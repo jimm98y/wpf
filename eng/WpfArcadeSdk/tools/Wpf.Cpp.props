@@ -5,6 +5,26 @@
 
     <!-- v143 = Visual Studio 2022 -->
     <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+
+  <!--
+    Visual Studio 2026 (v18) defaults VCToolsVersion to a v145 (14.5x) MSVC toolset.
+    That is incompatible with the v143 PlatformToolset our native projects require and
+    fails with 'error MSB8052: MSVC Toolset Version ... is not compatible with v143'.
+    When VCToolsVersion has not been explicitly supplied (e.g. via /p: or a Developer
+    environment) and a v143-compatible (14.4x) toolset/redist is installed alongside it,
+    pin to that pair so a plain build works on VS 2026. The Exists() guards mean this is a
+    no-op on VS 2022 / CI / any machine lacking these exact versions, so those keep their
+    own v143 default and nothing breaks.
+  -->
+  <PropertyGroup Condition="'$(VCToolsVersion)' == ''">
+    <WpfV143ToolsVersion>14.44.35207</WpfV143ToolsVersion>
+    <WpfV143RedistVersion>14.44.35112</WpfV143RedistVersion>
+    <VCToolsVersion Condition="Exists('$(VsInstallRoot)\VC\Tools\MSVC\$(WpfV143ToolsVersion)')">$(WpfV143ToolsVersion)</VCToolsVersion>
+    <VCToolsRedistVersion Condition="'$(VCToolsVersion)' == '$(WpfV143ToolsVersion)' and Exists('$(VsInstallRoot)\VC\Redist\MSVC\$(WpfV143RedistVersion)')">$(WpfV143RedistVersion)</VCToolsRedistVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
 
     <!-- 26100 is Windows 11 SDK -->
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
