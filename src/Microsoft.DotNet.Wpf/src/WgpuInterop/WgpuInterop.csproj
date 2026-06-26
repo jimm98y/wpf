@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Standalone Phase-0 binding library. Targets net10.0 to match the WPF
+         repo's TFM; RollForward=Major lets it run on a newer installed runtime
+         (e.g. the win-arm64 11.0 SDK on dev boxes). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <AssemblyName>Microsoft.Wpf.Interop.WebGpu</AssemblyName>
+    <RootNamespace>Microsoft.Wpf.Interop.WebGpu</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+
+    <!-- The binding lives in this folder's root .cs files. Keep the nested test
+         project and downloaded native/ tree out of this assembly's compile. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;native\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+</Project>
