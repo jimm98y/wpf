@@ -129,9 +129,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public void Dispose()
         {
-            // wgpu objects are reference counted; for the headless test we rely
-            // on process teardown. Release hooks are added when the renderer
-            // owns long-lived surfaces (Phase-1 HWND integration).
+            if (Queue != IntPtr.Zero) wgpuQueueRelease(Queue);
+            if (Device != IntPtr.Zero) wgpuDeviceRelease(Device);
+            if (Adapter != IntPtr.Zero) wgpuAdapterRelease(Adapter);
+            if (Instance != IntPtr.Zero) wgpuInstanceRelease(Instance);
+            Queue = Device = Adapter = Instance = IntPtr.Zero;
             GC.KeepAlive(_adapterCb);
             GC.KeepAlive(_deviceCb);
         }

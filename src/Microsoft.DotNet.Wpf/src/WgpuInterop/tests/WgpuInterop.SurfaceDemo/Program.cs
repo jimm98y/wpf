@@ -79,6 +79,10 @@ namespace WgpuInterop.SurfaceDemo
                 if (wgpuSurfacePresent(surface) == WGPUStatus.Success)
                     presented++;
 
+                // The acquired swap-chain texture and our view are per-frame.
+                wgpuTextureViewRelease(view);
+                wgpuTextureRelease(surfaceTexture.texture);
+
                 Thread.Sleep(8); // ~120 Hz cap; Fifo also paces to vblank
             }
 

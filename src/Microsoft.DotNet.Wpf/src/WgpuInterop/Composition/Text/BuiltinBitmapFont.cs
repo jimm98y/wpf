@@ -13,13 +13,30 @@ using System.Collections.Generic;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
-    internal sealed class BuiltinBitmapFont : IGlyphSource
+    internal sealed class BuiltinBitmapFont : IFont
     {
         private const int CellWidth = 5;
         private const int CellHeight = 7;
         private const int AdvanceCells = 6; // 5px glyph + 1px gap
 
-        public int Ascent => CellHeight;
+        public int PixelsPerEm => CellHeight;
+
+        // Glyph index == character code for this font (no cmap indirection).
+        public int GlyphIndex(char c) => c;
+
+        public float Advance(int glyphId) => AdvanceCells;
+
+        // A couple of synthetic kerning pairs (base pixels) so the shaping seam
+        // can be exercised deterministically without depending on a real font.
+        private static readonly Dictionary<(int, int), float> Kerning = new()
+        {
+            [('A', 'W')] = -2f,
+            [('W', 'A')] = -2f,
+            [('T', 'I')] = -1f,
+        };
+
+        public bool TryGetKerning(int leftGlyph, int rightGlyph, out float kerning)
+            => Kerning.TryGetValue((leftGlyph, rightGlyph), out kerning);
 
         // 7 rows x 5 columns; '#' = opaque, anything else = transparent.
         private static readonly Dictionary<char, string[]> Glyphs = new()
@@ -42,8 +59,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             ['W'] = new[] { "#...#", "#...#", "#...#", "#.#.#", "#.#.#", "#.#.#", ".#.#." },
         };
 
-        public bool TryGetGlyph(char c, out GlyphBitmap glyph)
+        public bool TryGetGlyph(int glyphId, out GlyphBitmap glyph)
         {
+            char c = (char)glyphId;
             if (c == ' ')
             {
                 glyph = new GlyphBitmap(System.Array.Empty<byte>(), 0, 0, AdvanceCells, 0, CellHeight);

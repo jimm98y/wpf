@@ -145,6 +145,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
             R8Unorm = 0x00000001,
             RGBA8Unorm = 0x00000016,
             BGRA8Unorm = 0x00000017,
+            Depth24Plus = 0x0000002E,
         }
 
         // ---- Flag typedefs (WGPUFlags = uint64_t) ----------------------------

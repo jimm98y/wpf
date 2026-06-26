@@ -25,6 +25,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
         {
             Unorm8x4 = 0x00000009,
             Float32x2 = 0x0000001D,
+            Float32x3 = 0x0000001E,
             Float32x4 = 0x0000001F,
         }
 

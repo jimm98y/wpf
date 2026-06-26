@@ -62,11 +62,85 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public PolygonGeometry(Vector2[] points) => Points = points;
     }
 
+    /// <summary>
+    /// A rectangle with rounded corners (the analog of WPF's RectangleGeometry
+    /// with RadiusX/RadiusY). Realized as a path with quarter-ellipse corners.
+    /// </summary>
+    internal sealed class RoundedRectangleGeometry : Geometry
+    {
+        public Rect Rect { get; }
+        public float RadiusX { get; }
+        public float RadiusY { get; }
+
+        public RoundedRectangleGeometry(Rect rect, float radiusX, float radiusY)
+        {
+            Rect = rect; RadiusX = radiusX; RadiusY = radiusY;
+        }
+    }
+
+    /// <summary>
+    /// An axis-aligned ellipse (a circle when the radii are equal) — the analog of
+    /// WPF's EllipseGeometry. Realized as a path with four quarter-ellipse arcs.
+    /// </summary>
+    internal sealed class EllipseGeometry : Geometry
+    {
+        public Vector2 Center { get; }
+        public float RadiusX { get; }
+        public float RadiusY { get; }
+
+        public EllipseGeometry(Vector2 center, float radiusX, float radiusY)
+        {
+            Center = center; RadiusX = radiusX; RadiusY = radiusY;
+        }
+    }
+
     /// <summary>How overlapping/contained contours determine the filled region.</summary>
     internal enum FillRule
     {
         EvenOdd = 0,
         NonZero = 1,
+    }
+
+    /// <summary>Boolean combination of two geometries (WPF's GeometryCombineMode).</summary>
+    internal enum GeometryCombineMode
+    {
+        Union = 0,     // either
+        Intersect = 1, // both
+        Xor = 2,       // exactly one
+        Exclude = 3,   // in the first but not the second
+    }
+
+    /// <summary>
+    /// A boolean combination of two geometries (the analog of WPF's
+    /// CombinedGeometry). Combined at the coverage level, so the result is
+    /// anti-aliased.
+    /// </summary>
+    internal sealed class CombinedGeometry : Geometry
+    {
+        public GeometryCombineMode Mode { get; }
+        public Geometry Geometry1 { get; }
+        public Geometry Geometry2 { get; }
+
+        public CombinedGeometry(GeometryCombineMode mode, Geometry geometry1, Geometry geometry2)
+        {
+            Mode = mode; Geometry1 = geometry1; Geometry2 = geometry2;
+        }
+    }
+
+    /// <summary>
+    /// A composite of several geometries (possibly different kinds) filled as one
+    /// region under a shared fill rule — the analog of WPF's GeometryGroup. With
+    /// EvenOdd, a contained child becomes a hole (e.g. a frame with a cut-out).
+    /// </summary>
+    internal sealed class GeometryGroup : Geometry
+    {
+        public FillRule FillRule { get; }
+        public List<Geometry> Children { get; }
+
+        public GeometryGroup(FillRule fillRule, List<Geometry> children)
+        {
+            FillRule = fillRule; Children = children;
+        }
     }
 
     internal abstract class PathSegment
@@ -140,6 +214,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public GradientStop(float offset, RgbaColor color) { Offset = offset; Color = color; }
     }
 
+    /// <summary>How a gradient extends beyond its [0,1] range (WPF's GradientSpreadMethod).</summary>
+    internal enum GradientSpreadMethod
+    {
+        Pad = 0,      // hold the end colours
+        Reflect = 1,  // mirror back and forth
+        Repeat = 2,   // tile from the start
+    }
+
     /// <summary>
     /// Linear gradient between <see cref="Start"/> and <see cref="End"/> (in the
     /// fill's local coordinate space), realized as a sampled colour ramp.
@@ -149,26 +231,63 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public Vector2 Start { get; }
         public Vector2 End { get; }
         public GradientStop[] Stops { get; }
+        public GradientSpreadMethod SpreadMethod { get; }
 
-        public LinearGradientBrush(Vector2 start, Vector2 end, GradientStop[] stops)
+        public LinearGradientBrush(Vector2 start, Vector2 end, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad)
         {
-            Start = start; End = end; Stops = stops;
+            Start = start; End = end; Stops = stops; SpreadMethod = spread;
         }
     }
 
     /// <summary>
-    /// Image brush: straight (non-premultiplied) RGBA8 pixels, row-major, mapped
-    /// across the fill geometry's local bounds.
+    /// Radial gradient from <see cref="Center"/> out to an ellipse of radii
+    /// (<see cref="RadiusX"/>, <see cref="RadiusY"/>), in the fill's local space
+    /// (the analog of WPF's RadialGradientBrush). Evaluated per pixel.
+    /// </summary>
+    internal sealed class RadialGradientBrush : Brush
+    {
+        public Vector2 Center { get; }
+        public float RadiusX { get; }
+        public float RadiusY { get; }
+        public GradientStop[] Stops { get; }
+        public GradientSpreadMethod SpreadMethod { get; }
+
+        public RadialGradientBrush(Vector2 center, float radiusX, float radiusY, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad)
+        {
+            Center = center; RadiusX = radiusX; RadiusY = radiusY; Stops = stops; SpreadMethod = spread;
+        }
+    }
+
+    /// <summary>How an image brush repeats across the fill (WPF's TileMode).</summary>
+    internal enum TileMode
+    {
+        None = 0,   // map once across the geometry bounds
+        Tile = 1,   // repeat
+        FlipX = 2,  // repeat, mirroring alternate columns
+        FlipY = 3,  // repeat, mirroring alternate rows
+        FlipXY = 4, // repeat, mirroring both
+    }
+
+    /// <summary>
+    /// Image brush: straight (non-premultiplied) RGBA8 pixels, row-major. With
+    /// <see cref="TileMode.None"/> the image maps once across the geometry's local
+    /// bounds; otherwise it tiles every (<see cref="TileWidth"/>,
+    /// <see cref="TileHeight"/>) local units from the local origin.
     /// </summary>
     internal sealed class ImageBrush : Brush
     {
         public byte[] PixelsRgba { get; }
         public int PixelWidth { get; }
         public int PixelHeight { get; }
+        public TileMode TileMode { get; }
+        public float TileWidth { get; }
+        public float TileHeight { get; }
 
-        public ImageBrush(byte[] pixelsRgba, int pixelWidth, int pixelHeight)
+        public ImageBrush(byte[] pixelsRgba, int pixelWidth, int pixelHeight,
+            TileMode tileMode = TileMode.None, float tileWidth = 0f, float tileHeight = 0f)
         {
             PixelsRgba = pixelsRgba; PixelWidth = pixelWidth; PixelHeight = pixelHeight;
+            TileMode = tileMode; TileWidth = tileWidth; TileHeight = tileHeight;
         }
     }
 
@@ -199,6 +318,88 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
     }
 
+    /// <summary>How the ends of an open stroked figure are shaped.</summary>
+    internal enum LineCap
+    {
+        Butt = 0,
+        Round = 1,
+        Square = 2,
+    }
+
+    /// <summary>How the corner between two stroked segments is filled.</summary>
+    internal enum LineJoin
+    {
+        Miter = 0,
+        Bevel = 1,
+        Round = 2,
+    }
+
+    /// <summary>Pen parameters for stroking (the analog of WPF's Pen).</summary>
+    internal readonly struct StrokeStyle
+    {
+        public readonly double Thickness;
+        public readonly LineCap Cap;
+        public readonly LineJoin Join;
+        public readonly double MiterLimit;
+        /// <summary>Alternating on/off dash lengths (pixels); null = solid.</summary>
+        public readonly double[]? DashArray;
+        public readonly double DashOffset;
+
+        public StrokeStyle(double thickness, LineCap cap = LineCap.Round, LineJoin join = LineJoin.Round,
+            double miterLimit = 10.0, double[]? dashArray = null, double dashOffset = 0.0)
+        {
+            Thickness = thickness;
+            Cap = cap;
+            Join = join;
+            MiterLimit = miterLimit;
+            DashArray = dashArray;
+            DashOffset = dashOffset;
+        }
+    }
+
+    /// <summary>
+    /// Strokes a path's outline with a brush (the analog of WPF's
+    /// DrawGeometry with a Pen). Round joins/caps today; the outline is
+    /// rasterized like a filled path so it anti-aliases identically.
+    /// </summary>
+    internal sealed class GeometryStroke : DrawingPrimitive
+    {
+        public PathGeometry Geometry { get; }
+        public Brush Brush { get; }
+        public StrokeStyle Style { get; }
+
+        public GeometryStroke(PathGeometry geometry, Brush brush, StrokeStyle style)
+        {
+            Geometry = geometry;
+            Brush = brush;
+            Style = style;
+        }
+
+        /// <summary>Convenience overload for the common solid-colour stroke.</summary>
+        public GeometryStroke(PathGeometry geometry, RgbaColor color, StrokeStyle style)
+            : this(geometry, new SolidColorBrush(color), style)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Fills a geometry and/or strokes its outline in one instruction (the analog
+    /// of WPF's DrawGeometry(brush, pen, geometry)). The fill is drawn first, then
+    /// the stroke on top. Either may be null.
+    /// </summary>
+    internal sealed class GeometryDrawing : DrawingPrimitive
+    {
+        public Geometry Geometry { get; }
+        public Brush? Fill { get; }
+        public Brush? Stroke { get; }
+        public StrokeStyle StrokeStyle { get; }
+
+        public GeometryDrawing(Geometry geometry, Brush? fill, Brush? stroke = null, StrokeStyle strokeStyle = default)
+        {
+            Geometry = geometry; Fill = fill; Stroke = stroke; StrokeStyle = strokeStyle;
+        }
+    }
+
     /// <summary>
     /// A run of text drawn from a baseline origin (the analog of WPF's
     /// DrawGlyphRun). The glyphs are rasterized by an <see cref="Text.IGlyphSource"/>
@@ -214,6 +415,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public GlyphRunDraw(string text, Vector2 origin, float emSize, RgbaColor color)
         {
             Text = text; Origin = origin; EmSize = emSize; Color = color;
+        }
+    }
+
+    /// <summary>A post-processing effect applied to a visual's rendered subtree.</summary>
+    internal abstract class Effect
+    {
+    }
+
+    /// <summary>Gaussian blur (the analog of WPF's BlurEffect).</summary>
+    internal sealed class BlurEffect : Effect
+    {
+        /// <summary>Blur radius in pixels (≈ the Gaussian standard deviation).</summary>
+        public double Radius { get; }
+        public BlurEffect(double radius) => Radius = radius;
+    }
+
+    /// <summary>
+    /// Drop shadow: a blurred, tinted, offset silhouette of the subtree drawn
+    /// beneath it (the analog of WPF's DropShadowEffect).
+    /// </summary>
+    internal sealed class DropShadowEffect : Effect
+    {
+        public RgbaColor Color { get; }
+        public double BlurRadius { get; }
+        public double OffsetX { get; }
+        public double OffsetY { get; }
+
+        public DropShadowEffect(RgbaColor color, double blurRadius, double offsetX, double offsetY)
+        {
+            Color = color; BlurRadius = blurRadius; OffsetX = offsetX; OffsetY = offsetY;
         }
     }
 
@@ -234,8 +465,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Opacity in [0,1], multiplied with ancestors.</summary>
         public double Opacity { get; set; } = 1.0;
 
-        /// <summary>Optional axis-aligned clip in this visual's local space.</summary>
+        /// <summary>Optional axis-aligned clip in this visual's local space (fast scissor path).</summary>
         public Rect? Clip { get; set; }
+
+        /// <summary>
+        /// Optional arbitrary clip geometry in this visual's local space. Unlike
+        /// <see cref="Clip"/>, this masks the subtree to any shape (the analog of
+        /// WPF's Visual.Clip with a non-rectangular geometry).
+        /// </summary>
+        public PathGeometry? ClipGeometry { get; set; }
+
+        /// <summary>Optional post-processing effect applied to the rendered subtree.</summary>
+        public Effect? Effect { get; set; }
+
+        /// <summary>
+        /// Optional brush whose alpha modulates the subtree's opacity per pixel
+        /// (the analog of WPF's Visual.OpacityMask). Evaluated in local space.
+        /// </summary>
+        public Brush? OpacityMask { get; set; }
 
         /// <summary>Drawing content recorded by this visual, in local space.</summary>
         public List<DrawingPrimitive> Content { get; } = new();

@@ -43,6 +43,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal enum WGPUCompareFunction
         {
             Undefined = 0x00000000,
+            Less = 0x00000002,
+            LessEqual = 0x00000004,
+            Always = 0x00000008,
         }
 
         [StructLayout(LayoutKind.Sequential)]

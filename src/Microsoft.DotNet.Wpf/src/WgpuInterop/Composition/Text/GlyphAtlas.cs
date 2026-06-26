@@ -35,7 +35,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     {
         private const int Padding = 1;
 
-        private readonly Dictionary<char, GlyphEntry> _entries = new();
+        private readonly Dictionary<int, GlyphEntry> _entries = new();
         private int _penX = Padding;
         private int _penY = Padding;
         private int _rowHeight;
@@ -57,19 +57,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public void ClearDirty() => Dirty = false;
 
         /// <summary>Returns the glyph's atlas entry, rasterizing+packing it on first use.</summary>
-        public bool TryGetOrAdd(IGlyphSource font, char c, out GlyphEntry entry)
+        public bool TryGetOrAdd(IGlyphSource font, int glyphId, out GlyphEntry entry)
         {
-            if (_entries.TryGetValue(c, out entry))
+            if (_entries.TryGetValue(glyphId, out entry))
                 return true;
 
-            if (!font.TryGetGlyph(c, out GlyphBitmap g))
+            if (!font.TryGetGlyph(glyphId, out GlyphBitmap g))
                 return false;
 
             if (g.Width == 0 || g.Height == 0)
             {
                 // Blank glyph (e.g. space): metrics only, no atlas rectangle.
                 entry = new GlyphEntry(0, 0, 0, 0, 0, 0, g.Advance, g.BearingX, g.BearingY);
-                _entries[c] = entry;
+                _entries[glyphId] = entry;
                 return true;
             }
 
@@ -91,7 +91,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _penX / (float)Width, _penY / (float)Height,
                 (_penX + g.Width) / (float)Width, (_penY + g.Height) / (float)Height,
                 g.Width, g.Height, g.Advance, g.BearingX, g.BearingY);
-            _entries[c] = entry;
+            _entries[glyphId] = entry;
 
             _penX += g.Width + Padding;
             _rowHeight = Math.Max(_rowHeight, g.Height);

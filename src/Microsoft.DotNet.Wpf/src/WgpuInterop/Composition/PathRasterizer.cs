@@ -72,6 +72,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int height = (int)MathF.Ceiling(maxY) + 1 - originY;
             if (width <= 0 || height <= 0) return default;
 
+            byte[] bytes = FillCoverage(contours, path.FillRule, originX, originY, width, height);
+            return new CoverageMask(bytes, width, height, originX, originY);
+        }
+
+        /// <summary>
+        /// Rasterizes the path into a fixed-size coverage buffer aligned to device
+        /// pixels (origin 0,0). Used to build a full-target clip mask.
+        /// </summary>
+        public static byte[] RasterizeInto(PathGeometry path, int width, int height)
+        {
+            List<List<Vector2>> contours = Flatten(path);
+            return FillCoverage(contours, path.FillRule, 0, 0, width, height);
+        }
+
+        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height)
+        {
+            var bytes = new byte[width * height];
+            if (width <= 0 || height <= 0 || contours.Count == 0) return bytes;
+
             var edges = new List<Edge>();
             foreach (List<Vector2> c in contours)
             {
@@ -106,7 +125,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (crossings.Count < 2) continue;
                     crossings.Sort(static (a, b) => a.X.CompareTo(b.X));
 
-                    if (path.FillRule == FillRule.NonZero)
+                    if (fillRule == FillRule.NonZero)
                     {
                         int winding = 0;
                         for (int i = 0; i < crossings.Count - 1; i++)
@@ -125,11 +144,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
 
-            var bytes = new byte[width * height];
             for (int i = 0; i < bytes.Length; i++)
                 bytes[i] = (byte)Math.Clamp((int)MathF.Round(coverage[i] * 255f), 0, 255);
-
-            return new CoverageMask(bytes, width, height, originX, originY);
+            return bytes;
         }
 
         private static void AddSpan(float[] cov, int rowBase, int width, int originX, float xs, float xe, float weight)

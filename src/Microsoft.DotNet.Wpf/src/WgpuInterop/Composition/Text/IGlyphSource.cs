@@ -38,10 +38,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
     internal interface IGlyphSource
     {
-        /// <summary>Base pixels above the baseline; used to map EmSize to a scale.</summary>
-        int Ascent { get; }
+        /// <summary>
+        /// The em square's size in this source's base pixel units. The renderer
+        /// scales each glyph by EmSize / PixelsPerEm, so a glyph rasterized at
+        /// this resolution renders at the requested EmSize.
+        /// </summary>
+        int PixelsPerEm { get; }
 
-        /// <summary>Resolves a character to a glyph; false if unsupported.</summary>
-        bool TryGetGlyph(char c, out GlyphBitmap glyph);
+        /// <summary>
+        /// Rasterizes a glyph by its glyph index (not character). Shaping resolves
+        /// characters to glyph indices first; ligatures map several characters to
+        /// a single glyph index that no character maps to.
+        /// </summary>
+        bool TryGetGlyph(int glyphId, out GlyphBitmap glyph);
     }
 }

@@ -70,6 +70,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         v.Clip = r.U8() != 0 ? new Rect(r.F32(), r.F32(), r.F32(), r.F32()) : null;
                         break;
                     }
+                    case MilCommand.VisualSetClipGeometry:
+                    {
+                        SceneVisual v = Get(r.U32());
+                        v.ClipGeometry = ReadPath(r);
+                        break;
+                    }
+                    case MilCommand.VisualSetOpacityMask:
+                    {
+                        SceneVisual v = Get(r.U32());
+                        v.OpacityMask = ReadBrush(r);
+                        break;
+                    }
+                    case MilCommand.VisualSetEffect:
+                    {
+                        SceneVisual v = Get(r.U32());
+                        v.Effect = (EffectKind)r.U8() switch
+                        {
+                            EffectKind.Blur => new BlurEffect(r.F64()),
+                            EffectKind.DropShadow => new DropShadowEffect(ReadColor(r), r.F64(), r.F64(), r.F64()),
+                            _ => null,
+                        };
+                        break;
+                    }
                     case MilCommand.VisualSetContent:
                     {
                         SceneVisual v = Get(r.U32());
@@ -123,11 +146,59 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         output.Add(new GeometryFill(new PolygonGeometry(points), brush));
                         break;
                     }
+                    case RenderDataOp.FillRoundedRectangle:
+                    {
+                        var rect = new Rect(r.F32(), r.F32(), r.F32(), r.F32());
+                        float rx = r.F32(), ry = r.F32();
+                        Brush brush = ReadBrush(r);
+                        output.Add(new GeometryFill(new RoundedRectangleGeometry(rect, rx, ry), brush));
+                        break;
+                    }
+                    case RenderDataOp.FillEllipse:
+                    {
+                        var center = new Vector2(r.F32(), r.F32());
+                        float rx = r.F32(), ry = r.F32();
+                        Brush brush = ReadBrush(r);
+                        output.Add(new GeometryFill(new EllipseGeometry(center, rx, ry), brush));
+                        break;
+                    }
+                    case RenderDataOp.FillGeometryGroup:
+                    {
+                        GeometryGroup group = ReadGeometryGroup(r);
+                        Brush brush = ReadBrush(r);
+                        output.Add(new GeometryFill(group, brush));
+                        break;
+                    }
+                    case RenderDataOp.FillCombinedGeometry:
+                    {
+                        Geometry geometry = ReadGeometry(r);
+                        Brush brush = ReadBrush(r);
+                        output.Add(new GeometryFill(geometry, brush));
+                        break;
+                    }
                     case RenderDataOp.FillPath:
                     {
                         PathGeometry path = ReadPath(r);
                         Brush brush = ReadBrush(r);
                         output.Add(new GeometryFill(path, brush));
+                        break;
+                    }
+                    case RenderDataOp.StrokePath:
+                    {
+                        PathGeometry path = ReadPath(r);
+                        StrokeStyle style = ReadStrokeStyle(r);
+                        Brush brush = ReadBrush(r);
+                        output.Add(new GeometryStroke(path, brush, style));
+                        break;
+                    }
+                    case RenderDataOp.DrawGeometry:
+                    {
+                        Geometry geometry = ReadGeometry(r);
+                        Brush? fill = r.U8() != 0 ? ReadBrush(r) : null;
+                        Brush? stroke = null;
+                        StrokeStyle style = default;
+                        if (r.U8() != 0) { stroke = ReadBrush(r); style = ReadStrokeStyle(r); }
+                        output.Add(new GeometryDrawing(geometry, fill, stroke, style));
                         break;
                     }
                     case RenderDataOp.DrawGlyphRun:
@@ -145,6 +216,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         return; // unknown op: stop parsing this stream
                 }
             }
+        }
+
+        private static Geometry ReadGeometry(CommandReader r)
+        {
+            var kind = (GeometryKind)r.U8();
+            switch (kind)
+            {
+                case GeometryKind.Rectangle:
+                    return new RectangleGeometry(new Rect(r.F32(), r.F32(), r.F32(), r.F32()));
+                case GeometryKind.Polygon:
+                {
+                    int count = r.U16();
+                    var points = new Vector2[count];
+                    for (int i = 0; i < count; i++) points[i] = new Vector2(r.F32(), r.F32());
+                    return new PolygonGeometry(points);
+                }
+                case GeometryKind.RoundedRectangle:
+                {
+                    var rect = new Rect(r.F32(), r.F32(), r.F32(), r.F32());
+                    return new RoundedRectangleGeometry(rect, r.F32(), r.F32());
+                }
+                case GeometryKind.Ellipse:
+                    return new EllipseGeometry(new Vector2(r.F32(), r.F32()), r.F32(), r.F32());
+                case GeometryKind.Group:
+                    return ReadGeometryGroup(r);
+                case GeometryKind.Combined:
+                {
+                    var mode = (GeometryCombineMode)r.U8();
+                    Geometry g1 = ReadGeometry(r);
+                    Geometry g2 = ReadGeometry(r);
+                    return new CombinedGeometry(mode, g1, g2);
+                }
+                default:
+                    return ReadPath(r);
+            }
+        }
+
+        private static GeometryGroup ReadGeometryGroup(CommandReader r)
+        {
+            var fillRule = (FillRule)r.U8();
+            int count = r.U16();
+            var children = new List<Geometry>(count);
+            for (int i = 0; i < count; i++) children.Add(ReadGeometry(r));
+            return new GeometryGroup(fillRule, children);
         }
 
         private static PathGeometry ReadPath(CommandReader r)
@@ -179,6 +294,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return new PathGeometry(fillRule, figures);
         }
 
+        private static StrokeStyle ReadStrokeStyle(CommandReader r)
+        {
+            double thickness = r.F64();
+            var cap = (LineCap)r.U8();
+            var join = (LineJoin)r.U8();
+            double miterLimit = r.F64();
+            double dashOffset = r.F64();
+            int dashCount = r.U16();
+            double[]? dashes = dashCount > 0 ? new double[dashCount] : null;
+            for (int i = 0; i < dashCount; i++) dashes![i] = r.F64();
+            return new StrokeStyle(thickness, cap, join, miterLimit, dashes, dashOffset);
+        }
+
         private static Brush ReadBrush(CommandReader r)
         {
             var kind = (BrushKind)r.U8();
@@ -190,18 +318,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     var start = new Vector2(r.F32(), r.F32());
                     var end = new Vector2(r.F32(), r.F32());
+                    var spread = (GradientSpreadMethod)r.U8();
                     int stopCount = r.U16();
                     var stops = new GradientStop[stopCount];
                     for (int i = 0; i < stopCount; i++)
                         stops[i] = new GradientStop(r.F32(), ReadColor(r));
-                    return new LinearGradientBrush(start, end, stops);
+                    return new LinearGradientBrush(start, end, stops, spread);
+                }
+                case BrushKind.RadialGradient:
+                {
+                    var center = new Vector2(r.F32(), r.F32());
+                    float radiusX = r.F32(), radiusY = r.F32();
+                    var spread = (GradientSpreadMethod)r.U8();
+                    int stopCount = r.U16();
+                    var stops = new GradientStop[stopCount];
+                    for (int i = 0; i < stopCount; i++)
+                        stops[i] = new GradientStop(r.F32(), ReadColor(r));
+                    return new RadialGradientBrush(center, radiusX, radiusY, stops, spread);
                 }
                 case BrushKind.Image:
                 {
                     int w = (int)r.U32();
                     int h = (int)r.U32();
+                    var tileMode = (TileMode)r.U8();
+                    float tileWidth = r.F32();
+                    float tileHeight = r.F32();
                     byte[] pixels = r.Bytes(w * h * 4);
-                    return new ImageBrush(pixels, w, h);
+                    return new ImageBrush(pixels, w, h, tileMode, tileWidth, tileHeight);
                 }
                 default:
                     return new SolidColorBrush(new RgbaColor(0, 0, 0, 0));

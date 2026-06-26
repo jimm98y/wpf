@@ -36,6 +36,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         VisualSetContent = 6, // MILCMD_VISUAL_SETCONTENT (inline render data)
         VisualAddChild = 7,   // MILCMD_VISUAL_ADDCHILD
         TargetSetRoot = 8,    // MILCMD_TARGET_SETROOT
+        VisualSetEffect = 9,  // MILCMD_VISUAL_SETEFFECT
+        VisualSetClipGeometry = 10, // MILCMD_VISUAL_SETCLIP (geometry)
+        VisualSetOpacityMask = 11,  // MILCMD_VISUAL_SETOPACITYMASK
+    }
+
+    /// <summary>Effect discriminator carried by VisualSetEffect.</summary>
+    internal enum EffectKind : byte
+    {
+        None = 0,
+        Blur = 1,
+        DropShadow = 2,
     }
 
     /// <summary>Resource type tags (subset of wgx_resource_types).</summary>
@@ -51,6 +62,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         FillPolygon = 2,
         DrawGlyphRun = 3,
         FillPath = 4,
+        StrokePath = 5,
+        FillRoundedRectangle = 6,
+        FillEllipse = 7,
+        FillGeometryGroup = 8,
+        DrawGeometry = 9,
+        FillCombinedGeometry = 10,
+    }
+
+    /// <summary>Geometry type tag for the recursive geometry serializer.</summary>
+    internal enum GeometryKind : byte
+    {
+        Rectangle = 0,
+        Polygon = 1,
+        Path = 2,
+        RoundedRectangle = 3,
+        Ellipse = 4,
+        Group = 5,
+        Combined = 6,
     }
 
     /// <summary>Path segment discriminator in the render-data stream.</summary>
@@ -67,6 +96,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         Solid = 0,
         LinearGradient = 1,
         Image = 2,
+        RadialGradient = 3,
     }
 
     /// <summary>Little-endian append-only writer with record back-patching.</summary>
