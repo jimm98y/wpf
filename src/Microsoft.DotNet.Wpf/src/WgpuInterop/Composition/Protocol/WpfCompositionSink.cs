@@ -173,7 +173,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // corners keep real alpha) and hand the premultiplied bitmap to the OS compositor.
         private void PresentLayered(SceneVisual root, MilTarget t)
         {
-            byte[] rgba = _renderer!.RenderToRgba(root, t.Width, t.Height, new RgbaColor(0, 0, 0, 0));
+            byte[] rgba = _renderer!.RenderToRgba(root, t.Width, t.Height, new RgbaColor(0, 0, 0, 0), srgbOutput: true);
             LayeredWindow.Update((IntPtr)t.Hwnd, rgba, t.Width, t.Height);
             PresentedFrames++;
             if (t.Width > 4 && t.Height > 4 && CountDrawables(root) > 0) _layeredFrames++;
@@ -238,7 +238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 Log(_engine.DumpState());
                 Log($"root transform={(root.Transform.IsIdentity ? "I" : root.Transform.ToString())} drawables={CountDrawables(root)}");
-                byte[] px = _renderer!.RenderToRgba(root, t.Width, t.Height, t.ClearColor);
+                byte[] px = _renderer!.RenderToRgba(root, t.Width, t.Height, t.ClearColor, srgbOutput: true);
                 byte cr = (byte)Math.Clamp(t.ClearColor.R * 255f, 0, 255);
                 byte cg = (byte)Math.Clamp(t.ClearColor.G * 255f, 0, 255);
                 byte cb = (byte)Math.Clamp(t.ClearColor.B * 255f, 0, 255);
@@ -336,11 +336,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus.Success || caps.formatCount == 0)
                 return WGPUTextureFormat.BGRA8Unorm;
 
+            // The renderer outputs RGBA-order, linear scRGB colours. Prefer an RGBA *sRGB* surface
+            // so the linear->sRGB gamma encode happens once on the display write (a plain UNORM
+            // surface would show WPF's linear colours too dark). Avoid BGRA formats (channel swap).
             WGPUTextureFormat chosen = caps.formats[0];
+            bool haveSrgb = false, haveRgba = false;
             for (nuint i = 0; i < caps.formatCount; i++)
             {
-                if (caps.formats[i] == WGPUTextureFormat.BGRA8Unorm) { chosen = WGPUTextureFormat.BGRA8Unorm; break; }
+                if (caps.formats[i] == WGPUTextureFormat.RGBA8UnormSrgb) haveSrgb = true;
+                if (caps.formats[i] == WGPUTextureFormat.RGBA8Unorm) haveRgba = true;
             }
+            if (haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
+            else if (haveRgba) chosen = WGPUTextureFormat.RGBA8Unorm;
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return chosen;
         }

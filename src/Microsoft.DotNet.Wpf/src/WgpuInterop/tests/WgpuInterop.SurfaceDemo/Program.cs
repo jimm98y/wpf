@@ -137,14 +137,14 @@ namespace WgpuInterop.SurfaceDemo
         {
             WGPUSurfaceCapabilities caps;
             if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus.Success || caps.formatCount == 0)
-                return WGPUTextureFormat.BGRA8Unorm;
+                return WGPUTextureFormat.RGBA8UnormSrgb;
 
             WGPUTextureFormat chosen = caps.formats[0];
             for (nuint i = 0; i < caps.formatCount; i++)
             {
-                if (caps.formats[i] == WGPUTextureFormat.BGRA8Unorm)
+                if (caps.formats[i] == WGPUTextureFormat.RGBA8UnormSrgb)
                 {
-                    chosen = WGPUTextureFormat.BGRA8Unorm; // common, preferred swap-chain format
+                    chosen = WGPUTextureFormat.RGBA8UnormSrgb; // common, preferred swap-chain format
                     break;
                 }
             }

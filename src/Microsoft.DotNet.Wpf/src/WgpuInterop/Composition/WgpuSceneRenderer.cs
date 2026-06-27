@@ -33,10 +33,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     {
         private const int FloatsPerVertex = 8;            // pos.xy, color.rgba, uv.xy
         private const int VertexStride = FloatsPerVertex * sizeof(float);
+        // Intermediate layers/masks store LINEAR values (WPF colours arrive as linear scRGB).
         private const WGPUTextureFormat ReadbackFormat = WGPUTextureFormat.RGBA8Unorm;
+        // The final off-screen target is sRGB so the single linear->sRGB gamma encode happens
+        // exactly once on the display write (matching the on-screen sRGB swap chain). Screenshots
+        // and layered-popup bitmaps read back display-ready sRGB bytes.
+        private const WGPUTextureFormat OffscreenFormat = WGPUTextureFormat.RGBA8UnormSrgb;
 
         /// <summary>Optional diagnostics hook (set by the sink) for one-off render tracing.</summary>
         internal static Action<string>? DebugLog;
+
+        // True when the current frame targets an sRGB surface (on-screen / popups / screenshots):
+        // colours and images are kept linear internally and gamma-encoded once on the final write.
+        private bool _srgbOutput;
         private const int GradientRampTexels = 256;
 
         private const string ShaderWgsl = @"
@@ -243,13 +252,18 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
-        public byte[] RenderToRgba(SceneVisual root, int width, int height, RgbaColor background)
+        /// <summary>Render off-screen and read back RGBA8. <paramref name="srgbOutput"/> selects an
+        /// sRGB target (display-ready, gamma-encoded once) for screenshots / layered popups; the
+        /// default linear target is used by tests, which validate compositing independent of gamma.</summary>
+        public byte[] RenderToRgba(SceneVisual root, int width, int height, RgbaColor background, bool srgbOutput = false)
         {
             try
             {
+                WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
+                _srgbOutput = srgbOutput;
                 var plan = new List<LayerPass>();
                 var mainData = new DrawData();
-                CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, ReadbackFormat);
+                CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
 
                 IntPtr device = _ctx.Device;
                 int bytesPerRow = AlignUp(width * 4, 256);
@@ -259,7 +273,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopySrc,
                     dimension = WGPUTextureDimension._2D,
                     size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
-                    format = ReadbackFormat,
+                    format = outFormat,
                     mipLevelCount = 1,
                     sampleCount = 1,
                 };
@@ -271,7 +285,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
-                ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, ReadbackFormat), atlasView);
+                ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
 
                 var copySrc = new WGPUTexelCopyTextureInfo { texture = targetTex, aspect = WGPUTextureAspect.All };
                 var copyDst = new WGPUTexelCopyBufferInfo
@@ -312,6 +326,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             try
             {
+                _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
                 var plan = new List<LayerPass>();
                 var mainData = new DrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
@@ -835,7 +850,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 }
                 case ImageBrush img:
                 {
-                    var (tex, view) = CreateRgbaTexture(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                    var (tex, view) = CreateImageTexture(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, NearestSampler());
                     DeferReleaseSampled(tex, view, bindGroup);
                     kind = FillKind.Textured;
@@ -1402,6 +1417,12 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private (IntPtr Texture, IntPtr View) CreateRgbaTexture(byte[] rgba, int width, int height)
             => CreateTexture(rgba, width, height, WGPUTextureFormat.RGBA8Unorm, 4);
+
+        // Bitmap pixels are sRGB-encoded. For an sRGB (display) target, use an sRGB texture so the
+        // hardware decodes them to linear on sample, keeping one consistent linear space before the
+        // single gamma encode on the final write. For the linear (test) target, pass them through.
+        private (IntPtr Texture, IntPtr View) CreateImageTexture(byte[] rgba, int width, int height)
+            => CreateTexture(rgba, width, height, _srgbOutput ? WGPUTextureFormat.RGBA8UnormSrgb : WGPUTextureFormat.RGBA8Unorm, 4);
 
         private (IntPtr Texture, IntPtr View) CreateR8Texture(byte[] r8, int width, int height)
             => CreateTexture(r8, width, height, WGPUTextureFormat.R8Unorm, 1);

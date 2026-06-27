@@ -144,7 +144,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
             Undefined = 0x00000000,
             R8Unorm = 0x00000001,
             RGBA8Unorm = 0x00000016,
-            BGRA8Unorm = 0x00000017,
+            RGBA8UnormSrgb = 0x00000017,
+            BGRA8Unorm = 0x0000001B,
+            BGRA8UnormSrgb = 0x0000001C,
             Depth24Plus = 0x0000002E,
         }
 
