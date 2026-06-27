@@ -23,7 +23,25 @@ using Microsoft.Wpf.Interop.WebGpu.Composition;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
-    internal sealed class TrueTypeFont : IFont
+    /// <summary>
+    /// A font that can produce a glyph's filled outline (as PathFigures) by glyph
+    /// index. This is the seam the milcore glyph-run decoder uses to render WPF text:
+    /// WPF supplies already-shaped glyph indices + advances, and the outlines come
+    /// from whichever font the run referenced.
+    /// </summary>
+    internal interface IGlyphOutlineFont
+    {
+        /// <summary>The pixels-per-em the returned figures are scaled to.</summary>
+        int PixelsPerEm { get; }
+
+        /// <summary>
+        /// Get the glyph outline (in <see cref="PixelsPerEm"/> units, baseline at y=0,
+        /// y-down) for <paramref name="glyphId"/>. Returns false for blank/missing glyphs.
+        /// </summary>
+        bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures);
+    }
+
+    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont
     {
         // Glyphs are rasterized with the em square at this many pixels; the
         // renderer scales the atlas quad to the requested EmSize.
@@ -122,6 +140,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int bearingY = (int)MathF.Round(-mask.OriginY); // mask origin is above the baseline (negative y)
             glyph = new GlyphBitmap(mask.Coverage, mask.Width, mask.Height, advance, bearingX, bearingY);
             return true;
+        }
+
+        /// <summary>IGlyphOutlineFont: glyph outline by index (at BaseEmPixels, baseline y=0).</summary>
+        public bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures)
+        {
+            figures = (glyphId >= 0 && glyphId < _numGlyphs) ? BuildGlyphFigures(glyphId) : new List<PathFigure>();
+            return figures.Count > 0;
         }
 
         private ushort AdvanceWidth(int gid)

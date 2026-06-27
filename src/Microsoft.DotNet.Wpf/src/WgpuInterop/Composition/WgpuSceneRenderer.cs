@@ -890,6 +890,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty) return;
+
+            // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
+            // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
+            // and edges crisp under the DPI/scale/rotation transform instead of bilinear-blurry.
+            // (Non-solid brushes bake per-texel in the geometry's local space, so they stay local.)
+            if (brush is SolidColorBrush)
+            {
+                CoverageMask deviceMask = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, world));
+                EmitMask(deviceMask, brush, Matrix3x2.Identity, opacity, clip, width, height, format, data);
+                return;
+            }
             EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data);
         }
 

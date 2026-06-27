@@ -60,9 +60,16 @@
       <ResolvedMatchingContract Remove="@(ResolvedMatchingContract)"/>
       <ResolvedMatchingContract Include="$(IntermediateOutputPath)$(AssemblyName).dll" Condition="'$(ManagedCxx)'!='true'"/>
       <ResolvedMatchingContract Include="$(OutputPath)$(AssemblyName).dll" Condition="'$(ManagedCxx)'=='true'" />
-      <!-- Work backwards to find the output for a hand-crafted ref assembly. -->
+      <!-- Work backwards to find the output for a hand-crafted ref assembly.
+           For explicit platforms (x86/x64/arm64) the output path carries a
+           $(Platform) subfolder (e.g. ...\Foo-ref\arm64\Release\net10.0\); AnyCPU/Win32
+           builds omit it. The two conditioned globs keep this deterministic so a stale
+           cross-platform output can't produce a second (ambiguous) match. -->
       <ResolvedImplementationAssembly Remove="@(ResolvedImplementationAssembly)" />
-      <ResolvedImplementationAssembly Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Configuration)\**\$(AssemblyName).dll" />
+      <ResolvedImplementationAssembly Condition="'$(Platform)' != '' and '$(Platform)' != 'AnyCPU' and '$(Platform)' != 'Win32'"
+                                      Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Platform)\$(Configuration)\**\$(AssemblyName).dll" />
+      <ResolvedImplementationAssembly Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU' or '$(Platform)' == 'Win32'"
+                                      Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Configuration)\**\$(AssemblyName).dll" />
       <Error Condition="@(ResolvedImplementationAssembly->Count()) &gt; 1" Text="More than one reference assembly was added to ResolvedImplementationAssembly!" />
     </ItemGroup>
   </Target>
