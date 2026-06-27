@@ -117,6 +117,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         ScaleTransform = 0x74,
         SkewTransform = 0x75,
         RotateTransform = 0x76,
+        DashStyle = 0x85,
         Pen = 0x86,
         BlurEffect = 0x6e,
         DropShadowEffect = 0x6f,
@@ -156,6 +157,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, Matrix3x2> _transforms = new();
         private readonly Dictionary<uint, uint> _visualTransform = new();   // visual handle -> transform handle
         private readonly Dictionary<uint, MilPen> _pens = new();
+        private readonly Dictionary<uint, (double Offset, double[] Dashes)> _dashStyles = new();  // thickness-relative
         private readonly Dictionary<uint, Geometry> _geometries = new();
         private readonly Dictionary<uint, MilGradient> _gradients = new();
         private readonly Dictionary<uint, MilGlyphRun> _glyphRuns = new();
@@ -240,7 +242,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             public readonly StrokeStyle Style;
             public readonly uint BrushHandle;
-            public MilPen(StrokeStyle style, uint brushHandle) { Style = style; BrushHandle = brushHandle; }
+            public readonly uint DashHandle;   // hDashStyle; resolved lazily in ResolvePen
+            public MilPen(StrokeStyle style, uint brushHandle, uint dashHandle)
+            { Style = style; BrushHandle = brushHandle; DashHandle = dashHandle; }
         }
 
         // Accumulator for a variable-length command opened via BeginCommand and
@@ -320,6 +324,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _transforms.Remove(handle);
             _visualTransform.Remove(handle);
             _pens.Remove(handle);
+            _dashStyles.Remove(handle);
             _geometries.Remove(handle);
             _gradients.Remove(handle);
             _glyphRuns.Remove(handle);
@@ -472,7 +477,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _ = r.U32();                       // EndLineCap (use start for both)
                     _ = r.U32();                       // DashCap
                     var join = (LineJoin)Math.Min(r.U32(), 2u);
-                    _pens[ph] = new MilPen(new StrokeStyle(thickness, cap, join, miter), hBrush);
+                    uint hDash = r.U32();              // hDashStyle@48
+                    _pens[ph] = new MilPen(new StrokeStyle(thickness, cap, join, miter), hBrush, hDash);
+                    break;
+                }
+                case Mil.DashStyle:
+                {
+                    // MILCMD_DASHSTYLE: Handle@4, Offset@8 (double), hOffsetAnim@16, DashesSize@20
+                    // (bytes), then the dash doubles. Lengths are in pen-thickness multiples.
+                    uint dh = r.U32();
+                    double offset = r.F64();
+                    _ = r.U32();                       // hOffsetAnimations
+                    uint dashesSize = r.U32();
+                    var dashes = new double[dashesSize / 8];
+                    for (int i = 0; i < dashes.Length; i++) dashes[i] = r.F64();
+                    _dashStyles[dh] = (offset, dashes);
                     break;
                 }
                 case Mil.RectangleGeometry:
@@ -1327,7 +1346,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private (Brush?, StrokeStyle) ResolvePen(uint handle, Rect bounds)
         {
             if (handle != 0 && _pens.TryGetValue(handle, out MilPen pen))
-                return (ResolveBrush(pen.BrushHandle, bounds), pen.Style);
+            {
+                StrokeStyle style = pen.Style;
+                // WPF dash lengths are multiples of the pen thickness; scale to absolute pixels.
+                if (pen.DashHandle != 0 && _dashStyles.TryGetValue(pen.DashHandle, out (double Offset, double[] Dashes) ds) && ds.Dashes.Length > 0)
+                {
+                    double t = pen.Style.Thickness;
+                    var scaled = new double[ds.Dashes.Length];
+                    for (int i = 0; i < scaled.Length; i++) scaled[i] = ds.Dashes[i] * t;
+                    style = new StrokeStyle(pen.Style.Thickness, pen.Style.Cap, pen.Style.Join, pen.Style.MiterLimit, scaled, ds.Offset * t);
+                }
+                return (ResolveBrush(pen.BrushHandle, bounds), style);
+            }
             return (null, default);
         }
 
