@@ -111,6 +111,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         LinearGradientBrush = 0x7f,
         RadialGradientBrush = 0x80,
         ImageBrush = 0x81,
+        DrawingBrush = 0x82,
+        VisualBrush = 0x83,
+        GeometryDrawing = 0x87,
+        DrawingGroup = 0x8b,
         MatrixTransform = 0x77,
         TransformGroup = 0x72,
         TranslateTransform = 0x73,
@@ -212,6 +216,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// process; a fixed font in tests). When null, text is skipped.
         /// </summary>
         public Func<ulong, Text.IGlyphOutlineFont?>? FontResolver;
+
+        // Rasterizes a SceneVisual subtree to straight-RGBA pixels (wired by the host to the GPU
+        // renderer). Used to turn a VisualBrush's visual / a DrawingBrush's drawing into a tileable
+        // bitmap, which then flows through the existing ImageBrush tiling/viewbox/stretch path.
+        public Func<SceneVisual, int, int, byte[]?>? VisualRasterizer;
+
+        private readonly Dictionary<uint, (uint Source, bool IsDrawing)> _contentBrushes = new();  // Visual/DrawingBrush -> source
+        private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
+        private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
 
         /// <summary>A decoded WPF glyph run: already-shaped glyph indices + advances.</summary>
         private sealed class MilGlyphRun
@@ -325,6 +338,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _visualTransform.Remove(handle);
             _pens.Remove(handle);
             _dashStyles.Remove(handle);
+            _contentBrushes.Remove(handle);
+            _geometryDrawings.Remove(handle);
+            _drawingGroups.Remove(handle);
             _geometries.Remove(handle);
             _gradients.Remove(handle);
             _glyphRuns.Remove(handle);
@@ -711,6 +727,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits);
                     break;
                 }
+                case Mil.VisualBrush:
+                case Mil.DrawingBrush:
+                {
+                    // Same TileBrush layout as ImageBrush; the source (Visual or Drawing) is at @144.
+                    // We rasterize that source to a bitmap in Realize, then reuse the ImageBrush path.
+                    uint h = r.U32();
+                    r.Position = 16; var viewport = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    r.Position = 48; var viewbox = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    r.Position = 108; uint viewportUnits = r.U32();
+                    r.Position = 112; uint viewboxUnits = r.U32();
+                    r.Position = 124; uint stretch = r.U32();
+                    r.Position = 128; var tile = (TileMode)r.U32();
+                    r.Position = 144; uint hSource = r.U32();
+                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits);
+                    _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
+                    break;
+                }
+                case Mil.GeometryDrawing:
+                {
+                    // MILCMD_GEOMETRYDRAWING: Handle@4, hBrush@8, hPen@12, hGeometry@16.
+                    uint h = r.U32();
+                    uint hBrush = r.U32(), hPen = r.U32(), hGeom = r.U32();
+                    _geometryDrawings[h] = (hBrush, hPen, hGeom);
+                    break;
+                }
+                case Mil.DrawingGroup:
+                {
+                    // MILCMD_DRAWINGGROUP: Handle@4, Opacity@8, ChildrenSize@16, hTransform@32,
+                    // ... fixed struct ends at ClearTypeHint@48 (52 bytes); child handles follow.
+                    uint h = r.U32();
+                    double opacity = r.F64();
+                    r.Position = 16; uint childrenSize = r.U32();
+                    r.Position = 32; uint hTransform = r.U32();
+                    r.Position = 52;
+                    var children = new List<uint>();
+                    for (uint i = 0; i + 4 <= childrenSize && r.Remaining >= 4; i += 4) children.Add(r.U32());
+                    _drawingGroups[h] = (children, hTransform, opacity);
+                    break;
+                }
                 case Mil.BlurEffect:
                 {
                     // MILCMD_BLUREFFECT: Handle@4, Radius@8 (double).
@@ -875,6 +930,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
 
             Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
+            RealizeContentBrushes();   // rasterize VisualBrush/DrawingBrush sources to bitmaps
 
             // Opacity masks resolve after content so a relative gradient maps to the bounds.
             foreach (KeyValuePair<uint, uint> kv in _visualOpacityMask)
@@ -903,6 +959,84 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 minX = Math.Min(minX, b.X); minY = Math.Min(minY, b.Y);
                 maxX = Math.Max(maxX, b.X + b.Width); maxY = Math.Max(maxY, b.Y + b.Height);
                 any = true;
+            }
+            return any ? new Rect(minX, minY, maxX - minX, maxY - minY) : new Rect(0, 0, 0, 0);
+        }
+
+        // Rasterize each VisualBrush/DrawingBrush source into a bitmap so the existing ImageBrush
+        // tiling/viewbox/stretch path can paint it. Re-run every frame so VisualBrushes stay live.
+        private void RealizeContentBrushes()
+        {
+            if (VisualRasterizer is null || _contentBrushes.Count == 0) return;
+            foreach (KeyValuePair<uint, (uint Source, bool IsDrawing)> kv in _contentBrushes)
+            {
+                SceneVisual? source = kv.Value.IsDrawing
+                    ? BuildDrawingVisual(kv.Value.Source)
+                    : (_visuals.TryGetValue(kv.Value.Source, out SceneVisual? v) ? v : null);
+                if (source is null) continue;
+
+                Rect b = VisualSubtreeBounds(source, Matrix3x2.Identity);
+                if (b.Width <= 0.01f || b.Height <= 0.01f) continue;
+
+                const int supersample = 2;
+                int pw = Math.Clamp((int)MathF.Ceiling(b.Width * supersample), 1, 1024);
+                int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
+                // Map the source's content bounds onto the bitmap [0,pw]x[0,ph].
+                var wrapper = new SceneVisual
+                {
+                    Transform = Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
+                };
+                wrapper.Children.Add(source);
+                byte[]? px = VisualRasterizer(wrapper, pw, ph);
+                if (px is not null) _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph);
+            }
+        }
+
+        // Build a SceneVisual from a decoded Drawing resource (GeometryDrawing / DrawingGroup).
+        private SceneVisual BuildDrawingVisual(uint handle)
+        {
+            var v = new SceneVisual();
+            if (_geometryDrawings.TryGetValue(handle, out (uint Brush, uint Pen, uint Geometry) gd))
+            {
+                if (_geometries.TryGetValue(gd.Geometry, out Geometry? geom))
+                    EmitDrawing(v.Content, geom, gd.Brush, gd.Pen, RenderState.Default);
+            }
+            else if (_drawingGroups.TryGetValue(handle, out (List<uint> Children, uint Transform, double Opacity) dg))
+            {
+                v.Opacity = dg.Opacity;
+                if (dg.Transform != 0 && _transforms.TryGetValue(dg.Transform, out Matrix3x2 m)) v.Transform = m;
+                foreach (uint child in dg.Children) v.Children.Add(BuildDrawingVisual(child));
+            }
+            return v;
+        }
+
+        // Bounds of a visual subtree in the root's local space (content + transformed children).
+        private static Rect VisualSubtreeBounds(SceneVisual v, Matrix3x2 acc)
+        {
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            bool any = false;
+            void Union(Rect r)
+            {
+                if (r.Width < 0 || r.Height < 0) return;
+                minX = Math.Min(minX, r.X); minY = Math.Min(minY, r.Y);
+                maxX = Math.Max(maxX, r.X + r.Width); maxY = Math.Max(maxY, r.Y + r.Height);
+                any = true;
+            }
+            foreach (DrawingPrimitive p in v.Content)
+            {
+                Geometry? g = p switch
+                {
+                    GeometryFill f => f.Geometry,
+                    GeometryStroke s => s.Geometry,
+                    GeometryDrawing d => d.Geometry,
+                    _ => null,
+                };
+                if (g is not null) Union(TransformRect(GeometryBounds(g), acc));
+            }
+            foreach (SceneVisual c in v.Children)
+            {
+                Rect cb = VisualSubtreeBounds(c, c.LocalToParent * acc);
+                if (cb.Width > 0 && cb.Height > 0) Union(cb);
             }
             return any ? new Rect(minX, minY, maxX - minX, maxY - minY) : new Rect(0, 0, 0, 0);
         }

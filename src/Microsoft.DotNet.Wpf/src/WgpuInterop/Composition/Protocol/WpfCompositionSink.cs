@@ -139,6 +139,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Render and present every target that has a window and a root visual.</summary>
         public void RenderTargets()
         {
+            EnsureGpu();         // ensure the renderer (and VisualRasterizer) exist before Realize
             _engine.Realize();   // re-parse content with the current resource state
             string sig = "";
             foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
@@ -295,6 +296,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 _ctx = WgpuContext.Create();
                 _renderer = new WgpuSceneRenderer(_ctx);
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
+                // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
+                // (rendered sRGB for display, then un-premultiplied since the image path re-premultiplies).
+                _engine.VisualRasterizer = (visual, w, h) =>
+                {
+                    byte[] px = _renderer!.RenderToRgba(visual, w, h, new RgbaColor(0, 0, 0, 0), srgbOutput: true);
+                    for (int i = 0; i < px.Length; i += 4)
+                    {
+                        byte a = px[i + 3];
+                        if (a > 0 && a < 255)
+                        {
+                            px[i] = (byte)Math.Min(255, px[i] * 255 / a);
+                            px[i + 1] = (byte)Math.Min(255, px[i + 1] * 255 / a);
+                            px[i + 2] = (byte)Math.Min(255, px[i + 2] * 255 / a);
+                        }
+                    }
+                    return px;
+                };
                 Log($"WebGPU device created (0x{_ctx.Device:x})");
             }
         }
