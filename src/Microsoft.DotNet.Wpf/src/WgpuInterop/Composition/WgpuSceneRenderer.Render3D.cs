@@ -24,6 +24,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     {
         private const WGPUTextureFormat DepthFormat = WGPUTextureFormat.Depth24Plus;
         private const ulong WholeSize = ulong.MaxValue;
+        // 4x MSAA for the 3D pass: meshes are tessellated triangles (no analytic coverage like 2D
+        // shapes/text), so their silhouette edges alias without multisampling.
+        private const uint Msaa3D = 4;
 
         private readonly Dictionary<WGPUTextureFormat, IntPtr> _pipelines3D = new();
         private IntPtr _shader3D;
@@ -90,8 +93,9 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 (int)MathF.Ceiling(dw), (int)MathF.Ceiling(dh)));
             if (clip.IsEmpty) return;
 
-            var (_, colorView) = CreateLayerTexture(width, height);
-            IntPtr depthView = CreateDepthTexture(width, height);
+            var (_, colorView) = CreateLayerTexture(width, height);     // single-sample resolve target
+            IntPtr msaaColorView = CreateMsaaColorTexture(width, height, ReadbackFormat, Msaa3D);
+            IntPtr depthView = CreateDepthTexture(width, height, Msaa3D);
 
             float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
@@ -138,18 +142,21 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length));
             }
 
-            plan.Add(new LayerPass(colorView, ReadbackFormat, models, depthView));
+            plan.Add(new LayerPass(colorView, ReadbackFormat, models, depthView, msaaColorView));
             EmitFullScreenQuad(outData, outFormat, FillKind.Layer, colorView, 1f, 1f, 1f, (float)Math.Clamp(opacity, 0.0, 1.0), 0f, 0f, clip, width, height);
         }
 
-        private void ExecutePass3D(IntPtr encoder, IntPtr colorView, IntPtr depthView, WGPUTextureFormat format, List<Draw3D> models)
+        private void ExecutePass3D(IntPtr encoder, IntPtr resolveView, IntPtr msaaColorView, IntPtr depthView, WGPUTextureFormat format, List<Draw3D> models)
         {
+            // Render into the multisampled colour target and resolve into the single-sample view
+            // (which the 2D composite then samples). storeOp=Discard: only the resolve is needed.
             var colorAttachment = new WGPURenderPassColorAttachment
             {
-                view = colorView,
+                view = msaaColorView,
+                resolveTarget = resolveView,
                 depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
                 loadOp = WGPULoadOp.Clear,
-                storeOp = WGPUStoreOp.Store,
+                storeOp = WGPUStoreOp.Discard,
                 clearValue = new WGPUColor { r = 0, g = 0, b = 0, a = 0 },
             };
             var depthAttachment = new WGPURenderPassDepthStencilAttachment
@@ -182,7 +189,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             DeferRelease(() => wgpuRenderPassEncoderRelease(passLocal));
         }
 
-        private IntPtr CreateDepthTexture(int width, int height)
+        private IntPtr CreateDepthTexture(int width, int height, uint sampleCount = 1)
         {
             var texDesc = new WGPUTextureDescriptor
             {
@@ -191,7 +198,25 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
                 format = DepthFormat,
                 mipLevelCount = 1,
-                sampleCount = 1,
+                sampleCount = sampleCount,
+            };
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
+            DeferRelease(() => { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); });
+            return view;
+        }
+
+        // A multisampled colour render target that resolves into a single-sample view.
+        private IntPtr CreateMsaaColorTexture(int width, int height, WGPUTextureFormat format, uint sampleCount)
+        {
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
+                format = format,
+                mipLevelCount = 1,
+                sampleCount = sampleCount,
             };
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
@@ -301,7 +326,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                         cullMode = WGPUCullMode.None,
                     },
                     depthStencil = (IntPtr)(&depthState),
-                    multisample = new WGPUMultisampleState { count = 1, mask = 0xFFFFFFFF },
+                    multisample = new WGPUMultisampleState { count = Msaa3D, mask = 0xFFFFFFFF },
                     fragment = &fragment,
                 };
                 return wgpuDeviceCreateRenderPipeline(_ctx.Device, &desc);

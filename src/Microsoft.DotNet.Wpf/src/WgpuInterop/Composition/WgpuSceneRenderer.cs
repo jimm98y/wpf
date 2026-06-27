@@ -239,15 +239,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // When set, this is a 3D pass (depth-tested mesh draws) rather than 2D.
             public readonly List<Draw3D>? Models3D;
             public readonly IntPtr DepthView;
+            // For an MSAA 3D pass: the multisampled colour target that resolves into TargetView.
+            public readonly IntPtr MsaaColorView;
 
             public LayerPass(IntPtr targetView, bool clearTransparent, RgbaColor clearColor, DrawData data, WGPUTextureFormat format)
             {
                 TargetView = targetView; ClearTransparent = clearTransparent; ClearColor = clearColor; Data = data; Format = format;
             }
 
-            public LayerPass(IntPtr targetView, WGPUTextureFormat format, List<Draw3D> models3D, IntPtr depthView)
+            public LayerPass(IntPtr targetView, WGPUTextureFormat format, List<Draw3D> models3D, IntPtr depthView, IntPtr msaaColorView)
             {
-                TargetView = targetView; Format = format; Models3D = models3D; DepthView = depthView;
+                TargetView = targetView; Format = format; Models3D = models3D; DepthView = depthView; MsaaColorView = msaaColorView;
                 ClearTransparent = true; ClearColor = default; Data = new DrawData();
             }
         }
@@ -357,7 +359,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (lp.Models3D is { } models)
             {
-                ExecutePass3D(encoder, lp.TargetView, lp.DepthView, lp.Format, models);
+                ExecutePass3D(encoder, lp.TargetView, lp.MsaaColorView, lp.DepthView, lp.Format, models);
                 return;
             }
 
@@ -808,6 +810,16 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 || (fill.Brush is LinearGradientBrush lg && lg.SpreadMethod != GradientSpreadMethod.Pad)
                 || (fill.Brush is ImageBrush ib && ib.TileMode != TileMode.None);
             if (needsPerPixelBrush)
+            {
+                EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
+                return;
+            }
+
+            // A rotated/skewed rectangle is a non-axis-aligned quad whose edges alias under flat
+            // tessellation (no MSAA on the 2D path). Route it through the analytic-AA coverage path
+            // instead (same as paths/ellipses); keep the fast mesh path for axis-aligned rects, which
+            // don't alias. M12/M21 are the off-diagonal (rotation/shear) terms of the world matrix.
+            if (Math.Abs(world.M12) > 1e-6f || Math.Abs(world.M21) > 1e-6f)
             {
                 EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
                 return;
