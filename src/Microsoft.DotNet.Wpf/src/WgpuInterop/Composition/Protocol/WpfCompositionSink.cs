@@ -257,11 +257,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     PngWriter.Write(numbered, px, t.Width, t.Height);
                     Log($"wrote screenshot {numbered}");
 
-                    // Also a 1:1 (un-downsampled) crop of a text region so crispness is visible.
-                    int cw = Math.Min(1000, t.Width), ch = Math.Min(560, t.Height);
+                    // Also a 1:1 (un-downsampled) crop of a region so detail is visible.
+                    int ox = Math.Clamp(int.TryParse(Environment.GetEnvironmentVariable("WPF_WEBGPU_CROP_X"), out int cx) ? cx : 0, 0, Math.Max(0, t.Width - 1));
+                    int oy = Math.Clamp(int.TryParse(Environment.GetEnvironmentVariable("WPF_WEBGPU_CROP_Y"), out int cy) ? cy : 0, 0, Math.Max(0, t.Height - 1));
+                    int cw = Math.Min(1000, t.Width - ox), ch = Math.Min(560, t.Height - oy);
                     var crop = new byte[cw * ch * 4];
                     for (int yy = 0; yy < ch; yy++)
-                        Array.Copy(px, yy * t.Width * 4, crop, yy * cw * 4, cw * 4);
+                        Array.Copy(px, ((oy + yy) * t.Width + ox) * 4, crop, yy * cw * 4, cw * 4);
                     string cropPath = System.IO.Path.Combine(
                         System.IO.Path.GetDirectoryName(dump) ?? ".",
                         System.IO.Path.GetFileNameWithoutExtension(dump) + "_" + frame.ToString("000") + "_crop" + System.IO.Path.GetExtension(dump));
@@ -292,6 +294,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 _ctx = WgpuContext.Create();
                 _renderer = new WgpuSceneRenderer(_ctx);
+                if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 Log($"WebGPU device created (0x{_ctx.Device:x})");
             }
         }

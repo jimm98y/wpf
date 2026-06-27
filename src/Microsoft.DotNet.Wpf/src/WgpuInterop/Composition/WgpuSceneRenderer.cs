@@ -34,6 +34,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private const int FloatsPerVertex = 8;            // pos.xy, color.rgba, uv.xy
         private const int VertexStride = FloatsPerVertex * sizeof(float);
         private const WGPUTextureFormat ReadbackFormat = WGPUTextureFormat.RGBA8Unorm;
+
+        /// <summary>Optional diagnostics hook (set by the sink) for one-off render tracing.</summary>
+        internal static Action<string>? DebugLog;
         private const int GradientRampTexels = 256;
 
         private const string ShaderWgsl = @"
@@ -484,7 +487,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             foreach (DrawingPrimitive primitive in v.Content)
             {
                 if (primitive is Viewport3DDraw viewport)
-                    Emit3DViewport(viewport, accOpacity, clip, outData, plan, width, height, format);
+                    Emit3DViewport(viewport, world, accOpacity, clip, outData, plan, width, height, format);
                 else
                     EmitPrimitive(primitive, world, accOpacity, clip, width, height, format, outData);
             }

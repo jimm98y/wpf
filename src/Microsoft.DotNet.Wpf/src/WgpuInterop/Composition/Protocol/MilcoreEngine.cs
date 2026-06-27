@@ -42,9 +42,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
     internal enum MilResourceTypeId : uint
     {
         Null = 0,
-        Visual = 39,            // TYPE_VISUAL
-        RenderData = 43,        // TYPE_RENDERDATA
-        SolidColorBrush = 75,   // TYPE_SOLIDCOLORBRUSH
+        Visual = 39,                // TYPE_VISUAL
+        Viewport3DVisual = 40,      // TYPE_VIEWPORT3DVISUAL (2D node hosting a 3D scene)
+        Visual3D = 41,              // TYPE_VISUAL3D
+        RenderData = 43,            // TYPE_RENDERDATA
+        SolidColorBrush = 75,       // TYPE_SOLIDCOLORBRUSH
     }
 
     /// <summary>MILCMD ids from src/Common/Graphics/wgx_core_types.cs.</summary>
@@ -61,6 +63,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         VisualRemoveAllChildren = 0x24,
         VisualRemoveChild = 0x25,
         VisualInsertChildAt = 0x26,
+        // 3D (Viewport3D / Visual3D / models / cameras / lights / 3D transforms).
+        Viewport3DVisualSetCamera = 0x29,
+        Viewport3DVisualSetViewport = 0x2a,
+        Viewport3DVisualSet3DChild = 0x2b,
+        Visual3DSetContent = 0x2c,
+        Visual3DSetTransform = 0x2d,
+        Visual3DRemoveAllChildren = 0x2e,
+        Visual3DRemoveChild = 0x2f,
+        Visual3DInsertChildAt = 0x30,
+        AxisAngleRotation3D = 0x57,
+        PerspectiveCamera = 0x59,
+        Model3DGroup = 0x5c,
+        AmbientLight = 0x5d,
+        DirectionalLight = 0x5e,
+        GeometryModel3D = 0x61,
+        MeshGeometry3D = 0x62,
+        DiffuseMaterial = 0x64,
+        Transform3DGroup = 0x67,
+        TranslateTransform3D = 0x68,
+        ScaleTransform3D = 0x69,
+        RotateTransform3D = 0x6a,
+        MatrixTransform3D = 0x6b,
         HwndTargetCreate = 0x31,
         TargetUpdateWindowSettings = 0x33,
         GlyphRunCreate = 0x3a,
@@ -123,7 +147,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
     /// Decodes the genuine WPF milcore command stream into a SceneVisual tree.
     /// State is retained across batches, like a milcore partition.
     /// </summary>
-    internal sealed class MilcoreEngine
+    internal sealed partial class MilcoreEngine
     {
         private readonly Dictionary<uint, SceneVisual> _visuals = new();
         private readonly Dictionary<uint, byte[]> _renderData = new();
@@ -266,6 +290,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             switch (type)
             {
                 case MilResourceTypeId.Visual:
+                case MilResourceTypeId.Viewport3DVisual:   // a 2D node hosting a 3D scene
                     if (!_visuals.ContainsKey(handle)) _visuals[handle] = new SceneVisual();
                     break;
                 case MilResourceTypeId.RenderData:
@@ -629,6 +654,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     if (_targets.TryGetValue(targetHandle, out MilTarget? t)) t.RootHandle = hRoot;
                     break;
                 }
+                case Mil.Viewport3DVisualSetCamera:
+                case Mil.Viewport3DVisualSetViewport:
+                case Mil.Viewport3DVisualSet3DChild:
+                case Mil.Visual3DSetContent:
+                case Mil.Visual3DSetTransform:
+                case Mil.Visual3DRemoveAllChildren:
+                case Mil.Visual3DRemoveChild:
+                case Mil.Visual3DInsertChildAt:
+                case Mil.AxisAngleRotation3D:
+                case Mil.PerspectiveCamera:
+                case Mil.Model3DGroup:
+                case Mil.AmbientLight:
+                case Mil.DirectionalLight:
+                case Mil.GeometryModel3D:
+                case Mil.MeshGeometry3D:
+                case Mil.DiffuseMaterial:
+                case Mil.Transform3DGroup:
+                case Mil.TranslateTransform3D:
+                case Mil.ScaleTransform3D:
+                case Mil.RotateTransform3D:
+                case Mil.MatrixTransform3D:
+                    Decode3D(id, r);
+                    break;
                 case Mil.ImageBrush:
                 {
                     // MILCMD_IMAGEBRUSH: Handle@4, Opacity@8, Viewport@16, Viewbox@48,
@@ -806,6 +854,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (kv.Value != 0 && _renderData.TryGetValue(kv.Value, out byte[]? data))
                     ParseRenderData(data, v.Content);
             }
+
+            Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
 
             // Opacity masks resolve after content so a relative gradient maps to the bounds.
             foreach (KeyValuePair<uint, uint> kv in _visualOpacityMask)

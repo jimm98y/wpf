@@ -64,19 +64,48 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
         // Builds a 3D pass for the viewport's models and composites its offscreen
         // colour into the 2D draw data as a layer at the current opacity.
-        private void Emit3DViewport(Viewport3DDraw viewport, double opacity, Scissor clip,
+        private void Emit3DViewport(Viewport3DDraw viewport, Matrix3x2 world, double opacity, Scissor clip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
         {
+            if (clip.IsEmpty) return;
+
+            // Project the 3D scene into the viewport's on-screen rect (the card), not the whole
+            // window. The device rect = the local viewport rect transformed by the world matrix;
+            // mapping NDC -> that sub-rect is affine in clip space, so it folds into the matrix
+            // (no per-pixel viewport needed). An empty viewport means "fill the target" (the test).
+            Rect vp = viewport.Viewport;
+            float dx0, dy0, dx1, dy1;
+            if (vp.Width > 0 && vp.Height > 0)
+            {
+                Vector2 p0 = Vector2.Transform(new Vector2(vp.X, vp.Y), world);
+                Vector2 p1 = Vector2.Transform(new Vector2(vp.X + vp.Width, vp.Y + vp.Height), world);
+                dx0 = MathF.Min(p0.X, p1.X); dy0 = MathF.Min(p0.Y, p1.Y);
+                dx1 = MathF.Max(p0.X, p1.X); dy1 = MathF.Max(p0.Y, p1.Y);
+            }
+            else { dx0 = 0; dy0 = 0; dx1 = width; dy1 = height; }
+            float dw = MathF.Max(1f, dx1 - dx0), dh = MathF.Max(1f, dy1 - dy0);
+
+            // Keep the 3D inside its rect: scissor-intersect the clip with the device rect.
+            clip = Intersect(clip, new Scissor((int)MathF.Floor(dx0), (int)MathF.Floor(dy0),
+                (int)MathF.Ceiling(dw), (int)MathF.Ceiling(dh)));
             if (clip.IsEmpty) return;
 
             var (_, colorView) = CreateLayerTexture(width, height);
             IntPtr depthView = CreateDepthTexture(width, height);
 
-            float aspect = height > 0 ? width / (float)height : 1f;
+            float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
             Matrix4x4 view = Matrix4x4.CreateLookAt(cam.Position, cam.Position + cam.LookDirection, cam.UpDirection);
             Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(cam.FieldOfView * (MathF.PI / 180f), aspect, cam.NearPlane, cam.FarPlane);
-            Matrix4x4 viewProj = view * proj;
+            // Map full NDC [-1,1] to the device rect's NDC sub-region (y flipped: device y grows down).
+            float sx = (dx1 - dx0) / width, sy = (dy1 - dy0) / height;
+            float tx = (dx0 + dx1) / width - 1f, ty = 1f - (dy0 + dy1) / height;
+            var viewportMatrix = new Matrix4x4(
+                sx, 0, 0, 0,
+                0, sy, 0, 0,
+                0, 0, 1, 0,
+                tx, ty, 0, 1);
+            Matrix4x4 viewProj = view * proj * viewportMatrix;
 
             var models = new List<Draw3D>(viewport.Models.Count);
             foreach (Model3D model in viewport.Models)

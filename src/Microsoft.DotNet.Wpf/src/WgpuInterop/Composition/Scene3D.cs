@@ -83,9 +83,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public RgbaColor AmbientColor { get; }
         public List<Model3D> Models { get; }
 
+        /// <summary>The 2D rect (in the hosting visual's local space) the 3D scene projects into.
+        /// An empty rect means the whole render target (used by the standalone 3D test).</summary>
+        public Rect Viewport { get; }
+
         public Viewport3DDraw(Camera3D camera, DirectionalLight3D light, RgbaColor ambientColor, List<Model3D> models)
+            : this(camera, light, ambientColor, models, default) { }
+
+        public Viewport3DDraw(Camera3D camera, DirectionalLight3D light, RgbaColor ambientColor, List<Model3D> models, Rect viewport)
         {
-            Camera = camera; Light = light; AmbientColor = ambientColor; Models = models;
+            Camera = camera; Light = light; AmbientColor = ambientColor; Models = models; Viewport = viewport;
         }
     }
 }
