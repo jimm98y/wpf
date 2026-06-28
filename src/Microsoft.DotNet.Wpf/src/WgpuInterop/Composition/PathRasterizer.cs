@@ -110,7 +110,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
 
-            var coverage = new float[width * height];
+            // Rent the (largest) coverage scratch from the pool -- it's an internal accumulator returned
+            // before this method exits, so it never escapes; this avoids a width*height*4 byte alloc per
+            // rasterize (the dominant rasterizer allocation, e.g. animated/transformed shapes each frame).
+            int area = width * height;
+            float[] coverage = System.Buffers.ArrayPool<float>.Shared.Rent(area);
+            Array.Clear(coverage, 0, area);
             float weight = 1f / VerticalSamples;
             var crossings = new List<(float X, int Dir)>();
 
@@ -154,6 +159,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             for (int i = 0; i < bytes.Length; i++)
                 bytes[i] = (byte)Math.Clamp((int)MathF.Round(coverage[i] * 255f), 0, 255);
+            System.Buffers.ArrayPool<float>.Shared.Return(coverage);
             return bytes;
         }
 

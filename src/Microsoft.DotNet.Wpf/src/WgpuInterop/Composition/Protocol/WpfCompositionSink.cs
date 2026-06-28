@@ -41,7 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private bool _loggedLayered;
         private int _layeredFrames;
         private long _perfRealizeTicks, _perfRenderTicks, _perfRenderOnlyTicks, _perfPresentTicks;
-        private long _gcBytes0;
+        private long _gcBytes0, _perfRealizeAlloc, _perfRenderAlloc;
         private int _gc0, _gc1, _gc2;
         private int _perfFrames;
         private bool _disposed;
@@ -146,9 +146,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             EnsureGpu();         // ensure the renderer (and VisualRasterizer) exist before Realize
             _renderer!.BeginFrame();
             WgpuSceneRenderer.PerfReset();
+            long ra0 = GC.GetAllocatedBytesForCurrentThread();
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             _engine.Realize();   // re-parse content with the current resource state
             _perfRealizeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            long ra1 = GC.GetAllocatedBytesForCurrentThread();
+            _perfRealizeAlloc += ra1 - ra0;
             string sig = "";
             foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
                 sig += $"0x{tk.Key:x}:{tk.Value.Width}x{tk.Value.Height}:{tk.Value.Transparency};";
@@ -178,6 +181,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Present(ts, root, t);
                 _perfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
             }
+            _perfRenderAlloc += GC.GetAllocatedBytesForCurrentThread() - ra1;
 
             _renderer!.EndFrame();
 
@@ -191,8 +195,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
                 if (_gcBytes0 != 0)
-                    Log($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
-                _gcBytes0 = allocNow; _gc0 = g0; _gc1 = g1; _gc2 = g2;
+                    Log($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame (realize={_perfRealizeAlloc / 1024.0 / _perfFrames:0.0} render={_perfRenderAlloc / 1024.0 / _perfFrames:0.0} [collect={WgpuSceneRenderer.PerfCollectAlloc / 1024.0 / _perfFrames:0.0} exec={WgpuSceneRenderer.PerfExecAlloc / 1024.0 / _perfFrames:0.0}]) gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
+                _gcBytes0 = allocNow; _gc0 = g0; _gc1 = g1; _gc2 = g2; _perfRealizeAlloc = 0; _perfRenderAlloc = 0;
+                WgpuSceneRenderer.PerfCollectAlloc = 0; WgpuSceneRenderer.PerfExecAlloc = 0;
                 _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
             }
         }

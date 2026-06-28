@@ -131,13 +131,10 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 _ctx.WriteBuffer(ubuf, uni);
 
                 IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length);
-                DeferRelease(() =>
-                {
-                    wgpuBindGroupRelease(bindGroup);
-                    wgpuBufferRelease(ubuf);
-                    wgpuBufferRelease(vbuf);
-                    wgpuBufferRelease(ibuf);
-                });
+                DeferReleaseBindGroup(bindGroup);
+                DeferReleaseBuffer(ubuf);
+                DeferReleaseBuffer(vbuf);
+                DeferReleaseBuffer(ibuf);
 
                 models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length));
             }
@@ -186,7 +183,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             }
             wgpuRenderPassEncoderEnd(pass);
             IntPtr passLocal = pass;
-            DeferRelease(() => wgpuRenderPassEncoderRelease(passLocal));
+            DeferReleasePass(passLocal);
         }
 
         private IntPtr CreateDepthTexture(int width, int height, uint sampleCount = 1)
@@ -202,7 +199,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             };
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
-            DeferRelease(() => { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); });
+            DeferReleaseTexView(tex, view);
             return view;
         }
 
@@ -220,7 +217,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             };
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
-            DeferRelease(() => { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); });
+            DeferReleaseTexView(tex, view);
             return view;
         }
 

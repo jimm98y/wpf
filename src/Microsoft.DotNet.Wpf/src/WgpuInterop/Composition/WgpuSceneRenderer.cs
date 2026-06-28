@@ -51,6 +51,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
+        internal static long PerfCollectAlloc, PerfExecAlloc;
         internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
@@ -240,9 +241,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _atlasTexture, _atlasView;
         private bool _atlasValid;
 
-        // Transient GPU objects created during the current render, released once
-        // the frame is submitted (wgpu keeps them alive for in-flight work).
-        private readonly List<Action> _frameReleases = new();
+        // Transient GPU objects created during the current render, released once the frame is submitted
+        // (wgpu keeps them alive for in-flight work). Kept as typed handle lists rather than Action
+        // closures so deferring a release allocates nothing (there are ~50+ per frame).
+        private readonly List<IntPtr> _relBindGroups = new();
+        private readonly List<IntPtr> _relViews = new();
+        private readonly List<IntPtr> _relTextures = new();
+        private readonly List<IntPtr> _relBuffers = new();
+        private readonly List<IntPtr> _relEncoders = new();
+        private readonly List<IntPtr> _relCmdBuffers = new();
+        private readonly List<IntPtr> _relPasses = new();
+        private readonly List<(IntPtr Tex, IntPtr View, int W, int H)> _relPoolTex = new();
 
         /// <summary>Number of glyph-atlas texture uploads (caching diagnostic).</summary>
         public int AtlasUploads { get; private set; }
@@ -254,12 +263,29 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             _shaper = shaper ?? new Text.SimpleTextShaper();
         }
 
-        private void DeferRelease(Action release) => _frameReleases.Add(release);
+        private void DeferReleaseBindGroup(IntPtr bg) => _relBindGroups.Add(bg);
+        private void DeferReleaseBuffer(IntPtr b) => _relBuffers.Add(b);
+        private void DeferReleaseEncoder(IntPtr e) => _relEncoders.Add(e);
+        private void DeferReleaseCmdBuffer(IntPtr c) => _relCmdBuffers.Add(c);
+        private void DeferReleasePass(IntPtr p) => _relPasses.Add(p);
+        private void DeferReturnPoolTex(IntPtr tex, IntPtr view, int w, int h) => _relPoolTex.Add((tex, view, w, h));
+        private void DeferReleaseTexView(IntPtr tex, IntPtr view)
+        {
+            if (view != IntPtr.Zero) _relViews.Add(view);
+            if (tex != IntPtr.Zero) _relTextures.Add(tex);
+        }
 
         private void FlushFrameReleases()
         {
-            foreach (Action release in _frameReleases) release();
-            _frameReleases.Clear();
+            foreach (IntPtr x in _relBindGroups) wgpuBindGroupRelease(x); _relBindGroups.Clear();
+            foreach (IntPtr x in _relPasses) wgpuRenderPassEncoderRelease(x); _relPasses.Clear();
+            foreach (IntPtr x in _relCmdBuffers) wgpuCommandBufferRelease(x); _relCmdBuffers.Clear();
+            foreach (IntPtr x in _relEncoders) wgpuCommandEncoderRelease(x); _relEncoders.Clear();
+            foreach (IntPtr x in _relViews) wgpuTextureViewRelease(x); _relViews.Clear();
+            foreach (IntPtr x in _relTextures) wgpuTextureRelease(x); _relTextures.Clear();
+            foreach (IntPtr x in _relBuffers) wgpuBufferRelease(x); _relBuffers.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int W, int H) t in _relPoolTex) ReturnLayerTexture(t.Tex, t.View, t.W, t.H);
+            _relPoolTex.Clear();
             // Return this frame's geometry buffers to the free pool (reused next frame). By the time
             // we get here the frame is submitted; the buffers are reused a frame later, by which point
             // the GL backend has drained them -> no per-frame CreateBuffer churn / upload stalls.
@@ -433,10 +459,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 for (int row = 0; row < height; row++)
                     Buffer.BlockCopy(padded, row * bytesPerRow, pixels, row * width * 4, width * 4);
 
-                DeferRelease(() => wgpuCommandEncoderRelease(encoder));
-                DeferRelease(() => wgpuCommandBufferRelease(commandBuffer));
-                DeferRelease(() => wgpuBufferRelease(readback));
-                DeferRelease(() => { wgpuTextureViewRelease(targetView); wgpuTextureRelease(targetTex); });
+                DeferReleaseEncoder(encoder);
+                DeferReleaseCmdBuffer(commandBuffer);
+                DeferReleaseBuffer(readback);
+                DeferReleaseTexView(targetTex, targetView);
                 return pixels;
             }
             finally
@@ -455,10 +481,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long ca0 = GC.GetAllocatedBytesForCurrentThread();
                 List<LayerPass> plan = _plan; plan.Clear();
                 DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
                 PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
+                long ca1 = GC.GetAllocatedBytesForCurrentThread();
+                PerfCollectAlloc += ca1 - ca0;
 
                 IntPtr atlasView = EnsureAtlasView(AnyText(mainData, plan));
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
@@ -466,6 +495,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
+                PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
                 IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
                 PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
 
@@ -475,8 +505,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 wgpuQueueSubmit(_ctx.Queue, 1, cmds);
                 PerfSubmitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - s0;
 
-                DeferRelease(() => wgpuCommandEncoderRelease(encoder));
-                DeferRelease(() => wgpuCommandBufferRelease(commandBuffer));
+                DeferReleaseEncoder(encoder);
+                DeferReleaseCmdBuffer(commandBuffer);
             }
             finally
             {
@@ -504,13 +534,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 {
                     atlasBindGroup = CreateSampledBindGroup(lp.Format, FillKind.Text, atlasView, NearestSampler());
                     IntPtr bg = atlasBindGroup;
-                    DeferRelease(() => wgpuBindGroupRelease(bg));
+                    DeferReleaseBindGroup(bg);
                 }
                 RecordDraws(pass, lp.Format, vbuf, ibuf, lp.Data, atlasBindGroup, lp.OriginX, lp.OriginY, lp.TexW, lp.TexH);
             }
             wgpuRenderPassEncoderEnd(pass);
             IntPtr passLocal = pass;
-            DeferRelease(() => wgpuRenderPassEncoderRelease(passLocal));
+            DeferReleasePass(passLocal);
         }
 
         // ---- scene walk + opacity layering ----
@@ -829,7 +859,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private void EmitBlurQuad(DrawData data, IntPtr inputView, float stepX, float stepY, float sigma, int taps, Scissor region)
         {
             IntPtr bindGroup = CreateSampledBindGroup(ReadbackFormat, FillKind.Blur, inputView, LinearSampler());
-            DeferRelease(() => wgpuBindGroupRelease(bindGroup));
+            DeferReleaseBindGroup(bindGroup);
 
             // A full-coverage quad over the region texture (ToNdc + _devOX map the region to NDC).
             // Blur params ride in the (constant) vertex colour: (stepX, stepY, sigma, taps).
@@ -853,7 +883,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (clip.IsEmpty) return;
             IntPtr sampler = kind == FillKind.Layer ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
-            DeferRelease(() => wgpuBindGroupRelease(bindGroup));
+            DeferReleaseBindGroup(bindGroup);
 
             float x0 = devX, y0 = devY, x1 = devX + texW, y1 = devY + texH;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
@@ -917,7 +947,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (clip.IsEmpty) return;
             IntPtr sampler = kind == FillKind.Layer ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
-            DeferRelease(() => wgpuBindGroupRelease(bindGroup));
+            DeferReleaseBindGroup(bindGroup);
 
             float x0 = offsetX, y0 = offsetY, x1 = offsetX + width, y1 = offsetY + height;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
@@ -939,7 +969,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (clip.IsEmpty) return;
             IntPtr bindGroup = CreateClipBindGroup(format, layerView, maskView, NearestSampler());
-            DeferRelease(() => wgpuBindGroupRelease(bindGroup));
+            DeferReleaseBindGroup(bindGroup);
 
             float x0 = devX, y0 = devY, x1 = devX + texW, y1 = devY + texH;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
@@ -1123,7 +1153,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private (IntPtr Texture, IntPtr View) CreateLayerTexture(int width, int height)
         {
             (IntPtr tex, IntPtr view) = RentLayerTexture(width, height);
-            DeferRelease(() => ReturnLayerTexture(tex, view, width, height));
+            DeferReturnPoolTex(tex, view, width, height);
             return (tex, view);
         }
 
@@ -1211,32 +1241,62 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             maxX = MathF.Max(maxX, d.X + pad); maxY = MathF.Max(maxY, d.Y + pad);
         }
 
+        // Accumulates a geometry's device bounds directly per type -- deliberately does NOT call
+        // GeometryToPath (which allocates a path graph per rounded-rect/ellipse/group); this runs for
+        // every layer's whole subtree each frame, so allocating here would dominate the GC churn.
         private static void AccGeometry(Geometry g, Matrix3x2 world, float pad,
             ref float minX, ref float minY, ref float maxX, ref float maxY)
         {
-            if (g is CombinedGeometry cg)
+            switch (g)
             {
-                AccGeometry(cg.Geometry1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                AccGeometry(cg.Geometry2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                return;
-            }
-            PathGeometry path = g as PathGeometry ?? GeometryToPath(g);
-            foreach (PathFigure f in path.Figures)
-            {
-                AccPoint(f.Start, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                foreach (PathSegment seg in f.Segments)
-                    switch (seg)
+                case RectangleGeometry r:
+                    AccRect(r.Rect.X, r.Rect.Y, r.Rect.Width, r.Rect.Height, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case RoundedRectangleGeometry rr:
+                    AccRect(rr.Rect.X, rr.Rect.Y, rr.Rect.Width, rr.Rect.Height, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case EllipseGeometry e:
+                    AccRect(e.Center.X - e.RadiusX, e.Center.Y - e.RadiusY, 2f * e.RadiusX, 2f * e.RadiusY, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case PolygonGeometry pg:
+                    foreach (Vector2 p in pg.Points) AccPoint(p, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case GeometryGroup grp:
+                    foreach (Geometry child in grp.Children) AccGeometry(child, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case CombinedGeometry cg:
+                    AccGeometry(cg.Geometry1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    AccGeometry(cg.Geometry2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
+                case PathGeometry path:
+                    foreach (PathFigure f in path.Figures)
                     {
-                        case LineSegment l: AccPoint(l.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
-                        case QuadraticBezierSegment q:
-                            AccPoint(q.Control, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                            AccPoint(q.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
-                        case CubicBezierSegment c:
-                            AccPoint(c.Control1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                            AccPoint(c.Control2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
-                            AccPoint(c.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                        AccPoint(f.Start, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                        foreach (PathSegment seg in f.Segments)
+                            switch (seg)
+                            {
+                                case LineSegment l: AccPoint(l.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                                case QuadraticBezierSegment q:
+                                    AccPoint(q.Control, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                                    AccPoint(q.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                                case CubicBezierSegment c:
+                                    AccPoint(c.Control1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                                    AccPoint(c.Control2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                                    AccPoint(c.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                            }
                     }
+                    break;
             }
+        }
+
+        // Accumulates the 4 (world-transformed) corners of an axis-aligned rect -- correct under rotation/skew.
+        private static void AccRect(float x, float y, float w, float h, Matrix3x2 world, float pad,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            AccPoint(new Vector2(x, y), world, pad, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x + w, y), world, pad, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x + w, y + h), world, pad, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x, y + h), world, pad, ref minX, ref minY, ref maxX, ref maxY);
         }
 
         private static void AccText(GlyphRunDraw g, Matrix3x2 world,
@@ -1794,12 +1854,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private void DeferReleaseSampled(IntPtr texture, IntPtr view, IntPtr bindGroup)
         {
-            DeferRelease(() =>
-            {
-                wgpuBindGroupRelease(bindGroup);
-                wgpuTextureViewRelease(view);
-                wgpuTextureRelease(texture);
-            });
+            DeferReleaseBindGroup(bindGroup);
+            DeferReleaseTexView(texture, view);
         }
 
         // Returns the glyph-atlas texture view, rebuilding it only when new glyphs
