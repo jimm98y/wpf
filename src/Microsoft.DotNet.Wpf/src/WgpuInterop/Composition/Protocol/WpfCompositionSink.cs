@@ -338,7 +338,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     }
                     return px;
                 };
-                Log($"WebGPU device created (0x{_ctx.Device:x})");
+                Log($"WebGPU device created (0x{_ctx.Device:x}) {_ctx.AdapterDescription}");
             }
         }
 

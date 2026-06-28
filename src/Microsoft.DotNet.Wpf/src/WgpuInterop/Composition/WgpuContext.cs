@@ -19,6 +19,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     {
         public IntPtr Instance { get; private set; }
         public IntPtr Adapter { get; private set; }
+        public string? AdapterDescription { get; private set; }
         public IntPtr Device { get; private set; }
         public IntPtr Queue { get; private set; }
 
@@ -68,6 +69,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (adapterResult == IntPtr.Zero)
                 throw new InvalidOperationException("Could not acquire a WebGPU adapter.");
             ctx.Adapter = adapterResult;
+
+            // Report which backend/adapter wgpu selected (wgpu has no D3D11 backend, so on a box
+            // with only D3D11 it may fall back to a CPU/software adapter -> very slow).
+            var info = new WGPUAdapterInfo();
+            if (wgpuAdapterGetInfo(adapterResult, &info) == WGPUStatus.Success)
+            {
+                static string S(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
+                ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} device='{S(info.device)}' desc='{S(info.description)}'";
+            }
 
             var deviceInfo = new WGPURequestDeviceCallbackInfo
             {

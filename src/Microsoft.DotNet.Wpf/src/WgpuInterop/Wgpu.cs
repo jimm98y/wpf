@@ -366,7 +366,28 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal delegate void WGPUBufferMapCallback(
             WGPUMapAsyncStatus status, WGPUStringView message, IntPtr userdata1, IntPtr userdata2);
 
+        internal enum WGPUAdapterType { DiscreteGPU = 1, IntegratedGPU = 2, CPU = 3, Unknown = 4 }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUAdapterInfo
+        {
+            public WGPUChainedStruct* nextInChain;
+            public WGPUStringView vendor;
+            public WGPUStringView architecture;
+            public WGPUStringView device;
+            public WGPUStringView description;
+            public WGPUBackendType backendType;
+            public WGPUAdapterType adapterType;
+            public uint vendorID;
+            public uint deviceID;
+            public uint subgroupMinSize;
+            public uint subgroupMaxSize;
+        }
+
         // ---- Functions: webgpu.h ---------------------------------------------
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern WGPUStatus wgpuAdapterGetInfo(IntPtr adapter, WGPUAdapterInfo* info);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr wgpuCreateInstance(WGPUChainedStruct* descriptor);
