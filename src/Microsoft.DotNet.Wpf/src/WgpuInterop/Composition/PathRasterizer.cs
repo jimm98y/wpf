@@ -81,9 +81,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// pixels (origin 0,0). Used to build a full-target clip mask.
         /// </summary>
         public static byte[] RasterizeInto(PathGeometry path, int width, int height)
+            => RasterizeInto(path, width, height, 0, 0);
+
+        /// <summary>
+        /// Rasterizes the path into a fixed-size coverage buffer whose pixel (0,0)
+        /// maps to device pixel (<paramref name="originX"/>, <paramref name="originY"/>).
+        /// Used to build a region-sized clip/opacity mask aligned to a card-sized layer.
+        /// </summary>
+        public static byte[] RasterizeInto(PathGeometry path, int width, int height, int originX, int originY)
         {
             List<List<Vector2>> contours = Flatten(path);
-            return FillCoverage(contours, path.FillRule, 0, 0, width, height);
+            return FillCoverage(contours, path.FillRule, originX, originY, width, height);
         }
 
         private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height)

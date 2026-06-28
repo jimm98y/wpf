@@ -514,16 +514,27 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
-            // Effects + opacity-only layers are sized to just the region they touch (the big perf win).
-            // Geometry-clip / opacity-mask / Viewport3D assume full-target dimensions, so if any of
-            // those appear anywhere in the subtree the layer stays full-target (region-sizing a parent
-            // would leave those nested full-target passes with out-of-bounds scissors).
-            bool fullTarget = HasFullTargetContent(v);
+            // All layer kinds are sized to just the region they touch (the big perf win): a card-sized
+            // clip / opacity-mask / effect costs a card-sized offscreen + mask + composite instead of a
+            // full-window (e.g. 3420x2005) one -- which on the immediate GL backend is the difference
+            // between ~1ms and ~15-28ms of submit per changed card, plus a ~6.8M-pixel CPU mask raster.
+            // Viewport3D still assumes full-target dimensions; and a NESTED clip/mask/3D layer keeps the
+            // parent full-target (region-sizing a parent would leave those nested passes with
+            // out-of-bounds scissors). The geometry-clip region is the clip path's device bounds; the
+            // opacity-mask / effect regions are the content clip (+ blur spread / shadow offset).
+            bool fullTarget = HasNestedFullTargetContent(v);
+            // Effect/opacity-mask regions are derived from the subtree's actual content bounds, not the
+            // inherited rectangular clip -- otherwise a small card with no tight clip inherits the whole
+            // scroll viewport (e.g. 3420x1888) and its drop-shadow blurs ~6M pixels (and allocates a
+            // ~6-27MB transient buffer -> Gen2 GC) every frame instead of ~card-sized.
+            Scissor contentClip = fullTarget ? clip : Intersect(clip, ContentDeviceBounds(v, world, width, height));
             Scissor region =
                 fullTarget ? new Scissor(0, 0, width, height) :
-                v.Effect is BlurEffect be ? EffectRegion(clip, be.Radius, 0, 0, width, height) :
-                v.Effect is DropShadowEffect de ? EffectRegion(clip, de.BlurRadius, de.OffsetX, de.OffsetY, width, height) :
-                clip;
+                v.ClipGeometry is { } cg ? Intersect(clip, GeoDeviceBounds(cg, world, width, height)) :
+                v.OpacityMask != null ? contentClip :
+                v.Effect is BlurEffect be ? EffectRegion(contentClip, be.Radius, 0, 0, width, height) :
+                v.Effect is DropShadowEffect de ? EffectRegion(contentClip, de.BlurRadius, de.OffsetX, de.OffsetY, width, height) :
+                contentClip;
             if (region.IsEmpty) return;
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             float groupOpacity = (float)(inheritedOpacity * vOpacity);
@@ -563,15 +574,16 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
             if (v.ClipGeometry is { } clipGeom)
             {
-                // Full-target geometry-clip mask (CPU-rasterized once, then cached).
-                byte[] maskBytes = PathRasterizer.RasterizeInto(TransformGeometry(clipGeom, world), width, height);
-                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, width, height);
+                // Region-sized geometry-clip mask (CPU-rasterized once into a card-sized buffer aligned
+                // to the layer's device origin, then cached) -- not a full-window 6.8M-pixel raster.
+                byte[] maskBytes = PathRasterizer.RasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
+                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
                 cl.Mode = 3;
             }
             else if (v.OpacityMask is { } opacityMask)
             {
-                byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, width, height);
-                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, width, height);
+                byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, rw, rh, rx, ry);
+                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
                 cl.Mode = 4;
             }
             else if (v.Effect is BlurEffect b)
@@ -597,8 +609,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             var region = new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh);
             if (cl.Mode == 3 || cl.Mode == 4)
             {
-                // Geometry-clip / opacity-mask: modulate the (full-target) layer by the cached R8 mask.
-                EmitClipQuad(outData, outFormat, cl.SubView, cl.MaskView, groupOpacity, clip, width, height);
+                // Geometry-clip / opacity-mask: modulate the (region-sized) layer by the cached R8 mask.
+                EmitClipQuad(outData, outFormat, cl.SubView, cl.MaskView, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
             }
             else if (cl.Mode == 1)
             {
@@ -872,20 +884,22 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
-        // Composites a layer masked by a clip-coverage texture (fs_clip), as a
-        // full-target quad, at the group opacity.
+        // Composites a (region-sized) layer masked by a clip-coverage texture (fs_clip) at the group
+        // opacity. The quad covers the layer's device rect [devX,devY .. +texW,+texH] (which equals the
+        // full target when the layer is full-sized), mapping uv 0..1 onto the region-sized layer + mask.
         private void EmitClipQuad(DrawData data, WGPUTextureFormat format, IntPtr layerView, IntPtr maskView,
-            float groupOpacity, Scissor clip, int width, int height)
+            float groupOpacity, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
         {
             if (clip.IsEmpty) return;
             IntPtr bindGroup = CreateClipBindGroup(format, layerView, maskView, NearestSampler());
             DeferRelease(() => wgpuBindGroupRelease(bindGroup));
 
+            float x0 = devX, y0 = devY, x1 = devX + texW, y1 = devY + texH;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
-            AddVertex(data.Verts, ToNdc(new Vector2(0, 0), width, height), 1f, 1f, 1f, groupOpacity, 0f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(width, 0), width, height), 1f, 1f, 1f, groupOpacity, 1f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(width, height), width, height), 1f, 1f, 1f, groupOpacity, 1f, 1f);
-            AddVertex(data.Verts, ToNdc(new Vector2(0, height), width, height), 1f, 1f, 1f, groupOpacity, 0f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), 1f, 1f, 1f, groupOpacity, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), 1f, 1f, 1f, groupOpacity, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), 1f, 1f, 1f, groupOpacity, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), 1f, 1f, 1f, groupOpacity, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
             foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
@@ -1082,6 +1096,122 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             foreach (DrawingPrimitive p in v.Content) if (p is Viewport3DDraw) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
             return false;
+        }
+
+        // A clip/mask/effect visual can be region-sized unless something NESTED below it still needs
+        // full-target dimensions: a Viewport3D in its own content, or a descendant clip/mask/3D layer
+        // (rendered into this layer's region texture, those nested full-target passes would otherwise
+        // get out-of-bounds scissors). The visual's OWN clip/mask does not force full-target -- its
+        // region is computed by the caller (clip-path device bounds / content clip).
+        private static bool HasNestedFullTargetContent(SceneVisual v)
+        {
+            foreach (DrawingPrimitive p in v.Content) if (p is Viewport3DDraw) return true;
+            foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
+            return false;
+        }
+
+        // Device-space bounding box (Scissor) of a clip geometry under the world transform, padded 1px
+        // (matching the rasterizer) and clamped to the target. Bézier control points are included, so
+        // the box conservatively encloses the curve -- it is never smaller than the actual mask.
+        private Scissor GeoDeviceBounds(PathGeometry geom, Matrix3x2 world, int width, int height)
+        {
+            PathGeometry d = TransformGeometry(geom, world);
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            void Acc(Vector2 p) { minX = MathF.Min(minX, p.X); minY = MathF.Min(minY, p.Y); maxX = MathF.Max(maxX, p.X); maxY = MathF.Max(maxY, p.Y); }
+            foreach (PathFigure f in d.Figures)
+            {
+                Acc(f.Start);
+                foreach (PathSegment s in f.Segments)
+                    switch (s)
+                    {
+                        case LineSegment l: Acc(l.Point); break;
+                        case QuadraticBezierSegment q: Acc(q.Control); Acc(q.Point); break;
+                        case CubicBezierSegment c: Acc(c.Control1); Acc(c.Control2); Acc(c.Point); break;
+                    }
+            }
+            if (minX > maxX) return new Scissor(0, 0, 0, 0);
+            int ix = (int)MathF.Floor(minX) - 1, iy = (int)MathF.Floor(minY) - 1;
+            int iw = (int)MathF.Ceiling(maxX) + 1 - ix, ih = (int)MathF.Ceiling(maxY) + 1 - iy;
+            return Intersect(new Scissor(0, 0, width, height), new Scissor(ix, iy, iw, ih));
+        }
+
+        // Conservative device-space bounding box of everything a subtree draws. Over-estimates text
+        // (advance ~1em/char, ascent/descent ~1em) so glyphs are never clipped; the caller intersects
+        // with the real clip so the result is never larger than the inherited clip. Returns empty when
+        // the subtree draws nothing.
+        private static Scissor ContentDeviceBounds(SceneVisual v, Matrix3x2 world, int width, int height)
+        {
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            AccumulateContentBounds(v, world, ref minX, ref minY, ref maxX, ref maxY);
+            if (minX > maxX) return new Scissor(0, 0, 0, 0);
+            int ix = (int)MathF.Floor(minX) - 1, iy = (int)MathF.Floor(minY) - 1;
+            int iw = (int)MathF.Ceiling(maxX) + 1 - ix, ih = (int)MathF.Ceiling(maxY) + 1 - iy;
+            return Intersect(new Scissor(0, 0, width, height), new Scissor(ix, iy, iw, ih));
+        }
+
+        private static void AccumulateContentBounds(SceneVisual v, Matrix3x2 world,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            foreach (DrawingPrimitive p in v.Content)
+            {
+                switch (p)
+                {
+                    case GeometryFill f: AccGeometry(f.Geometry, world, 0f, ref minX, ref minY, ref maxX, ref maxY); break;
+                    case GeometryStroke s: AccGeometry(s.Geometry, world, (float)s.Style.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
+                    case GeometryDrawing d: AccGeometry(d.Geometry, world, (float)d.StrokeStyle.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
+                    case GlyphRunDraw g: AccText(g, world, ref minX, ref minY, ref maxX, ref maxY); break;
+                }
+            }
+            foreach (SceneVisual c in v.Children)
+                AccumulateContentBounds(c, c.LocalToParent * world, ref minX, ref minY, ref maxX, ref maxY);
+        }
+
+        private static void AccPoint(Vector2 p, Matrix3x2 world, float pad,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            Vector2 d = Vector2.Transform(p, world);
+            minX = MathF.Min(minX, d.X - pad); minY = MathF.Min(minY, d.Y - pad);
+            maxX = MathF.Max(maxX, d.X + pad); maxY = MathF.Max(maxY, d.Y + pad);
+        }
+
+        private static void AccGeometry(Geometry g, Matrix3x2 world, float pad,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            if (g is CombinedGeometry cg)
+            {
+                AccGeometry(cg.Geometry1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                AccGeometry(cg.Geometry2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                return;
+            }
+            PathGeometry path = g as PathGeometry ?? GeometryToPath(g);
+            foreach (PathFigure f in path.Figures)
+            {
+                AccPoint(f.Start, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: AccPoint(l.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                        case QuadraticBezierSegment q:
+                            AccPoint(q.Control, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                            AccPoint(q.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                        case CubicBezierSegment c:
+                            AccPoint(c.Control1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                            AccPoint(c.Control2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                            AccPoint(c.Point, world, pad, ref minX, ref minY, ref maxX, ref maxY); break;
+                    }
+            }
+        }
+
+        private static void AccText(GlyphRunDraw g, Matrix3x2 world,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            float w = Math.Max(1, g.Text?.Length ?? 0) * g.EmSize;
+            float x0 = g.Origin.X, x1 = g.Origin.X + w;
+            float y0 = g.Origin.Y - g.EmSize, y1 = g.Origin.Y + g.EmSize * 0.5f;
+            AccPoint(new Vector2(x0, y0), world, 0f, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x1, y0), world, 0f, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x1, y1), world, 0f, ref minX, ref minY, ref maxX, ref maxY);
+            AccPoint(new Vector2(x0, y1), world, 0f, ref minX, ref minY, ref maxX, ref maxY);
         }
 
         private static bool AnyText(DrawData main, List<LayerPass> plan)
@@ -1424,7 +1554,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         // Bakes a brush's alpha into a full-target R8 mask (device space). Used as
         // an opacity mask; gradient endpoints are transformed by the world matrix.
-        private static byte[] RasterizeOpacityMask(Brush brush, Matrix3x2 world, int width, int height)
+        private static byte[] RasterizeOpacityMask(Brush brush, Matrix3x2 world, int width, int height, int originX = 0, int originY = 0)
         {
             var bytes = new byte[width * height];
             switch (brush)
@@ -1443,7 +1573,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     for (int y = 0; y < height; y++)
                         for (int x = 0; x < width; x++)
                         {
-                            var p = new Vector2(x + 0.5f, y + 0.5f);
+                            var p = new Vector2(originX + x + 0.5f, originY + y + 0.5f);
                             float t = len2 > 0f ? ApplySpread(Vector2.Dot(p - start, axis) / len2, g.SpreadMethod) : 0f;
                             bytes[y * width + x] = ToByte(SampleStops(g.Stops, t).A);
                         }
@@ -1457,8 +1587,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     for (int y = 0; y < height; y++)
                         for (int x = 0; x < width; x++)
                         {
-                            float dx = rx > 0f ? (x + 0.5f - c.X) / rx : 0f;
-                            float dy = ry > 0f ? (y + 0.5f - c.Y) / ry : 0f;
+                            float dx = rx > 0f ? (originX + x + 0.5f - c.X) / rx : 0f;
+                            float dy = ry > 0f ? (originY + y + 0.5f - c.Y) / ry : 0f;
                             float t = ApplySpread(MathF.Sqrt(dx * dx + dy * dy), rad.SpreadMethod);
                             bytes[y * width + x] = ToByte(SampleStops(rad.Stops, t).A);
                         }
