@@ -183,7 +183,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 double ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _perfFrames;
                 double msr(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                Log($"PERF: collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
+                Log($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
                 Log($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;

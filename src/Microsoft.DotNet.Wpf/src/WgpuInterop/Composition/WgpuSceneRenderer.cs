@@ -48,9 +48,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private bool _srgbOutput;
 
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
-        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers;
-        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = 0; }
+        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
+        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -73,8 +73,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             public IntPtr SubTex, SubView;     // sharp content layer (owned)
             public IntPtr BlurTex, BlurView;   // blurred layer for blur/shadow (owned; Zero if none)
+            public IntPtr MaskTex, MaskView;   // R8 mask for clip-geometry/opacity-mask (owned; Zero if none)
             public int Rx, Ry, Rw, Rh;
-            public int Mode;                   // 0 = opacity-only, 1 = blur, 2 = drop shadow
+            public int Mode;                   // 0=opacity 1=blur 2=shadow 3=clip-geometry 4=opacity-mask
             public RgbaColor ShadowColor;
             public int OffX, OffY;
             public int LastFrame;
@@ -98,6 +99,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     CachedLayer c = kv.Value;
                     wgpuTextureViewRelease(c.SubView); wgpuTextureRelease(c.SubTex);
                     if (c.BlurTex != IntPtr.Zero) { wgpuTextureViewRelease(c.BlurView); wgpuTextureRelease(c.BlurTex); }
+                    if (c.MaskTex != IntPtr.Zero) { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
             }
@@ -256,6 +258,33 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             foreach (Action release in _frameReleases) release();
             _frameReleases.Clear();
+            // Return this frame's geometry buffers to the free pool (reused next frame). By the time
+            // we get here the frame is submitted; the buffers are reused a frame later, by which point
+            // the GL backend has drained them -> no per-frame CreateBuffer churn / upload stalls.
+            foreach ((IntPtr Buf, ulong Cap, bool Idx) b in _inUseBufs) (b.Idx ? _freeIdx : _freeVtx).Add((b.Buf, b.Cap));
+            _inUseBufs.Clear();
+        }
+
+        // Pooled vertex/index buffers (avoids per-pass-per-frame allocation, the GL stall source).
+        private readonly List<(IntPtr Buf, ulong Cap)> _freeVtx = new();
+        private readonly List<(IntPtr Buf, ulong Cap)> _freeIdx = new();
+        private readonly List<(IntPtr Buf, ulong Cap, bool Idx)> _inUseBufs = new();
+
+        private IntPtr RentBuffer(ulong size, bool index)
+        {
+            List<(IntPtr Buf, ulong Cap)> free = index ? _freeIdx : _freeVtx;
+            for (int i = 0; i < free.Count; i++)
+                if (free[i].Cap >= size)
+                {
+                    (IntPtr Buf, ulong Cap) hit = free[i];
+                    free.RemoveAt(i);
+                    _inUseBufs.Add((hit.Buf, hit.Cap, index));
+                    return hit.Buf;
+                }
+            ulong cap = 256; while (cap < size) cap <<= 1;   // round up -> small bucket count
+            IntPtr nb = _ctx.CreateBuffer(cap, (index ? WGPUBufferUsage.Index : WGPUBufferUsage.Vertex) | WGPUBufferUsage.CopyDst);
+            _inUseBufs.Add((nb, cap, index));
+            return nb;
         }
 
         private readonly struct Scissor
@@ -499,68 +528,23 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             float groupOpacity = (float)(inheritedOpacity * vOpacity);
 
-            // Region-sized effect/opacity layers are cacheable: if this subtree is byte-for-byte the
-            // same as a previous frame, reuse its rendered + blurred textures and SKIP the render
-            // passes entirely (the dominant cost on the GL backend). Animated cards re-hash -> re-render.
-            if (!fullTarget)
+            // ALL effect/opacity/clip/mask layers are cacheable: if this subtree (+ its clip/mask)
+            // is byte-for-byte the same as a previous frame, reuse its rendered textures and SKIP
+            // the render passes + the (full-target, CPU) mask rasterization entirely. This is the
+            // dominant cost for static cards on the GL backend. Animated cards re-hash -> re-render.
             {
+                long h0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 long key = LayerCacheKey(v, world, region);
+                PerfHashTicks += System.Diagnostics.Stopwatch.GetTimestamp() - h0;
                 if (!_layerCache.TryGetValue(key, out CachedLayer? cl))
+                {
+                    PerfLayerMiss++;
                     _layerCache[key] = cl = RenderLayerToCache(v, world, region, clip, plan, width, height);
+                }
+                else PerfLayerHits++;
                 cl.LastFrame = _frameId;
                 EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
                 return;
-            }
-
-            // Full-target path (clip-geometry / opacity-mask / Viewport3D in the subtree): no caching.
-            var (_, layerView) = CreateLayerTexture(rw, rh);
-            var subData = new DrawData();
-            EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
-            plan.Add(new LayerPass(layerView, true, default, subData, ReadbackFormat));
-
-            // Arbitrary clip geometry masks the layer (takes precedence over effects).
-            if (v.ClipGeometry is { } clipGeom)
-            {
-                PathGeometry deviceClip = TransformGeometry(clipGeom, world);
-                byte[] maskBytes = PathRasterizer.RasterizeInto(deviceClip, width, height);
-                var (maskTex, maskView) = CreateR8Texture(maskBytes, width, height);
-                DeferRelease(() => { wgpuTextureViewRelease(maskView); wgpuTextureRelease(maskTex); });
-                EmitClipQuad(outData, outFormat, layerView, maskView, groupOpacity, clip, width, height);
-                return;
-            }
-
-            // Opacity mask: a brush's alpha modulates the layer per pixel.
-            if (v.OpacityMask is { } opacityMask)
-            {
-                byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, width, height);
-                var (maskTex, maskView) = CreateR8Texture(maskBytes, width, height);
-                DeferRelease(() => { wgpuTextureViewRelease(maskView); wgpuTextureRelease(maskTex); });
-                EmitClipQuad(outData, outFormat, layerView, maskView, groupOpacity, clip, width, height);
-                return;
-            }
-
-            switch (v.Effect)
-            {
-                case BlurEffect:
-                {
-                    (IntPtr blurTex, IntPtr blurred) = BlurLayer(layerView, ((BlurEffect)v.Effect).Radius, plan, region);
-                    DeferRelease(() => { wgpuTextureViewRelease(blurred); wgpuTextureRelease(blurTex); });
-                    EmitLayerQuad(outData, outFormat, FillKind.Layer, blurred, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, region, width, height);
-                    break;
-                }
-                case DropShadowEffect ds:
-                {
-                    (IntPtr blurTex, IntPtr shadowBlur) = BlurLayer(layerView, ds.BlurRadius, plan, region);
-                    DeferRelease(() => { wgpuTextureViewRelease(shadowBlur); wgpuTextureRelease(blurTex); });
-                    float shadowAlpha = (float)Math.Clamp(ds.Color.A * groupOpacity, 0.0, 1.0);
-                    EmitLayerQuad(outData, outFormat, FillKind.Shadow, shadowBlur, ds.Color.R, ds.Color.G, ds.Color.B, shadowAlpha,
-                        rx + (int)ds.OffsetX, ry + (int)ds.OffsetY, rw, rh, region, width, height);
-                    EmitLayerQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, clip, width, height);
-                    break;
-                }
-                default: // opacity-only layer
-                    EmitLayerQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, clip, width, height);
-                    break;
             }
         }
 
@@ -577,19 +561,32 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             plan.Add(new LayerPass(subView, true, default, subData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
 
             var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
-            switch (v.Effect)
+            if (v.ClipGeometry is { } clipGeom)
             {
-                case BlurEffect b:
-                    (cl.BlurTex, cl.BlurView) = BlurLayer(subView, b.Radius, plan, region);
-                    cl.Mode = 1;
-                    break;
-                case DropShadowEffect ds:
-                    (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, plan, region);
-                    cl.Mode = 2; cl.ShadowColor = ds.Color; cl.OffX = (int)ds.OffsetX; cl.OffY = (int)ds.OffsetY;
-                    break;
-                default:
-                    cl.Mode = 0;
-                    break;
+                // Full-target geometry-clip mask (CPU-rasterized once, then cached).
+                byte[] maskBytes = PathRasterizer.RasterizeInto(TransformGeometry(clipGeom, world), width, height);
+                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, width, height);
+                cl.Mode = 3;
+            }
+            else if (v.OpacityMask is { } opacityMask)
+            {
+                byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, width, height);
+                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, width, height);
+                cl.Mode = 4;
+            }
+            else if (v.Effect is BlurEffect b)
+            {
+                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, b.Radius, plan, region);
+                cl.Mode = 1;
+            }
+            else if (v.Effect is DropShadowEffect ds)
+            {
+                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, plan, region);
+                cl.Mode = 2; cl.ShadowColor = ds.Color; cl.OffX = (int)ds.OffsetX; cl.OffY = (int)ds.OffsetY;
+            }
+            else
+            {
+                cl.Mode = 0;
             }
             return cl;
         }
@@ -598,7 +595,12 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private void EmitCachedLayer(CachedLayer cl, float groupOpacity, Scissor clip, DrawData outData, WGPUTextureFormat outFormat, int width, int height)
         {
             var region = new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh);
-            if (cl.Mode == 1)
+            if (cl.Mode == 3 || cl.Mode == 4)
+            {
+                // Geometry-clip / opacity-mask: modulate the (full-target) layer by the cached R8 mask.
+                EmitClipQuad(outData, outFormat, cl.SubView, cl.MaskView, groupOpacity, clip, width, height);
+            }
+            else if (cl.Mode == 1)
             {
                 EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.BlurView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, region, width, height);
             }
@@ -625,7 +627,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             _hash = unchecked((long)1469598103934665603UL);
             HV(region.X); HV(region.Y); HV(region.W); HV(region.H);
-            switch (v.Effect)
+            // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
+            if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); HF(world.M31); HF(world.M32); }
+            else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); HF(world.M31); HF(world.M32); }
+            else switch (v.Effect)
             {
                 case BlurEffect b: HV(101); HF((float)b.Radius); break;
                 case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
@@ -652,6 +657,18 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HF((float)s.Style.Thickness); break;
                 case GeometryDrawing d: HV(3); HashGeo(d.Geometry); break;
                 case GlyphRunDraw g: HV(4); HV(g.Text.GetHashCode()); HF(g.Origin.X); HF(g.Origin.Y); HF(g.EmSize); break;
+                case Viewport3DDraw v3:
+                    HV(5);
+                    HF(v3.Camera.Position.X); HF(v3.Camera.Position.Y); HF(v3.Camera.Position.Z);
+                    HF(v3.Camera.LookDirection.X); HF(v3.Camera.LookDirection.Y); HF(v3.Camera.LookDirection.Z);
+                    foreach (Model3D m in v3.Models)
+                    {
+                        Matrix4x4 t = m.Transform;
+                        HF(t.M11); HF(t.M12); HF(t.M13); HF(t.M21); HF(t.M22); HF(t.M23);
+                        HF(t.M31); HF(t.M32); HF(t.M33); HF(t.M41); HF(t.M42); HF(t.M43);
+                        HF(m.DiffuseColor.R); HF(m.DiffuseColor.G); HF(m.DiffuseColor.B);
+                    }
+                    break;
                 default: HV(9); break;
             }
         }
@@ -1557,14 +1574,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             byte[] ibytes = new byte[data.Indices.Count * sizeof(uint)];
             Buffer.BlockCopy(data.Indices.ToArray(), 0, ibytes, 0, ibytes.Length);
 
-            vbuf = _ctx.CreateBuffer((ulong)vbytes.Length, WGPUBufferUsage.Vertex | WGPUBufferUsage.CopyDst);
-            ibuf = _ctx.CreateBuffer((ulong)ibytes.Length, WGPUBufferUsage.Index | WGPUBufferUsage.CopyDst);
+            vbuf = RentBuffer((ulong)vbytes.Length, index: false);
+            ibuf = RentBuffer((ulong)ibytes.Length, index: true);
             _ctx.WriteBuffer(vbuf, vbytes);
             _ctx.WriteBuffer(ibuf, ibytes);
-
-            IntPtr vbufLocal = vbuf, ibufLocal = ibuf;
-            DeferRelease(() => wgpuBufferRelease(vbufLocal));
-            DeferRelease(() => wgpuBufferRelease(ibufLocal));
+            // Buffers are recycled (not released) in FlushFrameReleases.
         }
 
         private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup,
@@ -1644,6 +1658,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         public void Dispose()
         {
             FlushFrameReleases();
+            foreach ((IntPtr Buf, ulong _) in _freeVtx) wgpuBufferRelease(Buf);
+            foreach ((IntPtr Buf, ulong _) in _freeIdx) wgpuBufferRelease(Buf);
+            foreach ((IntPtr Buf, ulong _, bool _) in _inUseBufs) wgpuBufferRelease(Buf);
+            _freeVtx.Clear(); _freeIdx.Clear(); _inUseBufs.Clear();
             ReleaseAtlas();
             ReleaseResources3D();
             foreach (IntPtr pipeline in _pipelines.Values) wgpuRenderPipelineRelease(pipeline);

@@ -919,18 +919,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// resource tables. Called before each frame so commands that arrive in any order
         /// (brush/pen/geometry updates after SetContent) are resolved. Idempotent.
         /// </summary>
+        internal long PerfParseTicks, PerfBrushTicks;
+        internal int PerfParsed;
+
         public void Realize()
         {
+            long p0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            PerfParsed = 0;
             foreach (KeyValuePair<uint, uint> kv in _visualContent)
             {
                 if (!_visuals.TryGetValue(kv.Key, out SceneVisual? v)) continue;
                 v.Content.Clear();
                 if (kv.Value != 0 && _renderData.TryGetValue(kv.Value, out byte[]? data))
+                {
                     ParseRenderData(data, v.Content);
+                    PerfParsed++;
+                }
             }
+            PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
 
             Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
+            long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
             RealizeContentBrushes();   // rasterize VisualBrush/DrawingBrush sources to bitmaps
+            PerfBrushTicks = System.Diagnostics.Stopwatch.GetTimestamp() - b0;
 
             // Opacity masks resolve after content so a relative gradient maps to the bounds.
             foreach (KeyValuePair<uint, uint> kv in _visualOpacityMask)
@@ -981,6 +992,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 const int supersample = 2;
                 int pw = Math.Clamp((int)MathF.Ceiling(b.Width * supersample), 1, 1024);
                 int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
+
+                // Rasterizing a brush source costs a GPU render + a blocking readback (very expensive
+                // on the GL backend). Skip it when the source content + size are unchanged from the
+                // previous frame: the already-rasterized bitmap in _bitmaps is still valid.
+                long hash = HashBrushSource(source) ^ ((long)pw << 21) ^ ph;
+                if (_brushHash.TryGetValue(kv.Key, out long prev) && prev == hash && _bitmaps.ContainsKey(kv.Value.Source))
+                    continue;
+
                 // Map the source's content bounds onto the bitmap [0,pw]x[0,ph].
                 var wrapper = new SceneVisual
                 {
@@ -988,7 +1007,63 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 };
                 wrapper.Children.Add(source);
                 byte[]? px = VisualRasterizer(wrapper, pw, ph);
-                if (px is not null) _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph);
+                if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Key] = hash; }
+            }
+        }
+
+        private readonly Dictionary<uint, long> _brushHash = new();
+        private long _bh;
+        private void BMix(long x) => _bh = (_bh ^ x) * 1099511628211L;
+        private void BMixF(float f) => BMix(BitConverter.SingleToInt32Bits(f));
+
+        // Content hash of a brush source subtree (geometry/brush/transform) -> detects when a
+        // VisualBrush/DrawingBrush actually changed and must be re-rasterized.
+        private long HashBrushSource(SceneVisual root)
+        {
+            _bh = unchecked((long)1469598103934665603UL);
+            HashBSrc(root, Matrix3x2.Identity);
+            return _bh;
+        }
+
+        private void HashBSrc(SceneVisual n, Matrix3x2 w)
+        {
+            BMixF(w.M11); BMixF(w.M12); BMixF(w.M21); BMixF(w.M22); BMixF(w.M31); BMixF(w.M32);
+            BMix(BitConverter.DoubleToInt64Bits(n.Opacity));
+            foreach (DrawingPrimitive p in n.Content)
+            {
+                switch (p)
+                {
+                    case GeometryFill f: BMix(1); HashBGeo(f.Geometry); HashBBrush(f.Brush); break;
+                    case GeometryStroke s: BMix(2); HashBGeo(s.Geometry); HashBBrush(s.Brush); BMixF((float)s.Style.Thickness); break;
+                    case GeometryDrawing d: BMix(3); HashBGeo(d.Geometry); break;
+                    case GlyphRunDraw g: BMix(4); BMix(g.Text.GetHashCode()); BMixF(g.Origin.X); BMixF(g.Origin.Y); BMixF(g.EmSize); break;
+                    default: BMix(9); break;
+                }
+            }
+            foreach (SceneVisual c in n.Children) HashBSrc(c, c.LocalToParent * w);
+        }
+
+        private void HashBGeo(Geometry g)
+        {
+            switch (g)
+            {
+                case RectangleGeometry r: BMix(21); BMixF(r.Rect.X); BMixF(r.Rect.Y); BMixF(r.Rect.Width); BMixF(r.Rect.Height); break;
+                case RoundedRectangleGeometry rr: BMix(22); BMixF(rr.Rect.X); BMixF(rr.Rect.Y); BMixF(rr.Rect.Width); BMixF(rr.Rect.Height); BMixF(rr.RadiusX); break;
+                case EllipseGeometry e: BMix(23); BMixF(e.Center.X); BMixF(e.Center.Y); BMixF(e.RadiusX); BMixF(e.RadiusY); break;
+                case PathGeometry pg: BMix(24); foreach (PathFigure fig in pg.Figures) { BMixF(fig.Start.X); BMixF(fig.Start.Y); BMix(fig.Segments.Count); } break;
+                case CombinedGeometry cg: BMix(25); HashBGeo(cg.Geometry1); HashBGeo(cg.Geometry2); break;
+                default: BMix(20); break;
+            }
+        }
+
+        private void HashBBrush(Brush b)
+        {
+            switch (b)
+            {
+                case SolidColorBrush s: BMix(11); BMixF(s.Color.R); BMixF(s.Color.G); BMixF(s.Color.B); BMixF(s.Color.A); break;
+                case LinearGradientBrush lg: BMix(12); BMixF(lg.Start.X); BMixF(lg.End.X); foreach (GradientStop st in lg.Stops) { BMixF(st.Offset); BMixF(st.Color.R); BMixF(st.Color.G); BMixF(st.Color.B); } break;
+                case RadialGradientBrush rg: BMix(13); BMixF(rg.RadiusX); foreach (GradientStop st in rg.Stops) { BMixF(st.Offset); BMixF(st.Color.R); BMixF(st.Color.G); BMixF(st.Color.B); } break;
+                default: BMix(10); break;
             }
         }
 
