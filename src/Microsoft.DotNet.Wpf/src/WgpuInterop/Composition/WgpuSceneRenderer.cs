@@ -97,8 +97,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (kv.Value.LastFrame >= _frameId - 2) continue;
                     (deadL ??= new List<long>()).Add(kv.Key);
                     CachedLayer c = kv.Value;
-                    wgpuTextureViewRelease(c.SubView); wgpuTextureRelease(c.SubTex);
-                    if (c.BlurTex != IntPtr.Zero) { wgpuTextureViewRelease(c.BlurView); wgpuTextureRelease(c.BlurTex); }
+                    // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
+                    ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
+                    if (c.BlurTex != IntPtr.Zero) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
                     if (c.MaskTex != IntPtr.Zero) { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
@@ -747,8 +748,24 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         }
 
         // A layer texture NOT defer-released this frame (caller owns it: cached, or releases it).
-        private (IntPtr Tex, IntPtr View) CreateOwnedLayerTexture(int width, int height)
+        private (IntPtr Tex, IntPtr View) CreateOwnedLayerTexture(int width, int height) => RentLayerTexture(width, height);
+
+        // Pooled layer textures (RGBA8, RenderAttachment|TextureBinding -- all layer textures share
+        // ReadbackFormat). Creating + destroying GPU textures every frame for animated cards' offscreen
+        // layers is very expensive on the (virtualized) GL backend; reuse same-size textures across
+        // frames instead. Card layer regions are stable size (content bounds include the opaque card
+        // background), so exact-size matching reuses well. Cleared on use, so stale contents are fine.
+        private readonly List<(IntPtr Tex, IntPtr View, int W, int H)> _freeLayerTex = new();
+
+        private (IntPtr Tex, IntPtr View) RentLayerTexture(int width, int height)
         {
+            for (int i = 0; i < _freeLayerTex.Count; i++)
+                if (_freeLayerTex[i].W == width && _freeLayerTex[i].H == height)
+                {
+                    (IntPtr Tex, IntPtr View, int W, int H) hit = _freeLayerTex[i];
+                    _freeLayerTex.RemoveAt(i);
+                    return (hit.Tex, hit.View);
+                }
             PerfLayers++;
             var texDesc = new WGPUTextureDescriptor
             {
@@ -761,6 +778,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             };
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
+        }
+
+        private void ReturnLayerTexture(IntPtr tex, IntPtr view, int width, int height)
+        {
+            const int Cap = 64;   // bound the pool; release extras (e.g. after a window resize)
+            if (tex == IntPtr.Zero || _freeLayerTex.Count >= Cap)
+            {
+                if (tex != IntPtr.Zero) { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
+                return;
+            }
+            _freeLayerTex.Add((tex, view, width, height));
         }
 
         // The region a layer effect actually touches: the content's clip plus the blur spread (and,
@@ -1072,21 +1100,12 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             return new PathGeometry(geometry.FillRule, figures);
         }
 
+        // A transient layer texture (e.g. the horizontal-blur intermediate): rented from the pool and
+        // returned to it after the frame is submitted (reused next frame, like the geometry buffers).
         private (IntPtr Texture, IntPtr View) CreateLayerTexture(int width, int height)
         {
-            PerfLayers++;
-            var texDesc = new WGPUTextureDescriptor
-            {
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
-                format = ReadbackFormat,
-                mipLevelCount = 1,
-                sampleCount = 1,
-            };
-            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
-            IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
-            DeferRelease(() => { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); });
+            (IntPtr tex, IntPtr view) = RentLayerTexture(width, height);
+            DeferRelease(() => ReturnLayerTexture(tex, view, width, height));
             return (tex, view);
         }
 
@@ -1792,6 +1811,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             foreach ((IntPtr Buf, ulong _) in _freeIdx) wgpuBufferRelease(Buf);
             foreach ((IntPtr Buf, ulong _, bool _) in _inUseBufs) wgpuBufferRelease(Buf);
             _freeVtx.Clear(); _freeIdx.Clear(); _inUseBufs.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeLayerTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
+            _freeLayerTex.Clear();
             ReleaseAtlas();
             ReleaseResources3D();
             foreach (IntPtr pipeline in _pipelines.Values) wgpuRenderPipelineRelease(pipeline);
