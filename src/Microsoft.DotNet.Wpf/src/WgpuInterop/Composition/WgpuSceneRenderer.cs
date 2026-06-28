@@ -46,6 +46,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // True when the current frame targets an sRGB surface (on-screen / popups / screenshots):
         // colours and images are kept linear internally and gamma-encoded once on the final write.
         private bool _srgbOutput;
+
+        // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
+        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers;
+        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks;
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = 0; }
+
+        // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
+        // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
+        // GPU resources keyed by the device-space geometry so unchanged content is reused (the colour
+        // tint lives in the quad vertices, so the same glyph in any colour shares one cached mask).
+        private sealed class CachedMask
+        {
+            public IntPtr Tex, View, BindGroup;
+            public int Ox, Oy, W, H;
+            public int LastFrame;
+        }
+        private readonly Dictionary<long, CachedMask> _maskCache = new();
+        private int _frameId;
+
+
+        /// <summary>Begin a logical composition frame (drives coverage-cache eviction).</summary>
+        public void BeginFrame() => _frameId++;
+
+        /// <summary>End the frame: return pooled layers and evict stale coverage-cache entries.</summary>
+        public void EndFrame()
+        {
+            if (_maskCache.Count == 0) return;
+            List<long>? dead = null;
+            foreach (KeyValuePair<long, CachedMask> kv in _maskCache)
+            {
+                if (kv.Value.LastFrame >= _frameId - 3) continue;
+                (dead ??= new List<long>()).Add(kv.Key);
+                CachedMask c = kv.Value;
+                wgpuBindGroupRelease(c.BindGroup);
+                wgpuTextureViewRelease(c.View);
+                wgpuTextureRelease(c.Tex);
+            }
+            if (dead != null) foreach (long k in dead) _maskCache.Remove(k);
+        }
         private const int GradientRampTexels = 256;
 
         private const string ShaderWgsl = @"
@@ -241,6 +280,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             public readonly IntPtr DepthView;
             // For an MSAA 3D pass: the multisampled colour target that resolves into TargetView.
             public readonly IntPtr MsaaColorView;
+            // For a region-sized layer texture: its absolute device origin + size. Scissors (stored
+            // in absolute coords) are rebased by this origin and clamped to the size at record time.
+            public int OriginX, OriginY, TexW, TexH;
 
             public LayerPass(IntPtr targetView, bool clearTransparent, RgbaColor clearColor, DrawData data, WGPUTextureFormat format)
             {
@@ -261,6 +303,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             try
             {
+                PerfReadbacks++;
                 WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
                 _srgbOutput = srgbOutput;
                 var plan = new List<LayerPass>();
@@ -329,20 +372,26 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             try
             {
                 _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
+                long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var plan = new List<LayerPass>();
                 var mainData = new DrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
+                PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
 
                 IntPtr atlasView = EnsureAtlasView(AnyText(mainData, plan));
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
 
+                long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
-
                 IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
+                PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
+
                 IntPtr* cmds = stackalloc IntPtr[1];
                 cmds[0] = commandBuffer;
+                long s0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+                PerfSubmitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - s0;
 
                 DeferRelease(() => wgpuCommandEncoderRelease(encoder));
                 DeferRelease(() => wgpuCommandBufferRelease(commandBuffer));
@@ -375,7 +424,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     IntPtr bg = atlasBindGroup;
                     DeferRelease(() => wgpuBindGroupRelease(bg));
                 }
-                RecordDraws(pass, lp.Format, vbuf, ibuf, lp.Data, atlasBindGroup);
+                RecordDraws(pass, lp.Format, vbuf, ibuf, lp.Data, atlasBindGroup, lp.OriginX, lp.OriginY, lp.TexW, lp.TexH);
             }
             wgpuRenderPassEncoderEnd(pass);
             IntPtr passLocal = pass;
@@ -406,13 +455,30 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
-            // Render the subtree at full opacity into its own texture.
-            var (_, layerView) = CreateLayerTexture(width, height);
-            var subData = new DrawData();
-            EmitSubtree(v, world, 1.0, clip, subData, plan, width, height, ReadbackFormat);
-            plan.Add(new LayerPass(layerView, true, default, subData, ReadbackFormat));
-
             float groupOpacity = (float)(inheritedOpacity * vOpacity);
+
+            // Effects + opacity-only layers are sized to just the region they touch (the big perf win).
+            // Geometry-clip / opacity-mask / Viewport3D assume full-target dimensions, so if any of
+            // those appear anywhere in the subtree the layer stays full-target (region-sizing a parent
+            // would leave those nested full-target passes with out-of-bounds scissors).
+            bool fullTarget = HasFullTargetContent(v);
+            Scissor region =
+                fullTarget ? new Scissor(0, 0, width, height) :
+                v.Effect is BlurEffect be ? EffectRegion(clip, be.Radius, 0, 0, width, height) :
+                v.Effect is DropShadowEffect de ? EffectRegion(clip, de.BlurRadius, de.OffsetX, de.OffsetY, width, height) :
+                clip;
+            if (region.IsEmpty) return;
+            int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
+
+            // Render the subtree at full opacity into a (usually region-sized) texture.
+            var (_, layerView) = CreateLayerTexture(rw, rh);
+            var subData = new DrawData();
+            float sOX = _devOX, sOY = _devOY;
+            if (!fullTarget) { _devOX = rx; _devOY = ry; }
+            EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
+            _devOX = sOX; _devOY = sOY;
+            plan.Add(new LayerPass(layerView, true, default, subData, ReadbackFormat)
+            { OriginX = rx, OriginY = ry, TexW = fullTarget ? 0 : rw, TexH = fullTarget ? 0 : rh });
 
             // Arbitrary clip geometry masks the layer (takes precedence over effects).
             if (v.ClipGeometry is { } clipGeom)
@@ -425,8 +491,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
-            // Opacity mask: a brush's alpha modulates the layer per pixel (same
-            // masked composite as a geometry clip, but the mask is brush alpha).
+            // Opacity mask: a brush's alpha modulates the layer per pixel.
             if (v.OpacityMask is { } opacityMask)
             {
                 byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, width, height);
@@ -438,64 +503,108 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
             switch (v.Effect)
             {
-                case BlurEffect blur:
+                case BlurEffect:
                 {
-                    IntPtr blurred = BlurLayer(layerView, blur.Radius, plan, width, height);
-                    EmitFullScreenQuad(outData, outFormat, FillKind.Layer, blurred, 1f, 1f, 1f, groupOpacity, 0f, 0f, clip, width, height);
+                    IntPtr blurred = BlurLayer(layerView, ((BlurEffect)v.Effect).Radius, plan, region);
+                    EmitLayerQuad(outData, outFormat, FillKind.Layer, blurred, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, region, width, height);
                     break;
                 }
                 case DropShadowEffect ds:
                 {
-                    IntPtr shadowBlur = BlurLayer(layerView, ds.BlurRadius, plan, width, height);
+                    IntPtr shadowBlur = BlurLayer(layerView, ds.BlurRadius, plan, region);
                     float shadowAlpha = (float)Math.Clamp(ds.Color.A * groupOpacity, 0.0, 1.0);
-                    EmitFullScreenQuad(outData, outFormat, FillKind.Shadow, shadowBlur,
-                        ds.Color.R, ds.Color.G, ds.Color.B, shadowAlpha, (float)ds.OffsetX, (float)ds.OffsetY, clip, width, height);
-                    EmitFullScreenQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, 0f, 0f, clip, width, height);
+                    EmitLayerQuad(outData, outFormat, FillKind.Shadow, shadowBlur, ds.Color.R, ds.Color.G, ds.Color.B, shadowAlpha,
+                        rx + (int)ds.OffsetX, ry + (int)ds.OffsetY, rw, rh, region, width, height);
+                    EmitLayerQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, clip, width, height);
                     break;
                 }
                 default: // opacity-only layer
-                    EmitFullScreenQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, 0f, 0f, clip, width, height);
+                    EmitLayerQuad(outData, outFormat, FillKind.Layer, layerView, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, clip, width, height);
                     break;
             }
         }
 
         // Two-pass separable Gaussian blur of a layer texture; returns the
         // blurred texture's view. Each pass is a full-target draw added to the plan.
-        private IntPtr BlurLayer(IntPtr input, double radius, List<LayerPass> plan, int width, int height)
+        // Two separable blur passes over the region-sized layer textures (input is region-sized).
+        private IntPtr BlurLayer(IntPtr input, double radius, List<LayerPass> plan, Scissor region)
         {
             float sigma = (float)Math.Max(0.5, radius);
             int taps = Math.Clamp((int)Math.Ceiling(radius * 3.0), 1, 48);
+            int rw = region.W, rh = region.H;
+            float sOX = _devOX, sOY = _devOY;
 
-            var (_, hView) = CreateLayerTexture(width, height);
+            var (_, hView) = CreateLayerTexture(rw, rh);
             var hData = new DrawData();
-            EmitBlurQuad(hData, input, 1f / width, 0f, sigma, taps, width, height);
-            plan.Add(new LayerPass(hView, true, default, hData, ReadbackFormat));
+            _devOX = region.X; _devOY = region.Y;
+            EmitBlurQuad(hData, input, 1f / rw, 0f, sigma, taps, region);
+            _devOX = sOX; _devOY = sOY;
+            plan.Add(new LayerPass(hView, true, default, hData, ReadbackFormat) { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
 
-            var (_, vView) = CreateLayerTexture(width, height);
+            var (_, vView) = CreateLayerTexture(rw, rh);
             var vData = new DrawData();
-            EmitBlurQuad(vData, hView, 0f, 1f / height, sigma, taps, width, height);
-            plan.Add(new LayerPass(vView, true, default, vData, ReadbackFormat));
+            _devOX = region.X; _devOY = region.Y;
+            EmitBlurQuad(vData, hView, 0f, 1f / rh, sigma, taps, region);
+            _devOX = sOX; _devOY = sOY;
+            plan.Add(new LayerPass(vView, true, default, vData, ReadbackFormat) { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
 
             return vView;
         }
 
-        private void EmitBlurQuad(DrawData data, IntPtr inputView, float stepX, float stepY, float sigma, int taps, int width, int height)
+        // The region a layer effect actually touches: the content's clip plus the blur spread (and,
+        // for a drop shadow, the offset). Blurring/compositing only these pixels instead of the whole
+        // window is the difference between ~50k and ~7M shaded pixels per effect.
+        private static Scissor EffectRegion(Scissor clip, double blurRadius, double offX, double offY, int width, int height)
+        {
+            int m = (int)Math.Ceiling(blurRadius * 3.0) + 2;
+            int x0 = (int)Math.Min(clip.X, clip.X + offX) - m;
+            int y0 = (int)Math.Min(clip.Y, clip.Y + offY) - m;
+            int x1 = (int)Math.Max(clip.X + clip.W, clip.X + clip.W + offX) + m;
+            int y1 = (int)Math.Max(clip.Y + clip.H, clip.Y + clip.H + offY) + m;
+            return Intersect(new Scissor(0, 0, width, height), new Scissor(x0, y0, x1 - x0, y1 - y0));
+        }
+
+        private void EmitBlurQuad(DrawData data, IntPtr inputView, float stepX, float stepY, float sigma, int taps, Scissor region)
         {
             IntPtr bindGroup = CreateSampledBindGroup(ReadbackFormat, FillKind.Blur, inputView, LinearSampler());
             DeferRelease(() => wgpuBindGroupRelease(bindGroup));
 
+            // A full-coverage quad over the region texture (ToNdc + _devOX map the region to NDC).
             // Blur params ride in the (constant) vertex colour: (stepX, stepY, sigma, taps).
-            var clip = new Scissor(0, 0, width, height);
+            int rw = region.W, rh = region.H;
+            float x0 = region.X, y0 = region.Y, x1 = region.X + rw, y1 = region.Y + rh;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
-            AddVertex(data.Verts, ToNdc(new Vector2(0, 0), width, height), stepX, stepY, sigma, taps, 0f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(width, 0), width, height), stepX, stepY, sigma, taps, 1f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(width, height), width, height), stepX, stepY, sigma, taps, 1f, 1f);
-            AddVertex(data.Verts, ToNdc(new Vector2(0, height), width, height), stepX, stepY, sigma, taps, 0f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), rw, rh), stepX, stepY, sigma, taps, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), rw, rh), stepX, stepY, sigma, taps, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), rw, rh), stepX, stepY, sigma, taps, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), rw, rh), stepX, stepY, sigma, taps, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
             foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
                 data.Indices.Add(baseVertex + li);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Blur, bindGroup));
+            data.Draws.Add(new DrawItem(firstIndex, 6, region, FillKind.Blur, bindGroup));
+        }
+
+        // Composite a (region-sized) layer texture into the parent at an absolute device rect.
+        private void EmitLayerQuad(DrawData data, WGPUTextureFormat format, FillKind kind, IntPtr view,
+            float r, float g, float b, float a, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
+        {
+            if (clip.IsEmpty) return;
+            IntPtr sampler = kind == FillKind.Layer ? NearestSampler() : LinearSampler();
+            IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
+            DeferRelease(() => wgpuBindGroupRelease(bindGroup));
+
+            float x0 = devX, y0 = devY, x1 = devX + texW, y1 = devY + texH;
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), r, g, b, a, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), r, g, b, a, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), r, g, b, a, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
+
+            uint firstIndex = (uint)data.Indices.Count;
+            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
+                data.Indices.Add(baseVertex + li);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
         private void EmitSubtree(SceneVisual v, Matrix3x2 world, double accOpacity, Scissor clip,
@@ -751,6 +860,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private (IntPtr Texture, IntPtr View) CreateLayerTexture(int width, int height)
         {
+            PerfLayers++;
             var texDesc = new WGPUTextureDescriptor
             {
                 usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
@@ -764,6 +874,14 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
             DeferRelease(() => { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); });
             return (tex, view);
+        }
+
+        private static bool HasFullTargetContent(SceneVisual v)
+        {
+            if (v.ClipGeometry != null || v.OpacityMask != null) return true;
+            foreach (DrawingPrimitive p in v.Content) if (p is Viewport3DDraw) return true;
+            foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
+            return false;
         }
 
         private static bool AnyText(DrawData main, List<LayerPass> plan)
@@ -925,13 +1043,63 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
             // and edges crisp under the DPI/scale/rotation transform instead of bilinear-blurry.
             // (Non-solid brushes bake per-texel in the geometry's local space, so they stay local.)
-            if (brush is SolidColorBrush)
+            if (brush is SolidColorBrush solid)
             {
-                CoverageMask deviceMask = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, world));
-                EmitMask(deviceMask, brush, Matrix3x2.Identity, opacity, clip, width, height, format, data);
+                PathGeometry deviceGeom = TransformGeometry(coverageGeometry, world);
+                long key = HashGeometry(deviceGeom) * 397 ^ (long)format;
+                if (!_maskCache.TryGetValue(key, out CachedMask? cm))
+                {
+                    PerfCoverage++;
+                    CoverageMask m = PathRasterizer.Rasterize(deviceGeom);
+                    if (m.IsEmpty) return;
+                    (IntPtr tex, IntPtr view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                    IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
+                    cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = (int)m.OriginX, Oy = (int)m.OriginY, W = m.Width, H = m.Height };
+                    _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
+                }
+                cm.LastFrame = _frameId;
+                EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data);
                 return;
             }
+            PerfCoverage++;
             EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data);
+        }
+
+        // Emit a quad sampling a cached device-space coverage mask, tinted by the solid colour.
+        private void EmitCachedSolidMask(CachedMask c, RgbaColor color, double opacity, Scissor clip, int width, int height, DrawData data)
+        {
+            if (clip.IsEmpty) return;
+            float r = color.R, g = color.G, b = color.B, a = (float)Math.Clamp(color.A * opacity, 0.0, 1.0);
+            float x0 = c.Ox, y0 = c.Oy, x1 = c.Ox + c.W, y1 = c.Oy + c.H;
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), r, g, b, a, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), r, g, b, a, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), r, g, b, a, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
+            uint firstIndex = (uint)data.Indices.Count;
+            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 }) data.Indices.Add(baseVertex + li);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, c.BindGroup));
+        }
+
+        private static long HashGeometry(PathGeometry g)
+        {
+            long h = 17 * 31 + (int)g.FillRule;
+            static long HashV(Vector2 v) => ((long)BitConverter.SingleToInt32Bits(v.X) << 32) ^ (uint)BitConverter.SingleToInt32Bits(v.Y);
+            foreach (PathFigure f in g.Figures)
+            {
+                h = h * 31 + HashV(f.Start);
+                foreach (PathSegment s in f.Segments)
+                {
+                    h = s switch
+                    {
+                        LineSegment l => h * 31 + HashV(l.Point),
+                        QuadraticBezierSegment q => (h * 31 + HashV(q.Control)) * 31 + HashV(q.Point),
+                        CubicBezierSegment c => ((h * 31 + HashV(c.Control1)) * 31 + HashV(c.Control2)) * 31 + HashV(c.Point),
+                        _ => h * 31,
+                    };
+                }
+            }
+            return h;
         }
 
         // Composites a coverage mask with a brush. Solid brushes sample the R8
@@ -1172,8 +1340,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             verts.Add(u); verts.Add(v);
         }
 
-        private static Vector2 ToNdc(Vector2 devicePoint, int width, int height)
-            => new(devicePoint.X / width * 2f - 1f, 1f - devicePoint.Y / height * 2f);
+        // The current render target's absolute device origin (non-zero when rendering into a
+        // region-sized layer texture, so a card's effect uses a ~card-sized target instead of the
+        // whole window). ToNdc maps absolute device coords into the current target's NDC.
+        private float _devOX, _devOY;
+
+        private Vector2 ToNdc(Vector2 devicePoint, int width, int height)
+            => new((devicePoint.X - _devOX) / width * 2f - 1f, 1f - (devicePoint.Y - _devOY) / height * 2f);
 
         private IntPtr BeginClearPass(IntPtr encoder, IntPtr view, RgbaColor background)
         {
@@ -1211,7 +1384,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             DeferRelease(() => wgpuBufferRelease(ibufLocal));
         }
 
-        private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup)
+        private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup,
+            int originX = 0, int originY = 0, int texW = 0, int texH = 0)
         {
             wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vbuf, 0, (ulong)(data.Verts.Count * sizeof(float)));
             wgpuRenderPassEncoderSetIndexBuffer(pass, ibuf, WGPUIndexFormat.Uint32, 0, (ulong)(data.Indices.Count * sizeof(uint)));
@@ -1234,7 +1408,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup != IntPtr.Zero ? d.BindGroup : atlasBindGroup, 0, null);
                         break;
                 }
-                wgpuRenderPassEncoderSetScissorRect(pass, (uint)d.Clip.X, (uint)d.Clip.Y, (uint)d.Clip.W, (uint)d.Clip.H);
+                // Rebase the absolute scissor into the (possibly region-sized) target + clamp.
+                int sx = d.Clip.X - originX, sy = d.Clip.Y - originY, sw = d.Clip.W, sh = d.Clip.H;
+                if (texW > 0)
+                {
+                    if (sx < 0) { sw += sx; sx = 0; }
+                    if (sy < 0) { sh += sy; sy = 0; }
+                    if (sx + sw > texW) sw = texW - sx;
+                    if (sy + sh > texH) sh = texH - sy;
+                    if (sw <= 0 || sh <= 0) continue;
+                }
+                wgpuRenderPassEncoderSetScissorRect(pass, (uint)sx, (uint)sy, (uint)sw, (uint)sh);
                 wgpuRenderPassEncoderDrawIndexed(pass, d.IndexCount, 1, d.FirstIndex, 0, 0);
             }
         }
@@ -1407,6 +1591,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private (IntPtr Texture, IntPtr View) CreateTexture(byte[] pixels, int width, int height, WGPUTextureFormat format, int bytesPerPixel)
         {
+            PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
             {
                 usage = WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopyDst,
@@ -1441,6 +1626,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private IntPtr CreateSampledBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr view, IntPtr sampler)
         {
+            PerfBindGroups++;
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
             var entries = stackalloc WGPUBindGroupEntry[2];
             entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = view };
@@ -1525,7 +1711,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             size = new Vector2(maxX - minX, maxY - minY);
         }
 
-        private static Scissor DeviceBounds(Rect clip, Matrix3x2 world, int width, int height)
+        private Scissor DeviceBounds(Rect clip, Matrix3x2 world, int width, int height)
         {
             Vector2 p0 = Vector2.Transform(new Vector2(clip.X, clip.Y), world);
             Vector2 p1 = Vector2.Transform(new Vector2(clip.X + clip.Width, clip.Y), world);
@@ -1541,7 +1727,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             int iy = (int)MathF.Floor(minY);
             int iw = (int)MathF.Ceiling(maxX) - ix;
             int ih = (int)MathF.Ceiling(maxY) - iy;
-            return Intersect(new Scissor(0, 0, width, height), new Scissor(ix, iy, iw, ih));
+            // Scissors are absolute device coords, clamped to the current target's absolute extent.
+            return Intersect(new Scissor((int)_devOX, (int)_devOY, width, height), new Scissor(ix, iy, iw, ih));
         }
 
         private static Scissor Intersect(Scissor a, Scissor b)

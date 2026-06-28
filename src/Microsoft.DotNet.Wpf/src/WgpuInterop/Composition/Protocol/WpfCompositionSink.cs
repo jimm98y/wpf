@@ -40,6 +40,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private string _targetsSig = "";
         private bool _loggedLayered;
         private int _layeredFrames;
+        private long _perfRealizeTicks, _perfRenderTicks, _perfRenderOnlyTicks, _perfPresentTicks;
+        private int _perfFrames;
         private bool _disposed;
 
         // Optional diagnostics: when WPF_WEBGPU_SINK_LOG names a file, the sink appends
@@ -140,7 +142,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void RenderTargets()
         {
             EnsureGpu();         // ensure the renderer (and VisualRasterizer) exist before Realize
+            _renderer!.BeginFrame();
+            WgpuSceneRenderer.PerfReset();
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             _engine.Realize();   // re-parse content with the current resource state
+            _perfRealizeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             string sig = "";
             foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
                 sig += $"0x{tk.Key:x}:{tk.Value.Width}x{tk.Value.Height}:{tk.Value.Transparency};";
@@ -166,7 +172,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     continue;
                 }
                 TargetSurface ts = EnsureSurface(kv.Key, t);
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 Present(ts, root, t);
+                _perfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+            }
+
+            _renderer!.EndFrame();
+
+            if (++_perfFrames >= 60 && s_logPath != null)
+            {
+                double ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _perfFrames;
+                double msr(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                Log($"PERF: collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
+                Log($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
+                    $"rasterized={WgpuSceneRenderer.PerfCoverage} textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
+                _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
             }
         }
 
@@ -212,9 +232,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             AcquiredFrames++;
 
             IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
+            long ta = System.Diagnostics.Stopwatch.GetTimestamp();
             _renderer!.RenderSceneToView(root, view, ts.Format, t.Width, t.Height, t.ClearColor);
+            _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
-            if (wgpuSurfacePresent(ts.Surface) == WGPUStatus.Success)
+            long tp = System.Diagnostics.Stopwatch.GetTimestamp();
+            WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
+            _perfPresentTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tp;
+            if (pres == WGPUStatus.Success)
             {
                 PresentedFrames++;
                 if (PresentedFrames == 1 || PresentedFrames % 60 == 0)
