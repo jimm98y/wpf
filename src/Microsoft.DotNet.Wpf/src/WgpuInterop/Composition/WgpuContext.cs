@@ -20,6 +20,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public IntPtr Instance { get; private set; }
         public IntPtr Adapter { get; private set; }
         public string? AdapterDescription { get; private set; }
+
+        /// <summary>Optional sink for wgpu-native's own log messages (backend selection diagnostics).</summary>
+        public static Action<string>? LogSink;
+        private static WGPULogCallback? s_logCallback;   // kept alive against GC
         public IntPtr Device { get; private set; }
         public IntPtr Queue { get; private set; }
 
@@ -36,6 +40,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public static WgpuContext Create()
         {
+            if (LogSink != null)
+            {
+                s_logCallback = (level, msg, ud) =>
+                {
+                    string m = msg.data == null ? "" : System.Text.Encoding.UTF8.GetString(msg.data, (int)msg.length);
+                    LogSink?.Invoke($"[wgpu {level}] {m}");
+                };
+                wgpuSetLogCallback(Marshal.GetFunctionPointerForDelegate(s_logCallback), IntPtr.Zero);
+                // Warn by default (errors/warnings); set WPF_WEBGPU_WGPU_LOG=debug for backend-selection traces.
+                wgpuSetLogLevel(Environment.GetEnvironmentVariable("WPF_WEBGPU_WGPU_LOG") == "debug" ? WGPULogLevel.Debug : WGPULogLevel.Warn);
+            }
+
             IntPtr instance = wgpuCreateInstance(null);
             if (instance == IntPtr.Zero)
                 throw new InvalidOperationException("wgpuCreateInstance failed.");

@@ -318,6 +318,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             if (_ctx is null)
             {
+                if (s_logPath != null) WgpuContext.LogSink = Log;
                 _ctx = WgpuContext.Create();
                 _renderer = new WgpuSceneRenderer(_ctx);
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;

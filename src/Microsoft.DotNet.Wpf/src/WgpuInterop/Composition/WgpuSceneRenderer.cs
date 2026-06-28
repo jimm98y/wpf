@@ -65,6 +65,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly Dictionary<long, CachedMask> _maskCache = new();
         private int _frameId;
 
+        // Static-layer cache: an effect/opacity card whose subtree is unchanged from a previous
+        // frame reuses its already-rendered (+ blurred) textures and SKIPS its 3 render passes
+        // (subtree + h/v blur). On the GL backend (where each pass is ~4ms) this is the biggest win
+        // for largely-static UI. Keyed by a content hash of the subtree + region + effect params.
+        private sealed class CachedLayer
+        {
+            public IntPtr SubTex, SubView;     // sharp content layer (owned)
+            public IntPtr BlurTex, BlurView;   // blurred layer for blur/shadow (owned; Zero if none)
+            public int Rx, Ry, Rw, Rh;
+            public int Mode;                   // 0 = opacity-only, 1 = blur, 2 = drop shadow
+            public RgbaColor ShadowColor;
+            public int OffX, OffY;
+            public int LastFrame;
+        }
+        private readonly Dictionary<long, CachedLayer> _layerCache = new();
+
 
         /// <summary>Begin a logical composition frame (drives coverage-cache eviction).</summary>
         public void BeginFrame() => _frameId++;
@@ -72,6 +88,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>End the frame: return pooled layers and evict stale coverage-cache entries.</summary>
         public void EndFrame()
         {
+            if (_layerCache.Count > 0)
+            {
+                List<long>? deadL = null;
+                foreach (KeyValuePair<long, CachedLayer> kv in _layerCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 2) continue;
+                    (deadL ??= new List<long>()).Add(kv.Key);
+                    CachedLayer c = kv.Value;
+                    wgpuTextureViewRelease(c.SubView); wgpuTextureRelease(c.SubTex);
+                    if (c.BlurTex != IntPtr.Zero) { wgpuTextureViewRelease(c.BlurView); wgpuTextureRelease(c.BlurTex); }
+                }
+                if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
+            }
+
             if (_maskCache.Count == 0) return;
             List<long>? dead = null;
             foreach (KeyValuePair<long, CachedMask> kv in _maskCache)
@@ -455,8 +485,6 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
-            float groupOpacity = (float)(inheritedOpacity * vOpacity);
-
             // Effects + opacity-only layers are sized to just the region they touch (the big perf win).
             // Geometry-clip / opacity-mask / Viewport3D assume full-target dimensions, so if any of
             // those appear anywhere in the subtree the layer stays full-target (region-sizing a parent
@@ -469,16 +497,26 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 clip;
             if (region.IsEmpty) return;
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
+            float groupOpacity = (float)(inheritedOpacity * vOpacity);
 
-            // Render the subtree at full opacity into a (usually region-sized) texture.
+            // Region-sized effect/opacity layers are cacheable: if this subtree is byte-for-byte the
+            // same as a previous frame, reuse its rendered + blurred textures and SKIP the render
+            // passes entirely (the dominant cost on the GL backend). Animated cards re-hash -> re-render.
+            if (!fullTarget)
+            {
+                long key = LayerCacheKey(v, world, region);
+                if (!_layerCache.TryGetValue(key, out CachedLayer? cl))
+                    _layerCache[key] = cl = RenderLayerToCache(v, world, region, clip, plan, width, height);
+                cl.LastFrame = _frameId;
+                EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
+                return;
+            }
+
+            // Full-target path (clip-geometry / opacity-mask / Viewport3D in the subtree): no caching.
             var (_, layerView) = CreateLayerTexture(rw, rh);
             var subData = new DrawData();
-            float sOX = _devOX, sOY = _devOY;
-            if (!fullTarget) { _devOX = rx; _devOY = ry; }
             EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
-            _devOX = sOX; _devOY = sOY;
-            plan.Add(new LayerPass(layerView, true, default, subData, ReadbackFormat)
-            { OriginX = rx, OriginY = ry, TexW = fullTarget ? 0 : rw, TexH = fullTarget ? 0 : rh });
+            plan.Add(new LayerPass(layerView, true, default, subData, ReadbackFormat));
 
             // Arbitrary clip geometry masks the layer (takes precedence over effects).
             if (v.ClipGeometry is { } clipGeom)
@@ -505,13 +543,15 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 case BlurEffect:
                 {
-                    IntPtr blurred = BlurLayer(layerView, ((BlurEffect)v.Effect).Radius, plan, region);
+                    (IntPtr blurTex, IntPtr blurred) = BlurLayer(layerView, ((BlurEffect)v.Effect).Radius, plan, region);
+                    DeferRelease(() => { wgpuTextureViewRelease(blurred); wgpuTextureRelease(blurTex); });
                     EmitLayerQuad(outData, outFormat, FillKind.Layer, blurred, 1f, 1f, 1f, groupOpacity, rx, ry, rw, rh, region, width, height);
                     break;
                 }
                 case DropShadowEffect ds:
                 {
-                    IntPtr shadowBlur = BlurLayer(layerView, ds.BlurRadius, plan, region);
+                    (IntPtr blurTex, IntPtr shadowBlur) = BlurLayer(layerView, ds.BlurRadius, plan, region);
+                    DeferRelease(() => { wgpuTextureViewRelease(shadowBlur); wgpuTextureRelease(blurTex); });
                     float shadowAlpha = (float)Math.Clamp(ds.Color.A * groupOpacity, 0.0, 1.0);
                     EmitLayerQuad(outData, outFormat, FillKind.Shadow, shadowBlur, ds.Color.R, ds.Color.G, ds.Color.B, shadowAlpha,
                         rx + (int)ds.OffsetX, ry + (int)ds.OffsetY, rw, rh, region, width, height);
@@ -524,10 +564,136 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
-        // Two-pass separable Gaussian blur of a layer texture; returns the
-        // blurred texture's view. Each pass is a full-target draw added to the plan.
+        // Render a cacheable region layer (subtree + optional blur) into OWNED textures.
+        private CachedLayer RenderLayerToCache(SceneVisual v, Matrix3x2 world, Scissor region, Scissor clip, List<LayerPass> plan, int width, int height)
+        {
+            int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
+            (IntPtr subTex, IntPtr subView) = CreateOwnedLayerTexture(rw, rh);
+            var subData = new DrawData();
+            float sOX = _devOX, sOY = _devOY;
+            _devOX = rx; _devOY = ry;
+            EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
+            _devOX = sOX; _devOY = sOY;
+            plan.Add(new LayerPass(subView, true, default, subData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
+
+            var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
+            switch (v.Effect)
+            {
+                case BlurEffect b:
+                    (cl.BlurTex, cl.BlurView) = BlurLayer(subView, b.Radius, plan, region);
+                    cl.Mode = 1;
+                    break;
+                case DropShadowEffect ds:
+                    (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, plan, region);
+                    cl.Mode = 2; cl.ShadowColor = ds.Color; cl.OffX = (int)ds.OffsetX; cl.OffY = (int)ds.OffsetY;
+                    break;
+                default:
+                    cl.Mode = 0;
+                    break;
+            }
+            return cl;
+        }
+
+        // Composite a cached region layer into the parent (no render passes needed on a hit).
+        private void EmitCachedLayer(CachedLayer cl, float groupOpacity, Scissor clip, DrawData outData, WGPUTextureFormat outFormat, int width, int height)
+        {
+            var region = new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh);
+            if (cl.Mode == 1)
+            {
+                EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.BlurView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, region, width, height);
+            }
+            else if (cl.Mode == 2)
+            {
+                float sa = (float)Math.Clamp(cl.ShadowColor.A * groupOpacity, 0.0, 1.0);
+                EmitLayerQuad(outData, outFormat, FillKind.Shadow, cl.BlurView, cl.ShadowColor.R, cl.ShadowColor.G, cl.ShadowColor.B, sa,
+                    cl.Rx + cl.OffX, cl.Ry + cl.OffY, cl.Rw, cl.Rh, region, width, height);
+                EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
+            }
+            else
+            {
+                EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
+            }
+        }
+
+        // ---- region-layer content hash (FNV-1a over geometry/brushes/transforms) ----
+        private long _hash;
+        private void HV(long x) => _hash = (_hash ^ x) * 1099511628211L;
+        private void HF(float f) => HV(BitConverter.SingleToInt32Bits(f));
+        private void HR(Rect r) { HF(r.X); HF(r.Y); HF(r.Width); HF(r.Height); }
+
+        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region)
+        {
+            _hash = unchecked((long)1469598103934665603UL);
+            HV(region.X); HV(region.Y); HV(region.W); HV(region.H);
+            switch (v.Effect)
+            {
+                case BlurEffect b: HV(101); HF((float)b.Radius); break;
+                case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
+                default: HV(100); break;
+            }
+            HashVisual(v, world);
+            return _hash;
+        }
+
+        private void HashVisual(SceneVisual n, Matrix3x2 w)
+        {
+            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22); HF(w.M31); HF(w.M32);
+            HV(BitConverter.DoubleToInt64Bits(n.Opacity));
+            if (n.Clip is { } c) HR(c); else HV(7);
+            foreach (DrawingPrimitive p in n.Content) HashPrimitive(p);
+            foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w);
+        }
+
+        private void HashPrimitive(DrawingPrimitive p)
+        {
+            switch (p)
+            {
+                case GeometryFill f: HV(1); HashGeo(f.Geometry); HashBrush(f.Brush); break;
+                case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HF((float)s.Style.Thickness); break;
+                case GeometryDrawing d: HV(3); HashGeo(d.Geometry); break;
+                case GlyphRunDraw g: HV(4); HV(g.Text.GetHashCode()); HF(g.Origin.X); HF(g.Origin.Y); HF(g.EmSize); break;
+                default: HV(9); break;
+            }
+        }
+
+        private void HashGeo(Geometry g)
+        {
+            switch (g)
+            {
+                case RectangleGeometry r: HV(21); HR(r.Rect); break;
+                case RoundedRectangleGeometry rr: HV(22); HR(rr.Rect); HF(rr.RadiusX); HF(rr.RadiusY); break;
+                case EllipseGeometry e: HV(23); HF(e.Center.X); HF(e.Center.Y); HF(e.RadiusX); HF(e.RadiusY); break;
+                case PathGeometry pg: HV(24); HV(HashGeometry(pg)); break;
+                case CombinedGeometry cg: HV(25); HashGeo(cg.Geometry1); HashGeo(cg.Geometry2); break;
+                default: HV(20); break;
+            }
+        }
+
+        private void HashBrush(Brush b)
+        {
+            switch (b)
+            {
+                case SolidColorBrush s: HV(11); HF(s.Color.R); HF(s.Color.G); HF(s.Color.B); HF(s.Color.A); break;
+                case LinearGradientBrush lg:
+                    HV(12); HF(lg.Start.X); HF(lg.Start.Y); HF(lg.End.X); HF(lg.End.Y);
+                    foreach (GradientStop st in lg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
+                    break;
+                case RadialGradientBrush rg:
+                    HV(13); HF(rg.Center.X); HF(rg.Center.Y); HF(rg.RadiusX); HF(rg.RadiusY);
+                    foreach (GradientStop st in rg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
+                    break;
+                case ImageBrush img:
+                    HV(14); HV(img.PixelWidth); HV(img.PixelHeight); HF((float)img.TileWidth); HF((float)img.TileHeight);
+                    byte[] px = img.PixelsRgba;
+                    int step = Math.Max(4, (px.Length / 256) & ~3);
+                    for (int i = 0; i + 3 < px.Length; i += step) HV(px[i] | (px[i + 1] << 8) | (px[i + 2] << 16) | ((long)px[i + 3] << 24));
+                    break;
+            }
+        }
+
         // Two separable blur passes over the region-sized layer textures (input is region-sized).
-        private IntPtr BlurLayer(IntPtr input, double radius, List<LayerPass> plan, Scissor region)
+        // The final (v) texture is OWNED by the caller (cached or defer-released); h is transient.
+        private (IntPtr Tex, IntPtr View) BlurLayer(IntPtr input, double radius, List<LayerPass> plan, Scissor region)
         {
             float sigma = (float)Math.Max(0.5, radius);
             int taps = Math.Clamp((int)Math.Ceiling(radius * 3.0), 1, 48);
@@ -541,14 +707,31 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             _devOX = sOX; _devOY = sOY;
             plan.Add(new LayerPass(hView, true, default, hData, ReadbackFormat) { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
 
-            var (_, vView) = CreateLayerTexture(rw, rh);
+            (IntPtr vTex, IntPtr vView) = CreateOwnedLayerTexture(rw, rh);
             var vData = new DrawData();
             _devOX = region.X; _devOY = region.Y;
             EmitBlurQuad(vData, hView, 0f, 1f / rh, sigma, taps, region);
             _devOX = sOX; _devOY = sOY;
             plan.Add(new LayerPass(vView, true, default, vData, ReadbackFormat) { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
 
-            return vView;
+            return (vTex, vView);
+        }
+
+        // A layer texture NOT defer-released this frame (caller owns it: cached, or releases it).
+        private (IntPtr Tex, IntPtr View) CreateOwnedLayerTexture(int width, int height)
+        {
+            PerfLayers++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
+                format = ReadbackFormat,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
         }
 
         // The region a layer effect actually touches: the content's clip plus the blur spread (and,

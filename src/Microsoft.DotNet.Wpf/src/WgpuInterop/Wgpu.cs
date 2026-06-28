@@ -368,6 +368,17 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         internal enum WGPUAdapterType { DiscreteGPU = 1, IntegratedGPU = 2, CPU = 3, Unknown = 4 }
 
+        internal enum WGPULogLevel { Off = 0, Error = 1, Warn = 2, Info = 3, Debug = 4, Trace = 5 }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate void WGPULogCallback(WGPULogLevel level, WGPUStringView message, IntPtr userdata);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuSetLogCallback(IntPtr callback, IntPtr userdata);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuSetLogLevel(WGPULogLevel level);
+
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUAdapterInfo
         {
