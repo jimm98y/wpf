@@ -41,6 +41,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private bool _loggedLayered;
         private int _layeredFrames;
         private long _perfRealizeTicks, _perfRenderTicks, _perfRenderOnlyTicks, _perfPresentTicks;
+        private long _gcBytes0;
+        private int _gc0, _gc1, _gc2;
         private int _perfFrames;
         private bool _disposed;
 
@@ -186,6 +188,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Log($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
                 Log($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
+                long allocNow = GC.GetTotalAllocatedBytes();
+                int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
+                if (_gcBytes0 != 0)
+                    Log($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
+                _gcBytes0 = allocNow; _gc0 = g0; _gc1 = g1; _gc2 = g2;
                 _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
             }
         }

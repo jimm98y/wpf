@@ -24,6 +24,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
@@ -264,12 +265,33 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // the GL backend has drained them -> no per-frame CreateBuffer churn / upload stalls.
             foreach ((IntPtr Buf, ulong Cap, bool Idx) b in _inUseBufs) (b.Idx ? _freeIdx : _freeVtx).Add((b.Buf, b.Cap));
             _inUseBufs.Clear();
+            // Return this frame's DrawData (and their grown Vert/Index/Draw lists) to the pool so next
+            // frame reuses the backing arrays instead of allocating fresh lists per pass.
+            foreach (DrawData d in _inUseDrawData) _drawDataPool.Push(d);
+            _inUseDrawData.Clear();
         }
 
         // Pooled vertex/index buffers (avoids per-pass-per-frame allocation, the GL stall source).
         private readonly List<(IntPtr Buf, ulong Cap)> _freeVtx = new();
         private readonly List<(IntPtr Buf, ulong Cap)> _freeIdx = new();
         private readonly List<(IntPtr Buf, ulong Cap, bool Idx)> _inUseBufs = new();
+
+        // Pooled DrawData (one per render pass). Reused across frames so the per-pass vertex/index/draw
+        // lists keep their capacity instead of reallocating each frame.
+        private readonly Stack<DrawData> _drawDataPool = new();
+        private readonly List<DrawData> _inUseDrawData = new();
+        // Shared empty DrawData for 3D passes (their content is drawn via ExecutePass3D; Data is never read).
+        private static readonly DrawData s_emptyData = new();
+        // Reused per-frame layer-pass plan (cleared each render; not reentrant on the single render thread).
+        private readonly List<LayerPass> _plan = new();
+
+        private DrawData RentDrawData()
+        {
+            DrawData d = _drawDataPool.Count > 0 ? _drawDataPool.Pop() : new DrawData();
+            d.Verts.Clear(); d.Indices.Clear(); d.Draws.Clear(); d.HasText = false;
+            _inUseDrawData.Add(d);
+            return d;
+        }
 
         private IntPtr RentBuffer(ulong size, bool index)
         {
@@ -352,7 +374,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             public LayerPass(IntPtr targetView, WGPUTextureFormat format, List<Draw3D> models3D, IntPtr depthView, IntPtr msaaColorView)
             {
                 TargetView = targetView; Format = format; Models3D = models3D; DepthView = depthView; MsaaColorView = msaaColorView;
-                ClearTransparent = true; ClearColor = default; Data = new DrawData();
+                ClearTransparent = true; ClearColor = default; Data = s_emptyData;
             }
         }
 
@@ -366,8 +388,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 PerfReadbacks++;
                 WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
                 _srgbOutput = srgbOutput;
-                var plan = new List<LayerPass>();
-                var mainData = new DrawData();
+                List<LayerPass> plan = _plan; plan.Clear();
+                DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
 
                 IntPtr device = _ctx.Device;
@@ -433,8 +455,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                var plan = new List<LayerPass>();
-                var mainData = new DrawData();
+                List<LayerPass> plan = _plan; plan.Clear();
+                DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
                 PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
 
@@ -565,7 +587,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         {
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             (IntPtr subTex, IntPtr subView) = CreateOwnedLayerTexture(rw, rh);
-            var subData = new DrawData();
+            DrawData subData = RentDrawData();
             float sOX = _devOX, sOY = _devOY;
             _devOX = rx; _devOY = ry;
             EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
@@ -731,14 +753,14 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             float sOX = _devOX, sOY = _devOY;
 
             var (_, hView) = CreateLayerTexture(rw, rh);
-            var hData = new DrawData();
+            DrawData hData = RentDrawData();
             _devOX = region.X; _devOY = region.Y;
             EmitBlurQuad(hData, input, 1f / rw, 0f, sigma, taps, region);
             _devOX = sOX; _devOY = sOY;
             plan.Add(new LayerPass(hView, true, default, hData, ReadbackFormat) { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
 
             (IntPtr vTex, IntPtr vView) = CreateOwnedLayerTexture(rw, rh);
-            var vData = new DrawData();
+            DrawData vData = RentDrawData();
             _devOX = region.X; _devOY = region.Y;
             EmitBlurQuad(vData, hView, 0f, 1f / rh, sigma, taps, region);
             _devOX = sOX; _devOY = sOY;
@@ -820,8 +842,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), rw, rh), stepX, stepY, sigma, taps, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, region, FillKind.Blur, bindGroup));
         }
 
@@ -842,8 +863,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
@@ -907,8 +927,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
@@ -930,8 +949,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), 1f, 1f, 1f, groupOpacity, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Clip, bindGroup));
         }
 
@@ -1426,7 +1444,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), r, g, b, a, 1f, 1f);
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 }) data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, c.BindGroup));
         }
 
@@ -1492,8 +1510,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), r, g, b, a, 0f, 1f);
 
             uint firstIndex = (uint)data.Indices.Count;
-            foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                data.Indices.Add(baseVertex + li);
+            AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
@@ -1672,14 +1689,21 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), run.Color.R, run.Color.G, run.Color.B, a, e.U0, e.V1);
 
                     uint firstIndex = (uint)data.Indices.Count;
-                    foreach (uint li in new uint[] { 0, 1, 2, 0, 2, 3 })
-                        data.Indices.Add(baseVertex + li);
+                    AddQuadIndices(data.Indices, baseVertex);
                     data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, IntPtr.Zero));
                     data.HasText = true;
                 }
 
                 penX += sg.Advance * scale;
             }
+        }
+
+        // Appends two triangles (0,1,2, 0,2,3) for a quad starting at baseVertex -- avoids allocating
+        // a 6-element index array per quad (which, with one quad per glyph, was hundreds of allocs/frame).
+        private static void AddQuadIndices(List<uint> indices, uint baseVertex)
+        {
+            indices.Add(baseVertex); indices.Add(baseVertex + 1); indices.Add(baseVertex + 2);
+            indices.Add(baseVertex); indices.Add(baseVertex + 2); indices.Add(baseVertex + 3);
         }
 
         private static void AddVertex(List<float> verts, Vector2 ndc, float r, float g, float b, float a, float u, float v)
@@ -1718,10 +1742,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             hasGeometry = data.Indices.Count > 0;
             if (!hasGeometry) return;
 
-            byte[] vbytes = new byte[data.Verts.Count * sizeof(float)];
-            Buffer.BlockCopy(data.Verts.ToArray(), 0, vbytes, 0, vbytes.Length);
-            byte[] ibytes = new byte[data.Indices.Count * sizeof(uint)];
-            Buffer.BlockCopy(data.Indices.ToArray(), 0, ibytes, 0, ibytes.Length);
+            // Write straight from the lists' backing arrays as byte spans -- no ToArray()/byte[] copies.
+            ReadOnlySpan<byte> vbytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Verts));
+            ReadOnlySpan<byte> ibytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Indices));
 
             vbuf = RentBuffer((ulong)vbytes.Length, index: false);
             ibuf = RentBuffer((ulong)ibytes.Length, index: true);

@@ -207,6 +207,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void SetBitmap(uint handle, byte[] rgba, int width, int height)
             => _bitmaps[handle] = new MilBitmap(rgba, width, height);
         private readonly Dictionary<uint, uint> _visualContent = new();      // visual handle -> render-data handle
+        private readonly Dictionary<uint, byte[]> _parsedDataRef = new();     // visual handle -> render-data byte[] last parsed (ref-equality change check)
         private readonly Dictionary<uint, uint> _visualOpacityMask = new();  // visual handle -> mask brush handle
         private uint _rootHandle;
 
@@ -929,11 +930,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             foreach (KeyValuePair<uint, uint> kv in _visualContent)
             {
                 if (!_visuals.TryGetValue(kv.Key, out SceneVisual? v)) continue;
-                v.Content.Clear();
                 if (kv.Value != 0 && _renderData.TryGetValue(kv.Value, out byte[]? data))
                 {
+                    // Skip re-parsing visuals whose render-data buffer is unchanged since last frame.
+                    // SetContent replaces the byte[] wholesale, so reference-equality detects real
+                    // changes; this avoids rebuilding the whole primitive/geometry/brush object graph
+                    // for ~all (static) visuals every frame -- the dominant managed allocation / GC churn.
+                    if (_parsedDataRef.TryGetValue(kv.Key, out byte[]? prev) && ReferenceEquals(prev, data))
+                        continue;
+                    v.Content.Clear();
                     ParseRenderData(data, v.Content);
+                    _parsedDataRef[kv.Key] = data;
                     PerfParsed++;
+                }
+                else
+                {
+                    v.Content.Clear();
+                    _parsedDataRef.Remove(kv.Key);
                 }
             }
             PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
