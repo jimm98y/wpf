@@ -585,8 +585,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 fullTarget ? new Scissor(0, 0, width, height) :
                 v.ClipGeometry is { } cg ? Intersect(clip, GeoDeviceBounds(cg, world, width, height)) :
                 v.OpacityMask != null ? contentClip :
-                v.Effect is BlurEffect be ? EffectRegion(contentClip, be.Radius, 0, 0, width, height) :
-                v.Effect is DropShadowEffect de ? EffectRegion(contentClip, de.BlurRadius, de.OffsetX, de.OffsetY, width, height) :
+                v.Effect is BlurEffect be ? EffectRegion(contentClip, be.Radius, 0, 0, clip) :
+                v.Effect is DropShadowEffect de ? EffectRegion(contentClip, de.BlurRadius, de.OffsetX, de.OffsetY, clip) :
                 contentClip;
             if (region.IsEmpty) return;
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
@@ -843,17 +843,20 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             _freeLayerTex.Add((tex, view, width, height));
         }
 
-        // The region a layer effect actually touches: the content's clip plus the blur spread (and,
-        // for a drop shadow, the offset). Blurring/compositing only these pixels instead of the whole
-        // window is the difference between ~50k and ~7M shaded pixels per effect.
-        private static Scissor EffectRegion(Scissor clip, double blurRadius, double offX, double offY, int width, int height)
+        // The region a layer effect actually touches: the content bounds plus the blur spread (and, for
+        // a drop shadow, the offset). Blurring/compositing only these pixels instead of the whole window
+        // is the difference between ~50k and ~7M shaded pixels per effect. Clamped to <paramref
+        // name="bound"/> (the absolute-device clip) so the halo stays within the visible area -- NOT to
+        // (0,0,width,height), which for a nested layer is the region size, not the window (the absolute
+        // content coords would then fall outside it and the region would wrongly come out empty).
+        private static Scissor EffectRegion(Scissor content, double blurRadius, double offX, double offY, Scissor bound)
         {
             int m = (int)Math.Ceiling(blurRadius * 3.0) + 2;
-            int x0 = (int)Math.Min(clip.X, clip.X + offX) - m;
-            int y0 = (int)Math.Min(clip.Y, clip.Y + offY) - m;
-            int x1 = (int)Math.Max(clip.X + clip.W, clip.X + clip.W + offX) + m;
-            int y1 = (int)Math.Max(clip.Y + clip.H, clip.Y + clip.H + offY) + m;
-            return Intersect(new Scissor(0, 0, width, height), new Scissor(x0, y0, x1 - x0, y1 - y0));
+            int x0 = (int)Math.Min(content.X, content.X + offX) - m;
+            int y0 = (int)Math.Min(content.Y, content.Y + offY) - m;
+            int x1 = (int)Math.Max(content.X + content.W, content.X + content.W + offX) + m;
+            int y1 = (int)Math.Max(content.Y + content.H, content.Y + content.H + offY) + m;
+            return Intersect(bound, new Scissor(x0, y0, x1 - x0, y1 - y0));
         }
 
         private void EmitBlurQuad(DrawData data, IntPtr inputView, float stepX, float stepY, float sigma, int taps, Scissor region)
@@ -1177,9 +1180,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             return false;
         }
 
-        // Device-space bounding box (Scissor) of a clip geometry under the world transform, padded 1px
-        // (matching the rasterizer) and clamped to the target. Bézier control points are included, so
-        // the box conservatively encloses the curve -- it is never smaller than the actual mask.
+        // Absolute device-space bounding box (Scissor) of a clip geometry under the world transform,
+        // padded 1px (matching the rasterizer). Bézier control points are included, so the box
+        // conservatively encloses the curve. The caller intersects with the (absolute) clip; this does
+        // NOT clamp to (0,0,width,height) -- for a nested layer those are the region size, not the window.
         private Scissor GeoDeviceBounds(PathGeometry geom, Matrix3x2 world, int width, int height)
         {
             PathGeometry d = TransformGeometry(geom, world);
@@ -1199,7 +1203,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (minX > maxX) return new Scissor(0, 0, 0, 0);
             int ix = (int)MathF.Floor(minX) - 1, iy = (int)MathF.Floor(minY) - 1;
             int iw = (int)MathF.Ceiling(maxX) + 1 - ix, ih = (int)MathF.Ceiling(maxY) + 1 - iy;
-            return Intersect(new Scissor(0, 0, width, height), new Scissor(ix, iy, iw, ih));
+            return new Scissor(ix, iy, iw, ih);
         }
 
         // Conservative device-space bounding box of everything a subtree draws. Over-estimates text
@@ -1213,7 +1217,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (minX > maxX) return new Scissor(0, 0, 0, 0);
             int ix = (int)MathF.Floor(minX) - 1, iy = (int)MathF.Floor(minY) - 1;
             int iw = (int)MathF.Ceiling(maxX) + 1 - ix, ih = (int)MathF.Ceiling(maxY) + 1 - iy;
-            return Intersect(new Scissor(0, 0, width, height), new Scissor(ix, iy, iw, ih));
+            // Absolute device-space bbox; the caller intersects with the (absolute) clip. Do NOT clamp to
+            // (0,0,width,height) -- for a nested layer those are the region's size, not the window, and
+            // the absolute bbox would fall outside them and be wrongly discarded.
+            return new Scissor(ix, iy, iw, ih);
         }
 
         private static void AccumulateContentBounds(SceneVisual v, Matrix3x2 world,
