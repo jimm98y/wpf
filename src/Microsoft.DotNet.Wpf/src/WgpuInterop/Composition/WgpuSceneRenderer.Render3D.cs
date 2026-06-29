@@ -100,7 +100,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
             Matrix4x4 view = Matrix4x4.CreateLookAt(cam.Position, cam.Position + cam.LookDirection, cam.UpDirection);
-            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(cam.FieldOfView * (MathF.PI / 180f), aspect, cam.NearPlane, cam.FarPlane);
+            // WPF's PerspectiveCamera.FieldOfView is HORIZONTAL (PerspectiveCamera.GetProjectionMatrix:
+            // w = 1/tan(fov/2), h = aspectRatio/tan(fov/2)), but CreatePerspectiveFieldOfView takes a
+            // VERTICAL fov. Passing the horizontal angle directly shrinks the projection by ~1/aspect,
+            // so objects recede and the camera looks farther than WPF. Convert horizontal -> vertical.
+            float fovH = cam.FieldOfView * (MathF.PI / 180f);
+            float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
+            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
             // Map full NDC [-1,1] to the device rect's NDC sub-region (y flipped: device y grows down).
             float sx = (dx1 - dx0) / width, sy = (dy1 - dy0) / height;
             float tx = (dx0 + dx1) / width - 1f, ty = 1f - (dy0 + dy1) / height;

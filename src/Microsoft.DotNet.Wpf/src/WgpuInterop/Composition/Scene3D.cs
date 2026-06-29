@@ -33,7 +33,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public readonly Vector3 Position;
         public readonly Vector3 LookDirection;
         public readonly Vector3 UpDirection;
-        public readonly float FieldOfView; // vertical, degrees
+        public readonly float FieldOfView; // horizontal, degrees (matches WPF PerspectiveCamera.FieldOfView)
         public readonly float NearPlane;
         public readonly float FarPlane;
 
