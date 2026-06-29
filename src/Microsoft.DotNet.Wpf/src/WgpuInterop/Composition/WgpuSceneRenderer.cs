@@ -788,8 +788,12 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // The final (v) texture is OWNED by the caller (cached or defer-released); h is transient.
         private (IntPtr Tex, IntPtr View) BlurLayer(IntPtr input, double radius, List<LayerPass> plan, Scissor region)
         {
-            float sigma = (float)Math.Max(0.5, radius);
-            int taps = Math.Clamp((int)Math.Ceiling(radius * 3.0), 1, 48);
+            // Match WPF: standard deviation is 1/3rd the radius, and the Gaussian kernel
+            // half-extent is the radius itself (kernel runs -radius..+radius). See
+            // CMilBlurEffectDuce::CalculateSamplingWeights ("sd = radius / 3.0"). Treating
+            // the radius directly as sigma (and extending taps to 3*radius) over-blurs ~3x.
+            float sigma = (float)Math.Max(0.5, radius / 3.0);
+            int taps = Math.Clamp((int)Math.Ceiling(radius), 1, 48);
             int rw = region.W, rh = region.H;
             float sOX = _devOX, sOY = _devOY;
 
@@ -862,7 +866,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // content coords would then fall outside it and the region would wrongly come out empty).
         private static Scissor EffectRegion(Scissor content, double blurRadius, double offX, double offY, Scissor bound)
         {
-            int m = (int)Math.Ceiling(blurRadius * 3.0) + 2;
+            // The blur kernel reaches blurRadius pixels (half-extent == radius; see BlurLayer),
+            // so the touched halo is blurRadius beyond the content edge.
+            int m = (int)Math.Ceiling(blurRadius) + 2;
             int x0 = (int)Math.Min(content.X, content.X + offX) - m;
             int y0 = (int)Math.Min(content.Y, content.Y + offY) - m;
             int x1 = (int)Math.Max(content.X + content.W, content.X + content.W + offX) + m;
