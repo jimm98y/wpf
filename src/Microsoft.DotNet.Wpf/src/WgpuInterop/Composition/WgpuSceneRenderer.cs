@@ -720,7 +720,14 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 case GeometryFill f: HV(1); HashGeo(f.Geometry); HashBrush(f.Brush); break;
                 case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HF((float)s.Style.Thickness); break;
-                case GeometryDrawing d: HV(3); HashGeo(d.Geometry); break;
+                // Must hash the fill/stroke brushes too -- a brush-only change (e.g. a menu item's
+                // hover highlight: transparent -> blue with the geometry unchanged) would otherwise
+                // leave the layer-cache key unchanged and the card would render the stale (un-hovered) state.
+                case GeometryDrawing d:
+                    HV(3); HashGeo(d.Geometry);
+                    if (d.Fill != null) { HV(31); HashBrush(d.Fill); }
+                    if (d.Stroke != null) { HV(32); HashBrush(d.Stroke); HF((float)d.StrokeStyle.Thickness); }
+                    break;
                 case GlyphRunDraw g: HV(4); HV(g.Text.GetHashCode()); HF(g.Origin.X); HF(g.Origin.Y); HF(g.EmSize); break;
                 case Viewport3DDraw v3:
                     HV(5);
