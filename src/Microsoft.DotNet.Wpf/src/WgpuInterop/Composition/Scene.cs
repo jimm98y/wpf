@@ -259,13 +259,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     }
 
     /// <summary>How an image brush repeats across the fill (WPF's TileMode).</summary>
+    // Values MATCH System.Windows.Media.TileMode exactly (None=0, FlipX=1, FlipY=2, FlipXY=3, Tile=4)
+    // so the MILCMD parse can cast the raw WPF value directly. (Note: Tile is 4, not 1.)
     internal enum TileMode
     {
         None = 0,   // map once across the geometry bounds
-        Tile = 1,   // repeat
-        FlipX = 2,  // repeat, mirroring alternate columns
-        FlipY = 3,  // repeat, mirroring alternate rows
-        FlipXY = 4, // repeat, mirroring both
+        FlipX = 1,  // repeat, mirroring alternate columns
+        FlipY = 2,  // repeat, mirroring alternate rows
+        FlipXY = 3, // repeat, mirroring both
+        Tile = 4,   // repeat
     }
 
     /// <summary>

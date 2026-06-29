@@ -71,31 +71,34 @@ internal static class Program
         var renderer = new WgpuSceneRenderer(ctx);
         byte[] img = renderer.RenderToRgba(engine.VisualByHandle(HRoot)!, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
 
+        // Sampling note: image brushes are bilinear-sampled (matching WPF), so an upscaled checker
+        // blends across texel boundaries. Sample near the OUTER corner of each texel region (well away
+        // from the centre boundary) where bilinear clamps to the pure texel colour.
         bool ok = true;
         // DrawImage quadrants (16px each within 4..36).
-        ok &= Check(img, 12, 12, 255, 0, 0, "DrawImage top-left = red");
-        ok &= Check(img, 28, 12, 0, 255, 0, "DrawImage top-right = green");
-        ok &= Check(img, 12, 28, 0, 0, 255, "DrawImage bottom-left = blue");
-        ok &= Check(img, 28, 28, 255, 255, 0, "DrawImage bottom-right = yellow");
+        ok &= Check(img, 8, 8, 255, 0, 0, "DrawImage top-left = red");
+        ok &= Check(img, 32, 8, 0, 255, 0, "DrawImage top-right = green");
+        ok &= Check(img, 8, 32, 0, 0, 255, "DrawImage bottom-left = blue");
+        ok &= Check(img, 32, 32, 255, 255, 0, "DrawImage bottom-right = yellow");
         // ImageBrush fill quadrants (within 4..36, 44..76).
-        ok &= Check(img, 12, 52, 255, 0, 0, "ImageBrush top-left = red");
-        ok &= Check(img, 28, 52, 0, 255, 0, "ImageBrush top-right = green");
-        ok &= Check(img, 12, 68, 0, 0, 255, "ImageBrush bottom-left = blue");
-        ok &= Check(img, 28, 68, 255, 255, 0, "ImageBrush bottom-right = yellow");
+        ok &= Check(img, 8, 48, 255, 0, 0, "ImageBrush top-left = red");
+        ok &= Check(img, 32, 48, 0, 255, 0, "ImageBrush top-right = green");
+        ok &= Check(img, 8, 72, 0, 0, 255, "ImageBrush bottom-left = blue");
+        ok &= Check(img, 32, 72, 255, 255, 0, "ImageBrush bottom-right = yellow");
         // Uniform letterbox: a 2x1 image in a 32x32 rect (44..76, 4..36) -> centered band
         // (44..76, 12..28); top/bottom letterbox stays background.
-        ok &= Check(img, 52, 20, 255, 0, 0, "Uniform: image band left = red");
-        ok &= Check(img, 68, 20, 0, 255, 0, "Uniform: image band right = green");
+        ok &= Check(img, 48, 20, 255, 0, 0, "Uniform: image band left = red");
+        ok &= Check(img, 72, 20, 0, 255, 0, "Uniform: image band right = green");
         ok &= Check(img, 60, 8, 255, 255, 255, "Uniform: top letterbox is clear");
         ok &= Check(img, 60, 32, 255, 255, 255, "Uniform: bottom letterbox is clear");
         // UniformToFill: 4x4 (rows red/green/blue/yellow) into 32x16 (44..76, 44..60) -> covers fully,
         // shows the centre rows (green, blue) cropped; no letterbox.
-        ok &= Check(img, 60, 48, 0, 255, 0, "UniformToFill: covered, centre crop top row = green");
-        ok &= Check(img, 60, 56, 0, 0, 255, "UniformToFill: covered, centre crop bottom row = blue");
+        ok &= Check(img, 60, 46, 0, 255, 0, "UniformToFill: covered, centre crop top row = green");
+        ok &= Check(img, 60, 58, 0, 0, 255, "UniformToFill: covered, centre crop bottom row = blue");
         ok &= Check(img, 46, 46, 0, 255, 0, "UniformToFill: corner is covered (no letterbox)");
         // Viewbox crop: right column [green, yellow] filled into (44..76, 62..78).
-        ok &= Check(img, 60, 66, 0, 255, 0, "Viewbox: cropped source top = green");
-        ok &= Check(img, 60, 74, 255, 255, 0, "Viewbox: cropped source bottom = yellow");
+        ok &= Check(img, 60, 64, 0, 255, 0, "Viewbox: cropped source top = green");
+        ok &= Check(img, 60, 76, 255, 255, 0, "Viewbox: cropped source bottom = yellow");
 
         if (!ok) return 1;
         Console.WriteLine("PASS: DrawImage + ImageBrush decode and render a bitmap");

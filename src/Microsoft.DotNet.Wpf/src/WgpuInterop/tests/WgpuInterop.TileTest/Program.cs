@@ -39,17 +39,20 @@ internal static class Program
         byte[] tilePx = renderer.RenderToRgba(tile, W, H, white);
         byte[] flipPx = renderer.RenderToRgba(flip, W, H, white);
 
-        // Tile 0 is identical in both modes: red | green across the tile.
-        Pixel(tilePx, 2, 2, 255, 0, 0, "tile: first tile column 0 (red)");
-        Pixel(tilePx, 6, 2, 0, 255, 0, "tile: first tile column 1 (green)");
+        // Sampling note: image brushes are bilinear-sampled (matching WPF), so a 2x2 checker scaled to
+        // an 8x8 tile blends across texel boundaries. Sample at clamped corners of each texel region
+        // (x in {1,6} per 8px tile, y=1 = top row) where bilinear == the pure texel colour.
+        // Tile 0 is identical in both modes: red (col 0) | green (col 1) across the top row.
+        Pixel(tilePx, 1, 1, 255, 0, 0, "tile: first tile column 0 (red)");
+        Pixel(tilePx, 6, 1, 0, 255, 0, "tile: first tile column 1 (green)");
         // Tile 1 repeats exactly.
-        Pixel(tilePx, 10, 2, 255, 0, 0, "tile: second tile column 0 repeats (red)");
-        Pixel(tilePx, 14, 2, 0, 255, 0, "tile: second tile column 1 repeats (green)");
+        Pixel(tilePx, 9, 1, 255, 0, 0, "tile: second tile column 0 repeats (red)");
+        Pixel(tilePx, 14, 1, 0, 255, 0, "tile: second tile column 1 repeats (green)");
 
         // FlipX mirrors the second tile, so its columns swap.
-        Pixel(flipPx, 2, 2, 255, 0, 0, "flipX: first tile column 0 (red)");
-        Pixel(flipPx, 10, 2, 0, 255, 0, "flipX: second tile mirrored, column 0 is green");
-        Pixel(flipPx, 14, 2, 255, 0, 0, "flipX: second tile mirrored, column 1 is red");
+        Pixel(flipPx, 1, 1, 255, 0, 0, "flipX: first tile column 0 (red)");
+        Pixel(flipPx, 9, 1, 0, 255, 0, "flipX: second tile mirrored, column 0 is green");
+        Pixel(flipPx, 14, 1, 255, 0, 0, "flipX: second tile mirrored, column 1 is red");
 
         CheckRoundTrip(renderer, tile, tilePx, white, "tile");
         CheckRoundTrip(renderer, flip, flipPx, white, "flipX");

@@ -1643,16 +1643,40 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                         if ((img.TileMode == TileMode.FlipX || img.TileMode == TileMode.FlipXY) && (cellX & 1) != 0) u = 1f - u;
                         if ((img.TileMode == TileMode.FlipY || img.TileMode == TileMode.FlipXY) && (cellY & 1) != 0) v = 1f - v;
                     }
-                    int px = Math.Clamp((int)(u * img.PixelWidth), 0, img.PixelWidth - 1);
-                    int py = Math.Clamp((int)(v * img.PixelHeight), 0, img.PixelHeight - 1);
-                    int p = (py * img.PixelWidth + px) * 4;
-                    return RgbaColor.FromBytes(img.PixelsRgba[p], img.PixelsRgba[p + 1], img.PixelsRgba[p + 2], img.PixelsRgba[p + 3]);
+                    return SampleBilinear(img, u, v);
                 }
                 case SolidColorBrush solid:
                     return solid.Color;
                 default:
                     return new RgbaColor(0, 0, 0, 0);
             }
+        }
+
+        // Bilinear sample of a straight-RGBA image at uv in [0,1] (edge-clamped). Interpolates in
+        // PREMULTIPLIED space so transparent texels don't bleed dark fringes into opaque edges, then
+        // returns straight RGBA (matching WPF's smooth tile/image sampling instead of blocky nearest).
+        private static RgbaColor SampleBilinear(ImageBrush img, float u, float v)
+        {
+            int w = img.PixelWidth, h = img.PixelHeight;
+            float fx = u * w - 0.5f, fy = v * h - 0.5f;
+            int x0 = (int)MathF.Floor(fx), y0 = (int)MathF.Floor(fy);
+            float tx = fx - x0, ty = fy - y0;
+            int x1 = Math.Clamp(x0 + 1, 0, w - 1), y1 = Math.Clamp(y0 + 1, 0, h - 1);
+            x0 = Math.Clamp(x0, 0, w - 1); y0 = Math.Clamp(y0, 0, h - 1);
+            byte[] px = img.PixelsRgba;
+            (float r, float g, float b, float a) Pm(int x, int y)
+            {
+                int p = (y * w + x) * 4;
+                float a = px[p + 3] / 255f;
+                return (px[p] / 255f * a, px[p + 1] / 255f * a, px[p + 2] / 255f * a, a);
+            }
+            var c00 = Pm(x0, y0); var c10 = Pm(x1, y0); var c01 = Pm(x0, y1); var c11 = Pm(x1, y1);
+            float L(float a, float b, float t) => a + (b - a) * t;
+            float pr = L(L(c00.r, c10.r, tx), L(c01.r, c11.r, tx), ty);
+            float pg = L(L(c00.g, c10.g, tx), L(c01.g, c11.g, tx), ty);
+            float pb = L(L(c00.b, c10.b, tx), L(c01.b, c11.b, tx), ty);
+            float pa = L(L(c00.a, c10.a, tx), L(c01.a, c11.a, tx), ty);
+            return pa > 1e-6f ? new RgbaColor(pr / pa, pg / pa, pb / pa, pa) : new RgbaColor(0, 0, 0, 0);
         }
 
         // Bakes a brush's alpha into a full-target R8 mask (device space). Used as

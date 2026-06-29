@@ -1015,7 +1015,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Rect b = VisualSubtreeBounds(source, source.LocalToParent);
                 if (b.Width <= 0.01f || b.Height <= 0.01f) continue;
 
-                const int supersample = 2;
+                const int supersample = 3;   // motif bitmap density; with bilinear sampling keeps tiled/scaled brushes crisp
                 int pw = Math.Clamp((int)MathF.Ceiling(b.Width * supersample), 1, 1024);
                 int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
 
