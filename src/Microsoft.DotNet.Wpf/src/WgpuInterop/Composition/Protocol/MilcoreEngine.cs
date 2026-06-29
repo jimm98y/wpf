@@ -208,6 +208,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             => _bitmaps[handle] = new MilBitmap(rgba, width, height);
         private readonly Dictionary<uint, uint> _visualContent = new();      // visual handle -> render-data handle
         private readonly Dictionary<uint, byte[]> _parsedDataRef = new();     // visual handle -> render-data byte[] last parsed (ref-equality change check)
+        private readonly HashSet<uint> _contentBrushConsumers = new();        // visual handles that paint a VisualBrush/DrawingBrush (must re-parse every frame)
+        private bool _parseTouchedContentBrush;                               // set during ParseRenderData when a content-brush fill is resolved
         private readonly Dictionary<uint, uint> _visualOpacityMask = new();  // visual handle -> mask brush handle
         private uint _rootHandle;
 
@@ -936,10 +938,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // SetContent replaces the byte[] wholesale, so reference-equality detects real
                     // changes; this avoids rebuilding the whole primitive/geometry/brush object graph
                     // for ~all (static) visuals every frame -- the dominant managed allocation / GC churn.
-                    if (_parsedDataRef.TryGetValue(kv.Key, out byte[]? prev) && ReferenceEquals(prev, data))
+                    // EXCEPTION: visuals that paint a VisualBrush/DrawingBrush must re-parse every frame
+                    // -- the brush bitmap is rasterized AFTER this parse loop (RealizeContentBrushes), so
+                    // the fill only resolves on the *next* frame's parse; skipping them leaves them blank.
+                    if (_parsedDataRef.TryGetValue(kv.Key, out byte[]? prev) && ReferenceEquals(prev, data)
+                        && !_contentBrushConsumers.Contains(kv.Key))
                         continue;
                     v.Content.Clear();
+                    _parseTouchedContentBrush = false;
                     ParseRenderData(data, v.Content);
+                    if (_parseTouchedContentBrush) _contentBrushConsumers.Add(kv.Key); else _contentBrushConsumers.Remove(kv.Key);
                     _parsedDataRef[kv.Key] = data;
                     PerfParsed++;
                 }
@@ -947,6 +955,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     v.Content.Clear();
                     _parsedDataRef.Remove(kv.Key);
+                    _contentBrushConsumers.Remove(kv.Key);
                 }
             }
             PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
@@ -999,7 +1008,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     : (_visuals.TryGetValue(kv.Value.Source, out SceneVisual? v) ? v : null);
                 if (source is null) continue;
 
-                Rect b = VisualSubtreeBounds(source, Matrix3x2.Identity);
+                // Measure the source in its own LocalToParent space (so a live tree element's layout
+                // offset / a DrawingGroup transform is included), then map THAT space onto the bitmap.
+                // Rendering applies source.LocalToParent too, so the two stay consistent; measuring with
+                // Identity instead left the source positioned outside the bitmap (empty brush).
+                Rect b = VisualSubtreeBounds(source, source.LocalToParent);
                 if (b.Width <= 0.01f || b.Height <= 0.01f) continue;
 
                 const int supersample = 2;
@@ -1352,6 +1365,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private bool TryImageBrushFill(uint hBrush, Rect bounds, ref Geometry g, out Brush? fill)
         {
             fill = null;
+            if (_contentBrushes.ContainsKey(hBrush)) _parseTouchedContentBrush = true;
             if (!_imageBrushes.TryGetValue(hBrush, out MilImageBrush ib) ||
                 !_bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
                 return false;
@@ -1557,6 +1571,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private Brush? ResolveBrush(uint handle, Rect bounds)
         {
             if (handle == 0) return null;
+            if (_contentBrushes.ContainsKey(handle)) _parseTouchedContentBrush = true;
             if (_solidBrushes.TryGetValue(handle, out RgbaColor c)) return new SolidColorBrush(c);
             if (_gradients.TryGetValue(handle, out MilGradient? g)) return BuildGradient(g, bounds);
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
