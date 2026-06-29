@@ -747,6 +747,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 case EllipseGeometry e: HV(23); HF(e.Center.X); HF(e.Center.Y); HF(e.RadiusX); HF(e.RadiusY); break;
                 case PathGeometry pg: HV(24); HV(HashGeometry(pg)); break;
                 case CombinedGeometry cg: HV(25); HashGeo(cg.Geometry1); HashGeo(cg.Geometry2); break;
+                // PolygonGeometry must hash its points: a rotated/skewed rect bakes into a polygon, and
+                // omitting the points left an animated transform with a constant layer-cache key (stuck).
+                case PolygonGeometry pgon: HV(26); foreach (Vector2 pt in pgon.Points) { HF(pt.X); HF(pt.Y); } break;
+                case GeometryGroup grp: HV(27); foreach (Geometry child in grp.Children) HashGeo(child); break;
                 default: HV(20); break;
             }
         }

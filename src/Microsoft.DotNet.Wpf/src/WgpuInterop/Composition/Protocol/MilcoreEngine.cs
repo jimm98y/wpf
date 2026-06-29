@@ -435,13 +435,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // Handle@4, ChildrenSize@8, then ChildrenSize/4 child transform handles.
                     uint th = r.U32();
                     int childrenSize = (int)r.U32();
-                    var m = Matrix3x2.Identity;
-                    for (int i = 0; i < childrenSize / 4; i++)
-                    {
-                        uint child = r.U32();
-                        if (_transforms.TryGetValue(child, out Matrix3x2 cm)) m *= cm;
-                    }
-                    SetTransform(th, m);
+                    var children = new uint[childrenSize / 4];
+                    for (int i = 0; i < children.Length; i++) children[i] = r.U32();
+                    _transformGroupChildren[th] = children;
+                    RecomposeGroup(th);   // compose from children + store/propagate
                     break;
                 }
                 case Mil.TargetSetClearColor:
@@ -942,12 +939,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // -- the brush bitmap is rasterized AFTER this parse loop (RealizeContentBrushes), so
                     // the fill only resolves on the *next* frame's parse; skipping them leaves them blank.
                     if (_parsedDataRef.TryGetValue(kv.Key, out byte[]? prev) && ReferenceEquals(prev, data)
-                        && !_contentBrushConsumers.Contains(kv.Key))
+                        && !_contentBrushConsumers.Contains(kv.Key) && !TransformDepsChanged(kv.Key))
                         continue;
                     v.Content.Clear();
                     _parseTouchedContentBrush = false;
+                    _parseTransformRefs.Clear();
                     ParseRenderData(data, v.Content);
                     if (_parseTouchedContentBrush) _contentBrushConsumers.Add(kv.Key); else _contentBrushConsumers.Remove(kv.Key);
+                    RecordTransformDeps(kv.Key);
                     _parsedDataRef[kv.Key] = data;
                     PerfParsed++;
                 }
@@ -956,6 +955,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     v.Content.Clear();
                     _parsedDataRef.Remove(kv.Key);
                     _contentBrushConsumers.Remove(kv.Key);
+                    _visualTransformDeps.Remove(kv.Key);
                 }
             }
             PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
@@ -1148,9 +1148,60 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private void SetTransform(uint handle, Matrix3x2 m)
         {
             _transforms[handle] = m;
+            _transformVersion[handle] = _transformVersion.GetValueOrDefault(handle) + 1;   // for content that bakes it via PushTransform
             foreach (KeyValuePair<uint, uint> kv in _visualTransform)
                 if (kv.Value == handle && _visuals.TryGetValue(kv.Key, out SceneVisual? v))
                     v.Transform = m;
+            // A TransformGroup composes its children once at decode; if a child animates, recompose any
+            // group that contains it (recursively -> nested groups + visuals linked to the group). Without
+            // this, an animated RotateTransform nested in a group (WPF wraps a centred rotate in one) is
+            // frozen at the angle captured when the group was first composed.
+            if (_transformGroupChildren.Count > 0)
+                foreach (KeyValuePair<uint, uint[]> g in _transformGroupChildren)
+                    if (g.Key != handle && Array.IndexOf(g.Value, handle) >= 0)
+                        RecomposeGroup(g.Key);
+        }
+
+        private readonly Dictionary<uint, uint[]> _transformGroupChildren = new();   // group handle -> ordered child handles
+
+        private void RecomposeGroup(uint groupHandle)
+        {
+            if (!_transformGroupChildren.TryGetValue(groupHandle, out uint[]? children)) return;
+            var m = Matrix3x2.Identity;
+            foreach (uint c in children)
+                if (_transforms.TryGetValue(c, out Matrix3x2 cm)) m *= cm;
+            SetTransform(groupHandle, m);
+        }
+
+        // Transform resources are baked into geometry at parse time (PushTransform). When such a
+        // transform animates, the consuming visual's render-data byte[] is unchanged (it holds the
+        // handle, not the matrix), so parse-skip must re-parse it. Track each visual's referenced
+        // transform handles + their version at parse, and the live version bumped on every SetTransform.
+        private readonly Dictionary<uint, int> _transformVersion = new();          // transform handle -> bump count
+        private readonly List<uint> _parseTransformRefs = new();                   // handles PushTransform'd during the current parse
+        private readonly Dictionary<uint, (uint Handle, int Ver)[]> _visualTransformDeps = new(); // visual -> deps snapshot
+
+        // True if any transform the visual's content baked in (via PushTransform) changed since last parse.
+        private bool TransformDepsChanged(uint visual)
+        {
+            if (!_visualTransformDeps.TryGetValue(visual, out (uint Handle, int Ver)[]? deps)) return false;
+            foreach ((uint Handle, int Ver) d in deps)
+                if (_transformVersion.GetValueOrDefault(d.Handle) != d.Ver) return true;
+            return false;
+        }
+
+        // Snapshot the (distinct) transform handles this parse baked in, with their current version.
+        private void RecordTransformDeps(uint visual)
+        {
+            if (_parseTransformRefs.Count == 0) { _visualTransformDeps.Remove(visual); return; }
+            var distinct = new List<(uint, int)>();
+            foreach (uint h in _parseTransformRefs)
+            {
+                bool seen = false;
+                foreach ((uint H, int _) in distinct) if (H == h) { seen = true; break; }
+                if (!seen) distinct.Add((h, _transformVersion.GetValueOrDefault(h)));
+            }
+            _visualTransformDeps[visual] = distinct.ToArray();
         }
 
         /// <summary>
@@ -1256,6 +1307,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         stack.Push(state);
                         uint hTransform = r.U32();
+                        if (hTransform != 0) _parseTransformRefs.Add(hTransform);   // record for parse-skip invalidation
                         if (_transforms.TryGetValue(hTransform, out Matrix3x2 m))
                             state.Transform = m * state.Transform;
                         break;
