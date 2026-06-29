@@ -2154,8 +2154,28 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             return stops[^1].Color;
         }
 
+        // Interpolate gradient stops in sRGB (gamma) space, matching WPF's default
+        // GradientBrush.ColorInterpolationMode = SRgbLinearInterpolation. Our stop colours are scRGB
+        // (linear, as they arrive in the MIL stream), so convert each endpoint linear->sRGB, lerp,
+        // then convert back to linear for the linear compositing pipeline. Alpha stays linear.
+        // (A plain linear lerp shifts midtones -- e.g. red->orange midpoint reads too green/blue.)
         private static RgbaColor Lerp(RgbaColor a, RgbaColor b, float f)
-            => new(a.R + (b.R - a.R) * f, a.G + (b.G - a.G) * f, a.B + (b.B - a.B) * f, a.A + (b.A - a.A) * f);
+        {
+            float Ch(float la, float lb) => SrgbToLinear(LinearToSrgb(la) + (LinearToSrgb(lb) - LinearToSrgb(la)) * f);
+            return new(Ch(a.R, b.R), Ch(a.G, b.G), Ch(a.B, b.B), a.A + (b.A - a.A) * f);
+        }
+
+        private static float LinearToSrgb(float c)
+        {
+            c = Math.Clamp(c, 0f, 1f);
+            return c <= 0.0031308f ? c * 12.92f : 1.055f * MathF.Pow(c, 1f / 2.4f) - 0.055f;
+        }
+
+        private static float SrgbToLinear(float c)
+        {
+            c = Math.Clamp(c, 0f, 1f);
+            return c <= 0.04045f ? c / 12.92f : MathF.Pow((c + 0.055f) / 1.055f, 2.4f);
+        }
 
         private static byte ToByte(float v) => (byte)Math.Clamp((int)MathF.Round(v * 255f), 0, 255);
 

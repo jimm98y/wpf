@@ -37,9 +37,12 @@ internal static class Program
         // The gradient is continuous (~4.5/channel per pixel over 56px), so a
         // sample even a couple of pixels in is already slightly shaded; the
         // tolerances reflect that physical rate rather than demanding pure ends.
-        Expect(direct, 5, 12, 250, 0, 5, "gradient near start (red)", 12);
-        Expect(direct, 58, 12, 5, 0, 250, "gradient near end (blue)", 12);
-        Expect(direct, 32, 12, 128, 0, 128, "gradient midpoint (purple)", 12);
+        // Stops are interpolated in sRGB space (WPF's default SRgbLinearInterpolation), so the
+        // red->blue midpoint on this LINEAR target reads ~54 (= sRGB 127 once gamma-encoded for
+        // display), not the 128 a naive linear interpolation would give.
+        Expect(direct, 5, 12, 250, 0, 5, "gradient near start (red)", 14);
+        Expect(direct, 58, 12, 5, 0, 250, "gradient near end (blue)", 14);
+        Expect(direct, 32, 12, 54, 0, 54, "gradient midpoint (purple)", 12);
 
         // Image checker over Rect(8,36,16,16): TL red, TR green, BL blue, BR yellow.
         Expect(direct, 11, 39, 255, 0, 0, "image TL (red)", 2);

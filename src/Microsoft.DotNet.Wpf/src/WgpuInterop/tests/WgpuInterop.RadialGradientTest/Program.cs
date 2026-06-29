@@ -40,8 +40,10 @@ internal static class Program
         int corner = Lum(px, 8, 8);  // beyond radius (clamped)
         Console.WriteLine($"centre={centre}, halfUp={up}, halfLeft={left}, edge={edge}, corner={corner}");
 
-        Check(centre > 245, "centre is the first stop (white)");
-        Check(Math.Abs(up - 128) <= 24, "half radius is the mid colour (grey)");
+        // Stops interpolate in sRGB space (WPF default), so on this LINEAR target the half-radius grey
+        // reads ~60 (= sRGB 127 once gamma-encoded) and the near-centre white falls off a touch faster.
+        Check(centre > 230, "centre is the first stop (white)");
+        Check(Math.Abs(up - 60) <= 28, "half radius is the mid colour (grey)");
         Check(Math.Abs(up - left) <= 8, "equidistant points match (radial symmetry)");
         Check(edge < 40, "one radius out is the last stop (black)");
         Check(corner < 40, "beyond the radius the last stop is held (clamped)");

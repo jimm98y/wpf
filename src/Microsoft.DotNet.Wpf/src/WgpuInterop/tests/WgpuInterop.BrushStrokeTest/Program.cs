@@ -43,8 +43,9 @@ internal static class Program
         Reddish(px, 8, 29, "gradient stroke: red end");
         Bluish(px, 40, 29, "gradient stroke: blue end");
 
-        // Image on a filled path (2x2 checker over square 4..28 x, 40..64 y).
-        Solid(px, 10, 46, 255, 0, 0, "image path: top-left red");
+        // Image on a filled path (2x2 checker over square 4..28 x, 40..64 y). Image brushes are
+        // bilinear-sampled (matching WPF), so sample near the clamped texel corners, not mid-texel.
+        Solid(px, 6, 42, 255, 0, 0, "image path: top-left red");
         Solid(px, 22, 58, 255, 255, 0, "image path: bottom-right yellow");
 
         // Round-capped dashes (line y=76, pattern 10 on / 16 off, half-width 4).
@@ -130,7 +131,8 @@ internal static class Program
     private static void Reddish(byte[] px, int x, int y, string what)
     {
         int i = (y * W + x) * 4;
-        bool ok = px[i] > 200 && px[i + 2] < 80;
+        // sRGB-space stop interpolation (WPF default) makes the ends fall off faster than a linear lerp.
+        bool ok = px[i] > 180 && px[i + 2] < 80;
         Console.WriteLine($"  [{(ok ? "ok " : "BAD")}] ({x},{y}) {what}: got [{px[i]},{px[i + 1]},{px[i + 2]}]");
         if (!ok) _failures++;
     }
@@ -138,7 +140,8 @@ internal static class Program
     private static void Bluish(byte[] px, int x, int y, string what)
     {
         int i = (y * W + x) * 4;
-        bool ok = px[i + 2] > 200 && px[i] < 80;
+        // sRGB-space stop interpolation (WPF default) makes the ends fall off faster than a linear lerp.
+        bool ok = px[i + 2] > 180 && px[i] < 80;
         Console.WriteLine($"  [{(ok ? "ok " : "BAD")}] ({x},{y}) {what}: got [{px[i]},{px[i + 1]},{px[i + 2]}]");
         if (!ok) _failures++;
     }
