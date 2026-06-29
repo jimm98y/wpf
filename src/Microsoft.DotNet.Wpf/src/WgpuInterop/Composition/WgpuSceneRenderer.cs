@@ -1575,7 +1575,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             }
             else
             {
-                byte[] rgba = BakeBrushMask(mask, brush);
+                byte[] rgba = BakeBrushMask(mask, brush, _srgbOutput);
                 (IntPtr tex, view) = CreateRgbaTexture(rgba, mask.Width, mask.Height);
                 bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, NearestSampler());
                 DeferReleaseSampled(tex, view, bindGroup);
@@ -1601,7 +1601,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // Evaluates a non-solid brush at each coverage texel, producing a straight
         // RGBA mask (rgb = brush colour, a = coverage * brush alpha) that the
         // premultiplying fs_textured pipeline composites correctly.
-        private static byte[] BakeBrushMask(CoverageMask mask, Brush brush)
+        // <paramref name="decodeSrgb"/> mirrors CreateImageTexture: when the final target is sRGB,
+        // image samples are sRGB-encoded bytes that must be decoded to linear (the direct image path
+        // gets this from the hardware sRGB texture format) before they enter the linear bake buffer,
+        // which is uploaded as RGBA8Unorm. Without it tiled/DrawingBrush images come out too light.
+        private static byte[] BakeBrushMask(CoverageMask mask, Brush brush, bool decodeSrgb)
         {
             var rgba = new byte[mask.Width * mask.Height * 4];
             for (int y = 0; y < mask.Height; y++)
@@ -1611,7 +1615,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     int i = (y * mask.Width + x);
                     float cov = mask.Coverage[i] / 255f;
                     var localPos = new Vector2(mask.OriginX + x + 0.5f, mask.OriginY + y + 0.5f);
-                    RgbaColor c = EvaluateBrush(brush, localPos, mask);
+                    RgbaColor c = EvaluateBrush(brush, localPos, mask, decodeSrgb);
                     rgba[i * 4 + 0] = ToByte(c.R);
                     rgba[i * 4 + 1] = ToByte(c.G);
                     rgba[i * 4 + 2] = ToByte(c.B);
@@ -1621,7 +1625,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             return rgba;
         }
 
-        private static RgbaColor EvaluateBrush(Brush brush, Vector2 localPos, CoverageMask mask)
+        private static RgbaColor EvaluateBrush(Brush brush, Vector2 localPos, CoverageMask mask, bool decodeSrgb)
         {
             switch (brush)
             {
@@ -1660,7 +1664,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                         if ((img.TileMode == TileMode.FlipX || img.TileMode == TileMode.FlipXY) && (cellX & 1) != 0) u = 1f - u;
                         if ((img.TileMode == TileMode.FlipY || img.TileMode == TileMode.FlipXY) && (cellY & 1) != 0) v = 1f - v;
                     }
-                    return SampleBilinear(img, u, v);
+                    return SampleBilinear(img, u, v, decodeSrgb);
                 }
                 case SolidColorBrush solid:
                     return solid.Color;
@@ -1672,7 +1676,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // Bilinear sample of a straight-RGBA image at uv in [0,1] (edge-clamped). Interpolates in
         // PREMULTIPLIED space so transparent texels don't bleed dark fringes into opaque edges, then
         // returns straight RGBA (matching WPF's smooth tile/image sampling instead of blocky nearest).
-        private static RgbaColor SampleBilinear(ImageBrush img, float u, float v)
+        // When <paramref name="decodeSrgb"/>, each texel's RGB is decoded sRGB->linear first (alpha
+        // stays linear), reproducing the hardware sRGB texture path so baked tiles match direct images.
+        private static RgbaColor SampleBilinear(ImageBrush img, float u, float v, bool decodeSrgb)
         {
             int w = img.PixelWidth, h = img.PixelHeight;
             float fx = u * w - 0.5f, fy = v * h - 0.5f;
@@ -1685,7 +1691,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 int p = (y * w + x) * 4;
                 float a = px[p + 3] / 255f;
-                return (px[p] / 255f * a, px[p + 1] / 255f * a, px[p + 2] / 255f * a, a);
+                float r = px[p] / 255f, g = px[p + 1] / 255f, b = px[p + 2] / 255f;
+                if (decodeSrgb) { r = SrgbToLinear(r); g = SrgbToLinear(g); b = SrgbToLinear(b); }
+                return (r * a, g * a, b * a, a);
             }
             var c00 = Pm(x0, y0); var c10 = Pm(x1, y0); var c01 = Pm(x0, y1); var c11 = Pm(x1, y1);
             float L(float a, float b, float t) => a + (b - a) * t;
