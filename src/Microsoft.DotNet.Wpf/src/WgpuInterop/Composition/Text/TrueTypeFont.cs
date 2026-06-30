@@ -48,6 +48,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private const int BaseEmPixels = 48;
 
         private readonly byte[] _data;
+        private readonly int _sfntBase;         // offset of this face's sfnt header (non-zero inside a .ttc)
         private readonly float _scale;          // font units -> base pixels
         private readonly int _numGlyphs;
         private readonly int _glyfOffset;
@@ -72,9 +73,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // Bold simulation thickens stems by ~2% of the em on each side.
         private const float EmboldenFraction = 0.02f;
 
-        public TrueTypeFont(byte[] data, bool synthesizeBold = false, bool synthesizeOblique = false)
+        // <paramref name="sfntOffset"/> is the byte offset of this face's sfnt header,
+        // non-zero when the face lives inside a TrueType Collection (.ttc).
+        public TrueTypeFont(byte[] data, bool synthesizeBold = false, bool synthesizeOblique = false, int sfntOffset = 0)
         {
             _data = data;
+            _sfntBase = sfntOffset;
             if (synthesizeBold) _emboldenStrength = BaseEmPixels * EmboldenFraction;
             if (synthesizeOblique) _shear = ObliqueShear;
 
@@ -475,9 +479,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private Dictionary<string, int> ReadTableDirectory()
         {
-            int numTables = U16(4);
+            // Table records start after the 12-byte sfnt header; table offsets within
+            // are absolute file offsets (so they stay valid for a face inside a .ttc).
+            int numTables = U16(_sfntBase + 4);
             var tables = new Dictionary<string, int>(numTables);
-            int p = 12;
+            int p = _sfntBase + 12;
             for (int i = 0; i < numTables; i++)
             {
                 string tag = System.Text.Encoding.ASCII.GetString(_data, p, 4);

@@ -24,9 +24,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     internal sealed class DWriteFontResolver
     {
-        private const uint DWRITE_FONT_SIMULATIONS_BOLD = 0x0001;
-        private const uint DWRITE_FONT_SIMULATIONS_OBLIQUE = 0x0002;
-
         private readonly Dictionary<ulong, IGlyphOutlineFont?> _cache = new();
 
         /// <summary>Resolve an IDWriteFont* to a glyph-outline font (cached; null on failure).</summary>
@@ -54,12 +51,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var font = (IDWriteFont)o;
             font.CreateFontFace(out IDWriteFontFace face);
 
-            // DirectWrite synthesizes bold/oblique for faces the family lacks; the
-            // font file carries only the regular outlines, so replicate the look.
-            uint sim = face.GetSimulations();
-            bool bold = (sim & DWRITE_FONT_SIMULATIONS_BOLD) != 0;
-            bool oblique = (sim & DWRITE_FONT_SIMULATIONS_OBLIQUE) != 0;
-
             uint numberOfFiles = 0;
             face.GetFiles(ref numberOfFiles, IntPtr.Zero);   // first call: query the file count
             if (numberOfFiles == 0) return null;
@@ -83,14 +74,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                 if (!File.Exists(path)) return null;
                 byte[] bytes = File.ReadAllBytes(path);
-                // TrueTypeFont parses a single sfnt (.ttf); skip TrueType Collections.
+                // TrueTypeFont/CffFont parse a single sfnt (.ttf/.otf); skip Collections
+                // for now -- selecting the face index without COM (GetIndex) is part of
+                // the cross-platform font-resolution work. The readers DO support a .ttc
+                // sub-offset once the index can be supplied cross-platform.
                 if (bytes.Length >= 4 && bytes[0] == (byte)'t' && bytes[1] == (byte)'t' &&
                     bytes[2] == (byte)'c' && bytes[3] == (byte)'f')
                     return null;
+
                 // OpenType/PostScript (CFF) outlines vs TrueType (glyf) outlines.
                 return CffFont.IsCff(bytes)
-                    ? new CffFont(bytes, bold, oblique)
-                    : new TrueTypeFont(bytes, bold, oblique);
+                    ? new CffFont(bytes)
+                    : new TrueTypeFont(bytes);
             }
             finally
             {
@@ -114,7 +109,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             void Reserved1_GetType();
             void GetFiles(ref uint numberOfFiles, IntPtr fontFiles);
             [PreserveSig] uint GetIndex();
-            [PreserveSig] uint GetSimulations();   // DWRITE_FONT_SIMULATIONS
         }
 
         [ComImport, Guid("739d886a-cef5-47dc-8769-1a8b41bebbb0"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

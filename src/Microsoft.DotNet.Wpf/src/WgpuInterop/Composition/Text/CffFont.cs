@@ -59,22 +59,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>True for a CID-keyed CFF (glyphs select per-FD local subrs).</summary>
         public bool IsCidKeyed => _isCid;
 
-        /// <summary>True if <paramref name="data"/> is an OpenType/CFF (not 'glyf') sfnt.</summary>
-        public static bool IsCff(byte[] data)
+        /// <summary>True if the sfnt at <paramref name="sfntOffset"/> has PostScript (CFF) outlines.</summary>
+        public static bool IsCff(byte[] data, int sfntOffset = 0)
         {
             // 'OTTO' sfnt version, or any sfnt carrying a 'CFF ' table.
-            if (data.Length >= 4 && data[0] == (byte)'O' && data[1] == (byte)'T' && data[2] == (byte)'T' && data[3] == (byte)'O')
+            if (data.Length >= sfntOffset + 4 && data[sfntOffset] == (byte)'O' && data[sfntOffset + 1] == (byte)'T'
+                && data[sfntOffset + 2] == (byte)'T' && data[sfntOffset + 3] == (byte)'O')
                 return true;
-            return TableDirectory(data).ContainsKey("CFF ");
+            return TableDirectory(data, sfntOffset).ContainsKey("CFF ");
         }
 
-        public CffFont(byte[] data, bool synthesizeBold = false, bool synthesizeOblique = false)
+        // <paramref name="sfntOffset"/> is the byte offset of this face's sfnt header,
+        // non-zero when the face lives inside an OpenType Collection (.ttc/.otc).
+        public CffFont(byte[] data, bool synthesizeBold = false, bool synthesizeOblique = false, int sfntOffset = 0)
         {
             _data = data;
             if (synthesizeBold) _emboldenStrength = BaseEmPixels * EmboldenFraction;
             if (synthesizeOblique) _shear = ObliqueShear;
 
-            Dictionary<string, int> tables = TableDirectory(data);
+            Dictionary<string, int> tables = TableDirectory(data, sfntOffset);
             int head = Require(tables, "head");
             int maxp = Require(tables, "maxp");
             int hhea = Require(tables, "hhea");
@@ -751,11 +754,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // ---- sfnt table directory + big-endian primitives ----
 
-        private static Dictionary<string, int> TableDirectory(byte[] data)
+        private static Dictionary<string, int> TableDirectory(byte[] data, int sfntBase = 0)
         {
-            int numTables = (data[4] << 8) | data[5];
+            int numTables = (data[sfntBase + 4] << 8) | data[sfntBase + 5];
             var tables = new Dictionary<string, int>(numTables);
-            int p = 12;
+            int p = sfntBase + 12;
             for (int i = 0; i < numTables && p + 16 <= data.Length; i++)
             {
                 string tag = Encoding.ASCII.GetString(data, p, 4);

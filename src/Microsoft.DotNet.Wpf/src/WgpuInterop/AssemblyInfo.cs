@@ -17,6 +17,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.FontTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.CffTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.GammaTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.TtcTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.StrokeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.StyledStrokeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.BrushStrokeTest")]
