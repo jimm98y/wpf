@@ -307,10 +307,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public Geometry Geometry { get; }
         public Brush Brush { get; }
 
-        public GeometryFill(Geometry geometry, Brush brush)
+        /// <summary>True when this fill is a glyph outline (from a glyph run). Text
+        /// coverage is gamma-corrected on the display path so weight matches WPF,
+        /// which blends text in gamma space.</summary>
+        public bool IsGlyph { get; }
+
+        public GeometryFill(Geometry geometry, Brush brush, bool isGlyph = false)
         {
             Geometry = geometry;
             Brush = brush;
+            IsGlyph = isGlyph;
         }
 
         /// <summary>Convenience overload for the common solid-colour fill.</summary>

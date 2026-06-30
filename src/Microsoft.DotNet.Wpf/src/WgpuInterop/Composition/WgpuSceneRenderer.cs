@@ -236,6 +236,21 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _linearSampler;
         private IntPtr _nearestSampler;
 
+        // Text gamma: WPF blends glyph coverage in gamma (sRGB) space, which makes
+        // text heavier than the linear-space blend this engine uses elsewhere. On the
+        // display-destined sRGB path we re-map glyph coverage through this LUT so text
+        // weight matches WPF. (Linear test targets are left untouched, so coverage
+        // tests stay exact.) cov' = cov^(1/2.2), the standard sRGB text gamma.
+        private const float TextGamma = 2.2f;
+        private static readonly byte[] s_textGammaLut = BuildTextGammaLut();
+        private static byte[] BuildTextGammaLut()
+        {
+            var lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+                lut[i] = (byte)Math.Clamp((int)MathF.Round(MathF.Pow(i / 255f, 1f / TextGamma) * 255f), 0, 255);
+            return lut;
+        }
+
         // Cached glyph-atlas texture, rebuilt only when the atlas changes. The
         // per-pass bind group is created on demand (passes may differ in format).
         private IntPtr _atlasTexture, _atlasView;
@@ -1360,7 +1375,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (fill.Geometry is CombinedGeometry combined)
             {
                 if (!clip.IsEmpty)
-                    EmitMask(RasterizeCombined(combined), fill.Brush, world, opacity, clip, width, height, format, data);
+                    EmitMask(RasterizeCombined(combined), fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph);
                 return;
             }
 
@@ -1458,7 +1473,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
         private void EmitPath(GeometryFill fill, PathGeometry path, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
-            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data);
+            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph);
 
         // Fills a geometry and/or strokes its outline in one primitive (the fill
         // first, then the stroke on top), reusing the fill and stroke paths.
@@ -1486,9 +1501,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
-            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false)
         {
             if (clip.IsEmpty) return;
+
+            bool gamma = isGlyph && _srgbOutput;
 
             // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
@@ -1497,12 +1514,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (brush is SolidColorBrush solid)
             {
                 PathGeometry deviceGeom = TransformGeometry(coverageGeometry, world);
-                long key = HashGeometry(deviceGeom) * 397 ^ (long)format;
+                long key = (HashGeometry(deviceGeom) * 397 ^ (long)format) * 2 + (gamma ? 1 : 0);
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
                     CoverageMask m = PathRasterizer.Rasterize(deviceGeom);
                     if (m.IsEmpty) return;
+                    if (gamma) ApplyTextGamma(m.Coverage);
                     (IntPtr tex, IntPtr view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
                     IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
                     cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = (int)m.OriginX, Oy = (int)m.OriginY, W = m.Width, H = m.Height };
@@ -1513,7 +1531,15 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
             PerfCoverage++;
-            EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data);
+            EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data, isGlyph);
+        }
+
+        // Re-map glyph coverage through the text-gamma LUT (in place) so text blends
+        // with WPF-matching weight on the display-destined sRGB path.
+        private static void ApplyTextGamma(byte[] coverage)
+        {
+            for (int i = 0; i < coverage.Length; i++)
+                coverage[i] = s_textGammaLut[coverage[i]];
         }
 
         // Emit a quad sampling a cached device-space coverage mask, tinted by the solid colour.
@@ -1557,9 +1583,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // coverage directly (fs_text); other brushes are baked per-texel into an
         // RGBA mask (brush colour, alpha = coverage * brush alpha) for fs_textured.
         private void EmitMask(CoverageMask mask, Brush brush, Matrix3x2 world, double opacity,
-            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false)
         {
             if (clip.IsEmpty || mask.IsEmpty) return;
+
+            if (isGlyph && _srgbOutput) ApplyTextGamma(mask.Coverage);
 
             IntPtr view, bindGroup;
             FillKind kind;

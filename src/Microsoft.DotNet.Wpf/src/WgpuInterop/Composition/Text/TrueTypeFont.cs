@@ -54,16 +54,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly uint[] _loca;          // numGlyphs+1 glyph data offsets
         private readonly ushort[] _advanceWidths;
         private readonly int _numHMetrics;
-        private readonly Dictionary<char, int> _cmap = new();
+        private readonly CmapTable _cmap;
         private readonly Dictionary<(int, int), float> _kerning = new(); // base pixels
+
+        // Synthetic style (DirectWrite font simulations): when WPF requests a weight/
+        // style the family has no real face for, DWrite returns the regular outlines
+        // flagged BOLD/OBLIQUE and synthesizes the look. We replicate that here.
+        private readonly float _emboldenStrength;   // base-pixel outline dilation per side (0 = none)
+        private readonly float _shear;              // oblique x-shear coefficient (0 = none)
 
         public int PixelsPerEm => BaseEmPixels;
 
         public int GlyphCount => _numGlyphs;
 
-        public TrueTypeFont(byte[] data)
+        // DirectWrite oblique simulation slants glyphs by 20 degrees.
+        private const float ObliqueShear = 0.36397023f;     // tan(20°)
+        // Bold simulation thickens stems by ~2% of the em on each side.
+        private const float EmboldenFraction = 0.02f;
+
+        public TrueTypeFont(byte[] data, bool synthesizeBold = false, bool synthesizeOblique = false)
         {
             _data = data;
+            if (synthesizeBold) _emboldenStrength = BaseEmPixels * EmboldenFraction;
+            if (synthesizeOblique) _shear = ObliqueShear;
 
             Dictionary<string, int> tables = ReadTableDirectory();
             int head = Require(tables, "head");
@@ -88,14 +101,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i <= _numGlyphs; i++)
                 _loca[i] = indexToLocFormat == 0 ? (uint)U16(loca + i * 2) * 2 : U32(loca + i * 4);
 
-            ParseCmap(cmap);
+            _cmap = new CmapTable(_data, cmap);
+
             if (tables.TryGetValue("kern", out int kern))
                 ParseKern(kern);
         }
 
         // ---- IShapingFont ----
 
-        public int GlyphIndex(char c) => _cmap.TryGetValue(c, out int gid) ? gid : 0;
+        public int GlyphIndex(char c) => _cmap.Map(c);
 
         public float Advance(int glyphId) => AdvanceWidth(glyphId) * _scale;
 
@@ -105,7 +119,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Convenience char-based rasterization (returns false if unmapped).</summary>
         public bool TryGetGlyph(char c, out GlyphBitmap glyph)
         {
-            if (!_cmap.TryGetValue(c, out int gid))
+            int gid = _cmap.Map(c);
+            if (gid == 0)
             {
                 glyph = default;
                 return false;
@@ -155,7 +170,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>True if the glyph for <paramref name="c"/> is a composite glyph.</summary>
         public bool IsCompositeGlyph(char c)
         {
-            if (!_cmap.TryGetValue(c, out int gid)) return false;
+            int gid = _cmap.Map(c);
+            if (gid == 0) return false;
             uint start = _loca[gid], end = _loca[gid + 1];
             if (end <= start) return false;
             return (short)U16(_glyfOffset + (int)start) < 0;
@@ -303,21 +319,76 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return result;
         }
 
-        // Converts a glyph's font-unit contours to screen-space (y-down) figures.
+        // Converts a glyph's font-unit contours to screen-space (y-down) figures,
+        // applying synthetic bold/oblique simulations when requested.
         private List<PathFigure> BuildGlyphFigures(int gid)
         {
             List<Contour> contours = ReadGlyphContours(gid, 0);
-            var figures = new List<PathFigure>(contours.Count);
+
+            // Scale to base pixels and flip to y-down screen space.
+            var scaled = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
             foreach (Contour contour in contours)
             {
                 if (contour.Points.Length < 2) continue;
                 var pts = new Vector2[contour.Points.Length];
                 for (int i = 0; i < pts.Length; i++)
                     pts[i] = new Vector2(contour.Points[i].X * _scale, -contour.Points[i].Y * _scale);
-                figures.Add(BuildContourFigure(pts, contour.OnCurve));
+                scaled.Add((pts, contour.OnCurve));
             }
+
+            if (_emboldenStrength > 0f) Embolden(scaled, _emboldenStrength);
+            if (_shear != 0f)
+                foreach ((Vector2[] pts, _) in scaled)
+                    for (int i = 0; i < pts.Length; i++)
+                        pts[i] = new Vector2(pts[i].X - _shear * pts[i].Y, pts[i].Y); // lean right above the baseline
+
+            var figures = new List<PathFigure>(scaled.Count);
+            foreach ((Vector2[] pts, bool[] on) in scaled)
+                figures.Add(BuildContourFigure(pts, on));
             return figures;
         }
+
+        // Emulates DirectWrite's bold simulation: offset every point (on- and
+        // off-curve) outward along the contour normal. A single global fill
+        // orientation (from the summed signed area) is used for all contours so
+        // outer contours grow and holes (reverse-wound) shrink -- adding ink
+        // everywhere, the same effect as FreeType's outline embolden.
+        private static void Embolden(List<(Vector2[] Pts, bool[] On)> contours, float strength)
+        {
+            float totalArea = 0f;
+            foreach ((Vector2[] pts, _) in contours) totalArea += SignedArea(pts);
+            float sense = totalArea >= 0f ? -1f : 1f;
+
+            foreach ((Vector2[] pts, _) in contours)
+            {
+                int n = pts.Length;
+                var shifted = new Vector2[n];
+                for (int i = 0; i < n; i++)
+                {
+                    Vector2 cur = pts[i];
+                    Vector2 nIn = Perp(Norm(cur - pts[(i - 1 + n) % n]));
+                    Vector2 nOut = Perp(Norm(pts[(i + 1) % n] - cur));
+                    Vector2 nrm = nIn + nOut;
+                    float len = nrm.Length();
+                    shifted[i] = len > 1e-4f ? cur + sense * strength * (nrm / len) : cur;
+                }
+                Array.Copy(shifted, pts, n);
+            }
+        }
+
+        private static float SignedArea(Vector2[] p)
+        {
+            float a = 0f;
+            for (int i = 0; i < p.Length; i++)
+            {
+                Vector2 u = p[i], v = p[(i + 1) % p.Length];
+                a += u.X * v.Y - v.X * u.Y;
+            }
+            return a * 0.5f;
+        }
+
+        private static Vector2 Perp(Vector2 v) => new(-v.Y, v.X);
+        private static Vector2 Norm(Vector2 v) { float l = v.Length(); return l > 1e-4f ? v / l : default; }
 
         private float F2Dot14(int offset) => (short)U16(offset) / 16384f;
 
@@ -366,68 +437,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private static Vector2 Mid(Vector2 a, Vector2 b) => new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
-
-        // ---- cmap (format 4) ----
-
-        private void ParseCmap(int cmap)
-        {
-            int numTables = U16(cmap + 2);
-            int best = -1, bestScore = -1;
-            for (int i = 0; i < numTables; i++)
-            {
-                int rec = cmap + 4 + i * 8;
-                int platform = U16(rec);
-                int encoding = U16(rec + 2);
-                int sub = cmap + (int)U32(rec + 4);
-
-                // Only format 4 (segment-mapped BMP) is supported; a font may
-                // also carry format 12/6/0 subtables which we skip here.
-                if (U16(sub) != 4) continue;
-
-                int score = (platform, encoding) switch
-                {
-                    (3, 1) => 4,
-                    (0, _) => 3,
-                    (3, 0) => 1,
-                    _ => 0,
-                };
-                if (score > bestScore) { bestScore = score; best = sub; }
-            }
-            if (best < 0) return; // no format-4 subtable
-
-            int segCount = U16(best + 6) / 2;
-            int endCodes = best + 14;
-            int startCodes = endCodes + segCount * 2 + 2; // + reservedPad
-            int idDeltas = startCodes + segCount * 2;
-            int idRangeOffsets = idDeltas + segCount * 2;
-
-            for (char c = (char)0x20; c < 0x2FF; c++)
-            {
-                int gid = MapCharFormat4(c, segCount, endCodes, startCodes, idDeltas, idRangeOffsets);
-                if (gid != 0) _cmap[c] = gid;
-            }
-        }
-
-        private int MapCharFormat4(char c, int segCount, int endCodes, int startCodes, int idDeltas, int idRangeOffsets)
-        {
-            for (int i = 0; i < segCount; i++)
-            {
-                if (c > U16(endCodes + i * 2)) continue;
-                int start = U16(startCodes + i * 2);
-                if (c < start) return 0;
-
-                int idDelta = (short)U16(idDeltas + i * 2);
-                int idRangeOffset = U16(idRangeOffsets + i * 2);
-                if (idRangeOffset == 0)
-                    return (c + idDelta) & 0xFFFF;
-
-                // idRangeOffset is relative to its own slot.
-                int glyphIndexAddr = idRangeOffsets + i * 2 + idRangeOffset + (c - start) * 2;
-                int gid = U16(glyphIndexAddr);
-                return gid == 0 ? 0 : (gid + idDelta) & 0xFFFF;
-            }
-            return 0;
-        }
 
         // ---- kern (legacy pairwise kerning, format 0) ----
 

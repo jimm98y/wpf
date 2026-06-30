@@ -24,6 +24,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     internal sealed class DWriteFontResolver
     {
+        private const uint DWRITE_FONT_SIMULATIONS_BOLD = 0x0001;
+        private const uint DWRITE_FONT_SIMULATIONS_OBLIQUE = 0x0002;
+
         private readonly Dictionary<ulong, IGlyphOutlineFont?> _cache = new();
 
         /// <summary>Resolve an IDWriteFont* to a glyph-outline font (cached; null on failure).</summary>
@@ -50,6 +53,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             object o = Marshal.GetObjectForIUnknown((IntPtr)pIDWriteFont);
             var font = (IDWriteFont)o;
             font.CreateFontFace(out IDWriteFontFace face);
+
+            // DirectWrite synthesizes bold/oblique for faces the family lacks; the
+            // font file carries only the regular outlines, so replicate the look.
+            uint sim = face.GetSimulations();
+            bool bold = (sim & DWRITE_FONT_SIMULATIONS_BOLD) != 0;
+            bool oblique = (sim & DWRITE_FONT_SIMULATIONS_OBLIQUE) != 0;
 
             uint numberOfFiles = 0;
             face.GetFiles(ref numberOfFiles, IntPtr.Zero);   // first call: query the file count
@@ -78,7 +87,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (bytes.Length >= 4 && bytes[0] == (byte)'t' && bytes[1] == (byte)'t' &&
                     bytes[2] == (byte)'c' && bytes[3] == (byte)'f')
                     return null;
-                return new TrueTypeFont(bytes);
+                // OpenType/PostScript (CFF) outlines vs TrueType (glyf) outlines.
+                return CffFont.IsCff(bytes)
+                    ? new CffFont(bytes, bold, oblique)
+                    : new TrueTypeFont(bytes, bold, oblique);
             }
             finally
             {
@@ -102,6 +114,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             void Reserved1_GetType();
             void GetFiles(ref uint numberOfFiles, IntPtr fontFiles);
             [PreserveSig] uint GetIndex();
+            [PreserveSig] uint GetSimulations();   // DWRITE_FONT_SIMULATIONS
         }
 
         [ComImport, Guid("739d886a-cef5-47dc-8769-1a8b41bebbb0"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

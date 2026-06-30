@@ -1362,7 +1362,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     glyph = TransformGeometry(glyph, state.Transform);
                     if (state.Clip is not null)
                         glyph = new CombinedGeometry(GeometryCombineMode.Intersect, glyph, state.Clip);
-                    output.Add(new GeometryFill(glyph, brush));
+                    output.Add(new GeometryFill(glyph, brush, isGlyph: true));
                 }
                 penX += i < run.Advances.Length ? run.Advances[i] : 0f;
             }
