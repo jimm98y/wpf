@@ -26,7 +26,7 @@ using Microsoft.Wpf.Interop.WebGpu.Composition;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
-    internal sealed class CffFont : IFont, IGlyphOutlineFont
+    internal sealed class CffFont : IFont, IGlyphOutlineFont, IColorGlyphFont
     {
         private const int BaseEmPixels = 48;
         private const float ObliqueShear = 0.36397023f;   // tan(20°)
@@ -38,6 +38,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly ushort[] _advanceWidths;
         private readonly int _numHMetrics;
         private readonly CmapTable _cmap;
+        private readonly ColorTable? _color;    // COLR/CPAL color glyphs, null if absent
         private readonly float _emboldenStrength;
         private readonly float _shear;
 
@@ -95,6 +96,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _advanceWidths[i] = (ushort)U16(hmtx + i * 4);
 
             _cmap = new CmapTable(_data, cmap);
+            if (tables.TryGetValue("COLR", out int colr) && tables.TryGetValue("CPAL", out int cpal))
+                _color = new ColorTable(_data, colr, cpal);
 
             // ---- CFF: header -> Name INDEX -> Top DICT INDEX -> String INDEX -> Global Subr INDEX ----
             int hdrSize = _data[cff + 2];
@@ -165,6 +168,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int bearingY = (int)MathF.Round(-mask.OriginY);
             glyph = new GlyphBitmap(mask.Coverage, mask.Width, mask.Height, advance, bearingX, bearingY);
             return true;
+        }
+
+        // ---- IColorGlyphFont ----
+
+        public bool TryGetColorLayers(int glyphId, out IReadOnlyList<ColorGlyphLayer> layers)
+        {
+            if (_color != null) return _color.TryGetColorLayers(glyphId, out layers);
+            layers = Array.Empty<ColorGlyphLayer>();
+            return false;
         }
 
         // ---- IGlyphOutlineFont ----

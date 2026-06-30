@@ -41,7 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures);
     }
 
-    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont
+    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont
     {
         // Glyphs are rasterized with the em square at this many pixels; the
         // renderer scales the atlas quad to the requested EmSize.
@@ -56,6 +56,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly ushort[] _advanceWidths;
         private readonly int _numHMetrics;
         private readonly CmapTable _cmap;
+        private readonly ColorTable? _color;    // COLR/CPAL color glyphs (emoji), null if absent
         private readonly Dictionary<(int, int), float> _kerning = new(); // base pixels
 
         // Synthetic style (DirectWrite font simulations): when WPF requests a weight/
@@ -107,8 +108,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             _cmap = new CmapTable(_data, cmap);
 
+            // Color glyphs (emoji): COLR layers reference outline glyphs in this same
+            // font, coloured from the CPAL palette.
+            if (tables.TryGetValue("COLR", out int colr) && tables.TryGetValue("CPAL", out int cpal))
+                _color = new ColorTable(_data, colr, cpal);
+
             if (tables.TryGetValue("kern", out int kern))
                 ParseKern(kern);
+        }
+
+        // ---- IColorGlyphFont ----
+
+        public bool TryGetColorLayers(int glyphId, out IReadOnlyList<ColorGlyphLayer> layers)
+        {
+            if (_color != null) return _color.TryGetColorLayers(glyphId, out layers);
+            layers = System.Array.Empty<ColorGlyphLayer>();
+            return false;
         }
 
         // ---- IShapingFont ----

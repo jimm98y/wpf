@@ -1350,14 +1350,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (brush is null) { Note("text:brushnull"); return; }
             Note($"text:emit{run.Indices.Length}");
 
+            var colorFont = font as Text.IColorGlyphFont;
             float scale = run.EmSize / font.PixelsPerEm;
             float penX = run.Origin.X;
             for (int i = 0; i < run.Indices.Length; i++)
             {
-                if (font.TryGetGlyphOutline(run.Indices[i], out List<PathFigure> figures) && figures.Count > 0)
+                float gx = penX + (run.Offsets != null ? run.Offsets[2 * i] : 0f);
+                float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
+
+                // Color glyph (COLR/CPAL emoji): paint each layer outline in its palette
+                // colour (or the foreground brush), back-to-front, in place of the
+                // single monochrome outline.
+                if (colorFont != null && colorFont.TryGetColorLayers(run.Indices[i], out var layers))
+                    EmitColorGlyph(output, font, layers, scale, gx, gy, brush, state);
+                else if (font.TryGetGlyphOutline(run.Indices[i], out List<PathFigure> figures) && figures.Count > 0)
                 {
-                    float gx = penX + (run.Offsets != null ? run.Offsets[2 * i] : 0f);
-                    float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
                     Geometry glyph = new PathGeometry(FillRule.NonZero, ScaleFigures(figures, scale, gx, gy));
                     glyph = TransformGeometry(glyph, state.Transform);
                     if (state.Clip is not null)
@@ -1365,6 +1372,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     output.Add(new GeometryFill(glyph, brush, isGlyph: true));
                 }
                 penX += i < run.Advances.Length ? run.Advances[i] : 0f;
+            }
+        }
+
+        // Emit a color glyph's layers (back-to-front): each layer is an outline glyph
+        // filled with its palette colour, or the run's foreground brush when the layer
+        // has no palette index. Layer fills blend linearly (no text gamma).
+        private void EmitColorGlyph(List<DrawingPrimitive> output, Text.IGlyphOutlineFont font,
+            IReadOnlyList<Text.ColorGlyphLayer> layers, float scale, float gx, float gy, Brush foreground, RenderState state)
+        {
+            foreach (Text.ColorGlyphLayer layer in layers)
+            {
+                if (!font.TryGetGlyphOutline(layer.GlyphId, out List<PathFigure> figures) || figures.Count == 0)
+                    continue;
+                Geometry glyph = new PathGeometry(FillRule.NonZero, ScaleFigures(figures, scale, gx, gy));
+                glyph = TransformGeometry(glyph, state.Transform);
+                if (state.Clip is not null)
+                    glyph = new CombinedGeometry(GeometryCombineMode.Intersect, glyph, state.Clip);
+
+                Brush layerBrush = layer.Color is RgbaColor c
+                    ? ApplyOpacity(new SolidColorBrush(c), state.Opacity)!
+                    : foreground;
+                output.Add(new GeometryFill(glyph, layerBrush, isGlyph: false));
             }
         }
 
