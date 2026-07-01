@@ -21,7 +21,6 @@ namespace System.Windows.Threading
     {
         static Dispatcher()
         {
-            _msgProcessQueue = UnsafeNativeMethods.RegisterWindowMessage("DispatcherProcessQueue");
             _globalLock = new object();
             _dispatchers = new List<WeakReference>();
             _possibleDispatcher = new WeakReference(null);
@@ -1732,12 +1731,10 @@ namespace System.Windows.Threading
 
             _defaultDispatcherSynchronizationContext = new DispatcherSynchronizationContext(this);
 
-            // Create the message-only window we use to receive messages
-            // that tell us to process the queue.
-            _window = new MessageOnlyHwndWrapper();
-
-            _hook = new HwndWrapperHook(WndProcHook);
-            _window.AddHook(_hook);
+            // The cross-platform run loop that replaces the Win32 message-only window: the
+            // dispatcher thread blocks in it and RequestProcessing/timers wake it. See
+            // DispatcherRunLoop for why this is a single managed implementation on every platform.
+            _runLoop = new DispatcherRunLoop();
 
             // Verify that the accessibility switches are set prior to any major UI code running.
             AccessibilitySwitches.VerifySwitches(this);
@@ -1836,18 +1833,17 @@ namespace System.Windows.Threading
                 ShutdownFinished(this, EventArgs.Empty);
             }
 
-            // Destroy the message-only window we use to process Win32 messages
+            // Stop the run loop and release any thread blocked pumping frames.
             //
             // Note: we need to do this BEFORE we actually mark the dispatcher
-            // as shutdown.  This is because the window will need the dispatcher
-            // to execute the window proc.
-            MessageOnlyHwndWrapper window = null;
+            // as shutdown, mirroring the original ordering for the message-only window.
+            DispatcherRunLoop runLoop = null;
             lock(_instanceLock)
             {
-                window = _window;
-                _window = null;
+                runLoop = _runLoop;
+                _runLoop = null;
             }
-            window.Dispose();
+            runLoop?.Shutdown();
 
             // Mark this dispatcher as shut down.  Attempts to BeginInvoke
             // or Invoke will result in an exception.
@@ -2047,7 +2043,6 @@ namespace System.Windows.Threading
         {
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
-            MSG msg = new MSG();
 
             _frameDepth++;
             try
@@ -2061,10 +2056,24 @@ namespace System.Windows.Threading
                 {
                     while(frame.Continue)
                     {
-                        if (!GetMessage(ref msg, IntPtr.Zero, 0, 0))
+                        if (!WaitForWork())
                             break;
 
-                        TranslateAndDispatchMessage(ref msg);
+                        if(_disableProcessingCount > 0)
+                        {
+                            throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+                        }
+
+                        // A run-loop wake either delivers queued operations or a fired timer
+                        // (or both). Promote any due timers first, then service the queue.
+                        if(_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                        {
+                            PromoteTimers(Environment.TickCount);
+                        }
+
+                        ProcessQueue();
+
+                        RaiseIdleIfQuiescent();
                     }
 
                     // If this was the last frame to exit after a quit, we
@@ -2094,160 +2103,36 @@ namespace System.Windows.Threading
             }
         }
 
-
-        private bool GetMessage(ref MSG msg, IntPtr hwnd, int minMessage, int maxMessage)
+        // Block the dispatcher thread until there is work to do or the next DispatcherTimer is due.
+        // Returns false once the run loop has been shut down, which unwinds the frame.
+        private bool WaitForWork()
         {
-            // If Any TextServices for Cicero is not installed GetMessagePump() returns null.
-            // If TextServices are there, we can get ITfMessagePump and have to use it instead of
-            // Win32 GetMessage().
-            bool result;
-            UnsafeNativeMethods.ITfMessagePump messagePump = GetMessagePump();
-            try
+            DispatcherRunLoop runLoop = _runLoop;
+            if (runLoop is null)
             {
-                if (messagePump == null)
-                {
-                    // We have foreground items to process.
-                    // By posting a message, Win32 will service us fairly promptly.
-                    result = UnsafeNativeMethods.GetMessageW(ref msg,
-                                                             new HandleRef(this, hwnd),
-                                                             minMessage,
-                                                             maxMessage);
-                }
-                else
-                {
-                    int intResult;
-
-                    messagePump.GetMessageW(
-                        ref msg,
-                        hwnd,
-                        minMessage,
-                        maxMessage,
-                        out intResult);
-
-                    if (intResult == -1)
-                    {
-                        throw new Win32Exception();
-                    }
-                    else if (intResult == 0)
-                    {
-                        result = false;
-                    }
-                    else
-                    {
-                        result = true;
-                    }
-                }
-            }
-            finally
-            {
-                if (messagePump != null) Marshal.ReleaseComObject(messagePump);
+                return false;
             }
 
-            return result;
-        }
-
-        //  Get ITfMessagePump interface from Cicero.
-        private UnsafeNativeMethods.ITfMessagePump GetMessagePump()
-        {
-            UnsafeNativeMethods.ITfMessagePump messagePump = null;
-
-            if (_isTSFMessagePumpEnabled)
+            // Compute how long to sleep: until the next DispatcherTimer fires, else indefinitely.
+            int timeout = Timeout.Infinite;
+            lock(_instanceLock)
             {
-                // If the current thread is not STA, Cicero just does not work.
-                // Probably this Dispatcher is running for worker thread.
-                if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+                if (_dueTimeFound)
                 {
-                    // If there is no text services, we don't have to use ITfMessagePump.
-                    if (TextServicesLoader.ServicesInstalled)
-                    {
-                        UnsafeNativeMethods.ITfThreadMgr threadManager;
-                        threadManager = TextServicesLoader.Load();
-
-                        // ThreadManager does not exist. No MessagePump yet.
-                        if (threadManager != null)
-                        {
-                            // QI ITfMessagePump.
-                            messagePump = threadManager as UnsafeNativeMethods.ITfMessagePump;
-                        }
-                    }
+                    int delta = _dueTimeInTicks - Environment.TickCount;
+                    timeout = delta < 0 ? 0 : delta;
                 }
             }
 
-            return messagePump;
+            return runLoop.Wait(timeout);
         }
 
-        /// <summary>
-        /// Enables/disables ITfMessagePump handshake with Text Services Framework.
-        /// </summary>
-        /// <remarks>
-        /// PresentationCore's TextServicesManager sets this property false when
-        /// no WPF element has focus.  This is important to ensure that native
-        /// controls receive unfiltered input.
-        /// </remarks>
-        internal bool IsTSFMessagePumpEnabled
+        // When the queue has quiesced (nothing foreground/background pending) the dispatcher is
+        // idle - raise the same hooks the Win32 WndProc used to raise before returning to the OS.
+        private void RaiseIdleIfQuiescent()
         {
-            set
-            {
-                _isTSFMessagePumpEnabled = value;
-            }
-        }
-
-        private void TranslateAndDispatchMessage(ref MSG msg)
-        {
-            bool handled = false;
-
-            handled = ComponentDispatcher.RaiseThreadMessage(ref msg);
-
-            if(!handled)
-            {
-                UnsafeNativeMethods.TranslateMessage(ref msg);
-                UnsafeNativeMethods.DispatchMessage(ref msg);
-            }
-        }
-
-        private IntPtr WndProcHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-        {
-            WindowMessage message = (WindowMessage)msg;
-            if(_disableProcessingCount > 0)
-            {
-                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
-            }
-
-            if(message == WindowMessage.WM_DESTROY)
-            {
-                if(!_hasShutdownStarted && !_hasShutdownFinished) // Dispatcher thread - no lock needed for read
-                {
-                    // Aack!  We are being torn down rudely!  Try to
-                    // shut the dispatcher down as nicely as we can.
-                    ShutdownImpl();
-                }
-            }
-            else if(message == _msgProcessQueue)
-            {
-                ProcessQueue();
-            }
-            else if(message == WindowMessage.WM_TIMER && (int) wParam == TIMERID_BACKGROUND)
-            {
-                // This timer is just used to process background operations.
-                // Stop the timer so that it doesn't fire again.
-                SafeNativeMethods.KillTimer(new HandleRef(this, hwnd), TIMERID_BACKGROUND);
-
-                ProcessQueue();
-            }
-            else if(message == WindowMessage.WM_TIMER && (int) wParam == TIMERID_TIMERS)
-            {
-                // We want 1-shot only timers.  So stop the timer
-                // that just fired.
-                KillWin32Timer();
-
-                PromoteTimers(Environment.TickCount);
-            }
-
-            // We are about to return to the OS.  If there is nothing left
-            // to do in the queue, then we will effectively go to sleep.
-            // This is the condition that means Idle.
             DispatcherHooks hooks = null;
-            bool idle = false;
+            bool idle;
 
             lock(_instanceLock)
             {
@@ -2264,54 +2149,29 @@ namespace System.Windows.Threading
 
                 ComponentDispatcher.RaiseIdle();
             }
-
-            return IntPtr.Zero ;
         }
 
+        /// <summary>
+        /// Enables/disables ITfMessagePump handshake with Text Services Framework.
+        /// </summary>
+        /// <remarks>
+        /// PresentationCore's TextServicesManager sets this property false when
+        /// no WPF element has focus.  Retained for API compatibility; the cross-platform
+        /// run loop does not host the Win32/Cicero ITfMessagePump.
+        /// </remarks>
+        internal bool IsTSFMessagePumpEnabled
+        {
+            set
+            {
+                _isTSFMessagePumpEnabled = value;
+            }
+        }
+
+        // The cross-platform run loop has no separate OS input queue to defer background work to;
+        // operation ordering is handled entirely by the dispatcher's priority queue.
         private bool IsInputPending()
         {
-            int retVal = 0;
-
-            // We need to know if there is any pending input in the Win32
-            // queue because we want to only process Avalon "background"
-            // items after Win32 input has been processed.
-            //
-            // Win32 provides the GetQueueStatus API -- but it has a major
-            // drawback: it only counts "new" input.  This means that
-            // sometimes it could return false, even if there really is input
-            // that needs to be processed.  This results in very hard to
-            // find bugs.
-            //
-            // Luckily, Win32 also provides the MsgWaitForMultipleObjectsEx
-            // API.  While more awkward to use, this API can return queue
-            // status information even if the input is "old".  The various
-            // flags we use are:
-            //
-            // QS_INPUT
-            // This represents any pending input - such as mouse moves, or
-            // key presses.  It also includes the new GenericInput messages.
-            //
-            // QS_EVENT
-            // This is actually a private flag that represents the various
-            // events that can be queued in Win32.  Some of these events
-            // can cause input, but Win32 doesn't include them in the
-            // QS_INPUT flag.  An example is WM_MOUSELEAVE.
-            //
-            // QS_POSTMESSAGE
-            // If there is already a message in the queue, we need to process
-            // it before we can process input.
-            //
-            // MWMO_INPUTAVAILABLE
-            // This flag indicates that any input (new or old) is to be
-            // reported.
-            //
-            retVal = UnsafeNativeMethods.MsgWaitForMultipleObjectsEx(0, null, 0,
-                                                                     NativeMethods.QS_INPUT |
-                                                                     NativeMethods.QS_EVENT |
-                                                                     NativeMethods.QS_POSTMESSAGE,
-                                                                     NativeMethods.MWMO_INPUTAVAILABLE);
-
-            return retVal == 0;
+            return false;
         }
 
 
@@ -2325,9 +2185,9 @@ namespace System.Windows.Threading
             bool succeeded = true;
 
             // This method is called from within the instance lock.  So we
-            // can reliably check the _window field without worrying about
+            // can reliably check the _runLoop field without worrying about
             // it being changed out from underneath us during shutdown.
-            if (IsWindowNull())
+            if (IsRunLoopNull())
                 return false;
 
             DispatcherPriority priority = _queue.MaxPriority;
@@ -2336,24 +2196,11 @@ namespace System.Windows.Threading
                 priority != DispatcherPriority.Inactive)
             {
                 // If forcing the processing request, we will discard any
-                // existing request (timer or message) and request again.
+                // existing request and request again. With the managed run loop a
+                // pending wake simply collapses into the next Signal(), so there is
+                // nothing to unschedule - we just reset the posted state.
                 if (force)
                 {
-                    if (_postedProcessingType == PROCESS_BACKGROUND)
-                    {
-                        SafeNativeMethods.KillTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND);
-                    }
-                    else if (_postedProcessingType == PROCESS_FOREGROUND)
-                    {
-                        // Preserve the thread's current "extra message info"
-                        // (PeekMessage overwrites it).
-                        IntPtr extraInformation = UnsafeNativeMethods.GetMessageExtraInfo();
-
-                        MSG msg = new MSG();
-                        UnsafeNativeMethods.PeekMessage(ref msg, new HandleRef(this, _window.Handle), _msgProcessQueue, _msgProcessQueue, NativeMethods.PM_REMOVE);
-
-                        UnsafeNativeMethods.SetMessageExtraInfo(extraInformation);
-                    }
                     _postedProcessingType = PROCESS_NONE;
                 }
 
@@ -2370,30 +2217,16 @@ namespace System.Windows.Threading
             return succeeded;
         }
 
-        private bool IsWindowNull() => _window is null;
+        private bool IsRunLoopNull() => _runLoop is null;
 
         private bool RequestForegroundProcessing()
         {
             if(_postedProcessingType < PROCESS_FOREGROUND)
             {
-                // If we have already set a timer to do background processing,
-                // make sure we stop it before posting a message for foreground
-                // processing.
-                if(_postedProcessingType == PROCESS_BACKGROUND)
-                {
-                    SafeNativeMethods.KillTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND);
-                }
-
                 _postedProcessingType = PROCESS_FOREGROUND;
 
-                // We have foreground items to process.
-                // By posting a message, Win32 will service us fairly promptly.
-                bool succeeded = UnsafeNativeMethods.TryPostMessage(new HandleRef(this, _window.Handle), _msgProcessQueue, IntPtr.Zero, IntPtr.Zero);
-                if (!succeeded)
-                {
-                    OnRequestProcessingFailure("TryPostMessage");
-                }
-                return succeeded;
+                // Wake the run loop so it services the queue promptly.
+                _runLoop?.Signal();
             }
 
             return true;
@@ -2401,30 +2234,15 @@ namespace System.Windows.Threading
 
         private bool RequestBackgroundProcessing()
         {
-            bool succeeded = true;
-
             if(_postedProcessingType < PROCESS_BACKGROUND)
             {
-                // If there is Win32 input pending, we can't do any background
-                // processing until it is done.  We use a short timer to
-                // get processing time after the input.
-                if(IsInputPending())
-                {
-                    _postedProcessingType = PROCESS_BACKGROUND;
-
-                    succeeded = SafeNativeMethods.TrySetTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND, DELTA_BACKGROUND);
-                    if (!succeeded)
-                    {
-                        OnRequestProcessingFailure("TrySetTimer");
-                    }
-                }
-                else
-                {
-                    succeeded = RequestForegroundProcessing();
-                }
+                // The managed run loop has no separate OS input queue to defer to
+                // (IsInputPending is always false), so background work is serviced the
+                // same way as foreground - the priority queue preserves ordering.
+                return RequestForegroundProcessing();
             }
 
-            return succeeded;
+            return true;
         }
 
         // Request{Foreground|Background}Processing can encounter failures from an
@@ -2638,37 +2456,20 @@ namespace System.Windows.Threading
 
         private void SetWin32Timer(int dueTimeInTicks)
         {
-            if(!IsWindowNull())
+            if(!IsRunLoopNull())
             {
-                int delta = dueTimeInTicks - Environment.TickCount;
-                if(delta < 1)
-                {
-                    delta = 1;
-                }
-
-                // We are being called on the dispatcher thread so we can rely on
-                // _window.Value being non-null without taking the instance lock.
-
-                SafeNativeMethods.SetTimer(
-                    new HandleRef(this, _window.Handle),
-                    TIMERID_TIMERS,
-                    delta);
-
+                // The managed run loop derives its sleep timeout directly from _dueTimeInTicks
+                // (see WaitForWork). Recording that a timer is armed and waking the loop is enough
+                // for it to recompute the deadline - no OS timer object is needed.
                 _isWin32TimerSet = true;
+                _runLoop?.Signal();
             }
         }
 
         private void KillWin32Timer()
         {
-            if(!IsWindowNull())
+            if(!IsRunLoopNull())
             {
-                // We are being called on the dispatcher thread so we can rely on
-                // _window.Value being non-null without taking the instance lock.
-
-                SafeNativeMethods.KillTimer(
-                    new HandleRef(this, _window.Handle),
-                    TIMERID_TIMERS);
-
                 _isWin32TimerSet = false;
             }
         }
@@ -2795,10 +2596,6 @@ namespace System.Windows.Threading
         private const int PROCESS_BACKGROUND = 1;
         private const int PROCESS_FOREGROUND = 2;
 
-        private const int TIMERID_BACKGROUND = 1;
-        private const int TIMERID_TIMERS = 2;
-        private const int DELTA_BACKGROUND = 1;
-
         private static List<WeakReference> _dispatchers;
         private static WeakReference _possibleDispatcher;
         private static readonly object _globalLock;
@@ -2820,12 +2617,10 @@ namespace System.Windows.Threading
         private static PriorityRange _backgroundPriorityRange = new PriorityRange(DispatcherPriority.Background, true, DispatcherPriority.Input, true);
         private static PriorityRange _idlePriorityRange = new PriorityRange(DispatcherPriority.SystemIdle, true, DispatcherPriority.ContextIdle, true);
 
-        private MessageOnlyHwndWrapper _window;
-
-        private HwndWrapperHook _hook;
+        // Cross-platform replacement for the Win32 message-only window that used to wake the pump.
+        private DispatcherRunLoop _runLoop;
 
         private int _postedProcessingType;
-        private static WindowMessage _msgProcessQueue;
 
         private static ExceptionWrapper _exceptionWrapper;
         private static readonly object ExceptionDataKey = new object();

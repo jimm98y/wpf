@@ -295,6 +295,7 @@
     <Compile Include="System\Windows\Threading\DispatcherProcessingDisabled.cs" />
     <Compile Include="System\Windows\Threading\DispatcherObject.cs" />
     <Compile Include="System\Windows\Threading\DispatcherFrame.cs" />
+    <Compile Include="System\Windows\Threading\DispatcherRunLoop.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperation.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperationStatus.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperationTaskMapping.cs" />
