@@ -225,7 +225,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private void PresentLayered(SceneVisual root, MilTarget t)
         {
             byte[] rgba = _renderer!.RenderToRgba(root, t.Width, t.Height, new RgbaColor(0, 0, 0, 0), srgbOutput: true);
-            LayeredWindow.Update((IntPtr)t.Hwnd, rgba, t.Width, t.Height);
+            Platform.NativePlatform.TryPresentLayered((IntPtr)t.Hwnd, rgba, t.Width, t.Height);
             PresentedFrames++;
             if (t.Width > 4 && t.Height > 4 && CountDrawables(root) > 0) _layeredFrames++;
             if (!_loggedLayered && _layeredFrames == 25)
@@ -377,7 +377,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             if (!_surfaces.TryGetValue(targetHandle, out TargetSurface? ts))
             {
-                IntPtr surface = CreateHwndSurface((IntPtr)t.Hwnd);
+                IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
                 WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter);
                 ts = new TargetSurface { Surface = surface, Format = format, Width = t.Width, Height = t.Height };
                 _surfaces[targetHandle] = ts;
@@ -390,18 +390,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Configure(ts);
             }
             return ts;
-        }
-
-        private IntPtr CreateHwndSurface(IntPtr hwnd)
-        {
-            var hwndSource = new WGPUSurfaceSourceWindowsHWND
-            {
-                chain = new WGPUChainedStruct { next = null, sType = WGPUSType_SurfaceSourceWindowsHWND },
-                hinstance = (void*)GetModuleHandleW(null),
-                hwnd = (void*)hwnd,
-            };
-            var desc = new WGPUSurfaceDescriptor { nextInChain = (WGPUChainedStruct*)&hwndSource };
-            return wgpuInstanceCreateSurface(_ctx!.Instance, &desc);
         }
 
         private static WGPUTextureFormat ChooseFormat(IntPtr surface, IntPtr adapter)
@@ -461,8 +449,5 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public int Width;
             public int Height;
         }
-
-        [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", CharSet = CharSet.Unicode)]
-        private static extern IntPtr GetModuleHandleW(string? lpModuleName);
     }
 }

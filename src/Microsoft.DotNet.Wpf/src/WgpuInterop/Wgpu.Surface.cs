@@ -74,6 +74,21 @@ namespace Microsoft.Wpf.Interop.WebGpu
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUSurfaceSourceMetalLayer
+        {
+            public WGPUChainedStruct chain; // chain.sType = WGPUSType_SurfaceSourceMetalLayer
+            public void* layer;             // a CAMetalLayer*
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUSurfaceSourceXlibWindow
+        {
+            public WGPUChainedStruct chain; // chain.sType = WGPUSType_SurfaceSourceXlibWindow
+            public void* display;           // a Display*
+            public ulong window;            // an X11 Window (XID)
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUSurfaceConfiguration
         {
             public WGPUChainedStruct* nextInChain;

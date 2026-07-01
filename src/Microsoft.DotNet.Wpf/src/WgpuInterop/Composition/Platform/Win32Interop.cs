@@ -2,24 +2,42 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// Presents a premultiplied-alpha frame to a WS_EX_LAYERED, per-pixel-alpha window via
-// UpdateLayeredWindow. WPF hosts every Popup (ComboBox/Menu/ToolTip/ContextMenu drop-downs)
-// in such a window, and the DWM composites those from a bitmap rather than from normal
-// painting/swap-chain presentation -- so the WebGPU backend renders the popup's visual tree
-// off-screen (transparent clear -> premultiplied BGRA) and hands the bitmap to the OS here.
+// Windows backend for NativePlatform: the ONLY file in the engine that calls
+// kernel32/user32/gdi32. It creates a wgpu surface from an HWND (the milcore
+// HWND/DXGI swap-chain analog) and presents Popups (ComboBox/Menu/ToolTip) to
+// their WS_EX_LAYERED per-pixel-alpha windows via UpdateLayeredWindow. All Win32
+// P/Invoke that used to be scattered across WpfCompositionSink + LayeredWindow
+// now lives here.
 //
 
 using System;
 using System.Runtime.InteropServices;
 
-namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
+namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 {
-    internal static unsafe class LayeredWindow
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    internal static unsafe class Win32Interop
     {
-        /// <summary>Push a premultiplied RGBA frame (top-down) to a layered window.</summary>
-        public static void Update(IntPtr hwnd, byte[] rgbaPremul, int width, int height)
+        // ---- wgpu surface from an HWND ----------------------------------------------
+
+        public static IntPtr CreateSurface(IntPtr instance, IntPtr hwnd)
         {
-            if (width <= 0 || height <= 0 || rgbaPremul.Length < width * height * 4) return;
+            var hwndSource = new Wgpu.WGPUSurfaceSourceWindowsHWND
+            {
+                chain = new Wgpu.WGPUChainedStruct { next = null, sType = Wgpu.WGPUSType_SurfaceSourceWindowsHWND },
+                hinstance = (void*)GetModuleHandleW(null),
+                hwnd = (void*)hwnd,
+            };
+            var desc = new Wgpu.WGPUSurfaceDescriptor { nextInChain = (Wgpu.WGPUChainedStruct*)&hwndSource };
+            return Wgpu.wgpuInstanceCreateSurface(instance, &desc);
+        }
+
+        // ---- layered-window (popup) present -----------------------------------------
+
+        /// <summary>Push a premultiplied top-down RGBA frame to a layered window. Always true.</summary>
+        public static bool PresentLayered(IntPtr hwnd, byte[] rgbaPremul, int width, int height)
+        {
+            if (width <= 0 || height <= 0 || rgbaPremul.Length < width * height * 4) return false;
 
             IntPtr screenDc = GetDC(IntPtr.Zero);
             IntPtr memDc = CreateCompatibleDC(screenDc);
@@ -34,9 +52,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 biCompression = 0,         // BI_RGB
             };
 
-            IntPtr bits;
-            IntPtr dib = CreateDIBSection(memDc, ref bmi, 0, out bits, IntPtr.Zero, 0);
-            if (dib == IntPtr.Zero) { CleanUp(screenDc, memDc, IntPtr.Zero, IntPtr.Zero); return; }
+            IntPtr dib = CreateDIBSection(memDc, ref bmi, 0, out IntPtr bits, IntPtr.Zero, 0);
+            if (dib == IntPtr.Zero) { CleanUp(screenDc, memDc, IntPtr.Zero, IntPtr.Zero); return false; }
 
             // RGBA (GPU readback) -> BGRA (what GDI/UpdateLayeredWindow expects), both premultiplied.
             byte* dst = (byte*)bits;
@@ -62,6 +79,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             UpdateLayeredWindow(hwnd, screenDc, IntPtr.Zero, ref size, memDc, ref src, 0, ref blend, ULW_ALPHA);
 
             CleanUp(screenDc, memDc, dib, oldBmp);
+            return true;
         }
 
         private static void CleanUp(IntPtr screenDc, IntPtr memDc, IntPtr dib, IntPtr oldBmp)
@@ -71,6 +89,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (memDc != IntPtr.Zero) DeleteDC(memDc);
             if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc);
         }
+
+        // ---- native declarations ----------------------------------------------------
 
         private const byte AC_SRC_OVER = 0x00;
         private const byte AC_SRC_ALPHA = 0x01;
@@ -97,6 +117,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public uint biClrImportant;
             public uint bmiColors;   // padding for the (unused) palette entry
         }
+
+        [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", CharSet = CharSet.Unicode)]
+        private static extern IntPtr GetModuleHandleW(string? lpModuleName);
 
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
