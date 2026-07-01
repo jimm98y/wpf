@@ -936,12 +936,57 @@ namespace System.Windows.Media.Imaging
                 // We may end up loading in the bitmap bits so it's necessary to take the sync lock here.
                 lock (_syncObject)
                 {
-                    channel.SendCommandBitmapSource(
-                        _duceResource.GetHandle(channel),
-                        DUCECompatiblePtr
-                        );
+                    if (DUCE.ManagedComposition.IsEnabled)
+                    {
+                        // Cross-platform backend: copy pixels with WPF's managed imaging
+                        // stack and send bytes -- no native IWICBitmapSource COM pointer
+                        // crosses into the backend.
+                        byte[] pixels = CopyPixelsForManagedComposition(out int width, out int height, out int stride);
+                        if (pixels != null)
+                        {
+                            channel.SendCommandBitmapData(
+                                _duceResource.GetHandle(channel),
+                                width, height, stride, pixels);
+                        }
+                    }
+                    else
+                    {
+                        channel.SendCommandBitmapSource(
+                            _duceResource.GetHandle(channel),
+                            DUCECompatiblePtr
+                            );
+                    }
                 }
             }
+        }
+
+        /// <summary>
+        /// Copy this bitmap's pixels into a straight (non-premultiplied) BGRA32 buffer for
+        /// the managed composition backend. Uses only WPF's managed imaging APIs, so the
+        /// cross-platform backend never dereferences a native bitmap pointer. Returns null
+        /// if the bitmap has no pixels.
+        /// </summary>
+        private byte[] CopyPixelsForManagedComposition(out int width, out int height, out int stride)
+        {
+            width = 0; height = 0; stride = 0;
+
+            // Normalize any source format (indexed, gray, premultiplied, 24bpp, ...) to a
+            // single straight BGRA32 layout the backend understands.
+            BitmapSource source = (Format == PixelFormats.Bgra32) ? this : new FormatConvertedBitmap(this, PixelFormats.Bgra32, null, 0);
+
+            int w = source.PixelWidth;
+            int h = source.PixelHeight;
+            if (w <= 0 || h <= 0)
+            {
+                return null;
+            }
+
+            int rowBytes = checked(w * 4);
+            byte[] pixels = new byte[checked(rowBytes * h)];
+            source.CopyPixels(pixels, rowBytes, 0);
+
+            width = w; height = h; stride = rowBytes;
+            return pixels;
         }
 
         /// <summary>

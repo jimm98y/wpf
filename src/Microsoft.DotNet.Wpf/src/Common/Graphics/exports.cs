@@ -109,11 +109,12 @@ namespace System.Windows.Media.Composition
         void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch);
 
         /// <summary>
-        /// SendCommandBitmapSource analog: an image-source resource whose pixels live in a
-        /// native IWICBitmapSource (<paramref name="bitmapSource"/>). The sink reads the
-        /// pixels synchronously (the pointer is only valid for the duration of the call).
+        /// SendCommandBitmapSource analog: an image-source resource whose pixels are
+        /// marshalled on the managed side (no COM/WIC pointer crosses the boundary).
+        /// <paramref name="pixels"/> is straight (non-premultiplied) BGRA32, top-down,
+        /// <paramref name="stride"/> bytes per row.
         /// </summary>
-        void SendBitmap(int channelId, uint handle, IntPtr bitmapSource);
+        void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels);
 
         /// <summary>BeginCommand analog: opens a variable-length command (header bytes).</summary>
         void BeginCommand(int channelId, byte[] data, int extraSize);
@@ -289,8 +290,8 @@ namespace System.Windows.Media.Composition
             public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch) =>
                 _sendCommand.Invoke(_impl, new object[] { channelId, data, sendInSeparateBatch });
 
-            public void SendBitmap(int channelId, uint handle, IntPtr bitmapSource) =>
-                _sendBitmap.Invoke(_impl, new object[] { channelId, handle, bitmapSource });
+            public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels) =>
+                _sendBitmap.Invoke(_impl, new object[] { channelId, handle, width, height, stride, pixels });
 
             public void BeginCommand(int channelId, byte[] data, int extraSize) =>
                 _beginCommand.Invoke(_impl, new object[] { channelId, data, extraSize });
@@ -1108,20 +1109,32 @@ namespace System.Windows.Media.Composition
             {
                 Invariant.Assert(pBitmapSource != null && !pBitmapSource.IsInvalid);
 
-                if (_sink != null)
-                {
-                    // Hand the native IWICBitmapSource pointer to the managed backend, which
-                    // reads its pixels synchronously.
-                    _sink.SendBitmap(_managedId, (uint)imageHandle, pBitmapSource.DangerousGetHandle());
-                    return;
-                }
-
+                // The managed composition backend never takes the native pointer path: the
+                // caller routes bitmaps through SendCommandBitmapData (managed pixels) when
+                // DUCE.ManagedComposition.IsEnabled, so here we only marshal to milcore.
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
                 HRESULT.Check(UnsafeNativeMethods.MilResource_SendCommandBitmapSource(
                     imageHandle,
                     pBitmapSource,
                     _hChannel));
+            }
+
+            /// <summary>
+            /// Managed-pixels variant of <see cref="SendCommandBitmapSource"/>: the caller
+            /// has already copied the bitmap to a straight BGRA32 byte buffer using WPF's
+            /// managed imaging stack, so no COM/WIC pointer crosses into the backend. Only
+            /// valid when the managed composition sink is active.
+            /// </summary>
+            internal void SendCommandBitmapData(
+                DUCE.ResourceHandle imageHandle,
+                int width,
+                int height,
+                int stride,
+                byte[] pixels)
+            {
+                Invariant.Assert(_sink != null);
+                _sink.SendBitmap(_managedId, (uint)imageHandle, width, height, stride, pixels);
             }
 
             /// <summary>

@@ -3,10 +3,12 @@
 
 //
 // Image decode test: WPF DrawImage / ImageBrush reference a bitmap whose pixels arrive
-// out-of-band (SendCommandBitmapSource -> the host reads the native IWICBitmapSource).
-// Here we inject a 2x2 RGBA checker via SetBitmap and assert that (a) a DrawImage record
-// stretches it across its rectangle and (b) an ImageBrush fill maps it across a shape's
-// bounds -- each quadrant of the checker landing where expected.
+// out-of-band. PresentationCore copies them with its managed imaging stack (no COM) and
+// hands the sink straight BGRA32 bytes via IMilCompositionSink.SendBitmap. Here we inject
+// a 2x2 RGBA checker via SetBitmap and assert that (a) a DrawImage record stretches it
+// across its rectangle and (b) an ImageBrush fill maps it across a shape's bounds -- each
+// quadrant landing where expected. We additionally drive the real SendBitmap byte path
+// through WpfCompositionSink (BGRA32 -> RGBA, no COM) and verify the same quadrants.
 //
 
 using System;
@@ -100,9 +102,46 @@ internal static class Program
         ok &= Check(img, 60, 64, 0, 255, 0, "Viewbox: cropped source top = green");
         ok &= Check(img, 60, 76, 255, 255, 0, "Viewbox: cropped source bottom = yellow");
 
+        ok &= SinkBitmapPathOk();
+
         if (!ok) return 1;
         Console.WriteLine("PASS: DrawImage + ImageBrush decode and render a bitmap");
         return 0;
+    }
+
+    // Drive the REAL ingestion path: WpfCompositionSink.SendBitmap receives straight BGRA32
+    // bytes (as PresentationCore now marshals them with no COM) and must convert to RGBA.
+    // Feed a 2x2 BGRA checker, DrawImage it, and verify the quadrants come out correct.
+    private static bool SinkBitmapPathOk()
+    {
+        // Same checker as above but in straight BGRA32: red, green, blue, yellow.
+        byte[] bgra =
+        {
+            0, 0, 255, 255,   0, 255, 0, 255,
+            255, 0, 0, 255,   0, 255, 255, 255,
+        };
+
+        using var sink = new WpfCompositionSink();
+        sink.SendBitmap(0, HImg, 2, 2, 8, bgra);
+
+        MilcoreEngine engine = sink.Engine;
+        engine.CreateOrAddRef(HRoot, MilResourceTypeId.Visual);
+        engine.CreateOrAddRef(HContent, MilResourceTypeId.RenderData);
+        byte[] content = DrawImageRecord(4, 4, 32, 32, HImg);
+        engine.BeginCommand(RenderDataHeader(HContent, content.Length));
+        engine.AppendCommandData(content);
+        engine.EndCommand();
+        engine.SubmitCommand(VisualSetContent(HRoot, HContent));
+        engine.Realize();
+
+        byte[] img = sink.Renderer.RenderToRgba(engine.VisualByHandle(HRoot)!, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
+
+        bool ok = true;
+        ok &= Check(img, 8, 8, 255, 0, 0, "Sink BGRA path top-left = red");
+        ok &= Check(img, 32, 8, 0, 255, 0, "Sink BGRA path top-right = green");
+        ok &= Check(img, 8, 32, 0, 0, 255, "Sink BGRA path bottom-left = blue");
+        ok &= Check(img, 32, 32, 255, 255, 0, "Sink BGRA path bottom-right = yellow");
+        return ok;
     }
 
     // ---- builders ----------------------------------------------------------------

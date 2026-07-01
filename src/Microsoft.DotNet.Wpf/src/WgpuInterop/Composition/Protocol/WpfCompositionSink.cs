@@ -54,12 +54,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         public WpfCompositionSink()
         {
-            // Resolve WPF glyph runs' native IDWriteFont pointers to real fonts so text renders
-            // (via DirectWrite -> local font file -> TrueTypeFont). Set WPF_WEBGPU_TEXT=0 to disable.
+            // Resolve WPF glyph runs to real fonts so text renders. The run carries a
+            // managed font descriptor (file path + face index + style simulations from
+            // GlyphTypeface), so this is fully cross-platform -- no COM / DirectWrite.
+            // Set WPF_WEBGPU_TEXT=0 to disable text.
             if (Environment.GetEnvironmentVariable("WPF_WEBGPU_TEXT") != "0")
             {
-                var fonts = new Text.DWriteFontResolver();
-                _engine.FontResolver = fonts.Resolve;
+                var fonts = new Text.ManagedFontResolver();
+                _engine.ManagedFontResolver = fonts.Resolve;
             }
             Log($"WpfCompositionSink created (pid {Environment.ProcessId})");
         }
@@ -110,17 +112,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch)
             => _engine.SubmitCommand(data);
 
-        public void SendBitmap(int channelId, uint handle, IntPtr bitmapSource)
+        // Receive an image-source's pixels as straight BGRA32 (top-down, stride bytes/row),
+        // marshalled on the managed PresentationCore side -- no COM. Convert to the engine's
+        // straight RGBA and register it for image brushes / DrawImage.
+        public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels)
         {
-            if (BitmapReader.TryRead(bitmapSource, out byte[] rgba, out int w, out int h))
-            {
-                _engine.SetBitmap(handle, rgba, w, h);
-                Log($"bitmap 0x{handle:x}: {w}x{h}");
-            }
-            else
+            if (width <= 0 || height <= 0 || pixels == null || stride < width * 4 ||
+                (long)stride * height > pixels.Length)
             {
                 Log($"bitmap 0x{handle:x}: unsupported/failed");
+                return;
             }
+
+            var rgba = new byte[width * height * 4];
+            for (int y = 0; y < height; y++)
+            {
+                int s = y * stride, d = y * width * 4;
+                for (int x = 0; x < width; x++)
+                {
+                    int si = s + x * 4, di = d + x * 4;
+                    rgba[di]     = pixels[si + 2];   // R <- B-G-R-A source
+                    rgba[di + 1] = pixels[si + 1];   // G
+                    rgba[di + 2] = pixels[si];       // B
+                    rgba[di + 3] = pixels[si + 3];   // A (straight)
+                }
+            }
+            _engine.SetBitmap(handle, rgba, width, height);
+            Log($"bitmap 0x{handle:x}: {width}x{height}");
         }
 
         public void BeginCommand(int channelId, byte[] data, int extraSize)

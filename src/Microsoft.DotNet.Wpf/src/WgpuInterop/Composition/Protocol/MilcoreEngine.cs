@@ -165,6 +165,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, Geometry> _geometries = new();
         private readonly Dictionary<uint, MilGradient> _gradients = new();
         private readonly Dictionary<uint, MilGlyphRun> _glyphRuns = new();
+
+        // 'WFNT' (W,F,N,T as little-endian bytes) marks the managed font descriptor
+        // trailer appended to a glyph run when the managed WebGPU backend is active.
+        private const uint FontTrailerMagic = 0x544E4657;
         private readonly Dictionary<uint, Effect> _effects = new();
         private readonly Dictionary<uint, MilBitmap> _bitmaps = new();
         private readonly Dictionary<uint, MilImageBrush> _imageBrushes = new();
@@ -214,9 +218,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private uint _rootHandle;
 
         /// <summary>
-        /// Resolves a native IDWriteFont pointer (from a glyph run) to a font that can
-        /// produce glyph outlines. Injected by the host (DWrite-backed for a live WPF
-        /// process; a fixed font in tests). When null, text is skipped.
+        /// Resolves a managed font descriptor (file path + face index + style
+        /// simulations, carried by a glyph run) to a font that can produce glyph
+        /// outlines. This is the cross-platform, COM-free path used by a live WPF
+        /// process. When null or unresolved, the engine falls back to
+        /// <see cref="FontResolver"/>. When both miss, text is skipped.
+        /// </summary>
+        public Func<Text.FontDescriptor, Text.IGlyphOutlineFont?>? ManagedFontResolver;
+
+        /// <summary>
+        /// Legacy resolver keyed by the run's raw font pointer. Retained as a test
+        /// injection seam (tests supply a fixed font); the live path uses the
+        /// platform-neutral <see cref="ManagedFontResolver"/> instead.
         /// </summary>
         public Func<ulong, Text.IGlyphOutlineFont?>? FontResolver;
 
@@ -239,6 +252,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public ushort[] Indices = Array.Empty<ushort>();
             public float[] Advances = Array.Empty<float>();
             public float[]? Offsets;    // 2 per glyph (x,y), or null
+
+            // Managed font descriptor (cross-platform, COM-free). Present when the
+            // run carried the 'WFNT' trailer; null for legacy/test streams that
+            // only supply FontPtr.
+            public string? FontPath;
+            public int FaceIndex;
+            public int Simulations;     // WPF StyleSimulations: 1=Bold, 2=Italic
         }
 
         /// <summary>A decoded WPF gradient brush (linear or radial), pre-bounds-mapping.</summary>
@@ -456,6 +476,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // advances + optional float[2*count] offsets (76-byte struct).
                     uint handle = r.U32();
                     r.Position = 8; ulong fontPtr = r.U64();
+                    r.Position = 16; ushort glyphFlags = r.U16();
                     r.Position = 20; var origin = new Vector2(r.F32(), r.F32());
                     r.Position = 28; float emSize = r.F32();
                     r.Position = 32; var bounds = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
@@ -466,17 +487,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < count; i++) indices[i] = r.U16();
                     var advances = new float[count];
                     for (int i = 0; i < count; i++) advances[i] = r.F32();
-                    // Offsets are present iff the buffer carries the extra 8 bytes/glyph.
+                    // Offsets present iff MilGlyphRun.HasOffsets (0x10) is set. (A length
+                    // sniff is unreliable now that an optional font trailer can follow.)
                     float[]? offsets = null;
-                    if (command.Length - 76 >= count * 14)
+                    if ((glyphFlags & 0x10) != 0)
                     {
                         offsets = new float[2 * count];
                         for (int i = 0; i < 2 * count; i++) offsets[i] = r.F32();
                     }
+
+                    // Optional managed font descriptor trailer ('WFNT'): faceIndex(i32),
+                    // simulations(i32), pathLen(i32), UTF-8 path. Appended by WPF only
+                    // when the managed WebGPU backend is active (see GlyphRun.cs); lets
+                    // us resolve the font with no COM / DirectWrite.
+                    string? fontPath = null; int faceIndex = 0, simulations = 0;
+                    if (r.Remaining >= 16 && r.U32() == FontTrailerMagic)
+                    {
+                        faceIndex = (int)r.U32();
+                        simulations = (int)r.U32();
+                        int pathLen = (int)r.U32();
+                        if (pathLen > 0 && pathLen <= r.Remaining)
+                            fontPath = System.Text.Encoding.UTF8.GetString(r.Bytes(pathLen));
+                    }
+
                     _glyphRuns[handle] = new MilGlyphRun
                     {
                         FontPtr = fontPtr, Origin = origin, EmSize = emSize, Bounds = bounds,
                         Indices = indices, Advances = advances, Offsets = offsets,
+                        FontPath = fontPath, FaceIndex = faceIndex, Simulations = simulations,
                     };
                     break;
                 }
@@ -1342,7 +1380,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         private void EmitGlyphRun(List<DrawingPrimitive> output, MilGlyphRun run, uint hBrush, RenderState state)
         {
-            Text.IGlyphOutlineFont? font = FontResolver?.Invoke(run.FontPtr);
+            // Prefer the cross-platform managed descriptor (path/face/simulations);
+            // fall back to the legacy pointer-keyed resolver (used by tests).
+            Text.IGlyphOutlineFont? font = null;
+            if (run.FontPath != null && ManagedFontResolver != null)
+                font = ManagedFontResolver(new Text.FontDescriptor(run.FontPath, run.FaceIndex, run.Simulations));
+            font ??= FontResolver?.Invoke(run.FontPtr);
             if (font is null) { Note("text:fontnull"); return; }
             if (run.Indices.Length == 0) { Note("text:noglyphs"); return; }
 
