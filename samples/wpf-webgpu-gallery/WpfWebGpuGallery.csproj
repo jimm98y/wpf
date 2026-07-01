@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>WpfWebGpuGallery</AssemblyName>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!-- Deploy the WebGPU backend so PresentationCore's reflection loader can resolve it
+       (deployment only; PresentationCore takes no compile-time dependency). -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu">
+      <HintPath>C:\Git\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <None Include="C:\Git\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\native\win-arm64\lib\wgpu_native.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
