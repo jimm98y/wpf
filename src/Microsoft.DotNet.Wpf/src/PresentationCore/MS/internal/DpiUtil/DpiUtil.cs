@@ -60,6 +60,14 @@ namespace MS.Internal
         /// <remarks>See remarks for <see cref="GetProcessDpiAwareness(IntPtr)"/></remarks>
         internal static DpiAwarenessContextValue GetProcessDpiAwarenessContextValue(IntPtr hWnd)
         {
+            // Process DPI awareness is a Win32/user32 concept. Off-Windows report SystemAware,
+            // consistent with the fixed 96 DPI reported by FontCache.Util until a cross-platform
+            // windowing backend supplies the real per-monitor scale.
+            if (!OperatingSystem.IsWindows())
+            {
+                return DpiAwarenessContextValue.SystemAware;
+            }
+
             var dpiAwarenessContext = ProcessDpiAwarenessHelper.GetProcessDpiAwareness(hWnd);
             return (DpiAwarenessContextValue)DpiAwarenessContextHelper.GetProcessDpiAwarenessContext(dpiAwarenessContext);
         }

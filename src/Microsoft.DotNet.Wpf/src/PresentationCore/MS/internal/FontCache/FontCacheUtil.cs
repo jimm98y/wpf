@@ -299,9 +299,17 @@ namespace MS.Internal.FontCache
 
         static Util()
         {
-            string s = Environment.GetEnvironmentVariable(WinDir) + @"\Fonts\";
-
-            _windowsFontsLocalPath = s.ToUpperInvariant();
+            if (OperatingSystem.IsWindows())
+            {
+                string s = Environment.GetEnvironmentVariable(WinDir) + @"\Fonts\";
+                _windowsFontsLocalPath = s.ToUpperInvariant();
+            }
+            else
+            {
+                // No %windir%\Fonts off-Windows; use the OS system font directory so this is a valid
+                // absolute path/URI. Paths are case-sensitive here, so it is not upper-cased.
+                _windowsFontsLocalPath = OperatingSystem.IsMacOS() ? "/System/Library/Fonts/" : "/usr/share/fonts/";
+            }
 
             _windowsFontsUriObject = new Uri(_windowsFontsLocalPath, UriKind.Absolute);
 
@@ -346,6 +354,16 @@ namespace MS.Internal.FontCache
                     {
                         if (!_dpiInitialized)
                         {
+                            // GetDC/GetDeviceCaps are user32/gdi32 (Windows-only). Off-Windows use
+                            // the standard 96 DPI until a cross-platform windowing backend reports
+                            // the real display scale.
+                            if (!OperatingSystem.IsWindows())
+                            {
+                                _dpi = 96;
+                                _dpiInitialized = true;
+                                return _dpi;
+                            }
+
                             HandleRef desktopWnd = new HandleRef(null, IntPtr.Zero);
 
                             // Win32Exception will get the Win32 error code so we don't have to

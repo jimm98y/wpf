@@ -53,8 +53,19 @@ namespace MS.Internal.Automation
             return RawUiaLookupId( type, ref guid );
         }
 
+        // UI Automation (UIAutomationCore.dll, COM) is Windows-only. The reserved values are only
+        // used as identity sentinels, so off-Windows we hand out stable managed singletons instead
+        // of marshaling COM objects that don't exist here.
+        private static readonly object s_reservedNotSupportedValue = new object();
+        private static readonly object s_reservedMixedAttributeValue = new object();
+
         internal static object UiaGetReservedNotSupportedValue()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return s_reservedNotSupportedValue;
+            }
+
             object notSupportedValue;
             CheckError(RawUiaGetReservedNotSupportedValue(out notSupportedValue));
             return notSupportedValue;
@@ -62,6 +73,11 @@ namespace MS.Internal.Automation
 
         internal static object UiaGetReservedMixedAttributeValue()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return s_reservedMixedAttributeValue;
+            }
+
             object mixedAttributeValue;
             CheckError(RawUiaGetReservedMixedAttributeValue(out mixedAttributeValue));
             return mixedAttributeValue;

@@ -25,7 +25,9 @@ namespace MS.Win32
             SND_RESOURCE = 0x00040000, /* name is resource name or atom */
         }
 
-        public static bool IsUxThemeActive() { return SafeNativeMethodsPrivate.IsThemeActive() != 0; }
+        // uxtheme.dll (Windows visual styles) does not exist off-Windows; report the theme as
+        // inactive so WPF falls back to its classic/generic theme dictionaries.
+        public static bool IsUxThemeActive() { return System.OperatingSystem.IsWindows() && SafeNativeMethodsPrivate.IsThemeActive() != 0; }
 
         public static bool SetCaretPos(int x, int y)
         {
@@ -92,7 +94,56 @@ namespace MS.Win32
 
         public static int GetSysColor(int nIndex)
         {
-            return SafeNativeMethodsPrivate.GetSysColor(nIndex);
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SafeNativeMethodsPrivate.GetSysColor(nIndex);
+            }
+
+            return NonWindowsSysColor(nIndex);
+        }
+
+        // GetSysColor is user32-only. Off-Windows return a neutral light-theme palette so
+        // SystemColors resolves until a cross-platform theme/settings backend is wired in.
+        // Values are COLORREF (0x00BBGGRR).
+        private static int NonWindowsSysColor(int nIndex)
+        {
+            switch (nIndex)
+            {
+                // Text colors -> black (graytext -> mid gray).
+                case 7:   // COLOR_MENUTEXT
+                case 8:   // COLOR_WINDOWTEXT
+                case 9:   // COLOR_CAPTIONTEXT
+                case 18:  // COLOR_BTNTEXT
+                case 23:  // COLOR_INFOTEXT
+                    return 0x00000000;
+                case 17:  // COLOR_GRAYTEXT
+                    return 0x006D6D6D;
+
+                // Window / control backgrounds.
+                case 5:   // COLOR_WINDOW
+                case 14:  // COLOR_HIGHLIGHTTEXT
+                case 20:  // COLOR_BTNHIGHLIGHT
+                    return 0x00FFFFFF;
+                case 24:  // COLOR_INFOBK
+                    return 0x00E1FFFF;
+
+                // Highlight / accent (RGB 0,120,215).
+                case 13:  // COLOR_HIGHLIGHT
+                case 26:  // COLOR_HOTLIGHT
+                    return 0x00D77800;
+
+                // Shadows / borders.
+                case 16:  // COLOR_BTNSHADOW
+                    return 0x00A0A0A0;
+                case 21:  // COLOR_3DDKSHADOW
+                    return 0x00696969;
+                case 22:  // COLOR_3DLIGHT
+                    return 0x00E3E3E3;
+
+                // Default: the classic light control face (0xF0F0F0).
+                default:
+                    return 0x00F0F0F0;
+            }
         }
 
 #if FRAMEWORK_NATIVEMETHODS || BASE_NATIVEMETHODS 
@@ -102,6 +153,14 @@ namespace MS.Win32
 #if BASE_NATIVEMETHODS
         public static void QueryPerformanceCounter(out long lpPerformanceCount)
         {
+            // kernel32 QueryPerformanceCounter/Frequency are Windows-only; System.Diagnostics.Stopwatch
+            // is the cross-platform high-resolution timer and is used off-Windows.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                lpPerformanceCount = System.Diagnostics.Stopwatch.GetTimestamp();
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.QueryPerformanceCounter(out lpPerformanceCount))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -110,6 +169,12 @@ namespace MS.Win32
 
         public static void QueryPerformanceFrequency(out long lpFrequency)
         {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                lpFrequency = System.Diagnostics.Stopwatch.Frequency;
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.QueryPerformanceFrequency(out lpFrequency))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());

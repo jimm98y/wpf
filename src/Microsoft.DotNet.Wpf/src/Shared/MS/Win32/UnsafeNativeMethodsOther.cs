@@ -628,11 +628,35 @@ namespace MS.Win32
             }
         }
 
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false)]
-        internal static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate);
+        // Off-Windows these return success with sensible defaults (see the CLR overloads for the
+        // rationale) so SystemParameters does not throw when there is no user32.
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate);
+        internal static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, anim, nUpdate);
+            }
+            // Minimized-window animation off by default.
+            anim.iMinAnimate = 0;
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false, ThrowOnUnmappableChar = true)]
-        internal static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", CharSet = CharSet.Auto, BestFitMapping = false, ThrowOnUnmappableChar = true)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate);
+        internal static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, metrics, nUpdate);
+            }
+            metrics.iHorzSpacing = 75;
+            metrics.iVertSpacing = 75;
+            metrics.iTitleWrap = 1;
+            metrics.lfFont = NativeMethods.LOGFONT.CreateDefault();
+            return true;
+        }
 
 
         //---------------------------------------------------------------------------

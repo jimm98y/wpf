@@ -1018,6 +1018,18 @@ namespace System.Windows
         /// </summary>
         private static void EnsureResourceChangeListener()
         {
+            // The resource-change listener is a hidden Win32 window that receives WM_SETTINGCHANGE /
+            // theme / DPI-change broadcasts. Those broadcasts are Windows-only, so off-Windows we
+            // skip creating the window and just keep the (empty) bookkeeping collections non-null;
+            // system-setting change notifications are simply not delivered.
+            if (!OperatingSystem.IsWindows())
+            {
+                _hwndNotify ??= new Dictionary<DpiUtil.HwndDpiInfo, HwndWrapper>();
+                _hwndNotifyHook ??= new Dictionary<DpiUtil.HwndDpiInfo, HwndWrapperHook>();
+                _dpiAwarenessContextAndDpis ??= new List<DpiUtil.HwndDpiInfo>();
+                return;
+            }
+
             // Create a new notify window if we haven't already created any corresponding to ProcessDpiAwarenessContextValue for this thread.
             if (_hwndNotify == null ||
                 _hwndNotifyHook == null ||

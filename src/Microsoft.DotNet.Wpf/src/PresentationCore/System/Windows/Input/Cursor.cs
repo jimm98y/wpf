@@ -303,7 +303,10 @@ namespace System.Windows.Input
 
         private void LoadCursorHelper(CursorType cursorType)
         {
-            if (cursorType != CursorType.None)
+            // LoadCursor loads a native Win32/user32 cursor handle. Off-Windows there is no such
+            // handle; the cursor type is still tracked, and the actual cursor is applied by the
+            // (per-platform) windowing backend, so the native handle is simply left unset.
+            if (cursorType != CursorType.None && OperatingSystem.IsWindows())
             {
                 // Load a Standard Cursor
                 _cursorHandle = SafeNativeMethods.LoadCursor(new HandleRef(this,IntPtr.Zero), (IntPtr)(CursorTypes[(int)cursorType]));

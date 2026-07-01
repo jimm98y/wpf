@@ -16,7 +16,8 @@ namespace MS.Win32
 
         public static IntPtr GetKeyboardLayout(int dwLayout)
         {
-            return SafeNativeMethodsPrivate.GetKeyboardLayout(dwLayout);
+            // user32-only; off-Windows there is no HKL, so report "none".
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetKeyboardLayout(dwLayout) : IntPtr.Zero;
         }
 
         public static IntPtr ActivateKeyboardLayout(HandleRef hkl, int uFlags)
@@ -27,6 +28,12 @@ namespace MS.Win32
 #if BASE_NATIVEMETHODS
         public static int GetKeyboardLayoutList(int size, [Out, MarshalAs(UnmanagedType.LPArray)] IntPtr[] hkls)
         {
+            // user32-only; off-Windows there are no HKLs to enumerate.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+
             int result = NativeMethodsSetLastError.GetKeyboardLayoutList(size, hkls);
             if (result == 0)
             {
@@ -132,7 +139,8 @@ namespace MS.Win32
 
         public static int GetDoubleClickTime()
         {
-            return SafeNativeMethodsPrivate.GetDoubleClickTime();
+            // user32-only; 500 ms is the Windows default double-click interval.
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetDoubleClickTime() : 500;
         }
 
         public static bool IsWindowEnabled(HandleRef hWnd)
@@ -238,7 +246,11 @@ namespace MS.Win32
 
         public static int GetCurrentThreadId()
         {
-            return SafeNativeMethodsPrivate.GetCurrentThreadId();
+            // kernel32 GetCurrentThreadId is Windows-only. Off-Windows the managed thread id is a
+            // stable per-thread value, which is all the callers need (identity/comparison).
+            return System.OperatingSystem.IsWindows()
+                ? SafeNativeMethodsPrivate.GetCurrentThreadId()
+                : System.Environment.CurrentManagedThreadId;
         }
 
         /// <summary>

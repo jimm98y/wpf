@@ -78,6 +78,14 @@ namespace Microsoft.Internal.Interop
 
         static OSVersionHelper()
         {
+            // These checks P/Invoke the PresentationNative helper DLL, which is Windows-only.
+            // Off-Windows every "is this Windows version or greater" answer is false, so leave all
+            // properties at their default (false) and skip the native calls entirely.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             IsOsWindows10RS5OrGreater = IsWindows10RS5OrGreater();
 
             IsOsWindows10RS4OrGreater = IsWindows10RS4OrGreater();

@@ -46,8 +46,32 @@ namespace MS.Win32
         public static extern int GetCurrentThemeName(StringBuilder pszThemeFileName, int dwMaxNameChars, StringBuilder pszColorBuff, int dwMaxColorChars, StringBuilder pszSizeBuff, int cchMaxSizeChars);
 
 #if !DRT && !UIAUTOMATIONTYPES
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern WindowMessage RegisterWindowMessage(string msg);
+        [DllImport(ExternDll.User32, EntryPoint = "RegisterWindowMessage", CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern WindowMessage RegisterWindowMessageNative(string msg);
+
+        // RegisterWindowMessage is user32-only. Off-Windows there is no Win32 message routing, but
+        // callers still store the returned id and compare against it, so hand out distinct synthetic
+        // ids in the RegisterWindowMessage range with the same "same string -> same id" contract.
+        public static WindowMessage RegisterWindowMessage(string msg)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return RegisterWindowMessageNative(msg);
+            }
+
+            lock (s_registeredMessages)
+            {
+                if (!s_registeredMessages.TryGetValue(msg, out WindowMessage m))
+                {
+                    m = (WindowMessage)(s_nextSyntheticMessage++);
+                    s_registeredMessages[msg] = m;
+                }
+                return m;
+            }
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, WindowMessage> s_registeredMessages = new();
+        private static int s_nextSyntheticMessage = 0xC000; // start of the real RegisterWindowMessage range
 #endif
 
         [DllImport(ExternDll.User32, EntryPoint = "SetWindowPos", ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
@@ -743,24 +767,142 @@ namespace MS.Win32
         internal static extern bool FreeLibrary([In] IntPtr hModule);
 
 #if !DRT && !UIAUTOMATIONTYPES
-        [DllImport(ExternDll.User32)]
-        public static extern int GetSystemMetrics(SM nIndex);
+        [DllImport(ExternDll.User32, EntryPoint = "GetSystemMetrics")]
+        private static extern int GetSystemMetricsNative(SM nIndex);
+
+        // GetSystemMetrics is a user32-only call. Off-Windows there is no such API, so this returns
+        // the value Windows uses by default for the metric, letting layout / hit-testing get sane
+        // numbers until a cross-platform windowing backend supplies real ones. This is the single
+        // consolidation point, so callers never need their own platform check.
+        public static int GetSystemMetrics(SM nIndex)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return GetSystemMetricsNative(nIndex);
+            }
+
+            return NonWindowsSystemMetric(nIndex);
+        }
+
+        private static int NonWindowsSystemMetric(SM nIndex)
+        {
+            switch (nIndex)
+            {
+                // Primary/virtual screen size (a default desktop until the windowing backend reports real bounds).
+                case SM.CXSCREEN: case SM.CXFULLSCREEN: case SM.CXVIRTUALSCREEN: case SM.CXMAXIMIZED: return 1920;
+                case SM.CYSCREEN: case SM.CYFULLSCREEN: case SM.CYVIRTUALSCREEN: case SM.CYMAXIMIZED: return 1080;
+                case SM.CMONITORS: return 1;
+
+                // Double-click / drag thresholds (Windows defaults).
+                case SM.CXDOUBLECLK: case SM.CYDOUBLECLK: case SM.CXDRAG: case SM.CYDRAG: return 4;
+
+                // Scrollbars, borders, edges, frames.
+                case SM.CXVSCROLL: case SM.CYHSCROLL: case SM.CYVSCROLL: case SM.CXHSCROLL: return 17;
+                case SM.CXBORDER: case SM.CYBORDER: case SM.CXFOCUSBORDER: case SM.CYFOCUSBORDER: return 1;
+                case SM.CXEDGE: case SM.CYEDGE: return 2;
+                case SM.CXFRAME: case SM.CYFRAME: case SM.CXFIXEDFRAME: case SM.CYFIXEDFRAME: return 4;
+
+                // Caption / menu.
+                case SM.CYCAPTION: return 23;
+                case SM.CYSMCAPTION: return 19;
+                case SM.CYMENU: return 20;
+
+                // Icons / cursors.
+                case SM.CXICON: case SM.CYICON: case SM.CXCURSOR: case SM.CYCURSOR: return 32;
+                case SM.CXSMICON: case SM.CYSMICON: return 16;
+
+                // Mouse.
+                case SM.CMOUSEBUTTONS: return 3;
+                case SM.MOUSEPRESENT: case SM.MOUSEWHEELPRESENT: return 1;
+
+                // Everything else (IMMENABLED, SWAPBUTTON, REMOTESESSION, TABLETPC, ...) defaults off/zero.
+                default: return 0;
+            }
+        }
 #endif
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate);
+        // SystemParametersInfo is user32-only. Off-Windows each overload returns success with a
+        // sensibly-populated result (a plain "false" return would make SystemParameters throw a
+        // Win32Exception), so the whole SystemParameters/SystemFonts surface works from defaults
+        // until a cross-platform system-settings backend is wired in. All platform decisions live
+        // here rather than at the ~100 SystemParameters call sites.
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref rc, nUpdate);
+            }
+            // SPI_GETWORKAREA and friends: report the default desktop work area.
+            rc = new NativeMethods.RECT(0, 0, 1920, 1080);
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref int value, int ignore);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref int value, int ignore);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref int value, int ignore)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref value, ignore);
+            }
+            // Leave the caller-provided value in place and report success.
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref bool value, int ignore);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref bool value, int ignore);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref bool value, int ignore)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref value, ignore);
+            }
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref rc, nUpdate);
+            }
+            // High contrast is off by default.
+            rc.dwFlags = 0;
+            rc.lpszDefaultScheme = IntPtr.Zero;
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, metrics, nUpdate);
+            }
+
+            // Populate the non-client metrics with reasonable defaults, including the system fonts
+            // (their LOGFONTs are null by default, which SystemFonts would dereference).
+            metrics.iBorderWidth = 1;
+            metrics.iScrollWidth = 17;
+            metrics.iScrollHeight = 17;
+            metrics.iCaptionWidth = 23;
+            metrics.iCaptionHeight = 23;
+            metrics.iSmCaptionWidth = 19;
+            metrics.iSmCaptionHeight = 19;
+            metrics.iMenuWidth = 20;
+            metrics.iMenuHeight = 20;
+            metrics.lfCaptionFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfSmCaptionFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfMenuFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfStatusFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfMessageFont = NativeMethods.LOGFONT.CreateDefault();
+            return true;
+        }
 
         [DllImport(ExternDll.Kernel32, CharSet = CharSet.Auto, ExactSpelling = true)]
         public static extern bool GetSystemPowerStatus(ref NativeMethods.SYSTEM_POWER_STATUS systemPowerStatus);

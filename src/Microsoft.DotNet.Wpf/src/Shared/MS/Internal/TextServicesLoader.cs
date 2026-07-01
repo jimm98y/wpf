@@ -130,7 +130,11 @@ namespace MS.Internal
                 {
                     if (s_servicesInstalled == InstallState.Unknown)
                     {
-                        s_servicesInstalled = TIPsWantToRun() ? InstallState.Installed : InstallState.NotInstalled;
+                        // The Text Services Framework (Cicero) and its registry configuration are
+                        // Windows-only; off-Windows no text-input processors are installed.
+                        s_servicesInstalled = (OperatingSystem.IsWindows() && TIPsWantToRun())
+                            ? InstallState.Installed
+                            : InstallState.NotInstalled;
                     }
                 }
 
