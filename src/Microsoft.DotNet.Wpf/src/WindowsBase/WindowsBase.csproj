@@ -367,10 +367,12 @@
        TXT files they consume and the tools (which are not compiled, simply scripts).
        The output files are automatically added as source files to the Compile task.
    -->
-  <Target Name="GenerateSources" BeforeTargets="CoreCompile" Inputs="MS\Internal\IO\Packaging\PackageXmlNamespaces.txt;MS\Internal\IO\Packaging\PackageXmlStrings.txt;" Outputs="$(IntermediateOutputPath)\PackageXmlStringTable.cs">
-    <Error Condition="!Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
+  <Target Name="GenerateSources" BeforeTargets="CoreCompile" Inputs="MS\Internal\IO\Packaging\PackageXmlNamespaces.txt;MS\Internal\IO\Packaging\PackageXmlStrings.txt;" Outputs="$(IntermediateOutputPath)/PackageXmlStringTable.cs">
+    <!-- Only validated on Windows: there PerlCommand is a restored file path. On macOS/Linux
+         it's the bare "perl" command resolved via PATH, which Exists() can't check. -->
+    <Error Condition="'$(OS)' == 'Windows_NT' and !Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
     <MakeDir Condition="!Exists('$(IntermediateOutputPath)')" Directories="$(IntermediateOutputPath)" />
-    <Exec Command="$(PerlCommand) $(GenXmlStringTable) -o $(IntermediateOutputPath)\PackageXmlStringTable.cs -n MS\Internal\IO\Packaging\PackageXmlNamespaces.txt -x MS\Internal\IO\Packaging\PackageXmlStrings.txt -e MS.Internal.IO.Packaging.PackageXmlEnum -c MS.Internal.IO.Packaging.PackageXmlStringTable" StandardOutputImportance="normal" Outputs="$(IntermediateOutputPath)\PackageXmlStringTable.cs">
+    <Exec Command="$(PerlCommand) $(GenXmlStringTable) -o $(IntermediateOutputPath)/PackageXmlStringTable.cs -n MS/Internal/IO/Packaging/PackageXmlNamespaces.txt -x MS/Internal/IO/Packaging/PackageXmlStrings.txt -e MS.Internal.IO.Packaging.PackageXmlEnum -c MS.Internal.IO.Packaging.PackageXmlStringTable" StandardOutputImportance="normal" Outputs="$(IntermediateOutputPath)/PackageXmlStringTable.cs">
       <Output TaskParameter="Outputs" ItemName="Compile" />
     </Exec>
   </Target>

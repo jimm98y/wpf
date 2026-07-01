@@ -1382,9 +1382,12 @@
 
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj">
+    <!-- DirectWriteForwarder is C++/CLI (Windows-only); use the managed stub off-Windows so
+         PresentationFramework still compiles. See Stub/DirectWriteForwarderStub.csproj. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj" Condition="'$(OS)' == 'Windows_NT'">
       <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
     </ProjectReference>
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" Condition="'$(OS)' != 'Windows_NT'" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj" />

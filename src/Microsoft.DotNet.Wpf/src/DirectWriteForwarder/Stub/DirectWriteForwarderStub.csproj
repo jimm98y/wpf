@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    macOS/Linux stand-in for DirectWriteForwarder.vcxproj, which wraps DirectWrite via C++/CLI
+    (an MSVC + CLR-only technology with no non-Windows equivalent). This project exists purely
+    to let PresentationCore compile on non-Windows dev machines: it re-declares the managed
+    surface that PresentationCore's C# consumes from the real DirectWriteForwarder assembly,
+    with bodies that throw PlatformNotSupportedException. Font/text shaping is not functional
+    through this stub - a real cross-platform backend (e.g. HarfBuzz/FreeType or CoreText) is a
+    separate, much larger effort. Only referenced when '$(OS)' != 'Windows_NT'
+    (see PresentationCore.csproj).
+  -->
+  <PropertyGroup>
+    <AssemblyName>DirectWriteForwarder</AssemblyName>
+    <RootNamespace>MS.Internal.Text.TextInterface</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- CA1051 (visible instance fields) is intentionally suppressed: several stub value types
+         (GlyphMetrics, FontMetrics, GlyphOffset, DWriteFontFeature) mirror C++/CLI value structs
+         from the original DWriteWrapper headers whose fields PresentationCore accesses directly
+         by name (e.g. GlyphMetrics.AdvanceWidth, GlyphOffset.du/dv). -->
+    <NoWarn>$(NoWarn);CS0108;CS0114;CS0067;CA1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -238,6 +238,7 @@
     <Compile Include="MS\Internal\Interop\DWrite\IDWriteFontFileLoader.cs" />
     <Compile Include="MS\Internal\Interop\DWrite\IDWriteTextAnalyzer.cs" />
     <Compile Include="MS\Internal\Interop\IUnknown.cs" />
+    <Compile Include="MS\Internal\Interop\NativePlatform.cs" />
     <Compile Include="MS\Internal\Interop\NativePointerCriticalHandle.cs" />
     <Compile Include="MS\Internal\Interop\TipTsfHelper.cs" />
     <Compile Include="MS\Internal\IO\Packaging\ByteRangeDownloader.cs" />
@@ -1393,9 +1394,13 @@
   <ItemGroup>
     <!-- required for internals access -->
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj">
+    <!-- DirectWriteForwarder.vcxproj wraps DirectWrite via C++/CLI, which only exists on
+         Windows (MSVC + CLR toolchain). On macOS/Linux dev machines, substitute the managed
+         stub so PresentationCore still compiles; see Stub/DirectWriteForwarderStub.csproj. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj" Condition="'$(OS)' == 'Windows_NT'">
       <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
     </ProjectReference>
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" Condition="'$(OS)' != 'Windows_NT'" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Windows.Input.Manipulations\System.Windows.Input.Manipulations.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Windows.Primitives\System.Windows.Primitives.csproj" />

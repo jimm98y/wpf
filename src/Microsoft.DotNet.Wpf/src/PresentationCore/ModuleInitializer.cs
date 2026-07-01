@@ -3,7 +3,7 @@
 
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
+using MS.Internal.Interop;
 using MS.Internal.Text.TextInterface;
 
 internal static class ModuleInitializer
@@ -22,12 +22,9 @@ internal static class ModuleInitializer
     {
         IsProcessDpiAware();
 
-        DWriteLoader.LoadDWrite();
-
-        AppDomain.CurrentDomain.ProcessExit += static (object sender, EventArgs e) =>
-        {
-            DWriteLoader.UnloadDWrite();
-        };
+        // Native text backend (DirectWrite) load + teardown. All platform decisions live in
+        // NativePlatform; on non-Windows this is a no-op until a text backend is ported.
+        NativePlatform.InitializeTextBackend();
 
         MS.Internal.NativeWPFDLLLoader.LoadDwrite();
     }
@@ -48,14 +45,13 @@ internal static class ModuleInitializer
 
         if (!disableDpiAware)
         {
-            // DpiAware composition is enabled for this application.
-            SetProcessDPIAware_Internal();
+            // DpiAware composition is enabled for this application. The actual native call is a
+            // Win32/user32 concept; NativePlatform routes it to the Win32 backend on Windows and
+            // no-ops elsewhere (the windowing backend owns DPI/scale on other platforms).
+            NativePlatform.SetProcessDpiAwareness();
         }
 
         // Only when DisableDpiAwareness attribute is set in Application assembly,
         // It will ignore the SetProcessDPIAware API call.
     }
-
-    [DllImport("user32.dll", EntryPoint = "SetProcessDPIAware")]
-    private static extern void SetProcessDPIAware_Internal();
 }
