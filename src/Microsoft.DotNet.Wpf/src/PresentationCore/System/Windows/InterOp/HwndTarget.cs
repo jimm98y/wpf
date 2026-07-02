@@ -288,9 +288,9 @@ namespace System.Windows.Interop
                 // will be left in a state when no other HwndTarget can be created
                 // for it.
                 //
-                if(exceptionThrown)
+                if(exceptionThrown && OperatingSystem.IsWindows())
                 {
-                    // Return value ignored on purpose.
+                    // Return value ignored on purpose. (milcore; nothing to detach off-Windows.)
                     VisualTarget_DetachFromHwnd(hwnd);
                 }
             }
@@ -301,6 +301,12 @@ namespace System.Windows.Interop
         /// </summary>
         private void CheckAndDisableSpecialCharacterLigature()
         {
+            // The LineServices ligature toggle is a native (milcore/LS) call; skip off-Windows.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             NativeMethodsSetLastError.LsDisableSpecialCharacterLigature(CoreAppContextSwitches.DisableSpecialCharacterLigature);
         }
 
@@ -310,6 +316,18 @@ namespace System.Windows.Interop
         /// <remarks>Helper for constructor</remarks>
         private void InitializeDpiAwarenessAndDpiScales()
         {
+            // Off-Windows the Win32 DPI-awareness APIs do not exist. Report a fixed 1.0 scale
+            // (the Cocoa content size is already used verbatim as the client rect); per-monitor
+            // backing-scale handling is a later refinement.
+            if (!OperatingSystem.IsWindows())
+            {
+                AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
+                ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
+                DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
+                CurrentDpiScale = new DpiScale2(1.0, 1.0);
+                return;
+            }
+
             // Only do this once to get:
             // 1. Process DPI Awareness
             // 2. System/Primary monitor's DPI, store it in the first entry of the static array UIElement::MonitorDPIScaleX/Y.
@@ -513,6 +531,14 @@ namespace System.Windows.Interop
         /// </summary>
         private void AttachToHwnd(IntPtr hwnd)
         {
+            // Off-Windows the handle is a Cocoa NSView*, not an HWND: there is no Win32 window to
+            // validate (GetWindowThreadProcessId/IsWindow) and no milcore target to attach. The
+            // WebGPU compositor binds to the view via the DUCE HwndInitialize command instead.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             int processId = 0;
             int threadId = UnsafeNativeMethods.GetWindowThreadProcessId(
                 new HandleRef(this, hwnd),
@@ -1617,6 +1643,19 @@ namespace System.Windows.Interop
         /// </summary>
         private void UpdateWindowAndClientCoordinates()
         {
+            // Off-Windows there is no GetClientRect/GetWindowRect; take the size from the Cocoa
+            // content view (in points; DPI scale is handled separately). Origin is treated as (0,0).
+            if (!OperatingSystem.IsWindows())
+            {
+                int cw = 0, ch = 0;
+                MS.Internal.Interop.CocoaWindow view = MS.Internal.Interop.CocoaWindow.FromHandle(_hWnd.h);
+                view?.GetContentSize(out cw, out ch);
+
+                _hwndWindowRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);
+                _hwndClientRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);
+                return;
+            }
+
             HandleRef hWnd = _hWnd.MakeHandleRef(this);
 
             // Update the window rect

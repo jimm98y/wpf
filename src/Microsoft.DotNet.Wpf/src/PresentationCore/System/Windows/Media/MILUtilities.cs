@@ -164,9 +164,14 @@ namespace System.Windows.Media
             );
 
         internal static Rect ProjectBounds(
-            ref Matrix3D viewProjMatrix, 
+            ref Matrix3D viewProjMatrix,
             ref Rect3D originalBox)
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return ProjectBoundsManaged(ref viewProjMatrix, ref originalBox);
+            }
+
             D3DMATRIX viewProjFloatMatrix = CompositionResourceManager.Matrix3DToD3DMATRIX(viewProjMatrix);
             MILRect3D originalBoxFloat = new MILRect3D(ref originalBox);
             MilRectF outRect = new MilRectF();
@@ -185,12 +190,56 @@ namespace System.Windows.Media
             else
             {
                 return new Rect(
-                    outRect.Left, 
-                    outRect.Top, 
-                    outRect.Right - outRect.Left, 
+                    outRect.Left,
+                    outRect.Top,
+                    outRect.Right - outRect.Left,
                     outRect.Bottom - outRect.Top
                     );
             }
+        }
+
+        // Managed replacement for the native MIL3DCalcProjected2DBounds (wpfgfx). Projects the eight
+        // corners of the 3D box through the (row-vector) view-projection matrix, does the perspective
+        // divide, and returns the 2D bounding rectangle. Corners at/behind the camera (w <= 0) are
+        // clamped to a tiny positive w so the resulting bound stays conservative (a superset) rather
+        // than dividing by zero; for content fully in front of the camera the result is exact.
+        private static Rect ProjectBoundsManaged(ref Matrix3D m, ref Rect3D box)
+        {
+            double x0 = box.X, y0 = box.Y, z0 = box.Z;
+            double x1 = x0 + box.SizeX, y1 = y0 + box.SizeY, z1 = z0 + box.SizeZ;
+
+            double left = double.PositiveInfinity, top = double.PositiveInfinity;
+            double right = double.NegativeInfinity, bottom = double.NegativeInfinity;
+            bool any = false;
+
+            for (int c = 0; c < 8; c++)
+            {
+                double x = (c & 1) == 0 ? x0 : x1;
+                double y = (c & 2) == 0 ? y0 : y1;
+                double z = (c & 4) == 0 ? z0 : z1;
+
+                // [x y z 1] * M   (WPF Matrix3D is row-major / row-vector).
+                double px = x * m.M11 + y * m.M21 + z * m.M31 + m.OffsetX;
+                double py = x * m.M12 + y * m.M22 + z * m.M32 + m.OffsetY;
+                double pw = x * m.M14 + y * m.M24 + z * m.M34 + m.M44;
+
+                if (pw < 1e-6) pw = 1e-6;
+                double sx = px / pw;
+                double sy = py / pw;
+
+                if (double.IsNaN(sx) || double.IsNaN(sy)) continue;
+                any = true;
+                if (sx < left) left = sx;
+                if (sx > right) right = sx;
+                if (sy < top) top = sy;
+                if (sy > bottom) bottom = sy;
+            }
+
+            if (!any || left == right || top == bottom)
+            {
+                return Rect.Empty;
+            }
+            return new Rect(left, top, right - left, bottom - top);
         }
     }
 }

@@ -935,7 +935,14 @@ namespace System.Windows
                     System.Xaml.XamlObjectWriterSettings owSettings = XamlReader.CreateObjectWriterSettingsForBaml();
                     if (assembly != null)
                     {
-                        owSettings.AccessLevel = XamlAccessLevel.AssemblyAccessTo(assembly);
+                        // XamlAccessLevel is type-forwarded to System.Windows.Extensions, whose types
+                        // throw PlatformNotSupportedException off-Windows. System-theme BAML is trusted
+                        // and predominantly instantiates public types, so skip the internals-access grant
+                        // there rather than fail the whole theme dictionary load.
+                        if (System.OperatingSystem.IsWindows())
+                        {
+                            owSettings.AccessLevel = XamlAccessLevel.AssemblyAccessTo(assembly);
+                        }
 
                         AssemblyName asemblyName = new AssemblyName(assembly.FullName);
                         Uri streamUri = null;

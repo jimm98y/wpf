@@ -48,6 +48,13 @@ namespace MS.Internal.Text.TextInterface
         /// </returns>
         private Factory(FactoryType factoryType, IFontSourceCollectionFactory fontSourceCollectionFactory, IFontSourceFactory fontSourceFactory)
         {
+            _fontSourceFactory = fontSourceFactory;
+
+#if WPF_DWRITE_MANAGED_STUB
+            // Off-Windows there is no DirectWrite; the TextInterface surface is backed by the managed
+            // OpenType stack in the DirectWriteForwarder stub. No COM factory is created; every method
+            // routes to Managed.ManagedTextBackend.
+#else
             Initialize(factoryType);
 
             _wpfFontFileLoader = new FontFileLoader(fontSourceFactory);
@@ -56,16 +63,14 @@ namespace MS.Internal.Text.TextInterface
                                                                _wpfFontFileLoader
                                                                );
 
-            _fontSourceFactory = fontSourceFactory;
-
             IntPtr pIDWriteFontFileLoaderMirror = Marshal.GetComInterfaceForObject(
                                                     _wpfFontFileLoader,
                                                     typeof(IDWriteFontFileLoaderMirror));
 
-            // Future improvement note: 
-            // This seems a bit hacky, but unclear at this time how to implement this any better. 
+            // Future improvement note:
+            // This seems a bit hacky, but unclear at this time how to implement this any better.
             // When we attempt to unregister these, do we need to keep around the same IntPtr
-            // representing the result of GetComInterfaceForObject to free it ? Or will it 
+            // representing the result of GetComInterfaceForObject to free it ? Or will it
             // be the same if we call it again?
 
 
@@ -88,10 +93,11 @@ namespace MS.Internal.Text.TextInterface
             Marshal.Release(pIDWriteFontCollectionLoaderMirror);
 
             DWriteUtil.ConvertHresultToException(hr);
+#endif
         }
 
         internal IDWriteFactory* DWriteFactory
-            => _factory.Value;
+            => _factory != null ? _factory.Value : null;
 
         /// <summary>
         /// Initializes a factory object.
@@ -139,6 +145,15 @@ namespace MS.Internal.Text.TextInterface
         /// </returns>
         internal FontFile CreateFontFile(Uri filePathUri)
         {
+#if WPF_DWRITE_MANAGED_STUB
+            // Validate the file the way DWrite's failure path does, then wrap it.
+            if (Factory.IsLocalUri(filePathUri) && _fontSourceFactory != null)
+            {
+                IFontSource fontSource = _fontSourceFactory.Create(filePathUri.AbsoluteUri);
+                fontSource.TestFileOpenable();
+            }
+            return Managed.ManagedTextBackend.CreateFontFile(filePathUri);
+#else
             Native.IDWriteFontFile* dwriteFontFile = null;
             int hr = InternalFactory.CreateFontFile((Native.IDWriteFactory*)_factory.Value, _wpfFontFileLoader, filePathUri, &dwriteFontFile);
 
@@ -160,6 +175,7 @@ namespace MS.Internal.Text.TextInterface
             DWriteUtil.ConvertHresultToException(hr);
 
             return new FontFile(dwriteFontFile);
+#endif
         }
 
         /// <summary>
@@ -192,6 +208,9 @@ namespace MS.Internal.Text.TextInterface
         /// </returns>
         internal FontFace CreateFontFace(Uri filePathUri, uint faceIndex, FontSimulations fontSimulationFlags)
         {
+#if WPF_DWRITE_MANAGED_STUB
+            return Managed.ManagedTextBackend.CreateFontFace(filePathUri, faceIndex, fontSimulationFlags);
+#else
             FontFile fontFile = CreateFontFile(filePathUri);
             Native.DWRITE_FONT_FILE_TYPE dwriteFontFileType;
             Native.DWRITE_FONT_FACE_TYPE dwriteFontFaceType;
@@ -251,6 +270,7 @@ namespace MS.Internal.Text.TextInterface
             }
 
             return null;
+#endif
         }
 
         /// <summary>
@@ -261,7 +281,11 @@ namespace MS.Internal.Text.TextInterface
         /// </returns>
         internal FontCollection GetSystemFontCollection()
         {
+#if WPF_DWRITE_MANAGED_STUB
+            return Managed.ManagedTextBackend.GetSystemFontCollection();
+#else
             return GetSystemFontCollection(false);
+#endif
         }
 
         /// <summary>
@@ -294,6 +318,9 @@ namespace MS.Internal.Text.TextInterface
         /// </returns>
         internal FontCollection GetFontCollection(Uri uri)
         {
+#if WPF_DWRITE_MANAGED_STUB
+            return Managed.ManagedTextBackend.GetFontCollection(uri);
+#else
             string uriString = uri.AbsoluteUri;
             IDWriteFontCollection* dwriteFontCollection = null;
 
@@ -319,15 +346,20 @@ namespace MS.Internal.Text.TextInterface
             DWriteUtil.ConvertHresultToException(hr);
 
             return new FontCollection((Native.IDWriteFontCollection*)dwriteFontCollection);
+#endif
         }
 
         internal TextAnalyzer CreateTextAnalyzer()
         {
+#if WPF_DWRITE_MANAGED_STUB
+            return Managed.ManagedTextBackend.CreateTextAnalyzer();
+#else
             IDWriteTextAnalyzer* textAnalyzer = null;
 
             _factory.Value->CreateTextAnalyzer(&textAnalyzer);
 
             return new TextAnalyzer((Native.IDWriteTextAnalyzer*)textAnalyzer);
+#endif
         }
 
         internal static bool IsLocalUri(Uri uri)

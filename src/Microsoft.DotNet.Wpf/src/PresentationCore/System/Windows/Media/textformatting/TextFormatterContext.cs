@@ -110,6 +110,13 @@ namespace System.Windows.Media.TextFormatting
                 IntPtr ploc = IntPtr.Zero;
                 IntPtr ppenaltyModule = IntPtr.Zero;
 
+                // Off-Windows the managed Line Services engine needs the callbacks object itself
+                // (not just the native function-pointer table); hand it over for LoCreateContext.
+                if (!OperatingSystem.IsWindows())
+                {
+                    MS.Internal.TextFormatting.ManagedLineServices.SetPendingCallbacks(_callbacks);
+                }
+
                 lserr = UnsafeNativeMethods.LoCreateContext(
                     ref contextInfo,
                     ref lscbkRedef,

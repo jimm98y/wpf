@@ -4056,6 +4056,13 @@ namespace System.Windows
         /// </summary>
         private void UpdateIcon()
         {
+            // The window icon is applied via Win32 WM_SETICON to an HWND. Off-Windows the Cocoa
+            // window owns its title-bar/Dock icon, so there is nothing to push here.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             // NOTE: Set Window.Icon = null causes NullReferenceException
 
             // if _icon is null, set _defaultLargeIconHandle and _defaultSmallIconHandle

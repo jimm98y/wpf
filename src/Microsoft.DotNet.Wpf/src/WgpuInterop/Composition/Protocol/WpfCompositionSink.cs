@@ -38,6 +38,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private WgpuSceneRenderer? _renderer;
         private uint _nextHandle;
         private string _targetsSig = "";
+        private int _diagCount;
         private bool _loggedLayered;
         private int _layeredFrames;
         private long _perfRealizeTicks, _perfRenderTicks, _perfRenderOnlyTicks, _perfPresentTicks;
@@ -187,6 +188,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (root is null) continue;
 
                 EnsureGpu();
+
+                if (s_logPath != null && (_diagCount < 5 || _diagCount % 30 == 0) && _diagCount < 200)
+                {
+                    _diagCount++;
+                    int drawables = CountDrawables(root);
+                    Log($"DIAG frame#{_diagCount}: root=0x{t.RootHandle:x} drawables={drawables}");
+                }
+
                 if (t.IsLayered)
                 {
                     // ComboBox/Menu/ToolTip popups live in WS_EX_LAYERED per-pixel-alpha windows;
@@ -255,10 +264,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 return;
             }
             if (surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.SuccessOptimal &&
-                surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.SuccessSuboptimal)
+                surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.SuccessSuboptimal &&
+                surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.Occluded)
             {
                 return;
             }
+            // A valid status can still hand back a null texture (e.g. an occluded/off-screen
+            // drawable). Rendering to it would panic inside wgpu-native, so skip this frame.
+            if (surfaceTexture.texture == IntPtr.Zero)
+            {
+                return;
+            }
+
             AcquiredFrames++;
 
             IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);

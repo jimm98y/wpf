@@ -189,6 +189,13 @@ namespace System.Windows.Input
         {
             get
             {
+                // The WPF stylus/touch input stack (WISP and WM_POINTER) is Win32-only; disable it
+                // off-Windows so no HwndStylusInputProvider is created.
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 return !CoreAppContextSwitches.DisableStylusAndTouchSupport;
             }
         }
@@ -280,6 +287,12 @@ namespace System.Windows.Input
             {
                 bool result = false;
 
+                // The pen/touch "pointer stack" and its opt-in registry value are Windows-only.
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 try
                 {
                     result = ((int)(Registry.CurrentUser.OpenSubKey(WpfPointerKey, RegistryKeyPermissionCheck.ReadSubTree)?.GetValue(WpfPointerValue, 0) ?? 0)) == 1;
@@ -324,6 +337,13 @@ namespace System.Windows.Input
         /// </summary>
         protected void ReadSystemConfig()
         {
+            // The WISP stylus/touch configuration lives in the Windows registry; off-Windows keep
+            // the built-in defaults (there is no Windows Ink stack here).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             object obj;
             RegistryKey stylusKey = null; // This object has finalizer to close the key.
             RegistryKey touchKey = null; // This object has finalizer to close the key.

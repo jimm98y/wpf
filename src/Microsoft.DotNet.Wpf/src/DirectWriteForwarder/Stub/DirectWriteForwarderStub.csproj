@@ -2,13 +2,12 @@
 
   <!--
     macOS/Linux stand-in for DirectWriteForwarder.vcxproj, which wraps DirectWrite via C++/CLI
-    (an MSVC + CLR-only technology with no non-Windows equivalent). This project exists purely
-    to let PresentationCore compile on non-Windows dev machines: it re-declares the managed
-    surface that PresentationCore's C# consumes from the real DirectWriteForwarder assembly,
-    with bodies that throw PlatformNotSupportedException. Font/text shaping is not functional
-    through this stub - a real cross-platform backend (e.g. HarfBuzz/FreeType or CoreText) is a
-    separate, much larger effort. Only referenced when '$(OS)' != 'Windows_NT'
-    (see PresentationCore.csproj).
+    (an MSVC + CLR-only technology with no non-Windows equivalent). It re-declares the managed
+    MS.Internal.Text.TextInterface surface that PresentationCore consumes from the real
+    DirectWriteForwarder assembly, and (off-Windows) backs it with the managed OpenType font
+    stack in the WebGPU engine (Microsoft.Wpf.Interop.WebGpu, Composition.Text) rather than
+    DirectWrite - the same font code the renderer already uses to rasterize glyph runs.
+    Only referenced when '$(OS)' != 'Windows_NT' (see PresentationCore.csproj).
   -->
   <PropertyGroup>
     <AssemblyName>DirectWriteForwarder</AssemblyName>
@@ -28,6 +27,9 @@
 
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
+    <!-- The managed OpenType font stack (Composition.Text: TrueTypeFont/CffFont/CmapTable/
+         ManagedFontResolver/Shaping) lives here; we adapt it to the TextInterface surface. -->
+    <ProjectReference Include="$(WpfSourceDir)WgpuInterop\WgpuInterop.csproj" />
   </ItemGroup>
 
 </Project>

@@ -2173,6 +2173,16 @@ namespace System.Windows.Media
 }
 
             _needToCommitChannel = false;
+
+            // The managed (WebGPU) composition sink renders and presents synchronously inside
+            // Channel.Commit() above - there is no separate composition engine to send an async
+            // "Presented" back-channel notification. Complete the interlock immediately (as if the
+            // frame presented at vsync) so the render loop schedules the next frame instead of
+            // waiting forever in WaitingForResponse. Without this the UI renders exactly one frame.
+            if (DUCE.ManagedComposition.IsEnabled && _interlockState == InterlockState.WaitingForResponse)
+            {
+                NotifyPresented(MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_VSYNC, CurrentTicks, 60);
+            }
         }
 
         /// <summary>

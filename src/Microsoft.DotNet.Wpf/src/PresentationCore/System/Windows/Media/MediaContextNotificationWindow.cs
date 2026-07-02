@@ -46,6 +46,16 @@ namespace System.Windows.Media
             // Remember the pointer to the owner MediaContext that we'll forward the broadcasts to.
             _ownerMediaContext = ownerMediaContext;
 
+            // This window exists purely to receive Win32/DWM/milcore broadcasts (composition
+            // changed, magnifier, MIL channel notification). None of that machinery exists off
+            // Windows (the WebGPU compositor drives presentation instead), so there is no window
+            // to create and the object stays inert.
+            if (!OperatingSystem.IsWindows())
+            {
+                _isDisposed = false;
+                return;
+            }
+
             // Create a top-level, invisible window so we can get the WM_DWMCOMPOSITIONCHANGED
             // and other DWM notifications that are broadcasted to top-level windows only.
             HwndWrapper hwndNotification;
@@ -79,12 +89,16 @@ namespace System.Windows.Media
         {
             if (!_isDisposed)
             {
-                //
-                // If DWM is not running, this call will result in NoOp.
-                //
-                MS.Internal.HRESULT.Check(MilContent_DetachFromHwnd(_hwndNotification.Handle));
+                // Off-Windows there is no notification window / milcore attachment to tear down.
+                if (_hwndNotification != null)
+                {
+                    //
+                    // If DWM is not running, this call will result in NoOp.
+                    //
+                    MS.Internal.HRESULT.Check(MilContent_DetachFromHwnd(_hwndNotification.Handle));
 
-                _hwndNotification.Dispose();
+                    _hwndNotification.Dispose();
+                }
 
                 _hwndNotificationHook = null;
                 _hwndNotification = null;
@@ -117,6 +131,13 @@ namespace System.Windows.Media
         internal void SetAsChannelNotificationWindow()
         {
             ObjectDisposedException.ThrowIf(_isDisposed, typeof(MediaContextNotificationWindow));
+
+            // Off-Windows there is no HWND; the WebGPU compositor delivers channel notifications
+            // through its own path, so there is no window handle to register here.
+            if (_hwndNotification == null)
+            {
+                return;
+            }
 
             _ownerMediaContext.Channel.SetNotificationWindow(_hwndNotification.Handle, s_channelNotifyMessage);
         }

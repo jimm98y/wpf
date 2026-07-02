@@ -2,6 +2,9 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <DefineConstants>$(DefineConstants);CORE_NATIVEMETHODS;PRESENTATION_CORE;COMMONDPS</DefineConstants>
+    <!-- Off-Windows the TextInterface Factory routes to the managed OpenType backend
+         (Managed.ManagedTextBackend), which only exists in the DirectWriteForwarder stub. -->
+    <DefineConstants Condition="'$(OS)' != 'Windows_NT'">$(DefineConstants);WPF_DWRITE_MANAGED_STUB</DefineConstants>
     <NoWarn>$(NoWarn);0618;0436;1058;1705;3001;3002;3003;3009;3024</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- SYSLIB5005: System.Formats.Nrbf is experimental -->
@@ -105,6 +108,7 @@
     <Compile Include="MS\Internal\AnimatedTypeHelpers.cs" />
     <Compile Include="MS\Internal\CheckedPointers.cs" />
     <Compile Include="MS\Internal\Classification.cs" />
+    <Compile Include="MS\Internal\ManagedClassification.cs" />
     <Compile Include="MS\Internal\CoreAppContextSwitches.cs" />
     <Compile Include="MS\Internal\CustomCategoryAttribute.cs" />
     <Compile Include="MS\Internal\DeferredElementTreeState.cs" />
@@ -292,6 +296,7 @@
     <Compile Include="MS\Internal\TextFormatting\ITextSymbols.cs" />
     <Compile Include="MS\Internal\TextFormatting\LexicalChunk.cs" />
     <Compile Include="MS\Internal\TextFormatting\LineServices.cs" />
+    <Compile Include="MS\Internal\TextFormatting\ManagedLineServices.cs" />
     <Compile Include="MS\Internal\TextFormatting\LineServicesCallbacks.cs" />
     <Compile Include="MS\Internal\TextFormatting\LineServicesRun.cs" />
     <Compile Include="MS\Internal\TextFormatting\NumberSubstitution.cs" />
@@ -699,6 +704,7 @@
     <Compile Include="System\Windows\Media\ByteStreamGeometryContext.cs" />
     <Compile Include="System\Windows\Media\CacheMode.cs" />
     <Compile Include="System\Windows\Media\CapacityStreamGeometryContext.cs" />
+    <Compile Include="System\Windows\Media\PathBoundsAccumulator.cs" />
     <Compile Include="System\Windows\Media\ChannelManager.cs" />
     <Compile Include="System\Windows\Media\CharacterMetrics.cs" />
     <Compile Include="System\Windows\Media\CharacterMetricsDictionary.cs" />

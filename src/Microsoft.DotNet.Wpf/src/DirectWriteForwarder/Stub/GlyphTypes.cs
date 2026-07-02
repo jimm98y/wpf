@@ -33,14 +33,24 @@ namespace MS.Internal.Text.TextInterface
         public short StrikethroughPosition;
         public ushort StrikethroughThickness;
 
+        // Em-relative baseline and line spacing, matching the DWriteWrapper's computed values
+        // (GlyphTypeface.Baseline / .LineSpacing consume these).
         public double Baseline
         {
-            get { throw new System.PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform."); }
+            get
+            {
+                double em = DesignUnitsPerEm == 0 ? 1.0 : DesignUnitsPerEm;
+                return (Ascent + LineGap * 0.5) / em;
+            }
         }
 
         public double LineSpacing
         {
-            get { throw new System.PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform."); }
+            get
+            {
+                double em = DesignUnitsPerEm == 0 ? 1.0 : DesignUnitsPerEm;
+                return (Ascent + Descent + LineGap) / em;
+            }
         }
     }
 

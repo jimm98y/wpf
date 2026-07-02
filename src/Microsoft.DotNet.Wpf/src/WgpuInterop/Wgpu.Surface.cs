@@ -33,6 +33,10 @@ namespace Microsoft.Wpf.Interop.WebGpu
             Outdated = 0x00000004,
             Lost = 0x00000005,
             Error = 0x00000006,
+            // wgpu-native extension (wgpu.h): the acquired texture is valid to render/present,
+            // but the surface is currently occluded (e.g. the window is not front-most). We still
+            // render and present so the content is up to date when it becomes visible.
+            Occluded = 0x00030001,
         }
 
         internal enum WGPUPresentMode

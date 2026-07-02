@@ -197,6 +197,12 @@ namespace MS.Win32
         {
             extStatus = MSGFLTINFO.NONE;
 
+            // Per-window Win32 message-filter isolation (UIPI) does not exist off-Windows.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HRESULT.S_FALSE;
+            }
+
             // This API were added for Vista.  The Ex version was added for Windows 7.
             // If we're not on either, then this message filter isolation doesn't exist.
             if (!Utilities.IsOSVistaOrNewer)
@@ -260,7 +266,14 @@ namespace MS.Win32
         // note that this method exists in UnsafeNativeMethodsCLR.cs but with a different signature
         // using a HandleRef for the hWnd instead of an IntPtr, and not using an IntPtr for lParam
         [DllImport(ExternDll.User32, EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
-        internal static extern IntPtr UnsafeSendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+        private static extern IntPtr UnsafeSendMessageNative(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+
+        // Win32 window messaging does not exist off-Windows; the managed run loop and Cocoa backend
+        // handle window lifecycle directly, so posted messages are simply dropped.
+        internal static IntPtr UnsafeSendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam)
+        {
+            return System.OperatingSystem.IsWindows() ? UnsafeSendMessageNative(hWnd, msg, wParam, lParam) : IntPtr.Zero;
+        }
 
         [DllImport(ExternDll.User32, EntryPoint = "RegisterPowerSettingNotification")]
         internal static extern unsafe IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, Guid* pGuid, int Flags);
@@ -335,6 +348,12 @@ namespace MS.Win32
 
         internal static IntPtr SetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
+            // No Win32 window styles to set off-Windows (see GetWindowLong); no-op.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
+
             IntPtr result = IntPtr.Zero;
 
             if (IntPtr.Size == 4)
@@ -354,6 +373,12 @@ namespace MS.Win32
 
         internal static IntPtr CriticalSetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
+            // No Win32 window styles to apply off-Windows (AppKit owns the NSWindow's style).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
+
             IntPtr result = IntPtr.Zero;
 
             if (IntPtr.Size == 4)
@@ -433,6 +458,13 @@ namespace MS.Win32
 
         internal static int GetWindowLong(HandleRef hWnd, int nIndex)
         {
+            // Window styles/exstyles are a Win32 concept. Off-Windows a WPF top-level Cocoa window
+            // is opaque, non-child, non-layered and LTR, i.e. no style bits the callers care about.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+
             int iResult = 0;
             IntPtr result = IntPtr.Zero;
             int error = 0;
@@ -610,6 +642,20 @@ namespace MS.Win32
         // note:  this method exists in UnsafeNativeMethodsCLR.cs, but that method does not have the if/throw implemntation
         internal static void GetWindowPlacement(HandleRef hWnd, ref NativeMethods.WINDOWPLACEMENT placement)
         {
+            // Off-Windows report a normal (non-min/maximized) placement whose normal position is the
+            // Cocoa content rect. Window state (min/max) is managed by AppKit, not this struct.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                int w = 0, h = 0;
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                placement.showCmd = 1; // SW_NORMAL
+                placement.rcNormalPosition_left = 0;
+                placement.rcNormalPosition_top = 0;
+                placement.rcNormalPosition_right = w;
+                placement.rcNormalPosition_bottom = h;
+                return;
+            }
+
             if (!IntGetWindowPlacement(hWnd, ref placement))
             {
                 throw new Win32Exception();
@@ -622,6 +668,12 @@ namespace MS.Win32
         // note: this method appears in UnsafeNativeMethodsCLR.cs but does not have the if/throw block
         internal static void SetWindowPlacement(HandleRef hWnd, [In] ref NativeMethods.WINDOWPLACEMENT placement)
         {
+            // Window placement (min/max/restore geometry) is driven by AppKit off-Windows; no-op.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!IntSetWindowPlacement(hWnd, ref placement))
             {
                 throw new Win32Exception();

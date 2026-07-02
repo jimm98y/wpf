@@ -72,9 +72,28 @@ namespace MS.Internal.TextFormatting
         /// </summary>
         static TextStore()
         {
-            EscStringInfo esc = new EscStringInfo();
+            EscStringInfo esc;
 
-            UnsafeNativeMethods.LoGetEscString(ref esc);
+            if (OperatingSystem.IsWindows())
+            {
+                esc = new EscStringInfo();
+                UnsafeNativeMethods.LoGetEscString(ref esc);
+            }
+            else
+            {
+                // Off-Windows the native LineServices escapement strings are unavailable; supply
+                // the standard Unicode markers as pinned single-char native buffers so the
+                // (char*)Pwch* dereferences and LSRun control runs still work.
+                esc = new EscStringInfo
+                {
+                    szNbsp              = AllocMarker((char)0x00A0),   // no-break space
+                    szHidden            = AllocMarker((char)0xFFFF),   // hidden run marker
+                    szParaSeparator     = AllocMarker((char)0x2029),   // paragraph separator
+                    szLineSeparator     = AllocMarker((char)0x2028),   // line separator
+                    szObjectReplacement = AllocMarker((char)0xFFFC),   // object replacement char
+                    szObjectTerminator  = AllocMarker((char)0xFFFB),   // object terminator
+                };
+            }
 
             ControlRuns = new LSRun[3];
 
@@ -88,6 +107,14 @@ namespace MS.Internal.TextFormatting
             PwchLineSeparator     = esc.szLineSeparator;
             PwchObjectReplacement = esc.szObjectReplacement;
             PwchObjectTerminator  = esc.szObjectTerminator;
+        }
+
+        // Allocates a persistent, null-terminated single-char native buffer for an escapement marker.
+        private static IntPtr AllocMarker(char c)
+        {
+            IntPtr p = System.Runtime.InteropServices.Marshal.AllocHGlobal(4);
+            unsafe { ((char*)p)[0] = c; ((char*)p)[1] = '\0'; }
+            return p;
         }
 
 

@@ -38,6 +38,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             SendVoidBool(nsView, Sel("setWantsLayer:"), true);
             SendVoidPtr(nsView, Sel("setLayer:"), metalLayer);
 
+            // Pin the layer to 1:1 device scale so its drawable size equals the view's point size.
+            // WPF composes at point size (DpiScale 1.0 off-Windows), and the wgpu surface is
+            // configured to that same size; on a Retina display the layer would otherwise default
+            // to 2x, so wgpuSurfaceGetCurrentTexture would report Outdated every frame.
+            SendVoidDouble(metalLayer, Sel("setContentsScale:"), 1.0);
+
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {
                 chain = new Wgpu.WGPUChainedStruct { next = null, sType = Wgpu.WGPUSType_SurfaceSourceMetalLayer },
@@ -78,6 +84,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
 
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
     }

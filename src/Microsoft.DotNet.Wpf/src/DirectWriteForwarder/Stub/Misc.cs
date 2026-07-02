@@ -32,10 +32,13 @@ namespace MS.Internal
 
 namespace MS.Internal.Text.TextInterface
 {
+    // Managed-backed off-Windows. DWrite exposes a localized string table (name-table
+    // strings keyed by locale); WPF mainly reads index 0 / the en-us entry and enumerates
+    // (culture -> string) pairs. We back it with a small ordered locale/value list.
     public sealed class LocalizedStrings : IDictionary<CultureInfo, string>
     {
-        private static readonly PlatformNotSupportedException NotSupported =
-            new PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform.");
+        private readonly List<string> _locales = new();
+        private readonly List<string> _values = new();
 
         public unsafe LocalizedStrings(Native.IDWriteFactory* localizedStrings)
         {
@@ -45,106 +48,101 @@ namespace MS.Internal.Text.TextInterface
         {
         }
 
-        public uint StringsCount
+        // Single-entry (en-us) table for a plain family/face name.
+        internal static LocalizedStrings FromString(string value)
         {
-            get { throw NotSupported; }
+            var s = new LocalizedStrings();
+            s._locales.Add("en-us");
+            s._values.Add(value ?? string.Empty);
+            return s;
         }
+
+        public uint StringsCount => (uint)_values.Count;
 
         public bool FindLocaleName(string localeName, out uint index)
         {
-            throw NotSupported;
+            for (int i = 0; i < _locales.Count; i++)
+            {
+                if (string.Equals(_locales[i], localeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    index = (uint)i;
+                    return true;
+                }
+            }
+            index = 0;
+            return false;
         }
 
-        public string GetLocaleName(uint index)
-        {
-            throw NotSupported;
-        }
+        public string GetLocaleName(uint index) => _locales[(int)index];
 
-        public string GetString(uint index)
+        public string GetString(uint index) => _values[(int)index];
+
+        private CultureInfo CultureAt(int i)
         {
-            throw NotSupported;
+            try { return CultureInfo.GetCultureInfo(_locales[i]); }
+            catch { return CultureInfo.InvariantCulture; }
         }
 
         public void Add(CultureInfo key, string value)
         {
-            throw new NotSupportedException();
+            _locales.Add(key?.Name ?? "en-us");
+            _values.Add(value ?? string.Empty);
         }
 
-        public bool ContainsKey(CultureInfo key)
-        {
-            throw NotSupported;
-        }
+        public bool ContainsKey(CultureInfo key) => FindLocaleName(key?.Name ?? string.Empty, out _);
 
         public ICollection<CultureInfo> Keys
         {
-            get { throw NotSupported; }
+            get
+            {
+                var list = new List<CultureInfo>(_locales.Count);
+                for (int i = 0; i < _locales.Count; i++) list.Add(CultureAt(i));
+                return list;
+            }
         }
 
-        public bool Remove(CultureInfo key)
-        {
-            throw new NotSupportedException();
-        }
+        public bool Remove(CultureInfo key) => throw new NotSupportedException();
 
         public bool TryGetValue(CultureInfo key, out string value)
         {
-            throw NotSupported;
+            if (FindLocaleName(key?.Name ?? string.Empty, out uint idx)) { value = _values[(int)idx]; return true; }
+            value = null;
+            return false;
         }
 
-        public ICollection<string> Values
-        {
-            get { throw NotSupported; }
-        }
+        public ICollection<string> Values => _values.AsReadOnly();
 
         public string this[CultureInfo key]
         {
-            get { throw NotSupported; }
-            set { throw new NotSupportedException(); }
+            get => TryGetValue(key, out string v) ? v : null;
+            set => throw new NotSupportedException();
         }
 
-        public void Add(KeyValuePair<CultureInfo, string> item)
-        {
-            throw new NotSupportedException();
-        }
+        public void Add(KeyValuePair<CultureInfo, string> item) => Add(item.Key, item.Value);
 
-        public void Clear()
-        {
-            throw new NotSupportedException();
-        }
+        public void Clear() { _locales.Clear(); _values.Clear(); }
 
-        public bool Contains(KeyValuePair<CultureInfo, string> item)
-        {
-            throw new NotImplementedException();
-        }
+        public bool Contains(KeyValuePair<CultureInfo, string> item) => ContainsKey(item.Key);
 
         public void CopyTo(KeyValuePair<CultureInfo, string>[] array, int arrayIndex)
         {
-            throw NotSupported;
+            for (int i = 0; i < _values.Count; i++)
+                array[arrayIndex + i] = new KeyValuePair<CultureInfo, string>(CultureAt(i), _values[i]);
         }
 
-        public int Count
-        {
-            get { throw NotSupported; }
-        }
+        public int Count => _values.Count;
 
-        public bool IsReadOnly
-        {
-            get { return true; }
-        }
+        public bool IsReadOnly => true;
 
-        public bool Remove(KeyValuePair<CultureInfo, string> item)
-        {
-            throw new NotSupportedException();
-        }
+        public bool Remove(KeyValuePair<CultureInfo, string> item) => throw new NotSupportedException();
 
         public IEnumerator<KeyValuePair<CultureInfo, string>> GetEnumerator()
         {
-            throw NotSupported;
+            for (int i = 0; i < _values.Count; i++)
+                yield return new KeyValuePair<CultureInfo, string>(CultureAt(i), _values[i]);
         }
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return GetEnumerator();
-        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     public static class LocalizedErrorMsgs

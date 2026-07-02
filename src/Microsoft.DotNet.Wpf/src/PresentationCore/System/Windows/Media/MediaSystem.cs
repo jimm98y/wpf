@@ -42,7 +42,18 @@ namespace System.Windows.Media
             // *** Failure here does NOT indicate a bug in MediaContext.Startup! ***
             //
 
-            HRESULT.Check(UnsafeNativeMethods.MilVersionCheck(MS.Internal.Composition.Version.MilSdkVersion));
+            // When the managed (WebGPU) composition backend is driving composition, the native
+            // milcore engine is not used - DUCE.Channel forwards every command to the managed sink
+            // instead of creating a native channel. In that case skip milcore's version handshake,
+            // partition-manager init and WpfGfx configuration entirely. This is what lets WPF run
+            // without milcore at all (e.g. on macOS, where milcore does not exist).
+            DUCE.ManagedComposition.EnsureAutoRegistered();
+            bool managedComposition = DUCE.ManagedComposition.IsEnabled;
+
+            if (!managedComposition)
+            {
+                HRESULT.Check(UnsafeNativeMethods.MilVersionCheck(MS.Internal.Composition.Version.MilSdkVersion));
+            }
 
             using (CompositionEngineLock.Acquire())
             {
@@ -51,12 +62,15 @@ namespace System.Windows.Media
                 //Is this the first startup?
                 if (0 == s_refCount)
                 {
-                    HRESULT.Check(SafeNativeMethods.MilCompositionEngine_InitializePartitionManager(
-                                  0 // THREAD_PRIORITY_NORMAL
-                                  ));
+                    if (!managedComposition)
+                    {
+                        HRESULT.Check(SafeNativeMethods.MilCompositionEngine_InitializePartitionManager(
+                                      0 // THREAD_PRIORITY_NORMAL
+                                      ));
 
-                    s_forceSoftareForGraphicsStreamMagnifier =
-                        UnsafeNativeMethods.WgxConnection_ShouldForceSoftwareForGraphicsStreamClient();
+                        s_forceSoftareForGraphicsStreamMagnifier =
+                            UnsafeNativeMethods.WgxConnection_ShouldForceSoftwareForGraphicsStreamClient();
+                    }
 
                     ConnectTransport();
 
@@ -67,11 +81,14 @@ namespace System.Windows.Media
                 s_refCount++;
             }
 
-            // Pass security mitigation switch to native WpfGfx code.
-            UnsafeNativeMethods.WpfGfx_SetDisableBoundsCheckProtection(CoreAppContextSwitches.DisableWpfGfxBoundsCheckProtection);
+            if (!managedComposition)
+            {
+                // Pass security mitigation switch to native WpfGfx code.
+                UnsafeNativeMethods.WpfGfx_SetDisableBoundsCheckProtection(CoreAppContextSwitches.DisableWpfGfxBoundsCheckProtection);
 
-            // Setting renderOption for Hardware acceleration in RDP as per appcontext switch.
-            UnsafeNativeMethods.RenderOptions_EnableHardwareAccelerationInRdp(CoreAppContextSwitches.EnableHardwareAccelerationInRdp);
+                // Setting renderOption for Hardware acceleration in RDP as per appcontext switch.
+                UnsafeNativeMethods.RenderOptions_EnableHardwareAccelerationInRdp(CoreAppContextSwitches.EnableHardwareAccelerationInRdp);
+            }
 
             // Consider making MediaSystem.ConnectTransport return the state of transport connectedness so
             // that we can initialize the media system to a disconnected state.
@@ -196,10 +213,14 @@ namespace System.Windows.Media
             // Create a default transport to be used by this media system.
             // If creation fails, fall back to a local transport.
             //
-
-            HRESULT.Check(UnsafeNativeMethods.WgxConnection_Create(
-                false, // false means asynchronous transport
-                out s_pConnection));
+            // With the managed composition backend there is no native milcore connection; the
+            // service channel below routes to the managed sink, so the connection stays null.
+            if (!DUCE.ManagedComposition.IsEnabled)
+            {
+                HRESULT.Check(UnsafeNativeMethods.WgxConnection_Create(
+                    false, // false means asynchronous transport
+                    out s_pConnection));
+            }
 
             // Create service channel used by global glyph cache. This channel is
             // the first channel created for the app, and by creating it with

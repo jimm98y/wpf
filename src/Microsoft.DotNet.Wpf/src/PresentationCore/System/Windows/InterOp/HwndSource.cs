@@ -326,8 +326,9 @@ namespace System.Windows.Interop
             }
             AddSource();
 
-            // Register dropable window.
-            if (_hwndWrapper.Handle != IntPtr.Zero)
+            // Register dropable window. OLE drag/drop is COM-based and Windows-only; skip it
+            // off-Windows (a cross-platform drag/drop backend would hook in here later).
+            if (_hwndWrapper.Handle != IntPtr.Zero && OperatingSystem.IsWindows())
             {
                 // This call is safe since DragDrop.RegisterDropTarget is checking the unmanged
                 // code permission.

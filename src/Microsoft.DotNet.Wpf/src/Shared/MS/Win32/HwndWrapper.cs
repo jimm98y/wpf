@@ -46,6 +46,34 @@ namespace MS.Win32
 
             _wndProc = new HwndWrapperHook(WndProc);
 
+            // Off-Windows there is no Win32 window class/HWND. A sized request maps to a real Cocoa
+            // NSWindow (its layer-backed NSView* becomes the handle the compositor targets); an
+            // unsized request (parking / message-only window) just gets a unique synthetic handle
+            // since nothing dereferences it once the Win32 message paths are gone.
+            if (!OperatingSystem.IsWindows())
+            {
+                // A styled window (style != 0) is a real top-level window -> back it with an
+                // NSWindow whose NSView* is the handle. Parking / message-only windows (style 0)
+                // just get a synthetic handle. WPF creates top-level windows with CW_USEDEFAULT
+                // geometry and sizes them afterward via SetWindowPos, so substitute a default size
+                // here when the requested one is not positive.
+                if (style != 0)
+                {
+                    int cw = width > 0 ? width : 1024;
+                    int ch = height > 0 ? height : 768;
+                    int cx = x > 0 ? x : 100;
+                    int cy = y > 0 ? y : 100;
+                    _cocoaWindow = new MS.Internal.Interop.CocoaWindow();
+                    _cocoaWindow.Create(name, cx, cy, cw, ch);
+                    _handle = _cocoaWindow.ContentView;
+                }
+                else
+                {
+                    _handle = AllocateSyntheticHandle();
+                }
+                return;
+            }
+
             // We create the HwndSubclass object so that we can use its
             // window proc directly.  We will not be "subclassing" the
             // window we create.
@@ -180,7 +208,16 @@ namespace MS.Win32
             // We are now considered disposed.
             _isDisposed = true;
 
-            
+            // Off-Windows: tear down the Cocoa window (if any) and drop the handle; there is no
+            // Win32 window/class to destroy or unregister.
+            if (!OperatingSystem.IsWindows())
+            {
+                _cocoaWindow?.Destroy();
+                _cocoaWindow = null;
+                _handle = default;
+                return;
+            }
+
             if (isHwndBeingDestroyed)
             {
                 // The window is in the process of being destroyed.  We can't call UnregisterClass yet
@@ -362,6 +399,19 @@ namespace MS.Win32
         
         private HwndWrapperHook _wndProc;
         private bool _isDisposed;
+
+        // Off-Windows backing: the Cocoa window (for sized/top-level windows) and a counter that
+        // hands out unique non-zero synthetic handles for message-only/parking windows.
+        private MS.Internal.Interop.CocoaWindow _cocoaWindow;
+        private static long s_syntheticHandle;
+
+        private static IntPtr AllocateSyntheticHandle()
+        {
+            // Start well above 0 and step by a page so these never collide with each other or with
+            // real NSView pointers; they are only ever compared for equality, never dereferenced.
+            long value = System.Threading.Interlocked.Add(ref s_syntheticHandle, 0x1000) + 0x7F00_0000;
+            return new IntPtr(value);
+        }
 
         private bool _isInCreateWindow = false;     // debugging variable (temporary)
 

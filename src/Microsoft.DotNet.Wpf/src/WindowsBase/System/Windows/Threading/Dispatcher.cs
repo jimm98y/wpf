@@ -2124,6 +2124,25 @@ namespace System.Windows.Threading
                 }
             }
 
+            // On macOS the Cocoa windowing backend has no separate UI thread: its NSApplication
+            // run loop must be serviced on this (the dispatcher) thread. Rather than block on the
+            // managed event, block on the Cocoa run loop - that is what actually composites the
+            // window (CoreAnimation / window-server handshake) and delivers input; a bare managed
+            // wait leaves the CAMetalLayer occluded. If work was already signaled, don't block:
+            // just drain pending events and return so the queue is processed promptly.
+            if (OperatingSystem.IsMacOS())
+            {
+                int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+
+                // Wait for managed work (or the timer deadline / the ~120Hz cap), then drain the
+                // Cocoa event queue non-blocking. The wait uses the managed event so DispatcherTimers
+                // and cross-thread posts wake the loop promptly (keeping animation + shutdown live);
+                // draining events keeps the window responsive.
+                runLoop.Wait(cap <= 0 ? 0 : cap);
+                MS.Internal.Interop.CocoaWindow.PumpEvents(0);
+                return _runLoop != null;
+            }
+
             return runLoop.Wait(timeout);
         }
 
@@ -2595,6 +2614,9 @@ namespace System.Windows.Threading
         private const int PROCESS_NONE = 0;
         private const int PROCESS_BACKGROUND = 1;
         private const int PROCESS_FOREGROUND = 2;
+
+        // ~120 Hz cap for draining the macOS Cocoa event queue from the dispatcher loop.
+        private const int NativeEventPumpIntervalMs = 8;
 
         private static List<WeakReference> _dispatchers;
         private static WeakReference _possibleDispatcher;

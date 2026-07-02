@@ -353,6 +353,35 @@ namespace System.Windows.Media.Imaging
 
             _bitmapInit.BeginInit();
 
+            // Off-Windows there is no WIC. Back the bitmap with an in-memory managed pixel buffer
+            // instead of a native WICBitmap; CopyPixels reads from it and the managed composition
+            // path forwards those bytes to the WebGPU backend. Palettized formats are not supported
+            // on this path (they require WIC palette expansion).
+            if (!OperatingSystem.IsWindows())
+            {
+                if (pixelFormat.Palettized)
+                {
+                    throw new PlatformNotSupportedException("Palettized bitmap formats are not supported without WIC on this platform.");
+                }
+
+                _managedPixels = new byte[bufferSize];
+                Marshal.Copy(buffer, _managedPixels, 0, bufferSize);
+                _managedStride = stride;
+
+                _format = pixelFormat;
+                _pixelWidth = pixelWidth;
+                _pixelHeight = pixelHeight;
+                _dpiX = dpiX;
+                _dpiY = dpiY;
+
+                _createOptions = BitmapCreateOptions.PreservePixelFormat;
+                _cacheOption = BitmapCacheOption.OnLoad;
+                _isSourceCached = true;
+                _syncObject = _managedPixels; // any stable non-null lock target
+                _bitmapInit.EndInit();
+                return;
+            }
+
             try
             {
                 BitmapSourceSafeMILHandle wicBitmap;

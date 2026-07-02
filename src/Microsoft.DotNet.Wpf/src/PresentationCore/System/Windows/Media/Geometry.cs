@@ -148,10 +148,31 @@ namespace System.Windows.Media
         }
 
 
+        // Axis-aligned bounds of an affine-transformed rect (transform the 4 corners, re-bound).
+        private static Rect TransformRectAffine(Rect r, Matrix m)
+        {
+            if (m.IsIdentity || r.IsEmpty)
+            {
+                return r;
+            }
+
+            Point p0 = m.Transform(new Point(r.Left, r.Top));
+            Point p1 = m.Transform(new Point(r.Right, r.Top));
+            Point p2 = m.Transform(new Point(r.Right, r.Bottom));
+            Point p3 = m.Transform(new Point(r.Left, r.Bottom));
+
+            double left = Math.Min(Math.Min(p0.X, p1.X), Math.Min(p2.X, p3.X));
+            double top = Math.Min(Math.Min(p0.Y, p1.Y), Math.Min(p2.Y, p3.Y));
+            double right = Math.Max(Math.Max(p0.X, p1.X), Math.Max(p2.X, p3.X));
+            double bottom = Math.Max(Math.Max(p0.Y, p1.Y), Math.Max(p2.Y, p3.Y));
+
+            return new Rect(left, top, right - left, bottom - top);
+        }
+
         internal static unsafe Rect GetBoundsHelper(
-            Pen pen, 
-            Matrix *pWorldMatrix, 
-            Point* pPoints, 
+            Pen pen,
+            Matrix *pWorldMatrix,
+            Point* pPoints,
             byte *pTypes, 
             uint pointCount,
             uint segmentCount,
@@ -165,6 +186,43 @@ namespace System.Windows.Media
 
             // If the pen contributes to the bounds, populate the CMD struct
             bool fPenContributesToBounds = Pen.ContributesToBounds(pen);
+
+            if (!OperatingSystem.IsWindows())
+            {
+                // Off-Windows the native milcore polygon-bounds helper is unavailable; union the
+                // flattened points managed (control points give a valid superset), apply the
+                // geometry+world transforms, then inflate by the pen.
+                double left = double.PositiveInfinity, top = double.PositiveInfinity;
+                double right = double.NegativeInfinity, bottom = double.NegativeInfinity;
+                for (uint pi = 0; pi < pointCount; pi++)
+                {
+                    Point pt = pPoints[pi];
+                    if (double.IsNaN(pt.X) || double.IsNaN(pt.Y)) continue;
+                    if (pt.X < left) left = pt.X;
+                    if (pt.X > right) right = pt.X;
+                    if (pt.Y < top) top = pt.Y;
+                    if (pt.Y > bottom) bottom = pt.Y;
+                }
+
+                if (right < left || bottom < top)
+                {
+                    return Rect.Empty;
+                }
+
+                Rect rawBounds = new Rect(left, top, right - left, bottom - top);
+
+                Matrix combined = (pGeometryMatrix != null) ? *pGeometryMatrix : Matrix.Identity;
+                if (pWorldMatrix != null) combined.Append(*pWorldMatrix);
+                Rect managedBounds = TransformRectAffine(rawBounds, combined);
+
+                if (fPenContributesToBounds)
+                {
+                    double half = pen.Thickness / 2.0;
+                    managedBounds.Inflate(half, half);
+                }
+
+                return managedBounds;
+            }
 
             if (fPenContributesToBounds)
             {

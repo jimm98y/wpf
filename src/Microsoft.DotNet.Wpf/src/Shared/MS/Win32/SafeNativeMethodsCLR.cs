@@ -113,6 +113,17 @@ namespace MS.Win32
 
         internal static void GetClientRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
+            // Off-Windows the handle is a Cocoa NSView*; the content view IS the client area, so the
+            // client rect equals the content size (origin (0,0)). Reporting the same size as the window
+            // rect makes the computed non-client frame 0, so the window's content gets the full size.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                int w = 0, h = 0;
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                rect = new NativeMethods.RECT(0, 0, w, h);
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetClientRect(hWnd, ref rect))
             {
                 throw new Win32Exception();
@@ -131,6 +142,16 @@ namespace MS.Win32
 
         internal static void GetWindowRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
+            // Off-Windows the handle is a Cocoa NSView*; report its content size as the window rect
+            // (origin (0,0); title-bar geometry is owned by AppKit).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                int w = 0, h = 0;
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                rect = new NativeMethods.RECT(0, 0, w, h);
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetWindowRect(hWnd, ref rect))
             {
                 throw new Win32Exception();
@@ -261,6 +282,13 @@ namespace MS.Win32
         /// </returns>
         public static int? GetCurrentSessionId()
         {
+            // Windows terminal-services sessions (kernel32 ProcessIdToSessionId) do not exist
+            // off-Windows; report "no session".
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
             int? result = null;
 
             int sessionId;
@@ -310,6 +338,13 @@ namespace MS.Win32
         /// </returns>
         public static bool IsCurrentSessionConnectStateWTSActive(int? SessionId = null, bool defaultResult = true)
         {
+            // WTS session-connect state is a Windows terminal-services concept; off-Windows the
+            // session is always considered "active" (the app owns its Cocoa window).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             IntPtr buffer = IntPtr.Zero;
             int bytesReturned;
 

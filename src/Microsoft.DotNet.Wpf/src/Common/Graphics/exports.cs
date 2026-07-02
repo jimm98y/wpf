@@ -54,11 +54,23 @@ namespace System.Windows.Media.Composition
     /// </remark>
     internal struct CompositionEngineLock : IDisposable
     {
+        // The native composition engine lock lives in milcore. When the managed (WebGPU) backend
+        // is driving composition there is no milcore, so a process-wide managed monitor provides
+        // the same mutual exclusion between the UI and composition code paths.
+        private static readonly object s_managedLock = new object();
+        private bool _managed;
+
         /// <summary>
         /// Aquires the composition engine lock.
         /// </summary>
         internal static CompositionEngineLock Acquire()
         {
+            if (DUCE.ManagedComposition.IsEnabled)
+            {
+                System.Threading.Monitor.Enter(s_managedLock);
+                return new CompositionEngineLock { _managed = true };
+            }
+
             UnsafeNativeMethods.MilCoreApi.EnterCompositionEngineLock();
 
             return new CompositionEngineLock();
@@ -69,6 +81,12 @@ namespace System.Windows.Media.Composition
         /// </summary>
         public void Dispose()
         {
+            if (_managed)
+            {
+                System.Threading.Monitor.Exit(s_managedLock);
+                return;
+            }
+
             UnsafeNativeMethods.MilCoreApi.ExitCompositionEngineLock();
         }
     }

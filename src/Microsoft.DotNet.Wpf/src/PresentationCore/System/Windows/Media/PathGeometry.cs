@@ -737,17 +737,66 @@ namespace System.Windows.Media
         /// This function should not be called with a PathGeometryData that's known to be empty, since MilRectD
         /// does not offer a standard way of representing this.
         /// </summary>
+        // Axis-aligned bounds of an affine-transformed rect (transform the 4 corners, re-bound).
+        private static Rect TransformRectManaged(Rect r, Matrix m)
+        {
+            if (m.IsIdentity || r.IsEmpty)
+            {
+                return r;
+            }
+
+            Point p0 = m.Transform(new Point(r.Left, r.Top));
+            Point p1 = m.Transform(new Point(r.Right, r.Top));
+            Point p2 = m.Transform(new Point(r.Right, r.Bottom));
+            Point p3 = m.Transform(new Point(r.Left, r.Bottom));
+
+            double left = Math.Min(Math.Min(p0.X, p1.X), Math.Min(p2.X, p3.X));
+            double top = Math.Min(Math.Min(p0.Y, p1.Y), Math.Min(p2.Y, p3.Y));
+            double right = Math.Max(Math.Max(p0.X, p1.X), Math.Max(p2.X, p3.X));
+            double bottom = Math.Max(Math.Max(p0.Y, p1.Y), Math.Max(p2.Y, p3.Y));
+
+            return new Rect(left, top, right - left, bottom - top);
+        }
+
         internal static MilRectD GetPathBoundsAsRB(
             PathGeometryData pathData,
-            Pen pen, 
-            Matrix worldMatrix, 
-            double tolerance, 
-            ToleranceType type, 
+            Pen pen,
+            Matrix worldMatrix,
+            double tolerance,
+            ToleranceType type,
             bool skipHollows)
         {
             // This method can't handle the empty geometry case, as it's impossible for us to
             // return Rect.Empty. Callers should do their own check.
             Debug.Assert(!pathData.IsEmpty());
+
+            if (!OperatingSystem.IsWindows())
+            {
+                // Off-Windows the native milcore bounds helper is unavailable; walk the serialized
+                // path managed and union its points, then apply the geometry+world transforms and
+                // pen inflation.
+                PathBoundsAccumulator acc = new PathBoundsAccumulator();
+                ParsePathGeometryData(pathData, acc);
+                Rect r = acc.Bounds;
+                if (r.IsEmpty)
+                {
+                    return MilRectD.Empty;
+                }
+
+                Matrix m = new Matrix(pathData.Matrix.S_11, pathData.Matrix.S_12,
+                                      pathData.Matrix.S_21, pathData.Matrix.S_22,
+                                      pathData.Matrix.DX, pathData.Matrix.DY);
+                m.Append(worldMatrix);
+                Rect tr = TransformRectManaged(r, m);
+
+                if (pen != null)
+                {
+                    double half = pen.Thickness / 2.0;
+                    tr.Inflate(half, half);
+                }
+
+                return new MilRectD(tr.Left, tr.Top, tr.Right, tr.Bottom);
+            }
 
             unsafe
             {

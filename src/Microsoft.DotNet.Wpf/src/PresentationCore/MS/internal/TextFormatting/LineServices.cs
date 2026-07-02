@@ -1404,20 +1404,103 @@ namespace MS.Internal.TextFormatting
 
     internal static class UnsafeNativeMethods
     {
+
+        // ----------------------------------------------------------------------------------------
+        // Off-Windows these Line Services entry points are served by the managed engine
+        // (ManagedLineServices) instead of the native PresentationNative DLL. On Windows they
+        // forward to the original P/Invoke (the *Native methods below).
+        // ----------------------------------------------------------------------------------------
+        private static readonly bool s_managedLS = !OperatingSystem.IsWindows();
+
+        internal static LsErr LoCreateContext(ref LsContextInfo contextInfo, ref LscbkRedefined lscbkRedef, out IntPtr ploc)
+        {
+            if (s_managedLS) return ManagedLineServices.CreateContext(ref contextInfo, ref lscbkRedef, out ploc);
+            return LoCreateContextNative(ref contextInfo, ref lscbkRedef, out ploc);
+        }
+
+        internal static LsErr LoDestroyContext(IntPtr ploc)
+            => s_managedLS ? ManagedLineServices.DestroyContext(ploc) : LoDestroyContextNative(ploc);
+
+        internal static LsErr LoCreateLine(IntPtr ploc, int cp, int ccpLim, int durColumn, uint dwLineFlags,
+            IntPtr pInputBreakRec, out LsLInfo plslinfo, out IntPtr pploline, out int maxDepth, out LsLineWidths lineWidths)
+        {
+            if (s_managedLS) return ManagedLineServices.CreateLine(ploc, cp, ccpLim, durColumn, dwLineFlags, pInputBreakRec, out plslinfo, out pploline, out maxDepth, out lineWidths);
+            return LoCreateLineNative(ploc, cp, ccpLim, durColumn, dwLineFlags, pInputBreakRec, out plslinfo, out pploline, out maxDepth, out lineWidths);
+        }
+
+        internal static LsErr LoDisposeLine(IntPtr ploline, bool finalizing)
+            => s_managedLS ? ManagedLineServices.DisposeLine(ploline, finalizing) : LoDisposeLineNative(ploline, finalizing);
+
+        internal static LsErr LoDisplayLine(IntPtr ploline, ref LSPOINT pt, uint displayMode, ref LSRECT clipRect)
+        {
+            if (s_managedLS) return ManagedLineServices.DisplayLine(ploline, ref pt, displayMode, ref clipRect);
+            return LoDisplayLineNative(ploline, ref pt, displayMode, ref clipRect);
+        }
+
+        internal static LsErr LoSetDoc(IntPtr ploc, int isDisplay, int isReferencePresentationEqual, ref LsDevRes deviceInfo)
+        {
+            if (s_managedLS) return ManagedLineServices.SetDoc(ploc, isDisplay, isReferencePresentationEqual, ref deviceInfo);
+            return LoSetDocNative(ploc, isDisplay, isReferencePresentationEqual, ref deviceInfo);
+        }
+
+        internal static LsErr LoSetBreaking(IntPtr ploc, int strategy)
+            => s_managedLS ? ManagedLineServices.SetBreaking(ploc, strategy) : LoSetBreakingNative(ploc, strategy);
+
+        internal static unsafe LsErr LoSetTabs(IntPtr ploc, int durIncrementalTab, int tabCount, LsTbd* pTabs)
+        {
+            if (s_managedLS) return ManagedLineServices.SetTabs(ploc, durIncrementalTab, tabCount, pTabs);
+            return LoSetTabsNative(ploc, durIncrementalTab, tabCount, pTabs);
+        }
+
+        internal static LsErr LoQueryLineCpPpoint(IntPtr ploline, int lscpQuery, int depthQueryMax,
+            IntPtr pSubLineInfo, out int actualDepthQuery, out LsTextCell lsTextCell)
+        {
+            if (s_managedLS) return ManagedLineServices.QueryLineCpPpoint(ploline, lscpQuery, depthQueryMax, pSubLineInfo, out actualDepthQuery, out lsTextCell);
+            return LoQueryLineCpPpointNative(ploline, lscpQuery, depthQueryMax, pSubLineInfo, out actualDepthQuery, out lsTextCell);
+        }
+
+        internal static LsErr LoQueryLinePointPcp(IntPtr ploline, ref LSPOINT ptQuery, int depthQueryMax,
+            IntPtr pSubLineInfo, out int actualDepthQuery, out LsTextCell lsTextCell)
+        {
+            if (s_managedLS) return ManagedLineServices.QueryLinePointPcp(ploline, ref ptQuery, depthQueryMax, pSubLineInfo, out actualDepthQuery, out lsTextCell);
+            return LoQueryLinePointPcpNative(ploline, ref ptQuery, depthQueryMax, pSubLineInfo, out actualDepthQuery, out lsTextCell);
+        }
+
+        internal static LsErr LoAcquireBreakRecord(IntPtr ploline, out IntPtr pbreakrec)
+        {
+            if (s_managedLS) return ManagedLineServices.AcquireBreakRecord(ploline, out pbreakrec);
+            return LoAcquireBreakRecordNative(ploline, out pbreakrec);
+        }
+
+        internal static LsErr LoDisposeBreakRecord(IntPtr pBreakRec, bool finalizing)
+            => s_managedLS ? ManagedLineServices.DisposeBreakRecord(pBreakRec, finalizing) : LoDisposeBreakRecordNative(pBreakRec, finalizing);
+
+        internal static LsErr LoCloneBreakRecord(IntPtr pBreakRec, out IntPtr pBreakRecClone)
+        {
+            if (s_managedLS) return ManagedLineServices.CloneBreakRecord(pBreakRec, out pBreakRecClone);
+            return LoCloneBreakRecordNative(pBreakRec, out pBreakRecClone);
+        }
+
+        internal static LsErr LoEnumLine(IntPtr ploline, bool reverseOder, bool fGeometryneeded, ref LSPOINT pt)
+        {
+            if (s_managedLS) return ManagedLineServices.EnumLine(ploline, reverseOder, fGeometryneeded, ref pt);
+            return LoEnumLineNative(ploline, reverseOder, fGeometryneeded, ref pt);
+        }
+
         [DllImport(DllImport.PresentationNative, EntryPoint="LoCreateContext")]
-        internal static extern LsErr LoCreateContext(
+        private static extern LsErr LoCreateContextNative(
             ref LsContextInfo               contextInfo,      // const
             ref LscbkRedefined              lscbkRedef,
             out IntPtr                      ploc
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoDestroyContext")]
-        internal static extern LsErr LoDestroyContext(
+        private static extern LsErr LoDestroyContextNative(
             IntPtr                  ploc
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoCreateLine")]
-        internal static extern LsErr LoCreateLine(
+        private static extern LsErr LoCreateLineNative(
             IntPtr                  ploc,
             int                     cp,
             int                     ccpLim,
@@ -1431,27 +1514,27 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoDisposeLine")]
-        internal static extern LsErr LoDisposeLine(
+        private static extern LsErr LoDisposeLineNative(
             IntPtr                  ploline,
             [MarshalAs(UnmanagedType.Bool)]
             bool                    finalizing
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoAcquireBreakRecord")]
-        internal static extern LsErr LoAcquireBreakRecord(
+        private static extern LsErr LoAcquireBreakRecordNative(
             IntPtr                  ploline,
             out IntPtr              pbreakrec
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoDisposeBreakRecord")]
-        internal static extern LsErr LoDisposeBreakRecord(
+        private static extern LsErr LoDisposeBreakRecordNative(
             IntPtr                  pBreakRec,
             [MarshalAs(UnmanagedType.Bool)]
             bool                    finalizing
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoCloneBreakRecord")]
-        internal static extern LsErr LoCloneBreakRecord(
+        private static extern LsErr LoCloneBreakRecordNative(
             IntPtr                  pBreakRec,
             out IntPtr              pBreakRecClone
             );
@@ -1462,13 +1545,13 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoSetBreaking")]
-        internal static extern LsErr LoSetBreaking(
+        private static extern LsErr LoSetBreakingNative(
             IntPtr                  ploc,
             int                     strategy
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoSetDoc")]
-        internal static extern LsErr LoSetDoc(
+        private static extern LsErr LoSetDocNative(
             IntPtr                  ploc,
             int                     isDisplay,
             int                     isReferencePresentationEqual,
@@ -1476,7 +1559,7 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoSetTabs")]
-        internal static extern unsafe LsErr LoSetTabs(
+        private static extern unsafe LsErr LoSetTabsNative(
             IntPtr                  ploc,
             int                     durIncrementalTab,
             int                     tabCount,
@@ -1484,7 +1567,7 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoDisplayLine")]
-        internal static extern LsErr LoDisplayLine(
+        private static extern LsErr LoDisplayLineNative(
             IntPtr                  ploline,
             ref LSPOINT             pt,
             uint                    displayMode,
@@ -1492,7 +1575,7 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoEnumLine")]
-        internal static extern LsErr LoEnumLine(
+        private static extern LsErr LoEnumLineNative(
             IntPtr                  ploline,
             bool                    reverseOder,
             bool                    fGeometryneeded,
@@ -1500,7 +1583,7 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoQueryLineCpPpoint")]
-        internal static extern LsErr LoQueryLineCpPpoint(
+        private static extern LsErr LoQueryLineCpPpointNative(
             IntPtr                  ploline,
             int                     lscpQuery,
             int                     depthQueryMax,
@@ -1510,7 +1593,7 @@ namespace MS.Internal.TextFormatting
             );
 
         [DllImport(DllImport.PresentationNative, EntryPoint="LoQueryLinePointPcp")]
-        internal static extern LsErr LoQueryLinePointPcp(
+        private static extern LsErr LoQueryLinePointPcpNative(
             IntPtr                  ploline,
             ref LSPOINT             ptQuery,        //  use POINT as POINTUV
             int                     depthQueryMax,

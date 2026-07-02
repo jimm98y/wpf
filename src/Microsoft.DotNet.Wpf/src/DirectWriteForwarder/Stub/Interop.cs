@@ -31,22 +31,24 @@ namespace MS.Internal.Text.TextInterface
 
     public static class DWriteTypeConverter
     {
-        // DWRITE_FACTORY_TYPE Convert(FactoryType) - cast to int at the call site.
+        // DWRITE_FACTORY_TYPE Convert(FactoryType): SHARED=0, ISOLATED=1 (matches FactoryType).
         public static int Convert(FactoryType factoryType)
         {
-            throw new PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform.");
+            return (int)factoryType;
         }
 
-        // unsigned char Convert(FontSimulations) - DWRITE_FONT_SIMULATIONS flags byte.
+        // DWRITE_FONT_SIMULATIONS Convert(FontSimulations): NONE=0, BOLD=1, OBLIQUE=2 (identical flags).
         public static byte Convert(FontSimulations fontSimulations)
         {
-            throw new PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform.");
+            return (byte)fontSimulations;
         }
 
-        // DWRITE_MEASURING_MODE Convert(TextFormattingMode) - cast to UInt16 at the call site.
+        // DWRITE_MEASURING_MODE Convert(TextFormattingMode): Ideal->NATURAL(0), Display->GDI_CLASSIC(1).
+        // The value is only carried in the glyph-run command; the managed renderer rasterizes from
+        // the outline regardless, so the exact mode is not behaviourally critical off-Windows.
         public static int Convert(System.Windows.Media.TextFormattingMode measuringMode)
         {
-            throw new PlatformNotSupportedException("DirectWrite text/font shaping is not available on this platform.");
+            return measuringMode == System.Windows.Media.TextFormattingMode.Display ? 1 : 0;
         }
     }
 }

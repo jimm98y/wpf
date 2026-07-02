@@ -75,7 +75,23 @@ namespace MS.Win32
 #endif
 
         [DllImport(ExternDll.User32, EntryPoint = "SetWindowPos", ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern bool SetWindowPos(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags);
+        private static extern bool SetWindowPosNative(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags);
+
+        // Off-Windows, forward a resize to the Cocoa window (position/z-order are owned by AppKit).
+        public static bool SetWindowPos(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetWindowPosNative(hWnd, hWndInsertAfter, x, y, cx, cy, flags);
+            }
+
+            const int SWP_NOSIZE = 0x0001;
+            if ((flags & SWP_NOSIZE) == 0)
+            {
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.SetContentSize(cx, cy);
+            }
+            return true;
+        }
 
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern IntPtr GetWindow(HandleRef hWnd, int uCmd);
@@ -113,8 +129,14 @@ namespace MS.Win32
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern int GetBitmapBits(HandleRef hbmp, int cbBuffer, byte[] lpvBits);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool ShowWindow(HandleRef hWnd, int nCmdShow);
+        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "ShowWindow")]
+        private static extern bool ShowWindowNative(HandleRef hWnd, int nCmdShow);
+
+        // The Cocoa window is already ordered-front when created; nothing to do off-Windows.
+        public static bool ShowWindow(HandleRef hWnd, int nCmdShow)
+        {
+            return OperatingSystem.IsWindows() ? ShowWindowNative(hWnd, nCmdShow) : true;
+        }
 
         public static void DeleteObject(HandleRef hObject)
         {
@@ -955,8 +977,17 @@ namespace MS.Win32
         internal static extern bool TryPostMessage(HandleRef hwnd, WindowMessage msg, IntPtr wparam, IntPtr lparam);
 #endif
 #if BASE_NATIVEMETHODS || CORE_NATIVEMETHODS
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern void NotifyWinEvent(int winEvent, HandleRef hwnd, int objType, int objID);
+        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "NotifyWinEvent")]
+        private static extern void NotifyWinEventNative(int winEvent, HandleRef hwnd, int objType, int objID);
+
+        // UI Automation WinEvents are a user32 accessibility facility; no-op off-Windows.
+        public static void NotifyWinEvent(int winEvent, HandleRef hwnd, int objType, int objID)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                NotifyWinEventNative(winEvent, hwnd, objType, objID);
+            }
+        }
 #endif
         [DllImport(ExternDll.User32, ExactSpelling = true, EntryPoint = "BeginPaint", CharSet = CharSet.Auto)]
         private static extern IntPtr IntBeginPaint(HandleRef hWnd, [In, Out] ref NativeMethods.PAINTSTRUCT lpPaint);

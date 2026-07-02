@@ -6,6 +6,10 @@ using System.Runtime.CompilerServices;
 // The WebGPU binding is internal API (it becomes part of PresentationCore's
 // native seam). The Phase-0 smoke test lives in a separate assembly and needs
 // access to drive the device path directly.
+// The DirectWriteForwarder replacement (off-Windows) reuses this assembly's managed OpenType
+// font stack (Composition.Text) to back PresentationCore's MS.Internal.Text.TextInterface layer,
+// so it needs access to the internal font types.
+[assembly: InternalsVisibleTo("DirectWriteForwarder")]
 [assembly: InternalsVisibleTo("WgpuInterop.SmokeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.RenderTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.SurfaceDemo")]

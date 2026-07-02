@@ -702,6 +702,14 @@ namespace System.Windows.Media.Imaging
 
             lock (_syncObject)
             {
+                // Managed (off-Windows) backing: copy the requested rect out of the in-memory
+                // buffer instead of calling into WIC.
+                if (_managedPixels != null)
+                {
+                    CopyPixelsFromManagedBuffer(sourceRect, buffer, stride);
+                    return;
+                }
+
                 HRESULT.Check(UnsafeNativeMethods.WICBitmapSource.CopyPixels(
                     WicSourceHandle,
                     ref sourceRect,
@@ -709,6 +717,29 @@ namespace System.Windows.Media.Imaging
                     bufferSize,
                     buffer
                     ));
+            }
+        }
+
+        /// <summary>
+        /// Copies a rectangle of the managed pixel backing (see <see cref="_managedPixels"/>) into
+        /// the destination buffer. Only whole-byte pixel formats are supported (the formats WPF's
+        /// managed composition path uses); the source rect is assumed byte-aligned.
+        /// </summary>
+        private unsafe void CopyPixelsFromManagedBuffer(Int32Rect sourceRect, IntPtr buffer, int stride)
+        {
+            int bitsPerPixel = Format.BitsPerPixel;
+            int rowBytes = checked((sourceRect.Width * bitsPerPixel + 7) / 8);
+            int srcByteX = checked((sourceRect.X * bitsPerPixel) / 8);
+
+            byte* dst = (byte*)buffer;
+            for (int row = 0; row < sourceRect.Height; row++)
+            {
+                int srcIndex = checked((sourceRect.Y + row) * _managedStride + srcByteX);
+                int dstIndex = checked(row * stride);
+                for (int b = 0; b < rowBytes; b++)
+                {
+                    dst[dstIndex + b] = _managedPixels[srcIndex + b];
+                }
             }
         }
 
@@ -1578,6 +1609,14 @@ namespace System.Windows.Media.Imaging
 
         internal object _syncObject;
         internal bool _isSourceCached;
+
+        // Off-Windows there is no native WIC bitmap to hold pixels. When _managedPixels is non-null
+        // this bitmap is backed by an in-memory buffer instead of a WICBitmapSource: the cached
+        // settings (_format/_pixelWidth/_pixelHeight/_dpi) are populated directly and CopyPixels
+        // reads from this buffer. Used by the managed composition path, which extracts BGRA32 bytes
+        // via CopyPixels rather than dereferencing a COM pointer.
+        internal byte[] _managedPixels;
+        internal int _managedStride;
 
         // Setting this to true causes us to throw away the old DUCECompatiblePtr which contains
         // a cache of the bitmap in video memory. We'll create a new DUCECompatiblePtr and

@@ -198,9 +198,18 @@ namespace MS.Internal
 
         [DllImport(DllImport.PresentationNative, EntryPoint="MILGetClassificationTables")]
         internal static extern void MILGetClassificationTables(out RawClassificationTables ct);
+        // Off-Windows the native classification tables (PresentationNative) are unavailable;
+        // ManagedClassification supplies equivalent per-character attributes instead.
+        private static readonly bool _managed = !OperatingSystem.IsWindows();
+
         static Classification()
         {
-            unsafe 
+            if (_managed)
+            {
+                return;
+            }
+
+            unsafe
             {
                 RawClassificationTables ct = new RawClassificationTables();
                 MILGetClassificationTables(out ct);
@@ -217,7 +226,10 @@ namespace MS.Internal
         /// </summary>
         public static short GetUnicodeClassUTF16(char codepoint)
         {
-            unsafe 
+            if (_managed)
+                return ManagedClassification.GetClass(codepoint);
+
+            unsafe
             {
                 short **plane0 = UnicodeClassTable[0];
                 Invariant.Assert((long)plane0 >= (long)UnicodeClass.Max);
@@ -234,6 +246,12 @@ namespace MS.Internal
         /// </summary>
         public static short GetUnicodeClass(int unicodeScalar)
         {
+            if (_managed)
+            {
+                Invariant.Assert(unicodeScalar >= 0 && unicodeScalar <= 0x10FFFF);
+                return ManagedClassification.GetClass(unicodeScalar);
+            }
+
             unsafe
             {
                 Invariant.Assert(unicodeScalar >= 0 && unicodeScalar <= 0x10FFFF);
@@ -259,7 +277,7 @@ namespace MS.Internal
         {
             unsafe
             {
-                return (ScriptID)Classification.CharAttributeTable[GetUnicodeClass(unicodeScalar)].Script;
+                return (ScriptID)CharAttributeOf(GetUnicodeClass(unicodeScalar)).Script;
             }
         }
 
@@ -297,7 +315,7 @@ namespace MS.Internal
         {
             unsafe
             {
-                byte itemClass = Classification.CharAttributeTable[GetUnicodeClass(unicodeScalar)].ItemClass;
+                byte itemClass = CharAttributeOf(GetUnicodeClass(unicodeScalar)).ItemClass;
 
                 return itemClass == (byte)ItemClass.SimpleMarkClass
                     || itemClass == (byte)ItemClass.ComplexMarkClass
@@ -312,8 +330,8 @@ namespace MS.Internal
         {
             unsafe
             {
-                byte itemClass = Classification.CharAttributeTable[GetUnicodeClass(unicodeScalar)].ItemClass;
-                
+                byte itemClass = CharAttributeOf(GetUnicodeClass(unicodeScalar)).ItemClass;
+
                 return itemClass == (byte) ItemClass.JoinerClass;
             }
         }
@@ -350,7 +368,7 @@ namespace MS.Internal
             {
                 unsafe
                 {
-                    ushort flags = (ushort)Classification.CharAttributeTable[(int)GetUnicodeClassUTF16(charBuffer[i])].Flags;
+                    ushort flags = (ushort)CharAttributeOf((int)GetUnicodeClassUTF16(charBuffer[i])).Flags;
 
                     if((flags & mask) != 0)
                         break;
@@ -384,7 +402,7 @@ namespace MS.Internal
             
                 unsafe
                 {
-                    byte currentClass = (byte) Classification.CharAttributeTable[(int)GetUnicodeClass(ch)].ItemClass;
+                    byte currentClass = (byte) CharAttributeOf((int)GetUnicodeClass(ch)).ItemClass;
                     if (currentClass != (byte) itemClass)
                         break;
                 }
@@ -401,10 +419,13 @@ namespace MS.Internal
 
         internal static CharacterAttribute CharAttributeOf(int charClass)
         {
+            if (_managed)
+                return ManagedClassification.Attr(charClass);
+
             unsafe
             {
                 Invariant.Assert(charClass >= 0 && charClass < (int) UnicodeClass.Max);
-                return CharAttributeTable[charClass]; 
+                return CharAttributeTable[charClass];
             }
         }
 
