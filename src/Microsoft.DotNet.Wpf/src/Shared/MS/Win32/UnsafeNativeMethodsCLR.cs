@@ -86,9 +86,26 @@ namespace MS.Win32
             }
 
             const int SWP_NOSIZE = 0x0001;
-            if ((flags & SWP_NOSIZE) == 0)
+            const int SWP_NOMOVE = 0x0002;
+            MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+            if (cocoa != null)
             {
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.SetContentSize(cx, cy);
+                if ((flags & SWP_NOSIZE) == 0)
+                {
+                    // cx/cy arrive in DEVICE PIXELS (WPF computed them via LogicalToDeviceUnits = DIPs *
+                    // DPI). NSWindow.setContentSize: takes POINTS, so divide by the backing scale; on a
+                    // Retina display a 640-DIP window is 1280 px here and must become 640 points.
+                    double scale = cocoa.GetBackingScale();
+                    if (scale <= 0) scale = 1.0;
+                    cocoa.SetContentSize((int)System.Math.Round(cx / scale), (int)System.Math.Round(cy / scale));
+                }
+
+                // Move only popups (borderless windows) to their requested screen position; normal
+                // top-level windows are placed by AppKit (and their x/y here are CW_USEDEFAULT-ish).
+                if ((flags & SWP_NOMOVE) == 0 && cocoa.IsBorderless)
+                {
+                    cocoa.SetFrameOrigin(x, y);
+                }
             }
             return true;
         }
@@ -370,6 +387,15 @@ namespace MS.Win32
 
         internal static bool TryGetCursorPos(ref NativeMethods.POINT pt)
         {
+            // user32-only; off-Windows report the origin (callers, e.g. WindowStartupLocation
+            // Center*, treat a failed cursor query as "unknown" and fall back gracefully).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                pt.x = 0;
+                pt.y = 0;
+                return false;
+            }
+
             bool returnValue = IntTryGetCursorPos(ref pt);
 
             // Sometimes Win32 will fail this call, such as if you are
@@ -934,6 +960,21 @@ namespace MS.Win32
 
         public static void ClientToScreen(HandleRef hWnd, ref NativeMethods.POINT pt)
         {
+            // Off-Windows, add the window's client-area origin on screen so the point becomes a true
+            // screen coordinate (device pixels, top-left). This is what places popups correctly and
+            // keeps mouse hit-testing consistent (ScreenToClient subtracts the same offset).
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+                if (cocoa != null)
+                {
+                    cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
+                    pt.x += ox;
+                    pt.y += oy;
+                }
+                return;
+            }
+
             if (IntClientToScreen(hWnd, ref pt) == 0)
             {
                 throw new Win32Exception();
@@ -1206,6 +1247,13 @@ namespace MS.Win32
 
         public static IntPtr WindowFromPoint(int x, int y)
         {
+            // Off-Windows resolve the point to one of our Cocoa windows (client==screen coordinates
+            // there); used by mouse hit-testing to find the window under the cursor.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Interop.CocoaWindow.HitTest(x, y);
+            }
+
             POINT ps = new POINT(x, y);
             return IntWindowFromPoint(ps);
         }

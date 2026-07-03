@@ -268,11 +268,17 @@ namespace MS.Win32
         [DllImport(ExternDll.User32, EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
         private static extern IntPtr UnsafeSendMessageNative(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
 
-        // Win32 window messaging does not exist off-Windows; the managed run loop and Cocoa backend
-        // handle window lifecycle directly, so posted messages are simply dropped.
+        // Win32 window messaging does not exist off-Windows; route a "sent" message to the target
+        // window's managed WndProc instead (there is no OS queue). This makes synchronous message
+        // paths such as Window.Close()'s WM_CLOSE actually run.
         internal static IntPtr UnsafeSendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam)
         {
-            return System.OperatingSystem.IsWindows() ? UnsafeSendMessageNative(hWnd, msg, wParam, lParam) : IntPtr.Zero;
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HwndWrapper.DispatchMessage(hWnd, (int)msg, wParam, lParam);
+            }
+
+            return UnsafeSendMessageNative(hWnd, msg, wParam, lParam);
         }
 
         [DllImport(ExternDll.User32, EntryPoint = "RegisterPowerSettingNotification")]

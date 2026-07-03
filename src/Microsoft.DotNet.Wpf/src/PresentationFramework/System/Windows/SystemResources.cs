@@ -799,6 +799,32 @@ namespace System.Windows
                 {
                 }
 
+                // Theme assemblies (e.g. PresentationFramework.Aero2) ship next to PresentationFramework
+                // but an app that doesn't reference them won't list them in its .deps.json, so the
+                // deps-based Assembly.Load above can't resolve them even though the DLL is deployed in
+                // the app directory. Fall back to loading it by path from the base directory. (On Windows
+                // this rarely triggers because the theme assemblies are part of the WPF runtime pack.)
+                if (assembly == null)
+                {
+                    try
+                    {
+                        string candidate = System.IO.Path.Combine(AppContext.BaseDirectory, assemblyName + ".dll");
+                        if (System.IO.File.Exists(candidate))
+                        {
+                            assembly = Assembly.LoadFrom(candidate);
+                        }
+                    }
+                    catch (FileNotFoundException)
+                    {
+                    }
+                    catch (BadImageFormatException)
+                    {
+                    }
+                    catch (IOException)
+                    {
+                    }
+                }
+
                 // Wires themes KnownTypeHelper
                 if (_assemblyName == PresentationFrameworkName && assembly != null)
                 {

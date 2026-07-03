@@ -52,9 +52,15 @@ namespace MS.Win32
         // NOTE:  CLR has this in UnsafeNativeMethodsCLR.cs.  Not sure why it is unsafe - need to follow up.
         public static int GetCaretBlinkTime()
         {
+            // user32-only; 530 ms is the Windows default caret blink interval.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return 530;
+            }
+
             // To be consistent with our other PInvoke wrappers
             // we should "throw" a Win32Exception on error here.
-            // But we don't want to introduce new "throws" w/o 
+            // But we don't want to introduce new "throws" w/o
             // time to follow up on any new problems that causes.
 
             return SafeNativeMethodsPrivate.GetCaretBlinkTime();
@@ -183,6 +189,14 @@ namespace MS.Win32
 
         internal static int GetMessageTime()
         {
+            // user32-only (time of the last message retrieved by GetMessage). Off-Windows there is
+            // no Win32 message queue; a monotonically increasing managed tick is an adequate stand-in
+            // (input providers use it only for relative timing / double-click intervals).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return System.Environment.TickCount;
+            }
+
             return SafeNativeMethodsPrivate.GetMessageTime();
         }
 #endif // BASE_NATIVEMETHODS

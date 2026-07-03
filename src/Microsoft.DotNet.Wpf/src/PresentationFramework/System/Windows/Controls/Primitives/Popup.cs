@@ -2660,6 +2660,14 @@ namespace System.Windows.Controls.Primitives
                 return _secHelper.GetParentWindowRect();
             }
 
+            // Off-Windows there is no Win32 monitor enumeration (MonitorFromRect/GetMonitorInfo).
+            // Return a large screen rect so the popup is sized to its content and placed at its
+            // requested location without monitor-edge clamping (adequate for a single display).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return new Rect(0, 0, 1_000_000, 1_000_000);
+            }
+
             NativeMethods.RECT rect = new NativeMethods.RECT(0, 0, 0, 0);
 
             NativeMethods.RECT nativeBounds = PointUtil.FromRect(boundingBox);
@@ -3370,6 +3378,14 @@ namespace System.Windows.Controls.Primitives
 
             private static bool ConnectedToForegroundWindow(IntPtr window)
             {
+                // Off-Windows there is no Win32 GetForegroundWindow/GetParent, and no HWND parent
+                // chain. Report "not connected" so the popup is built as a standalone top-level window
+                // (its own NSWindow), which is the correct model on macOS.
+                if (!System.OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 IntPtr foregroundWindow = UnsafeNativeMethods.GetForegroundWindow();
 
                 while (window != IntPtr.Zero)
@@ -3423,6 +3439,21 @@ namespace System.Windows.Controls.Primitives
             ///
             /// </summary>
             internal void ForceMsaaToUiaBridge(PopupRoot popupRoot)
+            {
+                // The MSAA->UIA bridge and WinEvent hooks are Windows accessibility infrastructure that
+                // does not exist off-Windows. The actual work references the Accessibility assembly
+                // (IAccessible), so it lives in a separate, non-inlined method that is only JIT-compiled
+                // when actually invoked -- keeping Accessibility.dll from being required off-Windows.
+                if (!System.OperatingSystem.IsWindows())
+                {
+                    return;
+                }
+
+                ForceMsaaToUiaBridgeWindows(popupRoot);
+            }
+
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            private void ForceMsaaToUiaBridgeWindows(PopupRoot popupRoot)
             {
                 if (Handle != IntPtr.Zero && (UnsafeNativeMethods.IsWinEventHookInstalled(NativeMethods.EVENT_OBJECT_FOCUS) || UnsafeNativeMethods.IsWinEventHookInstalled(NativeMethods.EVENT_OBJECT_STATECHANGE)))
                 {

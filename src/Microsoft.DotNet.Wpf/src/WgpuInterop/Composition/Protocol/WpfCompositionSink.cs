@@ -196,10 +196,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Log($"DIAG frame#{_diagCount}: root=0x{t.RootHandle:x} drawables={drawables}");
                 }
 
-                if (t.IsLayered)
+                if (t.IsLayered && Platform.NativePlatform.SupportsLayeredWindows)
                 {
                     // ComboBox/Menu/ToolTip popups live in WS_EX_LAYERED per-pixel-alpha windows;
                     // present those via UpdateLayeredWindow from a premultiplied off-screen render.
+                    // Where the OS has no layered-window path (macOS), fall through and present the
+                    // popup through its own swap-chain surface instead (opaque, but its content shows).
                     PresentLayered(root, t);
                     continue;
                 }
@@ -433,6 +435,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private void Configure(TargetSurface ts)
         {
+            Log($"CONFIGURE surface {ts.Width}x{ts.Height}");
             var config = new WGPUSurfaceConfiguration
             {
                 device = _ctx!.Device,

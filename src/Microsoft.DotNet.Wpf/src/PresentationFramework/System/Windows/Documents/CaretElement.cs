@@ -946,6 +946,14 @@ namespace System.Windows.Documents
         // Win32 application have the compatibility to handle the caret event which is Magnifier or Tablet Tip.
         private void Win32CreateCaret()
         {
+            // The Win32 system caret (gdi32 CreateBitmap + user32 CreateCaret) exists only for Win32
+            // IME / accessibility / Magnifier compatibility; WPF renders its own visual caret. Off-
+            // Windows there is no system caret, so skip it.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret
@@ -1005,6 +1013,12 @@ namespace System.Windows.Documents
         // Destroy Win32 caret if we create it with checking Win32 error.
         private void Win32DestroyCaret()
         {
+            // No Win32 system caret off-Windows (see Win32CreateCaret).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret
@@ -1035,6 +1049,12 @@ namespace System.Windows.Documents
         // Set Win32 caret position with checking Win32 error.
         private void Win32SetCaretPos()
         {
+            // No Win32 system caret off-Windows (see Win32CreateCaret).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret

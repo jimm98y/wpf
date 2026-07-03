@@ -2469,6 +2469,13 @@ namespace System.Windows.Documents
         /// </returns>
         private static bool IsBidiInputLanguage(CultureInfo cultureInfo)
         {
+            // Off-Windows there is no GetLocaleInfoW font-signature query; use the managed RTL flag
+            // to detect a bidi (Arabic/Hebrew/etc.) input language.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return cultureInfo.TextInfo.IsRightToLeft;
+            }
+
             bool bidiInput;
             string fontSignature;
 

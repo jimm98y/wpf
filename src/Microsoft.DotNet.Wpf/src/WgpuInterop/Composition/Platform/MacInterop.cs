@@ -34,15 +34,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             IntPtr metalLayer = CreateMetalLayer();
             if (metalLayer == IntPtr.Zero) return IntPtr.Zero;
 
-            // view.wantsLayer = YES; view.layer = metalLayer;  (layer-back the NSView)
+            // Keep the NSView layer-BACKED (AppKit owns/manages the root layer) and add the
+            // CAMetalLayer as a SUBLAYER, rather than layer-HOSTING it via setLayer:. AppKit
+            // keeps a backing layer's geometry in sync with the view, but never resizes a hosted
+            // layer -- so a hosted CAMetalLayer would keep its initial frame while the view grows
+            // or shrinks, and Core Animation would stretch the fixed drawable to the new bounds
+            // (content over-stretched + cropped when enlarging, black margin when shrinking).
+            // As an autoresizing sublayer its frame tracks the view's bounds on every resize.
             SendVoidBool(nsView, Sel("setWantsLayer:"), true);
-            SendVoidPtr(nsView, Sel("setLayer:"), metalLayer);
+            IntPtr rootLayer = Send(nsView, Sel("layer"));
 
-            // Pin the layer to 1:1 device scale so its drawable size equals the view's point size.
-            // WPF composes at point size (DpiScale 1.0 off-Windows), and the wgpu surface is
-            // configured to that same size; on a Retina display the layer would otherwise default
-            // to 2x, so wgpuSurfaceGetCurrentTexture would report Outdated every frame.
-            SendVoidDouble(metalLayer, Sel("setContentsScale:"), 1.0);
+            // Match the metal layer to the current view bounds, then let Core Animation grow/shrink
+            // it with the superlayer (WidthSizable | HeightSizable, no margins => fills exactly).
+            NSRect bounds = SendRect(rootLayer, Sel("bounds"));
+            SendVoidRect(metalLayer, Sel("setFrame:"), bounds);
+            SendVoidNUInt(metalLayer, Sel("setAutoresizingMask:"), kCALayerWidthSizable | kCALayerHeightSizable);
+            SendVoidPtr(rootLayer, Sel("addSublayer:"), metalLayer);
+
+            // Set the layer's contents scale to the backing scale so its drawable (which wgpu sizes to
+            // the surface config = the view's DEVICE-PIXEL size) maps 1:1 onto the point-sized frame:
+            // drawableSize(2N px) == frame(N pt) * contentsScale(2) on Retina. WPF renders its DIP scene
+            // into that larger pixel target via HwndTarget._worldTransform (= the same backing scale),
+            // so the result is crisp. Must match CocoaWindow.GetBackingScale / the HwndTarget DPI scale.
+            SendVoidDouble(metalLayer, Sel("setContentsScale:"), BackingScale(nsView));
 
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {
@@ -51,6 +65,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             };
             var desc = new Wgpu.WGPUSurfaceDescriptor { nextInChain = (Wgpu.WGPUChainedStruct*)&metalSource };
             return Wgpu.wgpuInstanceCreateSurface(instance, &desc);
+        }
+
+        // The view's backing scale factor (2.0 on Retina). Sourced from the window's screen (falling
+        // back to the main screen), mirroring CocoaWindow.GetBackingScale so the CAMetalLayer's
+        // contentsScale agrees with the HwndTarget DPI scale and the device-pixel client rects.
+        // WPF_MAC_FORCE_SCALE overrides it (to exercise the Retina path on a 1x display).
+        private static double BackingScale(IntPtr nsView)
+        {
+            string force = Environment.GetEnvironmentVariable("WPF_MAC_FORCE_SCALE");
+            if (!string.IsNullOrEmpty(force) &&
+                double.TryParse(force, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double forced) &&
+                forced > 0)
+            {
+                return forced;
+            }
+
+            double scale = 0;
+            IntPtr window = nsView != IntPtr.Zero ? Send(nsView, Sel("window")) : IntPtr.Zero;
+            if (window != IntPtr.Zero)
+            {
+                IntPtr screen = Send(window, Sel("screen"));
+                if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
+                if (scale <= 0) scale = SendDouble(window, Sel("backingScaleFactor"));
+            }
+            if (scale <= 0)
+            {
+                IntPtr mainScreen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+                if (mainScreen != IntPtr.Zero) scale = SendDouble(mainScreen, Sel("backingScaleFactor"));
+            }
+            return scale > 0 ? scale : 1.0;
         }
 
         // [[CAMetalLayer layer] retain] -- a fresh, owned CAMetalLayer. We retain it so it
@@ -85,7 +130,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidNUInt(IntPtr receiver, IntPtr selector, nuint arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRect(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, NSRect arg);
 
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NSRect
+        {
+            public double x;
+            public double y;
+            public double width;
+            public double height;
+        }
+
+        // CALayerAutoresizingMask: sublayer stays sized to fill its superlayer's bounds.
+        private const nuint kCALayerWidthSizable = 1 << 1;
+        private const nuint kCALayerHeightSizable = 1 << 4;
     }
 }

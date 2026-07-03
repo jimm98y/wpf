@@ -17,10 +17,22 @@ namespace System.Windows.Interop
         {
             _site = InputManager.Current.RegisterInputProvider(this);
             _source = source;
+
+            // Off-Windows there is no Win32 message loop feeding key input to FilterMessage; keys
+            // arrive as translated Cocoa events. Subscribe and forward them into the InputManager.
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow.KeyInput += OnCocoaKeyInput;
+            }
         }
 
         public void Dispose()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow.KeyInput -= OnCocoaKeyInput;
+            }
+
             _site?.Dispose();
             _site = null;
             _source = null;
@@ -50,6 +62,20 @@ namespace System.Windows.Interop
             bool result = false;
 
             Debug.Assert( null != _source );
+
+            // Off-Windows there is no Win32 focus (GetFocus/SetFocus). Our single Cocoa key window
+            // always holds OS focus; WPF's own keyboard-focus tracking is managed, so just report
+            // success and let WPF route keyboard input to the focused element.
+            if (!OperatingSystem.IsWindows())
+            {
+                if (!checkOnly)
+                {
+                    _acquiringFocusOurselves = true;
+                    _restoreFocusWindow = IntPtr.Zero;
+                    _restoreFocus = null;
+                }
+                return true;
+            }
 
             try
             {
@@ -789,6 +815,126 @@ namespace System.Windows.Interop
             }
 
             return IntPtr.Zero;
+        }
+
+        // Off-Windows key path: map a translated Cocoa key event to a Win32 virtual key, report the
+        // key-down/up to the InputManager, and (on key-down) deliver typed text as a text-input report.
+        private void OnCocoaKeyInput(MS.Internal.Interop.CocoaWindow.CocoaKeyMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.View != _source.Handle) return;
+
+            int virtualKey = MapMacKeyCodeToVirtualKey(msg.KeyCode);
+            if (virtualKey != 0)
+            {
+                ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs);
+            }
+
+            // Deliver typed characters on key-down, unless a Command/Control shortcut is active or the
+            // character is non-printable (control chars, or the private-use codepoints AppKit uses for
+            // arrows/function keys). Enter/Tab/Backspace are handled as key events, not text.
+            const ulong CommandOrControl = 0x100000 | 0x40000;
+            if (msg.IsDown && !string.IsNullOrEmpty(msg.Characters) && (msg.ModifierFlags & CommandOrControl) == 0)
+            {
+                foreach (char c in msg.Characters)
+                {
+                    if (c >= ' ' && c != '\x7f' && !(c >= '\uF700' && c <= '\uF8FF'))
+                    {
+                        ReportMacText(c, msg.TimestampMs);
+                    }
+                }
+            }
+        }
+
+        private void ReportMacKey(RawKeyboardActions action, int virtualKey, int timestamp)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+
+            if (!_active || _partialActive)
+            {
+                action |= RawKeyboardActions.Activate;
+                _active = true;
+                _partialActive = false;
+            }
+
+            System.Windows.Input.Win32KeyboardDevice.TrackMacKey(virtualKey, (action & RawKeyboardActions.KeyDown) != 0);
+
+            RawKeyboardInputReport report = new RawKeyboardInputReport(
+                _source, InputMode.Foreground, timestamp, action,
+                /*scanCode*/ 0, /*isExtendedKey*/ false, /*isSystemKey*/ false, virtualKey, IntPtr.Zero);
+
+            _site.ReportInput(report);
+        }
+
+        private void ReportMacText(char c, int timestamp)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+
+            RawTextInputReport report = new RawTextInputReport(
+                _source, InputMode.Foreground, timestamp,
+                /*isDeadCharacter*/ false, /*isSystemCharacter*/ false, /*isControlCharacter*/ false, c);
+
+            _site.ReportInput(report);
+        }
+
+        // Maps a macOS hardware key code (kVK_*) to a Win32 virtual-key code (VK_*), which WPF's
+        // KeyInterop turns into a Key. Returns 0 for key codes we don't translate.
+        private static int MapMacKeyCodeToVirtualKey(int keyCode)
+        {
+            switch (keyCode)
+            {
+                // Letters -> 'A'..'Z' (VK == ASCII uppercase)
+                case 0x00: return 'A'; case 0x0B: return 'B'; case 0x08: return 'C'; case 0x02: return 'D';
+                case 0x0E: return 'E'; case 0x03: return 'F'; case 0x05: return 'G'; case 0x04: return 'H';
+                case 0x22: return 'I'; case 0x26: return 'J'; case 0x28: return 'K'; case 0x25: return 'L';
+                case 0x2E: return 'M'; case 0x2D: return 'N'; case 0x1F: return 'O'; case 0x23: return 'P';
+                case 0x0C: return 'Q'; case 0x0F: return 'R'; case 0x01: return 'S'; case 0x11: return 'T';
+                case 0x20: return 'U'; case 0x09: return 'V'; case 0x0D: return 'W'; case 0x07: return 'X';
+                case 0x10: return 'Y'; case 0x06: return 'Z';
+                // Top-row digits -> '0'..'9'
+                case 0x1D: return '0'; case 0x12: return '1'; case 0x13: return '2'; case 0x14: return '3';
+                case 0x15: return '4'; case 0x17: return '5'; case 0x16: return '6'; case 0x1A: return '7';
+                case 0x1C: return '8'; case 0x19: return '9';
+                // Editing / navigation
+                case 0x24: return 0x0D; // Return  -> VK_RETURN
+                case 0x30: return 0x09; // Tab     -> VK_TAB
+                case 0x31: return 0x20; // Space   -> VK_SPACE
+                case 0x33: return 0x08; // Delete  -> VK_BACK (backspace)
+                case 0x35: return 0x1B; // Escape  -> VK_ESCAPE
+                case 0x75: return 0x2E; // FwdDel  -> VK_DELETE
+                case 0x73: return 0x24; // Home    -> VK_HOME
+                case 0x77: return 0x23; // End     -> VK_END
+                case 0x74: return 0x21; // PageUp  -> VK_PRIOR
+                case 0x79: return 0x22; // PageDn  -> VK_NEXT
+                case 0x7B: return 0x25; // Left    -> VK_LEFT
+                case 0x7C: return 0x27; // Right   -> VK_RIGHT
+                case 0x7E: return 0x26; // Up      -> VK_UP
+                case 0x7D: return 0x28; // Down    -> VK_DOWN
+                // Modifiers
+                case 0x38: case 0x3C: return 0x10; // Shift        -> VK_SHIFT
+                case 0x3B: case 0x3E: return 0x11; // Control      -> VK_CONTROL
+                case 0x3A: case 0x3D: return 0x12; // Option       -> VK_MENU (Alt)
+                case 0x37: return 0x5B;            // Command      -> VK_LWIN
+                case 0x36: return 0x5C;            // RightCommand -> VK_RWIN
+                case 0x39: return 0x14;            // CapsLock     -> VK_CAPITAL
+                // Punctuation (OEM keys)
+                case 0x2B: return 0xBC; // ,  VK_OEM_COMMA
+                case 0x2F: return 0xBE; // .  VK_OEM_PERIOD
+                case 0x2C: return 0xBF; // /  VK_OEM_2
+                case 0x29: return 0xBA; // ;  VK_OEM_1
+                case 0x27: return 0xDE; // '  VK_OEM_7
+                case 0x2A: return 0xDC; // \  VK_OEM_5
+                case 0x21: return 0xDB; // [  VK_OEM_4
+                case 0x1E: return 0xDD; // ]  VK_OEM_6
+                case 0x18: return 0xBB; // =  VK_OEM_PLUS
+                case 0x1B: return 0xBD; // -  VK_OEM_MINUS
+                case 0x32: return 0xC0; // `  VK_OEM_3
+                // Function keys
+                case 0x7A: return 0x70; case 0x78: return 0x71; case 0x63: return 0x72; case 0x76: return 0x73;
+                case 0x60: return 0x74; case 0x61: return 0x75; case 0x62: return 0x76; case 0x64: return 0x77;
+                case 0x65: return 0x78; case 0x6D: return 0x79; case 0x67: return 0x7A; case 0x6F: return 0x7B;
+                default: return 0;
+            }
         }
 
         private bool ReportInput(

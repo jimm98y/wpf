@@ -599,6 +599,15 @@ namespace System.Windows.Media
             double tolerance,
             ToleranceType type)
         {
+            // Off-Windows there is no milcore MilUtility_PathGeometryCombine (a full geometry boolean).
+            // Approximate with axis-aligned bounds arithmetic -- which is EXACT for the dominant case
+            // (rectangle-vs-rectangle Intersect, e.g. FrameworkElement layout clips used by popups) and
+            // a safe bounding-box approximation otherwise.
+            if (!OperatingSystem.IsWindows())
+            {
+                return ManagedCombine(geometry1, geometry2, mode, transform);
+            }
+
             PathGeometry resultGeometry = null;
 
             unsafe
@@ -652,6 +661,44 @@ namespace System.Windows.Media
             }
 
             return resultGeometry;
+        }
+
+        // Managed stand-in for MilUtility_PathGeometryCombine (off-Windows). Operates on the geometries'
+        // axis-aligned bounds: exact for rectangle-vs-rectangle (the layout-clip case), approximate for
+        // arbitrary shapes. Never returns null.
+        private static PathGeometry ManagedCombine(Geometry geometry1, Geometry geometry2, GeometryCombineMode mode, Transform transform)
+        {
+            Rect r1 = geometry1?.Bounds ?? Rect.Empty;
+            Rect r2 = geometry2?.Bounds ?? Rect.Empty;
+
+            Rect result;
+            switch (mode)
+            {
+                case GeometryCombineMode.Intersect:
+                    result = Rect.Intersect(r1, r2);
+                    break;
+                case GeometryCombineMode.Union:
+                    result = Rect.Union(r1, r2);
+                    break;
+                default: // Xor / Exclude: approximate with the first geometry's bounds.
+                    result = r1;
+                    break;
+            }
+
+            var pg = new PathGeometry();
+            if (!result.IsEmpty)
+            {
+                var figure = new PathFigure { StartPoint = result.TopLeft, IsClosed = true };
+                figure.Segments.Add(new LineSegment(result.TopRight, true));
+                figure.Segments.Add(new LineSegment(result.BottomRight, true));
+                figure.Segments.Add(new LineSegment(result.BottomLeft, true));
+                pg.Figures.Add(figure);
+            }
+            if (transform != null && !transform.Value.IsIdentity)
+            {
+                pg.Transform = transform;
+            }
+            return pg;
         }
         #endregion Combine
 

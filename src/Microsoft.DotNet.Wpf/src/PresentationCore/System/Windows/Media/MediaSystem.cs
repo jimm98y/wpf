@@ -149,12 +149,18 @@ namespace System.Windows.Media
                     // We can shut-down.
                     // Debug.WriteLine("MediSystem::NotifyDisconnect Stop Transport\n");
 
-                    if (IsTransportConnected)
+                    // When the managed (WebGPU) composition backend is driving composition, milcore's
+                    // transport / partition-manager were never initialized (see Startup), so there is
+                    // nothing native to disconnect or deinitialize here.
+                    if (!DUCE.ManagedComposition.IsEnabled)
                     {
-                        DisconnectTransport();
-                    }
+                        if (IsTransportConnected)
+                        {
+                            DisconnectTransport();
+                        }
 
-                    HRESULT.Check(SafeNativeMethods.MilCompositionEngine_DeinitializePartitionManager());
+                        HRESULT.Check(SafeNativeMethods.MilCompositionEngine_DeinitializePartitionManager());
+                    }
                 }
             }
         }

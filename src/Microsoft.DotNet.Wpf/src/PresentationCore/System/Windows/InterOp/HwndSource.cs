@@ -272,8 +272,12 @@ namespace System.Windows.Interop
             {
                 _hwndTarget.BackgroundColor = Colors.Transparent;
 
-                // Prevent this window from being themed.
-                UnsafeNativeMethods.CriticalSetWindowTheme(new HandleRef(this, _hwndWrapper.Handle), "", "");
+                // Prevent this window from being themed. (uxtheme is Windows-only; there is no visual
+                // style to opt out of off-Windows.)
+                if (OperatingSystem.IsWindows())
+                {
+                    UnsafeNativeMethods.CriticalSetWindowTheme(new HandleRef(this, _hwndWrapper.Handle), "", "");
+                }
             }
             _constructionParameters = null;
 

@@ -61,5 +61,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 default: return false;   // no per-pixel-alpha popup path yet on macOS/Linux
             }
         }
+
+        /// <summary>
+        /// True where the OS has a per-pixel-alpha layered-window compositing path (Windows'
+        /// UpdateLayeredWindow). Where false (macOS/Linux), popups are presented opaquely through a
+        /// normal swap-chain surface instead.
+        /// </summary>
+        public static bool SupportsLayeredWindows => Current == PlatformKind.Windows;
     }
 }

@@ -116,10 +116,12 @@ namespace MS.Win32
             // Off-Windows the handle is a Cocoa NSView*; the content view IS the client area, so the
             // client rect equals the content size (origin (0,0)). Reporting the same size as the window
             // rect makes the computed non-client frame 0, so the window's content gets the full size.
+            // Win32 rects are in device pixels; report the content view's PIXEL size (points * backing
+            // scale) so it round-trips through TransformFromDevice/CurrentDpiScale back to the right DIPs.
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
                 rect = new NativeMethods.RECT(0, 0, w, h);
                 return;
             }
@@ -142,12 +144,13 @@ namespace MS.Win32
 
         internal static void GetWindowRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
-            // Off-Windows the handle is a Cocoa NSView*; report its content size as the window rect
-            // (origin (0,0); title-bar geometry is owned by AppKit).
+            // Off-Windows the handle is a Cocoa NSView*; report its content size (in device pixels =
+            // points * backing scale, matching Win32 rect semantics) as the window rect (origin (0,0);
+            // title-bar geometry is owned by AppKit).
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
                 rect = new NativeMethods.RECT(0, 0, w, h);
                 return;
             }
@@ -166,6 +169,12 @@ namespace MS.Win32
 
         public static bool IsWindowEnabled(HandleRef hWnd)
         {
+            // Off-Windows our Cocoa windows are always enabled (no Win32 WS_DISABLED concept here).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return hWnd.Handle != IntPtr.Zero;
+            }
+
             return SafeNativeMethodsPrivate.IsWindowEnabled(hWnd);
         }
 
@@ -259,6 +268,20 @@ namespace MS.Win32
 
         public static void ScreenToClient(HandleRef hWnd, ref NativeMethods.POINT pt)
         {
+            // Off-Windows, subtract the window's client-area screen origin (the inverse of
+            // UnsafeNativeMethods.ClientToScreen) to map a screen point back into client coordinates.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+                if (cocoa != null)
+                {
+                    cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
+                    pt.x -= ox;
+                    pt.y -= oy;
+                }
+                return;
+            }
+
             if (SafeNativeMethodsPrivate.IntScreenToClient(hWnd, ref pt) == 0)
             {
                 throw new Win32Exception();
@@ -303,6 +326,15 @@ namespace MS.Win32
 
         public static IntPtr GetCapture()
         {
+            // user32-only; off-Windows report the window that holds WPF mouse capture (tracked by the
+            // input provider). WPF's capture-reestablish heuristics rely on this being non-zero while a
+            // control is captured -- e.g. ComboBox.OnLostMouseCapture only reclaims capture when
+            // GetCapture()==0, so a stale zero here makes it re-grab capture forever.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Interop.CocoaWindow.MouseCaptureHandle;
+            }
+
             return SafeNativeMethodsPrivate.GetCapture();
         }
 #if BASE_NATIVEMETHODS

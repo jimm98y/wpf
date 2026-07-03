@@ -316,15 +316,20 @@ namespace System.Windows.Interop
         /// <remarks>Helper for constructor</remarks>
         private void InitializeDpiAwarenessAndDpiScales()
         {
-            // Off-Windows the Win32 DPI-awareness APIs do not exist. Report a fixed 1.0 scale
-            // (the Cocoa content size is already used verbatim as the client rect); per-monitor
-            // backing-scale handling is a later refinement.
+            // Off-Windows the Win32 DPI-awareness APIs do not exist. The DPI scale is the window's
+            // backing scale factor (2.0 on Retina), which maps DIPs -> device pixels exactly as the
+            // Win32 per-monitor DPI scale does: the client rects are reported in device pixels
+            // (CocoaWindow.GetPixelSize), the render surface is configured to that pixel size, and
+            // _worldTransform (= this scale) makes WPF render its DIP scene into the larger pixel
+            // target -- so the layer is crisp on Retina. The scale must match the one GetPixelSize
+            // uses; both read CocoaWindow.GetBackingScale (screen-sourced, stable at construction).
             if (!OperatingSystem.IsWindows())
             {
                 AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
-                CurrentDpiScale = new DpiScale2(1.0, 1.0);
+                double scale = MS.Internal.Interop.CocoaWindow.FromHandle(_hWnd.h)?.GetBackingScale() ?? 1.0;
+                CurrentDpiScale = new DpiScale2(scale, scale);
                 return;
             }
 
@@ -709,7 +714,12 @@ namespace System.Windows.Interop
                 {
                     RootVisual = null;
 
-                    HRESULT.Check(VisualTarget_DetachFromHwnd(_hWnd));
+                    // VisualTarget_DetachFromHwnd is milcore; there is no native visual target to detach
+                    // off-Windows (the managed compositor owns teardown), so skip it there.
+                    if (OperatingSystem.IsWindows())
+                    {
+                        HRESULT.Check(VisualTarget_DetachFromHwnd(_hWnd));
+                    }
 
                     //
                     // Unregister this CompositionTarget from the MediaSystem.
@@ -723,8 +733,11 @@ namespace System.Windows.Interop
                         _notificationWindowHelper = null;
                     }
 
-                    // Unregister for Fast User Switching messages
-                    UnsafeNativeMethods.WTSUnRegisterSessionNotification(_hWnd);
+                    // Unregister for Fast User Switching messages (WTS/session APIs are Windows-only).
+                    if (OperatingSystem.IsWindows())
+                    {
+                        UnsafeNativeMethods.WTSUnRegisterSessionNotification(_hWnd);
+                    }
                 }
 }
             finally
@@ -1112,6 +1125,15 @@ namespace System.Windows.Interop
                         }
 
                         _isMinimized = false;
+
+                        // On Windows the client rect is refreshed by the WM_WINDOWPOSCHANGED that
+                        // precedes WM_SIZE. Off-Windows we synthesize WM_SIZE directly on a Cocoa
+                        // resize, so refresh the rect from the window here before OnResize re-sends it.
+                        if (!OperatingSystem.IsWindows())
+                        {
+                            UpdateWindowAndClientCoordinates();
+                        }
+
                         DoPaint();
 
                         OnResize();
@@ -1379,6 +1401,16 @@ namespace System.Windows.Interop
         /// </summary>
         private void DoPaint()
         {
+            // DoPaint is pure Win32 GDI (BeginPaint/EndPaint/InvalidateRect) used to service
+            // WM_PAINT and prime layered windows; there is no HDC/GDI off-Windows. Skipping it is
+            // a no-op there, and critically it keeps a synthesized WM_SIZE from throwing here
+            // (BeginPaint -> DllNotFound) before the subsequent OnResize(), which is what re-sends
+            // the new window size to the compositor so the render surface reconfigures on resize.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             NativeMethods.PAINTSTRUCT ps = new NativeMethods.PAINTSTRUCT();
             NativeMethods.HDC hdc;
 
@@ -1644,12 +1676,15 @@ namespace System.Windows.Interop
         private void UpdateWindowAndClientCoordinates()
         {
             // Off-Windows there is no GetClientRect/GetWindowRect; take the size from the Cocoa
-            // content view (in points; DPI scale is handled separately). Origin is treated as (0,0).
+            // content view in DEVICE PIXELS (points * backing scale), matching Win32 rect semantics.
+            // These rects size the render surface (device pixels) and are converted back to DIPs for
+            // layout via TransformFromDevice/CurrentDpiScale, so they must be the same backing scale
+            // as CurrentDpiScale. Origin is treated as (0,0).
             if (!OperatingSystem.IsWindows())
             {
                 int cw = 0, ch = 0;
                 MS.Internal.Interop.CocoaWindow view = MS.Internal.Interop.CocoaWindow.FromHandle(_hWnd.h);
-                view?.GetContentSize(out cw, out ch);
+                view?.GetPixelSize(out cw, out ch);
 
                 _hwndWindowRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);
                 _hwndClientRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);

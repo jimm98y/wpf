@@ -25,10 +25,32 @@ namespace System.Windows.Interop
             _setCursorState = SetCursorState.SetCursorNotReceived;
             _haveCapture = false;
             _queryCursorOperation = null;
+
+            // Off-Windows there is no Win32 message loop feeding FilterMessage; mouse/scroll input
+            // arrives as translated Cocoa events. Subscribe and forward them into the InputManager.
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow.MouseInput += OnCocoaMouseInput;
+            }
         }
 
         public void Dispose()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                // Off-Windows the teardown below is all Win32 mouse-tracking/capture/deactivation
+                // (TrackMouseEvent, GetCapture, WindowFromPoint, ...) that has no analog here; just
+                // unsubscribe from Cocoa input and drop the input site.
+                MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
+                if (_site != null)
+                {
+                    _site.Dispose();
+                    _site = null;
+                }
+                _source = null;
+                return;
+            }
+
             if(_site != null)
             {
                 //Console.WriteLine("Disposing");
@@ -84,6 +106,14 @@ namespace System.Windows.Interop
         // Set the real cursor
         bool IMouseInputProvider.SetCursor(Cursor cursor)
         {
+            // Off-Windows there is no Win32 SetCursor; map the WPF stock cursor to an NSCursor and set
+            // it via AppKit. Report success so WPF considers the cursor handled.
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.CocoaWindow.SetCursor(MapCursorToNSCursor(cursor));
+                return true;
+            }
+
             bool success = false;
 
             // MITIGATION_SETCURSOR
@@ -107,10 +137,44 @@ namespace System.Windows.Interop
             return success;
         }
 
+        // Maps a WPF stock cursor to the NSCursor class-method selector that best matches it. macOS
+        // lacks equivalents for some Win32 cursors (wait, diagonal resize, size-all, ...); those fall
+        // back to the arrow.
+        private static string MapCursorToNSCursor(Cursor cursor)
+        {
+            CursorType type = (cursor != null) ? cursor.CursorType : CursorType.Arrow;
+            switch (type)
+            {
+                case CursorType.IBeam:   return "IBeamCursor";
+                case CursorType.Hand:    return "pointingHandCursor";
+                case CursorType.Cross:   return "crosshairCursor";
+                case CursorType.No:      return "operationNotAllowedCursor";
+                case CursorType.SizeWE:
+                case CursorType.ScrollWE:
+                case CursorType.ScrollW:
+                case CursorType.ScrollE:  return "resizeLeftRightCursor";
+                case CursorType.SizeNS:
+                case CursorType.ScrollNS:
+                case CursorType.ScrollN:
+                case CursorType.ScrollS:  return "resizeUpDownCursor";
+                default:                  return "arrowCursor";
+            }
+        }
+
         bool IMouseInputProvider.CaptureMouse()
         {
             if(_isDwmProcess)
             {
+                return true;
+            }
+
+            // Off-Windows there is no Win32 SetCapture; the Cocoa pump delivers every mouse event to
+            // us regardless, so WPF's managed capture tracking is sufficient. Record the capturing
+            // window so GetCapture() reports it (WPF's reestablish heuristics depend on that).
+            if (!OperatingSystem.IsWindows())
+            {
+                _haveCapture = true;
+                if (_source != null) MS.Internal.Interop.CocoaWindow.MouseCaptureHandle = _source.Handle;
                 return true;
             }
 
@@ -182,6 +246,36 @@ namespace System.Windows.Interop
 
             if(_isDwmProcess)
             {
+                return;
+            }
+
+            // Off-Windows there is no Win32 ReleaseCapture. Crucially, MouseDevice.Capture(null) does
+            // NOT clear its own capture state directly -- it calls this method and relies on the
+            // provider emitting a RawMouseActions.CancelCapture report (which on Windows is produced by
+            // the WM_CAPTURECHANGED that ReleaseCapture triggers). Without an OS message we must
+            // synthesize that report, or the captured element (e.g. a pressed Button) keeps mouse
+            // capture forever and swallows all later clicks.
+            if (!OperatingSystem.IsWindows())
+            {
+                // WPF clears its capture state only when the provider emits a CancelCapture report (on
+                // Windows this arrives via a WM_CAPTURECHANGED message that ReleaseCapture posts). We
+                // must post it ASYNCHRONOUSLY: processing it inline would raise LostMouseCapture in the
+                // middle of a popup/ComboBox close, and its lost-capture handler would re-establish
+                // capture before teardown finishes (leaving it stuck). Deferring matches the Windows
+                // ordering, where CancelCapture is handled after the current operation completes.
+                PresentationSource source = _source;
+                if (source != null && _site != null && !source.IsDisposed && source.CompositionTarget != null)
+                {
+                    RawMouseInputReport report = new RawMouseInputReport(
+                        InputMode.Foreground, Environment.TickCount, source,
+                        RawMouseActions.CancelCapture, 0, 0, 0, IntPtr.Zero);
+                    // Process CancelCapture (clears Mouse.Captured, raises LostMouseCapture) while
+                    // GetCapture() still reports this window -- so a ComboBox/Popup lost-capture handler
+                    // does NOT reclaim capture (its reestablish is gated on GetCapture()==0). Then clear
+                    // the tracked handle so subsequent GetCapture() correctly reports "no capture".
+                    try { _site.ReportInput(report); } catch { }
+                }
+                MS.Internal.Interop.CocoaWindow.MouseCaptureHandle = IntPtr.Zero;
                 return;
             }
 
@@ -314,6 +408,15 @@ namespace System.Windows.Interop
         internal IntPtr FilterMessage(IntPtr hwnd, WindowMessage msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             IntPtr result = IntPtr.Zero ;
+
+            // Off-Windows this provider is not wired to a Win32 message queue; its processing here
+            // depends on user32 (GetMessageTime/GetMessagePos/capture) and would otherwise consume
+            // synthetic messages (e.g. the WM_SIZE we post on a Cocoa resize) before the layout hook
+            // runs. Cocoa->WPF input is delivered through a separate path, so bail out here.
+            if (!OperatingSystem.IsWindows())
+            {
+                return result;
+            }
 
             // It is possible to be re-entered during disposal.  Just return.
             if(_source is null)
@@ -1208,6 +1311,89 @@ namespace System.Windows.Interop
             }
 
             return isOurWindow;
+        }
+
+        // Off-Windows mouse/scroll path: map a translated Cocoa event to RawMouseActions and report it
+        // straight to the InputManager, bypassing FilterMessage (which is built around Win32 messages,
+        // HWNDs, and cursor/capture APIs that don't exist on macOS).
+        private void OnCocoaMouseInput(MS.Internal.Interop.CocoaWindow.CocoaMouseMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.View != _source.Handle) return;   // route to the provider that owns this NSView
+
+            const int NSLeftDown = 1, NSLeftUp = 2, NSRightDown = 3, NSRightUp = 4, NSMouseMoved = 5,
+                      NSLeftDragged = 6, NSRightDragged = 7, NSScrollWheel = 22,
+                      NSOtherDown = 25, NSOtherUp = 26, NSOtherDragged = 27;
+
+            RawMouseActions actions;
+            int wheel = 0;
+            switch (msg.NSType)
+            {
+                case NSLeftDown:  actions = RawMouseActions.Button1Press;   break;
+                case NSLeftUp:    actions = RawMouseActions.Button1Release; break;
+                case NSRightDown: actions = RawMouseActions.Button2Press;   break;
+                case NSRightUp:   actions = RawMouseActions.Button2Release; break;
+                case NSMouseMoved:
+                case NSLeftDragged:
+                case NSRightDragged:
+                case NSOtherDragged: actions = RawMouseActions.AbsoluteMove; break;
+                case NSScrollWheel:  actions = RawMouseActions.VerticalWheelRotate; wheel = msg.Wheel; break;
+                // macOS button numbers: 0=left, 1=right, 2=middle, 3/4=extra -> WPF buttons 3/4/5.
+                case NSOtherDown:
+                    actions = msg.ButtonNumber == 2 ? RawMouseActions.Button3Press
+                            : msg.ButtonNumber == 3 ? RawMouseActions.Button4Press
+                            :                          RawMouseActions.Button5Press;
+                    break;
+                case NSOtherUp:
+                    actions = msg.ButtonNumber == 2 ? RawMouseActions.Button3Release
+                            : msg.ButtonNumber == 3 ? RawMouseActions.Button4Release
+                            :                          RawMouseActions.Button5Release;
+                    break;
+                default: return;
+            }
+
+            ReportMacInput(actions, msg.X, msg.Y, wheel, msg.TimestampMs);
+        }
+
+        private void ReportMacInput(RawMouseActions actions, int x, int y, int wheel, int timestamp)
+        {
+            PresentationSource source = _source;
+            if (source == null || _site == null || source.IsDisposed || source.CompositionTarget == null)
+            {
+                return;
+            }
+
+            bool isWheel = (actions & (RawMouseActions.VerticalWheelRotate | RawMouseActions.HorizontalWheelRotate)) != 0;
+
+            // If only a button/wheel event was delivered but the cursor moved, report the move too so
+            // hit-testing stays current (mirrors the Win32 ReportInput coordinate-change behavior).
+            if ((actions & RawMouseActions.AbsoluteMove) == 0 && !isWheel && (x != _lastX || y != _lastY))
+            {
+                actions |= RawMouseActions.AbsoluteMove;
+            }
+
+            // Activate the mouse input stream on first contact so the MouseDevice adopts this source
+            // and records the cursor position (the report carries the current location either way).
+            if (!_active)
+            {
+                actions |= RawMouseActions.Activate;
+                _active = true;
+            }
+
+            if ((actions & (RawMouseActions.AbsoluteMove | RawMouseActions.Activate)) != 0)
+            {
+                _lastX = x;
+                _lastY = y;
+            }
+
+            // Record the physical button state so MouseDevice.GetButtonStateFromSystem can report it
+            // off-Windows (there is no GetKeyState to query).
+            Win32MouseDevice.TrackMacButtons(actions);
+
+            RawMouseInputReport report = new RawMouseInputReport(
+                InputMode.Foreground, timestamp, source, actions, x, y, wheel, IntPtr.Zero);
+
+            _site.ReportInput(report);
         }
 
         private bool ReportInput(
