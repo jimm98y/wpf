@@ -18,10 +18,27 @@ namespace System.Windows;
 /// </summary>
 public static class Clipboard
 {
+    // Off-Windows there is no OLE/system clipboard, and touching ClipboardCore requires the
+    // dispatcher thread to be STA (impossible on macOS/Linux) so it throws ThreadStateException.
+    // Back the clipboard with an in-process store instead: copy/paste works within the app and
+    // the STA-required OLE path is never entered. (A real NSPasteboard-backed cross-app clipboard
+    // is a future enhancement.) Every public accessor funnels through GetDataObject/SetDataObject,
+    // so guarding those plus Clear/Flush/IsCurrent covers GetText/SetText/GetData/ContainsText/etc.
+    private static IDataObject? s_nonWindowsClipboard;
+
     /// <summary>
     ///  Clear the system clipboard.
     /// </summary>
-    public static void Clear() => ClipboardCore.Clear().ThrowOnFailure();
+    public static void Clear()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            s_nonWindowsClipboard = null;
+            return;
+        }
+
+        ClipboardCore.Clear().ThrowOnFailure();
+    }
 
     /// <summary>
     ///  Return <see langword="true"/> if Clipboard contains the audio data. Otherwise, return <see langword="false"/>.
@@ -64,7 +81,16 @@ public static class Clipboard
     /// <summary>
     ///  Permanently renders the contents of the last IDataObject that was set onto the clipboard.
     /// </summary>
-    public static void Flush() => ClipboardCore.Flush().ThrowOnFailure();
+    public static void Flush()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            // Nothing to render to a system clipboard off-Windows; the in-process store persists as-is.
+            return;
+        }
+
+        ClipboardCore.Flush().ThrowOnFailure();
+    }
 
     /// <summary>
     ///  Get audio data as Stream from Clipboard.
@@ -207,6 +233,11 @@ public static class Clipboard
     /// </summary>
     public static IDataObject? GetDataObject()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return s_nonWindowsClipboard;
+        }
+
         ClipboardCore.GetDataObject<DataObject, IDataObject>(out IDataObject? dataObject).ThrowOnFailure();
         return dataObject;
     }
@@ -222,6 +253,12 @@ public static class Clipboard
     public static bool IsCurrent(IDataObject data)
     {
         ArgumentNullException.ThrowIfNull(data);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return ReferenceEquals(s_nonWindowsClipboard, data);
+        }
+
         return ClipboardCore.IsObjectOnClipboard(data);
     }
 
@@ -253,6 +290,13 @@ public static class Clipboard
 
         // Wrap if we're not already a DataObject
         DataObject dataObject = data as DataObject ?? DataObject.CreateFromClipboard(data);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            s_nonWindowsClipboard = dataObject;
+            return;
+        }
+
         ClipboardCore.SetData(dataObject, copy).ThrowOnFailure();
     }
 

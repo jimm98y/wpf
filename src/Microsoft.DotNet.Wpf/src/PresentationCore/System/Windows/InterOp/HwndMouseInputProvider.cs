@@ -263,7 +263,15 @@ namespace System.Windows.Interop
                 // middle of a popup/ComboBox close, and its lost-capture handler would re-establish
                 // capture before teardown finishes (leaving it stuck). Deferring matches the Windows
                 // ordering, where CancelCapture is handled after the current operation completes.
+                // The InputManager only processes a mouse report whose source matches the device's
+                // ACTIVE source. After a click inside a popup window (e.g. selecting a ComboBox item)
+                // the active source is the popup, not this provider's window -- so a CancelCapture
+                // reported with _source would be silently dropped, leaving capture stuck. Report it with
+                // the currently active source instead.
                 PresentationSource source = _source;
+                MouseDevice md = _site?.CriticalInputManager?.PrimaryMouseDevice;
+                if (md?.CriticalActiveSource != null) source = md.CriticalActiveSource;
+
                 if (source != null && _site != null && !source.IsDisposed && source.CompositionTarget != null)
                 {
                     RawMouseInputReport report = new RawMouseInputReport(

@@ -895,7 +895,14 @@ namespace MS.Win32
             {
                 return SystemParametersInfoNative(nAction, nParam, ref value, ignore);
             }
-            // Leave the caller-provided value in place and report success.
+            // SPI_GETCARETWIDTH: report the Windows default caret width (1 device pixel).
+            // The caller seeds this with 0; leaving it there makes CaretElement draw a
+            // zero-width (invisible) caret, so the text-box blinking cursor disappears.
+            if (nAction == NativeMethods.SPI_GETCARETWIDTH)
+            {
+                value = 1;
+            }
+            // Otherwise leave the caller-provided value in place and report success.
             return true;
         }
 

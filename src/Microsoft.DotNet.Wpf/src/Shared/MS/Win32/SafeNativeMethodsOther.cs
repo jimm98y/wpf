@@ -87,6 +87,19 @@ namespace MS.Win32
 
         public static unsafe bool GetStringTypeEx(uint locale, uint infoType, ReadOnlySpan<char> sourceString, Span<ushort> charTypes)
         {
+            // GetStringTypeEx lives in kernel32 (only on Windows). The selection word breaker calls it
+            // for every character pair, so off-Windows we classify chars managed via UnicodeCategory /
+            // code-point ranges instead of throwing DllNotFoundException (which aborts word selection).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                for (int i = 0; i < sourceString.Length; i++)
+                {
+                    charTypes[i] = ClassifyCharManaged(sourceString[i], infoType);
+                }
+
+                return true;
+            }
+
             // Since we do not use [LibraryImport], Span<T> marshallers are not available by default
             fixed (char* ptrSourceString = sourceString)
             fixed (ushort* ptrCharTypes = charTypes)
@@ -96,6 +109,70 @@ namespace MS.Win32
             }
 
             return true;
+        }
+
+        // Managed GetStringTypeEx classification for the char types the selection word breaker consumes.
+        // CT_CTYPE1: C1_SPACE/C1_BLANK/C1_PUNCT. CT_CTYPE3: the ideographic/kana + diacritic/kashida
+        // flags (all zero for Latin, which is what unblocks western word selection). Approximate but
+        // sufficient for word-break decisions; a full NLS table is not warranted here.
+        private static ushort ClassifyCharManaged(char ch, uint infoType)
+        {
+            if (infoType == CT_CTYPE1)
+            {
+                ushort t = 0;
+                if (char.IsWhiteSpace(ch))
+                {
+                    t |= C1_SPACE;
+                    if (ch == ' ' || ch == '\t' || ch == '\u00a0')
+                    {
+                        t |= C1_BLANK;
+                    }
+                }
+                if (char.IsPunctuation(ch) || char.IsSymbol(ch))
+                {
+                    t |= C1_PUNCT;
+                }
+                return t;
+            }
+
+            if (infoType == CT_CTYPE3)
+            {
+                ushort t = 0;
+
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    t |= (ushort)(C3_NONSPACING | C3_DIACRITIC);
+                }
+
+                if (ch >= 0x3040 && ch <= 0x309F)            // Hiragana
+                {
+                    t |= (ushort)(C3_HIRAGANA | C3_FULLWIDTH);
+                }
+                else if (ch >= 0x30A0 && ch <= 0x30FF)       // Katakana (full-width)
+                {
+                    t |= (ushort)(C3_KATAKANA | C3_FULLWIDTH);
+                }
+                else if (ch >= 0xFF65 && ch <= 0xFF9F)       // Half-width Katakana
+                {
+                    t |= (ushort)(C3_KATAKANA | C3_HALFWIDTH);
+                }
+                else if ((ch >= 0x4E00 && ch <= 0x9FFF) ||   // CJK Unified Ideographs
+                         (ch >= 0x3400 && ch <= 0x4DBF) ||   // CJK Extension A
+                         (ch >= 0xF900 && ch <= 0xFAFF))      // CJK Compatibility Ideographs
+                {
+                    t |= (ushort)(C3_IDEOGRAPH | C3_FULLWIDTH);
+                }
+
+                if (ch == 0x0640)                            // Arabic Tatweel (Kashida)
+                {
+                    t |= C3_KASHIDA;
+                }
+
+                return t;
+            }
+
+            // CT_CTYPE2 and anything else the word breaker doesn't consult: no flags.
+            return 0;
         }
 
         public static int GetSysColor(int nIndex)

@@ -66,6 +66,10 @@ namespace MS.Internal.Interop
                 long bestOrder = long.MaxValue;
                 foreach (CocoaWindow w in s_byView.Values)
                 {
+                    // Skip windows that aren't on screen (e.g. a popup that was just ordered out) so a
+                    // stale entry can't win the hit test.
+                    if (w._window == IntPtr.Zero || !SendBool(w._window, Sel("isVisible"))) continue;
+
                     w.GetClientScreenOriginPixels(out int ox, out int oy);
                     w.GetPixelSize(out int pw, out int ph);
                     if (pw <= 0 || ph <= 0 || x < ox || y < oy || x >= ox + pw || y >= oy + ph)
@@ -796,6 +800,9 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidPoint(IntPtr receiver, IntPtr selector, NSPoint point);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern NSPoint SendPointPoint(IntPtr receiver, IntPtr selector, NSPoint point);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct NSRect
