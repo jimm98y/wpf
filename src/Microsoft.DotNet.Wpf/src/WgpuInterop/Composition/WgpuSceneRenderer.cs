@@ -81,6 +81,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public RgbaColor ShadowColor;
             public int OffX, OffY;
             public int LastFrame;
+            // A full-target layer (nested 3D/clip/mask) is rendered with region origin (0,0), so its
+            // content sits at ABSOLUTE device coordinates in the texture rather than region-local. To
+            // reuse it at a new scroll position we composite it shifted by how far the layer's world
+            // translation has moved since it was rendered. Region-sized layers instead track position
+            // via Rx/Ry (their content is already region-local). See the cache-hit path.
+            public bool FullTarget;
+            public float OrigTX, OrigTY;       // world translation when rendered (full-target layers)
         }
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
 
@@ -619,8 +626,27 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 {
                     PerfLayerMiss++;
                     _layerCache[key] = cl = RenderLayerToCache(v, world, region, clip, plan, width, height);
+                    cl.FullTarget = fullTarget;
+                    cl.OrigTX = world.M31; cl.OrigTY = world.M32;
                 }
-                else PerfLayerHits++;
+                else
+                {
+                    PerfLayerHits++;
+                    // The key is scroll-invariant, so a hit's cached textures are valid at the current
+                    // position -- re-composite them where the layer now sits. A region-sized layer's
+                    // content is region-local, so it composites at the current region origin. A full-
+                    // target layer's content is at absolute device coords, so it composites shifted by how
+                    // far the layer's world translation has moved since it was rendered.
+                    if (cl.FullTarget)
+                    {
+                        cl.Rx = (int)MathF.Round(world.M31 - cl.OrigTX);
+                        cl.Ry = (int)MathF.Round(world.M32 - cl.OrigTY);
+                    }
+                    else
+                    {
+                        cl.Rx = rx; cl.Ry = ry;
+                    }
+                }
                 cl.LastFrame = _frameId;
                 EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
                 return;
@@ -674,7 +700,14 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // Composite a cached region layer into the parent (no render passes needed on a hit).
         private void EmitCachedLayer(CachedLayer cl, float groupOpacity, Scissor clip, DrawData outData, WGPUTextureFormat outFormat, int width, int height)
         {
-            var region = new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh);
+            // Clamp to the current render target's device bounds: a reused full-target layer is
+            // composited shifted by its scroll delta, so (Rx,Ry) can fall partly/fully off-target and an
+            // unclamped scissor origin makes wgpu abort. The target origin is (_devOX,_devOY) -- NOT (0,0)
+            // -- because when compositing a nested layer into a parent region texture the scissor coords
+            // are absolute device space; clamping against (0,0) there would empty a valid nested layer
+            // (e.g. a nested blur at absolute x~800 vs a 224-wide card region -> nothing drawn).
+            var region = Intersect(new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh),
+                                   new Scissor((int)_devOX, (int)_devOY, width, height));
             if (cl.Mode == 3 || cl.Mode == 4)
             {
                 // Geometry-clip / opacity-mask: modulate the (region-sized) layer by the cached R8 mask.
@@ -706,27 +739,46 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region)
         {
             _hash = unchecked((long)1469598103934665603UL);
-            HV(region.X); HV(region.Y); HV(region.W); HV(region.H);
+            // Key on region SIZE, not origin, and on translation RELATIVE to the region origin. A cached
+            // layer's textures are rendered in layer-local space (content offset = world translation minus
+            // region origin), and scrolling shifts the world translation and the region origin by the SAME
+            // delta -- so that relative offset (and thus the rendered content) is invariant under scroll.
+            // Keying on the absolute translation/origin made every card miss the cache each scroll frame
+            // (hits=0, ~600 re-rasterizations/frame -> ~20fps); keying relative lets fully-visible cards
+            // hit and just be re-composited at their new position. (region.X/Y and M31/M32 must move
+            // together; sub-pixel scroll still changes the relative offset -> re-render, staying correct.)
+            HV(region.W); HV(region.H);
+            float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
-            if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); HF(world.M31); HF(world.M32); }
-            else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); HF(world.M31); HF(world.M32); }
+            if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
+            else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else switch (v.Effect)
             {
                 case BlurEffect b: HV(101); HF((float)b.Radius); break;
                 case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
                 default: HV(100); break;
             }
-            HashVisual(v, world);
+            HashVisual(v, world, bx, by);
             return _hash;
         }
 
-        private void HashVisual(SceneVisual n, Matrix3x2 w)
+        // bx/by: the layer's top-node world translation. Each node's translation is hashed relative to it
+        // so the key is scroll-invariant: (world - topWorld) is a node's fixed local offset within the
+        // card, cancelling both the scroll delta and the card's absolute position EXACTLY (no rounding ->
+        // no sub-pixel boundary flips). The top node hashes to 0. This lets a fully-visible card keep a
+        // stable key while scrolling and hit the cache instead of re-rasterizing ~600 masks/frame (the
+        // ~20fps scroll stall). The cached texture is re-composited at the current region origin; the only
+        // approximation is a <=1px whole-pixel snap of the cached content, standard for a scroll cache.
+        // Scale/rotation/skew (M11..M22) are hashed exactly, so rotating/scaling cards re-render.
+        private void HashVisual(SceneVisual n, Matrix3x2 w, float bx, float by)
         {
-            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22); HF(w.M31); HF(w.M32);
+            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22); HF(w.M31 - bx); HF(w.M32 - by);
             HV(BitConverter.DoubleToInt64Bits(n.Opacity));
             if (n.Clip is { } c) HR(c); else HV(7);
+            if (n.OpacityMask is { } nm) HashBrush(nm);
+            if (n.ClipGeometry is { } ncg) HashGeo(ncg);
             foreach (DrawingPrimitive p in n.Content) HashPrimitive(p);
-            foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w);
+            foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w, bx, by);
         }
 
         private void HashPrimitive(DrawingPrimitive p)
