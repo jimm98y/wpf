@@ -49,8 +49,26 @@ namespace MS.Win32
 #endif
 
 
+        // Off-Windows there is no HMONITOR; the MonitorFrom* guards below hand back this non-null
+        // sentinel so callers proceed to GetMonitorInfo (whose guard fills the real Cocoa screen rect).
+        private static readonly IntPtr s_macMonitor = (IntPtr)1;
+
         internal static void GetMonitorInfo(HandleRef hmonitor, [In, Out] NativeMethods.MONITORINFOEX info)
         {
+            // user32 GetMonitorInfo is Windows-only; off-Windows populate the struct from the primary
+            // Cocoa screen (device pixels, top-left origin) so Window.CenterScreen / work-area clamping
+            // work instead of P/Invoking a missing user32.dll (which FailFasts the app).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                int ml = 0, mt = 0, mr = 1920, mb = 1080, wl = 0, wt = 0, wr = 1920, wb = 1080;
+                MS.Internal.Interop.CocoaWindow.GetPrimaryScreenPixels(
+                    out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
+                info.rcMonitor = new NativeMethods.RECT(ml, mt, mr, mb);
+                info.rcWork = new NativeMethods.RECT(wl, wt, wr, wb);
+                info.dwFlags = 1; // MONITORINFOF_PRIMARY
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetMonitorInfo(hmonitor, info))
             {
                 throw new Win32Exception();
@@ -60,18 +78,21 @@ namespace MS.Win32
 
         public static IntPtr MonitorFromPoint(NativeMethods.POINT pt, int flags)
         {
+            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
             return SafeNativeMethodsPrivate.MonitorFromPoint(pt, flags);
         }
 
 
         public static IntPtr MonitorFromRect(ref NativeMethods.RECT rect, int flags)
         {
+            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
             return SafeNativeMethodsPrivate.MonitorFromRect(ref rect, flags);
         }
 
 
         public static IntPtr MonitorFromWindow(HandleRef handle, int flags)
         {
+            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
             return SafeNativeMethodsPrivate.MonitorFromWindow(handle, flags);
         }
 

@@ -245,6 +245,46 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>
+        /// The primary screen's full and work-area bounds in Win32 device-pixel semantics (top-left
+        /// origin, pixels = points * backingScale). Backs the off-Windows GetMonitorInfo guard so
+        /// Window.CenterScreen / work-area clamping have a real monitor rect. The work area is
+        /// NSScreen.visibleFrame (Cocoa bottom-left) flipped into the frame's top-left space (the menu
+        /// bar shrinks it from the top, the Dock from a side/bottom). Returns false if AppKit is
+        /// unavailable (caller falls back to a default).
+        /// </summary>
+        public static bool GetPrimaryScreenPixels(
+            out int monLeft, out int monTop, out int monRight, out int monBottom,
+            out int workLeft, out int workTop, out int workRight, out int workBottom)
+        {
+            monLeft = monTop = monRight = monBottom = 0;
+            workLeft = workTop = workRight = workBottom = 0;
+            EnsureApplication();
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            IntPtr primary = (screens != IntPtr.Zero && SendNUInt(screens, Sel("count")) > 0)
+                ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
+                : Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+            if (primary == IntPtr.Zero) return false;
+
+            double scale = SendDouble(primary, Sel("backingScaleFactor"));
+            if (scale <= 0) scale = 1.0;
+            NSRect frame = SendRect(primary, Sel("frame"));            // full, bottom-left points
+            NSRect vis = SendRect(primary, Sel("visibleFrame"));       // work area, bottom-left points
+
+            monLeft = 0;
+            monTop = 0;
+            monRight = (int)Math.Round(frame.width * scale);
+            monBottom = (int)Math.Round(frame.height * scale);
+
+            // Flip visibleFrame (bottom-left) into the frame's top-left space, then scale to pixels.
+            double workTopPt = frame.height - (vis.y + vis.height);   // menu-bar gap at the top
+            workLeft = (int)Math.Round(vis.x * scale);
+            workTop = (int)Math.Round(workTopPt * scale);
+            workRight = (int)Math.Round((vis.x + vis.width) * scale);
+            workBottom = (int)Math.Round((workTopPt + vis.height) * scale);
+            return true;
+        }
+
+        /// <summary>
         /// The window's backing scale factor (2.0 on a Retina display, 1.0 otherwise). This is the
         /// single source of truth for the device-pixel/DIP ratio on macOS: the HwndTarget DPI scale,
         /// the client rects (GetPixelSize), and the CAMetalLayer contentsScale must all agree on it,
