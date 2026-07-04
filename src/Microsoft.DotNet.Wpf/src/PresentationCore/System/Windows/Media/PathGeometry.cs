@@ -725,9 +725,15 @@ namespace System.Windows.Media
             return pg;
         }
 
-        // Breaks a geometry into the set of axis-aligned rectangles that bound each of its figures.
-        // GetAsPathGeometry() is fully managed (no milcore) and bakes in the geometry's own Transform,
-        // so the figure points are already in the geometry's coordinate space.
+        // Breaks a geometry into the set of axis-aligned rectangles that bound each of its figures,
+        // in the geometry's FINAL coordinate space. GetAsPathGeometry() is fully managed (no milcore)
+        // but it emits figures in the geometry's LOCAL space and carries the geometry's transform on
+        // the returned PathGeometry.Transform (PathStreamGeometryContext does NOT bake it into the
+        // points). So we must apply that transform to each figure's bounds -- otherwise a translated
+        // clip rect (e.g. a layout slot clip whose RectangleGeometry has an offset MatrixTransform)
+        // lands in the wrong place and its Intersect with an un-transformed partner collapses to empty,
+        // which culls the clipped subtree (this blanked ComboBox/Menu popup content). The old code used
+        // geometry.Bounds, which already includes the transform.
         private static List<Rect> DecomposeToRects(Geometry geometry)
         {
             var rects = new List<Rect>();
@@ -739,7 +745,7 @@ namespace System.Windows.Media
             PathGeometry pg = geometry.GetAsPathGeometry();
             if (pg?.Figures == null || pg.Figures.Count == 0)
             {
-                Rect b = geometry.Bounds;
+                Rect b = geometry.Bounds;   // Bounds already includes the geometry's transform.
                 if (!b.IsEmpty)
                 {
                     rects.Add(b);
@@ -747,13 +753,20 @@ namespace System.Windows.Media
                 return rects;
             }
 
+            Matrix xf = pg.Transform?.Value ?? Matrix.Identity;
             foreach (PathFigure figure in pg.Figures)
             {
                 Rect r = GetFigureBounds(figure);
-                if (!r.IsEmpty)
+                if (r.IsEmpty)
                 {
-                    rects.Add(r);
+                    continue;
                 }
+
+                if (!xf.IsIdentity)
+                {
+                    r = Rect.Transform(r, xf);
+                }
+                rects.Add(r);
             }
             return rects;
         }
