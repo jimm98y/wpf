@@ -8,18 +8,20 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>WpfWebGpuGallery</AssemblyName>
     <SelfContained>false</SelfContained>
+    <!-- Allows compiling this Windows-only WPF app on non-Windows dev machines; it still can't run here. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <!-- Deploy the WebGPU backend so PresentationCore's reflection loader can resolve it
-       (deployment only; PresentationCore takes no compile-time dependency). -->
+       (deployment only; PresentationCore takes no compile-time dependency).
+       Guarded with Exists() so this still compiles on machines (or platforms) where the
+       from-source WPF checkout hasn't been built / the native lib hasn't been fetched yet. -->
   <ItemGroup>
-    <Reference Include="Microsoft.Wpf.Interop.WebGpu">
-      <HintPath>C:\Git\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="Exists('..\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll')">
+      <HintPath>..\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
       <Private>true</Private>
     </Reference>
-    <None Include="C:\Git\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\native\win-arm64\lib\wgpu_native.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
 
+  </ItemGroup>
+  
 </Project>

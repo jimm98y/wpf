@@ -87,6 +87,46 @@ internal static class Program
         root.Children.Add(header);
         root.Children.Add(scroll);
 
+        // Always-visible FPS overlay pinned to the top-right corner. It floats above the whole UI
+        // (last child of an overlay Grid = top of the z-order) and is non-hit-testable so it never
+        // steals input. The rate is measured from CompositionTarget.Rendering — one tick per frame
+        // the composition system renders — which is the true render/present cadence on this path.
+        var fpsText = new TextBlock
+        {
+            Text = "— fps",
+            FontSize = 13,
+            FontFamily = new FontFamily("Menlo, Consolas, Courier New, monospace"),
+            Foreground = Brushes.White,
+        };
+        var fpsBadge = new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 12, 14, 0),
+            Padding = new Thickness(10, 4, 10, 4),
+            CornerRadius = new CornerRadius(8),
+            Background = new SolidColorBrush(Color.FromArgb(0xB8, 0x11, 0x18, 0x27)),
+            Child = fpsText,
+            IsHitTestVisible = false,
+        };
+        var overlay = new Grid();
+        overlay.Children.Add(root);
+        overlay.Children.Add(fpsBadge);
+
+        int renderTicks = 0;
+        var fpsClock = System.Diagnostics.Stopwatch.StartNew();
+        CompositionTarget.Rendering += (s, e) =>
+        {
+            renderTicks++;
+            double elapsed = fpsClock.Elapsed.TotalSeconds;
+            if (elapsed >= 0.5)
+            {
+                fpsText.Text = $"{renderTicks / elapsed:0} fps";
+                renderTicks = 0;
+                fpsClock.Restart();
+            }
+        };
+
         var window = new Window
         {
             Title = "WPF on WebGPU — Feature Gallery",
@@ -94,7 +134,7 @@ internal static class Program
             Height = 760,
             WindowState = WindowState.Maximized,
             Background = new SolidColorBrush(Color.FromRgb(0xEC, 0xEF, 0xF3)),
-            Content = root,
+            Content = overlay,
         };
 
         // A little live motion so it's obvious frames are composited continuously.
