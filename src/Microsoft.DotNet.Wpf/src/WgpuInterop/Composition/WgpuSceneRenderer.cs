@@ -614,13 +614,31 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             float groupOpacity = (float)(inheritedOpacity * vOpacity);
 
+            // A full-target layer is rendered ONCE into a full-window texture at ABSOLUTE device coords
+            // (region origin (0,0)) and reused at other scroll positions by translation shift. That single
+            // render only captures the subtree where it fell inside the target; if the layer is currently
+            // partly/fully off-screen, the missing part is baked blank and the scroll-invariant key means
+            // it is NEVER re-rendered -- so a card first seen while partially scrolled in stays blank/clipped
+            // even after it fully enters view. Guard: only allow scroll-invariant shift-reuse once the
+            // layer's content fits entirely within the target. Until then, key on absolute position so it
+            // re-renders fresh (and correct) at each scroll offset. Region-sized layers are unaffected
+            // (their key already varies with the visible region size).
+            bool shiftReusable = true;
+            if (fullTarget)
+            {
+                Scissor cb = ContentDeviceBounds(v, world, width, height);
+                shiftReusable = cb.IsEmpty ||
+                    (cb.X >= _devOX && cb.Y >= _devOY &&
+                     cb.X + cb.W <= _devOX + width && cb.Y + cb.H <= _devOY + height);
+            }
+
             // ALL effect/opacity/clip/mask layers are cacheable: if this subtree (+ its clip/mask)
             // is byte-for-byte the same as a previous frame, reuse its rendered textures and SKIP
             // the render passes + the (full-target, CPU) mask rasterization entirely. This is the
             // dominant cost for static cards on the GL backend. Animated cards re-hash -> re-render.
             {
                 long h0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                long key = LayerCacheKey(v, world, region);
+                long key = LayerCacheKey(v, world, region, shiftReusable);
                 PerfHashTicks += System.Diagnostics.Stopwatch.GetTimestamp() - h0;
                 if (!_layerCache.TryGetValue(key, out CachedLayer? cl))
                 {
@@ -736,7 +754,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private void HF(float f) => HV(BitConverter.SingleToInt32Bits(f));
         private void HR(Rect r) { HF(r.X); HF(r.Y); HF(r.Width); HF(r.Height); }
 
-        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region)
+        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region, bool shiftReusable = true)
         {
             _hash = unchecked((long)1469598103934665603UL);
             // Key on region SIZE, not origin, and on translation RELATIVE to the region origin. A cached
@@ -748,6 +766,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // hit and just be re-composited at their new position. (region.X/Y and M31/M32 must move
             // together; sub-pixel scroll still changes the relative offset -> re-render, staying correct.)
             HV(region.W); HV(region.H);
+            // A full-target layer that is not yet fully on-screen must NOT be shift-reused (its off-target
+            // content is baked blank); mixing in the absolute position makes each scroll offset a distinct
+            // key so it re-renders fresh at the current position until it is fully in view. See CollectVisual.
+            if (!shiftReusable) { HV(0x5C0117); HV(region.X); HV(region.Y); HF(world.M31); HF(world.M32); }
             float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
             if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
