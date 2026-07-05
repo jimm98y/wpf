@@ -223,7 +223,20 @@ namespace MS.Internal.TextFormatting
 
                 if (!isText || fHidden != 0 || isBreak)
                 {
-                    // A control/object/hidden run or a hard line/paragraph break.
+                    // A control/object/hidden run or a hard line/paragraph break. Record it as a
+                    // zero-width non-text run so its codepoints stay QUERYABLE: a selection that
+                    // spans lines includes the break cp as the last cp of the first line's range,
+                    // and FullTextLine.GetTextBounds hard-requires QueryLineCpPpoint to resolve it
+                    // (an unresolved cp returns degenerate bounds and the segment's highlight
+                    // vanishes). DisplayLine skips non-text runs, so nothing is drawn for it.
+                    line.Runs.Add(new ManagedLsRun
+                    {
+                        Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
+                        Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
+                        CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
+                        Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
+                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false,
+                    });
                     cp += cchText;
                     forced = true;
                     break;
@@ -447,7 +460,46 @@ namespace MS.Internal.TextFormatting
 
         // ---- hit-testing (greedy single-direction cp<->x mapping) ----
 
-        internal static LsErr QueryLineCpPpoint(IntPtr ploline, int lscpQuery, int depthQueryMax,
+        // Fills the caller's LsQSubInfo buffer (one level deep: no nested sublines in the
+        // greedy single-direction engine) and the text cell for one character of a run.
+        // FullTextLine's hit-testing REQUIRES actualDepthQuery > 0 and dupCell > 0 —
+        // with an empty subline array it silently falls back to "line start", which
+        // broke caret placement and word selection wherever the shim formats text.
+        // NOTE lscpEndCell is the LAST lscp still inside the cell (== start for a
+        // single-codepoint cell), not one-past-the-end.
+        private static unsafe void FillQueryResult(ManagedLsLine line, ManagedLsRun run, int cp, int cellX, int cellW,
+            int depthQueryMax, IntPtr pSubLineInfo, out int actualDepthQuery, ref LsTextCell lsTextCell)
+        {
+            lsTextCell.lscpStartCell = cp;
+            lsTextCell.lscpEndCell = cp;
+            lsTextCell.pointUvStartCell = new LSPOINT(cellX, 0);
+            lsTextCell.dupCell = Math.Max(cellW, 1);
+            lsTextCell.cCharsInCell = 1;
+            lsTextCell.cGlyphsInCell = 1;
+
+            actualDepthQuery = 0;
+            if (pSubLineInfo != IntPtr.Zero && depthQueryMax >= 1)
+            {
+                var sub = new LsQSubInfo
+                {
+                    lstflowSubLine = LsTFlow.lstflowES,
+                    lscpFirstSubLine = line.CpFirst,
+                    lsdcpSubLine = Math.Max(1, line.CpLim - line.CpFirst),
+                    pointUvStartSubLine = new LSPOINT(0, 0),
+                    dupSubLine = line.Width,
+                    idobj = (uint)MS.Internal.TextFormatting.TextStore.ObjectId.Text_chp,
+                    plsrun = (IntPtr)(uint)run.Plsrun,
+                    lscpFirstRun = run.CpFirst,
+                    lsdcpRun = run.CchText,
+                    pointUvStartRun = new LSPOINT(run.PenX, 0),
+                    dupRun = run.Width,
+                };
+                *(LsQSubInfo*)pSubLineInfo = sub;
+                actualDepthQuery = 1;
+            }
+        }
+
+        internal static unsafe LsErr QueryLineCpPpoint(IntPtr ploline, int lscpQuery, int depthQueryMax,
             IntPtr pSubLineInfo, out int actualDepthQuery, out LsTextCell lsTextCell)
         {
             ManagedLsLine line = LineFrom(ploline);
@@ -461,43 +513,54 @@ namespace MS.Internal.TextFormatting
                     int x = run.PenX;
                     for (int i = 0; i < offset && i < run.Advances.Length; i++) x += run.Advances[i];
                     int w = offset < run.Advances.Length ? run.Advances[offset] : 0;
-                    lsTextCell.lscpStartCell = lscpQuery;
-                    lsTextCell.lscpEndCell = lscpQuery + 1;
-                    lsTextCell.pointUvStartCell = new LSPOINT(x, 0);
-                    lsTextCell.dupCell = w;
-                    lsTextCell.cCharsInCell = 1;
-                    lsTextCell.cGlyphsInCell = 1;
+                    FillQueryResult(line, run, lscpQuery, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
                     return LsErr.None;
                 }
             }
             return LsErr.None;
         }
 
-        internal static LsErr QueryLinePointPcp(IntPtr ploline, ref LSPOINT ptQuery, int depthQueryMax,
+        internal static unsafe LsErr QueryLinePointPcp(IntPtr ploline, ref LSPOINT ptQuery, int depthQueryMax,
             IntPtr pSubLineInfo, out int actualDepthQuery, out LsTextCell lsTextCell)
         {
             ManagedLsLine line = LineFrom(ploline);
             actualDepthQuery = 0;
             lsTextCell = new LsTextCell();
             int qx = ptQuery.x;
+
+            // Point->cp maps only onto TEXT runs. The trailing break/control run exists so
+            // cp->x queries (selection bounds) can resolve its codepoints, but a POINT past
+            // the text must resolve to the last real character: returning the break cp put
+            // the caret beyond the document and TextBoxView.GetTextPositionFromDistance
+            // throws ("Requested distance is outside the content...").
+            ManagedLsRun lastText = null;
             foreach (ManagedLsRun run in line.Runs)
             {
+                if (!run.IsText) continue;
+                lastText = run;
                 int x = run.PenX;
                 for (int i = 0; i < run.CchText; i++)
                 {
                     int w = i < run.Advances.Length ? run.Advances[i] : 0;
-                    if (qx < x + w || (run == line.Runs[line.Runs.Count - 1] && i == run.CchText - 1))
+                    if (qx < x + w)
                     {
-                        lsTextCell.lscpStartCell = run.CpFirst + i;
-                        lsTextCell.lscpEndCell = run.CpFirst + i + 1;
-                        lsTextCell.pointUvStartCell = new LSPOINT(x, 0);
-                        lsTextCell.dupCell = w;
-                        lsTextCell.cCharsInCell = 1;
-                        lsTextCell.cGlyphsInCell = 1;
+                        FillQueryResult(line, run, run.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
                         return LsErr.None;
                     }
                     x += w;
                 }
+            }
+
+            // Past the end of the text: the trailing edge of the last character. A line with
+            // no text runs (blank line) returns an empty cell; the caller's fallback places
+            // the caret at the line start, which is correct there.
+            if (lastText != null && lastText.CchText > 0)
+            {
+                int i = lastText.CchText - 1;
+                int x = lastText.PenX;
+                for (int j = 0; j < i && j < lastText.Advances.Length; j++) x += lastText.Advances[j];
+                int w = i < lastText.Advances.Length ? lastText.Advances[i] : 0;
+                FillQueryResult(line, lastText, lastText.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
             }
             return LsErr.None;
         }
