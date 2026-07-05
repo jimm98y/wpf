@@ -51,3 +51,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.TransformTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.OpacityMaskDecodeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.ManagedFontTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.WasmSpike")]

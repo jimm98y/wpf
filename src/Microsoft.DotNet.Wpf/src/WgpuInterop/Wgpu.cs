@@ -373,12 +373,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         internal delegate void WGPULogCallback(WGPULogLevel level, WGPUStringView message, IntPtr userdata);
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuSetLogCallback(IntPtr callback, IntPtr userdata);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuSetLogLevel(WGPULogLevel level);
-
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUAdapterInfo
         {
@@ -395,71 +389,8 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public uint subgroupMaxSize;
         }
 
-        // ---- Functions: webgpu.h ---------------------------------------------
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUStatus wgpuAdapterGetInfo(IntPtr adapter, WGPUAdapterInfo* info);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuCreateInstance(WGPUChainedStruct* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUFuture wgpuInstanceRequestAdapter(
-            IntPtr instance, WGPURequestAdapterOptions* options, WGPURequestAdapterCallbackInfo callbackInfo);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuInstanceProcessEvents(IntPtr instance);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUFuture wgpuAdapterRequestDevice(
-            IntPtr adapter, IntPtr descriptor, WGPURequestDeviceCallbackInfo callbackInfo);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceGetQueue(IntPtr device);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateTexture(IntPtr device, WGPUTextureDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateBuffer(IntPtr device, WGPUBufferDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateCommandEncoder(IntPtr device, IntPtr descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuTextureCreateView(IntPtr texture, IntPtr descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuCommandEncoderBeginRenderPass(IntPtr commandEncoder, WGPURenderPassDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderEnd(IntPtr renderPassEncoder);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuCommandEncoderCopyTextureToBuffer(
-            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuQueueSubmit(IntPtr queue, nuint commandCount, IntPtr* commands);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUFuture wgpuBufferMapAsync(
-            IntPtr buffer, WGPUMapMode mode, nuint offset, nuint size, WGPUBufferMapCallbackInfo callbackInfo);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void* wgpuBufferGetConstMappedRange(IntPtr buffer, nuint offset, nuint size);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuBufferUnmap(IntPtr buffer);
-
-        // ---- Functions: wgpu.h extensions ------------------------------------
-
-        // Drives the device's internal event/callback queue. wait=true blocks
-        // until the optional submission index has completed.
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern uint wgpuDevicePoll(IntPtr device, uint wait, ulong* submissionIndex);
+        // ---- Functions -------------------------------------------------------
+        // The extern entry points live in Wgpu.Native.cs (desktop DllImport into
+        // wgpu-native) and Browser/Wgpu.Browser.cs (browser JS-interop bodies).
     }
 }

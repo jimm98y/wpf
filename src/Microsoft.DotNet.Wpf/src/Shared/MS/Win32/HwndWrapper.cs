@@ -69,18 +69,33 @@ namespace MS.Win32
                     int ch = height > 0 ? height : (borderless ? 1 : 768);
                     int cx = x > 0 ? x : 100;
                     int cy = y > 0 ? y : 100;
-                    _cocoaWindow = new MS.Internal.Interop.CocoaWindow();
-                    _cocoaWindow.Create(name, cx, cy, cw, ch, borderless);
-                    _handle = _cocoaWindow.ContentView;
+                    if (OperatingSystem.IsBrowser())
+                    {
+                        // Browser: the window is a canvas element (see BrowserWindow); position is
+                        // page-owned for the main window, SetFrameOrigin moves popups.
+                        var browser = new MS.Internal.Interop.BrowserWindow();
+                        browser.Create(name, cw, ch, borderless);
+                        // Route content-size changes to a synthetic WM_SIZE exactly like Cocoa below.
+                        browser.Resized += OnCocoaResized;
+                        _platformWindow = browser;
+                        _handle = browser.Handle;
+                    }
+                    else
+                    {
+                        var cocoa = new MS.Internal.Interop.CocoaWindow();
+                        cocoa.Create(name, cx, cy, cw, ch, borderless);
+                        // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
+                        // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
+                        cocoa.Resized += OnCocoaResized;
+                        // Route a title-bar close-button click to a WM_CLOSE (which fires Closing/Closed
+                        // and tears the window down, exactly as the Win32 close path does).
+                        cocoa.Closed += OnCocoaClosed;
+                        _platformWindow = cocoa;
+                        _handle = cocoa.ContentView;
+                    }
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)
                     // can be routed synchronously to this wrapper's managed WndProc (see DispatchMessage).
                     lock (s_byHandleLock) { s_byHandle[_handle] = this; }
-                    // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
-                    // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
-                    _cocoaWindow.Resized += OnCocoaResized;
-                    // Route a title-bar close-button click to a WM_CLOSE (which fires Closing/Closed
-                    // and tears the window down, exactly as the Win32 close path does).
-                    _cocoaWindow.Closed += OnCocoaClosed;
                 }
                 else
                 {
@@ -231,8 +246,8 @@ namespace MS.Win32
                 {
                     lock (s_byHandleLock) { s_byHandle.Remove(_handle); }
                 }
-                _cocoaWindow?.Destroy();
-                _cocoaWindow = null;
+                _platformWindow?.Destroy();
+                _platformWindow = null;
                 _handle = default;
                 return;
             }
@@ -482,7 +497,7 @@ namespace MS.Win32
 
         // Off-Windows backing: the Cocoa window (for sized/top-level windows) and a counter that
         // hands out unique non-zero synthetic handles for message-only/parking windows.
-        private MS.Internal.Interop.CocoaWindow _cocoaWindow;
+        private MS.Internal.Interop.IPlatformWindow _platformWindow;
         private static long s_syntheticHandle;
 
         private static IntPtr AllocateSyntheticHandle()

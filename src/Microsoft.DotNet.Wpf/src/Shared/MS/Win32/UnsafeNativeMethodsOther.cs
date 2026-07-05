@@ -653,7 +653,7 @@ namespace MS.Win32
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
                 placement.showCmd = 1; // SW_NORMAL
                 placement.rcNormalPosition_left = 0;
                 placement.rcNormalPosition_top = 0;

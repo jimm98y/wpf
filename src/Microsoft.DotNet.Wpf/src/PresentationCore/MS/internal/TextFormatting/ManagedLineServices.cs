@@ -408,8 +408,11 @@ namespace MS.Internal.TextFormatting
         internal static unsafe LsErr DisplayLine(IntPtr ploline, ref LSPOINT pt, uint displayMode, ref LSRECT clipRect)
         {
             ManagedLsLine line = LineFrom(ploline);
-            // Baseline origin: pt is the top-left of the line; the glyph baseline is pt.y + ascent.
-            int baseline = pt.y + line.Ascent;
+            // pt is the LS line reference origin, which callers pass as the BASELINE
+            // position (FullTextLine passes (0, _metrics._baselineOffset)); native LS
+            // anchors glyph runs at it directly. Adding line.Ascent here double-counted
+            // the ascent and drew all shim-formatted text a full ascent too low.
+            int baseline = pt.y;
 
             // The current FullTextLine sets up its Draw state (Draw.CurrentLine) before calling us;
             // the callbacks resolve the drawing context from there.

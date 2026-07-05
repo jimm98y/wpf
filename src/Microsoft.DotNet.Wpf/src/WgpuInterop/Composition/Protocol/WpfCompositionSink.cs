@@ -30,7 +30,7 @@ using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 {
-    internal sealed unsafe class WpfCompositionSink : IDisposable
+    internal sealed unsafe partial class WpfCompositionSink : IDisposable
     {
         private readonly MilcoreEngine _engine = new();
         private readonly Dictionary<uint, TargetSurface> _surfaces = new();
@@ -363,6 +363,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             catch { /* diagnostics only */ }
         }
 
+        private static void UnpremultiplyInPlace(byte[] px)
+        {
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                byte a = px[i + 3];
+                if (a > 0 && a < 255)
+                {
+                    px[i] = (byte)Math.Min(255, px[i] * 255 / a);
+                    px[i + 1] = (byte)Math.Min(255, px[i + 1] * 255 / a);
+                    px[i + 2] = (byte)Math.Min(255, px[i + 2] * 255 / a);
+                }
+            }
+        }
+
+// Browser async brush rasterization lives in WpfCompositionSink.Browser.cs (a
+        // non-unsafe partial part: await is illegal inside this unsafe class declaration).
+
         private void EnsureGpu()
         {
             if (_ctx is null)
@@ -373,21 +390,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
                 // (rendered sRGB for display, then un-premultiplied since the image path re-premultiplies).
+#if WGPU_BROWSER
+                // Browser: the readback is Promise-based, so brush rasterization completes with
+                // one frame of latency (kick the async render, retry delivers the bytes).
+                _engine.VisualRasterizerKeyed = RasterizeBrushBrowser;
+#else
                 _engine.VisualRasterizer = (visual, w, h) =>
                 {
                     byte[] px = _renderer!.RenderToRgba(visual, w, h, new RgbaColor(0, 0, 0, 0), srgbOutput: true);
-                    for (int i = 0; i < px.Length; i += 4)
-                    {
-                        byte a = px[i + 3];
-                        if (a > 0 && a < 255)
-                        {
-                            px[i] = (byte)Math.Min(255, px[i] * 255 / a);
-                            px[i + 1] = (byte)Math.Min(255, px[i + 1] * 255 / a);
-                            px[i + 2] = (byte)Math.Min(255, px[i + 2] * 255 / a);
-                        }
-                    }
+                    UnpremultiplyInPlace(px);
                     return px;
                 };
+#endif
                 Log($"WebGPU device created (0x{_ctx.Device:x}) {_ctx.AdapterDescription}");
             }
         }

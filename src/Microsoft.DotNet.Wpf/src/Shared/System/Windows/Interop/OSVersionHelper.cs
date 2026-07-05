@@ -323,6 +323,14 @@ namespace Microsoft.Internal.Interop
                 return OperatingSystemVersion.WindowsXPSP2;
             }
 
+            // Off-Windows all the IsOsWindows* probes are false by design; report the
+            // newest known version so version-gated features (composite font typographic
+            // defaults etc.) take their modern paths instead of throwing.
+            if (!OperatingSystem.IsWindows())
+            {
+                return OperatingSystemVersion.Windows10RS5;
+            }
+
             throw new Exception("OSVersionHelper.GetOsVersion Could not detect OS!");
         }
 

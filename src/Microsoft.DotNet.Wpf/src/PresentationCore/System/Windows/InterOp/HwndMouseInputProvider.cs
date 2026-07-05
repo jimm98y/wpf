@@ -28,7 +28,11 @@ namespace System.Windows.Interop
 
             // Off-Windows there is no Win32 message loop feeding FilterMessage; mouse/scroll input
             // arrives as translated Cocoa events. Subscribe and forward them into the InputManager.
-            if (!OperatingSystem.IsWindows())
+            if (OperatingSystem.IsBrowser())
+            {
+                MS.Internal.Interop.BrowserWindow.MouseInput += OnBrowserMouseInput;
+            }
+            else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.MouseInput += OnCocoaMouseInput;
             }
@@ -41,7 +45,10 @@ namespace System.Windows.Interop
                 // Off-Windows the teardown below is all Win32 mouse-tracking/capture/deactivation
                 // (TrackMouseEvent, GetCapture, WindowFromPoint, ...) that has no analog here; just
                 // unsubscribe from Cocoa input and drop the input site.
-                MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
+                if (OperatingSystem.IsBrowser())
+                    MS.Internal.Interop.BrowserWindow.MouseInput -= OnBrowserMouseInput;
+                else
+                    MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
                 if (_site != null)
                 {
                     _site.Dispose();
@@ -110,7 +117,10 @@ namespace System.Windows.Interop
             // it via AppKit. Report success so WPF considers the cursor handled.
             if (!OperatingSystem.IsWindows())
             {
-                MS.Internal.Interop.CocoaWindow.SetCursor(MapCursorToNSCursor(cursor));
+                if (OperatingSystem.IsBrowser())
+                    MS.Internal.Interop.BrowserWindow.SetCursor(MapCursorToCssCursor(cursor));
+                else
+                    MS.Internal.Interop.CocoaWindow.SetCursor(MapCursorToNSCursor(cursor));
                 return true;
             }
 
@@ -174,7 +184,7 @@ namespace System.Windows.Interop
             if (!OperatingSystem.IsWindows())
             {
                 _haveCapture = true;
-                if (_source != null) MS.Internal.Interop.CocoaWindow.MouseCaptureHandle = _source.Handle;
+                if (_source != null) MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = _source.Handle;
                 return true;
             }
 
@@ -283,7 +293,7 @@ namespace System.Windows.Interop
                     // the tracked handle so subsequent GetCapture() correctly reports "no capture".
                     try { _site.ReportInput(report); } catch { }
                 }
-                MS.Internal.Interop.CocoaWindow.MouseCaptureHandle = IntPtr.Zero;
+                MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
                 return;
             }
 
@@ -1324,6 +1334,65 @@ namespace System.Windows.Interop
         // Off-Windows mouse/scroll path: map a translated Cocoa event to RawMouseActions and report it
         // straight to the InputManager, bypassing FilterMessage (which is built around Win32 messages,
         // HWNDs, and cursor/capture APIs that don't exist on macOS).
+        // Browser (WebAssembly): DOM events drained by the dispatcher pump arrive here with
+        // device-pixel client coordinates already relative to the window under the pointer.
+        private void OnBrowserMouseInput(MS.Internal.Interop.BrowserWindow.BrowserMouseMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.Window != _source.Handle) return;   // route to the provider that owns this canvas
+
+            RawMouseActions actions;
+            int wheel = 0;
+            switch (msg.Kind)
+            {
+                case 0:
+                    actions = RawMouseActions.AbsoluteMove;
+                    break;
+                case 1: // DOM buttons: 0=left 1=middle 2=right
+                    actions = msg.Button == 2 ? RawMouseActions.Button2Press
+                            : msg.Button == 1 ? RawMouseActions.Button3Press
+                            : RawMouseActions.Button1Press;
+                    break;
+                case 2:
+                    actions = msg.Button == 2 ? RawMouseActions.Button2Release
+                            : msg.Button == 1 ? RawMouseActions.Button3Release
+                            : RawMouseActions.Button1Release;
+                    break;
+                case 3:
+                    actions = RawMouseActions.VerticalWheelRotate;
+                    wheel = msg.Wheel;
+                    break;
+                default:
+                    return;
+            }
+
+            ReportMacInput(actions, msg.X, msg.Y, wheel, msg.TimestampMs);
+        }
+
+        private static string MapCursorToCssCursor(Cursor cursor)
+        {
+            CursorType type = (cursor != null) ? cursor.CursorType : CursorType.Arrow;
+            switch (type)
+            {
+                case CursorType.IBeam:    return "text";
+                case CursorType.Hand:     return "pointer";
+                case CursorType.Cross:    return "crosshair";
+                case CursorType.No:       return "not-allowed";
+                case CursorType.SizeWE:
+                case CursorType.ScrollWE: return "ew-resize";
+                case CursorType.SizeNS:
+                case CursorType.ScrollNS: return "ns-resize";
+                case CursorType.SizeNESW: return "nesw-resize";
+                case CursorType.SizeNWSE: return "nwse-resize";
+                case CursorType.SizeAll:  return "move";
+                case CursorType.Wait:     return "wait";
+                case CursorType.AppStarting: return "progress";
+                case CursorType.Help:     return "help";
+                case CursorType.None:     return "none";
+                default:                  return "default";
+            }
+        }
+
         private void OnCocoaMouseInput(MS.Internal.Interop.CocoaWindow.CocoaMouseMessage msg)
         {
             if (_source == null || _site == null || _source.IsDisposed) return;

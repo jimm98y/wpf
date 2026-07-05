@@ -49,9 +49,13 @@ namespace MS.Internal
         private static CharacterAttribute[] BuildTemplates()
         {
             var t = new CharacterAttribute[11];
-            t[C_Control]      = Make(0x3E, 9, 0x0004,             1, 9);   // Control: line-break neutral
+            // NOTE: CharacterLineBreak (0x4) must ONLY be on actual break characters
+            // (CR/LF/NEL/VT/FF/LS/PS -> C_CRLF). Putting it on spaces/controls makes
+            // TextStore substitute them with U+2028 markers, which hard-breaks the
+            // line after every word in the managed LineServices shim.
+            t[C_Control]      = Make(0x3E, 9, 0x0000,             1, 9);   // Control: neutral (incl. tab)
             t[C_CRLF]         = Make(0x3E, 9, 0x0400 | 0x0200 | 0x0004, 1, 11);
-            t[C_Space]        = Make(0x1F, 6, 0x0080 | 0x0004,   0, 18);
+            t[C_Space]        = Make(0x1F, 6, 0x0080,             0, 18);
             t[C_Digit]        = Make(0x3D, 0, 0x0100,             2, 3);
             t[C_Latin]        = Make(0x1F, 5, 0x0800,             0, 0);
             t[C_Punct]        = Make(0x00, 6, 0x0000,             0, 19);
@@ -89,6 +93,7 @@ namespace MS.Internal
             if (cp < 0x80)
             {
                 if (cp == '\r' || cp == '\n') return C_CRLF;
+                if (cp == 0x0B || cp == 0x0C) return C_CRLF;    // VT / FF are line breaks
                 if (cp < 0x20 || cp == 0x7F) return C_Control;
                 if (cp == 0x20) return C_Space;
                 if (cp >= '0' && cp <= '9') return C_Digit;
@@ -99,6 +104,7 @@ namespace MS.Internal
             // Common Latin-1 / Latin Extended / punctuation.
             if (cp <= 0x24F)
             {
+                if (cp == 0x85) return C_CRLF;                  // NEL is a line break
                 if (cp == 0xA0) return C_Space;                 // no-break space
                 if (cp == 0xAD) return C_Punct;                 // soft hyphen
                 if (cp is 0xD7 or 0xF7) return C_Punct;         // × ÷

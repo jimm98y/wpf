@@ -128,22 +128,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public WGPUCompositeAlphaMode* alphaModes;
         }
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuInstanceCreateSurface(IntPtr instance, WGPUSurfaceDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuSurfaceConfigure(IntPtr surface, WGPUSurfaceConfiguration* config);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUStatus wgpuSurfaceGetCapabilities(IntPtr surface, IntPtr adapter, WGPUSurfaceCapabilities* capabilities);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuSurfaceCapabilitiesFreeMembers(WGPUSurfaceCapabilities capabilities);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuSurfaceGetCurrentTexture(IntPtr surface, WGPUSurfaceTexture* surfaceTexture);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern WGPUStatus wgpuSurfacePresent(IntPtr surface);
+        // Extern entry points: see Wgpu.Native.cs / Browser/Wgpu.Browser.cs.
     }
 }

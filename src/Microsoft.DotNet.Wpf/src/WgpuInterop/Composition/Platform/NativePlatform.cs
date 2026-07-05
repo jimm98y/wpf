@@ -16,7 +16,7 @@ using System.Runtime.InteropServices;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 {
-    internal enum PlatformKind { Windows, MacOS, Linux, Unknown }
+    internal enum PlatformKind { Windows, MacOS, Linux, Browser, Unknown }
 
     internal static class NativePlatform
     {
@@ -25,6 +25,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 
         private static PlatformKind Detect()
         {
+            if (OperatingSystem.IsBrowser()) return PlatformKind.Browser;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return PlatformKind.Windows;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return PlatformKind.MacOS;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return PlatformKind.Linux;
@@ -43,6 +44,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 case PlatformKind.Windows: return Win32Interop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.MacOS: return MacInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.Linux: return LinuxInterop.CreateSurface(instance, nativeWindow);
+#if WGPU_BROWSER
+                case PlatformKind.Browser: return BrowserInterop.CreateSurface(instance, nativeWindow);
+#endif
                 default: return IntPtr.Zero;
             }
         }

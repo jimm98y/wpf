@@ -328,7 +328,7 @@ namespace System.Windows.Interop
                 AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
-                double scale = MS.Internal.Interop.CocoaWindow.FromHandle(_hWnd.h)?.GetBackingScale() ?? 1.0;
+                double scale = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h)?.GetBackingScale() ?? 1.0;
                 CurrentDpiScale = new DpiScale2(scale, scale);
                 return;
             }
@@ -1683,7 +1683,7 @@ namespace System.Windows.Interop
             if (!OperatingSystem.IsWindows())
             {
                 int cw = 0, ch = 0;
-                MS.Internal.Interop.CocoaWindow view = MS.Internal.Interop.CocoaWindow.FromHandle(_hWnd.h);
+                MS.Internal.Interop.IPlatformWindow view = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h);
                 view?.GetPixelSize(out cw, out ch);
 
                 _hwndWindowRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);

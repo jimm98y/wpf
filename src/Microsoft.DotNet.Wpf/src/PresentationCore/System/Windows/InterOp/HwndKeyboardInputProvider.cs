@@ -20,7 +20,11 @@ namespace System.Windows.Interop
 
             // Off-Windows there is no Win32 message loop feeding key input to FilterMessage; keys
             // arrive as translated Cocoa events. Subscribe and forward them into the InputManager.
-            if (!OperatingSystem.IsWindows())
+            if (OperatingSystem.IsBrowser())
+            {
+                MS.Internal.Interop.BrowserWindow.KeyInput += OnBrowserKeyInput;
+            }
+            else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.KeyInput += OnCocoaKeyInput;
             }
@@ -28,7 +32,11 @@ namespace System.Windows.Interop
 
         public void Dispose()
         {
-            if (!OperatingSystem.IsWindows())
+            if (OperatingSystem.IsBrowser())
+            {
+                MS.Internal.Interop.BrowserWindow.KeyInput -= OnBrowserKeyInput;
+            }
+            else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.KeyInput -= OnCocoaKeyInput;
             }
@@ -819,6 +827,94 @@ namespace System.Windows.Interop
 
         // Off-Windows key path: map a translated Cocoa key event to a Win32 virtual key, report the
         // key-down/up to the InputManager, and (on key-down) deliver typed text as a text-input report.
+        // Browser (WebAssembly): DOM keyboard events drained by the dispatcher pump. The
+        // physical key (KeyboardEvent.code) maps to a virtual key for WPF key events; the
+        // logical key (KeyboardEvent.key) supplies typed text, so layouts/dead keys are
+        // whatever the browser already resolved.
+        private void OnBrowserKeyInput(MS.Internal.Interop.BrowserWindow.BrowserKeyMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.Window != _source.Handle) return;
+
+            int virtualKey = MapDomCodeToVirtualKey(msg.Code);
+            if (virtualKey != 0)
+            {
+                ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs);
+            }
+
+            // Printable text: KeyboardEvent.key is the composed character ("a", "A", "é"), or a
+            // multi-char name ("Enter", "Shift") for non-printable keys. Suppress under Ctrl/Meta
+            // shortcuts, mirroring the Cocoa Command/Control rule.
+            if (msg.IsDown && !msg.Ctrl && !msg.Meta && msg.Key != null && msg.Key.Length == 1)
+            {
+                char c = msg.Key[0];
+                if (c >= ' ' && c != '\x7f')
+                {
+                    ReportMacText(c, msg.TimestampMs);
+                }
+            }
+        }
+
+        // Maps a DOM KeyboardEvent.code (physical key) to a Win32 virtual-key code.
+        private static int MapDomCodeToVirtualKey(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return 0;
+
+            // KeyA..KeyZ / Digit0..Digit9 / F1..F12 handled positionally.
+            if (code.Length == 4 && code.StartsWith("Key", StringComparison.Ordinal))
+                return code[3];
+            if (code.Length == 6 && code.StartsWith("Digit", StringComparison.Ordinal))
+                return code[5];
+            if (code.Length >= 2 && code[0] == 'F' && int.TryParse(code.AsSpan(1), out int fn) && fn >= 1 && fn <= 12)
+                return 0x70 + (fn - 1); // VK_F1..
+            if (code.StartsWith("Numpad", StringComparison.Ordinal) && code.Length == 7 && char.IsDigit(code[6]))
+                return 0x60 + (code[6] - '0'); // VK_NUMPAD0..
+
+            switch (code)
+            {
+                case "Enter": case "NumpadEnter": return 0x0D;
+                case "Tab": return 0x09;
+                case "Space": return 0x20;
+                case "Backspace": return 0x08;
+                case "Escape": return 0x1B;
+                case "Delete": return 0x2E;
+                case "Insert": return 0x2D;
+                case "Home": return 0x24;
+                case "End": return 0x23;
+                case "PageUp": return 0x21;
+                case "PageDown": return 0x22;
+                case "ArrowLeft": return 0x25;
+                case "ArrowRight": return 0x27;
+                case "ArrowUp": return 0x26;
+                case "ArrowDown": return 0x28;
+                case "ShiftLeft": case "ShiftRight": return 0x10;
+                case "ControlLeft": case "ControlRight": return 0x11;
+                case "AltLeft": case "AltRight": return 0x12;
+                case "MetaLeft": return 0x5B;
+                case "MetaRight": return 0x5C;
+                case "CapsLock": return 0x14;
+                case "ContextMenu": return 0x5D;
+                // OEM punctuation (US layout positions)
+                case "Minus": return 0xBD;
+                case "Equal": return 0xBB;
+                case "BracketLeft": return 0xDB;
+                case "BracketRight": return 0xDD;
+                case "Backslash": return 0xDC;
+                case "Semicolon": return 0xBA;
+                case "Quote": return 0xDE;
+                case "Comma": return 0xBC;
+                case "Period": return 0xBE;
+                case "Slash": return 0xBF;
+                case "Backquote": return 0xC0;
+                case "NumpadAdd": return 0x6B;
+                case "NumpadSubtract": return 0x6D;
+                case "NumpadMultiply": return 0x6A;
+                case "NumpadDivide": return 0x6F;
+                case "NumpadDecimal": return 0x6E;
+                default: return 0;
+            }
+        }
+
         private void OnCocoaKeyInput(MS.Internal.Interop.CocoaWindow.CocoaKeyMessage msg)
         {
             if (_source == null || _site == null || _source.IsDisposed) return;

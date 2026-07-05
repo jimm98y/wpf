@@ -28,7 +28,7 @@ namespace MS.Internal.Interop
     // reference it, and those files are compiled into several WPF assemblies; the type itself is
     // defined once (in WindowsBase) so all callers share a single window map.
     [System.Runtime.Versioning.SupportedOSPlatform("macos")]
-    public sealed class CocoaWindow
+    public sealed class CocoaWindow : IPlatformWindow
     {
         private IntPtr _window;      // NSWindow*
         private IntPtr _contentView; // NSView* (layer-backed) - used as the window handle

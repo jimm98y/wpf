@@ -61,7 +61,7 @@ namespace MS.Win32
             if (!System.OperatingSystem.IsWindows())
             {
                 int ml = 0, mt = 0, mr = 1920, mb = 1080, wl = 0, wt = 0, wr = 1920, wb = 1080;
-                MS.Internal.Interop.CocoaWindow.GetPrimaryScreenPixels(
+                MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
                     out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
                 info.rcMonitor = new NativeMethods.RECT(ml, mt, mr, mb);
                 info.rcWork = new NativeMethods.RECT(wl, wt, wr, wb);
@@ -142,7 +142,7 @@ namespace MS.Win32
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
                 rect = new NativeMethods.RECT(0, 0, w, h);
                 return;
             }
@@ -171,7 +171,7 @@ namespace MS.Win32
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
                 rect = new NativeMethods.RECT(0, 0, w, h);
                 return;
             }
@@ -293,7 +293,7 @@ namespace MS.Win32
             // UnsafeNativeMethods.ClientToScreen) to map a screen point back into client coordinates.
             if (!System.OperatingSystem.IsWindows())
             {
-                MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+                MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
                 if (cocoa != null)
                 {
                     cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
@@ -353,7 +353,7 @@ namespace MS.Win32
             // GetCapture()==0, so a stale zero here makes it re-grab capture forever.
             if (!System.OperatingSystem.IsWindows())
             {
-                return MS.Internal.Interop.CocoaWindow.MouseCaptureHandle;
+                return MS.Internal.Interop.PlatformWindow.MouseCaptureHandle;
             }
 
             return SafeNativeMethodsPrivate.GetCapture();

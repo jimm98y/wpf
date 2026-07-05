@@ -139,7 +139,13 @@ namespace MS.Internal.Text.TextInterface.Managed
 
         private static IEnumerable<string> FontDirectories()
         {
-            if (OperatingSystem.IsMacOS())
+            if (OperatingSystem.IsBrowser())
+            {
+                // WebAssembly: no OS fonts. The app head bundles fonts into the wasm
+                // virtual filesystem under /fonts (see the GalleryWasm csproj).
+                yield return "/fonts";
+            }
+            else if (OperatingSystem.IsMacOS())
             {
                 yield return "/System/Library/Fonts";
                 yield return "/System/Library/Fonts/Supplemental";

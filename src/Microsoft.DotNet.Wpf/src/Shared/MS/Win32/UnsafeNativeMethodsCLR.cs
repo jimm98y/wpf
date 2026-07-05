@@ -87,7 +87,7 @@ namespace MS.Win32
 
             const int SWP_NOSIZE = 0x0001;
             const int SWP_NOMOVE = 0x0002;
-            MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+            MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
             if (cocoa != null)
             {
                 if ((flags & SWP_NOSIZE) == 0)
@@ -972,7 +972,7 @@ namespace MS.Win32
             // keeps mouse hit-testing consistent (ScreenToClient subtracts the same offset).
             if (!OperatingSystem.IsWindows())
             {
-                MS.Internal.Interop.CocoaWindow cocoa = MS.Internal.Interop.CocoaWindow.FromHandle(hWnd.Handle);
+                MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
                 if (cocoa != null)
                 {
                     cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
@@ -1258,7 +1258,7 @@ namespace MS.Win32
             // there); used by mouse hit-testing to find the window under the cursor.
             if (!OperatingSystem.IsWindows())
             {
-                return MS.Internal.Interop.CocoaWindow.HitTest(x, y);
+                return MS.Internal.Interop.PlatformWindow.HitTest(x, y);
             }
 
             POINT ps = new POINT(x, y);

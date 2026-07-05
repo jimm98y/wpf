@@ -270,6 +270,8 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceList.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceEnumerator.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapper.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapperHook.cs" />

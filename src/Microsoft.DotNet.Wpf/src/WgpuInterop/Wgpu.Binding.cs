@@ -87,22 +87,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public ushort maxAnisotropy;
         }
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateBindGroup(IntPtr device, WGPUBindGroupDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateSampler(IntPtr device, WGPUSamplerDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuRenderPipelineGetBindGroupLayout(IntPtr renderPipeline, uint groupIndex);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuQueueWriteTexture(
-            IntPtr queue, WGPUTexelCopyTextureInfo* destination, void* data, nuint dataSize,
-            WGPUTexelCopyBufferLayout* dataLayout, WGPUExtent3D* writeSize);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderSetBindGroup(
-            IntPtr renderPassEncoder, uint groupIndex, IntPtr group, nuint dynamicOffsetCount, uint* dynamicOffsets);
+        // Extern entry points: see Wgpu.Native.cs / Browser/Wgpu.Browser.cs.
     }
 }

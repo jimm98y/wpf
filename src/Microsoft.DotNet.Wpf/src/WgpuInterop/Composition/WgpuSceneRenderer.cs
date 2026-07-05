@@ -182,9 +182,12 @@ fn fs_blur(in : VSOut) -> @location(0) vec4<f32> {
     let radius = i32(in.color.w);
     var sum = vec4<f32>(0.0);
     var wsum = 0.0;
+    // textureSampleLevel (not textureSample): the loop bound is per-fragment data,
+    // and browser WGSL (Tint) rejects implicit-derivative sampling in non-uniform
+    // control flow. The blur inputs are single-mip, so level 0 is identical.
     for (var i = -radius; i <= radius; i = i + 1) {
         let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
-        sum = sum + textureSample(tex, samp, in.uv + step * f32(i)) * w;
+        sum = sum + textureSampleLevel(tex, samp, in.uv + step * f32(i), 0.0) * w;
         wsum = wsum + w;
     }
     return sum / wsum;
@@ -492,6 +495,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 FlushFrameReleases();
             }
         }
+
+// Browser async readback lives in WgpuSceneRenderer.Browser.cs (a non-unsafe
+        // partial part: await is illegal inside this unsafe class declaration).
+
 
         /// <summary>
         /// Renders the scene into an externally owned texture view (e.g. a

@@ -289,6 +289,14 @@ namespace System.Xaml.Schema
                     return true;
                 }
 
+                // mono-wasm: MethodBase.IsSecurityCritical throws NotImplementedException and
+                // the ctor-function-pointer trick below has no interpreter support; skip this
+                // legacy fast path so the caller uses plain reflection activation instead.
+                if (OperatingSystem.IsBrowser())
+                {
+                    return false;
+                }
+
                 if (!type.IsPublic)
                 {
                     return false;

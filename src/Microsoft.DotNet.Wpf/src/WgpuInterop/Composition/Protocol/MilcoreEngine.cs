@@ -238,6 +238,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // bitmap, which then flows through the existing ImageBrush tiling/viewbox/stretch path.
         public Func<SceneVisual, int, int, byte[]?>? VisualRasterizer;
 
+        // Keyed variant (browser): receives the brush handle so an async rasterizer can
+        // correlate a kicked-off readback with the retry on a later frame. Preferred over
+        // VisualRasterizer when set.
+        public Func<uint, SceneVisual, int, int, byte[]?>? VisualRasterizerKeyed;
+
         private readonly Dictionary<uint, (uint Source, bool IsDrawing)> _contentBrushes = new();  // Visual/DrawingBrush -> source
         private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
         private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
@@ -1038,7 +1043,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // tiling/viewbox/stretch path can paint it. Re-run every frame so VisualBrushes stay live.
         private void RealizeContentBrushes()
         {
-            if (VisualRasterizer is null || _contentBrushes.Count == 0) return;
+            if ((VisualRasterizer is null && VisualRasterizerKeyed is null) || _contentBrushes.Count == 0) return;
             foreach (KeyValuePair<uint, (uint Source, bool IsDrawing)> kv in _contentBrushes)
             {
                 SceneVisual? source = kv.Value.IsDrawing
@@ -1070,7 +1075,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Transform = Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
                 };
                 wrapper.Children.Add(source);
-                byte[]? px = VisualRasterizer(wrapper, pw, ph);
+                byte[]? px = VisualRasterizerKeyed is not null
+                    ? VisualRasterizerKeyed(kv.Key, wrapper, pw, ph)
+                    : VisualRasterizer!(wrapper, pw, ph);
                 if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Key] = hash; }
             }
         }

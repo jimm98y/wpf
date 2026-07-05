@@ -20,8 +20,10 @@ internal static class Program
     private static readonly Color Ink = Color.FromRgb(0x22, 0x28, 0x33);
     private static readonly Color CardBg = Colors.White;
 
+    // internal (not private): the WebAssembly head (wpf-webgpu-gallery-wasm) compiles this
+    // file and chains here from its own async entry point after GPU pre-initialization.
     [STAThread]
-    private static int Main(string[] args)
+    internal static int Main(string[] args)
     {
         var app = new Application();
 

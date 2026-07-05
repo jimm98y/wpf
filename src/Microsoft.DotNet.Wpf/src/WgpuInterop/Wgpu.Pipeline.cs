@@ -216,30 +216,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public WGPUFragmentState* fragment;
         }
 
-        // ---- Functions -------------------------------------------------------
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateShaderModule(IntPtr device, WGPUShaderModuleDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateRenderPipeline(IntPtr device, WGPURenderPipelineDescriptor* descriptor);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuQueueWriteBuffer(IntPtr queue, IntPtr buffer, ulong bufferOffset, void* data, nuint size);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderSetPipeline(IntPtr renderPassEncoder, IntPtr pipeline);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderSetVertexBuffer(IntPtr renderPassEncoder, uint slot, IntPtr buffer, ulong offset, ulong size);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderSetIndexBuffer(IntPtr renderPassEncoder, IntPtr buffer, WGPUIndexFormat format, ulong offset, ulong size);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderDrawIndexed(IntPtr renderPassEncoder, uint indexCount, uint instanceCount, uint firstIndex, int baseVertex, uint firstInstance);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height);
+        // Extern entry points: see Wgpu.Native.cs / Browser/Wgpu.Browser.cs.
     }
 }

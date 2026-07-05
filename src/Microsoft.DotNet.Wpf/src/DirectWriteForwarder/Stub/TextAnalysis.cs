@@ -212,6 +212,14 @@ namespace MS.Internal.Text.TextInterface
             throw NotSupported;
         }
 
+        // ---- Nominal shaping ---------------------------------------------------------
+        //
+        // The "simple shaper": nominal cmap glyph per codepoint (surrogate pairs form one
+        // glyph), 1:1 cluster map, hmtx design advances, no OpenType features (no
+        // ligatures/kerning/complex-script reordering). This is what DWrite effectively
+        // produces for plain Latin runs, and it is what the managed LineServices shim
+        // needs off-Windows when a font's GSUB pushes WPF off the fast path.
+
         public void GetGlyphsAndTheirPlacements(
             char* textString,
             uint textLength,
@@ -233,7 +241,20 @@ namespace MS.Internal.Text.TextInterface
             out GlyphOffset[] glyphOffsets
             )
         {
-            throw NotSupported;
+            Managed.OpenTypeFontData d = font.Face.GetData();
+
+            var cmap = new ushort[textLength];
+            var gids = new ushort[textLength];
+            uint glyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids);
+
+            clusterMap = cmap;
+            glyphIndices = new ushort[glyphCount];
+            Array.Copy(gids, glyphIndices, glyphCount);
+            glyphAdvances = new int[glyphCount];
+            glyphOffsets = new GlyphOffset[glyphCount];
+            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
+            for (uint i = 0; i < glyphCount; i++)
+                glyphAdvances[i] = (int)Math.Round(d.AdvanceWidth(glyphIndices[i]) * toIdeal);
         }
 
         public void GetGlyphs(
@@ -257,7 +278,25 @@ namespace MS.Internal.Text.TextInterface
             out uint actualGlyphCount
             )
         {
-            throw NotSupported;
+            Managed.OpenTypeFontData d = font.Face.GetData();
+
+            var cmap = new ushort[textLength];
+            var gids = new ushort[textLength];
+            actualGlyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids);
+            if (actualGlyphCount > maxGlyphCount)
+                return;   // caller re-invokes with a larger buffer based on actualGlyphCount
+
+            for (uint i = 0; i < textLength; i++)
+            {
+                clusterMap[i] = cmap[i];
+                if (textProps != null) textProps[i] = 0;
+                if (pfCanGlyphAlone != null) pfCanGlyphAlone[i] = 1;
+            }
+            for (uint g = 0; g < actualGlyphCount; g++)
+            {
+                glyphIndices[g] = gids[g];
+                if (glyphProps != null) glyphProps[g] = 0;
+            }
         }
 
         public void GetGlyphPlacements(
@@ -283,7 +322,39 @@ namespace MS.Internal.Text.TextInterface
             out GlyphOffset[] glyphOffsets
             )
         {
-            throw NotSupported;
+            Managed.OpenTypeFontData d = font.Face.GetData();
+            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
+            for (uint g = 0; g < glyphCount; g++)
+                glyphAdvances[g] = (int)Math.Round(d.AdvanceWidth(glyphIndices[g]) * toIdeal);
+            glyphOffsets = new GlyphOffset[glyphCount];
+        }
+
+        // Maps UTF-16 text to nominal glyphs: one glyph per codepoint (a surrogate pair's
+        // two code units share one cluster), cluster map entry = first glyph of the char.
+        private static uint MapNominal(char* text, uint textLength,
+            Managed.OpenTypeFontData d, ushort blankGlyphIndex, ushort[] clusterMap, ushort[] gids)
+        {
+            uint g = 0;
+            for (uint i = 0; i < textLength; i++)
+            {
+                uint cp = text[i];
+                bool pair = char.IsHighSurrogate(text[i]) && i + 1 < textLength && char.IsLowSurrogate(text[i + 1]);
+                if (pair)
+                    cp = (uint)char.ConvertToUtf32(text[i], text[i + 1]);
+
+                ushort gid = (ushort)d.GlyphIndex(cp);
+                if (gid == 0 && (cp == 0x20 || cp == 0xA0 || cp == 0x09))
+                    gid = blankGlyphIndex;
+
+                clusterMap[i] = (ushort)g;
+                if (pair)
+                {
+                    clusterMap[i + 1] = (ushort)g;
+                    i++;
+                }
+                gids[g++] = gid;
+            }
+            return g;
         }
     }
 }

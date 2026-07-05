@@ -40,6 +40,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public static WgpuContext Create()
         {
+#if WGPU_BROWSER
+            // Browser: the adapter/device were pre-acquired by WgpuBrowser.InitializeAsync
+            // (WebGPU is Promise-based; the blocking callback dance below cannot run on the
+            // browser main thread, and Marshal.GetFunctionPointerForDelegate has no
+            // interpreter thunk on mono-wasm). Same object shape, no native callbacks.
+            {
+                IntPtr instance = wgpuCreateInstance(null);
+                var ctx = new WgpuContext(null!, null!) { Instance = instance };
+                ctx.Adapter = (IntPtr)WgpuBrowser.AdapterHandle;
+                var info = new WGPUAdapterInfo();
+                if (wgpuAdapterGetInfo(ctx.Adapter, &info) == WGPUStatus.Success)
+                {
+                    static string SVs(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
+                    ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} device='{SVs(info.device)}' desc='{SVs(info.description)}'";
+                }
+                ctx.Device = (IntPtr)WgpuBrowser.DeviceHandle;
+                ctx.Queue = wgpuDeviceGetQueue(ctx.Device);
+                return ctx;
+            }
+#else
             if (LogSink != null)
             {
                 s_logCallback = (level, msg, ud) =>
@@ -108,6 +128,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             ctx.Queue = wgpuDeviceGetQueue(deviceResult);
 
             return ctx;
+#endif
         }
 
         public IntPtr CreateBuffer(ulong size, WGPUBufferUsage usage)

@@ -2041,6 +2041,22 @@ namespace System.Windows.Threading
 
         private void PushFrameImpl(DispatcherFrame frame)
         {
+            // The browser main thread can never block: PushFrame's blocking loop is
+            // replaced by a self-scheduling async pump and this method returns
+            // immediately (Application.Run then returns; the wasm host keeps the
+            // runtime alive and the pump drives the queue/timers/rendering).
+            // Nested frames (ShowDialog, DispatcherOperation.Wait) need a blocking
+            // wait and are unsupported on this platform.
+            if (OperatingSystem.IsBrowser())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on the browser.");
+                }
+                RunBrowserPumpAsync(frame);
+                return;
+            }
+
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
 
@@ -2098,6 +2114,97 @@ namespace System.Windows.Threading
                 if(_frameDepth == 0)
                 {
                     // We have exited all frames.
+                    _exitAllFrames = false;
+                }
+            }
+        }
+
+        // Browser replacement for PushFrameImpl's blocking loop: an async pump that
+        // yields to the JS event loop between ticks (which is also what presents the
+        // WebGPU canvas) and services timers + the operation queue at up to ~120Hz,
+        // mirroring the macOS NativeEventPumpIntervalMs cadence. The pump's own
+        // awaits intentionally run OUTSIDE the DispatcherSynchronizationContext:
+        // posting its continuations through the dispatcher queue would deadlock the
+        // very loop that services that queue. The dispatcher context is installed
+        // only around ProcessQueue so application awaits resume via the dispatcher.
+        private async void RunBrowserPumpAsync(DispatcherFrame frame)
+        {
+            _frameDepth++;
+            try
+            {
+                var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+
+                while (frame.Continue)
+                {
+                    if (_runLoop is null)
+                    {
+                        break;
+                    }
+
+                    int timeout = Timeout.Infinite;
+                    lock (_instanceLock)
+                    {
+                        if (_dueTimeFound)
+                        {
+                            int delta = _dueTimeInTicks - Environment.TickCount;
+                            timeout = delta < 0 ? 0 : delta;
+                        }
+                    }
+                    int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+
+                    await System.Threading.Tasks.Task.Delay(cap <= 0 ? 1 : cap).ConfigureAwait(false);
+
+                    if (_runLoop is null || !frame.Continue)
+                    {
+                        break;
+                    }
+
+                    if (_disableProcessingCount > 0)
+                    {
+                        throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+                    }
+
+                    SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+                    SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+                    try
+                    {
+                        // Drain DOM input/resize events queued by the browser windowing
+                        // backend (the browser analog of the Cocoa pump in WaitForWork).
+                        MS.Internal.Interop.BrowserWindow.PumpEvents();
+
+                        if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                        {
+                            PromoteTimers(Environment.TickCount);
+                        }
+
+                        ProcessQueue();
+
+                        RaiseIdleIfQuiescent();
+                    }
+                    finally
+                    {
+                        SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+                    }
+                }
+
+                if (_frameDepth == 1 && _hasShutdownStarted)
+                {
+                    ShutdownImpl();
+                }
+            }
+            catch (Exception e)
+            {
+                // An exception escaping ProcessQueue is fatal on the desktop too (it
+                // unwinds Application.Run); surface it before the async-void rethrow
+                // turns it into an opaque unhandled promise rejection.
+                Console.WriteLine($"WPF browser dispatcher pump failed: {e}");
+                throw;
+            }
+            finally
+            {
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
                     _exitAllFrames = false;
                 }
             }

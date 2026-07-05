@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <!-- WebAssembly head for the WPF WebGPU gallery: compiles the same Program.cs as
+         the desktop/mac heads against the from-source WPF assemblies, with the
+         browser flavor of the WebGPU interop (JS interop over navigator.gpu). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WpfWebGpuGalleryWasm</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <StartupObject>WasmBoot</StartupObject>
+    <!-- WPF resolves types/resources reflectively (themes, BAML); never trim. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- WPF needs real cultures (SystemFonts, text formatting). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- The repo root Directory.Build.props turns style analyzers into errors; this
+         sample compiles the gallery sources as-is. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\wpf-webgpu-gallery\Program.cs" Link="Program.cs" />
+    <Compile Include="..\wpf-webgpu-gallery\InputDemo.cs" Link="InputDemo.cs" />
+  </ItemGroup>
+
+  <!-- Fonts live under wwwroot/fonts as plain static assets; main.js fetches them
+       and writes them into the wasm virtual filesystem at /fonts before Main runs
+       (where SystemFontCatalog scans on the browser). -->
+
+  <!-- From-source WPF (built by the repo into artifacts/) + the BROWSER flavor of
+       the WebGPU interop. Same set the mac head uses, plus both theme satellites. -->
+  <ItemGroup>
+    <Reference Include="PresentationFramework"><HintPath>..\..\artifacts\bin\PresentationFramework\Release\net10.0\PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>..\..\artifacts\bin\PresentationCore\Release\net10.0\PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>..\..\artifacts\bin\WindowsBase\Release\net10.0\WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>..\..\artifacts\bin\System.Xaml\Release\net10.0\System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework"><HintPath>..\..\artifacts\bin\ReachFramework\Release\net10.0\ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Input.Manipulations"><HintPath>..\..\artifacts\bin\System.Windows.Input.Manipulations\Release\net10.0\System.Windows.Input.Manipulations.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes"><HintPath>..\..\artifacts\bin\UIAutomationTypes\Release\net10.0\UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider"><HintPath>..\..\artifacts\bin\UIAutomationProvider\Release\net10.0\UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Primitives"><HintPath>..\..\artifacts\bin\System.Windows.Primitives\Release\net10.0\System.Windows.Primitives.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder"><HintPath>..\..\artifacts\bin\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>..\..\artifacts\bin\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Classic"><HintPath>..\..\artifacts\bin\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI"><HintPath>..\..\artifacts\bin\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <!-- The api-cycle System.Printing lacks XpsDocumentWriter, which mono-wasm resolves
+         EAGERLY while setting up DocumentViewerBase (CoreCLR is lazy about field types);
+         the fuller ref build carries the complete surface. -->
+    <Reference Include="System.Printing"><HintPath>..\..\artifacts\bin\System.Printing-ref\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.
+       Must run before static-web-asset discovery (stale integrity hashes otherwise). -->
+  <Target Name="CopyWpfInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-window.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
