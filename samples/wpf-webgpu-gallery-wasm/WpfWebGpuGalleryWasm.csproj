@@ -9,8 +9,56 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <StartupObject>WasmBoot</StartupObject>
-    <!-- WPF resolves types/resources reflectively (themes, BAML); never trim. -->
-    <PublishTrimmed>false</PublishTrimmed>
+    <!-- AOT: the interpreter renders the gallery at ~10fps (scene collection alone
+         ~80ms/frame); AOT-compiling the WPF assemblies is the difference between a
+         demo and an app. AfterBuild so the dev loop can serve the build AppBundle.
+         The wasm SDK requires PublishTrimmed for AOT; WPF resolves types/resources
+         reflectively (BAML, themes), so trim in partial mode and root every WPF and
+         support assembly — only trimmable-marked BCL assemblies get trimmed. -->
+    <RunAOTCompilation>true</RunAOTCompilation>
+    <RunAOTCompilationAfterBuild>true</RunAOTCompilationAfterBuild>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="WpfWebGpuGalleryWasm" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="System.Xaml" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <TrimmerRootAssembly Include="PresentationUI" />
+    <TrimmerRootAssembly Include="ReachFramework" />
+    <TrimmerRootAssembly Include="System.Printing" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="UIAutomationTypes" />
+    <TrimmerRootAssembly Include="UIAutomationProvider" />
+    <TrimmerRootAssembly Include="System.Windows.Primitives" />
+    <TrimmerRootAssembly Include="System.Windows.Input.Manipulations" />
+    <TrimmerRootAssembly Include="System.IO.Packaging" />
+    <TrimmerRootAssembly Include="System.Windows.Extensions" />
+    <TrimmerRootAssembly Include="System.Configuration.ConfigurationManager" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Keep these on the interpreter: they reference assemblies that are not (and
+         should not be) in the browser bundle (System.Windows.Forms, Accessibility,
+         print pipeline), which the AOT compiler cannot resolve — and none of them
+         are on the rendering/layout hot path. -->
+    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <PropertyGroup>
     <!-- WPF needs real cultures (SystemFonts, text formatting). -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
@@ -56,6 +104,11 @@
          EAGERLY while setting up DocumentViewerBase (CoreCLR is lazy about field types);
          the fuller ref build carries the complete surface. -->
     <Reference Include="System.Printing"><HintPath>..\..\artifacts\bin\System.Printing-ref\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <!-- Reference assembly bundled ONLY so the AOT compiler can resolve WindowsBase's
+         Accessibility-typed P/Invoke signatures; runtime never loads it (all call
+         sites are OS-guarded off-Windows). PresentationUI's System.Windows.Forms refs
+         don't need this treatment: it is on the interpreter list, so it is not AOT'd. -->
+    <Reference Include="Accessibility"><HintPath>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref\10.0.8\ref\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
   <ItemGroup>

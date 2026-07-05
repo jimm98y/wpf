@@ -23,13 +23,15 @@ function dpr() { return window.devicePixelRatio || 1; }
 
 function host() { return document.getElementById("wpf-host") ?? document.body; }
 
-export function createWindow(handle, title, width, height, borderless) {
+export function createWindow(handle, title, x, y, width, height, borderless) {
     const canvas = document.createElement("canvas");
     canvas.dataset.wpfHandle = String(handle);
     canvas.style.display = "block";
     canvas.style.position = borderless ? "fixed" : "relative";
-    canvas.style.left = "0px";
-    canvas.style.top = "0px";
+    // Popups are created AT their target position (CreateWindowEx semantics): WPF may
+    // not issue a follow-up move when the creation coordinates already match.
+    canvas.style.left = borderless ? `${x / dpr()}px` : "0px";
+    canvas.style.top = borderless ? `${y / dpr()}px` : "0px";
     canvas.style.zIndex = String(borderless ? ++zTop : 1);
     host().appendChild(canvas);
     windows.set(handle, { canvas, borderless });
@@ -126,6 +128,16 @@ export function setCursor(cssCursor) {
 export function drainEvents() {
     if (queue.length === 0) return "";
     return JSON.stringify(queue.splice(0));
+}
+
+// Resolves on the next animation frame (display-aligned; what the dispatcher pump
+// awaits between ticks). The 250ms timeout keeps the app ticking slowly when the
+// tab is hidden and rAF stops firing.
+export function nextFrame() {
+    return new Promise((resolve) => {
+        const t = setTimeout(() => resolve(1), 250);
+        requestAnimationFrame(() => { clearTimeout(t); resolve(0); });
+    });
 }
 
 // ---- DOM event capture -------------------------------------------------------

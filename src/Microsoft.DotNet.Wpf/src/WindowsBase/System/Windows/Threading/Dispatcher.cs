@@ -2141,18 +2141,13 @@ namespace System.Windows.Threading
                         break;
                     }
 
-                    int timeout = Timeout.Infinite;
-                    lock (_instanceLock)
-                    {
-                        if (_dueTimeFound)
-                        {
-                            int delta = _dueTimeInTicks - Environment.TickCount;
-                            timeout = delta < 0 ? 0 : delta;
-                        }
-                    }
-                    int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
-
-                    await System.Threading.Tasks.Task.Delay(cap <= 0 ? 1 : cap).ConfigureAwait(false);
+                    // Tick on animation frames: display-aligned (the canvas presents on the
+                    // same boundary) and immune to the browser's setTimeout clamping, which
+                    // stretched a Task.Delay-based pump to ~25ms periods (~40fps ceiling)
+                    // and made timer-driven animation visibly jitter. Timers with due times
+                    // inside a frame fire on the next tick — 60Hz granularity, same as any
+                    // display-paced app. Hidden tabs fall back to a slow JS-side timeout.
+                    await MS.Internal.Interop.BrowserWindow.NextFrameAsync().ConfigureAwait(false);
 
                     if (_runLoop is null || !frame.Continue)
                     {
@@ -2177,7 +2172,21 @@ namespace System.Windows.Threading
                             PromoteTimers(Environment.TickCount);
                         }
 
-                        ProcessQueue();
+                        // ProcessQueue services ONE operation. The Win32/macOS loops iterate
+                        // back-to-back while work is queued and only sleep when idle; awaiting
+                        // a display frame between single operations would serialize animation/
+                        // layout/render ops at the frame rate (~1/3 of it reaches rendering).
+                        // Drain the queue each tick, bounded by a frame-ish time budget so a
+                        // flood cannot starve the browser event loop.
+                        long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                        do
+                        {
+                            ProcessQueue();
+                        }
+                        while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                               && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                               && frame.Continue);
 
                         RaiseIdleIfQuiescent();
                     }

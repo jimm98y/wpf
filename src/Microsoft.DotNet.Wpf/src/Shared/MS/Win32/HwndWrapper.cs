@@ -71,10 +71,12 @@ namespace MS.Win32
                     int cy = y > 0 ? y : 100;
                     if (OperatingSystem.IsBrowser())
                     {
-                        // Browser: the window is a canvas element (see BrowserWindow); position is
-                        // page-owned for the main window, SetFrameOrigin moves popups.
+                        // Browser: the window is a canvas element (see BrowserWindow). Popups are
+                        // positioned at their CreateWindowEx coordinates — WPF may skip the follow-up
+                        // SetWindowPos move when the window is created where it already wants it
+                        // (a reopened combo dropdown at the same spot), so creation must place it.
                         var browser = new MS.Internal.Interop.BrowserWindow();
-                        browser.Create(name, cw, ch, borderless);
+                        browser.Create(name, cx, cy, cw, ch, borderless);
                         // Route content-size changes to a synthetic WM_SIZE exactly like Cocoa below.
                         browser.Resized += OnCocoaResized;
                         _platformWindow = browser;

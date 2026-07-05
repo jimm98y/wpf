@@ -634,9 +634,16 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             if (fullTarget)
             {
                 Scissor cb = ContentDeviceBounds(v, world, width, height);
+                // The baked render is cropped by BOTH the target rect and the inherited
+                // clip (e.g. the scroll viewport, whose top sits below the header band).
+                // Containment must be tested against their intersection: checking the
+                // target alone let a card that was almost scrolled off the top — inside
+                // the target but above the viewport clip — bake with its top missing
+                // under the scroll-invariant key, and reuse that cropped layer forever.
+                Scissor lim = Intersect(clip, new Scissor((int)_devOX, (int)_devOY, width, height));
                 shiftReusable = cb.IsEmpty ||
-                    (cb.X >= _devOX && cb.Y >= _devOY &&
-                     cb.X + cb.W <= _devOX + width && cb.Y + cb.H <= _devOY + height);
+                    (cb.X >= lim.X && cb.Y >= lim.Y &&
+                     cb.X + cb.W <= lim.X + lim.W && cb.Y + cb.H <= lim.Y + lim.H);
             }
 
             // ALL effect/opacity/clip/mask layers are cacheable: if this subtree (+ its clip/mask)

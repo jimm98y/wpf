@@ -46,11 +46,13 @@ namespace MS.Internal.Interop
         public static BrowserWindow FromHandle(IntPtr handle)
             => s_byHandle.TryGetValue(handle, out BrowserWindow w) ? w : null;
 
-        public void Create(string title, int width, int height, bool borderless)
+        /// <param name="x">Creation origin in top-left device pixels (borderless windows only;
+        /// the main window's canvas is page-positioned).</param>
+        public void Create(string title, int x, int y, int width, int height, bool borderless)
         {
             Handle = (IntPtr)System.Threading.Interlocked.Add(ref s_nextHandle, 0x10);
             IsBorderless = borderless;
-            Js.CreateWindow((int)Handle, title ?? "", width, height, borderless);
+            Js.CreateWindow((int)Handle, title ?? "", x, y, width, height, borderless);
             s_byHandle[Handle] = this;
         }
 
@@ -149,6 +151,10 @@ namespace MS.Internal.Interop
         public static event Action<BrowserMouseMessage> MouseInput;
         public static event Action<BrowserKeyMessage> KeyInput;
 
+        /// <summary>Completes on the next animation frame (display-aligned pacing for the
+        /// dispatcher pump; falls back to a 250ms timeout when the tab is hidden).</summary>
+        public static System.Threading.Tasks.Task NextFrameAsync() => Js.NextFrame();
+
         /// <summary>Drains DOM events queued by browser-window.js and raises the corresponding
         /// managed events. Called once per dispatcher pump tick on the browser.</summary>
         public static void PumpEvents()
@@ -206,7 +212,7 @@ namespace MS.Internal.Interop
             private const string Module = "wpfBrowserWindow";
 
             [JSImport("createWindow", Module)]
-            internal static partial void CreateWindow(int handle, string title, int width, int height, bool borderless);
+            internal static partial void CreateWindow(int handle, string title, int x, int y, int width, int height, bool borderless);
 
             [JSImport("destroyWindow", Module)]
             internal static partial void DestroyWindow(int handle);
@@ -246,6 +252,9 @@ namespace MS.Internal.Interop
 
             [JSImport("drainEvents", Module)]
             internal static partial string DrainEvents();
+
+            [JSImport("nextFrame", Module)]
+            internal static partial System.Threading.Tasks.Task<int> NextFrame();
         }
     }
 }
