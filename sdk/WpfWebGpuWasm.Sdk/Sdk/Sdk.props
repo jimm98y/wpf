@@ -1,0 +1,19 @@
+<!--
+  WpfWebGpuWasm.Sdk — the browser/WebAssembly head of WpfWebGpu.Sdk as a standalone
+  SDK id, so a WPF application project targets the browser purely by switching its
+  Sdk attribute (no -p:WpfPlatform=browser needed):
+
+      <Project Sdk="WpfWebGpuWasm.Sdk/0.1.1">
+
+  This is a thin wrapper: it pins WpfPlatform=browser (which must be decided before
+  the base SDK is chosen) and defers everything else to WpfWebGpu.Sdk.
+-->
+<Project>
+
+  <PropertyGroup>
+    <WpfPlatform>browser</WpfPlatform>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="WpfWebGpu.Sdk" Version="0.1.1" />
+
+</Project>

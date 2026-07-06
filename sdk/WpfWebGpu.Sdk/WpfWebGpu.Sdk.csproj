@@ -1,0 +1,78 @@
+<!-- Pack-only project: builds the WpfWebGpu.Sdk MSBuild-SDK NuGet directly from the
+     repo's build outputs (no staging step — works the same on macOS, Linux, Windows):
+
+         dotnet pack sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj -c Release -o artifacts/local-feed \
+             -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false
+
+     (assemble.sh / assemble.cmd are thin wrappers around exactly that.)
+     Rerun after rebuilding the fork so the packaged assemblies are current. -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>WpfWebGpu.Sdk</PackageId>
+    <Version>0.1.1</Version>
+    <Authors>wpf-webgpu</Authors>
+    <Description>MSBuild SDK that builds standard WPF application projects against the from-source WPF-on-WebGPU stack (macOS desktop and WebAssembly/browser), while windows TFMs keep the stock WindowsDesktop SDK (XAML designer keeps working).</Description>
+    <PackageType>MSBuildSdk</PackageType>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <NoWarn>$(NoWarn);NU5100;NU5110;NU5111;NU5128</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+
+    <WpfRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</WpfRepoRoot>
+    <WpfBin>$(WpfRepoRoot)artifacts/bin/</WpfBin>
+    <WgpuInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/</WgpuInteropDir>
+    <WindowsDesktopRefVersion>10.0.8</WindowsDesktopRefVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Sdk/**" Pack="true" PackagePath="Sdk/" />
+
+    <!-- Host page templates, boot shim, fonts — plus the JS interop modules taken
+         straight from their sources (no synced copies to drift). -->
+    <None Include="web/**" Pack="true" PackagePath="web/" />
+    <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" />
+    <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" />
+
+    <!-- Shared WPF assemblies (same set the gallery heads reference). -->
+    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Classic;PresentationFramework.Aero2;PresentationUI" />
+    <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
+    <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
+
+    <!-- Desktop flavor: P/Invoke WebGPU interop + the api-cycle System.Printing. -->
+    <None Include="$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <None Include="$(WpfBin)System.Printing-PresentationFramework-api-cycle/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+
+    <!-- Browser flavor: JS-interop WebGPU + the fuller System.Printing-ref (mono-wasm
+         resolves XpsDocumentWriter eagerly) + Accessibility ref (AOT resolution only). -->
+    <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+    <None Include="$(WpfBin)System.Printing-ref/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+    <None Include="$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+
+    <!-- Native wgpu for the macOS desktop head. -->
+    <None Include="$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-arm64/" />
+
+    <!-- XAML markup compiler (fork build) + its targets. -->
+    <None Include="$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll" Pack="true" PackagePath="tools/net10.0/" />
+    <None Include="$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.WinFX.targets" Pack="true" PackagePath="targets/" />
+  </ItemGroup>
+
+  <!-- Fail early with a readable message instead of packing a broken SDK when the
+       fork hasn't been built on this machine. -->
+  <Target Name="WpfWebGpuValidateInputs" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll')"
+           Text="WPF fork not built: missing $(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll — build the repo first." />
+    <Error Condition="!Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')"
+           Text="Browser interop not built: missing $(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll." />
+    <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
+           Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll')"
+           Text="Missing microsoft.windowsdesktop.app.ref $(WindowsDesktopRefVersion) in the NuGet cache (needed for Accessibility.dll); restore any windows-targeting project once, or adjust WindowsDesktopRefVersion." />
+  </Target>
+
+</Project>

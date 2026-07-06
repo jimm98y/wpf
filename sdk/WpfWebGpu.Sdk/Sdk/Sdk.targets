@@ -1,0 +1,156 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Which flavor is this (inner) build? Windows TFMs keep the stock WPF path. -->
+    <_WpfWebGpuWindows>false</_WpfWebGpuWindows>
+    <_WpfWebGpuWindows Condition="$(TargetFramework.Contains('-windows'))">true</_WpfWebGpuWindows>
+    <_WpfWebGpuBrowser>false</_WpfWebGpuBrowser>
+    <_WpfWebGpuBrowser Condition="'$(WpfPlatform)' == 'browser'">true</_WpfWebGpuBrowser>
+    <!-- Building/checking the windows TFM from a non-Windows dev machine. -->
+    <EnableWindowsTargeting Condition="'$(EnableWindowsTargeting)' == '' and '$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!--
+    Non-Windows flavors: WPF comes from the assemblies packaged in this SDK, not from
+    the WindowsDesktop framework reference. UseWPF must be OFF before the base SDK
+    targets evaluate (NETSDK1136 requires a windows TargetPlatform otherwise, and the
+    implicit WindowsDesktop SDK import must not fire); the user's intent is captured
+    first so XAML compilation and references still key off it.
+  -->
+  <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true'">
+    <_WpfWebGpuUseWpf>$(UseWPF)</_WpfWebGpuUseWpf>
+    <UseWPF>false</UseWPF>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <!-- XAML markup compilation (Microsoft.WinFX.targets) inputs, normally provided
+         by the WindowsDesktop SDK; the task assembly is the fork's own build. -->
+    <XamlRuntime Condition="'$(XamlRuntime)' == ''">Wpf</XamlRuntime>
+    <DefaultXamlRuntime Condition="'$(DefaultXamlRuntime)' == ''">Wpf</DefaultXamlRuntime>
+    <_PresentationBuildTasksAssembly>$(WpfWebGpuSdkRoot)tools/net10.0/PresentationBuildTasks.dll</_PresentationBuildTasksAssembly>
+    <EnableDefaultApplicationDefinition Condition="'$(EnableDefaultApplicationDefinition)' == ''">true</EnableDefaultApplicationDefinition>
+    <EnableDefaultPageItems Condition="'$(EnableDefaultPageItems)' == ''">true</EnableDefaultPageItems>
+  </PropertyGroup>
+
+  <!-- WPF's default XAML globbing (WindowsDesktop SDK semantics): App.xaml (or
+       <AssemblyName>.xaml) is the application definition, every other .xaml a Page. -->
+  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(EnableDefaultItems)' != 'false'">
+    <ApplicationDefinition Include="App.xaml"
+                           Condition="'$(EnableDefaultApplicationDefinition)' == 'true' and Exists('$(MSBuildProjectDirectory)/App.xaml')" />
+    <ApplicationDefinition Include="Application.xaml"
+                           Condition="'$(EnableDefaultApplicationDefinition)' == 'true' and Exists('$(MSBuildProjectDirectory)/Application.xaml')" />
+    <Page Include="**/*.xaml"
+          Exclude="@(ApplicationDefinition);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)"
+          Condition="'$(EnableDefaultPageItems)' == 'true'" />
+  </ItemGroup>
+
+  <!-- The packaged WPF fork. Shared set plus a per-flavor WebGPU interop:
+       desktop P/Invokes wgpu-native; browser JS-interops navigator.gpu. -->
+  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/*.dll" Private="true" />
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-desktop/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
+    <!-- Support packages WPF needs off the WindowsDesktop framework reference. -->
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- macOS desktop: WebGPU composition on by default + the native wgpu library. -->
+  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <None Include="$(WpfWebGpuSdkRoot)native/osx-arm64/libwgpu_native.dylib"
+          CopyToOutputDirectory="PreserveNewest" Link="libwgpu_native.dylib" Visible="false" />
+  </ItemGroup>
+
+  <!-- ================================ browser ================================ -->
+
+  <PropertyGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <!-- Boot shim: pre-acquires the WebGPU device (async) before the app's own
+         entry point runs; the app's generated App.Main is found by reflection. -->
+    <StartupObject Condition="'$(StartupObject)' == ''">WpfWebGpuWasmBoot</StartupObject>
+    <!-- AOT is the difference between ~10fps (interpreter) and full frame rate.
+         Opt out with -p:WpfWebGpuAot=false for fast development builds. -->
+    <WpfWebGpuAot Condition="'$(WpfWebGpuAot)' == ''">true</WpfWebGpuAot>
+    <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">$(WpfWebGpuAot)</RunAOTCompilation>
+    <RunAOTCompilationAfterBuild Condition="'$(RunAOTCompilationAfterBuild)' == ''">$(WpfWebGpuAot)</RunAOTCompilationAfterBuild>
+    <WasmEmitSymbolMap Condition="'$(WasmEmitSymbolMap)' == ''">true</WasmEmitSymbolMap>
+    <!-- The wasm SDK requires trimming for AOT; WPF resolves types/resources
+         reflectively (BAML, themes), so trim only trimmable-marked BCL assemblies. -->
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">true</PublishTrimmed>
+    <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- WPF needs real cultures (SystemFonts, text formatting). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <Compile Include="$(WpfWebGpuSdkRoot)web/WasmBoot.cs" Link="WpfWebGpuWasmBoot.cs" />
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+
+    <TrimmerRootAssembly Include="$(AssemblyName)" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="System.Xaml" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <TrimmerRootAssembly Include="PresentationUI" />
+    <TrimmerRootAssembly Include="ReachFramework" />
+    <TrimmerRootAssembly Include="System.Printing" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="UIAutomationTypes" />
+    <TrimmerRootAssembly Include="UIAutomationProvider" />
+    <TrimmerRootAssembly Include="System.Windows.Primitives" />
+    <TrimmerRootAssembly Include="System.Windows.Input.Manipulations" />
+    <TrimmerRootAssembly Include="System.IO.Packaging" />
+    <TrimmerRootAssembly Include="System.Windows.Extensions" />
+    <TrimmerRootAssembly Include="System.Configuration.ConfigurationManager" />
+
+    <!-- Keep these on the interpreter: they reference assemblies that are not in
+         the browser bundle (WinForms, Accessibility, print pipeline) and none are
+         on the rendering/layout hot path. -->
+    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
+
+  <!-- XAML markup compilation (after the base targets, mirroring where the
+       WindowsDesktop SDK imports it). Windows TFMs get it from the stock SDK. -->
+  <Import Project="$(WpfWebGpuSdkRoot)targets/Microsoft.WinFX.targets"
+          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''" />
+
+  <!-- Scaffold the browser host page into wwwroot: index.html and main.js are
+       copied once (kept if the app customizes them); the two WPF JS interop
+       modules and the bundled fonts are kept in sync with the SDK on every build.
+       Runs before static-web-asset discovery so integrity hashes stay valid. -->
+  <Target Name="WpfWebGpuScaffoldWeb"
+          BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/wwwroot;$(MSBuildProjectDirectory)/wwwroot/fonts" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/index.html" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
+          Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/main.js" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
+          Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/main.js')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js"
+          DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <_WpfWebGpuFonts Include="$(WpfWebGpuSdkRoot)web/fonts/*.ttf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfWebGpuFonts)" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot/fonts" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

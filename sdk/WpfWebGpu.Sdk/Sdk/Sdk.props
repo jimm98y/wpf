@@ -1,0 +1,30 @@
+<!--
+  WpfWebGpu.Sdk — build a standard WPF application project against the from-source
+  WPF-on-WebGPU stack by switching the project's Sdk attribute:
+
+      <Project Sdk="WpfWebGpu.Sdk/0.1.0">
+
+  Target selection:
+    - net10.0-windows TFM  : passes through to the regular WindowsDesktop SDK path
+                             (UseWPF), so Visual Studio's XAML designer and Windows
+                             builds keep working untouched.
+    - net10.0 TFM          : macOS desktop head on the packaged WPF fork (WebGPU
+                             composition, Cocoa windowing), including XAML markup
+                             compilation via the packaged PresentationBuildTasks.
+    - -p:WpfPlatform=browser : WebAssembly head (WebGPU via JS interop). Must be a
+                             global property (command line or Directory.Build.props)
+                             because it selects the base SDK before the project body
+                             is evaluated. Example:
+                               dotnet publish -f net10.0 -p:WpfPlatform=browser
+-->
+<Project>
+
+  <PropertyGroup>
+    <UsingWpfWebGpuSdk>true</UsingWpfWebGpuSdk>
+    <WpfWebGpuSdkRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</WpfWebGpuSdkRoot>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(WpfPlatform)' == 'browser'" />
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(WpfPlatform)' != 'browser'" />
+
+</Project>
