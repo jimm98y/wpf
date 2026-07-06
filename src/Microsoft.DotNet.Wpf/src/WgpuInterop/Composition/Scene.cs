@@ -464,6 +464,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     /// </summary>
     internal sealed class SceneVisual
     {
+        /// <summary>Stable visual identity (the milcore protocol handle); rendered into the
+        /// GPU hit-test id buffer and read back to map a device point to its visual. 0 = none.</summary>
+        public uint Id { get; set; }
+
         /// <summary>Offset applied after <see cref="Transform"/> (VisualOffset).</summary>
         public Vector2 Offset { get; set; } = Vector2.Zero;
 

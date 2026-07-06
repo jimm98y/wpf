@@ -36,6 +36,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.TileTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.RoundedRectTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.EllipseTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.HitTestTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.GeometryGroupTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.OpacityMaskTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.DrawGeometryTest")]

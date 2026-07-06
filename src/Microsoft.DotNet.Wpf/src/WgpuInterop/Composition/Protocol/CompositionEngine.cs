@@ -43,7 +43,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         uint handle = r.U32();
                         _ = (MilResourceType)r.U8();
-                        _resources[handle] = new SceneVisual();
+                        // The protocol handle is the visual's stable identity; it doubles as the
+                        // GPU hit-test id (rendered into the visual-id buffer, read back to map a
+                        // point to its visual). Handles are non-zero, so 0 = "no visual".
+                        _resources[handle] = new SceneVisual { Id = handle };
                         break;
                     }
                     case MilCommand.VisualSetOffset:

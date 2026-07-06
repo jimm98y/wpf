@@ -319,6 +319,29 @@ export function takeBytes(id) {
     return o ?? new Uint8Array(0);
 }
 
+// Async 1-texel readback for GPU hit testing: returns the packed visual id at (x,y)
+// (r | g<<8 | b<<16), or 0 when alpha is 0 (no visual). Reads a single texel rather
+// than the whole id buffer.
+export async function readbackTexel(deviceId, textureId, x, y) {
+    const device = get(deviceId);
+    const buf = device.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+        { texture: get(textureId), origin: { x, y, z: 0 } },
+        { buffer: buf, bytesPerRow: 256, rowsPerImage: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 });
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const p = new Uint8Array(buf.getMappedRange());
+    const id = p[3] === 0 ? 0 : (p[0] | (p[1] << 8) | (p[2] << 16));
+    buf.unmap();
+    buf.destroy();
+    return id;
+}
+
 // ---- Lifetime ----------------------------------------------------------------
 
 // Drops the handle. GPU-resource-owning objects are destroyed eagerly where the

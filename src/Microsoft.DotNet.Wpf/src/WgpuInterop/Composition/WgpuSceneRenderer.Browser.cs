@@ -42,6 +42,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>
+        /// Browser GPU hit test against the last composited scene: renders the visual-id buffer
+        /// once per frame (lazily, on the first query) and awaits a 1-pixel readback of the point.
+        /// Returns the topmost visual's id, or 0 for no hit / out of range.
+        /// </summary>
+        public async Task<uint> HitTestAsync(int x, int y)
+        {
+            if (!EnsureIdBuffer() || x < 0 || y < 0 || x >= _idW || y >= _idH) return 0;
+            int id = await Browser.WgpuBrowserJs.ReadbackTexel((int)_ctx.Device, (int)_idTex, x, y);
+            return (uint)id;
+        }
+
+        /// <summary>Standalone async hit test: renders the id buffer for the given scene, then
+        /// awaits the readback. Prefer <see cref="HitTestAsync(int,int)"/> after a frame render.</summary>
+        public Task<uint> HitTestAsync(SceneVisual root, int x, int y, int width, int height)
+        {
+            _idScene = root; _idW = width; _idH = height; _idValid = false;
+            return HitTestAsync(x, y);
+        }
+
         private static unsafe IntPtr CreateReadbackTargetTexture(IntPtr device, int width, int height, WGPUTextureFormat format)
         {
             var texDesc = new WGPUTextureDescriptor

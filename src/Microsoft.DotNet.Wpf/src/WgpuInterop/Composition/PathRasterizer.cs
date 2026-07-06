@@ -48,6 +48,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public Edge(Vector2 a, Vector2 b) { X0 = a.X; Y0 = a.Y; X1 = b.X; Y1 = b.Y; }
         }
 
+        /// <summary>
+        /// Flattens the path to non-horizontal line edges appended to <paramref name="edges"/>
+        /// as (x0, y0, x1, y1) quadruples, and reports the point bounds. Returns the edge
+        /// count. This is the shared front half of both the CPU scanline fill below and the
+        /// GPU coverage rasterizer (WgpuSceneRenderer fs_coverage), which evaluates the same
+        /// 4x-vertical-subsample exact-horizontal coverage per pixel in a fragment shader.
+        /// </summary>
+        public static int FlattenToEdges(PathGeometry path, List<float> edges,
+            out float minX, out float minY, out float maxX, out float maxY)
+        {
+            minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
+            List<List<Vector2>> contours = Flatten(path);
+            int count = 0;
+            foreach (List<Vector2> c in contours)
+            {
+                for (int i = 0; i < c.Count; i++)
+                {
+                    Vector2 a = c[i];
+                    Vector2 b = c[(i + 1) % c.Count]; // implicitly closed for fill
+                    minX = MathF.Min(minX, a.X); minY = MathF.Min(minY, a.Y);
+                    maxX = MathF.Max(maxX, a.X); maxY = MathF.Max(maxY, a.Y);
+                    if (a.Y == b.Y) continue;
+                    edges.Add(a.X); edges.Add(a.Y); edges.Add(b.X); edges.Add(b.Y);
+                    count++;
+                }
+            }
+            return count;
+        }
+
         public static CoverageMask Rasterize(PathGeometry path)
         {
             List<List<Vector2>> contours = Flatten(path);

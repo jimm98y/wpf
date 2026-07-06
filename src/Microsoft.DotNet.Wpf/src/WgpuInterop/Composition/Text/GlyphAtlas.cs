@@ -56,6 +56,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public void ClearDirty() => Dirty = false;
 
+        /// <summary>Looks up an already-packed glyph (no rasterization).</summary>
+        public bool TryGet(int glyphId, out GlyphEntry entry) => _entries.TryGetValue(glyphId, out entry);
+
+        /// <summary>
+        /// GPU path: reserves an atlas rectangle for a glyph of the given size and records its
+        /// entry + metrics, WITHOUT filling any pixels (the renderer rasterizes the outline into
+        /// the returned rectangle on the GPU). For a zero-size (blank) glyph, stores a metrics-only
+        /// entry and returns rw=rh=0. Returns false if the atlas is full.
+        /// </summary>
+        public bool AddPacked(int glyphId, int width, int height, int advance, int bearingX, int bearingY,
+            out GlyphEntry entry, out int rx, out int ry, out int rw, out int rh)
+        {
+            rx = ry = rw = rh = 0;
+            if (width <= 0 || height <= 0)
+            {
+                entry = new GlyphEntry(0, 0, 0, 0, 0, 0, advance, bearingX, bearingY);
+                _entries[glyphId] = entry;
+                return true;
+            }
+
+            // Shelf packing: wrap to a new row when the current one is full.
+            if (_penX + width + Padding > Width)
+            {
+                _penX = Padding;
+                _penY += _rowHeight + Padding;
+                _rowHeight = 0;
+            }
+            if (_penY + height + Padding > Height)
+            {
+                entry = default;
+                return false;   // atlas full (caller can skip the glyph / grow later)
+            }
+
+            rx = _penX; ry = _penY; rw = width; rh = height;
+            entry = new GlyphEntry(
+                _penX / (float)Width, _penY / (float)Height,
+                (_penX + width) / (float)Width, (_penY + height) / (float)Height,
+                width, height, advance, bearingX, bearingY);
+            _entries[glyphId] = entry;
+
+            _penX += width + Padding;
+            _rowHeight = Math.Max(_rowHeight, height);
+            Dirty = true;
+            return true;
+        }
+
         /// <summary>Returns the glyph's atlas entry, rasterizing+packing it on first use.</summary>
         public bool TryGetOrAdd(IGlyphSource font, int glyphId, out GlyphEntry entry)
         {

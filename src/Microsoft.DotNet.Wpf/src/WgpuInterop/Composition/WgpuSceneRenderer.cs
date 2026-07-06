@@ -235,7 +235,277 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip }
+        // GPU path rasterization: evaluates the SAME coverage math as PathRasterizer
+        // (4 vertical subsample rows, exact horizontal span coverage per pixel) in a
+        // fragment shader over a storage buffer of flattened edges, writing an R8
+        // coverage mask. Per pixel and subsample row: the winding at the pixel's left
+        // edge is the signed count of crossings at or left of it; the in-pixel
+        // crossings (rarely more than 2) are insertion-sorted and walked to measure
+        // the covered fraction exactly — pixel-identical AA to the CPU rasterizer.
+        // Draw encoding: uv carries mask-local pixel coords; the (flat) vertex colour
+        // carries (edgeCount, flags) — no uniform buffer needed.
+        private const string CoverageShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    return o;
+}
+
+@group(0) @binding(0) var<storage, read> edges : array<vec4<f32>>;
+
+const MAX_PIXEL_CROSSINGS : u32 = 16u;
+
+@fragment
+fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
+    let px = floor(in.uv.x);
+    let py = floor(in.uv.y);
+    let edgeCount = u32(in.color.x);
+    let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma
+    let evenOdd = (flags & 1u) != 0u;
+    var cov = 0.0;
+    for (var s = 0u; s < 4u; s = s + 1u) {
+        let sy = py + (f32(s) + 0.5) / 4.0;
+        var w = 0;
+        var cxs : array<f32, MAX_PIXEL_CROSSINGS>;
+        var cds : array<i32, MAX_PIXEL_CROSSINGS>;
+        var n = 0u;
+        for (var i = 0u; i < edgeCount; i = i + 1u) {
+            let e = edges[i];             // (x0, y0, x1, y1)
+            let ymin = min(e.y, e.w);
+            let ymax = max(e.y, e.w);
+            if (sy < ymin || sy >= ymax) { continue; }
+            let t = (sy - e.y) / (e.w - e.y);
+            let x = e.x + t * (e.z - e.x);
+            let dir = select(-1, 1, e.w > e.y);
+            if (x <= px) {
+                w = w + dir;
+            } else if (x < px + 1.0 && n < MAX_PIXEL_CROSSINGS) {
+                var j = n;
+                loop {
+                    if (j == 0u) { break; }
+                    if (cxs[j - 1u] <= x) { break; }
+                    cxs[j] = cxs[j - 1u];
+                    cds[j] = cds[j - 1u];
+                    j = j - 1u;
+                }
+                cxs[j] = x;
+                cds[j] = dir;
+                n = n + 1u;
+            }
+        }
+        var covered = 0.0;
+        var prev = px;
+        for (var k = 0u; k < n; k = k + 1u) {
+            let inside = select(w != 0, (w & 1) != 0, evenOdd);
+            if (inside) { covered = covered + (cxs[k] - prev); }
+            w = w + cds[k];
+            prev = cxs[k];
+        }
+        let insideEnd = select(w != 0, (w & 1) != 0, evenOdd);
+        if (insideEnd) { covered = covered + (px + 1.0 - prev); }
+        cov = cov + covered * 0.25;
+    }
+    cov = clamp(cov, 0.0, 1.0);
+    // Text gamma: WPF blends glyph coverage in gamma space; cov^(1/2.2) matches the
+    // CPU rasterizer's LUT on the display-destined sRGB path.
+    if ((flags & 2u) != 0u) { cov = pow(cov, 1.0 / 2.2); }
+    return vec4<f32>(cov, 0.0, 0.0, 1.0);
+}
+";
+
+        // GPU brush evaluation: gradients are computed per pixel in the fragment shader
+        // (sampling the same 256-texel ramp the tessellated gradient path uses) instead
+        // of the CPU per-texel bake. fs_maskbrush composites GPU-rasterized coverage
+        // with the brush (masked gradient fills); fs_brushalpha writes the brush's
+        // alpha into an R8 target (gradient opacity masks). Params ride in a small
+        // uniform buffer; localPos = rect.xy + uv * rect.zw reproduces the CPU
+        // evaluator's pixel-center sampling exactly.
+        private const string BrushShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    return o;
+}
+
+struct BrushParams {
+    kindSpread : vec4<u32>,   // x: 1=linear 2=radial; y: 0=pad 1=reflect 2=repeat
+    g0 : vec4<f32>,           // linear: start.xy, axis.xy ; radial: center.xy, radius.xy
+    rect : vec4<f32>,         // brush-space rect of the quad: origin.xy, size.xy
+    misc : vec4<f32>,         // x: opacity, y: linear 1/|axis|^2
+};
+
+fn brushT(params : BrushParams, local : vec2<f32>) -> f32 {
+    var t = 0.0;
+    if (params.kindSpread.x == 1u) {
+        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
+    } else {
+        let d = (local - params.g0.xy) / params.g0.zw;
+        t = length(d);
+    }
+    switch params.kindSpread.y {
+        case 1u: {                                  // reflect
+            let f = t - 2.0 * floor(t / 2.0);
+            t = select(f, 2.0 - f, f > 1.0);
+        }
+        case 2u: { t = t - floor(t); }              // repeat
+        default: { t = clamp(t, 0.0, 1.0); }        // pad
+    }
+    return t;
+}
+
+@group(0) @binding(0) var covTex : texture_2d<f32>;
+@group(0) @binding(1) var rampTex : texture_2d<f32>;
+@group(0) @binding(2) var covSamp : sampler;
+@group(0) @binding(3) var rampSamp : sampler;
+@group(0) @binding(4) var<uniform> params : BrushParams;
+
+@fragment
+fn fs_maskbrush(in : VSOut) -> @location(0) vec4<f32> {
+    let local = params.rect.xy + in.uv * params.rect.zw;
+    let t = brushT(params, local);
+    let c = textureSampleLevel(rampTex, rampSamp, vec2<f32>(t, 0.5), 0.0);
+    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
+    let a = cov * c.a * params.misc.x;
+    return vec4<f32>(c.rgb * a, a);
+}
+
+// Image/tile brush composited with GPU-rasterized coverage. binding(1) is the image
+// texture (an sRGB texture on the display path, so the hardware decodes + filters in
+// linear space). kindSpread.y = TileMode (0 None -> map once across the coverage rect;
+// 1 FlipX, 2 FlipY, 3 FlipXY, 4 Tile); g0.xy = (tileWidth, tileHeight). Mirrors
+// EvaluateBrush's ImageBrush UV + SampleBilinear (hardware linear sampler).
+@fragment
+fn fs_maskimage(in : VSOut) -> @location(0) vec4<f32> {
+    let mode = params.kindSpread.y;
+    var uv : vec2<f32>;
+    if (mode == 0u) {
+        uv = in.uv;                                  // map once across geometry bounds
+    } else {
+        let local = params.rect.xy + in.uv * params.rect.zw;
+        let tu = local.x / params.g0.x;
+        let tv = local.y / params.g0.y;
+        let cx = floor(tu);
+        let cy = floor(tv);
+        var u = tu - cx;
+        var v = tv - cy;
+        if ((mode == 1u || mode == 3u) && (i32(cx) & 1) != 0) { u = 1.0 - u; }  // FlipX / FlipXY
+        if ((mode == 2u || mode == 3u) && (i32(cy) & 1) != 0) { v = 1.0 - v; }  // FlipY / FlipXY
+        uv = vec2<f32>(u, v);
+    }
+    let c = textureSampleLevel(rampTex, rampSamp, uv, 0.0);   // binding(1) = image
+    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
+    let a = c.a * cov * params.misc.x;
+    return vec4<f32>(c.rgb * a, a);                            // premultiply
+}
+";
+
+        // fs_brushalpha has a different binding set (no coverage texture), so it lives
+        // in its own module for a clean auto-inferred pipeline layout.
+        private const string BrushAlphaShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    return o;
+}
+
+struct BrushParams {
+    kindSpread : vec4<u32>,
+    g0 : vec4<f32>,
+    rect : vec4<f32>,
+    misc : vec4<f32>,
+};
+
+fn brushT(params : BrushParams, local : vec2<f32>) -> f32 {
+    var t = 0.0;
+    if (params.kindSpread.x == 1u) {
+        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
+    } else {
+        let d = (local - params.g0.xy) / params.g0.zw;
+        t = length(d);
+    }
+    switch params.kindSpread.y {
+        case 1u: {
+            let f = t - 2.0 * floor(t / 2.0);
+            t = select(f, 2.0 - f, f > 1.0);
+        }
+        case 2u: { t = t - floor(t); }
+        default: { t = clamp(t, 0.0, 1.0); }
+    }
+    return t;
+}
+
+@group(0) @binding(0) var rampTex : texture_2d<f32>;
+@group(0) @binding(1) var rampSamp : sampler;
+@group(0) @binding(2) var<uniform> params : BrushParams;
+
+@fragment
+fn fs_brushalpha(in : VSOut) -> @location(0) vec4<f32> {
+    let local = params.rect.xy + in.uv * params.rect.zw;
+    let a = textureSampleLevel(rampTex, rampSamp, vec2<f32>(brushT(params, local), 0.5), 0.0).a;
+    return vec4<f32>(a, 0.0, 0.0, 1.0);
+}
+";
+
+        // GPU hit testing: the scene is re-walked into a visual-id buffer where each visual's
+        // content coverage writes that visual's packed id (RGBA8 = id bytes; a=1 marks a hit).
+        // Painter order means the topmost covering visual wins at each pixel (no blend, and
+        // uncovered fragments discard); reading back the query pixel maps a device point to its
+        // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
+        private const string IdShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    return o;
+}
+
+@group(0) @binding(0) var covTex : texture_2d<f32>;
+@group(0) @binding(1) var covSamp : sampler;
+
+@fragment
+fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
+    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
+    if (cov < 0.5) { discard; }   // outside the shape -> don't claim this pixel
+    return in.color;              // packed visual id (bytes / 255), a = 1
+}
+";
+
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
@@ -245,6 +515,16 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private readonly List<Text.ShapedGlyph> _shapeScratch = new();
         private IntPtr _shaderModule;
         private IntPtr _clipShaderModule;
+        private IntPtr _coverageShaderModule;
+        private IntPtr _brushShaderModule;
+        private IntPtr _brushAlphaShaderModule;
+        private IntPtr _idShaderModule;
+        private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
+
+        // GPU path rasterization is the default; WPF_WEBGPU_CPU_RASTER=1 restores the
+        // CPU scanline rasterizer (A/B comparison, driver-bug escape hatch).
+        private static readonly bool s_gpuRaster =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") != "1";
         private IntPtr _linearSampler;
         private IntPtr _nearestSampler;
 
@@ -268,6 +548,23 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _atlasTexture, _atlasView;
         private bool _atlasValid;
 
+        // GPU glyph rasterization: when the font exposes outlines and GPU raster is on, glyph
+        // coverage is rasterized by fs_coverage into a PERSISTENT atlas render target (instead of
+        // the CPU rasterizing bitmaps that are re-uploaded). Set in the constructor.
+        private readonly Text.IGlyphOutlineFont? _outlineFont;
+        private bool _gpuGlyphs;
+        private bool _gpuAtlasCreated;   // persistent atlas texture allocated (RenderAttachment)
+
+        // GPU hit-test id buffer, retained across frames and rendered LAZILY: RenderSceneToView
+        // records the frame's scene + size and marks the buffer stale; the first HitTest after a
+        // frame renders the visual-id buffer once, and every further query that frame is a pure
+        // 1-pixel readback (no scene re-walk). Idle frames with no query pay nothing.
+        private SceneVisual? _idScene;
+        private int _idW, _idH;
+        private bool _idValid;
+        private IntPtr _idTex, _idView;
+        private int _idTexW, _idTexH;
+
         // Transient GPU objects created during the current render, released once the frame is submitted
         // (wgpu keeps them alive for in-flight work). Kept as typed handle lists rather than Action
         // closures so deferring a release allocates nothing (there are ~50+ per frame).
@@ -288,6 +585,8 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             _ctx = ctx;
             _font = font ?? new Text.BuiltinBitmapFont();
             _shaper = shaper ?? new Text.SimpleTextShaper();
+            _outlineFont = _font as Text.IGlyphOutlineFont;
+            _gpuGlyphs = s_gpuRaster && _outlineFont != null;
         }
 
         private void DeferReleaseBindGroup(IntPtr bg) => _relBindGroups.Add(bg);
@@ -421,6 +720,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // For a region-sized layer texture: its absolute device origin + size. Scissors (stored
             // in absolute coords) are rebased by this origin and clamped to the size at record time.
             public int OriginX, OriginY, TexW, TexH;
+            // Load (preserve) instead of clear the target -- used to rasterize a new glyph into its
+            // shelf region of the persistent GPU glyph atlas without wiping the glyphs already there.
+            public bool LoadPreserve;
 
             public LayerPass(IntPtr targetView, bool clearTransparent, RgbaColor clearColor, DrawData data, WGPUTextureFormat format)
             {
@@ -546,6 +848,199 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             {
                 FlushFrameReleases();
             }
+
+            // The scene just composited is the one hit-tests should query; mark the id buffer
+            // stale so the next HitTest renders it once against this frame's tree.
+            _idScene = root; _idW = width; _idH = height; _idValid = false;
+        }
+
+        /// <summary>
+        /// GPU hit test against the last composited scene: reads back the visual id at the given
+        /// device point from the per-frame id buffer (rendered lazily on the first query each
+        /// frame; subsequent queries are pure 1-pixel readbacks). Returns the topmost visual's id,
+        /// or 0 if the point hits nothing.
+        /// </summary>
+        public uint HitTest(int x, int y)
+        {
+            if (!EnsureIdBuffer() || x < 0 || y < 0 || x >= _idW || y >= _idH) return 0;
+            try
+            {
+                IntPtr readback = CopyIdTexel(x, y, out int bytesPerRow, out IntPtr encoder, out IntPtr commandBuffer);
+                byte[] px = _ctx.MapRead(readback, 4);
+                uint id = px[3] == 0 ? 0u : (uint)(px[0] | (px[1] << 8) | (px[2] << 16));
+                DeferReleaseEncoder(encoder);
+                DeferReleaseCmdBuffer(commandBuffer);
+                DeferReleaseBuffer(readback);
+                return id;
+            }
+            finally
+            {
+                FlushFrameReleases();
+            }
+        }
+
+        /// <summary>Standalone hit test (renders the id buffer for the given scene, then reads
+        /// back). Prefer <see cref="HitTest(int,int)"/> after a normal frame render.</summary>
+        public uint HitTest(SceneVisual root, int x, int y, int width, int height)
+        {
+            _idScene = root; _idW = width; _idH = height; _idValid = false;
+            return HitTest(x, y);
+        }
+
+        // Renders the visual-id buffer for _idScene into the retained _idTex (created/resized as
+        // needed) if it is stale. Returns false when there is no scene to query. Shared by the
+        // desktop (sync) and browser (async) readback paths.
+        private bool EnsureIdBuffer()
+        {
+            if (_idScene is not { } root) return false;
+            if (_idValid && _idTexW == _idW && _idTexH == _idH) return true;
+
+            if (_idTexW != _idW || _idTexH != _idH)
+            {
+                if (_idView != IntPtr.Zero) { DeferReleaseTexView(_idTex, _idView); _idTex = _idView = IntPtr.Zero; }
+                var texDesc = new WGPUTextureDescriptor
+                {
+                    usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopySrc | WGPUTextureUsage.TextureBinding,
+                    dimension = WGPUTextureDimension._2D,
+                    size = new WGPUExtent3D { width = (uint)_idW, height = (uint)_idH, depthOrArrayLayers = 1 },
+                    format = ReadbackFormat,
+                    mipLevelCount = 1,
+                    sampleCount = 1,
+                };
+                _idTex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+                _idView = wgpuTextureCreateView(_idTex, IntPtr.Zero);
+                _idTexW = _idW; _idTexH = _idH;
+            }
+
+            try
+            {
+                List<LayerPass> plan = _plan; plan.Clear();
+                DrawData idData = RentDrawData();
+                CollectHitIds(root, Matrix3x2.Identity, new Scissor(0, 0, _idW, _idH), idData, _idW, _idH);
+
+                IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
+                // Coverage-rasterization plan passes first, then the id pass (clear to 0 = "no visual").
+                foreach (LayerPass lp in plan) ExecutePass(encoder, lp, IntPtr.Zero);
+                ExecutePass(encoder, new LayerPass(_idView, true, default, idData, ReadbackFormat), IntPtr.Zero);
+
+                IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
+                IntPtr* cmds = stackalloc IntPtr[1];
+                cmds[0] = commandBuffer;
+                wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+                DeferReleaseEncoder(encoder);
+                DeferReleaseCmdBuffer(commandBuffer);
+            }
+            finally
+            {
+                FlushFrameReleases();
+            }
+            _idValid = true;
+            return true;
+        }
+
+        // Copies the retained id buffer's (x,y) texel into a fresh MapRead buffer. The caller maps
+        // it (sync on desktop) and releases the returned buffer/encoder/commandBuffer.
+        private IntPtr CopyIdTexel(int x, int y, out int bytesPerRow, out IntPtr encoder, out IntPtr commandBuffer)
+        {
+            bytesPerRow = AlignUp(256, 256);   // one aligned row holds a single texel
+            IntPtr readback = _ctx.CreateBuffer((ulong)bytesPerRow, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
+            encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
+            var copySrc = new WGPUTexelCopyTextureInfo
+            {
+                texture = _idTex,
+                origin = new WGPUOrigin3D { x = (uint)x, y = (uint)y, z = 0 },
+                aspect = WGPUTextureAspect.All,
+            };
+            var copyDst = new WGPUTexelCopyBufferInfo
+            {
+                layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)bytesPerRow, rowsPerImage = 1 },
+                buffer = readback,
+            };
+            var copyExtent = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 };
+            wgpuCommandEncoderCopyTextureToBuffer(encoder, &copySrc, &copyDst, &copyExtent);
+            commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
+            IntPtr* cmds = stackalloc IntPtr[1];
+            cmds[0] = commandBuffer;
+            wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+            return readback;
+        }
+
+        // Hit-test scene walk: mirrors CollectVisual's world-transform and axis-aligned clip
+        // accumulation, emitting each visual's content coverage stamped with its packed id.
+        // Effects/opacity don't change WHICH visual is hit, so this skips the layer machinery;
+        // clip geometry is approximated by its device bounding box (keeps hits inside the clip).
+        private void CollectHitIds(SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, DrawData data, int width, int height)
+        {
+            Matrix3x2 world = v.LocalToParent * parentWorld;
+            Scissor clip = parentClip;
+            if (v.Clip.HasValue)
+                clip = Intersect(clip, DeviceBounds(v.Clip.Value, world, width, height));
+            if (v.ClipGeometry is { } cg)
+                clip = Intersect(clip, GeoDeviceBounds(cg, world, width, height));
+            if (clip.IsEmpty) return;
+
+            // Pack the visual id into the (constant) vertex colour bytes; a = 1 marks a hit.
+            uint id = v.Id;
+            float pr = (id & 0xFF) / 255f, pg = ((id >> 8) & 0xFF) / 255f, pb = ((id >> 16) & 0xFF) / 255f;
+
+            foreach (DrawingPrimitive p in v.Content)
+            {
+                switch (p)
+                {
+                    case GeometryFill f:
+                        EmitIdCoverage(GeometryToPath(f.Geometry), world, clip, pr, pg, pb, data, width, height);
+                        break;
+                    case GeometryStroke s:
+                        EmitIdCoverage(PathStroker.Stroke(s.Geometry, s.Style), world, clip, pr, pg, pb, data, width, height);
+                        break;
+                    case GeometryDrawing d2:
+                        if (d2.Fill != null)
+                            EmitIdCoverage(GeometryToPath(d2.Geometry), world, clip, pr, pg, pb, data, width, height);
+                        else if (d2.Stroke != null && d2.StrokeStyle.Thickness > 0)
+                            EmitIdCoverage(PathStroker.Stroke(GeometryToPath(d2.Geometry), d2.StrokeStyle), world, clip, pr, pg, pb, data, width, height);
+                        break;
+                    case GlyphRunDraw g:
+                    {
+                        // Text hits its run bounds (clicking a space still hits the text), not
+                        // per-glyph coverage: a solid id quad sampling the shared white coverage.
+                        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+                        AccText(g, world, ref minX, ref minY, ref maxX, ref maxY);
+                        if (minX <= maxX)
+                            EmitIdQuad(WhiteCoverageView(), minX, minY, maxX, maxY, clip, pr, pg, pb, data, width, height);
+                        break;
+                    }
+                }
+            }
+            foreach (SceneVisual child in v.Children)
+                CollectHitIds(child, world, clip, data, width, height);
+        }
+
+        // GPU-rasterizes a path's coverage (device space) and stamps it with the visual id.
+        private void EmitIdCoverage(PathGeometry localGeom, Matrix3x2 world, Scissor clip,
+            float pr, float pg, float pb, DrawData data, int width, int height)
+        {
+            if (!GpuRasterizeCoverage(TransformGeometry(localGeom, world), gamma: false,
+                    out IntPtr covTex, out IntPtr covView, out int ox, out int oy, out int w, out int h))
+                return;
+            DeferReleaseTexView(covTex, covView);
+            EmitIdQuad(covView, ox, oy, ox + w, oy + h, clip, pr, pg, pb, data, width, height);
+        }
+
+        // A device-space id quad sampling the given coverage view (white for bounds quads).
+        private void EmitIdQuad(IntPtr covView, float x0, float y0, float x1, float y1, Scissor clip,
+            float pr, float pg, float pb, DrawData data, int width, int height)
+        {
+            if (clip.IsEmpty) return;
+            IntPtr bg = CreateSampledBindGroup(ReadbackFormat, FillKind.Id, covView, LinearSampler());
+            DeferReleaseBindGroup(bg);
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), pr, pg, pb, 1f, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), pr, pg, pb, 1f, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), pr, pg, pb, 1f, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), pr, pg, pb, 1f, 0f, 1f);
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Id, bg));
         }
 
         // Records one pass (its own vertex/index buffers + an atlas bind group for
@@ -560,7 +1055,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
             BuildGeometryBuffers(lp.Data, out IntPtr vbuf, out IntPtr ibuf, out bool hasGeometry);
             RgbaColor clear = lp.ClearTransparent ? new RgbaColor(0, 0, 0, 0) : lp.ClearColor;
-            IntPtr pass = BeginClearPass(encoder, lp.TargetView, clear);
+            IntPtr pass = lp.LoadPreserve ? BeginLoadPass(encoder, lp.TargetView) : BeginClearPass(encoder, lp.TargetView, clear);
             if (hasGeometry)
             {
                 IntPtr atlasBindGroup = IntPtr.Zero;
@@ -765,16 +1260,28 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
             if (v.ClipGeometry is { } clipGeom)
             {
-                // Region-sized geometry-clip mask (CPU-rasterized once into a card-sized buffer aligned
-                // to the layer's device origin, then cached) -- not a full-window 6.8M-pixel raster.
-                byte[] maskBytes = PathRasterizer.RasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
-                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
+                // Region-sized geometry-clip mask (rasterized once, cached with the layer) --
+                // not a full-window 6.8M-pixel raster. GPU-rasterized by default.
+                if (s_gpuRaster)
+                {
+                    (cl.MaskTex, cl.MaskView) = GpuRasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
+                }
+                else
+                {
+                    byte[] maskBytes = PathRasterizer.RasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
+                    (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
+                }
                 cl.Mode = 3;
             }
             else if (v.OpacityMask is { } opacityMask)
             {
-                byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, rw, rh, rx, ry);
-                (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
+                // Gradient opacity masks are evaluated per-pixel on the GPU (fs_brushalpha);
+                // solid/unsupported masks keep the trivial CPU fill.
+                if (!s_gpuRaster || !GpuOpacityMask(opacityMask, world, rw, rh, rx, ry, out cl.MaskTex, out cl.MaskView))
+                {
+                    byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, rw, rh, rx, ry);
+                    (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
+                }
                 cl.Mode = 4;
             }
             else if (v.Effect is BlurEffect b)
@@ -1696,12 +2203,24 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     Matrix3x2 phased = world;
                     phased.M31 = qx - ox;
                     phased.M32 = qy - oy;
-                    CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, phased));
-                    if (m.IsEmpty) return;
-                    if (gamma) ApplyTextGamma(m.Coverage);
-                    (IntPtr tex, IntPtr view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                    IntPtr tex, view;
+                    int mox, moy, mw, mh;
+                    if (s_gpuRaster)
+                    {
+                        if (!GpuRasterizeCoverage(TransformGeometry(coverageGeometry, phased), gamma,
+                                out tex, out view, out mox, out moy, out mw, out mh))
+                            return;
+                    }
+                    else
+                    {
+                        CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, phased));
+                        if (m.IsEmpty) return;
+                        if (gamma) ApplyTextGamma(m.Coverage);
+                        (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                        mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
+                    }
                     IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
-                    cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = (int)m.OriginX, Oy = (int)m.OriginY, W = m.Width, H = m.Height };
+                    cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
                     _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
                 }
                 cm.LastFrame = _frameId;
@@ -1709,6 +2228,18 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
             PerfCoverage++;
+            // Non-solid fills: rasterize coverage + evaluate the brush entirely on the GPU
+            // (fs_maskbrush for gradients, fs_maskimage for image/tile brushes) — no CPU
+            // per-texel bake. Only unsupported brushes fall back to the CPU EmitMask bake.
+            if (s_gpuRaster)
+            {
+                if (IsGpuGradient(brush) &&
+                    EmitGpuGradientMask(coverageGeometry, brush, world, opacity, clip, width, height, format, data))
+                    return;
+                if (brush is ImageBrush imgBrush &&
+                    EmitGpuImageMask(coverageGeometry, imgBrush, world, opacity, clip, width, height, format, data))
+                    return;
+            }
             EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data, isGlyph);
         }
 
@@ -1998,7 +2529,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
             foreach (Text.ShapedGlyph sg in _shapeScratch)
             {
-                if (_glyphAtlas.TryGetOrAdd(_font, sg.GlyphId, out Text.GlyphEntry e) && e.Width > 0 && e.Height > 0)
+                bool haveGlyph = _gpuGlyphs
+                    ? TryGetOrAddGpuGlyph(sg.GlyphId, out Text.GlyphEntry e)
+                    : _glyphAtlas.TryGetOrAdd(_font, sg.GlyphId, out e);
+                if (haveGlyph && e.Width > 0 && e.Height > 0)
                 {
                     float x0 = penX + (e.BearingX + sg.XOffset) * scale;
                     float y0 = baseline - (e.BearingY + sg.YOffset) * scale;
@@ -2058,6 +2592,21 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             return wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
         }
 
+        // Begins a pass that PRESERVES the target's existing contents (loadOp=Load). Used to
+        // rasterize new glyphs into the persistent glyph atlas without clearing prior glyphs.
+        private IntPtr BeginLoadPass(IntPtr encoder, IntPtr view)
+        {
+            var colorAttachment = new WGPURenderPassColorAttachment
+            {
+                view = view,
+                depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
+                loadOp = WGPULoadOp.Load,
+                storeOp = WGPUStoreOp.Store,
+            };
+            var passDesc = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &colorAttachment };
+            return wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+        }
+
         private void BuildGeometryBuffers(DrawData data, out IntPtr vbuf, out IntPtr ibuf, out bool hasGeometry)
         {
             vbuf = IntPtr.Zero;
@@ -2093,6 +2642,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     case FillKind.Blur:
                     case FillKind.Shadow:
                     case FillKind.Clip:
+                    case FillKind.Coverage:
+                    case FillKind.MaskBrush:
+                    case FillKind.MaskImage:
+                    case FillKind.BrushAlpha:
+                    case FillKind.Id:
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup, 0, null);
                         break;
                     case FillKind.Text:
@@ -2127,8 +2681,17 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr EnsureAtlasView(bool anyText)
         {
             if (!anyText) return IntPtr.Zero;
-            if (_atlasValid && !_glyphAtlas.Dirty) return _atlasView;
 
+            // GPU glyphs: the persistent atlas render target was already created and had this
+            // frame's new glyphs rasterized into it (load-preserve passes appended during
+            // collection). Just return its view -- no CPU pixel upload.
+            if (_gpuGlyphs)
+            {
+                _glyphAtlas.ClearDirty();
+                return _atlasView;   // Zero only if no glyph with a rect was ever packed
+            }
+
+            if (_atlasValid && !_glyphAtlas.Dirty) return _atlasView;
             ReleaseAtlas();
             (_atlasTexture, _atlasView) = CreateR8Texture(_glyphAtlas.Pixels, _glyphAtlas.Width, _glyphAtlas.Height);
             _atlasValid = true;
@@ -2144,6 +2707,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             wgpuTextureRelease(_atlasTexture);
             _atlasView = _atlasTexture = IntPtr.Zero;
             _atlasValid = false;
+            _gpuAtlasCreated = false;
         }
 
         public void Dispose()
@@ -2155,15 +2719,23 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             _freeVtx.Clear(); _freeIdx.Clear(); _inUseBufs.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeLayerTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
             _freeLayerTex.Clear();
+            if (_idView != IntPtr.Zero) { wgpuTextureViewRelease(_idView); wgpuTextureRelease(_idTex); _idView = _idTex = IntPtr.Zero; }
             ReleaseAtlas();
             ReleaseResources3D();
             foreach (IntPtr pipeline in _pipelines.Values) wgpuRenderPipelineRelease(pipeline);
             _pipelines.Clear();
             if (_shaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shaderModule);
             if (_clipShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_clipShaderModule);
+            if (_coverageShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_coverageShaderModule);
+            if (_brushShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_brushShaderModule);
+            if (_brushAlphaShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_brushAlphaShaderModule);
+            if (_idShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_idShaderModule);
+            if (_whiteView != IntPtr.Zero) { wgpuTextureViewRelease(_whiteView); wgpuTextureRelease(_whiteTex); }
             if (_linearSampler != IntPtr.Zero) wgpuSamplerRelease(_linearSampler);
             if (_nearestSampler != IntPtr.Zero) wgpuSamplerRelease(_nearestSampler);
-            _shaderModule = _clipShaderModule = _linearSampler = _nearestSampler = IntPtr.Zero;
+            _shaderModule = _clipShaderModule = _coverageShaderModule = IntPtr.Zero;
+            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = IntPtr.Zero;
+            _whiteTex = _whiteView = _linearSampler = _nearestSampler = IntPtr.Zero;
         }
 
         // ---- GPU resource creation ----
@@ -2191,10 +2763,68 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             var key = (format, kind);
             if (_pipelines.TryGetValue(key, out IntPtr cached))
                 return cached;
-            IntPtr shader = kind == FillKind.Clip ? GetClipShaderModule() : GetShaderModule();
+            IntPtr shader = kind switch
+            {
+                FillKind.Clip => GetClipShaderModule(),
+                FillKind.Coverage => GetCoverageShaderModule(),
+                FillKind.MaskBrush or FillKind.MaskImage => GetBrushShaderModule(),
+                FillKind.BrushAlpha => GetBrushAlphaShaderModule(),
+                FillKind.Id => GetIdShaderModule(),
+                _ => GetShaderModule(),
+            };
             IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind);
             _pipelines[key] = pipeline;
             return pipeline;
+        }
+
+        private IntPtr GetCoverageShaderModule()
+        {
+            if (_coverageShaderModule != IntPtr.Zero) return _coverageShaderModule;
+            _coverageShaderModule = CompileWgsl(CoverageShaderWgsl);
+            return _coverageShaderModule;
+        }
+
+        private IntPtr GetBrushShaderModule()
+        {
+            if (_brushShaderModule != IntPtr.Zero) return _brushShaderModule;
+            _brushShaderModule = CompileWgsl(BrushShaderWgsl);
+            return _brushShaderModule;
+        }
+
+        private IntPtr GetBrushAlphaShaderModule()
+        {
+            if (_brushAlphaShaderModule != IntPtr.Zero) return _brushAlphaShaderModule;
+            _brushAlphaShaderModule = CompileWgsl(BrushAlphaShaderWgsl);
+            return _brushAlphaShaderModule;
+        }
+
+        private IntPtr GetIdShaderModule()
+        {
+            if (_idShaderModule != IntPtr.Zero) return _idShaderModule;
+            _idShaderModule = CompileWgsl(IdShaderWgsl);
+            return _idShaderModule;
+        }
+
+        private IntPtr WhiteCoverageView()
+        {
+            if (_whiteView != IntPtr.Zero) return _whiteView;
+            (_whiteTex, _whiteView) = CreateR8Texture(new byte[] { 255 }, 1, 1);
+            return _whiteView;
+        }
+
+        private IntPtr CompileWgsl(string wgslSource)
+        {
+            byte[] wgsl = Encoding.UTF8.GetBytes(wgslSource);
+            fixed (byte* pWgsl = wgsl)
+            {
+                var src = new WGPUShaderSourceWGSL
+                {
+                    chain = new WGPUChainedStruct { next = null, sType = WGPUSType_ShaderSourceWGSL },
+                    code = new WGPUStringView { data = pWgsl, length = (nuint)wgsl.Length },
+                };
+                var desc = new WGPUShaderModuleDescriptor { nextInChain = (WGPUChainedStruct*)&src };
+                return wgpuDeviceCreateShaderModule(_ctx.Device, &desc);
+            }
         }
 
         private IntPtr GetClipShaderModule()
@@ -2224,6 +2854,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.Blur => "fs_blur",
                 FillKind.Shadow => "fs_shadow",
                 FillKind.Clip => "fs_clip",
+                FillKind.Coverage => "fs_coverage",
+                FillKind.MaskBrush => "fs_maskbrush",
+                FillKind.MaskImage => "fs_maskimage",
+                FillKind.BrushAlpha => "fs_brushalpha",
+                FillKind.Id => "fs_id",
                 _ => "fs_solid",
             };
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -2250,7 +2885,12 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha },
                     alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha },
                 };
+                // Coverage / brush-alpha passes write the mask value directly (single opaque
+                // quad into a cleared R8 target) — no blending. All others blend premultiplied.
                 var colorTarget = new WGPUColorTargetState { format = targetFormat, blend = &blend, writeMask = WGPUColorWriteMask_All };
+                // Coverage / brush-alpha write mask values directly; the id pass writes packed
+                // ids with topmost-wins-by-paint-order (overwrite, no blend).
+                if (kind is FillKind.Coverage or FillKind.BrushAlpha or FillKind.Id) colorTarget.blend = null;
 
                 var fragment = new WGPUFragmentState
                 {
@@ -2317,6 +2957,413 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
 
         private (IntPtr Texture, IntPtr View) CreateR8Texture(byte[] r8, int width, int height)
             => CreateTexture(r8, width, height, WGPUTextureFormat.R8Unorm, 1);
+
+        // ---- GPU path rasterization (fs_coverage) ------------------------------
+
+        // Scratch edge list for flattening (single render thread; cleared per use).
+        private readonly List<float> _edgeScratch = new();
+
+        /// <summary>
+        /// Rasterizes path coverage into a new R8 mask texture ON THE GPU: flattens on the
+        /// CPU (cheap, cached upstream), uploads the edges to a storage buffer, and appends
+        /// an fs_coverage pass to the frame plan (plan passes execute before any pass that
+        /// samples the mask). Bounds math matches PathRasterizer.Rasterize exactly. Returns
+        /// false for an empty path. The caller owns tex/view.
+        /// </summary>
+        private bool GpuRasterizeCoverage(PathGeometry path, bool gamma,
+            out IntPtr tex, out IntPtr view, out int ox, out int oy, out int w, out int h)
+        {
+            tex = IntPtr.Zero; view = IntPtr.Zero; ox = oy = w = h = 0;
+            _edgeScratch.Clear();
+            int edgeCount = PathRasterizer.FlattenToEdges(path, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            if (edgeCount == 0 || minX > maxX) return false;
+            ox = (int)MathF.Floor(minX) - 1;
+            oy = (int)MathF.Floor(minY) - 1;
+            w = (int)MathF.Ceiling(maxX) + 1 - ox;
+            h = (int)MathF.Ceiling(maxY) + 1 - oy;
+            if (w <= 0 || h <= 0) return false;
+            (tex, view) = GpuCoveragePass(edgeCount, ox, oy, w, h, path.FillRule, gamma);
+            return true;
+        }
+
+        // ---- GPU glyph rasterization (outline -> fs_coverage -> persistent atlas) ----
+
+        // Ensures the persistent glyph-atlas render target exists (R8, RenderAttachment so
+        // fs_coverage can draw glyphs into it, TextureBinding so text draws sample it). New
+        // textures read as zero (transparent) until written, so no explicit clear is needed.
+        private void EnsureGpuAtlas()
+        {
+            if (_gpuAtlasCreated) return;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)_glyphAtlas.Width, height = (uint)_glyphAtlas.Height, depthOrArrayLayers = 1 },
+                format = WGPUTextureFormat.R8Unorm,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            _atlasTexture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            _atlasView = wgpuTextureCreateView(_atlasTexture, IntPtr.Zero);
+            _atlasValid = true;
+            _gpuAtlasCreated = true;
+        }
+
+        // Looks up (or first-time GPU-rasterizes) a glyph in the persistent atlas. New glyphs:
+        // fetch the outline, flatten for bounds+edges (matching PathRasterizer/TrueTypeFont
+        // metrics exactly), shelf-pack the rectangle, and append a load-preserve fs_coverage
+        // pass that rasterizes the outline into that rectangle. Returns false if unmappable.
+        private bool TryGetOrAddGpuGlyph(int glyphId, out Text.GlyphEntry entry)
+        {
+            if (_glyphAtlas.TryGet(glyphId, out entry))
+                return true;
+
+            if (_outlineFont == null || !_outlineFont.TryGetGlyphOutline(glyphId, out System.Collections.Generic.List<PathFigure> figures))
+            {
+                // Blank/missing glyph (e.g. space): metrics-only entry, no atlas rect.
+                return _glyphAtlas.AddPacked(glyphId, 0, 0, 0, 0, _outlineFont?.PixelsPerEm ?? 0, out entry, out _, out _, out _, out _);
+            }
+
+            _edgeScratch.Clear();
+            var outline = new PathGeometry(FillRule.NonZero, figures);
+            int edgeCount = PathRasterizer.FlattenToEdges(outline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            if (edgeCount == 0 || minX > maxX)
+                return _glyphAtlas.AddPacked(glyphId, 0, 0, 0, 0, _outlineFont.PixelsPerEm, out entry, out _, out _, out _, out _);
+
+            // Same bounds/bearing math as PathRasterizer.Rasterize / TrueTypeFont.TryGetGlyph.
+            int originX = (int)MathF.Floor(minX) - 1;
+            int originY = (int)MathF.Floor(minY) - 1;
+            int gw = (int)MathF.Ceiling(maxX) + 1 - originX;
+            int gh = (int)MathF.Ceiling(maxY) + 1 - originY;
+            if (gw <= 0 || gh <= 0)
+                return _glyphAtlas.AddPacked(glyphId, 0, 0, 0, 0, _outlineFont.PixelsPerEm, out entry, out _, out _, out _, out _);
+
+            if (!_glyphAtlas.AddPacked(glyphId, gw, gh, 0, originX, -originY,
+                    out entry, out int rx, out int ry, out int rw, out int rh))
+                return false;   // atlas full -> skip this glyph
+
+            EnsureGpuAtlas();
+            AppendGlyphCoveragePass(rx, ry, rw, rh, originX, originY, edgeCount, outline.FillRule);
+            return true;
+        }
+
+        // Appends a load-preserve fs_coverage pass that rasterizes the current _edgeScratch outline
+        // (rebased to glyph-local) into the atlas rectangle (rx,ry,rw,rh). Runs before any text pass
+        // samples the atlas (added to _plan during collection).
+        private void AppendGlyphCoveragePass(int rx, int ry, int rw, int rh, int originX, int originY, int edgeCount, FillRule rule)
+        {
+            Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
+            for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= originX; es[i + 1] -= originY; }
+
+            int byteLen = Math.Max(16, es.Length * sizeof(float));
+            IntPtr ebuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
+            if (es.Length > 0) _ctx.WriteBuffer(ebuf, MemoryMarshal.AsBytes(es));
+            DeferReleaseBuffer(ebuf);
+
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Coverage), 0);
+            var entryB = new WGPUBindGroupEntry { binding = 0, buffer = ebuf, offset = 0, size = (ulong)byteLen };
+            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entryB };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
+            DeferReleaseBindGroup(bg);
+
+            // Quad over the atlas rectangle in atlas NDC; uv = glyph-local pixel coords for fs_coverage.
+            float aw = _glyphAtlas.Width, ah = _glyphAtlas.Height;
+            float x0 = rx / aw * 2f - 1f, x1 = (rx + rw) / aw * 2f - 1f;
+            float y0 = 1f - ry / ah * 2f, y1 = 1f - (ry + rh) / ah * 2f;
+            float flags = rule == FillRule.EvenOdd ? 1f : 0f;   // glyphs: no text gamma (matches CPU atlas)
+            DrawData d = RentDrawData();
+            AddVertex(d.Verts, new Vector2(x0, y0), edgeCount, flags, 0f, 0f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(x1, y0), edgeCount, flags, 0f, 0f, rw, 0f);
+            AddVertex(d.Verts, new Vector2(x1, y1), edgeCount, flags, 0f, 0f, rw, rh);
+            AddVertex(d.Verts, new Vector2(x0, y1), edgeCount, flags, 0f, 0f, 0f, rh);
+            AddQuadIndices(d.Indices, 0);
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(rx, ry, rw, rh), FillKind.Coverage, bg));
+            _plan.Add(new LayerPass(_atlasView, false, default, d, WGPUTextureFormat.R8Unorm)
+            { LoadPreserve = true, TexW = (int)aw, TexH = (int)ah });
+        }
+
+        /// <summary>GPU equivalent of PathRasterizer.RasterizeInto: coverage into a
+        /// fixed-size mask whose pixel (0,0) maps to device (originX, originY).</summary>
+        private (IntPtr Tex, IntPtr View) GpuRasterizeInto(PathGeometry path, int width, int height, int originX, int originY)
+        {
+            _edgeScratch.Clear();
+            int edgeCount = PathRasterizer.FlattenToEdges(path, _edgeScratch, out _, out _, out _, out _);
+            return GpuCoveragePass(edgeCount, originX, originY, width, height, path.FillRule, gamma: false);
+        }
+
+        private (IntPtr Tex, IntPtr View) GpuCoveragePass(int edgeCount, int ox, int oy, int w, int h, FillRule rule, bool gamma)
+        {
+            // Rebase edges to mask-local coordinates (f32 precision; the shader's pixel
+            // coords are mask-local via uv).
+            Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
+            for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
+
+            int byteLen = Math.Max(16, es.Length * sizeof(float));   // never a zero-sized binding
+            IntPtr ebuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
+            if (es.Length > 0) _ctx.WriteBuffer(ebuf, MemoryMarshal.AsBytes(es));
+            DeferReleaseBuffer(ebuf);
+
+            PerfTextures++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 },
+                format = WGPUTextureFormat.R8Unorm,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
+
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Coverage), 0);
+            var entry = new WGPUBindGroupEntry { binding = 0, buffer = ebuf, offset = 0, size = (ulong)byteLen };
+            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
+            DeferReleaseBindGroup(bg);
+
+            // One full-target quad in the mask texture's own NDC — deliberately NOT ToNdc,
+            // which offsets by the ambient layer-bake origin (_devOX/_devOY): a mask created
+            // during a region-sized card bake would render shifted off its own target (and
+            // the blank result would be cached). uv = mask-local pixel coords; the flat
+            // vertex colour carries (edgeCount, flags) — matching fs_coverage's decoding.
+            float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f);
+            DrawData d = RentDrawData();
+            AddVertex(d.Verts, new Vector2(-1f, 1f), edgeCount, flags, 0f, 0f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(1f, 1f), edgeCount, flags, 0f, 0f, w, 0f);
+            AddVertex(d.Verts, new Vector2(1f, -1f), edgeCount, flags, 0f, 0f, w, h);
+            AddVertex(d.Verts, new Vector2(-1f, -1f), edgeCount, flags, 0f, 0f, 0f, h);
+            AddQuadIndices(d.Indices, 0);
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, bg));
+            _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
+            return (tex, view);
+        }
+
+        // ---- GPU brush evaluation (fs_maskbrush / fs_brushalpha) -----------------
+
+        private static bool IsGpuGradient(Brush b) => b is LinearGradientBrush or RadialGradientBrush;
+
+        // Fills the 64-byte BrushParams uniform for a gradient. localOrigin/localSize is the
+        // brush-space rect the quad's uv 0..1 maps across; gradient geometry (start/axis or
+        // centre/radius) is already in that same space (local for masked fills, device for
+        // opacity masks — the caller pre-transforms it). Mirrors EvaluateBrush's math.
+        private static byte[] BuildBrushParams(Brush brush, Vector2 g0, Vector2 g1,
+            float rectX, float rectY, float rectW, float rectH, float opacity)
+        {
+            var buf = new byte[64];
+            Span<uint> u = MemoryMarshal.Cast<byte, uint>((Span<byte>)buf);
+            Span<float> f = MemoryMarshal.Cast<byte, float>((Span<byte>)buf);
+            if (brush is LinearGradientBrush lg)
+            {
+                u[0] = 1; u[1] = SpreadCode(lg.SpreadMethod);
+                Vector2 axis = g1 - g0;
+                f[4] = g0.X; f[5] = g0.Y; f[6] = axis.X; f[7] = axis.Y;
+                float len2 = axis.LengthSquared();
+                f[13] = len2 > 0f ? 1f / len2 : 0f;   // misc.y = 1/|axis|^2
+            }
+            else if (brush is RadialGradientBrush)
+            {
+                u[0] = 2; u[1] = SpreadCode(((RadialGradientBrush)brush).SpreadMethod);
+                f[4] = g0.X; f[5] = g0.Y; f[6] = g1.X; f[7] = g1.Y;  // g1 = (radiusX, radiusY)
+            }
+            f[8] = rectX; f[9] = rectY; f[10] = rectW; f[11] = rectH; // rect
+            f[12] = opacity;                                          // misc.x
+            return buf;
+        }
+
+        private static uint SpreadCode(GradientSpreadMethod s) => s switch
+        {
+            GradientSpreadMethod.Reflect => 1u,
+            GradientSpreadMethod.Repeat => 2u,
+            _ => 0u,
+        };
+
+        private static GradientStop[] BrushStops(Brush b) => b switch
+        {
+            LinearGradientBrush lg => lg.Stops,
+            RadialGradientBrush rg => rg.Stops,
+            _ => Array.Empty<GradientStop>(),
+        };
+
+        // format must be the pipeline format of the pass the returned bind group is drawn in:
+        // auto-layout bind groups are exclusive to the exact pipeline their layout came from.
+        private IntPtr CreateBrushBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr covView, IntPtr rampView, IntPtr ubuf, int uniSize)
+        {
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
+            if (kind is FillKind.MaskBrush or FillKind.MaskImage)
+            {
+                // binding(1) = ramp (gradient) or image (fs_maskimage); identical layout.
+                var e = stackalloc WGPUBindGroupEntry[5];
+                e[0] = new WGPUBindGroupEntry { binding = 0, textureView = covView };
+                e[1] = new WGPUBindGroupEntry { binding = 1, textureView = rampView };
+                e[2] = new WGPUBindGroupEntry { binding = 2, sampler = LinearSampler() };
+                e[3] = new WGPUBindGroupEntry { binding = 3, sampler = LinearSampler() };
+                e[4] = new WGPUBindGroupEntry { binding = 4, buffer = ubuf, offset = 0, size = (ulong)uniSize };
+                var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 5, entries = e };
+                return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+            }
+            else
+            {
+                var e = stackalloc WGPUBindGroupEntry[3];
+                e[0] = new WGPUBindGroupEntry { binding = 0, textureView = rampView };
+                e[1] = new WGPUBindGroupEntry { binding = 1, sampler = LinearSampler() };
+                e[2] = new WGPUBindGroupEntry { binding = 2, buffer = ubuf, offset = 0, size = (ulong)uniSize };
+                var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 3, entries = e };
+                return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+            }
+        }
+
+        // Masked gradient fill on the GPU: rasterize local coverage, then composite it with
+        // the gradient evaluated per-fragment (fs_maskbrush) — no CPU per-texel bake. The
+        // brush geometry is in the same LOCAL space as the coverage; the quad carries the
+        // world transform. Returns false if the coverage is empty.
+        private bool EmitGpuGradientMask(PathGeometry localGeom, Brush gradient, Matrix3x2 world, double opacity,
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        {
+            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr covTex, out IntPtr covView,
+                    out int ox, out int oy, out int w, out int h))
+                return false;
+            DeferReleaseTexView(covTex, covView);
+
+            var (rampTex, rampView) = CreateRgbaTexture(BuildGradientRamp(BrushStops(gradient)), GradientRampTexels, 1);
+            DeferReleaseTexView(rampTex, rampView);
+
+            (Vector2 g0, Vector2 g1) = gradient is LinearGradientBrush lg
+                ? (lg.Start, lg.End)
+                : (((RadialGradientBrush)gradient).Center,
+                   new Vector2(((RadialGradientBrush)gradient).RadiusX, ((RadialGradientBrush)gradient).RadiusY));
+            byte[] uni = BuildBrushParams(gradient, g0, g1, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
+            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
+            _ctx.WriteBuffer(ubuf, uni);
+            DeferReleaseBuffer(ubuf);
+
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskBrush, covView, rampView, ubuf, uni.Length);
+            DeferReleaseBindGroup(bg);
+
+            float x0 = ox, y0 = oy, x1 = ox + w, y1 = oy + h;
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y0), world), width, height), 1f, 1f, 1f, 1f, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y0), world), width, height), 1f, 1f, 1f, 1f, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y1), world), width, height), 1f, 1f, 1f, 1f, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), 1f, 1f, 1f, 1f, 0f, 1f);
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskBrush, bg));
+            return true;
+        }
+
+        // Masked image/tile fill on the GPU: rasterize local coverage, upload the image (an
+        // sRGB texture on the display path so filtering happens in linear space), and let
+        // fs_maskimage do the tile/flip UV + bilinear sample per-fragment — replacing the CPU
+        // BakeBrushMask/SampleBilinear per-texel loop. Returns false if empty.
+        private bool EmitGpuImageMask(PathGeometry localGeom, ImageBrush img, Matrix3x2 world, double opacity,
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        {
+            if (img.PixelWidth <= 0 || img.PixelHeight <= 0)
+                return false;
+            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr covTex, out IntPtr covView,
+                    out int ox, out int oy, out int w, out int h))
+                return false;
+            DeferReleaseTexView(covTex, covView);
+
+            var (imgTex, imgView) = CreateImageTexture(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+            DeferReleaseTexView(imgTex, imgView);
+
+            byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
+            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
+            _ctx.WriteBuffer(ubuf, uni);
+            DeferReleaseBuffer(ubuf);
+
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length);
+            DeferReleaseBindGroup(bg);
+
+            float x0 = ox, y0 = oy, x1 = ox + w, y1 = oy + h;
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y0), world), width, height), 1f, 1f, 1f, 1f, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y0), world), width, height), 1f, 1f, 1f, 1f, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y1), world), width, height), 1f, 1f, 1f, 1f, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), 1f, 1f, 1f, 1f, 0f, 1f);
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskImage, bg));
+            return true;
+        }
+
+        // Fills the BrushParams uniform for an image/tile brush: kindSpread.y = TileMode,
+        // g0.xy = (tileWidth, tileHeight), rect = coverage bounds, misc.x = opacity.
+        private static byte[] BuildImageBrushParams(ImageBrush img, int ox, int oy, int w, int h, float opacity)
+        {
+            var buf = new byte[64];
+            Span<uint> u = MemoryMarshal.Cast<byte, uint>((Span<byte>)buf);
+            Span<float> f = MemoryMarshal.Cast<byte, float>((Span<byte>)buf);
+            u[0] = 3;                        // image marker
+            u[1] = (uint)img.TileMode;
+            f[4] = img.TileWidth; f[5] = img.TileHeight;
+            f[8] = ox; f[9] = oy; f[10] = w; f[11] = h;
+            f[12] = opacity;
+            return buf;
+        }
+
+        // Gradient opacity mask on the GPU: an R8 alpha target evaluated per-device-pixel
+        // (fs_brushalpha), replacing RasterizeOpacityMask's CPU loop. Endpoints are
+        // transformed to device space (matching the CPU path). Returns false for
+        // non-gradient brushes (the caller keeps the trivial CPU fill).
+        private bool GpuOpacityMask(Brush brush, Matrix3x2 world, int width, int height, int originX, int originY,
+            out IntPtr tex, out IntPtr view)
+        {
+            tex = IntPtr.Zero; view = IntPtr.Zero;
+            if (!IsGpuGradient(brush)) return false;
+
+            Vector2 g0, g1;
+            if (brush is LinearGradientBrush lg)
+            {
+                g0 = Vector2.Transform(lg.Start, world);
+                g1 = Vector2.Transform(lg.End, world);
+            }
+            else
+            {
+                var rg = (RadialGradientBrush)brush;
+                g0 = Vector2.Transform(rg.Center, world);
+                g1 = new Vector2(rg.RadiusX * new Vector2(world.M11, world.M12).Length(),
+                                 rg.RadiusY * new Vector2(world.M21, world.M22).Length());
+            }
+            byte[] uni = BuildBrushParams(brush, g0, g1, originX, originY, width, height, 1f);
+            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
+            _ctx.WriteBuffer(ubuf, uni);
+            DeferReleaseBuffer(ubuf);
+
+            var (rampTex, rampView) = CreateRgbaTexture(BuildGradientRamp(BrushStops(brush)), GradientRampTexels, 1);
+            DeferReleaseTexView(rampTex, rampView);
+
+            PerfTextures++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
+                format = WGPUTextureFormat.R8Unorm,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            view = wgpuTextureCreateView(tex, IntPtr.Zero);
+
+            IntPtr bg = CreateBrushBindGroup(WGPUTextureFormat.R8Unorm, FillKind.BrushAlpha, IntPtr.Zero, rampView, ubuf, uni.Length);
+            DeferReleaseBindGroup(bg);
+
+            DrawData d = RentDrawData();
+            AddVertex(d.Verts, new Vector2(-1f, 1f), 1f, 1f, 1f, 1f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(1f, 1f), 1f, 1f, 1f, 1f, 1f, 0f);
+            AddVertex(d.Verts, new Vector2(1f, -1f), 1f, 1f, 1f, 1f, 1f, 1f);
+            AddVertex(d.Verts, new Vector2(-1f, -1f), 1f, 1f, 1f, 1f, 0f, 1f);
+            AddQuadIndices(d.Indices, 0);
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, width, height), FillKind.BrushAlpha, bg));
+            _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = width, TexH = height });
+            return true;
+        }
 
         private IntPtr CreateSampledBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr view, IntPtr sampler)
         {

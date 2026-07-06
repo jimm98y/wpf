@@ -125,6 +125,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [return: JSMarshalAs<JSType.Array<JSType.Number>>]
         internal static partial byte[] TakeBytes(int id);
 
+        // Async GPU hit-test readback: the packed visual id at a device point.
+        [JSImport("readbackTexel", ModuleName)]
+        internal static partial Task<int> ReadbackTexel(int device, int texture, int x, int y);
+
         [JSImport("release", ModuleName)]
         internal static partial void Release(int id);
 
