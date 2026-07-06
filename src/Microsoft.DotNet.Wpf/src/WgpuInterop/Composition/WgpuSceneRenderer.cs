@@ -118,7 +118,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<long>? dead = null;
             foreach (KeyValuePair<long, CachedMask> kv in _maskCache)
             {
-                if (kv.Value.LastFrame >= _frameId - 3) continue;
+                // Masks are small (R8, geometry-sized); keep them across a scroll's phase
+                // cycling (a given half-px phase recurs every few frames, not every frame).
+                if (kv.Value.LastFrame >= _frameId - 60) continue;
                 (dead ??= new List<long>()).Add(kv.Key);
                 CachedMask c = kv.Value;
                 wgpuBindGroupRelease(c.BindGroup);
@@ -368,6 +370,9 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             public bool IsEmpty => W <= 0 || H <= 0;
         }
 
+        // Intersect-neutral bound (effect regions that must not be viewport-clipped).
+        private static readonly Scissor UnboundedScissor = new Scissor(int.MinValue / 4, int.MinValue / 4, int.MaxValue / 2, int.MaxValue / 2);
+
         private readonly struct DrawItem
         {
             public readonly uint FirstIndex, IndexCount;
@@ -609,14 +614,40 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // inherited rectangular clip -- otherwise a small card with no tight clip inherits the whole
             // scroll viewport (e.g. 3420x1888) and its drop-shadow blurs ~6M pixels (and allocates a
             // ~6-27MB transient buffer -> Gen2 GC) every frame instead of ~card-sized.
-            Scissor contentClip = fullTarget ? clip : Intersect(clip, ContentDeviceBounds(v, world, width, height));
-            Scissor region =
-                fullTarget ? new Scissor(0, 0, width, height) :
-                v.ClipGeometry is { } cg ? Intersect(clip, GeoDeviceBounds(cg, world, width, height)) :
-                v.OpacityMask != null ? contentClip :
-                v.Effect is BlurEffect be ? EffectRegion(contentClip, be.Radius, 0, 0, clip) :
-                v.Effect is DropShadowEffect de ? EffectRegion(contentClip, de.BlurRadius, de.OffsetX, de.OffsetY, clip) :
-                contentClip;
+            //
+            // The region is deliberately NOT intersected with the live clip and its size is padded to a
+            // multiple of 8: the cache key includes the region SIZE, and both the clip intersection (a
+            // card crossing the viewport edge shrinks every frame) and the floor/ceil of fractionally
+            // positioned bounds (±1px as subpixel scroll slides) would change the key every scroll frame
+            // — a full card re-bake each time (measured: ~30 layer bakes + ~10MB alloc per frame → 30fps
+            // touchpad scroll). Baking the complete content region keeps the key scroll-stable; the
+            // composite applies the live clip. Oversized regions (> target) keep the old clipped,
+            // per-position behavior.
+            bool stableRegion = false;
+            Scissor region;
+            if (fullTarget)
+            {
+                region = new Scissor(0, 0, width, height);
+            }
+            else
+            {
+                Scissor cb = v.ClipGeometry is { } cg
+                    ? GeoDeviceBounds(cg, world, width, height)
+                    : ContentDeviceBounds(v, world, width, height);
+                if (v.Effect is BlurEffect be) cb = EffectRegion(cb, be.Radius, 0, 0, UnboundedScissor);
+                else if (v.Effect is DropShadowEffect de) cb = EffectRegion(cb, de.BlurRadius, de.OffsetX, de.OffsetY, UnboundedScissor);
+                if (!cb.IsEmpty) cb = new Scissor(cb.X, cb.Y, (cb.W + 7) & ~7, (cb.H + 7) & ~7);
+                if (!cb.IsEmpty && cb.W <= width && cb.H <= height)
+                {
+                    stableRegion = true;
+                    region = cb;
+                    if (Intersect(clip, region).IsEmpty) return;   // fully outside the live clip
+                }
+                else
+                {
+                    region = Intersect(clip, cb);
+                }
+            }
             if (region.IsEmpty) return;
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             float groupOpacity = (float)(inheritedOpacity * vOpacity);
@@ -681,9 +712,11 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 if (!cacheHit)
                 {
                     PerfLayerMiss++;
-                    // Full-target bakes are clipped only by the render target so the cached
-                    // content is position-complete; the composite scissors to the live clip.
-                    Scissor bakeClip = fullTarget ? new Scissor((int)_devOX, (int)_devOY, width, height) : clip;
+                    // Full-target bakes are clipped only by the render target, and stable region
+                    // bakes only by their own region, so the cached content is position-complete;
+                    // the composite scissors to the live clip.
+                    Scissor bakeClip = fullTarget ? new Scissor((int)_devOX, (int)_devOY, width, height)
+                        : stableRegion ? region : clip;
                     _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height);
                     cl.FullTarget = fullTarget;
                     cl.OrigTX = world.M31; cl.OrigTY = world.M32;
@@ -1643,10 +1676,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 // offset (applied to the emitted quad) and a quarter-pixel subpixel phase
                 // (baked into the mask + key); rasterization then only happens when geometry,
                 // the linear transform, or the phase changes.
-                float qx = MathF.Round(world.M31 * 4f) * 0.25f;
-                float qy = MathF.Round(world.M32 * 4f) * 0.25f;
+                // Half-pixel phase (4 variants): fewer variants than quarter-px means a fast
+                // fractional scroll cycles through cached phases instead of missing on most
+                // frames (16 phases + a short eviction window re-rasterized nearly every frame).
+                float qx = MathF.Round(world.M31 * 2f) * 0.5f;
+                float qy = MathF.Round(world.M32 * 2f) * 0.5f;
                 float ox = MathF.Floor(qx), oy = MathF.Floor(qy);
-                int phase = (int)((qx - ox) * 4f) * 4 + (int)((qy - oy) * 4f);
+                int phase = (int)((qx - ox) * 2f) * 2 + (int)((qy - oy) * 2f);
                 long key = HashGeometry(coverageGeometry);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M11);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M12);
