@@ -16,6 +16,7 @@
          reflectively (BAML, themes), so trim in partial mode and root every WPF and
          support assembly — only trimmable-marked BCL assemblies get trimmed. -->
     <RunAOTCompilation>true</RunAOTCompilation>
+    <WasmEmitSymbolMap>true</WasmEmitSymbolMap>
     <RunAOTCompilationAfterBuild>true</RunAOTCompilationAfterBuild>
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>

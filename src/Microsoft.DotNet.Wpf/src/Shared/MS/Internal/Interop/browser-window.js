@@ -52,6 +52,14 @@ export function destroyWindow(handle) {
 export function setContentSize(handle, width, height) {
     const w = windows.get(handle);
     if (!w) return;
+    // Identical size is a strict no-op: macOS fires window-resize bursts with
+    // unchanged dimensions, a same-value canvas.width write still blanks the
+    // canvas, and the queued synthetic WM_SIZE would re-layout and invalidate
+    // the renderer's entire layer cache (~65ms per spurious event).
+    const dw = Math.max(1, Math.round(width * dpr()));
+    const dh = Math.max(1, Math.round(height * dpr()));
+    if (w.canvas.width === dw && w.canvas.height === dh && w.canvas.style.width === `${width}px`)
+        return;
     w.canvas.style.width = `${width}px`;
     w.canvas.style.height = `${height}px`;
     // The backing-store (attribute) size is owned by the WebGPU surface configure;

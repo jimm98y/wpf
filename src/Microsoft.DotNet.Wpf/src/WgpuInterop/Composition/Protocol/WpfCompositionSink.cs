@@ -53,6 +53,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly string? s_logPath =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_SINK_LOG");
 
+        // Diagnostics: also print the periodic PERF lines to the console (browser DevTools)
+        // so live perf can be inspected without pulling the VFS log (?perf=1 in the wasm head).
+        private static readonly bool s_perfToConsole =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_PERF_CONSOLE") == "1";
+
         public WpfCompositionSink()
         {
             // Resolve WPF glyph runs to real fonts so text renders. The run carries a
@@ -214,17 +219,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             _renderer!.EndFrame();
 
-            if (++_perfFrames >= 60 && s_logPath != null)
+            if (++_perfFrames >= 60 && (s_logPath != null || s_perfToConsole))
             {
                 double ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _perfFrames;
                 double msr(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                Log($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
-                Log($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
+                void Emit(string m) { Log(m); if (s_perfToConsole) Console.WriteLine(m); }
+                Emit($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
+                Emit($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
                 if (_gcBytes0 != 0)
-                    Log($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame (realize={_perfRealizeAlloc / 1024.0 / _perfFrames:0.0} render={_perfRenderAlloc / 1024.0 / _perfFrames:0.0} [collect={WgpuSceneRenderer.PerfCollectAlloc / 1024.0 / _perfFrames:0.0} exec={WgpuSceneRenderer.PerfExecAlloc / 1024.0 / _perfFrames:0.0}]) gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
+                    Emit($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame (realize={_perfRealizeAlloc / 1024.0 / _perfFrames:0.0} render={_perfRenderAlloc / 1024.0 / _perfFrames:0.0} [collect={WgpuSceneRenderer.PerfCollectAlloc / 1024.0 / _perfFrames:0.0} exec={WgpuSceneRenderer.PerfExecAlloc / 1024.0 / _perfFrames:0.0}]) gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
                 _gcBytes0 = allocNow; _gc0 = g0; _gc1 = g1; _gc2 = g2; _perfRealizeAlloc = 0; _perfRenderAlloc = 0;
                 WgpuSceneRenderer.PerfCollectAlloc = 0; WgpuSceneRenderer.PerfExecAlloc = 0;
                 _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;

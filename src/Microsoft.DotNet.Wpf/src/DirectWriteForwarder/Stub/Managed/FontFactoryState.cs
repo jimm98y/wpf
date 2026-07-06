@@ -48,15 +48,15 @@ namespace MS.Internal.Text.TextInterface.Managed
         // Keys are lower-cased; each maps to an ordered list of candidate replacements.
         private static readonly Dictionary<string, string[]> s_substitutes = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["segoe ui"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans" },
-            ["segoe ui semibold"] = new[] { "Helvetica Neue", "Helvetica", "DejaVu Sans" },
-            ["segoe ui symbol"] = new[] { "Apple Symbols", "Helvetica", "DejaVu Sans" },
-            ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans" },
-            ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "DejaVu Sans" },
-            ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "DejaVu Sans" },
-            ["microsoft sans serif"] = new[] { "Helvetica", "Arial", "DejaVu Sans" },
-            ["arial"] = new[] { "Arial", "Helvetica Neue", "Helvetica", "DejaVu Sans" },
-            ["calibri"] = new[] { "Helvetica Neue", "Helvetica", "DejaVu Sans" },
+            ["segoe ui"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
+            ["segoe ui semibold"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["segoe ui symbol"] = new[] { "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
+            ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["microsoft sans serif"] = new[] { "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
+            ["arial"] = new[] { "Arial", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["calibri"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
             ["consolas"] = new[] { "Menlo", "Courier New", "Monaco", "DejaVu Sans Mono" },
             ["courier new"] = new[] { "Courier New", "Menlo", "Monaco", "DejaVu Sans Mono" },
             ["times new roman"] = new[] { "Times New Roman", "Times", "DejaVu Serif" },
@@ -64,7 +64,7 @@ namespace MS.Internal.Text.TextInterface.Managed
         };
 
         // The ultimate fallback family when nothing else resolves (a face is guaranteed to exist).
-        private static readonly string[] s_lastResort = { "Helvetica Neue", "Helvetica", "Arial", "Times New Roman", "DejaVu Sans" };
+        private static readonly string[] s_lastResort = { "Helvetica Neue", "Helvetica", "Arial", "Times New Roman", "Liberation Sans", "DejaVu Sans" };
 
         internal static FamilyRecord LookupFamily(string name)
         {

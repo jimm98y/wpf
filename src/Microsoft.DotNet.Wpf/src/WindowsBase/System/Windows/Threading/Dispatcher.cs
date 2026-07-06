@@ -2127,6 +2127,14 @@ namespace System.Windows.Threading
         // posting its continuations through the dispatcher queue would deadlock the
         // very loop that services that queue. The dispatcher context is installed
         // only around ProcessQueue so application awaits resume via the dispatcher.
+        // Diagnostics (browser): per-tick wall-time telemetry to the console, enabled by
+        // WPF_WEBGPU_PERF_CONSOLE=1 (?perf=1 in the wasm head). The renderer's PERF lines
+        // cover the sink; this covers the whole dispatcher tick (input+layout+render).
+        private static readonly bool s_pumpPerfConsole =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_PERF_CONSOLE") == "1";
+        private int _pumpTickCount;
+        private double _pumpTickTotalMs, _pumpTickMaxMs;
+
         private async void RunBrowserPumpAsync(DispatcherFrame frame)
         {
             _frameDepth++;
@@ -2161,6 +2169,7 @@ namespace System.Windows.Threading
 
                     SynchronizationContext oldSyncContext = SynchronizationContext.Current;
                     SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+                    long tick0 = s_pumpPerfConsole ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                     try
                     {
                         // Drain DOM input/resize events queued by the browser windowing
@@ -2193,6 +2202,17 @@ namespace System.Windows.Threading
                     finally
                     {
                         SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+                        if (s_pumpPerfConsole)
+                        {
+                            double tms = (System.Diagnostics.Stopwatch.GetTimestamp() - tick0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                            _pumpTickTotalMs += tms;
+                            if (tms > _pumpTickMaxMs) _pumpTickMaxMs = tms;
+                            if (++_pumpTickCount == 120)
+                            {
+                                Console.WriteLine($"PERF/tick: avg={_pumpTickTotalMs / 120:F1}ms max={_pumpTickMaxMs:F1}ms over 120 ticks");
+                                _pumpTickCount = 0; _pumpTickTotalMs = 0; _pumpTickMaxMs = 0;
+                            }
+                        }
                     }
                 }
 

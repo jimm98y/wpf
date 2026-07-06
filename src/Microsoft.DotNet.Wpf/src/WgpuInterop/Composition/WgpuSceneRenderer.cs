@@ -633,17 +633,16 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             bool shiftReusable = true;
             if (fullTarget)
             {
+                // Containment vs the TARGET rect only: the bake below uses the target as its
+                // clip (not the inherited scroll-viewport clip), so a card that is inside the
+                // window but crossing the viewport edge still bakes COMPLETE content under the
+                // scroll-invariant key — the per-frame composite applies the current viewport
+                // clip. This keeps scrolling on cache hits (re-render only while crossing the
+                // actual window boundary) without the baked-cropped-top bug.
                 Scissor cb = ContentDeviceBounds(v, world, width, height);
-                // The baked render is cropped by BOTH the target rect and the inherited
-                // clip (e.g. the scroll viewport, whose top sits below the header band).
-                // Containment must be tested against their intersection: checking the
-                // target alone let a card that was almost scrolled off the top — inside
-                // the target but above the viewport clip — bake with its top missing
-                // under the scroll-invariant key, and reuse that cropped layer forever.
-                Scissor lim = Intersect(clip, new Scissor((int)_devOX, (int)_devOY, width, height));
                 shiftReusable = cb.IsEmpty ||
-                    (cb.X >= lim.X && cb.Y >= lim.Y &&
-                     cb.X + cb.W <= lim.X + lim.W && cb.Y + cb.H <= lim.Y + lim.H);
+                    (cb.X >= _devOX && cb.Y >= _devOY &&
+                     cb.X + cb.W <= _devOX + width && cb.Y + cb.H <= _devOY + height);
             }
 
             // ALL effect/opacity/clip/mask layers are cacheable: if this subtree (+ its clip/mask)
@@ -652,14 +651,47 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // dominant cost for static cards on the GL backend. Animated cards re-hash -> re-render.
             {
                 long h0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                long key = LayerCacheKey(v, world, region, shiftReusable);
+                // The scroll-invariant key is always CHECKED first: a stable bake created while
+                // the layer was fully visible holds the COMPLETE card (bake clip = target), so
+                // shift-reusing it while the card crosses the window edge is correct — the
+                // composite scissors to the live target/clip. Containment only gates CREATING
+                // the stable entry (a partial first sighting must not bake cropped content
+                // under the permanent key); until then, transient frames use position keys.
+                long stableKey = LayerCacheKey(v, world, region, shiftReusable: true);
+                long key = stableKey;
+                bool cacheHit = _layerCache.TryGetValue(key, out CachedLayer? cl);
+                if (!cacheHit && !shiftReusable)
+                {
+                    key = LayerCacheKey(v, world, region, shiftReusable: false);
+                    cacheHit = _layerCache.TryGetValue(key, out cl);
+                    // Flick throttle: during fast scrolls a layer first seen partially would
+                    // re-bake a full-target texture (+ CPU mask) at EVERY new offset. Reuse
+                    // the most recent transient bake (shifted) for up to 2 frames instead —
+                    // its leading edge lags imperceptibly, and the eviction window (3 idle
+                    // frames) guarantees the reused entry's textures are still alive.
+                    if (!cacheHit && fullTarget &&
+                        _transientBakes.TryGetValue(stableKey, out (CachedLayer Layer, long Frame) tb) &&
+                        _frameId - tb.Frame <= 2 && tb.Layer.LastFrame >= _frameId - 3)
+                    {
+                        cl = tb.Layer;
+                        cacheHit = true;
+                    }
+                }
                 PerfHashTicks += System.Diagnostics.Stopwatch.GetTimestamp() - h0;
-                if (!_layerCache.TryGetValue(key, out CachedLayer? cl))
+                if (!cacheHit)
                 {
                     PerfLayerMiss++;
-                    _layerCache[key] = cl = RenderLayerToCache(v, world, region, clip, plan, width, height);
+                    // Full-target bakes are clipped only by the render target so the cached
+                    // content is position-complete; the composite scissors to the live clip.
+                    Scissor bakeClip = fullTarget ? new Scissor((int)_devOX, (int)_devOY, width, height) : clip;
+                    _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height);
                     cl.FullTarget = fullTarget;
                     cl.OrigTX = world.M31; cl.OrigTY = world.M32;
+                    if (fullTarget)
+                    {
+                        if (shiftReusable) _transientBakes.Remove(stableKey);           // stable bake supersedes
+                        else _transientBakes[stableKey] = (cl, _frameId);               // remember for flick reuse
+                    }
                 }
                 else
                 {
@@ -761,6 +793,10 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
             }
         }
+
+        // Latest transient (partially-visible) full-target bake per stable key, for
+        // short-window reuse during fast scrolling. See the flick throttle above.
+        private readonly Dictionary<long, (CachedLayer Layer, long Frame)> _transientBakes = new();
 
         // ---- region-layer content hash (FNV-1a over geometry/brushes/transforms) ----
         private long _hash;
@@ -1601,12 +1637,30 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
             // (Non-solid brushes bake per-texel in the geometry's local space, so they stay local.)
             if (brush is SolidColorBrush solid)
             {
-                PathGeometry deviceGeom = TransformGeometry(coverageGeometry, world);
-                long key = (HashGeometry(deviceGeom) * 397 ^ (long)format) * 2 + (gamma ? 1 : 0);
+                // Translation-invariant cache: scrolling is pure translation, so the key must
+                // not contain the device-space offset or every scroll position re-rasterizes
+                // every visible path on the CPU. Split the translation into an integer pixel
+                // offset (applied to the emitted quad) and a quarter-pixel subpixel phase
+                // (baked into the mask + key); rasterization then only happens when geometry,
+                // the linear transform, or the phase changes.
+                float qx = MathF.Round(world.M31 * 4f) * 0.25f;
+                float qy = MathF.Round(world.M32 * 4f) * 0.25f;
+                float ox = MathF.Floor(qx), oy = MathF.Floor(qy);
+                int phase = (int)((qx - ox) * 4f) * 4 + (int)((qy - oy) * 4f);
+                long key = HashGeometry(coverageGeometry);
+                key = key * 31 + BitConverter.SingleToInt32Bits(world.M11);
+                key = key * 31 + BitConverter.SingleToInt32Bits(world.M12);
+                key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
+                key = key * 31 + BitConverter.SingleToInt32Bits(world.M22);
+                key = key * 31 + phase;
+                key = (key * 397 ^ (long)format) * 2 + (gamma ? 1 : 0);
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
-                    CoverageMask m = PathRasterizer.Rasterize(deviceGeom);
+                    Matrix3x2 phased = world;
+                    phased.M31 = qx - ox;
+                    phased.M32 = qy - oy;
+                    CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, phased));
                     if (m.IsEmpty) return;
                     if (gamma) ApplyTextGamma(m.Coverage);
                     (IntPtr tex, IntPtr view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
@@ -1615,7 +1669,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                     _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
                 }
                 cm.LastFrame = _frameId;
-                EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data);
+                EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
                 return;
             }
             PerfCoverage++;
@@ -1630,12 +1684,13 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
                 coverage[i] = s_textGammaLut[coverage[i]];
         }
 
-        // Emit a quad sampling a cached device-space coverage mask, tinted by the solid colour.
-        private void EmitCachedSolidMask(CachedMask c, RgbaColor color, double opacity, Scissor clip, int width, int height, DrawData data)
+        // Emit a quad sampling a cached coverage mask, tinted by the solid colour. The mask is
+        // rasterized translation-free; ox/oy re-apply the integer device-pixel offset.
+        private void EmitCachedSolidMask(CachedMask c, RgbaColor color, double opacity, Scissor clip, int width, int height, DrawData data, float ox = 0, float oy = 0)
         {
             if (clip.IsEmpty) return;
             float r = color.R, g = color.G, b = color.B, a = (float)Math.Clamp(color.A * opacity, 0.0, 1.0);
-            float x0 = c.Ox, y0 = c.Oy, x1 = c.Ox + c.W, y1 = c.Oy + c.H;
+            float x0 = c.Ox + ox, y0 = c.Oy + oy, x1 = x0 + c.W, y1 = y0 + c.H;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), r, g, b, a, 0f, 0f);
             AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), r, g, b, a, 1f, 0f);

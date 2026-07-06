@@ -38,6 +38,8 @@ namespace MS.Internal.Interop
 
         public bool IsBorderless { get; private set; }
 
+        private int _lastResizeW = -1, _lastResizeH = -1;   // resize-report dedupe
+
         public static IntPtr MouseCaptureHandle { get; set; }
 
         /// <summary>Raised when the window's content size changed (args in device pixels).</summary>
@@ -168,21 +170,44 @@ namespace MS.Internal.Interop
                 return;
 
             using JsonDocument doc = JsonDocument.Parse(json);
-            foreach (JsonElement e in doc.RootElement.EnumerateArray())
+            JsonElement[] events = System.Linq.Enumerable.ToArray(doc.RootElement.EnumerateArray());
+            for (int idx = 0; idx < events.Length; idx++)
             {
+                JsonElement e = events[idx];
                 string type = e.GetProperty("t").GetString();
                 switch (type)
                 {
                     case "m":
+                    {
+                        int kind = e.GetProperty("k").GetInt32();
+                        int handle = e.GetProperty("h").GetInt32();
+                        int wheel = e.GetProperty("w").GetInt32();
+                        // Coalesce trackpad floods within one tick: consecutive moves for the
+                        // same window keep only the last; consecutive wheels sum their deltas
+                        // (exactly what a Win32 message queue does with WM_MOUSEMOVE/WM_MOUSEWHEEL).
+                        // One layout per frame instead of one per DOM event.
+                        while (idx + 1 < events.Length)
+                        {
+                            JsonElement n = events[idx + 1];
+                            if (n.GetProperty("t").GetString() != "m" ||
+                                n.GetProperty("k").GetInt32() != kind ||
+                                n.GetProperty("h").GetInt32() != handle ||
+                                (kind != 0 && kind != 3))
+                                break;
+                            if (kind == 3) wheel += n.GetProperty("w").GetInt32();
+                            idx++;
+                            e = n;
+                        }
                         MouseInput?.Invoke(new BrowserMouseMessage(
-                            e.GetProperty("k").GetInt32(),
-                            (IntPtr)e.GetProperty("h").GetInt32(),
+                            kind,
+                            (IntPtr)handle,
                             e.GetProperty("b").GetInt32(),
                             e.GetProperty("x").GetInt32(),
                             e.GetProperty("y").GetInt32(),
-                            e.GetProperty("w").GetInt32(),
+                            kind == 3 ? wheel : e.GetProperty("w").GetInt32(),
                             e.GetProperty("ts").GetInt32()));
                         break;
+                    }
 
                     case "k":
                         KeyInput?.Invoke(new BrowserKeyMessage(
@@ -199,10 +224,23 @@ namespace MS.Internal.Interop
                         break;
 
                     case "r":
-                        FromHandle((IntPtr)e.GetProperty("h").GetInt32())?.Resized?.Invoke(
-                            e.GetProperty("x").GetInt32(),
-                            e.GetProperty("y").GetInt32());
+                    {
+                        BrowserWindow win = FromHandle((IntPtr)e.GetProperty("h").GetInt32());
+                        if (win != null)
+                        {
+                            int rw = e.GetProperty("x").GetInt32();
+                            int rh = e.GetProperty("y").GetInt32();
+                            // Unchanged size never reaches WPF: a WM_SIZE re-layouts the tree
+                            // and invalidates the renderer's layer cache.
+                            if (rw != win._lastResizeW || rh != win._lastResizeH)
+                            {
+                                win._lastResizeW = rw;
+                                win._lastResizeH = rh;
+                                win.Resized?.Invoke(rw, rh);
+                            }
+                        }
                         break;
+                    }
                 }
             }
         }
