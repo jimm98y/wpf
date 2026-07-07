@@ -453,9 +453,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return chosen;
         }
 
+        // Present mode: Fifo (default) is vsync-locked to the display refresh -- a frame that
+        // narrowly misses a vsync deadline slips to the next interval (so a 100Hz display can
+        // read ~88fps). WPF_WEBGPU_PRESENT=mailbox presents the newest frame without blocking on
+        // vsync (no tearing), which recovers those missed intervals; =immediate uncaps entirely
+        // (may tear). Backends that don't support the requested mode fall back to Fifo.
+        private static readonly WGPUPresentMode s_presentMode =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_PRESENT")?.ToLowerInvariant() switch
+            {
+                "mailbox" => WGPUPresentMode.Mailbox,
+                "immediate" => WGPUPresentMode.Immediate,
+                "fiforelaxed" => WGPUPresentMode.FifoRelaxed,
+                _ => WGPUPresentMode.Fifo,
+            };
+
         private void Configure(TargetSurface ts)
         {
-            Log($"CONFIGURE surface {ts.Width}x{ts.Height}");
+            Log($"CONFIGURE surface {ts.Width}x{ts.Height} present={s_presentMode}");
+            WGPUPresentMode mode = SurfaceSupportsPresentMode(ts.Surface, s_presentMode) ? s_presentMode : WGPUPresentMode.Fifo;
             var config = new WGPUSurfaceConfiguration
             {
                 device = _ctx!.Device,
@@ -464,9 +479,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 width = (uint)ts.Width,
                 height = (uint)ts.Height,
                 alphaMode = WGPUCompositeAlphaMode.Auto,
-                presentMode = WGPUPresentMode.Fifo,
+                presentMode = mode,
             };
             wgpuSurfaceConfigure(ts.Surface, &config);
+        }
+
+        // Fifo is guaranteed by the spec; any other requested mode is honoured only if the surface
+        // reports it in its capabilities (else we keep Fifo).
+        private bool SurfaceSupportsPresentMode(IntPtr surface, WGPUPresentMode mode)
+        {
+            if (mode == WGPUPresentMode.Fifo) return true;
+            var caps = new WGPUSurfaceCapabilities();
+            wgpuSurfaceGetCapabilities(surface, _ctx!.Adapter, &caps);
+            bool found = false;
+            for (nuint i = 0; i < caps.presentModeCount; i++)
+                if (caps.presentModes[i] == mode) { found = true; break; }
+            wgpuSurfaceCapabilitiesFreeMembers(caps);
+            return found;
         }
 
         public void Dispose()

@@ -260,7 +260,12 @@ fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @locati
     return o;
 }
 
-@group(0) @binding(0) var<storage, read> edges : array<vec4<f32>>;
+// Path outline as QUADRATIC Bézier segments, 3 vec2 each (p0, control, p1); a straight
+// line is the degenerate quadratic with control = midpoint, and cubics are split into a
+// few quadratics on the CPU. Curve flattening thus happens on the GPU: crossings are
+// solved analytically per scanline (exact for lines and quadratics) instead of the CPU
+// pre-subdividing every curve into ~24 line edges.
+@group(0) @binding(0) var<storage, read> segs : array<vec2<f32>>;
 
 const MAX_PIXEL_CROSSINGS : u32 = 16u;
 
@@ -268,7 +273,7 @@ const MAX_PIXEL_CROSSINGS : u32 = 16u;
 fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     let px = floor(in.uv.x);
     let py = floor(in.uv.y);
-    let edgeCount = u32(in.color.x);
+    let segCount = u32(in.color.x);
     let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma
     let evenOdd = (flags & 1u) != 0u;
     var cov = 0.0;
@@ -278,14 +283,42 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
         var cxs : array<f32, MAX_PIXEL_CROSSINGS>;
         var cds : array<i32, MAX_PIXEL_CROSSINGS>;
         var n = 0u;
-        for (var i = 0u; i < edgeCount; i = i + 1u) {
-            let e = edges[i];             // (x0, y0, x1, y1)
-            let ymin = min(e.y, e.w);
-            let ymax = max(e.y, e.w);
-            if (sy < ymin || sy >= ymax) { continue; }
-            let t = (sy - e.y) / (e.w - e.y);
-            let x = e.x + t * (e.z - e.x);
-            let dir = select(-1, 1, e.w > e.y);
+        for (var i = 0u; i < segCount; i = i + 1u) {
+            let p0 = segs[3u * i];
+            let c  = segs[3u * i + 1u];
+            let p1 = segs[3u * i + 2u];
+            // Segments are y-monotone (split at y-extrema on the CPU), so the crossing test is the
+            // robust endpoint half-open rule: exactly the segments whose endpoints straddle sy cross
+            // it. This uses exact float comparisons (no t-boundary epsilon), so a vertex shared by
+            // two segments is counted once when the path is monotone through it and twice at an
+            // extremum -- eliminating the missed/over-counted crossings that streak the fill.
+            let b0 = p0.y <= sy;
+            let b1 = p1.y <= sy;
+            if (b0 == b1) { continue; }
+            let A = p0.y - 2.0 * c.y + p1.y;
+            let B = 2.0 * (c.y - p0.y);
+            let C0 = p0.y - sy;
+            var t = 0.0;
+            if (abs(A) < 1e-7) {
+                t = -C0 / B;                              // truly linear (B != 0: endpoints straddle)
+            } else {
+                // Numerically STABLE quadratic solve. A line's control point is its midpoint, so A
+                // should be 0, but float rounding leaves a tiny A that can exceed the threshold; the
+                // naive (-B +/- sqrt)/(2A) then cancels catastrophically for small A and returns a
+                // wrong crossing x -> orientation-dependent jagged coverage (star arms) that blinks
+                // as a rect rotates. The q-formula avoids the cancellation and degrades to the linear
+                // root as A -> 0.
+                let disc = max(B * B - 4.0 * A * C0, 0.0);
+                let signB = select(-1.0, 1.0, B >= 0.0);
+                let q = -0.5 * (B + signB * sqrt(disc));  // |q| ~ |B|, never the cancelling term
+                let ra = q / A;
+                let rb = C0 / q;
+                t = select(rb, ra, ra >= 0.0 && ra <= 1.0);   // the one root in range (monotone)
+            }
+            t = clamp(t, 0.0, 1.0);
+            let mt = 1.0 - t;
+            let x = mt * mt * p0.x + 2.0 * mt * t * c.x + t * t * p1.x;
+            let dir = select(-1, 1, p1.y > p0.y);         // whole segment runs one y-direction
             if (x <= px) {
                 w = w + dir;
             } else if (x < px + 1.0 && n < MAX_PIXEL_CROSSINGS) {
@@ -318,6 +351,52 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     // Text gamma: WPF blends glyph coverage in gamma space; cov^(1/2.2) matches the
     // CPU rasterizer's LUT on the display-destined sRGB path.
     if ((flags & 2u) != 0u) { cov = pow(cov, 1.0 / 2.2); }
+    return vec4<f32>(cov, 0.0, 0.0, 1.0);
+}
+";
+
+        // GPU stroking (round join + round cap, solid): the stroke coverage is a signed
+        // distance field around the flattened centre-line polyline — coverage =
+        // clamp(0.5 + halfWidth - distanceToPolyline). Because point-to-segment distance
+        // includes the segment endpoints, shared vertices round into round joins and open
+        // ends round into round caps automatically, with no CPU stroke-to-fill. Non-round
+        // joins/caps and dashes are not distance-field-expressible and stay on PathStroker.
+        // Buffer: 2 vec2 per segment (a, b). Vertex colour: x = segCount, y = halfWidth.
+        private const string StrokeShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    return o;
+}
+
+@group(0) @binding(0) var<storage, read> spts : array<vec2<f32>>;   // 2 per segment: a, b
+
+fn segDist(p : vec2<f32>, a : vec2<f32>, b : vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let t = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
+    return length(pa - ba * t);
+}
+
+@fragment
+fn fs_stroke(in : VSOut) -> @location(0) vec4<f32> {
+    let p = vec2<f32>(floor(in.uv.x) + 0.5, floor(in.uv.y) + 0.5);
+    let segCount = u32(in.color.x);
+    let half = in.color.y;
+    var d = 1e30;
+    for (var i = 0u; i < segCount; i = i + 1u) {
+        d = min(d, segDist(p, spts[2u * i], spts[2u * i + 1u]));
+    }
+    let cov = clamp(0.5 + (half - d), 0.0, 1.0);   // 1px analytic AA ramp at the stroke edge
     return vec4<f32>(cov, 0.0, 0.0, 1.0);
 }
 ";
@@ -505,7 +584,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
@@ -519,6 +598,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _brushShaderModule;
         private IntPtr _brushAlphaShaderModule;
         private IntPtr _idShaderModule;
+        private IntPtr _strokeShaderModule;
         private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
 
         // GPU path rasterization is the default; WPF_WEBGPU_CPU_RASTER=1 restores the
@@ -2154,14 +2234,73 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
-        // Strokes a path: build the stroke outline (stroke-to-fill) and composite
-        // it through the same coverage path as a filled path (any brush).
+        // Strokes a path. Round-join + round-cap solid strokes (the fork's default, and the
+        // exactly distance-field-expressible case) are rasterized directly from the centre-line
+        // by fs_stroke — no CPU stroke-to-fill. Everything else (miter/bevel/square joins/caps,
+        // dashes, non-solid brushes, non-uniform scale) builds the outline on the CPU
+        // (PathStroker) and composites it through the GPU coverage path like any filled path.
         private void EmitStroke(GeometryStroke stroke, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty || stroke.Style.Thickness <= 0) return;
-            PathGeometry outline = PathStroker.Stroke(stroke.Geometry, stroke.Style);
+            StrokeStyle style = stroke.Style;
+            if (s_gpuRaster && stroke.Brush is SolidColorBrush solidStroke
+                && style.Cap == LineCap.Round && style.Join == LineJoin.Round
+                && (style.DashArray is null || style.DashArray.Length == 0)
+                && IsUniformScale(world))
+            {
+                EmitGpuStroke(stroke.Geometry, (float)(style.Thickness / 2.0), solidStroke, world, opacity, clip, width, height, format, data);
+                return;
+            }
+            PathGeometry outline = PathStroker.Stroke(stroke.Geometry, style);
             EmitCoverageMask(outline, stroke.Brush, world, opacity, clip, width, height, format, data);
+        }
+
+        // The SDF stroke uses one device-space half-width, so it is exact only when the world
+        // scale is (near-)uniform (rotation is fine; non-uniform scale would need an elliptical
+        // pen and stays on PathStroker).
+        private static bool IsUniformScale(Matrix3x2 m)
+        {
+            float sx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12);
+            float sy = MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22);
+            return MathF.Abs(sx - sy) <= 0.01f * MathF.Max(sx, sy);
+        }
+
+        // GPU signed-distance stroke (round join + cap, solid): translation-invariant mask cache
+        // mirroring the solid-fill path, rasterized by fs_stroke from the device-space centre-line.
+        private void EmitGpuStroke(PathGeometry centerline, float localHalf, SolidColorBrush solid, Matrix3x2 world,
+            double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        {
+            float deviceHalf = localHalf * MathF.Sqrt(world.M11 * world.M11 + world.M12 * world.M12);
+            if (deviceHalf <= 0f) return;
+
+            float qx = MathF.Round(world.M31 * 2f) * 0.5f;
+            float qy = MathF.Round(world.M32 * 2f) * 0.5f;
+            float ox = MathF.Floor(qx), oy = MathF.Floor(qy);
+            int phase = (int)((qx - ox) * 2f) * 2 + (int)((qy - oy) * 2f);
+            long key = HashGeometry(centerline);
+            key = key * 31 + BitConverter.SingleToInt32Bits(world.M11);
+            key = key * 31 + BitConverter.SingleToInt32Bits(world.M12);
+            key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
+            key = key * 31 + BitConverter.SingleToInt32Bits(world.M22);
+            key = key * 31 + phase;
+            key = key * 31 + BitConverter.SingleToInt32Bits(deviceHalf);
+            key = (key * 397 ^ (long)format) * 2 + 1;   // +1 marker distinguishes stroke from fill keys
+            if (!_maskCache.TryGetValue(key, out CachedMask? cm))
+            {
+                PerfCoverage++;
+                Matrix3x2 phased = world;
+                phased.M31 = qx - ox;
+                phased.M32 = qy - oy;
+                if (!GpuStrokeRasterize(TransformGeometry(centerline, phased), deviceHalf,
+                        out IntPtr tex, out IntPtr view, out int mox, out int moy, out int mw, out int mh))
+                    return;
+                IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
+                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
+                _maskCache[key] = cm;
+            }
+            cm.LastFrame = _frameId;
+            EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
@@ -2647,6 +2786,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     case FillKind.MaskImage:
                     case FillKind.BrushAlpha:
                     case FillKind.Id:
+                    case FillKind.Stroke:
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup, 0, null);
                         break;
                     case FillKind.Text:
@@ -2730,11 +2870,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_brushShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_brushShaderModule);
             if (_brushAlphaShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_brushAlphaShaderModule);
             if (_idShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_idShaderModule);
+            if (_strokeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeShaderModule);
             if (_whiteView != IntPtr.Zero) { wgpuTextureViewRelease(_whiteView); wgpuTextureRelease(_whiteTex); }
             if (_linearSampler != IntPtr.Zero) wgpuSamplerRelease(_linearSampler);
             if (_nearestSampler != IntPtr.Zero) wgpuSamplerRelease(_nearestSampler);
             _shaderModule = _clipShaderModule = _coverageShaderModule = IntPtr.Zero;
-            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = IntPtr.Zero;
+            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = IntPtr.Zero;
             _whiteTex = _whiteView = _linearSampler = _nearestSampler = IntPtr.Zero;
         }
 
@@ -2770,6 +2911,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.MaskBrush or FillKind.MaskImage => GetBrushShaderModule(),
                 FillKind.BrushAlpha => GetBrushAlphaShaderModule(),
                 FillKind.Id => GetIdShaderModule(),
+                FillKind.Stroke => GetStrokeShaderModule(),
                 _ => GetShaderModule(),
             };
             IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind);
@@ -2803,6 +2945,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_idShaderModule != IntPtr.Zero) return _idShaderModule;
             _idShaderModule = CompileWgsl(IdShaderWgsl);
             return _idShaderModule;
+        }
+
+        private IntPtr GetStrokeShaderModule()
+        {
+            if (_strokeShaderModule != IntPtr.Zero) return _strokeShaderModule;
+            _strokeShaderModule = CompileWgsl(StrokeShaderWgsl);
+            return _strokeShaderModule;
         }
 
         private IntPtr WhiteCoverageView()
@@ -2859,6 +3008,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.MaskImage => "fs_maskimage",
                 FillKind.BrushAlpha => "fs_brushalpha",
                 FillKind.Id => "fs_id",
+                FillKind.Stroke => "fs_stroke",
                 _ => "fs_solid",
             };
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -2888,9 +3038,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 // Coverage / brush-alpha passes write the mask value directly (single opaque
                 // quad into a cleared R8 target) — no blending. All others blend premultiplied.
                 var colorTarget = new WGPUColorTargetState { format = targetFormat, blend = &blend, writeMask = WGPUColorWriteMask_All };
-                // Coverage / brush-alpha write mask values directly; the id pass writes packed
-                // ids with topmost-wins-by-paint-order (overwrite, no blend).
-                if (kind is FillKind.Coverage or FillKind.BrushAlpha or FillKind.Id) colorTarget.blend = null;
+                // Coverage / stroke / brush-alpha write mask values directly; the id pass writes
+                // packed ids with topmost-wins-by-paint-order (overwrite, no blend).
+                if (kind is FillKind.Coverage or FillKind.Stroke or FillKind.BrushAlpha or FillKind.Id) colorTarget.blend = null;
 
                 var fragment = new WGPUFragmentState
                 {
@@ -2960,14 +3110,15 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // ---- GPU path rasterization (fs_coverage) ------------------------------
 
-        // Scratch edge list for flattening (single render thread; cleared per use).
+        // Scratch quadratic-segment list for GPU coverage (single render thread; cleared per use).
+        // Holds 6 floats per segment (p0, control, p1); fs_coverage flattens curves analytically.
         private readonly List<float> _edgeScratch = new();
 
         /// <summary>
-        /// Rasterizes path coverage into a new R8 mask texture ON THE GPU: flattens on the
-        /// CPU (cheap, cached upstream), uploads the edges to a storage buffer, and appends
-        /// an fs_coverage pass to the frame plan (plan passes execute before any pass that
-        /// samples the mask). Bounds math matches PathRasterizer.Rasterize exactly. Returns
+        /// Rasterizes path coverage into a new R8 mask texture ON THE GPU: emits quadratic
+        /// segments on the CPU (no curve flattening — cheap, cached upstream), uploads them to a
+        /// storage buffer, and appends an fs_coverage pass to the frame plan (plan passes execute
+        /// before any pass that samples the mask). Bounds are the curves' tight extents. Returns
         /// false for an empty path. The caller owns tex/view.
         /// </summary>
         private bool GpuRasterizeCoverage(PathGeometry path, bool gamma,
@@ -2975,14 +3126,14 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             tex = IntPtr.Zero; view = IntPtr.Zero; ox = oy = w = h = 0;
             _edgeScratch.Clear();
-            int edgeCount = PathRasterizer.FlattenToEdges(path, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
-            if (edgeCount == 0 || minX > maxX) return false;
+            int segCount = PathRasterizer.SegmentsToQuadratics(path, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            if (segCount == 0 || minX > maxX) return false;
             ox = (int)MathF.Floor(minX) - 1;
             oy = (int)MathF.Floor(minY) - 1;
             w = (int)MathF.Ceiling(maxX) + 1 - ox;
             h = (int)MathF.Ceiling(maxY) + 1 - oy;
             if (w <= 0 || h <= 0) return false;
-            (tex, view) = GpuCoveragePass(edgeCount, ox, oy, w, h, path.FillRule, gamma);
+            (tex, view) = GpuCoveragePass(segCount, ox, oy, w, h, path.FillRule, gamma);
             return true;
         }
 
@@ -3026,8 +3177,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
             _edgeScratch.Clear();
             var outline = new PathGeometry(FillRule.NonZero, figures);
-            int edgeCount = PathRasterizer.FlattenToEdges(outline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
-            if (edgeCount == 0 || minX > maxX)
+            int segCount = PathRasterizer.SegmentsToQuadratics(outline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            if (segCount == 0 || minX > maxX)
                 return _glyphAtlas.AddPacked(glyphId, 0, 0, 0, 0, _outlineFont.PixelsPerEm, out entry, out _, out _, out _, out _);
 
             // Same bounds/bearing math as PathRasterizer.Rasterize / TrueTypeFont.TryGetGlyph.
@@ -3043,14 +3194,14 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 return false;   // atlas full -> skip this glyph
 
             EnsureGpuAtlas();
-            AppendGlyphCoveragePass(rx, ry, rw, rh, originX, originY, edgeCount, outline.FillRule);
+            AppendGlyphCoveragePass(rx, ry, rw, rh, originX, originY, segCount, outline.FillRule);
             return true;
         }
 
         // Appends a load-preserve fs_coverage pass that rasterizes the current _edgeScratch outline
-        // (rebased to glyph-local) into the atlas rectangle (rx,ry,rw,rh). Runs before any text pass
-        // samples the atlas (added to _plan during collection).
-        private void AppendGlyphCoveragePass(int rx, int ry, int rw, int rh, int originX, int originY, int edgeCount, FillRule rule)
+        // (quadratic segments rebased to glyph-local) into the atlas rectangle (rx,ry,rw,rh). Runs
+        // before any text pass samples the atlas (added to _plan during collection).
+        private void AppendGlyphCoveragePass(int rx, int ry, int rw, int rh, int originX, int originY, int segCount, FillRule rule)
         {
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= originX; es[i + 1] -= originY; }
@@ -3073,14 +3224,71 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             float y0 = 1f - ry / ah * 2f, y1 = 1f - (ry + rh) / ah * 2f;
             float flags = rule == FillRule.EvenOdd ? 1f : 0f;   // glyphs: no text gamma (matches CPU atlas)
             DrawData d = RentDrawData();
-            AddVertex(d.Verts, new Vector2(x0, y0), edgeCount, flags, 0f, 0f, 0f, 0f);
-            AddVertex(d.Verts, new Vector2(x1, y0), edgeCount, flags, 0f, 0f, rw, 0f);
-            AddVertex(d.Verts, new Vector2(x1, y1), edgeCount, flags, 0f, 0f, rw, rh);
-            AddVertex(d.Verts, new Vector2(x0, y1), edgeCount, flags, 0f, 0f, 0f, rh);
+            AddVertex(d.Verts, new Vector2(x0, y0), segCount, flags, 0f, 0f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(x1, y0), segCount, flags, 0f, 0f, rw, 0f);
+            AddVertex(d.Verts, new Vector2(x1, y1), segCount, flags, 0f, 0f, rw, rh);
+            AddVertex(d.Verts, new Vector2(x0, y1), segCount, flags, 0f, 0f, 0f, rh);
             AddQuadIndices(d.Indices, 0);
             d.Draws.Add(new DrawItem(0, 6, new Scissor(rx, ry, rw, rh), FillKind.Coverage, bg));
             _plan.Add(new LayerPass(_atlasView, false, default, d, WGPUTextureFormat.R8Unorm)
             { LoadPreserve = true, TexW = (int)aw, TexH = (int)ah });
+        }
+
+        // Rasterizes a round stroke's coverage into a new R8 mask ON THE GPU (fs_stroke SDF):
+        // flattens the centre-line, pads the bounds by the half-width, and appends a stroke pass.
+        // Returns false for an empty centre-line. The caller owns tex/view.
+        private bool GpuStrokeRasterize(PathGeometry centerline, float half,
+            out IntPtr tex, out IntPtr view, out int ox, out int oy, out int w, out int h)
+        {
+            tex = IntPtr.Zero; view = IntPtr.Zero; ox = oy = w = h = 0;
+            _edgeScratch.Clear();
+            int segCount = PathRasterizer.FlattenCenterlineSegments(centerline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            if (segCount == 0 || minX > maxX) return false;
+            ox = (int)MathF.Floor(minX - half) - 1;
+            oy = (int)MathF.Floor(minY - half) - 1;
+            w = (int)MathF.Ceiling(maxX + half) + 1 - ox;
+            h = (int)MathF.Ceiling(maxY + half) + 1 - oy;
+            if (w <= 0 || h <= 0) return false;
+
+            Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
+            for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
+
+            int byteLen = Math.Max(16, es.Length * sizeof(float));
+            IntPtr sbuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
+            if (es.Length > 0) _ctx.WriteBuffer(sbuf, MemoryMarshal.AsBytes(es));
+            DeferReleaseBuffer(sbuf);
+
+            PerfTextures++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 },
+                format = WGPUTextureFormat.R8Unorm,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            view = wgpuTextureCreateView(tex, IntPtr.Zero);
+
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Stroke), 0);
+            var entry = new WGPUBindGroupEntry { binding = 0, buffer = sbuf, offset = 0, size = (ulong)byteLen };
+            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
+            DeferReleaseBindGroup(bg);
+
+            // Full-target quad in the mask's own NDC; uv = mask-local pixel coords; the flat vertex
+            // colour carries (segCount, halfWidth) — matching fs_stroke's decoding.
+            DrawData d = RentDrawData();
+            AddVertex(d.Verts, new Vector2(-1f, 1f), segCount, half, 0f, 0f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(1f, 1f), segCount, half, 0f, 0f, w, 0f);
+            AddVertex(d.Verts, new Vector2(1f, -1f), segCount, half, 0f, 0f, w, h);
+            AddVertex(d.Verts, new Vector2(-1f, -1f), segCount, half, 0f, 0f, 0f, h);
+            AddQuadIndices(d.Indices, 0);
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Stroke, bg));
+            _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
+            return true;
         }
 
         /// <summary>GPU equivalent of PathRasterizer.RasterizeInto: coverage into a
@@ -3088,14 +3296,14 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private (IntPtr Tex, IntPtr View) GpuRasterizeInto(PathGeometry path, int width, int height, int originX, int originY)
         {
             _edgeScratch.Clear();
-            int edgeCount = PathRasterizer.FlattenToEdges(path, _edgeScratch, out _, out _, out _, out _);
-            return GpuCoveragePass(edgeCount, originX, originY, width, height, path.FillRule, gamma: false);
+            int segCount = PathRasterizer.SegmentsToQuadratics(path, _edgeScratch, out _, out _, out _, out _);
+            return GpuCoveragePass(segCount, originX, originY, width, height, path.FillRule, gamma: false);
         }
 
-        private (IntPtr Tex, IntPtr View) GpuCoveragePass(int edgeCount, int ox, int oy, int w, int h, FillRule rule, bool gamma)
+        private (IntPtr Tex, IntPtr View) GpuCoveragePass(int segCount, int ox, int oy, int w, int h, FillRule rule, bool gamma)
         {
-            // Rebase edges to mask-local coordinates (f32 precision; the shader's pixel
-            // coords are mask-local via uv).
+            // Rebase segment control points to mask-local coordinates (all x/y pairs; the shader's
+            // pixel coords are mask-local via uv).
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
@@ -3128,13 +3336,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             // which offsets by the ambient layer-bake origin (_devOX/_devOY): a mask created
             // during a region-sized card bake would render shifted off its own target (and
             // the blank result would be cached). uv = mask-local pixel coords; the flat
-            // vertex colour carries (edgeCount, flags) — matching fs_coverage's decoding.
+            // vertex colour carries (segCount, flags) — matching fs_coverage's decoding.
             float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f);
             DrawData d = RentDrawData();
-            AddVertex(d.Verts, new Vector2(-1f, 1f), edgeCount, flags, 0f, 0f, 0f, 0f);
-            AddVertex(d.Verts, new Vector2(1f, 1f), edgeCount, flags, 0f, 0f, w, 0f);
-            AddVertex(d.Verts, new Vector2(1f, -1f), edgeCount, flags, 0f, 0f, w, h);
-            AddVertex(d.Verts, new Vector2(-1f, -1f), edgeCount, flags, 0f, 0f, 0f, h);
+            AddVertex(d.Verts, new Vector2(-1f, 1f), segCount, flags, 0f, 0f, 0f, 0f);
+            AddVertex(d.Verts, new Vector2(1f, 1f), segCount, flags, 0f, 0f, w, 0f);
+            AddVertex(d.Verts, new Vector2(1f, -1f), segCount, flags, 0f, 0f, w, h);
+            AddVertex(d.Verts, new Vector2(-1f, -1f), segCount, flags, 0f, 0f, 0f, h);
             AddQuadIndices(d.Indices, 0);
             d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, bg));
             _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
