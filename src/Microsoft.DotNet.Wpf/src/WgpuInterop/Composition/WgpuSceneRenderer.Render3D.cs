@@ -31,37 +31,85 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly Dictionary<WGPUTextureFormat, IntPtr> _pipelines3D = new();
         private IntPtr _shader3D;
 
+        private const int MaxLights3D = 8;
+
         private const string Shader3DWgsl = @"
+struct Light {
+    colorRange : vec4<f32>,   // rgb = colour, w = range (0 = infinite)
+    position   : vec4<f32>,   // xyz = world position, w = kind (1 dir, 2 point, 3 spot)
+    direction  : vec4<f32>,   // xyz = travel direction (normalized), w = outer-cone cos
+    atten      : vec4<f32>,   // x=const, y=linear, z=quadratic, w = inner-cone cos
+};
 struct U {
-    mvp : mat4x4<f32>,
-    model : mat4x4<f32>,
-    lightDir : vec4<f32>,
-    lightColor : vec4<f32>,
-    material : vec4<f32>,
-    ambient : vec4<f32>,
+    mvp      : mat4x4<f32>,
+    model    : mat4x4<f32>,
+    camPos   : vec4<f32>,
+    ambient  : vec4<f32>,     // rgb ambient light
+    diffuse  : vec4<f32>,     // material diffuse rgba
+    specular : vec4<f32>,     // rgb specular, w = specular power (0 = none)
+    emissive : vec4<f32>,     // rgb emissive
+    params   : vec4<f32>,     // x = light count, y = hasTexture
+    lights   : array<Light, 8>,
 };
 @group(0) @binding(0) var<uniform> u : U;
+@group(0) @binding(1) var texd : texture_2d<f32>;
+@group(0) @binding(2) var samp : sampler;
 
 struct VSOut {
     @builtin(position) pos : vec4<f32>,
-    @location(0) normal : vec3<f32>,
+    @location(0) normal   : vec3<f32>,
+    @location(1) worldPos : vec3<f32>,
+    @location(2) uv       : vec2<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) pos : vec3<f32>, @location(1) normal : vec3<f32>) -> VSOut {
+fn vs_main(@location(0) pos : vec3<f32>, @location(1) normal : vec3<f32>, @location(2) uv : vec2<f32>) -> VSOut {
     var o : VSOut;
     o.pos = u.mvp * vec4<f32>(pos, 1.0);
     o.normal = (u.model * vec4<f32>(normal, 0.0)).xyz;
+    o.worldPos = (u.model * vec4<f32>(pos, 1.0)).xyz;
+    o.uv = uv;
     return o;
 }
 
 @fragment
 fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     let n = normalize(in.normal);
-    let l = normalize(-u.lightDir.xyz);
-    let diff = max(dot(n, l), 0.0);
-    let rgb = u.material.rgb * (u.ambient.rgb + diff * u.lightColor.rgb);
-    return vec4<f32>(rgb, 1.0); // opaque (premultiplied with alpha 1)
+    let viewDir = normalize(u.camPos.xyz - in.worldPos);
+    var diffuseColor = u.diffuse.rgb;
+    if (u.params.y > 0.5) {
+        diffuseColor = diffuseColor * textureSampleLevel(texd, samp, in.uv, 0.0).rgb;
+    }
+    // Emissive is unlit; ambient modulates the diffuse albedo.
+    var rgb = u.emissive.rgb + u.ambient.rgb * diffuseColor;
+    let count = u32(u.params.x);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let L = u.lights[i];
+        let kind = u32(L.position.w);
+        var lightDir : vec3<f32>;   // surface -> light
+        var atten = 1.0;
+        if (kind == 1u) {
+            lightDir = normalize(-L.direction.xyz);
+        } else {
+            let toLight = L.position.xyz - in.worldPos;
+            let dist = length(toLight);
+            lightDir = toLight / max(dist, 1e-4);
+            atten = 1.0 / max(L.atten.x + L.atten.y * dist + L.atten.z * dist * dist, 1e-4);
+            if (L.colorRange.w > 0.0 && dist > L.colorRange.w) { atten = 0.0; }
+            if (kind == 3u) {   // spot cone falloff (outer-cone cos in direction.w, inner in atten.w)
+                let cosAngle = dot(normalize(L.direction.xyz), -lightDir);
+                atten = atten * clamp((cosAngle - L.direction.w) / max(L.atten.w - L.direction.w, 1e-4), 0.0, 1.0);
+            }
+        }
+        let ndotl = max(dot(n, lightDir), 0.0);
+        rgb = rgb + diffuseColor * L.colorRange.rgb * (ndotl * atten);
+        if (u.specular.w > 0.0 && ndotl > 0.0) {
+            let halfV = normalize(lightDir + viewDir);
+            let spec = pow(max(dot(n, halfV), 0.0), u.specular.w);
+            rgb = rgb + u.specular.rgb * L.colorRange.rgb * (spec * atten);
+        }
+    }
+    return vec4<f32>(rgb, 1.0);   // opaque (premultiplied, alpha 1)
 }
 ";
 
@@ -104,9 +152,18 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             // w = 1/tan(fov/2), h = aspectRatio/tan(fov/2)), but CreatePerspectiveFieldOfView takes a
             // VERTICAL fov. Passing the horizontal angle directly shrinks the projection by ~1/aspect,
             // so objects recede and the camera looks farther than WPF. Convert horizontal -> vertical.
-            float fovH = cam.FieldOfView * (MathF.PI / 180f);
-            float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
-            Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
+            Matrix4x4 proj;
+            if (cam.Orthographic)
+            {
+                float ow = cam.Width > 0f ? cam.Width : 2f;
+                proj = Matrix4x4.CreateOrthographic(ow, ow / aspect, cam.NearPlane, cam.FarPlane);
+            }
+            else
+            {
+                float fovH = cam.FieldOfView * (MathF.PI / 180f);
+                float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
+                proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
+            }
             // Map full NDC [-1,1] to the device rect's NDC sub-region (y flipped: device y grows down).
             float sx = (dx1 - dx0) / width, sy = (dy1 - dy0) / height;
             float tx = (dx0 + dx1) / width - 1f, ty = 1f - (dy0 + dy1) / height;
@@ -132,11 +189,26 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 _ctx.WriteBuffer(vbuf, vbytes);
                 _ctx.WriteBuffer(ibuf, ibytes);
 
-                byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, viewport.Light, viewport.AmbientColor, model.DiffuseColor);
+                Material3D mat = model.Material;
+                byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, cam.Position,
+                    viewport.Lights, viewport.AmbientColor, mat);
                 IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
                 _ctx.WriteBuffer(ubuf, uni);
 
-                IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length);
+                // Diffuse texture: the material's texture, or a shared 1x1 white for untextured models.
+                IntPtr texView;
+                if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
+                {
+                    (IntPtr tex, IntPtr tv) = CreateImageTexture(px, mat.TexWidth, mat.TexHeight);
+                    DeferReleaseTexView(tex, tv);
+                    texView = tv;
+                }
+                else
+                {
+                    texView = White3DView();
+                }
+
+                IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView);
                 DeferReleaseBindGroup(bindGroup);
                 DeferReleaseBuffer(ubuf);
                 DeferReleaseBuffer(vbuf);
@@ -227,11 +299,25 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return view;
         }
 
-        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size)
+        private IntPtr _white3DTex, _white3DView;
+
+        // Shared 1x1 opaque-white RGBA texture for untextured 3D models (so the shader always has a
+        // diffuse texture bound; the hasTexture flag gates whether it's actually sampled).
+        private IntPtr White3DView()
+        {
+            if (_white3DView != IntPtr.Zero) return _white3DView;
+            (_white3DTex, _white3DView) = CreateRgbaTexture(new byte[] { 255, 255, 255, 255 }, 1, 1);
+            return _white3DView;
+        }
+
+        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView)
         {
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(Get3DPipeline(ReadbackFormat), 0);
-            var entry = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = 0, size = size };
-            var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
+            var entries = stackalloc WGPUBindGroupEntry[3];
+            entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = 0, size = size };
+            entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = textureView };
+            entries[2] = new WGPUBindGroupEntry { binding = 2, sampler = LinearSampler() };
+            var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 3, entries = entries };
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
         }
 
@@ -269,14 +355,15 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             fixed (byte* pVs = vsEntry)
             fixed (byte* pFs = fsEntry)
             {
-                var attributes = stackalloc WGPUVertexAttribute[2];
+                var attributes = stackalloc WGPUVertexAttribute[3];
                 attributes[0] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x3, offset = 0, shaderLocation = 0 };
                 attributes[1] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x3, offset = 3 * sizeof(float), shaderLocation = 1 };
+                attributes[2] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 6 * sizeof(float), shaderLocation = 2 };
                 var bufferLayout = new WGPUVertexBufferLayout
                 {
                     stepMode = WGPUVertexStepMode.Vertex,
-                    arrayStride = 6 * sizeof(float),
-                    attributeCount = 2,
+                    arrayStride = 8 * sizeof(float),
+                    attributeCount = 3,
                     attributes = attributes,
                 };
 
@@ -339,29 +426,47 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
         private static byte[] BuildMeshVertices(MeshGeometry3D mesh)
         {
             int n = mesh.Positions.Length;
-            var floats = new float[n * 6];
+            var floats = new float[n * 8];
             for (int i = 0; i < n; i++)
             {
                 Vector3 p = mesh.Positions[i];
                 Vector3 nrm = i < mesh.Normals.Length ? mesh.Normals[i] : Vector3.UnitZ;
-                floats[i * 6 + 0] = p.X; floats[i * 6 + 1] = p.Y; floats[i * 6 + 2] = p.Z;
-                floats[i * 6 + 3] = nrm.X; floats[i * 6 + 4] = nrm.Y; floats[i * 6 + 5] = nrm.Z;
+                Vector2 uv = i < mesh.TexCoords.Length ? mesh.TexCoords[i] : Vector2.Zero;
+                floats[i * 8 + 0] = p.X; floats[i * 8 + 1] = p.Y; floats[i * 8 + 2] = p.Z;
+                floats[i * 8 + 3] = nrm.X; floats[i * 8 + 4] = nrm.Y; floats[i * 8 + 5] = nrm.Z;
+                floats[i * 8 + 6] = uv.X; floats[i * 8 + 7] = uv.Y;
             }
             var bytes = new byte[floats.Length * sizeof(float)];
             Buffer.BlockCopy(floats, 0, bytes, 0, bytes.Length);
             return bytes;
         }
 
-        private static byte[] BuildModelUniform(Matrix4x4 mvp, Matrix4x4 model, DirectionalLight3D light, RgbaColor ambient, RgbaColor material)
+        // Uniform layout matches the WGSL struct U: 2 mat4 + 6 vec4 header, then MaxLights3D Light
+        // (4 vec4 each). std140 alignment is satisfied (all vec4-aligned).
+        private static byte[] BuildModelUniform(Matrix4x4 mvp, Matrix4x4 model, Vector3 camPos,
+            IReadOnlyList<Light3D> lights, RgbaColor ambient, Material3D mat)
         {
-            var f = new float[48];
+            const int headerFloats = 32 + 24;                 // 2 mat4 (32) + 6 vec4 (24)
+            var f = new float[headerFloats + MaxLights3D * 16];
             int o = 0;
             WriteMatrix(f, ref o, mvp);
             WriteMatrix(f, ref o, model);
-            f[o++] = light.Direction.X; f[o++] = light.Direction.Y; f[o++] = light.Direction.Z; f[o++] = 0f;
-            f[o++] = light.Color.R; f[o++] = light.Color.G; f[o++] = light.Color.B; f[o++] = 1f;
-            f[o++] = material.R; f[o++] = material.G; f[o++] = material.B; f[o++] = material.A;
+            f[o++] = camPos.X; f[o++] = camPos.Y; f[o++] = camPos.Z; f[o++] = 0f;
             f[o++] = ambient.R; f[o++] = ambient.G; f[o++] = ambient.B; f[o++] = 1f;
+            f[o++] = mat.Diffuse.R; f[o++] = mat.Diffuse.G; f[o++] = mat.Diffuse.B; f[o++] = mat.Diffuse.A;
+            f[o++] = mat.Specular.R; f[o++] = mat.Specular.G; f[o++] = mat.Specular.B; f[o++] = mat.SpecularPower;
+            f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = 1f;
+            int count = Math.Min(lights.Count, MaxLights3D);
+            f[o++] = count; f[o++] = mat.Texture != null && mat.TexWidth > 0 ? 1f : 0f; f[o++] = 0f; f[o++] = 0f;
+            for (int i = 0; i < count; i++)
+            {
+                Light3D l = lights[i];
+                f[o++] = l.Color.R; f[o++] = l.Color.G; f[o++] = l.Color.B; f[o++] = l.Range;
+                f[o++] = l.Position.X; f[o++] = l.Position.Y; f[o++] = l.Position.Z; f[o++] = (float)l.Kind;
+                Vector3 d = l.Direction.LengthSquared() > 1e-8f ? Vector3.Normalize(l.Direction) : new Vector3(0, 0, -1);
+                f[o++] = d.X; f[o++] = d.Y; f[o++] = d.Z; f[o++] = l.OuterConeCos;
+                f[o++] = l.ConstantAtten; f[o++] = l.LinearAtten; f[o++] = l.QuadraticAtten; f[o++] = l.InnerConeCos;
+            }
             var bytes = new byte[f.Length * sizeof(float)];
             Buffer.BlockCopy(f, 0, bytes, 0, bytes.Length);
             return bytes;
@@ -380,6 +485,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             foreach (IntPtr pipeline in _pipelines3D.Values) wgpuRenderPipelineRelease(pipeline);
             _pipelines3D.Clear();
             if (_shader3D != IntPtr.Zero) { wgpuShaderModuleRelease(_shader3D); _shader3D = IntPtr.Zero; }
+            if (_white3DView != IntPtr.Zero) { wgpuTextureViewRelease(_white3DView); wgpuTextureRelease(_white3DTex); _white3DView = _white3DTex = IntPtr.Zero; }
         }
     }
 }

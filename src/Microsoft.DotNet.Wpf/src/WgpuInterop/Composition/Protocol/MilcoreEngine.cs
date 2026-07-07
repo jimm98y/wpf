@@ -74,12 +74,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         Visual3DInsertChildAt = 0x30,
         AxisAngleRotation3D = 0x57,
         PerspectiveCamera = 0x59,
+        OrthographicCamera = 0x5a,
         Model3DGroup = 0x5c,
         AmbientLight = 0x5d,
         DirectionalLight = 0x5e,
+        PointLight = 0x5f,
+        SpotLight = 0x60,
         GeometryModel3D = 0x61,
         MeshGeometry3D = 0x62,
+        MaterialGroup = 0x63,
         DiffuseMaterial = 0x64,
+        SpecularMaterial = 0x65,
+        EmissiveMaterial = 0x66,
         Transform3DGroup = 0x67,
         TranslateTransform3D = 0x68,
         ScaleTransform3D = 0x69,
@@ -742,12 +748,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case Mil.Visual3DInsertChildAt:
                 case Mil.AxisAngleRotation3D:
                 case Mil.PerspectiveCamera:
+                case Mil.OrthographicCamera:
                 case Mil.Model3DGroup:
                 case Mil.AmbientLight:
                 case Mil.DirectionalLight:
+                case Mil.PointLight:
+                case Mil.SpotLight:
                 case Mil.GeometryModel3D:
                 case Mil.MeshGeometry3D:
+                case Mil.MaterialGroup:
                 case Mil.DiffuseMaterial:
+                case Mil.SpecularMaterial:
+                case Mil.EmissiveMaterial:
                 case Mil.Transform3DGroup:
                 case Mil.TranslateTransform3D:
                 case Mil.ScaleTransform3D:

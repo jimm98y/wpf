@@ -29,7 +29,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, Visual3DNode> _visuals3D = new();
         private readonly Dictionary<uint, Viewport3DState> _viewports3D = new();
 
-        private struct MaterialDef { public RgbaColor Color; public uint Brush; }
+        // Kind: 0 diffuse, 1 specular, 2 emissive, 3 group.
+        private struct MaterialDef
+        {
+            public int Kind;
+            public RgbaColor Color;
+            public float SpecularPower;
+            public uint Brush;
+            public List<uint>? GroupChildren;
+        }
         private struct AxisAngle { public Vector3 Axis; public float Angle; }
         private struct RotateXform3D { public Vector3 Center; public uint RotationHandle; }
 
@@ -38,9 +46,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public uint TransformHandle;
             public List<uint>? GroupChildren;       // Model3DGroup
             public uint MeshHandle, MaterialHandle;  // GeometryModel3D
-            public int LightKind;                    // 1 = ambient, 2 = directional
+            public int LightKind;                    // 1 ambient, 2 directional, 3 point, 4 spot
             public RgbaColor LightColor;
             public Vector3 LightDir;
+            public Vector3 LightPos;
+            public float Range, ConstAtten, LinearAtten, QuadAtten, InnerConeDeg, OuterConeDeg;
         }
 
         private sealed class Visual3DNode
@@ -59,8 +69,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private sealed class LightAcc
         {
-            public bool HasDir;
-            public DirectionalLight3D Dir = new(new Vector3(0, 0, -1), RgbaColor.FromBytes(255, 255, 255, 255));
+            public readonly List<Light3D> Lights = new();
             public RgbaColor Ambient;
         }
 
@@ -134,6 +143,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _cameras[h] = new Camera3D(pos, look, up, (float)fov, (float)Math.Max(near, 0.001), (float)far);
                     break;
                 }
+                case Mil.OrthographicCamera:
+                {
+                    // MILCMD_ORTHOGRAPHICCAMERA: near@8, far@16, width@24, position@32, htransform@44,
+                    // lookDirection@48, hNear@60, upDirection@64.
+                    uint h = r.U32();
+                    double near = r.F64(), far = r.F64(), w = r.F64();
+                    Vector3 pos = Pt3(ref r);
+                    r.U32();                 // htransform
+                    Vector3 look = Pt3(ref r);
+                    r.U32();                 // hNearPlaneDistanceAnimations
+                    Vector3 up = Pt3(ref r);
+                    _cameras[h] = new Camera3D(pos, look, up, 0f, (float)Math.Max(near, 0.001), (float)far, orthographic: true, width: (float)w);
+                    break;
+                }
                 case Mil.AmbientLight:
                 {
                     uint h = r.U32(); RgbaColor c = Col(ref r);
@@ -144,6 +167,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     uint h = r.U32(); RgbaColor c = Col(ref r); Vector3 dir = Pt3(ref r);
                     _models3D[h] = new Model3DNode { LightKind = 2, LightColor = c, LightDir = dir };
+                    break;
+                }
+                case Mil.PointLight:
+                {
+                    // MILCMD_POINTLIGHT: color@8, range@24, const@32, linear@40, quad@48, position@56.
+                    uint h = r.U32(); RgbaColor c = Col(ref r);
+                    double range = r.F64(), ca = r.F64(), la = r.F64(), qa = r.F64();
+                    Vector3 pos = Pt3(ref r);
+                    _models3D[h] = new Model3DNode
+                    {
+                        LightKind = 3, LightColor = c, LightPos = pos,
+                        Range = (float)range, ConstAtten = (float)ca, LinearAtten = (float)la, QuadAtten = (float)qa,
+                    };
+                    break;
+                }
+                case Mil.SpotLight:
+                {
+                    // MILCMD_SPOTLIGHT: color@8, range@24, const@32, linear@40, quad@48, outerCone@56,
+                    // innerCone@64, position@72, htransform@84, direction@88.
+                    uint h = r.U32(); RgbaColor c = Col(ref r);
+                    double range = r.F64(), ca = r.F64(), la = r.F64(), qa = r.F64();
+                    double outer = r.F64(), inner = r.F64();
+                    Vector3 pos = Pt3(ref r);
+                    r.U32();                 // htransform
+                    Vector3 dir = Pt3(ref r);
+                    _models3D[h] = new Model3DNode
+                    {
+                        LightKind = 4, LightColor = c, LightPos = pos, LightDir = dir,
+                        Range = (float)range, ConstAtten = (float)ca, LinearAtten = (float)la, QuadAtten = (float)qa,
+                        InnerConeDeg = (float)inner, OuterConeDeg = (float)outer,
+                    };
                     break;
                 }
                 case Mil.GeometryModel3D:
@@ -172,11 +226,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < positions.Length; i++) positions[i] = Pt3(ref r);
                     var normals = new Vector3[normSize / 12];
                     for (int i = 0; i < normals.Length; i++) normals[i] = Pt3(ref r);
-                    r.Bytes((int)texSize);   // texture coordinates: not used by the diffuse-colour shader
+                    var texCoords = new Vector2[texSize / 8];   // MilPoint2F (2 floats) per coord
+                    for (int i = 0; i < texCoords.Length; i++) { float u = r.F32(), vv = r.F32(); texCoords[i] = new Vector2(u, vv); }
                     var indices = new int[idxSize / 4];
                     for (int i = 0; i < indices.Length; i++) indices[i] = (int)r.U32();
                     if (normals.Length != positions.Length) normals = ComputeNormals(positions, indices);
-                    _meshes[h] = new MeshGeometry3D(positions, normals, indices);
+                    _meshes[h] = new MeshGeometry3D(positions, normals, indices, texCoords);
                     break;
                 }
                 case Mil.DiffuseMaterial:
@@ -185,7 +240,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     RgbaColor color = Col(ref r);
                     Col(ref r);                  // ambientColor (folded into the viewport ambient instead)
                     uint hbrush = r.U32();
-                    _materials[h] = new MaterialDef { Color = color, Brush = hbrush };
+                    _materials[h] = new MaterialDef { Kind = 0, Color = color, Brush = hbrush };
+                    break;
+                }
+                case Mil.SpecularMaterial:
+                {
+                    // MILCMD_SPECULARMATERIAL: color@8, specularPower@24, hbrush@32.
+                    uint h = r.U32();
+                    RgbaColor color = Col(ref r);
+                    double power = r.F64();
+                    uint hbrush = r.U32();
+                    _materials[h] = new MaterialDef { Kind = 1, Color = color, SpecularPower = (float)power, Brush = hbrush };
+                    break;
+                }
+                case Mil.EmissiveMaterial:
+                {
+                    // MILCMD_EMISSIVEMATERIAL: color@8, hbrush@24.
+                    uint h = r.U32();
+                    RgbaColor color = Col(ref r);
+                    uint hbrush = r.U32();
+                    _materials[h] = new MaterialDef { Kind = 2, Color = color, Brush = hbrush };
+                    break;
+                }
+                case Mil.MaterialGroup:
+                {
+                    // MILCMD_MATERIALGROUP: ChildrenSize@8, then child handles.
+                    uint h = r.U32();
+                    uint childrenSize = r.U32();
+                    var children = new List<uint>();
+                    for (uint i = 0; i + 4 <= childrenSize; i += 4) children.Add(r.U32());
+                    _materials[h] = new MaterialDef { Kind = 3, GroupChildren = children };
                     break;
                 }
                 case Mil.AxisAngleRotation3D:
@@ -256,7 +340,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 var lights = new LightAcc();
                 WalkVisual3D(vp.ChildHandle, Matrix4x4.Identity, models, lights);
                 if (models.Count == 0) continue;
-                v.Content.Add(new Viewport3DDraw(cam, lights.Dir, lights.Ambient, models, vp.Viewport));
+                v.Content.Add(new Viewport3DDraw(cam, lights.Lights, lights.Ambient, models, vp.Viewport));
             }
         }
 
@@ -287,9 +371,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             else if (node.LightKind == 2)
             {
                 Vector3 dir = Vector3.TransformNormal(node.LightDir, m);
-                if (dir.LengthSquared() > 1e-6f) dir = Vector3.Normalize(dir);
-                lights.Dir = new DirectionalLight3D(dir, node.LightColor);
-                lights.HasDir = true;
+                lights.Lights.Add(Light3D.Directional(dir, node.LightColor));
+            }
+            else if (node.LightKind == 3)
+            {
+                Vector3 pos = Vector3.Transform(node.LightPos, m);
+                lights.Lights.Add(Light3D.Point(pos, node.LightColor, node.Range, node.ConstAtten, node.LinearAtten, node.QuadAtten));
+            }
+            else if (node.LightKind == 4)
+            {
+                Vector3 pos = Vector3.Transform(node.LightPos, m);
+                Vector3 dir = Vector3.TransformNormal(node.LightDir, m);
+                float innerCos = MathF.Cos(node.InnerConeDeg * (MathF.PI / 180f) * 0.5f);
+                float outerCos = MathF.Cos(node.OuterConeDeg * (MathF.PI / 180f) * 0.5f);
+                lights.Lights.Add(new Light3D(Light3DKind.Spot, node.LightColor, dir, pos,
+                    node.Range, node.ConstAtten, node.LinearAtten, node.QuadAtten, innerCos, outerCos));
             }
             else if (node.MeshHandle != 0 && _meshes.TryGetValue(node.MeshHandle, out MeshGeometry3D? mesh))
             {
@@ -317,11 +413,64 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return Matrix4x4.Identity;
         }
 
-        private RgbaColor ResolveMaterial(uint handle)
+        private struct MatAcc
         {
-            if (_materials.TryGetValue(handle, out MaterialDef def))
-                return _solidBrushes.TryGetValue(def.Brush, out RgbaColor b) ? b : def.Color;
-            return RgbaColor.FromBytes(204, 204, 204, 255);
+            public RgbaColor Diffuse, Specular, Emissive;
+            public float SpecPower;
+            public byte[]? TexPx; public int TexW, TexH;
+        }
+
+        // Resolves a WPF material (Diffuse/Specular/Emissive, possibly a MaterialGroup) into the
+        // renderer's combined Material3D, including a diffuse texture when the diffuse brush is an
+        // image / rasterized visual brush.
+        private Material3D ResolveMaterial(uint handle)
+        {
+            if (!_materials.ContainsKey(handle))
+                return Material3D.Diffuse3D(RgbaColor.FromBytes(204, 204, 204, 255));
+            var acc = new MatAcc
+            {
+                Diffuse = new RgbaColor(0, 0, 0, 1),
+                Specular = new RgbaColor(0, 0, 0, 0),
+                Emissive = new RgbaColor(0, 0, 0, 0),
+                SpecPower = 1f,
+            };
+            AccMaterial(handle, ref acc);
+            return new Material3D(acc.Diffuse, acc.Specular, acc.SpecPower, acc.Emissive, acc.TexPx, acc.TexW, acc.TexH);
+        }
+
+        private void AccMaterial(uint handle, ref MatAcc acc)
+        {
+            if (!_materials.TryGetValue(handle, out MaterialDef def)) return;
+            switch (def.Kind)
+            {
+                case 0:   // diffuse (colour and/or texture)
+                    acc.Diffuse = _solidBrushes.TryGetValue(def.Brush, out RgbaColor d) ? d : def.Color;
+                    (byte[]? px, int tw, int th) = ResolveTexture(def.Brush);
+                    if (px is not null) { acc.TexPx = px; acc.TexW = tw; acc.TexH = th; }
+                    break;
+                case 1:   // specular
+                    acc.Specular = _solidBrushes.TryGetValue(def.Brush, out RgbaColor s) ? s : def.Color;
+                    acc.SpecPower = def.SpecularPower;
+                    break;
+                case 2:   // emissive
+                    acc.Emissive = _solidBrushes.TryGetValue(def.Brush, out RgbaColor e) ? e : def.Color;
+                    break;
+                case 3:   // group: later children layer over earlier
+                    if (def.GroupChildren is not null)
+                        foreach (uint c in def.GroupChildren) AccMaterial(c, ref acc);
+                    break;
+            }
+        }
+
+        // Resolves a brush handle to raw texture pixels (image brush, or a visual brush already
+        // rasterized into _bitmaps). Returns (null, 0, 0) for solid/gradient/unknown brushes.
+        private (byte[]?, int, int) ResolveTexture(uint brushHandle)
+        {
+            if (brushHandle != 0
+                && _imageBrushes.TryGetValue(brushHandle, out MilImageBrush ib)
+                && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
+                return (bmp.Rgba, bmp.Width, bmp.Height);
+            return (null, 0, 0);
         }
 
         private static Vector3[] ComputeNormals(Vector3[] positions, int[] indices)

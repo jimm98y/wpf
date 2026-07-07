@@ -470,15 +470,18 @@ internal static class Program
         return s;
     }
 
-    // A real WPF Viewport3D: perspective camera, a lit + animated cube, decoded from the 3D
-    // MILCMD stream and rendered by the WebGPU backend's depth-tested 3D pass.
+    // A real WPF Viewport3D exercising the WebGPU backend's 3D pipeline end to end:
+    //   * a TEXTURED cube (DiffuseMaterial with an ImageBrush),
+    //   * a SPECULAR sphere (MaterialGroup of diffuse + SpecularMaterial -> Blinn-Phong highlight),
+    //   * three orbiting coloured POINT lights (attenuated), each marked by a small EMISSIVE sphere,
+    //   * and 2D-IN-3D: a tilted panel textured with a VisualBrush of live 2D WPF content.
     private static UIElement Viewport3DDemo(out AxisAngleRotation3D rotation)
     {
         var viewport = new Viewport3D { Width = 196, Height = 150 };
         viewport.Camera = new PerspectiveCamera
         {
-            Position = new Point3D(2.6, 2.2, 4.0),
-            LookDirection = new Vector3D(-2.6, -2.2, -4.0),
+            Position = new Point3D(0, 1.7, 6.4),
+            LookDirection = new Vector3D(0, -0.22, -1),
             UpDirection = new Vector3D(0, 1, 0),
             FieldOfView = 45,
             NearPlaneDistance = 0.1,
@@ -486,21 +489,100 @@ internal static class Program
         };
 
         var group = new Model3DGroup();
-        group.Children.Add(new AmbientLight(Color.FromRgb(0x3A, 0x3A, 0x46)));
-        group.Children.Add(new DirectionalLight(Colors.White, new Vector3D(-1.0, -1.5, -2.0)));
+        group.Children.Add(new AmbientLight(Color.FromRgb(0x20, 0x20, 0x28)));
 
-        rotation = new AxisAngleRotation3D(new Vector3D(0.3, 1, 0.2), 0);
-        var cube = new GeometryModel3D(CubeMesh(), new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6))))
+        // Orbiting coloured POINT lights + an emissive marker sphere at each, all under one animated
+        // rotation so they sweep the scene (shows multiple lights, point attenuation and emissive).
+        var orbit = new AxisAngleRotation3D(new Vector3D(0, 1, 0), 0);
+        var orbiters = new Model3DGroup { Transform = new RotateTransform3D(orbit) };
+        (Color c, double deg)[] pts =
         {
-            Transform = new RotateTransform3D(rotation),
+            (Colors.Red, 0),
+            (Color.FromRgb(0x2E, 0xE0, 0x66), 120),
+            (Color.FromRgb(0x53, 0x93, 0xFF), 240),
+        };
+        foreach ((Color c, double deg) in pts)
+        {
+            double a = deg * Math.PI / 180.0;
+            var pos = new Point3D(3.2 * Math.Cos(a), 1.6, 3.2 * Math.Sin(a));
+            orbiters.Children.Add(new PointLight(c, pos)
+            {
+                Range = 16,
+                ConstantAttenuation = 1.0,
+                LinearAttenuation = 0.12,
+                QuadraticAttenuation = 0.02,
+            });
+            orbiters.Children.Add(new GeometryModel3D(SphereMesh(0.13, 10),
+                new EmissiveMaterial(new SolidColorBrush(c)))
+            {
+                Transform = new TranslateTransform3D(pos.X, pos.Y, pos.Z),
+            });
+        }
+        group.Children.Add(orbiters);
+
+        // TEXTURED rotating cube (ImageBrush of a generated colour-wheel bitmap). Driven by the
+        // gallery timer via `rotation`.
+        rotation = new AxisAngleRotation3D(new Vector3D(0.25, 1, 0.12), 0);
+        var cube = new GeometryModel3D(TexturedCubeMesh(0.85), new DiffuseMaterial(new ImageBrush(MakePattern(96))))
+        {
+            Transform = new Transform3DGroup { Children = { new RotateTransform3D(rotation), new TranslateTransform3D(-1.9, 0.1, 0) } },
         };
         group.Children.Add(cube);
 
+        // SPECULAR shiny sphere: MaterialGroup layering a purple diffuse and a white specular.
+        var shiny = new MaterialGroup();
+        shiny.Children.Add(new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(0x7C, 0x3A, 0xED))));
+        shiny.Children.Add(new SpecularMaterial(new SolidColorBrush(Colors.White), 48));
+        group.Children.Add(new GeometryModel3D(SphereMesh(0.95, 26), shiny)
+        {
+            Transform = new TranslateTransform3D(1.9, 0.1, 0),
+        });
+
+        // 2D-IN-3D: a tilted quad textured with a VisualBrush of live 2D WPF content.
+        var panelBrush = new VisualBrush(Build3DPanelContent()) { Stretch = Stretch.Fill };
+        group.Children.Add(new GeometryModel3D(QuadMesh(3.0, 1.5), new DiffuseMaterial(panelBrush))
+        {
+            Transform = new Transform3DGroup
+            {
+                Children =
+                {
+                    new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(0, 1, 0), 18)),
+                    new TranslateTransform3D(0, 1.9, -2.4),
+                },
+            },
+        });
+
         viewport.Children.Add(new ModelVisual3D { Content = group });
+
+        // Self-animate the orbiting lights (the cube spin comes from the gallery timer).
+        CompositionTarget.Rendering += (s, e) => orbit.Angle = (orbit.Angle + 0.8) % 360.0;
         return viewport;
     }
 
-    private static MeshGeometry3D CubeMesh()
+    // A small live 2D UI, mirrored onto a 3D surface by a VisualBrush.
+    private static Visual Build3DPanelContent()
+    {
+        var root = new Border
+        {
+            Width = 300,
+            Height = 150,
+            Background = new SolidColorBrush(Color.FromRgb(0x11, 0x18, 0x27)),
+            Child = new StackPanel { Margin = new Thickness(16) },
+        };
+        var stack = (StackPanel)root.Child;
+        stack.Children.Add(new TextBlock { Text = "2D in 3D", FontSize = 30, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.White) });
+        stack.Children.Add(new TextBlock { Text = "live WPF UI on a 3D quad", FontSize = 15, Foreground = new SolidColorBrush(Color.FromRgb(0x9C, 0xB0, 0xD0)), Margin = new Thickness(0, 4, 0, 12) });
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(new Border { Width = 60, Height = 34, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6)), Margin = new Thickness(0, 0, 8, 0), Child = new TextBlock { Text = "OK", Foreground = new SolidColorBrush(Colors.White), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+        row.Children.Add(new Ellipse { Width = 34, Height = 34, Fill = new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81)) });
+        stack.Children.Add(row);
+        root.Measure(new Size(300, 150));
+        root.Arrange(new Rect(0, 0, 300, 150));
+        return root;
+    }
+
+    // A cube with per-face texture coordinates, half-extent `s`.
+    private static MeshGeometry3D TexturedCubeMesh(double s)
     {
         var mesh = new MeshGeometry3D();
         void Face(Point3D a, Point3D b, Point3D c, Point3D d, Vector3D n)
@@ -508,16 +590,59 @@ internal static class Program
             int i = mesh.Positions.Count;
             mesh.Positions.Add(a); mesh.Positions.Add(b); mesh.Positions.Add(c); mesh.Positions.Add(d);
             mesh.Normals.Add(n); mesh.Normals.Add(n); mesh.Normals.Add(n); mesh.Normals.Add(n);
+            mesh.TextureCoordinates.Add(new Point(0, 1)); mesh.TextureCoordinates.Add(new Point(1, 1));
+            mesh.TextureCoordinates.Add(new Point(1, 0)); mesh.TextureCoordinates.Add(new Point(0, 0));
             foreach (int k in new[] { i, i + 1, i + 2, i, i + 2, i + 3 }) mesh.TriangleIndices.Add(k);
         }
-        const double s = 1.0;
         Point3D P(double x, double y, double z) => new Point3D(x, y, z);
-        Face(P(-s, -s, s), P(s, -s, s), P(s, s, s), P(-s, s, s), new Vector3D(0, 0, 1));    // front
-        Face(P(s, -s, -s), P(-s, -s, -s), P(-s, s, -s), P(s, s, -s), new Vector3D(0, 0, -1)); // back
-        Face(P(-s, -s, -s), P(-s, -s, s), P(-s, s, s), P(-s, s, -s), new Vector3D(-1, 0, 0)); // left
-        Face(P(s, -s, s), P(s, -s, -s), P(s, s, -s), P(s, s, s), new Vector3D(1, 0, 0));     // right
-        Face(P(-s, s, s), P(s, s, s), P(s, s, -s), P(-s, s, -s), new Vector3D(0, 1, 0));     // top
-        Face(P(-s, -s, -s), P(s, -s, -s), P(s, -s, s), P(-s, -s, s), new Vector3D(0, -1, 0)); // bottom
+        Face(P(-s, -s, s), P(s, -s, s), P(s, s, s), P(-s, s, s), new Vector3D(0, 0, 1));      // front
+        Face(P(s, -s, -s), P(-s, -s, -s), P(-s, s, -s), P(s, s, -s), new Vector3D(0, 0, -1));  // back
+        Face(P(-s, -s, -s), P(-s, -s, s), P(-s, s, s), P(-s, s, -s), new Vector3D(-1, 0, 0));  // left
+        Face(P(s, -s, s), P(s, -s, -s), P(s, s, -s), P(s, s, s), new Vector3D(1, 0, 0));      // right
+        Face(P(-s, s, s), P(s, s, s), P(s, s, -s), P(-s, s, -s), new Vector3D(0, 1, 0));      // top
+        Face(P(-s, -s, -s), P(s, -s, -s), P(s, -s, s), P(-s, -s, s), new Vector3D(0, -1, 0));  // bottom
+        return mesh;
+    }
+
+    // A UV sphere (radius, latitude/longitude segments) with normals and texture coordinates.
+    private static MeshGeometry3D SphereMesh(double radius, int segments)
+    {
+        var mesh = new MeshGeometry3D();
+        for (int lat = 0; lat <= segments; lat++)
+        {
+            double theta = lat * Math.PI / segments;      // 0..pi
+            double st = Math.Sin(theta), ct = Math.Cos(theta);
+            for (int lon = 0; lon <= segments; lon++)
+            {
+                double phi = lon * 2 * Math.PI / segments; // 0..2pi
+                var n = new Vector3D(st * Math.Cos(phi), ct, st * Math.Sin(phi));
+                mesh.Positions.Add(new Point3D(n.X * radius, n.Y * radius, n.Z * radius));
+                mesh.Normals.Add(n);
+                mesh.TextureCoordinates.Add(new Point(lon / (double)segments, lat / (double)segments));
+            }
+        }
+        int stride = segments + 1;
+        for (int lat = 0; lat < segments; lat++)
+            for (int lon = 0; lon < segments; lon++)
+            {
+                int a = lat * stride + lon, b = a + stride;
+                mesh.TriangleIndices.Add(a); mesh.TriangleIndices.Add(b); mesh.TriangleIndices.Add(a + 1);
+                mesh.TriangleIndices.Add(a + 1); mesh.TriangleIndices.Add(b); mesh.TriangleIndices.Add(b + 1);
+            }
+        return mesh;
+    }
+
+    // A flat quad in the XY plane (facing +Z) with full [0,1] texture coordinates.
+    private static MeshGeometry3D QuadMesh(double w, double h)
+    {
+        double hw = w / 2, hh = h / 2;
+        var mesh = new MeshGeometry3D();
+        mesh.Positions.Add(new Point3D(-hw, -hh, 0)); mesh.Positions.Add(new Point3D(hw, -hh, 0));
+        mesh.Positions.Add(new Point3D(hw, hh, 0)); mesh.Positions.Add(new Point3D(-hw, hh, 0));
+        for (int i = 0; i < 4; i++) mesh.Normals.Add(new Vector3D(0, 0, 1));
+        mesh.TextureCoordinates.Add(new Point(0, 1)); mesh.TextureCoordinates.Add(new Point(1, 1));
+        mesh.TextureCoordinates.Add(new Point(1, 0)); mesh.TextureCoordinates.Add(new Point(0, 0));
+        foreach (int k in new[] { 0, 1, 2, 0, 2, 3 }) mesh.TriangleIndices.Add(k);
         return mesh;
     }
 
