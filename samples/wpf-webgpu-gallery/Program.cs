@@ -115,11 +115,22 @@ internal static class Program
         overlay.Children.Add(root);
         overlay.Children.Add(fpsBadge);
 
-        // WPF_GALLERY_SCROLL=<0..1>: park the scroll at a fixed fraction of scrollable height (for
-        // deterministic screenshots of lower cards, e.g. the 3D card). Applied every frame so it
-        // survives layout changes.
+        // WPF_GALLERY_SCROLL=<0..1> (or arg "scroll=<0..1>", for the browser where env vars aren't
+        // settable): park the scroll at a fixed fraction of scrollable height (for deterministic
+        // screenshots of lower cards, e.g. the 3D card). Applied every frame so it survives layout.
         double parkScroll = double.TryParse(Environment.GetEnvironmentVariable("WPF_GALLERY_SCROLL"),
             System.Globalization.CultureInfo.InvariantCulture, out double ps) ? ps : -1;
+        foreach (string a in args)
+            if (a.StartsWith("scroll=") && double.TryParse(a.Substring(7),
+                System.Globalization.CultureInfo.InvariantCulture, out double sf))
+                parkScroll = sf;
+
+        // 3D-panel interactivity probes: "3dprobe" prints the hosted Button's centre PROJECTED to
+        // window coords (via TransformToAncestor across the 2D->3D->2D boundary) so an external
+        // driver can aim real mouse input at it; "3dclick" (mac) self-injects a mouse move+click
+        // there through the Cocoa input path to prove the full chain without a real mouse.
+        bool probe3D = Environment.GetEnvironmentVariable("WPF_GALLERY_3DPROBE") == "1" || Array.IndexOf(args, "3dprobe") >= 0;
+        bool click3D = Environment.GetEnvironmentVariable("WPF_GALLERY_3DCLICK") == "1" || Array.IndexOf(args, "3dclick") >= 0;
 
         int renderTicks = 0;
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
@@ -189,6 +200,23 @@ internal static class Program
                 }
                 catch { }
             }
+            // 3D-panel interactivity probe/self-test (see probe3D/click3D above). The projection
+            // is only meaningful once the scroll has parked and the button has a size.
+            if ((probe3D || click3D) && Panel3DButton is { } pb && frame % 30 == 20 && pb.ActualWidth > 0)
+            {
+                try
+                {
+                    GeneralTransform toWindow = pb.TransformToAncestor(window);
+                    if (toWindow.TryTransform(new Point(pb.ActualWidth / 2, pb.ActualHeight / 2), out Point c))
+                    {
+                        if (probe3D) Console.WriteLine($"3DPANEL-BTN {c.X:0},{c.Y:0}");
+                        if (click3D && frame == 80) Inject3DClick(window, c);
+                    }
+                    else if (probe3D) Console.WriteLine("3DPANEL-BTN untransformable");
+                }
+                catch (Exception ex) { Console.WriteLine($"3DPANEL-BTN EX {ex.GetType().Name}: {ex.Message}"); }
+            }
+
             frame++;
             // Optional bounded run for automated verification: pass seconds as arg[0].
             if (args.Length > 0 && int.TryParse(args[0], out int secs) && frame > secs * 30)
@@ -549,19 +577,26 @@ internal static class Program
             Transform = new TranslateTransform3D(1.9, 0.1, 0),
         });
 
-        // 2D-IN-3D (LIVE, all-GPU): a real 2D WPF visual tree (text, shapes) is the source of a
-        // VisualBrush on a tilted quad. The engine renders that live subtree into a GPU texture
-        // each frame with the ordinary 2D shaders and the 3D shader samples it — no CPU
-        // rasterization, no readback. Diffuse+Emissive with the same brush makes the panel a
-        // self-lit "screen" while still catching the coloured scene lights.
-        Visual panelVisual = BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
+        viewport.Children.Add(new ModelVisual3D { Content = group });
+
+        // 2D-IN-3D, LIVE + INTERACTIVE (Viewport2DVisual3D): WPF's real mechanism for hosting
+        // interactive 2D content on a 3D surface. Its internal brush IS a VisualBrush, which the
+        // engine renders into a GPU texture each frame with the ordinary 2D shaders — no CPU
+        // rasterization, no readback. Input hit-tests through the 3D projection (camera ray →
+        // mesh triangle → barycentric UV → 2D point), so the hosted Button gets REAL mouse
+        // events. Diffuse+Emissive host materials make the panel a self-lit "screen" that still
+        // catches the coloured scene lights.
+        UIElement panelVisual = BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
             out TranslateTransform dot);
-        var panelBrush = new VisualBrush(panelVisual) { Stretch = Stretch.Fill };
-        var panelMat = new MaterialGroup();
-        panelMat.Children.Add(new DiffuseMaterial(panelBrush));
-        panelMat.Children.Add(new EmissiveMaterial(panelBrush));
-        group.Children.Add(new GeometryModel3D(QuadMesh(3.0, 1.6), panelMat)
+        // Only ONE material may be the interactive host; the diffuse host carries the live
+        // visual, and the scene's key light keeps the panel readable.
+        var diffuseHost = new DiffuseMaterial(Brushes.White);
+        Viewport2DVisual3D.SetIsVisualHostMaterial(diffuseHost, true);
+        viewport.Children.Add(new Viewport2DVisual3D
         {
+            Geometry = QuadMesh(3.0, 1.6),
+            Visual = panelVisual,
+            Material = diffuseHost,
             Transform = new Transform3DGroup
             {
                 Children =
@@ -571,8 +606,6 @@ internal static class Program
                 },
             },
         });
-
-        viewport.Children.Add(new ModelVisual3D { Content = group });
 
         // Self-animate the orbiting lights and the live 2D panel (cube spin comes from the gallery
         // timer). Only render-affecting properties are touched (transforms + brush colour), so the
@@ -591,10 +624,40 @@ internal static class Program
         return viewport;
     }
 
-    // The live 2D UI shown on the 3D quad: a dark "screen" panel with real text, a blinking
-    // status LED, an animated progress bar and a bouncing dot. It is a plain WPF visual tree
-    // (measured/arranged once; animated via render-only transform/colour properties).
-    private static Visual BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
+    // The Button hosted on the 3D panel (exposed for the projected-coordinate probe/self-test).
+    internal static Button Panel3DButton;
+
+    // macOS self-test: feed a mouse move + left click at the given window point (DIPs) into the
+    // SAME entry real AppKit events use (CocoaWindow.MouseInput -> HwndMouseInputProvider ->
+    // InputManager), proving hit-testing + routing through the 3D projection without a physical
+    // mouse. The event is raised via reflection (only CocoaWindow itself can invoke it); no-op
+    // when the Cocoa input path isn't active (e.g. browser).
+    private static void Inject3DClick(Window window, Point clientDip)
+    {
+        var field = typeof(MS.Internal.Interop.CocoaWindow).GetField(
+            "MouseInput", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        if (field?.GetValue(null) is not Action<MS.Internal.Interop.CocoaWindow.CocoaMouseMessage> raise)
+        {
+            Console.WriteLine("3DPANEL-SELFTEST no cocoa input sink");
+            return;
+        }
+        PresentationSource src = PresentationSource.FromVisual(window);
+        Point px = src?.CompositionTarget != null
+            ? src.CompositionTarget.TransformToDevice.Transform(clientDip)
+            : clientDip;
+        IntPtr view = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        int x = (int)Math.Round(px.X), y = (int)Math.Round(px.Y), t = Environment.TickCount;
+        Console.WriteLine($"3DPANEL-SELFTEST move+click at client px {x},{y}");
+        raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 5, 0, x, y, 0, t));   // NSMouseMoved
+        raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 1, 0, x, y, 0, t));   // NSLeftMouseDown
+        raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 2, 0, x, y, 0, t));   // NSLeftMouseUp
+    }
+
+    // The live+interactive 2D UI shown on the 3D quad: a dark "screen" panel with real text, a
+    // blinking status LED, an animated progress bar, a bouncing dot — and a REAL Button that
+    // receives mouse input hit-tested through the 3D projection. Animations touch only
+    // render-only transform/colour properties (no layout pass needed).
+    private static UIElement BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
         out TranslateTransform dot)
     {
         const double W = 360, H = 200;
@@ -614,18 +677,28 @@ internal static class Program
         led = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99));
         canvas.Children.Add(Place(new Ellipse { Width = 18, Height = 18, Fill = led }, 313, 17));
 
-        canvas.Children.Add(Place(new TextBlock
+        // A REAL interactive Button + click counter. Hover/click prove the whole input chain:
+        // window mouse event -> Viewport3DVisual ray hit test -> Viewport2DVisual3D UV mapping ->
+        // 2D hit test -> routed events on the hosted element.
+        var button = new Button { Content = "Click me", Width = 150, Height = 40, FontSize = 16 };
+        var counter = new TextBlock
         {
-            Text = "WPF VisualBrush on a lit quad,",
+            Text = "Clicks: 0",
             FontSize = 16,
             Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD4, 0xE6)),
-        }, 22, 66));
-        canvas.Children.Add(Place(new TextBlock
+        };
+        int clicks = 0;
+        button.Click += (s, e) =>
         {
-            Text = "rendered by GPU shaders every frame",
-            FontSize = 16,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x5B, 0x6E, 0x8C)),
-        }, 22, 90));
+            clicks++;
+            counter.Text = $"Clicks: {clicks}";
+            Console.WriteLine($"3DPANEL CLICK {clicks}");
+        };
+        button.MouseEnter += (s, e) => Console.WriteLine("3DPANEL ENTER");
+        button.MouseLeave += (s, e) => Console.WriteLine("3DPANEL LEAVE");
+        canvas.Children.Add(Place(button, 22, 64));
+        canvas.Children.Add(Place(counter, 190, 74));
+        Panel3DButton = button;
 
         // Progress bar: fixed track, fill animated with a ScaleTransform (render-only).
         canvas.Children.Add(Place(new Rectangle { Width = 316, Height = 16, RadiusX = 8, RadiusY = 8, Fill = new SolidColorBrush(Color.FromRgb(0x1E, 0x2B, 0x44)) }, 22, 124));
