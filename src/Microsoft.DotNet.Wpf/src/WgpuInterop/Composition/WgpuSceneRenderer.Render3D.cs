@@ -48,7 +48,7 @@ struct U {
     diffuse  : vec4<f32>,     // material diffuse rgba
     specular : vec4<f32>,     // rgb specular, w = specular power (0 = none)
     emissive : vec4<f32>,     // rgb emissive
-    params   : vec4<f32>,     // x = light count, y = hasTexture
+    params   : vec4<f32>,     // x = light count, y = hasTexture, z = emissive-textured
     lights   : array<Light, 8>,
 };
 @group(0) @binding(0) var<uniform> u : U;
@@ -80,8 +80,10 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     if (u.params.y > 0.5) {
         diffuseColor = diffuseColor * textureSampleLevel(texd, samp, in.uv, 0.0).rgb;
     }
-    // Emissive is unlit; ambient modulates the diffuse albedo.
-    var rgb = u.emissive.rgb + u.ambient.rgb * diffuseColor;
+    // Emissive is unlit; ambient modulates the diffuse albedo. An emissive-textured surface
+    // (params.z) shows its diffuse texture at full brightness -- a live 2D UI reads like a screen.
+    let emissive = select(u.emissive.rgb, diffuseColor * u.emissive.rgb, u.params.z > 0.5);
+    var rgb = emissive + u.ambient.rgb * diffuseColor;
     let count = u32(u.params.x);
     for (var i = 0u; i < count; i = i + 1u) {
         let L = u.lights[i];
@@ -195,9 +197,22 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
                 _ctx.WriteBuffer(ubuf, uni);
 
-                // Diffuse texture: the material's texture, or a shared 1x1 white for untextured models.
+                // Diffuse texture. Three sources, in priority order:
+                //  1. LIVE 2D content (VisualBrush) -> render its subtree into a GPU texture THIS frame
+                //     (a plan pass before the 3D pass), no CPU readback -> interactive 2D-in-3D.
+                //  2. A static image -> upload its pixels.
+                //  3. Untextured -> a shared 1x1 white (the shader's hasTexture flag gates sampling).
                 IntPtr texView;
-                if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
+                if (mat.TextureVisual is { } tvis)
+                {
+                    texView = RenderVisualToTexture(tvis, (int)mat.TexVisualBounds.Width, (int)mat.TexVisualBounds.Height, plan);
+                    // Diagnostic (WPF_DBG_3DTEX_OVERLAY=1): composite the live-2D texture straight
+                    // into the 2D scene over the viewport rect, bypassing the 3D pass -- isolates
+                    // texture-content bugs from 3D-sampling bugs.
+                    if (Dbg3DTexOverlay)
+                        EmitFullScreenQuad(outData, outFormat, FillKind.Layer, texView, 1f, 1f, 1f, 1f, 0f, 0f, clip, width, height);
+                }
+                else if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
                 {
                     (IntPtr tex, IntPtr tv) = CreateImageTexture(px, mat.TexWidth, mat.TexHeight);
                     DeferReleaseTexView(tex, tv);
@@ -296,6 +311,33 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
             DeferReleaseTexView(tex, view);
+            return view;
+        }
+
+        // Renders a 2D SceneVisual's subtree into a fresh RGBA GPU texture via a plan pass (which
+        // executes before the 3D pass samples it). Entirely on the GPU -- the live 2D content is
+        // rendered by the 2D shaders and sampled by the 3D shader, no CPU readback. Returns the view.
+        private static readonly bool Dbg3DTex = Environment.GetEnvironmentVariable("WPF_DBG_3DTEX") == "1";
+        private static readonly bool Dbg3DTexOverlay = Environment.GetEnvironmentVariable("WPF_DBG_3DTEX_OVERLAY") == "1";
+        private static int _dbg3DTexOnce;
+
+        private IntPtr RenderVisualToTexture(SceneVisual v, int w, int h, List<LayerPass> plan)
+        {
+            w = Math.Clamp(w, 1, 1024);
+            h = Math.Clamp(h, 1, 1024);
+            (IntPtr _, IntPtr view) = CreateLayerTexture(w, h);   // pooled; returned after the frame
+            DrawData d = RentDrawData();
+            float sOX = _devOX, sOY = _devOY;
+            _devOX = 0; _devOY = 0;
+            // CollectVisual (not EmitSubtree) so the wrapper's OWN transform (content-bounds ->
+            // texture-size mapping) is applied. Same-encoder write->sample across passes is ordered
+            // by WebGPU, so the 3D pass can sample this texture in the same submit (verified on
+            // wgpu-native/Metal and Dawn).
+            CollectVisual(v, System.Numerics.Matrix3x2.Identity, 1.0, new Scissor(0, 0, w, h), d, plan, w, h, ReadbackFormat);
+            _devOX = sOX; _devOY = sOY;
+            if (Dbg3DTex && _dbg3DTexOnce++ == 30)
+                Console.WriteLine($"3D-TEXRND {w}x{h} draws={d.Draws.Count} planIdx={plan.Count}");
+            plan.Add(new LayerPass(view, true, default, d, ReadbackFormat) { OriginX = 0, OriginY = 0, TexW = w, TexH = h });
             return view;
         }
 
@@ -457,7 +499,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             f[o++] = mat.Specular.R; f[o++] = mat.Specular.G; f[o++] = mat.Specular.B; f[o++] = mat.SpecularPower;
             f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = 1f;
             int count = Math.Min(lights.Count, MaxLights3D);
-            f[o++] = count; f[o++] = mat.Texture != null && mat.TexWidth > 0 ? 1f : 0f; f[o++] = 0f; f[o++] = 0f;
+            f[o++] = count; f[o++] = mat.HasTexture ? 1f : 0f; f[o++] = mat.EmissiveTextured ? 1f : 0f; f[o++] = 0f;
             for (int i = 0; i < count; i++)
             {
                 Light3D l = lights[i];

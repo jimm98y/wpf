@@ -53,6 +53,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly string? s_logPath =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_SINK_LOG");
 
+        // WPF_WEBGPU_SINK_DUMP names a PNG path for an offscreen dump of the composed frame.
+        private static readonly string? s_dumpPath =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_SINK_DUMP");
+
         // Diagnostics: also print the periodic PERF lines to the console (browser DevTools)
         // so live perf can be inspected without pulling the VFS log (?perf=1 in the wasm head).
         private static readonly bool s_perfToConsole =
@@ -290,6 +294,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
             _renderer!.RenderSceneToView(root, view, ts.Format, t.Width, t.Height, t.ClearColor);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
+
+            // Offscreen PNG dump keyed to ACQUIRED (rendered) frames, so it fires even when the window
+            // is occluded/off-screen (present never succeeds in a detached/headless run). Env-gated by
+            // WPF_WEBGPU_SINK_DUMP; fires once around frame 90 so animation has settled.
+            if (s_dumpPath != null && AcquiredFrames == 90)
+                VerifyOffscreen(root, t, AcquiredFrames);
 
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
             WGPUStatus pres = wgpuSurfacePresent(ts.Surface);

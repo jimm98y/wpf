@@ -47,16 +47,17 @@ export function getAdapterInfoJson(adapterId) {
 }
 
 export async function requestDevice(adapterId) {
-    console.log("[wgpu] requestDevice: adapter id", adapterId);
     const adapter = get(adapterId);
     const device = await adapter.requestDevice();
-    console.log("[wgpu] requestDevice: got device", !!device);
-    device.addEventListener("uncapturederror", (e) => {
-        console.error("[wgpu] uncaptured error:", e.error?.message ?? e.error);
-    });
-    device.lost.then((info) => {
-        console.error("[wgpu] device lost:", info.reason, info.message);
-    });
+    // Diagnostics only — guarded so engine differences (e.g. Safari) can't break boot.
+    try {
+        device.addEventListener("uncapturederror", (e) => {
+            console.error("[wgpu] uncaptured error:", e.error?.message ?? e.error);
+        });
+        device.lost.then((info) => {
+            console.error("[wgpu] device lost:", info.reason, info.message);
+        });
+    } catch { /* optional */ }
     return put(device);
 }
 
@@ -283,6 +284,62 @@ export function finishEncoder(encoderId) {
 
 export function submit(queueId, commandBufferId) {
     get(queueId).submit([get(commandBufferId)]);
+}
+
+// ---- Readback ------------------------------------------------------------------
+
+// Async GPU->CPU readback of a whole texture (RGBA8). Returns tightly-packed rows.
+export async function readbackTexture(deviceId, textureId, width, height) {
+    const device = get(deviceId);
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    const buf = device.createBuffer({
+        size: bytesPerRow * height,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+        { texture: get(textureId) },
+        { buffer: buf, bytesPerRow, rowsPerImage: height },
+        { width, height, depthOrArrayLayers: 1 });
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(buf.getMappedRange());
+    const out = new Uint8Array(width * 4 * height);
+    for (let y = 0; y < height; y++)
+        out.set(src.subarray(y * bytesPerRow, y * bytesPerRow + width * 4), y * width * 4);
+    buf.unmap();
+    buf.destroy();
+    // Task<byte[]> is not marshalable; park the bytes and let C# take them synchronously.
+    return put(out);
+}
+
+export function takeBytes(id) {
+    const o = get(id);
+    objs.delete(id);
+    return o ?? new Uint8Array(0);
+}
+
+// Async 1-texel readback for GPU hit testing: returns the packed visual id at (x,y)
+// (r | g<<8 | b<<16), or 0 when alpha is 0 (no visual). Reads a single texel rather
+// than the whole id buffer.
+export async function readbackTexel(deviceId, textureId, x, y) {
+    const device = get(deviceId);
+    const buf = device.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+        { texture: get(textureId), origin: { x, y, z: 0 } },
+        { buffer: buf, bytesPerRow: 256, rowsPerImage: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 });
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const p = new Uint8Array(buf.getMappedRange());
+    const id = p[3] === 0 ? 0 : (p[0] | (p[1] << 8) | (p[2] << 16));
+    buf.unmap();
+    buf.destroy();
+    return id;
 }
 
 // ---- Lifetime ----------------------------------------------------------------

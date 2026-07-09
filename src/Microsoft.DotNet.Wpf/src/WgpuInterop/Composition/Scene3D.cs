@@ -96,15 +96,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public readonly RgbaColor Specular;
         public readonly float SpecularPower;
         public readonly RgbaColor Emissive;
-        /// <summary>Optional straight-RGBA diffuse texture; null = untextured.</summary>
+        /// <summary>Optional straight-RGBA diffuse texture (a static image); null = none.</summary>
         public readonly byte[]? Texture;
         public readonly int TexWidth, TexHeight;
+        /// <summary>Optional LIVE 2D content (a VisualBrush's visual) rendered to a GPU texture on the
+        /// fly and sampled as the diffuse texture — interactive 2D-in-3D, no CPU readback.</summary>
+        public readonly SceneVisual? TextureVisual;
+        public readonly Rect TexVisualBounds;   // the visual's content bounds (local 2D space)
+        /// <summary>When true, the diffuse texture is also added as EMISSIVE (self-lit) — a
+        /// WPF EmissiveMaterial sharing the diffuse brush; makes a live 2D UI read like a screen.</summary>
+        public readonly bool EmissiveTextured;
+
+        public bool HasTexture => (Texture is not null && TexWidth > 0) || TextureVisual is not null;
 
         public Material3D(RgbaColor diffuse, RgbaColor specular, float specularPower, RgbaColor emissive,
-            byte[]? texture = null, int texWidth = 0, int texHeight = 0)
+            byte[]? texture = null, int texWidth = 0, int texHeight = 0,
+            SceneVisual? textureVisual = null, Rect texVisualBounds = default, bool emissiveTextured = false)
         {
             Diffuse = diffuse; Specular = specular; SpecularPower = specularPower; Emissive = emissive;
             Texture = texture; TexWidth = texWidth; TexHeight = texHeight;
+            TextureVisual = textureVisual; TexVisualBounds = texVisualBounds; EmissiveTextured = emissiveTextured;
         }
 
         public static Material3D Diffuse3D(RgbaColor c)

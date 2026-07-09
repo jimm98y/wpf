@@ -226,8 +226,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < positions.Length; i++) positions[i] = Pt3(ref r);
                     var normals = new Vector3[normSize / 12];
                     for (int i = 0; i < normals.Length; i++) normals[i] = Pt3(ref r);
-                    var texCoords = new Vector2[texSize / 8];   // MilPoint2F (2 floats) per coord
-                    for (int i = 0; i < texCoords.Length; i++) { float u = r.F32(), vv = r.F32(); texCoords[i] = new Vector2(u, vv); }
+                    // MilPoint2D (2 DOUBLES) per coord -- unlike positions/normals (MilPoint3F floats).
+                    var texCoords = new Vector2[texSize / 16];
+                    for (int i = 0; i < texCoords.Length; i++) { float u = (float)r.F64(), vv = (float)r.F64(); texCoords[i] = new Vector2(u, vv); }
                     var indices = new int[idxSize / 4];
                     for (int i = 0; i < indices.Length; i++) indices[i] = (int)r.U32();
                     if (normals.Length != positions.Length) normals = ComputeNormals(positions, indices);
@@ -329,6 +330,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // so animated cameras/rotations/materials are picked up).
         private void Realize3D()
         {
+            _brushes3DLive.Clear();   // re-collected below; RealizeContentBrushes (which runs first) uses last frame's set
             foreach (KeyValuePair<uint, Viewport3DState> kv in _viewports3D)
             {
                 if (!_visuals.TryGetValue(kv.Key, out SceneVisual? v)) continue;
@@ -418,6 +420,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public RgbaColor Diffuse, Specular, Emissive;
             public float SpecPower;
             public byte[]? TexPx; public int TexW, TexH;
+            public SceneVisual? TexVisual; public Rect TexBounds;
+            public bool EmissiveTex;
         }
 
         // Resolves a WPF material (Diffuse/Specular/Emissive, possibly a MaterialGroup) into the
@@ -435,7 +439,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 SpecPower = 1f,
             };
             AccMaterial(handle, ref acc);
-            return new Material3D(acc.Diffuse, acc.Specular, acc.SpecPower, acc.Emissive, acc.TexPx, acc.TexW, acc.TexH);
+            return new Material3D(acc.Diffuse, acc.Specular, acc.SpecPower, acc.Emissive,
+                acc.TexPx, acc.TexW, acc.TexH, acc.TexVisual, acc.TexBounds, acc.EmissiveTex);
         }
 
         private void AccMaterial(uint handle, ref MatAcc acc)
@@ -445,16 +450,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 case 0:   // diffuse (colour and/or texture)
                     acc.Diffuse = _solidBrushes.TryGetValue(def.Brush, out RgbaColor d) ? d : def.Color;
-                    (byte[]? px, int tw, int th) = ResolveTexture(def.Brush);
-                    if (px is not null) { acc.TexPx = px; acc.TexW = tw; acc.TexH = th; }
+                    // A VisualBrush/DrawingBrush -> render its LIVE 2D content into a GPU texture in
+                    // the 3D pass (interactive 2D-in-3D). A plain image brush -> upload its pixels.
+                    (SceneVisual? tv, Rect tb) = ResolveTextureVisual(def.Brush);
+                    if (tv is not null) { acc.TexVisual = tv; acc.TexBounds = tb; }
+                    else
+                    {
+                        (byte[]? px, int tw, int th) = ResolveTexture(def.Brush);
+                        if (px is not null) { acc.TexPx = px; acc.TexW = tw; acc.TexH = th; }
+                    }
+                    // A textured diffuse surface: the texture IS the albedo, so the modulating diffuse
+                    // colour must be WHITE (a non-solid brush leaves def.Color black, which would
+                    // multiply the texture to black in the shader).
+                    if (acc.TexVisual is not null || acc.TexPx is not null)
+                        acc.Diffuse = new RgbaColor(1, 1, 1, 1);
                     break;
                 case 1:   // specular
                     acc.Specular = _solidBrushes.TryGetValue(def.Brush, out RgbaColor s) ? s : def.Color;
                     acc.SpecPower = def.SpecularPower;
                     break;
-                case 2:   // emissive
-                    acc.Emissive = _solidBrushes.TryGetValue(def.Brush, out RgbaColor e) ? e : def.Color;
+                case 2:   // emissive (solid, or a textured/visual brush -> self-lit texture)
+                {
+                    (SceneVisual? etv, Rect etb) = ResolveTextureVisual(def.Brush);
+                    (byte[]? epx, int ew, int eh) = etv is null ? ResolveTexture(def.Brush) : (null, 0, 0);
+                    if (etv is not null || epx is not null)
+                    {
+                        acc.EmissiveTex = true;
+                        acc.Emissive = new RgbaColor(1, 1, 1, 1);   // full-brightness texture
+                        if (acc.TexVisual is null && acc.TexPx is null)   // share as the diffuse texture
+                        {
+                            if (etv is not null) { acc.TexVisual = etv; acc.TexBounds = etb; }
+                            else { acc.TexPx = epx; acc.TexW = ew; acc.TexH = eh; }
+                            acc.Diffuse = new RgbaColor(1, 1, 1, 1);   // texture is the albedo
+                        }
+                    }
+                    else
+                        acc.Emissive = _solidBrushes.TryGetValue(def.Brush, out RgbaColor e) ? e : def.Color;
                     break;
+                }
                 case 3:   // group: later children layer over earlier
                     if (def.GroupChildren is not null)
                         foreach (uint c in def.GroupChildren) AccMaterial(c, ref acc);
@@ -462,14 +495,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
         }
 
+        // For a VisualBrush/DrawingBrush diffuse brush, returns the LIVE 2D source wrapped so its
+        // content bounds map to a [0,pw]x[0,ph] texture, plus that target size. The renderer draws
+        // this into a GPU texture each frame (no CPU readback) -> live/interactive 2D-in-3D.
+        private (SceneVisual?, Rect) ResolveTextureVisual(uint brushHandle)
+        {
+            if (brushHandle == 0 || !_contentBrushes.TryGetValue(brushHandle, out (uint Source, bool IsDrawing) cb))
+                return (null, default);
+            SceneVisual? source = cb.IsDrawing
+                ? BuildDrawingVisual(cb.Source)
+                : (_visuals.TryGetValue(cb.Source, out SceneVisual? v) ? v : null);
+            if (source is null)
+            {
+                if (s_dbg3d) System.Console.WriteLine($"3D-TEXVIS brush={brushHandle} src={cb.Source} NOT FOUND (drawing={cb.IsDrawing})");
+                return (null, default);
+            }
+            Rect b = VisualSubtreeBounds(source, source.LocalToParent);
+            if (s_dbg3d) System.Console.WriteLine($"3D-TEXVIS brush={brushHandle} src={cb.Source} kids={source.Children.Count} content={source.Content.Count} bounds={b.X},{b.Y} {b.Width}x{b.Height}");
+            if (b.Width <= 0.01f || b.Height <= 0.01f) return (null, default);
+
+            _brushes3DLive.Add(brushHandle);
+            const int supersample = 2;
+            int pw = Math.Clamp((int)MathF.Ceiling(b.Width * supersample), 1, 1024);
+            int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
+            var wrapper = new SceneVisual
+            {
+                Transform = Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
+            };
+            wrapper.Children.Add(source);
+            return (wrapper, new Rect(0, 0, pw, ph));
+        }
+
+        private static readonly bool s_dbg3d = Environment.GetEnvironmentVariable("WPF_DBG_3DTEX") == "1";
+
         // Resolves a brush handle to raw texture pixels (image brush, or a visual brush already
         // rasterized into _bitmaps). Returns (null, 0, 0) for solid/gradient/unknown brushes.
         private (byte[]?, int, int) ResolveTexture(uint brushHandle)
         {
-            if (brushHandle != 0
-                && _imageBrushes.TryGetValue(brushHandle, out MilImageBrush ib)
-                && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
-                return (bmp.Rgba, bmp.Width, bmp.Height);
+            if (brushHandle == 0) return (null, 0, 0);
+            if (_imageBrushes.TryGetValue(brushHandle, out MilImageBrush ib))
+            {
+                if (_bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
+                    return (bmp.Rgba, bmp.Width, bmp.Height);
+                if (s_dbg3d) System.Console.WriteLine($"3D-TEX brush={brushHandle} imgHandle={ib.ImageHandle} NOT in _bitmaps (bitmaps={_bitmaps.Count}) content={_contentBrushes.ContainsKey(brushHandle)}");
+            }
+            else if (s_dbg3d)
+                System.Console.WriteLine($"3D-TEX brush={brushHandle} not imageBrush; solid={_solidBrushes.ContainsKey(brushHandle)} content={_contentBrushes.ContainsKey(brushHandle)} imgBrushes={_imageBrushes.Count}");
             return (null, 0, 0);
         }
 

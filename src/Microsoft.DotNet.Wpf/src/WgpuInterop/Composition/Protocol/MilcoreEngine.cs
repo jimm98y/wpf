@@ -250,6 +250,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public Func<uint, SceneVisual, int, int, byte[]?>? VisualRasterizerKeyed;
 
         private readonly Dictionary<uint, (uint Source, bool IsDrawing)> _contentBrushes = new();  // Visual/DrawingBrush -> source
+        private readonly HashSet<uint> _contentBrushes2D = new();   // content brushes some 2D primitive resolved (accumulated)
+        private readonly HashSet<uint> _brushes3DLive = new();      // content brushes a 3D material renders live per frame
         private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
         private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
 
@@ -373,6 +375,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _pens.Remove(handle);
             _dashStyles.Remove(handle);
             _contentBrushes.Remove(handle);
+            _contentBrushes2D.Remove(handle);
+            _brushes3DLive.Remove(handle);
             _geometryDrawings.Remove(handle);
             _drawingGroups.Remove(handle);
             _geometries.Remove(handle);
@@ -1015,10 +1019,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
 
-            Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
+            // Rasterize VisualBrush/DrawingBrush sources to bitmaps FIRST, so a 3D material's
+            // VisualBrush (2D-in-3D) can resolve its texture from _bitmaps in the same frame.
             long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            RealizeContentBrushes();   // rasterize VisualBrush/DrawingBrush sources to bitmaps
+            RealizeContentBrushes();
             PerfBrushTicks = System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+
+            Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
 
             // Opacity masks resolve after content so a relative gradient maps to the bounds.
             foreach (KeyValuePair<uint, uint> kv in _visualOpacityMask)
@@ -1058,6 +1065,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if ((VisualRasterizer is null && VisualRasterizerKeyed is null) || _contentBrushes.Count == 0) return;
             foreach (KeyValuePair<uint, (uint Source, bool IsDrawing)> kv in _contentBrushes)
             {
+                // A brush consumed ONLY by a 3D material renders live on the GPU each frame
+                // (ResolveTextureVisual); rasterizing it here (GPU render + BLOCKING readback,
+                // re-done every frame for animated content) would be pure waste.
+                if (_brushes3DLive.Contains(kv.Key) && !_contentBrushes2D.Contains(kv.Key)) continue;
+
                 SceneVisual? source = kv.Value.IsDrawing
                     ? BuildDrawingVisual(kv.Value.Source)
                     : (_visuals.TryGetValue(kv.Value.Source, out SceneVisual? v) ? v : null);
@@ -1508,7 +1520,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private bool TryImageBrushFill(uint hBrush, Rect bounds, ref Geometry g, out Brush? fill)
         {
             fill = null;
-            if (_contentBrushes.ContainsKey(hBrush)) _parseTouchedContentBrush = true;
+            if (_contentBrushes.ContainsKey(hBrush)) { _parseTouchedContentBrush = true; _contentBrushes2D.Add(hBrush); }
             if (!_imageBrushes.TryGetValue(hBrush, out MilImageBrush ib) ||
                 !_bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
                 return false;
@@ -1714,7 +1726,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private Brush? ResolveBrush(uint handle, Rect bounds)
         {
             if (handle == 0) return null;
-            if (_contentBrushes.ContainsKey(handle)) _parseTouchedContentBrush = true;
+            if (_contentBrushes.ContainsKey(handle)) { _parseTouchedContentBrush = true; _contentBrushes2D.Add(handle); }
             if (_solidBrushes.TryGetValue(handle, out RgbaColor c)) return new SolidColorBrush(c);
             if (_gradients.TryGetValue(handle, out MilGradient? g)) return BuildGradient(g, bounds);
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))

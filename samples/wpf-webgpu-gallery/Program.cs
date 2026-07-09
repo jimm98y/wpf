@@ -115,10 +115,18 @@ internal static class Program
         overlay.Children.Add(root);
         overlay.Children.Add(fpsBadge);
 
+        // WPF_GALLERY_SCROLL=<0..1>: park the scroll at a fixed fraction of scrollable height (for
+        // deterministic screenshots of lower cards, e.g. the 3D card). Applied every frame so it
+        // survives layout changes.
+        double parkScroll = double.TryParse(Environment.GetEnvironmentVariable("WPF_GALLERY_SCROLL"),
+            System.Globalization.CultureInfo.InvariantCulture, out double ps) ? ps : -1;
+
         int renderTicks = 0;
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
+            if (parkScroll >= 0 && scroll.ScrollableHeight > 0)
+                scroll.ScrollToVerticalOffset(parkScroll * scroll.ScrollableHeight);
             renderTicks++;
             double elapsed = fpsClock.Elapsed.TotalSeconds;
             if (elapsed >= 0.5)
@@ -490,6 +498,9 @@ internal static class Program
 
         var group = new Model3DGroup();
         group.Children.Add(new AmbientLight(Color.FromRgb(0x20, 0x20, 0x28)));
+        // A soft key DirectionalLight so the textured cube and the 2D-in-3D panel read clearly;
+        // the orbiting coloured point lights below add movement and colour on top.
+        group.Children.Add(new DirectionalLight(Color.FromRgb(0x9A, 0x9A, 0xA0), new Vector3D(-0.3, -0.45, -1.0)));
 
         // Orbiting coloured POINT lights + an emissive marker sphere at each, all under one animated
         // rotation so they sweep the scene (shows multiple lights, point attenuation and emissive).
@@ -538,9 +549,18 @@ internal static class Program
             Transform = new TranslateTransform3D(1.9, 0.1, 0),
         });
 
-        // 2D-IN-3D: a tilted quad textured with a VisualBrush of live 2D WPF content.
-        var panelBrush = new VisualBrush(Build3DPanelContent()) { Stretch = Stretch.Fill };
-        group.Children.Add(new GeometryModel3D(QuadMesh(3.0, 1.5), new DiffuseMaterial(panelBrush))
+        // 2D-IN-3D (LIVE, all-GPU): a real 2D WPF visual tree (text, shapes) is the source of a
+        // VisualBrush on a tilted quad. The engine renders that live subtree into a GPU texture
+        // each frame with the ordinary 2D shaders and the 3D shader samples it — no CPU
+        // rasterization, no readback. Diffuse+Emissive with the same brush makes the panel a
+        // self-lit "screen" while still catching the coloured scene lights.
+        Visual panelVisual = BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
+            out TranslateTransform dot);
+        var panelBrush = new VisualBrush(panelVisual) { Stretch = Stretch.Fill };
+        var panelMat = new MaterialGroup();
+        panelMat.Children.Add(new DiffuseMaterial(panelBrush));
+        panelMat.Children.Add(new EmissiveMaterial(panelBrush));
+        group.Children.Add(new GeometryModel3D(QuadMesh(3.0, 1.6), panelMat)
         {
             Transform = new Transform3DGroup
             {
@@ -554,31 +574,89 @@ internal static class Program
 
         viewport.Children.Add(new ModelVisual3D { Content = group });
 
-        // Self-animate the orbiting lights (the cube spin comes from the gallery timer).
-        CompositionTarget.Rendering += (s, e) => orbit.Angle = (orbit.Angle + 0.8) % 360.0;
+        // Self-animate the orbiting lights and the live 2D panel (cube spin comes from the gallery
+        // timer). Only render-affecting properties are touched (transforms + brush colour), so the
+        // orphan panel tree needs no layout pass — the invalidations flow to the compositor and the
+        // panel texture re-renders on the GPU.
+        int panelFrame = 0;
+        CompositionTarget.Rendering += (s, e) =>
+        {
+            orbit.Angle = (orbit.Angle + 0.8) % 360.0;
+            panelFrame++;
+            bool on = (panelFrame / 30) % 2 == 0;
+            led.Color = on ? Color.FromRgb(0x34, 0xD3, 0x99) : Color.FromRgb(0x14, 0x3A, 0x30);
+            progress.ScaleX = (panelFrame % 120) / 120.0;
+            dot.X = (Math.Sin(panelFrame * 0.06) * 0.5 + 0.5) * 300;
+        };
         return viewport;
     }
 
-    // A small live 2D UI, mirrored onto a 3D surface by a VisualBrush.
-    private static Visual Build3DPanelContent()
+    // The live 2D UI shown on the 3D quad: a dark "screen" panel with real text, a blinking
+    // status LED, an animated progress bar and a bouncing dot. It is a plain WPF visual tree
+    // (measured/arranged once; animated via render-only transform/colour properties).
+    private static Visual BuildLive3DPanel(out SolidColorBrush led, out ScaleTransform progress,
+        out TranslateTransform dot)
     {
-        var root = new Border
+        const double W = 360, H = 200;
+        var root = new Border { Width = W, Height = H, Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x12, 0x22)) };
+        var canvas = new Canvas();
+        root.Child = canvas;
+
+        // Header bar + title + blinking LED.
+        canvas.Children.Add(Place(new Rectangle { Width = W, Height = 52, Fill = new SolidColorBrush(Color.FromRgb(0x15, 0x22, 0x3C)) }, 0, 0));
+        canvas.Children.Add(Place(new TextBlock
         {
-            Width = 300,
-            Height = 150,
-            Background = new SolidColorBrush(Color.FromRgb(0x11, 0x18, 0x27)),
-            Child = new StackPanel { Margin = new Thickness(16) },
-        };
-        var stack = (StackPanel)root.Child;
-        stack.Children.Add(new TextBlock { Text = "2D in 3D", FontSize = 30, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.White) });
-        stack.Children.Add(new TextBlock { Text = "live WPF UI on a 3D quad", FontSize = 15, Foreground = new SolidColorBrush(Color.FromRgb(0x9C, 0xB0, 0xD0)), Margin = new Thickness(0, 4, 0, 12) });
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        row.Children.Add(new Border { Width = 60, Height = 34, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6)), Margin = new Thickness(0, 0, 8, 0), Child = new TextBlock { Text = "OK", Foreground = new SolidColorBrush(Colors.White), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
-        row.Children.Add(new Ellipse { Width = 34, Height = 34, Fill = new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81)) });
-        stack.Children.Add(row);
-        root.Measure(new Size(300, 150));
-        root.Arrange(new Rect(0, 0, 300, 150));
+            Text = "2D in 3D — live",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)),
+        }, 22, 11));
+        led = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99));
+        canvas.Children.Add(Place(new Ellipse { Width = 18, Height = 18, Fill = led }, 313, 17));
+
+        canvas.Children.Add(Place(new TextBlock
+        {
+            Text = "WPF VisualBrush on a lit quad,",
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD4, 0xE6)),
+        }, 22, 66));
+        canvas.Children.Add(Place(new TextBlock
+        {
+            Text = "rendered by GPU shaders every frame",
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x5B, 0x6E, 0x8C)),
+        }, 22, 90));
+
+        // Progress bar: fixed track, fill animated with a ScaleTransform (render-only).
+        canvas.Children.Add(Place(new Rectangle { Width = 316, Height = 16, RadiusX = 8, RadiusY = 8, Fill = new SolidColorBrush(Color.FromRgb(0x1E, 0x2B, 0x44)) }, 22, 124));
+        progress = new ScaleTransform(0.0, 1.0);
+        canvas.Children.Add(Place(new Rectangle
+        {
+            Width = 316, Height = 16, RadiusX = 8, RadiusY = 8,
+            Fill = new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8)),
+            RenderTransform = progress,
+        }, 22, 124));
+
+        // Bouncing dot along a rail (TranslateTransform, render-only).
+        canvas.Children.Add(Place(new Rectangle { Width = 316, Height = 4, Fill = new SolidColorBrush(Color.FromRgb(0x1E, 0x2B, 0x44)) }, 22, 168));
+        dot = new TranslateTransform(0, 0);
+        canvas.Children.Add(Place(new Ellipse
+        {
+            Width = 22, Height = 22,
+            Fill = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99)),
+            RenderTransform = dot,
+        }, 19, 159));
+
+        root.Measure(new Size(W, H));
+        root.Arrange(new Rect(0, 0, W, H));
         return root;
+
+        static UIElement Place(UIElement e, double x, double y)
+        {
+            Canvas.SetLeft(e, x);
+            Canvas.SetTop(e, y);
+            return e;
+        }
     }
 
     // A cube with per-face texture coordinates, half-extent `s`.
