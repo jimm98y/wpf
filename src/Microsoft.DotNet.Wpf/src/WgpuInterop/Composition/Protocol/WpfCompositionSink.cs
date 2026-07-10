@@ -264,6 +264,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
         }
 
+        // A surface can get STUCK returning no drawable when it was configured while its window
+        // wasn't visible yet (e.g. created behind a fullscreen Space, or before the first
+        // order-front) — the Occluded/null state then persists even after the window shows.
+        // Only Outdated/Timeout normally trigger a reconfigure, so force one after a run of
+        // drawable-less acquires to let the swapchain re-attach to the now-visible layer.
+        private void NoDrawable(TargetSurface ts)
+        {
+            if (++ts.NullAcquires % 30 != 0) return;
+            Log($"no drawable {ts.NullAcquires} frames in a row; reconfiguring surface");
+            Configure(ts);
+        }
+
         private void Present(TargetSurface ts, SceneVisual root, MilTarget t)
         {
             WGPUSurfaceTexture surfaceTexture;
@@ -279,15 +291,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.SuccessSuboptimal &&
                 surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus.Occluded)
             {
+                NoDrawable(ts);
                 return;
             }
             // A valid status can still hand back a null texture (e.g. an occluded/off-screen
             // drawable). Rendering to it would panic inside wgpu-native, so skip this frame.
             if (surfaceTexture.texture == IntPtr.Zero)
             {
+                NoDrawable(ts);
                 return;
             }
 
+            ts.NullAcquires = 0;
             AcquiredFrames++;
 
             IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
@@ -527,6 +542,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public WGPUTextureFormat Format;
             public int Width;
             public int Height;
+            /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>
+            public int NullAcquires;
         }
     }
 }

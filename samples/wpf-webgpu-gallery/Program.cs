@@ -514,15 +514,29 @@ internal static class Program
     private static UIElement Viewport3DDemo(out AxisAngleRotation3D rotation)
     {
         var viewport = new Viewport3D { Width = 196, Height = 150 };
-        viewport.Camera = new PerspectiveCamera
+
+        // ORBIT CAMERA: left-drag orbits around the scene centre (yaw/pitch on a sphere), scroll
+        // wheel zooms the radius. The initial pose matches the old fixed camera.
+        var camTarget = new Point3D(0, 0.9, 0);
+        double camYaw = 0, camPitch = 7 * Math.PI / 180, camRadius = 6.45;
+        var camera = new PerspectiveCamera
         {
-            Position = new Point3D(0, 1.7, 6.4),
-            LookDirection = new Vector3D(0, -0.22, -1),
             UpDirection = new Vector3D(0, 1, 0),
             FieldOfView = 45,
             NearPlaneDistance = 0.1,
             FarPlaneDistance = 100,
         };
+        void UpdateCamera()
+        {
+            var offset = new Vector3D(
+                camRadius * Math.Cos(camPitch) * Math.Sin(camYaw),
+                camRadius * Math.Sin(camPitch),
+                camRadius * Math.Cos(camPitch) * Math.Cos(camYaw));
+            camera.Position = camTarget + offset;
+            camera.LookDirection = -offset;
+        }
+        UpdateCamera();
+        viewport.Camera = camera;
 
         var group = new Model3DGroup();
         group.Children.Add(new AmbientLight(Color.FromRgb(0x20, 0x20, 0x28)));
@@ -621,7 +635,41 @@ internal static class Program
             progress.ScaleX = (panelFrame % 120) / 120.0;
             dot.X = (Math.Sin(panelFrame * 0.06) * 0.5 + 0.5) * 300;
         };
-        return viewport;
+
+        // Interaction surface for the orbit camera. A transparent Border catches mouse events over
+        // the WHOLE card area (Viewport3D itself only hit-tests where 3D geometry is). The hosted
+        // panel Button still wins its clicks (ButtonBase marks MouseLeftButtonDown handled, so a
+        // press on it never starts a drag); wheel zoom marks the event handled so the gallery's
+        // ScrollViewer doesn't scroll while zooming.
+        var surface = new Border { Background = Brushes.Transparent, Child = viewport };
+        bool dragging = false;
+        Point dragLast = default;
+        surface.MouseLeftButtonDown += (s, e) =>
+        {
+            dragging = surface.CaptureMouse();
+            dragLast = e.GetPosition(surface);
+        };
+        surface.MouseMove += (s, e) =>
+        {
+            if (!dragging) return;
+            Point p = e.GetPosition(surface);
+            camYaw -= (p.X - dragLast.X) * 0.012;
+            camPitch = Math.Clamp(camPitch + (p.Y - dragLast.Y) * 0.012, -75 * Math.PI / 180, 85 * Math.PI / 180);
+            dragLast = p;
+            UpdateCamera();
+        };
+        surface.MouseLeftButtonUp += (s, e) =>
+        {
+            dragging = false;
+            surface.ReleaseMouseCapture();
+        };
+        surface.MouseWheel += (s, e) =>
+        {
+            camRadius = Math.Clamp(camRadius * Math.Pow(1.0011, -e.Delta), 2.5, 14.0);
+            UpdateCamera();
+            e.Handled = true;
+        };
+        return surface;
     }
 
     // The Button hosted on the 3D panel (exposed for the projected-coordinate probe/self-test).
