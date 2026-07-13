@@ -75,6 +75,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         AxisAngleRotation3D = 0x57,
         PerspectiveCamera = 0x59,
         OrthographicCamera = 0x5a,
+        MatrixCamera = 0x5b,
         Model3DGroup = 0x5c,
         AmbientLight = 0x5d,
         DirectionalLight = 0x5e,
@@ -93,6 +94,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         MatrixTransform3D = 0x6b,
         HwndTargetCreate = 0x31,
         TargetUpdateWindowSettings = 0x33,
+        GenericTargetCreate = 0x34,
         GlyphRunCreate = 0x3a,
         TargetSetRoot = 0x35,
         TargetSetClearColor = 0x36,
@@ -152,6 +154,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // e.g. ComboBox/Menu/ToolTip popups, which need per-pixel-alpha presentation).
         public uint Transparency;
         public bool IsLayered => Transparency != 0;
+
+        // A bitmap target (MILCMD_GENERICTARGET_CREATE, e.g. RenderTargetBitmap): never
+        // presented to a window; rendered on demand via the sink's ReadbackTarget.
+        public bool IsBitmap;
     }
 
     /// <summary>
@@ -717,6 +723,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     t.ClearColor = new RgbaColor(cr, cg, cb, ca);
                     break;
                 }
+                case Mil.GenericTargetCreate:
+                {
+                    // MILCMD_GENERICTARGET_CREATE: Handle@4, hwnd(u64)@8, pRenderTarget(u64)@16,
+                    // width(u32)@24, height(u32)@28. A bitmap render target (RenderTargetBitmap):
+                    // no window; rendered on demand via ReadbackTarget, never presented.
+                    uint handle = r.U32();
+                    _ = r.U64();           // hwnd (0 for bitmap targets)
+                    _ = r.U64();           // pRenderTarget (native pointer; unused managed)
+                    uint w = r.U32();
+                    uint h = r.U32();
+                    if (!_targets.TryGetValue(handle, out MilTarget? t))
+                        _targets[handle] = t = new MilTarget();
+                    t.IsBitmap = true;
+                    t.Width = (int)w;
+                    t.Height = (int)h;
+                    t.ClearColor = new RgbaColor(0, 0, 0, 0);   // transparent, like MIL's bitmap RT
+                    break;
+                }
                 case Mil.TargetUpdateWindowSettings:
                 {
                     // MILCMD_TARGET_UPDATEWINDOWSETTINGS: Handle@4, windowRect(RECT)@8,
@@ -738,8 +762,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     uint targetHandle = r.U32();
                     uint hRoot = r.U32();
-                    _rootHandle = hRoot;
-                    if (_targets.TryGetValue(targetHandle, out MilTarget? t)) t.RootHandle = hRoot;
+                    bool known = _targets.TryGetValue(targetHandle, out MilTarget? t);
+                    if (known) t!.RootHandle = hRoot;
+                    // A bitmap target (RenderTargetBitmap sync render) must not hijack the
+                    // window's composition root -- its root lives only on the target itself.
+                    if (!known || !t!.IsBitmap) _rootHandle = hRoot;
                     break;
                 }
                 case Mil.Viewport3DVisualSetCamera:

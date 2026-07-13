@@ -284,6 +284,31 @@ namespace System.Windows.Media.Imaging
             if (_baseUri != null)
                 uri = new Uri(_baseUri, UriSource);
 
+            // No native WIC on this platform: decode with the managed decoder (PNG/BMP) and
+            // adopt the pixels as this image's managed backing. The decode-time transforms
+            // (SourceRect/DecodePixel*/Rotation) are native-WIC features.
+            if (!OperatingSystem.IsWindows())
+            {
+                if (!SourceRect.IsEmpty || DecodePixelWidth != 0 || DecodePixelHeight != 0 || Rotation != Rotation.Rotate0)
+                {
+                    throw new PlatformNotSupportedException(
+                        "BitmapImage.SourceRect/DecodePixelWidth/DecodePixelHeight/Rotation require native WIC, which is not available on this platform.");
+                }
+
+                BitmapSource decoded = ManagedImageDecoder.Decode(uri, StreamSource);
+                _managedPixels = decoded._managedPixels;
+                _managedStride = decoded._managedStride;
+                _format = decoded.Format;
+                _pixelWidth = decoded.PixelWidth;
+                _pixelHeight = decoded.PixelHeight;
+                _dpiX = decoded.DpiX;
+                _dpiY = decoded.DpiY;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                CreationCompleted = true;
+                return;
+            }
+
             if ((CreateOptions & BitmapCreateOptions.IgnoreImageCache) != 0)
             {
                 ImagingCache.RemoveFromImageCache(uri);

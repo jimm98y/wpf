@@ -228,6 +228,23 @@ namespace System.Windows.Media.Imaging
         /// </summary>
         internal override void FinalizeCreation()
         {
+            // A managed-backed source (no WIC handle, e.g. a RenderTargetBitmap or an in-memory
+            // bitmap off-Windows) provides its cached settings directly; UpdateCachedSettings
+            // would dereference the null native source. The frame also shares the source's
+            // pixel backing so CopyPixels/the composition marshal work on the frame itself.
+            if (WicSourceHandle == null)
+            {
+                _format = _source.Format;
+                _pixelWidth = _source.PixelWidth;
+                _pixelHeight = _source.PixelHeight;
+                _dpiX = _source.DpiX;
+                _dpiY = _source.DpiY;
+                _managedPixels = _source._managedPixels;
+                _managedStride = _source._managedStride;
+                CreationCompleted = true;
+                return;
+            }
+
             CreationCompleted = true;
             UpdateCachedSettings();
         }
@@ -258,7 +275,7 @@ namespace System.Windows.Media.Imaging
         #region Data Members
 
         /// Source for this Frame
-        private BitmapSource _source;
+        internal BitmapSource _source;
 
         #endregion
     }

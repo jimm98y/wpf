@@ -51,6 +51,33 @@ internal static class Program
         Check(cr > 180 && cb < 90, "the near quad (drawn first) is not overwritten by the far quad (depth test)");
         Check(Lum(depth, 2, 2) > 245, "corners are background");
 
+        // ---- MatrixCamera: explicit view/proj matrices must match the look-at camera ----
+        float aspect = W / (float)H;
+        float fovY = 2f * MathF.Atan(MathF.Tan(45f * MathF.PI / 360f) / aspect);
+        var mcam = new Camera3D(
+            Matrix4x4.CreateLookAt(new Vector3(0, 0, 3), new Vector3(0, 0, 2), new Vector3(0, 1, 0)),
+            Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, 0.125f, 1000f));
+        byte[] mc = renderer.RenderToRgba(LightingScene(mcam, ambient, gray, quad, towardQuad: true), W, H, white);
+        int mcCentre = Lum(mc, 32, 24);
+        Console.WriteLine($"matrixcamera: centre={mcCentre} (lookat gave {bright})");
+        Check(Math.Abs(mcCentre - bright) <= 8, "MatrixCamera view/proj matches the equivalent look-at camera");
+
+        // ---- Sidedness: front-only models cull their back; BackMaterial paints it ----
+        Matrix4x4 aboutFace = Matrix4x4.CreateRotationY(MathF.PI);   // quad now faces AWAY from the camera
+        var frontMat = Material3D.Diffuse3D(new RgbaColor(1f, 0f, 0f, 1f));
+        var backMat = Material3D.Diffuse3D(new RgbaColor(0f, 0f, 1f, 1f));
+        var light2 = new DirectionalLight3D(new Vector3(0, 0, -1), RgbaColor.FromBytes(255, 255, 255, 255));
+
+        byte[] culled = renderer.RenderToRgba(Viewport(camera, light2, ambient,
+            new List<Model3D> { new(quad, frontMat, true, default, false, aboutFace) }), W, H, white);
+        Check(Lum(culled, 32, 24) > 245, "a front-only model viewed from behind is culled (background shows)");
+
+        byte[] backed = renderer.RenderToRgba(Viewport(camera, light2, ambient,
+            new List<Model3D> { new(quad, frontMat, true, backMat, true, aboutFace) }), W, H, white);
+        int br = backed[(24 * W + 32) * 4], bb = backed[(24 * W + 32) * 4 + 2];
+        Console.WriteLine($"backmaterial: centre RGB=[{br},{backed[(24 * W + 32) * 4 + 1]},{bb}]");
+        Check(bb > 100 && br < 90, "the BackMaterial paints the back face (blue, not red/background)");
+
         if (_failures == 0)
         {
             Console.WriteLine("VIEWPORT3D TEST PASSED: 3D meshes render with a perspective camera, diffuse lighting and depth testing.");

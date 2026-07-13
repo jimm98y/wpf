@@ -166,6 +166,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         public void SyncFlush(int channelId) => RenderTargets();
 
+        /// <summary>
+        /// Renders a bitmap composition target (RenderTargetBitmap via the sync channel) and
+        /// returns its pixels as premultiplied BGRA32, top-down, width*4 stride. Null when the
+        /// target has no renderable root or this platform has no synchronous GPU readback
+        /// (browser -- its wgpu readback is Promise-only).
+        /// </summary>
+        public byte[]? ReadbackTarget(int channelId, uint targetHandle)
+        {
+            try
+            {
+                _engine.Realize();
+                if (!_engine.Targets.TryGetValue(targetHandle, out MilTarget? t)
+                    || t.RootHandle == 0 || t.Width <= 0 || t.Height <= 0)
+                    return null;
+                SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
+                if (root is null) return null;
+
+                EnsureGpu();
+                byte[] px = _renderer!.RenderToRgba(root, t.Width, t.Height, t.ClearColor, srgbOutput: true);
+                for (int i = 0; i < px.Length; i += 4)
+                    (px[i], px[i + 2]) = (px[i + 2], px[i]);   // RGBA -> BGRA
+                Log($"readback target 0x{targetHandle:x}: {t.Width}x{t.Height} root={t.RootHandle}");
+                return px;
+            }
+            catch (Exception ex)
+            {
+                Log($"readback target 0x{targetHandle:x} FAILED: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
         // ---- presentation ------------------------------------------------------------
 
         /// <summary>Render and present every target that has a window and a root visual.</summary>

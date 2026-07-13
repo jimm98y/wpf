@@ -200,6 +200,112 @@ internal static class Program
                 }
                 catch { }
             }
+            // RenderTargetBitmap smoke test (env WPF_GALLERY_RTB=1 or arg "rtb"): renders the live
+            // window content into an offscreen bitmap (sync-channel render + GPU readback under
+            // managed composition), verifies pixels via CopyPixels, and displays the result as the
+            // fps badge's background (proving the RTB also marshals back INTO the scene).
+            if (frame == 20 && (Environment.GetEnvironmentVariable("WPF_GALLERY_RTB") == "1" || Array.IndexOf(args, "rtb") >= 0))
+            {
+                try
+                {
+                    var rtb = new RenderTargetBitmap(300, 200, 96, 96, PixelFormats.Pbgra32);
+                    rtb.Render(overlay);
+                    var px = new byte[300 * 200 * 4];
+                    rtb.CopyPixels(px, 300 * 4, 0);
+                    long opaque = 0;
+                    for (int i = 3; i < px.Length; i += 4)
+                        if (px[i] != 0) opaque++;
+                    int c = (10 * 300 + 10) * 4;   // a pixel inside the purple header
+                    Console.WriteLine($"RTB-TEST opaque={opaque}/60000 px(10,10)=B{px[c]},G{px[c + 1]},R{px[c + 2]},A{px[c + 3]}");
+                    fpsBadge.Background = new ImageBrush(rtb);
+
+                    // And save it through the PNG encoder (managed off-Windows).
+                    string save = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wpf-rtb-test.png");
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(rtb));
+                    using (var fs = System.IO.File.Create(save))
+                        encoder.Save(fs);
+                    Console.WriteLine($"RTB-PNG saved {save} ({new System.IO.FileInfo(save).Length} bytes)");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"RTB-TEST FAILED {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            // WriteableBitmap smoke test (env WPF_GALLERY_WB=1 or arg "wb"): create + WritePixels a
+            // gradient (managed back buffer off-Windows), verify a CopyPixels round-trip, display
+            // it as the fps badge's background, then LIVE-update a stripe a couple seconds later
+            // (proving dirty updates re-marshal to the compositor).
+            if (frame == 20 && (Environment.GetEnvironmentVariable("WPF_GALLERY_WB") == "1" || Array.IndexOf(args, "wb") >= 0))
+            {
+                try
+                {
+                    _wbTest = new WriteableBitmap(120, 80, 96, 96, PixelFormats.Bgra32, null);
+                    var buf = new byte[120 * 80 * 4];
+                    for (int y = 0; y < 80; y++)
+                        for (int x = 0; x < 120; x++)
+                        {
+                            int i = (y * 120 + x) * 4;
+                            buf[i] = (byte)(255 - x * 2); buf[i + 1] = (byte)(y * 3); buf[i + 2] = (byte)(x * 2); buf[i + 3] = 255;
+                        }
+                    _wbTest.WritePixels(new Int32Rect(0, 0, 120, 80), buf, 120 * 4, 0);
+                    var check = new byte[120 * 80 * 4];
+                    _wbTest.CopyPixels(check, 120 * 4, 0);
+                    Console.WriteLine($"WB-TEST roundtrip={buf.AsSpan().SequenceEqual(check)} backbuffer=0x{_wbTest.BackBuffer:x} stride={_wbTest.BackBufferStride}");
+                    fpsBadge.Background = new ImageBrush(_wbTest);
+                }
+                catch (Exception ex) { Console.WriteLine($"WB-TEST FAILED {ex.GetType().Name}: {ex.Message}"); }
+            }
+            if (frame == 40 && _wbTest != null)
+            {
+                try
+                {
+                    var stripe = new byte[120 * 20 * 4];
+                    for (int i = 0; i < stripe.Length; i += 4) { stripe[i + 1] = 255; stripe[i + 3] = 255; }   // green
+                    _wbTest.WritePixels(new Int32Rect(0, 30, 120, 20), stripe, 120 * 4, 0);
+                    Console.WriteLine("WB-TEST live update written");
+                }
+                catch (Exception ex) { Console.WriteLine($"WB-TEST UPDATE FAILED {ex.GetType().Name}: {ex.Message}"); }
+            }
+
+            // Image decode smoke test (env WPF_GALLERY_IMG=1 or arg "img"): PNG round-trip through
+            // the managed encoder AND decoder (save a generated pattern, load it back via
+            // BitmapImage, compare bytes), display the decoded image, and optionally decode a
+            // real-world file given in WPF_IMG_FILE.
+            if (frame == 20 && (Environment.GetEnvironmentVariable("WPF_GALLERY_IMG") == "1" || Array.IndexOf(args, "img") >= 0))
+            {
+                try
+                {
+                    BitmapSource pattern = MakePattern(96);
+                    string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wpf-img-test.png");
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(pattern));
+                    using (var fs = System.IO.File.Create(path))
+                        encoder.Save(fs);
+
+                    var loaded = new BitmapImage(new Uri(path));
+                    var a = new byte[96 * 96 * 4];
+                    var b = new byte[96 * 96 * 4];
+                    pattern.CopyPixels(a, 96 * 4, 0);
+                    loaded.CopyPixels(b, 96 * 4, 0);
+                    Console.WriteLine($"IMG-TEST {loaded.PixelWidth}x{loaded.PixelHeight} roundtrip={a.AsSpan().SequenceEqual(b)}");
+                    fpsBadge.Background = new ImageBrush(loaded);
+
+                    string extra = Environment.GetEnvironmentVariable("WPF_IMG_FILE");
+                    if (!string.IsNullOrEmpty(extra))
+                    {
+                        var real = new BitmapImage(new Uri(extra));
+                        var px = new byte[real.PixelWidth * real.PixelHeight * 4];
+                        real.CopyPixels(px, real.PixelWidth * 4, 0);
+                        long nonZero = 0;
+                        for (int i = 3; i < px.Length; i += 4) if (px[i] != 0) nonZero++;
+                        Console.WriteLine($"IMG-FILE {extra}: {real.PixelWidth}x{real.PixelHeight} dpi={real.DpiX:0} opaquePx={nonZero}");
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine($"IMG-TEST FAILED {ex.GetType().Name}: {ex.Message}"); }
+            }
+
             // 3D-panel interactivity probe/self-test (see probe3D/click3D above). The projection
             // is only meaningful once the scroll has parked and the button has a size.
             if ((probe3D || click3D) && Panel3DButton is { } pb && frame % 30 == 20 && pb.ActualWidth > 0)
@@ -218,6 +324,12 @@ internal static class Program
             }
 
             frame++;
+            // "close" arg: exercise the REAL window-close path (same as the titlebar close
+            // button) instead of app.Shutdown, to catch teardown crashes.
+            if (frame == 60 && Array.IndexOf(args, "close") >= 0)
+            {
+                window.Close();
+            }
             // Optional bounded run for automated verification: pass seconds as arg[0].
             if (args.Length > 0 && int.TryParse(args[0], out int secs) && frame > secs * 30)
             {
@@ -606,19 +718,28 @@ internal static class Program
         // visual, and the scene's key light keeps the panel readable.
         var diffuseHost = new DiffuseMaterial(Brushes.White);
         Viewport2DVisual3D.SetIsVisualHostMaterial(diffuseHost, true);
+        Transform3D PanelPose() => new Transform3DGroup
+        {
+            Children =
+            {
+                new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(0, 1, 0), 18)),
+                new TranslateTransform3D(0, 1.9, -2.4),
+            },
+        };
         viewport.Children.Add(new Viewport2DVisual3D
         {
             Geometry = QuadMesh(3.0, 1.6),
             Visual = panelVisual,
             Material = diffuseHost,
-            Transform = new Transform3DGroup
-            {
-                Children =
-                {
-                    new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(0, 1, 0), 18)),
-                    new TranslateTransform3D(0, 1.9, -2.4),
-                },
-            },
+            Transform = PanelPose(),
+        });
+        // BACKMATERIAL: a coplanar quad with ONLY a BackMaterial gives the one-sided panel a dark
+        // "chassis" when orbited behind (its front is culled, the panel's front faces the other
+        // way — the two never draw together, so no z-fighting).
+        group.Children.Add(new GeometryModel3D(QuadMesh(3.0, 1.6), null)
+        {
+            BackMaterial = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x44))),
+            Transform = PanelPose(),
         });
 
         // Self-animate the orbiting lights and the live 2D panel (cube spin comes from the gallery
@@ -674,6 +795,9 @@ internal static class Program
 
     // The Button hosted on the 3D panel (exposed for the projected-coordinate probe/self-test).
     internal static Button Panel3DButton;
+
+    // WriteableBitmap under test (see the "wb" gallery arg).
+    private static WriteableBitmap _wbTest;
 
     // macOS self-test: feed a mouse move + left click at the given window point (DIPs) into the
     // SAME entry real AppKit events use (CocoaWindow.MouseInput -> HwndMouseInputProvider ->
@@ -825,8 +949,10 @@ internal static class Program
             for (int lon = 0; lon < segments; lon++)
             {
                 int a = lat * stride + lon, b = a + stride;
-                mesh.TriangleIndices.Add(a); mesh.TriangleIndices.Add(b); mesh.TriangleIndices.Add(a + 1);
-                mesh.TriangleIndices.Add(a + 1); mesh.TriangleIndices.Add(b); mesh.TriangleIndices.Add(b + 1);
+                // Counter-clockwise from OUTSIDE (WPF's front-face winding; back faces are culled
+                // when no BackMaterial is set).
+                mesh.TriangleIndices.Add(a); mesh.TriangleIndices.Add(a + 1); mesh.TriangleIndices.Add(b);
+                mesh.TriangleIndices.Add(a + 1); mesh.TriangleIndices.Add(b + 1); mesh.TriangleIndices.Add(b);
             }
         return mesh;
     }

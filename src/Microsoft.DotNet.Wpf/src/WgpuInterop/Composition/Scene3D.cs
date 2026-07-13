@@ -45,12 +45,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public readonly bool Orthographic;
         public readonly float Width;        // orthographic view width (world units)
 
+        /// <summary>Explicit view/projection matrices (WPF MatrixCamera); used verbatim when
+        /// HasMatrix is set, bypassing the look-at/FOV construction.</summary>
+        public readonly bool HasMatrix;
+        public readonly Matrix4x4 ViewMatrix;
+        public readonly Matrix4x4 ProjMatrix;
+
         public Camera3D(Vector3 position, Vector3 lookDirection, Vector3 upDirection, float fieldOfView,
             float nearPlane = 0.125f, float farPlane = 1000f, bool orthographic = false, float width = 0f)
         {
             Position = position; LookDirection = lookDirection; UpDirection = upDirection;
             FieldOfView = fieldOfView; NearPlane = nearPlane; FarPlane = farPlane;
             Orthographic = orthographic; Width = width;
+            HasMatrix = false; ViewMatrix = Matrix4x4.Identity; ProjMatrix = Matrix4x4.Identity;
+        }
+
+        public Camera3D(Matrix4x4 viewMatrix, Matrix4x4 projMatrix)
+        {
+            HasMatrix = true; ViewMatrix = viewMatrix; ProjMatrix = projMatrix;
+            // Camera position (for specular) recovered from the inverse view; identity fallback.
+            Position = Matrix4x4.Invert(viewMatrix, out Matrix4x4 inv) ? inv.Translation : Vector3.Zero;
+            LookDirection = new Vector3(0, 0, -1); UpDirection = new Vector3(0, 1, 0);
+            FieldOfView = 0f; NearPlane = 0f; FarPlane = 0f; Orthographic = false; Width = 0f;
         }
     }
 
@@ -122,19 +138,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             => new(c, new RgbaColor(0, 0, 0, 0), 1f, new RgbaColor(0, 0, 0, 0));
     }
 
-    /// <summary>A mesh with a material and a model transform.</summary>
+    /// <summary>A mesh with front/back materials and a model transform.</summary>
     internal sealed class Model3D
     {
         public MeshGeometry3D Mesh { get; }
         public Material3D Material { get; }
         public Matrix4x4 Transform { get; }
+        /// <summary>Material for back faces (WPF GeometryModel3D.BackMaterial); a side without a
+        /// material is culled. Front-only remains the common case.</summary>
+        public Material3D BackMaterial { get; }
+        public bool HasFrontMaterial { get; }
+        public bool HasBackMaterial { get; }
 
         /// <summary>Legacy accessor: the material's diffuse colour.</summary>
         public RgbaColor DiffuseColor => Material.Diffuse;
 
         public Model3D(MeshGeometry3D mesh, Material3D material, Matrix4x4 transform)
         {
+            Mesh = mesh; Material = material; Transform = transform; HasFrontMaterial = true;
+        }
+
+        public Model3D(MeshGeometry3D mesh, Material3D material, bool hasFront,
+            Material3D backMaterial, bool hasBack, Matrix4x4 transform)
+        {
             Mesh = mesh; Material = material; Transform = transform;
+            HasFrontMaterial = hasFront; BackMaterial = backMaterial; HasBackMaterial = hasBack;
         }
 
         public Model3D(MeshGeometry3D mesh, RgbaColor diffuseColor, Matrix4x4 transform)

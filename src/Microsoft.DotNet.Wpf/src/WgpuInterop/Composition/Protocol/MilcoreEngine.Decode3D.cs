@@ -45,7 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             public uint TransformHandle;
             public List<uint>? GroupChildren;       // Model3DGroup
-            public uint MeshHandle, MaterialHandle;  // GeometryModel3D
+            public uint MeshHandle, MaterialHandle, BackMaterialHandle;  // GeometryModel3D
             public int LightKind;                    // 1 ambient, 2 directional, 3 point, 4 spot
             public RgbaColor LightColor;
             public Vector3 LightDir;
@@ -157,6 +157,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _cameras[h] = new Camera3D(pos, look, up, 0f, (float)Math.Max(near, 0.001), (float)far, orthographic: true, width: (float)w);
                     break;
                 }
+                case Mil.MatrixCamera:
+                {
+                    // MILCMD_MATRIXCAMERA: viewMatrix (D3DMATRIX, 16 floats), projectionMatrix
+                    // (16 floats), htransform. The matrices are used verbatim (WPF applies no
+                    // viewport-aspect correction for MatrixCamera).
+                    uint h = r.U32();
+                    Matrix4x4 view = Mat16(ref r), proj = Mat16(ref r);
+                    r.U32();                 // htransform (ignored, like the other cameras)
+                    _cameras[h] = new Camera3D(view, proj);
+                    break;
+
+                    static Matrix4x4 Mat16(ref MilReader rr) => new(
+                        rr.F32(), rr.F32(), rr.F32(), rr.F32(),
+                        rr.F32(), rr.F32(), rr.F32(), rr.F32(),
+                        rr.F32(), rr.F32(), rr.F32(), rr.F32(),
+                        rr.F32(), rr.F32(), rr.F32(), rr.F32());
+                }
                 case Mil.AmbientLight:
                 {
                     uint h = r.U32(); RgbaColor c = Col(ref r);
@@ -203,9 +220,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case Mil.GeometryModel3D:
                 {
                     uint h = r.U32();
-                    uint htransform = r.U32(), hgeometry = r.U32(), hmaterial = r.U32();
-                    r.U32();                 // hbackMaterial
-                    _models3D[h] = new Model3DNode { TransformHandle = htransform, MeshHandle = hgeometry, MaterialHandle = hmaterial };
+                    uint htransform = r.U32(), hgeometry = r.U32(), hmaterial = r.U32(), hback = r.U32();
+                    _models3D[h] = new Model3DNode { TransformHandle = htransform, MeshHandle = hgeometry, MaterialHandle = hmaterial, BackMaterialHandle = hback };
                     break;
                 }
                 case Mil.Model3DGroup:
@@ -391,7 +407,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             else if (node.MeshHandle != 0 && _meshes.TryGetValue(node.MeshHandle, out MeshGeometry3D? mesh))
             {
-                models.Add(new Model3D(mesh, ResolveMaterial(node.MaterialHandle), m));
+                // WPF sidedness: Material = front faces, BackMaterial = back faces; a side without
+                // a material is culled (a model with neither draws nothing).
+                bool hasFront = node.MaterialHandle != 0, hasBack = node.BackMaterialHandle != 0;
+                if (hasFront || hasBack)
+                    models.Add(new Model3D(mesh,
+                        hasFront ? ResolveMaterial(node.MaterialHandle) : default, hasFront,
+                        hasBack ? ResolveMaterial(node.BackMaterialHandle) : default, hasBack, m));
             }
         }
 

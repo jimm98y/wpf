@@ -110,7 +110,9 @@ namespace System.Windows.Media
             {
                 DUCE.Channel syncChannel;
 
-                if (_pSyncConnection == IntPtr.Zero)
+                // Under managed composition, channels route to the sink and no native transport
+                // exists; DUCE.Channel ignores the connection pointer in that mode.
+                if (_pSyncConnection == IntPtr.Zero && !DUCE.ManagedComposition.IsEnabled)
                 {
                     HRESULT.Check(UnsafeNativeMethods.WgxConnection_Create(
                         true, // true means synchronous transport

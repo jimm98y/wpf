@@ -28,7 +28,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // shapes/text), so their silhouette edges alias without multisampling.
         private const uint Msaa3D = 4;
 
-        private readonly Dictionary<WGPUTextureFormat, IntPtr> _pipelines3D = new();
+        private readonly Dictionary<(WGPUTextureFormat Format, WGPUCullMode Cull), IntPtr> _pipelines3D = new();
         private IntPtr _shader3D;
 
         private const int MaxLights3D = 8;
@@ -48,7 +48,7 @@ struct U {
     diffuse  : vec4<f32>,     // material diffuse rgba
     specular : vec4<f32>,     // rgb specular, w = specular power (0 = none)
     emissive : vec4<f32>,     // rgb emissive
-    params   : vec4<f32>,     // x = light count, y = hasTexture, z = emissive-textured
+    params   : vec4<f32>,     // x = light count, y = hasTexture, z = emissive-textured, w = flip normals (back faces)
     lights   : array<Light, 8>,
 };
 @group(0) @binding(0) var<uniform> u : U;
@@ -74,7 +74,8 @@ fn vs_main(@location(0) pos : vec3<f32>, @location(1) normal : vec3<f32>, @locat
 
 @fragment
 fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
-    let n = normalize(in.normal);
+    // Back-material draws (params.w) light the back side: flip the interpolated normal.
+    let n = normalize(in.normal) * select(1.0, -1.0, u.params.w > 0.5);
     let viewDir = normalize(u.camPos.xyz - in.worldPos);
     var diffuseColor = u.diffuse.rgb;
     if (u.params.y > 0.5) {
@@ -149,22 +150,32 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
             float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
-            Matrix4x4 view = Matrix4x4.CreateLookAt(cam.Position, cam.Position + cam.LookDirection, cam.UpDirection);
-            // WPF's PerspectiveCamera.FieldOfView is HORIZONTAL (PerspectiveCamera.GetProjectionMatrix:
-            // w = 1/tan(fov/2), h = aspectRatio/tan(fov/2)), but CreatePerspectiveFieldOfView takes a
-            // VERTICAL fov. Passing the horizontal angle directly shrinks the projection by ~1/aspect,
-            // so objects recede and the camera looks farther than WPF. Convert horizontal -> vertical.
-            Matrix4x4 proj;
-            if (cam.Orthographic)
+            Matrix4x4 view, proj;
+            if (cam.HasMatrix)
             {
-                float ow = cam.Width > 0f ? cam.Width : 2f;
-                proj = Matrix4x4.CreateOrthographic(ow, ow / aspect, cam.NearPlane, cam.FarPlane);
+                // MatrixCamera: use the app-supplied matrices verbatim (WPF applies no
+                // viewport-aspect correction for MatrixCamera either).
+                view = cam.ViewMatrix;
+                proj = cam.ProjMatrix;
             }
             else
             {
-                float fovH = cam.FieldOfView * (MathF.PI / 180f);
-                float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
-                proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
+                view = Matrix4x4.CreateLookAt(cam.Position, cam.Position + cam.LookDirection, cam.UpDirection);
+                // WPF's PerspectiveCamera.FieldOfView is HORIZONTAL (PerspectiveCamera.GetProjectionMatrix:
+                // w = 1/tan(fov/2), h = aspectRatio/tan(fov/2)), but CreatePerspectiveFieldOfView takes a
+                // VERTICAL fov. Passing the horizontal angle directly shrinks the projection by ~1/aspect,
+                // so objects recede and the camera looks farther than WPF. Convert horizontal -> vertical.
+                if (cam.Orthographic)
+                {
+                    float ow = cam.Width > 0f ? cam.Width : 2f;
+                    proj = Matrix4x4.CreateOrthographic(ow, ow / aspect, cam.NearPlane, cam.FarPlane);
+                }
+                else
+                {
+                    float fovH = cam.FieldOfView * (MathF.PI / 180f);
+                    float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
+                    proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
+                }
             }
             // Map full NDC [-1,1] to the device rect's NDC sub-region (y flipped: device y grows down).
             float sx = (dx1 - dx0) / width, sy = (dy1 - dy0) / height;
@@ -181,6 +192,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             {
                 MeshGeometry3D mesh = model.Mesh;
                 if (mesh.Indices.Length == 0) continue;
+                if (!model.HasFrontMaterial && !model.HasBackMaterial) continue;
 
                 byte[] vbytes = BuildMeshVertices(mesh);
                 byte[] ibytes = new byte[mesh.Indices.Length * sizeof(uint)];
@@ -190,46 +202,53 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr ibuf = _ctx.CreateBuffer((ulong)ibytes.Length, WGPUBufferUsage.Index | WGPUBufferUsage.CopyDst);
                 _ctx.WriteBuffer(vbuf, vbytes);
                 _ctx.WriteBuffer(ibuf, ibytes);
-
-                Material3D mat = model.Material;
-                byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, cam.Position,
-                    viewport.Lights, viewport.AmbientColor, mat);
-                IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
-                _ctx.WriteBuffer(ubuf, uni);
-
-                // Diffuse texture. Three sources, in priority order:
-                //  1. LIVE 2D content (VisualBrush) -> render its subtree into a GPU texture THIS frame
-                //     (a plan pass before the 3D pass), no CPU readback -> interactive 2D-in-3D.
-                //  2. A static image -> upload its pixels.
-                //  3. Untextured -> a shared 1x1 white (the shader's hasTexture flag gates sampling).
-                IntPtr texView;
-                if (mat.TextureVisual is { } tvis)
-                {
-                    texView = RenderVisualToTexture(tvis, (int)mat.TexVisualBounds.Width, (int)mat.TexVisualBounds.Height, plan);
-                    // Diagnostic (WPF_DBG_3DTEX_OVERLAY=1): composite the live-2D texture straight
-                    // into the 2D scene over the viewport rect, bypassing the 3D pass -- isolates
-                    // texture-content bugs from 3D-sampling bugs.
-                    if (Dbg3DTexOverlay)
-                        EmitFullScreenQuad(outData, outFormat, FillKind.Layer, texView, 1f, 1f, 1f, 1f, 0f, 0f, clip, width, height);
-                }
-                else if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
-                {
-                    (IntPtr tex, IntPtr tv) = CreateImageTexture(px, mat.TexWidth, mat.TexHeight);
-                    DeferReleaseTexView(tex, tv);
-                    texView = tv;
-                }
-                else
-                {
-                    texView = White3DView();
-                }
-
-                IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView);
-                DeferReleaseBindGroup(bindGroup);
-                DeferReleaseBuffer(ubuf);
                 DeferReleaseBuffer(vbuf);
                 DeferReleaseBuffer(ibuf);
 
-                models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length));
+                // WPF sidedness: Material paints front faces, BackMaterial paints back faces (with
+                // normals flipped so lighting is correct); a missing side is culled away entirely.
+                if (model.HasFrontMaterial) AddDraw(model.Material, backFace: false);
+                if (model.HasBackMaterial) AddDraw(model.BackMaterial, backFace: true);
+
+                void AddDraw(Material3D mat, bool backFace)
+                {
+                    byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, cam.Position,
+                        viewport.Lights, viewport.AmbientColor, mat, backFace);
+                    IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
+                    _ctx.WriteBuffer(ubuf, uni);
+
+                    // Diffuse texture. Three sources, in priority order:
+                    //  1. LIVE 2D content (VisualBrush) -> render its subtree into a GPU texture THIS frame
+                    //     (a plan pass before the 3D pass), no CPU readback -> interactive 2D-in-3D.
+                    //  2. A static image -> upload its pixels.
+                    //  3. Untextured -> a shared 1x1 white (the shader's hasTexture flag gates sampling).
+                    IntPtr texView;
+                    if (mat.TextureVisual is { } tvis)
+                    {
+                        texView = RenderVisualToTexture(tvis, (int)mat.TexVisualBounds.Width, (int)mat.TexVisualBounds.Height, plan);
+                        // Diagnostic (WPF_DBG_3DTEX_OVERLAY=1): composite the live-2D texture straight
+                        // into the 2D scene over the viewport rect, bypassing the 3D pass -- isolates
+                        // texture-content bugs from 3D-sampling bugs.
+                        if (Dbg3DTexOverlay)
+                            EmitFullScreenQuad(outData, outFormat, FillKind.Layer, texView, 1f, 1f, 1f, 1f, 0f, 0f, clip, width, height);
+                    }
+                    else if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
+                    {
+                        (IntPtr tex, IntPtr tv) = CreateImageTexture(px, mat.TexWidth, mat.TexHeight);
+                        DeferReleaseTexView(tex, tv);
+                        texView = tv;
+                    }
+                    else
+                    {
+                        texView = White3DView();
+                    }
+
+                    IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView, backFace);
+                    DeferReleaseBindGroup(bindGroup);
+                    DeferReleaseBuffer(ubuf);
+
+                    models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length, backFace));
+                }
             }
 
             plan.Add(new LayerPass(colorView, ReadbackFormat, models, depthView, msaaColorView));
@@ -266,9 +285,11 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             };
             IntPtr pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
-            wgpuRenderPassEncoderSetPipeline(pass, Get3DPipeline(format));
             foreach (Draw3D m in models)
             {
+                // Front-material draws cull back faces; back-material draws cull front faces
+                // (WPF sidedness). Same shader/layout, so bind groups are interchangeable.
+                wgpuRenderPassEncoderSetPipeline(pass, Get3DPipeline(format, m.BackFace ? WGPUCullMode.Front : WGPUCullMode.Back));
                 wgpuRenderPassEncoderSetBindGroup(pass, 0, m.BindGroup, 0, null);
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m.Vbuf, 0, WholeSize);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, m.Ibuf, WGPUIndexFormat.Uint32, 0, WholeSize);
@@ -352,9 +373,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return _white3DView;
         }
 
-        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView)
+        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView, bool backFace)
         {
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(Get3DPipeline(ReadbackFormat), 0);
+            // Auto pipeline layouts are only compatible with the pipeline they came from, so the
+            // bind group must be created against the SAME cull variant it will be drawn with.
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(
+                Get3DPipeline(ReadbackFormat, backFace ? WGPUCullMode.Front : WGPUCullMode.Back), 0);
             var entries = stackalloc WGPUBindGroupEntry[3];
             entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = 0, size = size };
             entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = textureView };
@@ -363,11 +387,11 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
         }
 
-        private IntPtr Get3DPipeline(WGPUTextureFormat format)
+        private IntPtr Get3DPipeline(WGPUTextureFormat format, WGPUCullMode cull = WGPUCullMode.Back)
         {
-            if (_pipelines3D.TryGetValue(format, out IntPtr cached)) return cached;
-            IntPtr pipeline = Create3DPipeline(format);
-            _pipelines3D[format] = pipeline;
+            if (_pipelines3D.TryGetValue((format, cull), out IntPtr cached)) return cached;
+            IntPtr pipeline = Create3DPipeline(format, cull);
+            _pipelines3D[(format, cull)] = pipeline;
             return pipeline;
         }
 
@@ -388,7 +412,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return _shader3D;
         }
 
-        private IntPtr Create3DPipeline(WGPUTextureFormat targetFormat)
+        private IntPtr Create3DPipeline(WGPUTextureFormat targetFormat, WGPUCullMode cull)
         {
             IntPtr shader = Get3DShaderModule();
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -455,7 +479,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     {
                         topology = WGPUPrimitiveTopology.TriangleList,
                         frontFace = WGPUFrontFace.CCW,
-                        cullMode = WGPUCullMode.None,
+                        cullMode = cull,
                     },
                     depthStencil = (IntPtr)(&depthState),
                     multisample = new WGPUMultisampleState { count = Msaa3D, mask = 0xFFFFFFFF },
@@ -486,7 +510,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
         // Uniform layout matches the WGSL struct U: 2 mat4 + 6 vec4 header, then MaxLights3D Light
         // (4 vec4 each). std140 alignment is satisfied (all vec4-aligned).
         private static byte[] BuildModelUniform(Matrix4x4 mvp, Matrix4x4 model, Vector3 camPos,
-            IReadOnlyList<Light3D> lights, RgbaColor ambient, Material3D mat)
+            IReadOnlyList<Light3D> lights, RgbaColor ambient, Material3D mat, bool flipNormals = false)
         {
             const int headerFloats = 32 + 24;                 // 2 mat4 (32) + 6 vec4 (24)
             var f = new float[headerFloats + MaxLights3D * 16];
@@ -499,7 +523,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             f[o++] = mat.Specular.R; f[o++] = mat.Specular.G; f[o++] = mat.Specular.B; f[o++] = mat.SpecularPower;
             f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = 1f;
             int count = Math.Min(lights.Count, MaxLights3D);
-            f[o++] = count; f[o++] = mat.HasTexture ? 1f : 0f; f[o++] = mat.EmissiveTextured ? 1f : 0f; f[o++] = 0f;
+            f[o++] = count; f[o++] = mat.HasTexture ? 1f : 0f; f[o++] = mat.EmissiveTextured ? 1f : 0f; f[o++] = flipNormals ? 1f : 0f;
             for (int i = 0; i < count; i++)
             {
                 Light3D l = lights[i];

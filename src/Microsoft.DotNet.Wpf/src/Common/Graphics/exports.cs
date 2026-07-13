@@ -151,6 +151,14 @@ namespace System.Windows.Media.Composition
 
         /// <summary>SyncFlush analog: commit and block until executed.</summary>
         void SyncFlush(int channelId);
+
+        /// <summary>
+        /// Renders a bitmap composition target (TYPE_GENERICRENDERTARGET, e.g. a
+        /// RenderTargetBitmap) and returns its pixels as premultiplied BGRA32, top-down,
+        /// tightly packed (width*4 stride). Returns null if the target cannot be rendered
+        /// (unknown handle, no root, or no synchronous GPU readback on this platform).
+        /// </summary>
+        byte[] ReadbackTarget(int channelId, uint targetHandle);
     }
 
     /// <summary>
@@ -259,6 +267,7 @@ namespace System.Windows.Media.Composition
             private readonly System.Reflection.MethodInfo _closeBatch;
             private readonly System.Reflection.MethodInfo _commit;
             private readonly System.Reflection.MethodInfo _syncFlush;
+            private readonly System.Reflection.MethodInfo _readbackTarget;
 
             internal ReflectionMilCompositionSink(object impl)
             {
@@ -276,6 +285,7 @@ namespace System.Windows.Media.Composition
                 _closeBatch = Bind(t, "CloseBatch");
                 _commit = Bind(t, "Commit");
                 _syncFlush = Bind(t, "SyncFlush");
+                _readbackTarget = Bind(t, "ReadbackTarget");
             }
 
             private static System.Reflection.MethodInfo Bind(Type t, string name)
@@ -328,6 +338,9 @@ namespace System.Windows.Media.Composition
 
             public void SyncFlush(int channelId) =>
                 _syncFlush.Invoke(_impl, new object[] { channelId });
+
+            public byte[] ReadbackTarget(int channelId, uint targetHandle) =>
+                (byte[])_readbackTarget.Invoke(_impl, new object[] { channelId, targetHandle });
         }
 
         /// <summary>
@@ -748,6 +761,15 @@ namespace System.Windows.Media.Composition
 
                 HRESULT.Check(UnsafeNativeMethods.WgxConnection_SameThreadPresent(_pConnection));
             }
+
+            /// <summary>
+            /// Managed composition only: renders a bitmap composition target committed on this
+            /// channel and returns its premultiplied BGRA32 pixels (see
+            /// <see cref="IMilCompositionSink.ReadbackTarget"/>). Null when no managed backend
+            /// is registered or the target cannot be rendered.
+            /// </summary>
+            internal byte[] ReadbackTarget(DUCE.ResourceHandle targetHandle) =>
+                _sink?.ReadbackTarget(_managedId, (uint)targetHandle);
 
             /// <summary>
             /// Internal only: CreateOrAddRefOnChannel addrefs the resource corresponding to the

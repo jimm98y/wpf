@@ -150,7 +150,7 @@ namespace System.Windows.Media
             out MilRectF prcDestRect); 
 
         [DllImport(DllImport.MilCore, EntryPoint = "MilUtility_CopyPixelBuffer", PreserveSig = false)]
-        internal static extern unsafe void MILCopyPixelBuffer(
+        private static extern unsafe void MILCopyPixelBufferNative(
             byte *  pOutputBuffer,
             uint    outputBufferSize,
             uint    outputBufferStride,
@@ -162,6 +162,50 @@ namespace System.Windows.Media
             uint    height,
             uint    copyWidthInBits
             );
+
+        internal static unsafe void MILCopyPixelBuffer(
+            byte* pOutputBuffer,
+            uint outputBufferSize,
+            uint outputBufferStride,
+            uint outputBufferOffsetInBits,
+            byte* pInputBuffer,
+            uint inputBufferSize,
+            uint inputBufferStride,
+            uint inputBufferOffsetInBits,
+            uint height,
+            uint copyWidthInBits
+            )
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                // Managed row-copy for whole-byte pixels (every format this port produces).
+                // Sub-byte offsets/widths (1bpp/4bpp) would need the native bit-blitter.
+                if (outputBufferOffsetInBits != 0 || inputBufferOffsetInBits != 0 || (copyWidthInBits & 7) != 0)
+                {
+                    throw new PlatformNotSupportedException("Sub-byte pixel copies require native milcore.");
+                }
+
+                uint rowBytes = copyWidthInBits >> 3;
+                if (height > 0 &&
+                    ((ulong)(height - 1) * outputBufferStride + rowBytes > outputBufferSize ||
+                     (ulong)(height - 1) * inputBufferStride + rowBytes > inputBufferSize))
+                {
+                    throw new ArgumentException("The pixel copy does not fit within the supplied buffers.");
+                }
+
+                for (uint y = 0; y < height; y++)
+                {
+                    new ReadOnlySpan<byte>(pInputBuffer + y * inputBufferStride, (int)rowBytes)
+                        .CopyTo(new Span<byte>(pOutputBuffer + y * outputBufferStride, (int)rowBytes));
+                }
+                return;
+            }
+
+            MILCopyPixelBufferNative(
+                pOutputBuffer, outputBufferSize, outputBufferStride, outputBufferOffsetInBits,
+                pInputBuffer, inputBufferSize, inputBufferStride, inputBufferOffsetInBits,
+                height, copyWidthInBits);
+        }
 
         internal static Rect ProjectBounds(
             ref Matrix3D viewProjMatrix,

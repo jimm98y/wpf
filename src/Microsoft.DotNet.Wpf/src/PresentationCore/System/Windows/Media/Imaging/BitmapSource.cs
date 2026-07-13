@@ -567,6 +567,14 @@ namespace System.Windows.Media.Imaging
                 CompleteDelayedCreation();
                 if (_wicSource == null || _wicSource.IsInvalid)
                 {
+                    // The lazy IWICBitmapSource wrapper is COM interop, which does not exist
+                    // off-Windows -- managed-backed sources (_managedPixels) have no native
+                    // identity there and consumers key off a null handle instead.
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        return _wicSource;
+                    }
+
                     ManagedBitmapSource managedBitmapSource = new ManagedBitmapSource(this);
                     _wicSource = new BitmapSourceSafeMILHandle(Marshal.GetComInterfaceForObject(
                             managedBitmapSource,
@@ -997,13 +1005,19 @@ namespace System.Windows.Media.Imaging
         /// cross-platform backend never dereferences a native bitmap pointer. Returns null
         /// if the bitmap has no pixels.
         /// </summary>
-        private byte[] CopyPixelsForManagedComposition(out int width, out int height, out int stride)
+        internal byte[] CopyPixelsForManagedComposition(out int width, out int height, out int stride)
         {
             width = 0; height = 0; stride = 0;
 
-            // Normalize any source format (indexed, gray, premultiplied, 24bpp, ...) to a
-            // single straight BGRA32 layout the backend understands.
-            BitmapSource source = (Format == PixelFormats.Bgra32) ? this : new FormatConvertedBitmap(this, PixelFormats.Bgra32, null, 0);
+            // Normalize any source format to the single straight-BGRA32 layout the backend
+            // understands. Pbgra32 (e.g. RenderTargetBitmap) is un-premultiplied in managed code;
+            // FormatConvertedBitmap is native WIC, so it must not be hit for formats that appear
+            // on non-Windows platforms.
+            bool premultiplied = Format == PixelFormats.Pbgra32;
+            bool opaque = Format == PixelFormats.Bgr32;   // alpha byte is undefined; force 255
+            BitmapSource source = (Format == PixelFormats.Bgra32 || premultiplied || opaque)
+                ? this
+                : new FormatConvertedBitmap(this, PixelFormats.Bgra32, null, 0);
 
             int w = source.PixelWidth;
             int h = source.PixelHeight;
@@ -1015,6 +1029,27 @@ namespace System.Windows.Media.Imaging
             int rowBytes = checked(w * 4);
             byte[] pixels = new byte[checked(rowBytes * h)];
             source.CopyPixels(pixels, rowBytes, 0);
+
+            if (premultiplied)
+            {
+                for (int i = 0; i < pixels.Length; i += 4)
+                {
+                    byte a = pixels[i + 3];
+                    if (a != 0 && a != 255)
+                    {
+                        pixels[i] = (byte)Math.Min(255, (pixels[i] * 255) / a);
+                        pixels[i + 1] = (byte)Math.Min(255, (pixels[i + 1] * 255) / a);
+                        pixels[i + 2] = (byte)Math.Min(255, (pixels[i + 2] * 255) / a);
+                    }
+                }
+            }
+            else if (opaque)
+            {
+                for (int i = 3; i < pixels.Length; i += 4)
+                {
+                    pixels[i] = 255;
+                }
+            }
 
             width = w; height = h; stride = rowBytes;
             return pixels;

@@ -779,9 +779,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             public readonly IntPtr Vbuf, Ibuf, BindGroup;
             public readonly uint IndexCount;
-            public Draw3D(IntPtr vbuf, IntPtr ibuf, IntPtr bindGroup, uint indexCount)
+            /// <summary>True for a BackMaterial draw: cull front faces and flip normals.</summary>
+            public readonly bool BackFace;
+            public Draw3D(IntPtr vbuf, IntPtr ibuf, IntPtr bindGroup, uint indexCount, bool backFace = false)
             {
-                Vbuf = vbuf; Ibuf = ibuf; BindGroup = bindGroup; IndexCount = indexCount;
+                Vbuf = vbuf; Ibuf = ibuf; BindGroup = bindGroup; IndexCount = indexCount; BackFace = backFace;
             }
         }
 
