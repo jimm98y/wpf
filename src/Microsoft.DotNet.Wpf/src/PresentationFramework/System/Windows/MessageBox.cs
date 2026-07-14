@@ -405,6 +405,13 @@ namespace System.Windows
                 }
             }
 
+            // Off-Windows there is no user32 MessageBox. On macOS show a real in-process
+            // NSAlert; on other platforms fall back to the default result (no native UI).
+            if (!OperatingSystem.IsWindows())
+            {
+                return ShowPortable(messageBoxText, caption, button, icon, defaultResult);
+            }
+
             int style = (int) button | (int) icon | (int) DefaultResultToButtonNumber(defaultResult, button) | (int) options;
 
             // modal dialog notification?
@@ -417,6 +424,63 @@ namespace System.Windows
             //Application.EndModalMessageLoop();
 
             return result;
+        }
+
+        // Buttons for each MessageBoxButton, in NSAlert display order (first = default), paired
+        // with the MessageBoxResult each returns. AppKit lists buttons trailing-to-leading, so
+        // the first entry is the rightmost/default button -- matching Win32's default-button-1.
+        private static (string Label, MessageBoxResult Result)[] PortableButtons(MessageBoxButton button)
+        {
+            return button switch
+            {
+                MessageBoxButton.OK => new[] { ("OK", MessageBoxResult.OK) },
+                MessageBoxButton.OKCancel => new[] { ("OK", MessageBoxResult.OK), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.YesNo => new[] { ("Yes", MessageBoxResult.Yes), ("No", MessageBoxResult.No) },
+                MessageBoxButton.YesNoCancel => new[] { ("Yes", MessageBoxResult.Yes), ("No", MessageBoxResult.No), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.RetryCancel => new[] { ("Retry", MessageBoxResult.Retry), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.AbortRetryIgnore => new[] { ("Abort", MessageBoxResult.Abort), ("Retry", MessageBoxResult.Retry), ("Ignore", MessageBoxResult.Ignore) },
+                MessageBoxButton.CancelTryContinue => new[] { ("Cancel", MessageBoxResult.Cancel), ("Try Again", MessageBoxResult.TryAgain), ("Continue", MessageBoxResult.Continue) },
+                _ => new[] { ("OK", MessageBoxResult.OK) },
+            };
+        }
+
+        private static MessageBoxResult ShowPortable(string messageBoxText, string caption,
+            MessageBoxButton button, MessageBoxImage icon, MessageBoxResult defaultResult)
+        {
+            (string Label, MessageBoxResult Result)[] buttons = PortableButtons(button);
+
+            if (OperatingSystem.IsMacOS())
+            {
+                try
+                {
+                    // NSAlertStyle: Error/Stop/Hand -> critical (2); Warning/Exclamation -> warning (0);
+                    // everything else -> informational (1).
+                    int style = icon switch
+                    {
+                        MessageBoxImage.Error => 2,   // == Stop == Hand
+                        MessageBoxImage.Warning => 0, // == Exclamation
+                        _ => 1,
+                    };
+                    string[] labels = Array.ConvertAll(buttons, b => b.Label);
+                    int clicked = MS.Internal.Interop.CocoaDialogs.ShowAlert(messageBoxText, caption, labels, style);
+                    return buttons[clicked].Result;
+                }
+                catch
+                {
+                    // AppKit unavailable (e.g. headless) -> fall through to the default result.
+                }
+            }
+
+            // No native dialog available: return the caller's declared default (or the safest
+            // choice for the button set) without blocking.
+            foreach ((string _, MessageBoxResult result) in buttons)
+            {
+                if (result == defaultResult)
+                {
+                    return defaultResult;
+                }
+            }
+            return buttons[0].Result;
         }
 
         private static bool IsValidMessageBoxButton(MessageBoxButton value)

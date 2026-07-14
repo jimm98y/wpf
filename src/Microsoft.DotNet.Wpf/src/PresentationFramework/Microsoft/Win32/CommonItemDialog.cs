@@ -273,6 +273,13 @@ namespace Microsoft.Win32
         /// </summary>
         protected override bool RunDialog(IntPtr hwndOwner)
         {
+            // Off-Windows there is no IFileOpenDialog/IFileSaveDialog COM. On macOS show a real
+            // in-process NSOpenPanel/NSSavePanel; elsewhere report cancellation (no native UI).
+            if (!OperatingSystem.IsWindows())
+            {
+                return RunDialogPortable();
+            }
+
             IFileDialog dialog = CreateDialog();
 
             PrepareDialog(dialog);
@@ -280,6 +287,48 @@ namespace Microsoft.Win32
             using (VistaDialogEvents events = new VistaDialogEvents(dialog, HandleItemOk))
             {
                 return dialog.Show(hwndOwner).Succeeded;
+            }
+        }
+
+        private bool RunDialogPortable()
+        {
+            if (!OperatingSystem.IsMacOS())
+            {
+                return false;   // no native file dialog on this platform
+            }
+
+            string title = string.IsNullOrEmpty(Title) ? null : Title;
+            string dir = string.IsNullOrEmpty(InitialDirectory) ? null : InitialDirectory;
+
+            try
+            {
+                // A SaveFileDialog maps to NSSavePanel; everything else is an NSOpenPanel
+                // (folder picker when FOS_PICKFOLDERS is set).
+                if (this is SaveFileDialog)
+                {
+                    string suggested = MutableItemNames is { Length: > 0 } ? System.IO.Path.GetFileName(MutableItemNames[0]) : null;
+                    string chosen = MS.Internal.Interop.CocoaDialogs.ShowSavePanel(title, dir, suggested);
+                    if (chosen == null)
+                    {
+                        return false;
+                    }
+                    MutableItemNames = new[] { chosen };
+                    return true;
+                }
+
+                bool folders = GetOption(FOS.PICKFOLDERS);
+                bool multi = GetOption(FOS.ALLOWMULTISELECT);
+                string[] paths = MS.Internal.Interop.CocoaDialogs.ShowOpenPanel(title, dir, multi, folders);
+                if (paths == null || paths.Length == 0)
+                {
+                    return false;
+                }
+                MutableItemNames = paths;
+                return true;
+            }
+            catch
+            {
+                return false;   // AppKit unavailable -> treat as cancelled
             }
         }
 

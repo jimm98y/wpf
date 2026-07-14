@@ -132,10 +132,19 @@ internal static class Program
         bool probe3D = Environment.GetEnvironmentVariable("WPF_GALLERY_3DPROBE") == "1" || Array.IndexOf(args, "3dprobe") >= 0;
         bool click3D = Environment.GetEnvironmentVariable("WPF_GALLERY_3DCLICK") == "1" || Array.IndexOf(args, "3dclick") >= 0;
 
+        // WPF_GALLERY_FPSLOG=1 (or arg "fpslog"): also print the fps to the console once a second
+        // (diagnoses platforms where CompositionTarget.Rendering doesn't tick -> frozen badge).
+        bool fpsLog = Environment.GetEnvironmentVariable("WPF_GALLERY_FPSLOG") == "1" || Array.IndexOf(args, "fpslog") >= 0;
         int renderTicks = 0;
+        bool renderingSeen = false;
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
+            if (!renderingSeen)
+            {
+                renderingSeen = true;
+                if (fpsLog) Console.WriteLine("FPS first CompositionTarget.Rendering tick");
+            }
             if (parkScroll >= 0 && scroll.ScrollableHeight > 0)
                 scroll.ScrollToVerticalOffset(parkScroll * scroll.ScrollableHeight);
             renderTicks++;
@@ -143,6 +152,7 @@ internal static class Program
             if (elapsed >= 0.5)
             {
                 fpsText.Text = $"{renderTicks / elapsed:0} fps";
+                if (fpsLog) Console.WriteLine($"FPS {renderTicks / elapsed:0}");
                 renderTicks = 0;
                 fpsClock.Restart();
             }
@@ -267,6 +277,28 @@ internal static class Program
                     Console.WriteLine("WB-TEST live update written");
                 }
                 catch (Exception ex) { Console.WriteLine($"WB-TEST UPDATE FAILED {ex.GetType().Name}: {ex.Message}"); }
+            }
+
+            // Dialog smoke test (arg "dlg"): exercise MessageBox + Open/Save file dialogs. On a
+            // real desktop these are modal AppKit windows the user interacts with; headless (no
+            // display) they return the declared default / cancellation without blocking.
+            if (frame == 20 && Array.IndexOf(args, "dlg") >= 0)
+            {
+                try
+                {
+                    MessageBoxResult r = MessageBox.Show("Save changes before closing?", "Gallery",
+                        MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+                    Console.WriteLine($"DLG-MSGBOX result={r}");
+
+                    var ofd = new Microsoft.Win32.OpenFileDialog { Title = "Pick an image", Filter = "PNG|*.png" };
+                    bool? ok = ofd.ShowDialog();
+                    Console.WriteLine($"DLG-OPEN ok={ok} file={(ok == true ? ofd.FileName : "<none>")}");
+
+                    var sfd = new Microsoft.Win32.SaveFileDialog { Title = "Save as", FileName = "export.png" };
+                    bool? sok = sfd.ShowDialog();
+                    Console.WriteLine($"DLG-SAVE ok={sok} file={(sok == true ? sfd.FileName : "<none>")}");
+                }
+                catch (Exception ex) { Console.WriteLine($"DLG-TEST FAILED {ex.GetType().Name}: {ex.Message}"); }
             }
 
             // Image decode smoke test (env WPF_GALLERY_IMG=1 or arg "img"): PNG round-trip through
@@ -806,6 +838,10 @@ internal static class Program
     // when the Cocoa input path isn't active (e.g. browser).
     private static void Inject3DClick(Window window, Point clientDip)
     {
+#if LIBREWPF
+        // CocoaWindow is this fork's macOS windowing type; not present on other WPF platforms.
+        Console.WriteLine("3DPANEL-SELFTEST unavailable on this platform build");
+#else
         var field = typeof(MS.Internal.Interop.CocoaWindow).GetField(
             "MouseInput", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
         if (field?.GetValue(null) is not Action<MS.Internal.Interop.CocoaWindow.CocoaMouseMessage> raise)
@@ -823,6 +859,7 @@ internal static class Program
         raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 5, 0, x, y, 0, t));   // NSMouseMoved
         raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 1, 0, x, y, 0, t));   // NSLeftMouseDown
         raise(new MS.Internal.Interop.CocoaWindow.CocoaMouseMessage(view, 2, 0, x, y, 0, t));   // NSLeftMouseUp
+#endif
     }
 
     // The live+interactive 2D UI shown on the 3D quad: a dark "screen" panel with real text, a

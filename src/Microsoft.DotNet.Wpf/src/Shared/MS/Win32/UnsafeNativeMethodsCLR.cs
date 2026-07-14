@@ -1078,8 +1078,13 @@ namespace MS.Win32
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern int GetDeviceCaps(HandleRef hDC, int nIndex);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern IntPtr GetActiveWindow();
+        [DllImport(ExternDll.User32, EntryPoint = "GetActiveWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern IntPtr GetActiveWindowNative();
+
+        // Off-Windows there is no thread-attached active-window concept; callers fall back to
+        // the application's parking window (dialog ownership), which works on all platforms.
+        public static IntPtr GetActiveWindow() =>
+            OperatingSystem.IsWindows() ? GetActiveWindowNative() : IntPtr.Zero;
 
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern bool SetForegroundWindow(HandleRef hWnd);
