@@ -53,3 +53,6 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.OpacityMaskDecodeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.ManagedFontTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.WasmSpike")]
+// WinForms-on-WebGPU host: presents the Mono System.Windows.Forms composite through the shared
+// WebGPU present path (surface + WgpuSceneRenderer image quad), cross-platform (mac/win/browser).
+[assembly: InternalsVisibleTo("WinFormsHost")]

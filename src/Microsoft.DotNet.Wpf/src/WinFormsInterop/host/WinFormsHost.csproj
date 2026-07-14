@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WinFormsHost</AssemblyName>
+    <!-- EnableUnixSupport + libgdiplus make System.Drawing work off-Windows (see README); silence
+         the "Windows only" analyzer noise it would otherwise emit. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The Mono System.Windows.Forms build (managed controls + our XplatUIWebGpu driver). -->
+    <ProjectReference Include="../System.Windows.Forms.WebGpu.csproj" />
+    <!-- Shared WebGPU present path (surface + WgpuSceneRenderer); internals exposed via
+         InternalsVisibleTo("WinFormsHost") in WgpuInterop/AssemblyInfo.cs. -->
+    <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
+    <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- wgpu-native backend (Metal on mac). Copied next to the host so the DllImport resolves. -->
+    <None Include="../../WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib">
+      <Link>libwgpu_native.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>
