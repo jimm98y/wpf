@@ -59,6 +59,34 @@ internal sealed class CocoaHost
         return bmp;
     }
 
+    // Build one GPU layer per visible driver window (form + children + WS_POPUP dropdowns), in the
+    // driver's paint order, positioned in form space. This is the per-window GPU-compositing input
+    // (the GPU draws each control's bitmap as its own quad, instead of a CPU pre-composite).
+    private System.Collections.Generic.List<WgpuLayer> GetLayers(out int ox, out int oy)
+    {
+        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        ox = wins.Length >= 3 ? (int)wins[1] : 0;
+        oy = wins.Length >= 3 ? (int)wins[2] : 0;
+        var layers = new System.Collections.Generic.List<WgpuLayer>(wins.Length / 3);
+        for (int i = 0; i + 2 < wins.Length; i += 3)
+        {
+            var bb = (Bitmap)_getBB.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            if (bb != null) layers.Add(new WgpuLayer(bb, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+        }
+        return layers;
+    }
+
+    // The blinking text caret as a form-space rect (null when hidden/off-blink); the backing bitmaps
+    // don't contain it, so it's a per-frame overlay quad.
+    private Rectangle? GetCaretRect(int ox, int oy)
+    {
+        if (_getCaret == null) return null;
+        object[] a = { 0, 0, 0, 0 };
+        if (!(bool)_getCaret.Invoke(_driver, a)) return null;
+        if ((_blink.ElapsedMilliseconds / 530) % 2 != 0) return null;   // ~530ms blink
+        return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
+    }
+
     // ---- window + present -------------------------------------------------------
 
     internal void Show()
@@ -103,16 +131,16 @@ internal sealed class CocoaHost
     {
         if (_wgpu != null)
         {
-            using Bitmap frame = Composite();
-            DrawCaret(frame);
-            _wgpu.Present(frame);   // upload + draw a full-window textured quad through the swap chain
-            // One-shot: dump the GPU's own output (offscreen readback of the same quad) for verification.
+            var layers = GetLayers(out int ox, out int oy);
+            Rectangle? caret = GetCaretRect(ox, oy);
+            _wgpu.PresentLayers(layers, caret, _form.Width, _form.Height);   // one GPU quad per window
+            // One-shot: dump the GPU's own output (offscreen readback of the same layered scene).
             string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
             if (!string.IsNullOrEmpty(save) && !_savedGpu)
             {
                 _savedGpu = true;
-                byte[] rgba = _wgpu.RenderCompositeToRgba(frame);
-                SaveRgbaPng(rgba, frame.Width, frame.Height, save);
+                byte[] rgba = _wgpu.RenderLayersToRgba(layers, caret);
+                SaveRgbaPng(rgba, _form.Width, _form.Height, save);
                 Console.WriteLine($"saved GPU-rendered frame -> {save}");
             }
             return;

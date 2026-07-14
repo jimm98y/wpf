@@ -3,9 +3,9 @@
   <!--
     Builds Mono's managed System.Windows.Forms (fully-managed control painting) on net10 with our
     cross-platform XplatUIWebGpu driver (gen/), so legacy WinForms apps run on the WebGPU stack.
-    Mono S.W.F SOURCE is an external dependency (a sparse mono/mono clone); point MonoSwf/MonoMcs at
-    it (defaults below, override on the command line: -p:MonoSwf=... -p:MonoMcs=...). The handful of
-    Mono source edits needed are captured in mono-patches/mono-swf.patch. See README.md.
+    The Mono S.W.F source is VENDORED under swf/ (self-contained — no external mono checkout). The
+    native platform drivers (X11/Carbon), Mono WebBrowser, and NUnit tests were pruned when
+    vendoring; our edits vs upstream Mono are recorded in mono-patches/mono-swf.patch. See README.md.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -14,6 +14,9 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- The vendored swf/resources/*.resx now live inside the project dir; stop the SDK from
+         auto-including them (Resources.targets includes them explicitly with the right LogicalName). -->
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <DefineConstants>MONO;SECURITY_DEP;NET_4_5</DefineConstants>
     <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0114;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661</NoWarn>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -21,65 +24,28 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RunAnalyzers>false</RunAnalyzers>
     <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
-    <MonoSrc Condition="'$(MonoSrc)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../../../mono-src'))</MonoSrc>
-    <MonoSwf Condition="'$(MonoSwf)' == ''">$(MonoSrc)/mcs/class/System.Windows.Forms</MonoSwf>
-    <MonoMcs Condition="'$(MonoMcs)' == ''">$(MonoSrc)/mcs</MonoMcs>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Mono managed WinForms sources (all subtrees except the native platform drivers). -->
-    <Compile Include="$(MonoSwf)/System.Windows.Forms/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.Design/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.Layout/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.VisualStyles/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.PropertyGridInternal/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.Internal/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.RTF/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.Theming/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.Windows.Forms.WebBrowserDialogs/**/*.cs" />
-    <Compile Include="$(MonoSwf)/System.ComponentModel.Design.Serialization/**/*.cs" />
-    <Compile Include="$(MonoSwf)/Assembly/**/*.cs" />
+    <!-- Vendored Mono managed WinForms sources (swf/). The native X11/Carbon drivers, Mono
+         WebBrowser, and test files were removed during vendoring, so no Compile Remove is needed.
+         XplatUIWin32.cs is KEPT (compile-only): cross-platform files call its static P/Invoke
+         helpers; the DllImports never run (XplatUI selects our WebGPU driver). -->
+    <Compile Include="swf/System.Windows.Forms/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Design/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Layout/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.VisualStyles/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.PropertyGridInternal/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Internal/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.RTF/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Theming/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.WebBrowserDialogs/**/*.cs" />
+    <Compile Include="swf/Assembly/**/*.cs" />
 
-    <!-- Native drivers (X11/Carbon/Win32) + their internals are KEPT as compile-only: many
-         cross-platform files call their static P/Invoke helpers. The native code never runs
-         (XplatUI selects our WebGPU driver); the DllImports simply resolve to nothing at runtime.
-         Only the GTK X11 variant (needs gtk-sharp) and their internals dirs are pulled in. -->
-    <!-- X11 + Carbon drivers/internals need Mono.Posix / old Carbon interop; exclude them.
-         The Win32 driver compiles fine and satisfies the cross-platform static helper refs. -->
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/XplatUICarbon.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/XEventQueue.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/XplatUIX11.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/XplatUIX11GTK.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/XplatUIX11-new.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/X11Clipboard.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/X11DesktopColors.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/X11Dnd.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/X11Keyboard.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/X11Structs.cs" />
-
-    <!-- Globbed NUnit test files. -->
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms.RTF/RtfTest.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms.RTF/test.cs" />
-    <!-- The .resx design-time text format reader/writer (SoapFormatter/ResourceSet.Table removed
-         from modern .NET). WinForms apps load COMPILED .resources via ResourceManager at runtime,
-         so the ResX* subsystem isn't needed for control rendering. -->
-    <Compile Remove="$(MonoSwf)/System.Resources/SerializedFromResXHandler.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/ResXResourceSet.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/ResXResourceReader.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/ResXResourceWriter.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/ResXDataNode.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/ResXFileRef.cs" />
-    <Compile Remove="$(MonoSwf)/System.Resources/FileRefHandler.cs" />
-
-    <!-- Mono WebBrowser (Gecko/WebKit embedding) + its HTML DOM are an optional subsystem. -->
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/Html*.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/WebBrowser.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/WebBrowserBase.cs" />
-    <Compile Remove="$(MonoSwf)/System.Windows.Forms/WebBrowserSiteBase.cs" />
-
-    <!-- External Mono commons + our generated driver/consts. -->
-    <Compile Include="$(MonoMcs)/build/common/MonoTODOAttribute.cs" />
-    <Compile Include="$(MonoMcs)/class/System/System/MonoToolsLocator.cs" />
+    <!-- Two Mono commons that lived outside the S.W.F tree (vendored into swf/common/), plus our
+         generated driver/consts + shims. -->
+    <Compile Include="swf/common/MonoTODOAttribute.cs" />
+    <Compile Include="swf/common/MonoToolsLocator.cs" />
     <Compile Include="gen/Consts.cs" />
     <Compile Include="gen/XplatUIWebGpu.cs" />
     <Compile Include="gen/XplatUIWebGpu.Core.cs" />
@@ -88,9 +54,10 @@
 
   <ItemGroup>
     <!-- UITypeEditor is provided by our shim (shims/DrawingDesignShim.cs). Accessibility
-         (IAccessible) comes from the Windows Desktop ref pack. -->
+         (IAccessible et al.) is VENDORED under lib/ (a metadata-only interop assembly; it also
+         satisfies the interface types at runtime off-Windows) so the repo stays fully portable. -->
     <Reference Include="Accessibility">
-      <HintPath>/Users/lukasvolf/.nuget/packages/microsoft.windowsdesktop.app.ref/10.0.8/ref/net10.0/Accessibility.dll</HintPath>
+      <HintPath>lib/Accessibility.dll</HintPath>
     </Reference>
     <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />

@@ -56,3 +56,6 @@ using System.Runtime.CompilerServices;
 // WinForms-on-WebGPU host: presents the Mono System.Windows.Forms composite through the shared
 // WebGPU present path (surface + WgpuSceneRenderer image quad), cross-platform (mac/win/browser).
 [assembly: InternalsVisibleTo("WinFormsHost")]
+// GPU-rasterization proof: draws WinForms-style controls (bevels + text) as WgpuSceneRenderer
+// primitives (no libgdiplus), de-risking the System.Drawing-backend swap.
+[assembly: InternalsVisibleTo("WinFormsGpuRaster")]

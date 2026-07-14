@@ -14,7 +14,8 @@ CAMetalLayer surface). Windows and WebAssembly reuse the same present path (see 
 
 | Path | What |
 |------|------|
-| `System.Windows.Forms.WebGpu.csproj` | Builds Mono's managed `System.Windows.Forms.dll` on net10 with our driver. |
+| `System.Windows.Forms.WebGpu.csproj` | Builds Mono's managed `System.Windows.Forms.dll` on net10 with our driver, from the vendored `swf/`. |
+| `swf/` | **Vendored** Mono `System.Windows.Forms` source (self-contained — no external mono checkout). Managed control/theme/layout subtrees + `swf/resources/` (embedded cursors/icons) + `swf/common/` (two Mono helper files). Our edits vs upstream are applied here (see `mono-patches/`). |
 | `gen/XplatUIWebGpu.Core.cs` | Hand-written driver core: windows = `Hwnd` + a `System.Drawing.Bitmap` backing; managed message queue; `PaintEventStart` → `Graphics.FromImage(backing)`; mouse/keyboard/caret injection; screen metrics; `GetPresentWindows`/`GetWindowBackBuffer` present hooks. |
 | `gen/XplatUIWebGpu.cs` | Auto-generated default overrides for the ~78 non-core `XplatUIDriver` members. Regenerate from `gen/gen-driver.txt` (the raw `XplatUIDriver` member dump) when the driver contract changes; a CORE set is implemented in `.Core.cs`. |
 | `gen/Consts.cs`, `gen/Resources.targets` | Generated Mono `Consts.cs`; embeds the 58 Mono S.W.F resources (cursors/icons) by manifest name. |
@@ -23,17 +24,18 @@ CAMetalLayer surface). Windows and WebAssembly reuse the same present path (see 
 | `host/` | On-screen host: `CocoaHost.cs` (NSWindow + event pump), `WgpuPresenter.cs` (platform-neutral WebGPU present), `Host.cs` (a demo form). |
 | `mono-patches/mono-swf.patch` | The four Mono source edits needed (see below). |
 
-## The Mono System.Windows.Forms dependency
+## The vendored Mono System.Windows.Forms source
 
-Mono S.W.F source is **external** (a blobless sparse clone of `mono/mono`: the
-`mcs/class/System.Windows.Forms` + `System.Drawing` + `build/common` + `System/System` subtrees).
-Point the build at it with `MonoSrc` (or `MonoSwf`/`MonoMcs`); it defaults to `../../../../../mono-src`
-relative to this folder. The build globs the managed subtrees and **excludes** the native drivers
-(X11/Carbon), the ResX design-time subsystem, Mono WebBrowser, and NUnit test files (see the csproj
-comments). `XplatUIWin32.cs` is kept compile-only (cross-platform files call its static helpers; the
-DllImports never run because our driver is selected).
+The Mono S.W.F source is **vendored** under `swf/` — the repo is self-contained and needs **no
+external mono checkout**. Only the necessary managed subtrees were copied (control/theme/layout/
+visual-styles/RTF/design/assembly), plus `swf/resources/` (embedded cursors/icons) and
+`swf/common/` (two Mono helper files that lived outside the S.W.F tree). The native platform
+drivers (X11/Carbon), Mono WebBrowser, and NUnit tests were **pruned** during vendoring, so the
+csproj just globs `swf/**` with no excludes. `XplatUIWin32.cs` is kept compile-only (cross-platform
+files call its static helpers; the DllImports never run because our driver is selected).
 
-Four Mono source files need small edits, captured in `mono-patches/mono-swf.patch`:
+`mono-patches/mono-swf.patch` records the four Mono source edits we made vs upstream — **already
+applied** to the vendored `swf/` copy; it's kept only as provenance/documentation:
 - **XplatUI.cs** — select our driver (`driver = XplatUIWebGpu.GetInstance()`), add `GetHwndGraphics`.
 - **XplatUIDriver.cs** — add the `GetHwndGraphics` virtual.
 - **Control.cs** — `CreateGraphics()` → `XplatUI.GetHwndGraphics` (libgdiplus `Graphics.FromHwnd`
@@ -41,7 +43,8 @@ Four Mono source files need small edits, captured in `mono-patches/mono-swf.patc
 - **Win32DnD.cs** — `AppDomain.DefineDynamicAssembly` → `AssemblyBuilder.DefineDynamicAssembly`
   (API moved in .NET Core).
 
-Apply with `git apply mono-patches/mono-swf.patch` from the mono-src root.
+These are already applied in `swf/`; the patch is kept only to document the delta from upstream Mono
+(e.g. to re-apply if `swf/` is ever refreshed from a newer mono checkout).
 
 ### System.Drawing off Windows
 Modern **System.Drawing.Common 10 is Windows-only**. This uses **6.0.0** (the last version with Unix
@@ -72,8 +75,7 @@ things differ per platform, and `WgpuInterop` already has all three surface type
 ## Build & run (macOS)
 
 ```sh
-# 1. Ensure mono-src is present and patched (git apply mono-patches/mono-swf.patch in mono-src).
-# 2. brew install mono-libgdiplus
+# brew install mono-libgdiplus   (the only external prerequisite; source is vendored under swf/)
 dotnet build host/WinFormsHost.csproj -c Release
 WF_WEBGPU=1 DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib \
   dotnet host/bin/Release/net10.0/WinFormsHost.dll 30      # 30 = seconds to run
