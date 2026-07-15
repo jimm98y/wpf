@@ -7,6 +7,7 @@ internal static class Host
 {
     private static int Main(string[] args)
     {
+        Application.ThreadException += (s, e) => Console.Error.WriteLine("THREADEX: " + e.Exception);
         // Deliberately opt into the GDI TextRenderer path (as the VS WinForms template does) to prove
         // the driver forces GDI+ text back on in GPU-raster mode — no host-side setup needed.
         Application.SetCompatibleTextRenderingDefault(false);

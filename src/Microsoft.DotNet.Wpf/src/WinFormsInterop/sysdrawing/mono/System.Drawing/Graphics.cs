@@ -55,9 +55,71 @@ namespace System.Drawing
 		// font, so controls are sized to fit what's actually drawn. A browser prerequisite.
 		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
 
-		static int ArgbOf (Brush b) => (b as SolidBrush)?.Color.ToArgb () ?? 0;
-		static int ArgbOf (Pen p) => (p != null && p.Brush is SolidBrush sb) ? sb.Color.ToArgb () : (p?.Color.ToArgb () ?? 0);
+		static int ArgbOf (Brush b)
+		{
+			if (b is SolidBrush sb) return sb.Color.ToArgb ();
+			// A HatchBrush (e.g. the Percent50 dither the theme uses for pressed radio/checkbox glyphs)
+			// has no single colour; approximate it as the average of fore/back so it records as a solid
+			// instead of falling through to libgdiplus (which throws with no native Graphics).
+			if (b is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
+			return 0;
+		}
+		static int ArgbOf (Pen p)
+		{
+			if (p == null) return 0;
+			if (p.Brush is SolidBrush sb) return sb.Color.ToArgb ();
+			if (p.Brush is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
+			return p.Color.ToArgb ();
+		}
+		static int Blend (Color a, Color b) =>
+			Color.FromArgb ((a.A + b.A) / 2, (a.R + b.R) / 2, (a.G + b.G) / 2, (a.B + b.B) / 2).ToArgb ();
 		bool RecordSolid (Brush b) => GpuRecorder != null && b is SolidBrush;
+
+		// A HatchBrush rendered as a real repeating tile (fore/back pattern), recorded as a tiling
+		// ImageBrush so the GPU reproduces the actual hatch — horizontal/diagonal/cross lines and the
+		// Percent* dithers (e.g. the Percent50 the theme fills pressed radio/checkbox glyphs with).
+		internal readonly struct HatchTile
+		{
+			public readonly byte[] Rgba; public readonly int W, H; public readonly float Size;
+			public HatchTile (byte[] rgba, int w, int h, float size) { Rgba = rgba; W = w; H = h; Size = size; }
+		}
+		bool TryHatch (Brush b, out HatchTile tile)
+		{
+			tile = default;
+			if (GpuRecorder == null || !(b is Drawing2D.HatchBrush hb)) return false;
+			tile = BuildHatchTile (hb.HatchStyle, hb.ForegroundColor, hb.BackgroundColor);
+			return true;
+		}
+		// 8x8 pattern; Size is its extent in POINTS so cells are ~1 device px (fine dithers read as the
+		// intended grey, line hatches stay crisp) and the pattern scales with DPI.
+		static HatchTile BuildHatchTile (Drawing2D.HatchStyle style, Color fg, Color bg)
+		{
+			const int N = 8;
+			var px = new byte[N * N * 4];
+			for (int y = 0; y < N; y++)
+				for (int x = 0; x < N; x++) {
+					Color c = HatchHit (style, x, y, N) ? fg : bg;
+					int i = (y * N + x) * 4;
+					px[i] = c.R; px[i + 1] = c.G; px[i + 2] = c.B; px[i + 3] = c.A;
+				}
+			return new HatchTile (px, N, N, N / 2f);
+		}
+		// Foreground test for the hatch styles WinForms themes actually use; anything else falls back to
+		// a 50% dither (a reasonable stand-in that still reads as the foreground/background mix).
+		static bool HatchHit (Drawing2D.HatchStyle s, int x, int y, int n)
+		{
+			switch (s) {
+				case Drawing2D.HatchStyle.Horizontal: return y % n == 0;
+				case Drawing2D.HatchStyle.Vertical: return x % n == 0;
+				case Drawing2D.HatchStyle.Cross: return x % n == 0 || y % n == 0;
+				case Drawing2D.HatchStyle.ForwardDiagonal: return (x + y) % n == 0;
+				case Drawing2D.HatchStyle.BackwardDiagonal: return (x - y + n) % n == 0;
+				case Drawing2D.HatchStyle.DiagonalCross: return (x + y) % n == 0 || (x - y + n) % n == 0;
+				case Drawing2D.HatchStyle.Percent25: return ((x & 1) == 0) && ((y & 1) == 0);
+				case Drawing2D.HatchStyle.Percent75: return !(((x & 1) == 1) && ((y & 1) == 1));
+				default: return ((x + y) & 1) == 0;   // Percent50 and everything else
+			}
+		}
 		bool RecordPen (Pen p) => GpuRecorder != null && (p?.Brush is SolidBrush || p != null);
 		// Resolve a gradient brush (linear multi-stop or path/radial) to a GradientDesc; false = not a
 		// gradient in GPU mode (fall through to libgdiplus).
@@ -216,6 +278,7 @@ namespace System.Drawing
 		public void Clear (Color color)
 		{
 			Status status;
+ 			if (nativeObject == IntPtr.Zero) return;
  			status = GDIPlus.GdipGraphicsClear (nativeObject, color.ToArgb ());
  			GDIPlus.CheckStatus (status);
 		}
@@ -352,6 +415,8 @@ namespace System.Drawing
 
 		public void Dispose ()
 		{
+			// Recording-only Graphics (GPU-raster, no libgdiplus backing): nothing native to free.
+			if (nativeObject == IntPtr.Zero) { disposed = true; GpuRecorder = null; return; }
 			Status status;
 			if (! disposed) {
 				if (deviceContextHdc != IntPtr.Zero)
@@ -1554,6 +1619,7 @@ namespace System.Drawing
 	
 		public void ExcludeClip (Rectangle rect)
 		{
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Exclude);
 			GDIPlus.CheckStatus (status);
 		}
@@ -1562,6 +1628,7 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Exclude);
 			GDIPlus.CheckStatus (status);
 		}
@@ -1645,6 +1712,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
                         Status status = GDIPlus.GdipFillEllipse (nativeObject, brush.NativeBrush, x, y, width, height);
 			GDIPlus.CheckStatus (status);
@@ -1655,6 +1723,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillEllipseI (nativeObject, brush.NativeBrush, x, y, width, height);
 			GDIPlus.CheckStatus (status);
@@ -1684,6 +1753,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			// Approximate as a full ellipse fill (covers the common full-circle case, e.g. a radio dot).
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPieI (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
 			GDIPlus.CheckStatus (status);
@@ -1694,6 +1764,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
 			GDIPlus.CheckStatus (status);
@@ -1706,6 +1777,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2 (nativeObject, brush.NativeBrush, points, points.Length);
 			GDIPlus.CheckStatus (status);
@@ -1718,6 +1790,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2I (nativeObject, brush.NativeBrush, points, points.Length);
 			GDIPlus.CheckStatus (status);
@@ -1730,6 +1803,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygonI (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
 			GDIPlus.CheckStatus (status);
@@ -1742,6 +1816,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
 			GDIPlus.CheckStatus (status);
@@ -1769,6 +1844,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangleI (nativeObject, brush.NativeBrush, x, y, width, height);
@@ -1780,6 +1856,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangle (nativeObject, brush.NativeBrush, x, y, width, height);
@@ -1974,18 +2051,22 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Intersect);
 			GDIPlus.CheckStatus (status);
 		}
 		
 		public void IntersectClip (RectangleF rect)
 		{
+			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Intersect);
 			GDIPlus.CheckStatus (status);
 		}
 
 		public void IntersectClip (Rectangle rect)
 		{			
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Intersect);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2182,6 +2263,7 @@ namespace System.Drawing
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
 
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipMultiplyWorldTransform (nativeObject, matrix.nativeMatrix, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2211,12 +2293,15 @@ namespace System.Drawing
 		
 		public void ResetClip ()
 		{
+			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetClip (nativeObject);
 			GDIPlus.CheckStatus (status);
 		}
 
 		public void ResetTransform ()
 		{
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetWorldTransform (nativeObject);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2235,6 +2320,7 @@ namespace System.Drawing
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipRotateWorldTransform (nativeObject, angle, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2256,6 +2342,7 @@ namespace System.Drawing
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
+                        if (nativeObject == IntPtr.Zero) return;
                         Status status = GDIPlus.GdipScaleWorldTransform (nativeObject, sx, sy, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2290,6 +2377,8 @@ namespace System.Drawing
 			if (g == null)
 				throw new ArgumentNullException ("g");
 			
+			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipGraphics (nativeObject, g.NativeObject, combineMode);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2297,6 +2386,8 @@ namespace System.Drawing
 		
 		public void SetClip (Rectangle rect, CombineMode combineMode)
 		{
+			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2304,6 +2395,8 @@ namespace System.Drawing
 		
 		public void SetClip (RectangleF rect, CombineMode combineMode)
 		{
+			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2313,6 +2406,8 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
+			if (nativeObject == IntPtr.Zero) return;
 			Status status =   GDIPlus.GdipSetClipRegion(nativeObject,  region.NativeObject, combineMode); 
 			GDIPlus.CheckStatus (status);
 		}
@@ -2375,6 +2470,7 @@ namespace System.Drawing
 		
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{			
+			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipTranslateWorldTransform (nativeObject, dx, dy, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -2382,9 +2478,10 @@ namespace System.Drawing
 		public Region Clip {
 			get {
 				Region reg = new Region();
+				if (nativeObject == IntPtr.Zero) return reg;   // recording-only: infinite clip
 				Status status = GDIPlus.GdipGetClip (nativeObject, reg.NativeObject);
 				GDIPlus.CheckStatus (status);
-				return reg;				
+				return reg;
 			}
 			set {
 				SetClip (value, CombineMode.Replace);
@@ -2393,6 +2490,7 @@ namespace System.Drawing
 
 		public RectangleF ClipBounds {
 			get {
+                                if (nativeObject == IntPtr.Zero) return new RectangleF (0, 0, 1 << 20, 1 << 20);
                                 RectangleF rect = new RectangleF ();
                                 Status status = GDIPlus.GdipGetClipBounds (nativeObject, out rect);
 				GDIPlus.CheckStatus (status);
@@ -2409,6 +2507,7 @@ namespace System.Drawing
 				return mode;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetCompositingMode (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2424,6 +2523,7 @@ namespace System.Drawing
         			return quality;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetCompositingQuality (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2431,6 +2531,7 @@ namespace System.Drawing
 
 		public float DpiX {
 			get {
+                                if (nativeObject == IntPtr.Zero) return 96f;   // recording-only
                                 float x;
 
        				Status status = GDIPlus.GdipGetDpiX (nativeObject, out x);
@@ -2441,6 +2542,7 @@ namespace System.Drawing
 
 		public float DpiY {
 			get {
+                                if (nativeObject == IntPtr.Zero) return 96f;   // recording-only
                                 float y;
 
        				Status status = GDIPlus.GdipGetDpiY (nativeObject, out y);
@@ -2457,6 +2559,7 @@ namespace System.Drawing
         			return imode;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetInterpolationMode (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2491,6 +2594,7 @@ namespace System.Drawing
         			return scale;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPageScale (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2505,6 +2609,7 @@ namespace System.Drawing
         			return unit;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPageUnit (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2520,6 +2625,7 @@ namespace System.Drawing
         			return pixelOffset;
 			}
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPixelOffsetMode (nativeObject, value); 
 				GDIPlus.CheckStatus (status);
 			}
@@ -2534,6 +2640,7 @@ namespace System.Drawing
 			}
 
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetRenderingOrigin (nativeObject, value.X, value.Y);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2549,6 +2656,7 @@ namespace System.Drawing
 			}
 
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetSmoothingMode (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2565,6 +2673,7 @@ namespace System.Drawing
 			}
 
                         set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetTextContrast (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2580,6 +2689,7 @@ namespace System.Drawing
 			}
 
 			set {
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetTextRenderingHint (nativeObject, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2596,6 +2706,7 @@ namespace System.Drawing
 				if (value == null)
 					throw new ArgumentNullException ("value");
 				
+                                if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetWorldTransform (nativeObject, value.nativeMatrix);
 				GDIPlus.CheckStatus (status);
 			}
@@ -2603,6 +2714,7 @@ namespace System.Drawing
 
 		public RectangleF VisibleClipBounds {
 			get {
+                                if (nativeObject == IntPtr.Zero) return new RectangleF (0, 0, 1 << 20, 1 << 20);  // recording-only
                                 RectangleF rect;
 					
                                 Status status = GDIPlus.GdipGetVisibleClipBounds (nativeObject, out rect);

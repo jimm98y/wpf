@@ -1565,6 +1565,7 @@ namespace System.Windows.Forms
 			Rectangle text_draw = e.Bounds;
 			StringFormat string_format = new StringFormat ();
 			string_format.FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.NoWrap;
+			string_format.LineAlignment = StringAlignment.Center;   // vertically centre the item text in its row
 
 			if ((e.State & DrawItemState.Selected) == DrawItemState.Selected) {
 				back_color = ColorHighlight;

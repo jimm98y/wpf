@@ -27,10 +27,17 @@ namespace System.Drawing
         // Gradient fill of a shape (rect/ellipse: x,y,w,h; polygon: polyXY flattened).
         void FillGradient(GradientShape shape, float x, float y, float w, float h, float[] polyXY, GradientDesc g);
         void FillEllipse(float x, float y, float w, float h, int argb);
+        // Hatch fill of a shape: a small RGBA pattern tile (tileW x tileH) tiled every tileSize points.
+        void FillHatch(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
+                       byte[] tileRgba, int tileW, int tileH, float tileSize);
         void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
         void DrawLine(float x1, float y1, float x2, float y2, int argb);
         void DrawArc(float x, float y, float w, float h, float startDeg, float sweepDeg, int argb, float thickness);
         void DrawText(string text, float x, float y, float emPx, int argb);
         void DrawImage(byte[] rgba, int pw, int ph, float dx, float dy, float dw, float dh);
+        // Clip subsequent primitives to (or, if exclude, out of) a rect until ClearClip. Exclude is
+        // how ThemeWin32Classic gaps the GroupBox border around its title.
+        void SetClipRect(float x, float y, float w, float h, bool exclude);
+        void ClearClip();
     }
 }

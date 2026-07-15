@@ -1,4 +1,5 @@
 // Public entry point for the GPU-rasterization seam. A paint host (the XplatUIWebGpu driver) brackets
+using System;
 // its drawing with Begin/EndScene on the Graphics it hands to the control/theme: Begin attaches a
 // recorder so the drawing verbs build a WebGPU scene (no GPU work — pure data), and EndScene returns
 // that scene (as object, so callers need no WgpuInterop reference) for the present path to render.
@@ -11,6 +12,17 @@ namespace System.Drawing.WebGpuBackend
         public static void Begin(Graphics g)
         {
             if (g != null) g.GpuRecorder = new SceneRecorder();
+        }
+
+        /// <summary>A recording-only Graphics with NO libgdiplus backing (nativeObject == 0): the
+        /// drawing verbs record a WebGPU scene and the non-drawing gdip ops (clip/dispose/…) are
+        /// no-ops. Lets the driver paint a window with zero libgdiplus (no backing Bitmap / FromImage)
+        /// — a browser prerequisite.</summary>
+        public static Graphics NewRecording()
+        {
+            var g = new Graphics(IntPtr.Zero);
+            g.GpuRecorder = new SceneRecorder();
+            return g;
         }
 
         /// <summary>Detach the recorder and return the scene it recorded (a WgpuInterop SceneVisual,

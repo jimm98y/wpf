@@ -22,6 +22,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
     [System.Runtime.Versioning.SupportedOSPlatform("macos")]
     internal static unsafe class MacInterop
     {
+        private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_metalLayers = new();
+
+        /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the (runtime-detected)
+        /// backing scale so the drawable maps 1:1 to the display — e.g. when the window moves to a
+        /// different-DPI screen. Call together with resizing the wgpu surface to the new device size.</summary>
+        public static void SetContentsScale(IntPtr nsView, double scale)
+        {
+            if (nsView != IntPtr.Zero && s_metalLayers.TryGetValue(nsView, out IntPtr metalLayer) && metalLayer != IntPtr.Zero)
+                SendVoidDouble(metalLayer, Sel("setContentsScale:"), scale);
+        }
+
         /// <summary>
         /// Create a wgpu Metal surface for an NSView*. Makes the view layer-backed and
         /// installs a CAMetalLayer, then wraps that layer in WGPUSurfaceSourceMetalLayer.
@@ -57,6 +68,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // into that larger pixel target via HwndTarget._worldTransform (= the same backing scale),
             // so the result is crisp. Must match CocoaWindow.GetBackingScale / the HwndTarget DPI scale.
             SendVoidDouble(metalLayer, Sel("setContentsScale:"), BackingScale(nsView));
+            s_metalLayers[nsView] = metalLayer;   // remembered so contentsScale can track DPI at runtime
 
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {
@@ -86,17 +98,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             IntPtr window = nsView != IntPtr.Zero ? Send(nsView, Sel("window")) : IntPtr.Zero;
             if (window != IntPtr.Zero)
             {
-                IntPtr screen = Send(window, Sel("screen"));
-                if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
-                if (scale <= 0) scale = SendDouble(window, Sel("backingScaleFactor"));
+                // NSWindow.backingScaleFactor is the canonical, reliable value for a shown window;
+                // window.screen.backingScaleFactor can be transiently wrong (0/stale) while the
+                // window's screen association settles, which would render 1x on a Retina display and
+                // upscale to a pixelated result. Prefer the window, fall back to its screen.
+                scale = SendDouble(window, Sel("backingScaleFactor"));
+                if (scale <= 0)
+                {
+                    IntPtr screen = Send(window, Sel("screen"));
+                    if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
+                }
             }
             if (scale <= 0)
             {
                 IntPtr mainScreen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
                 if (mainScreen != IntPtr.Zero) scale = SendDouble(mainScreen, Sel("backingScaleFactor"));
             }
-            return scale > 0 ? scale : 1.0;
+            if (scale <= 0) scale = 1.0;
+
+            // A non-bundled binary (dotnet X.dll) isn't always registered as HiDPI-capable, so AppKit
+            // reports backingScaleFactor 1 even on a Retina panel — which would render 1x and upscale to
+            // thin, blurry text. CAMetalLayer renders at native resolution regardless of the window's
+            // backing, so when AppKit claims 1x, cross-check the physical panel via CoreGraphics (works
+            // independent of HiDPI-awareness) and prefer 2x on an actually-Retina display.
+            if (scale < 1.5 && PhysicalDisplayScale() >= 1.5)
+                scale = 2.0;
+            return scale;
         }
+
+        // Largest native-pixels / point ("looks like") ratio across all ACTIVE displays. ~2 on a Retina
+        // panel (incl. scaled "More Space" modes, where it's >1.5), 1 on non-Retina. Scanning every
+        // display (not just the main one) covers a Retina laptop used as a SECONDARY behind a 1x main.
+        private static double PhysicalDisplayScale()
+        {
+            var ids = new uint[16];
+            if (CGGetActiveDisplayList((uint)ids.Length, ids, out uint count) != 0 || count == 0)
+                return 1.0;
+            double best = 1.0;
+            for (uint i = 0; i < count && i < ids.Length; i++)
+            {
+                IntPtr mode = CGDisplayCopyDisplayMode(ids[i]);
+                if (mode == IntPtr.Zero) continue;
+                double px = CGDisplayModeGetPixelWidth(mode);
+                double pt = CGDisplayModeGetWidth(mode);
+                CGDisplayModeRelease(mode);
+                if (pt > 0 && px / pt > best) best = px / pt;
+            }
+            return best;
+        }
+
+        private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+        [DllImport(CoreGraphics)] private static extern int CGGetActiveDisplayList(uint maxDisplays, [Out] uint[] activeDisplays, out uint displayCount);
+        [DllImport(CoreGraphics)] private static extern IntPtr CGDisplayCopyDisplayMode(uint display);
+        [DllImport(CoreGraphics)] private static extern nuint CGDisplayModeGetPixelWidth(IntPtr mode);
+        [DllImport(CoreGraphics)] private static extern nuint CGDisplayModeGetWidth(IntPtr mode);
+        [DllImport(CoreGraphics)] private static extern void CGDisplayModeRelease(IntPtr mode);
 
         // [[CAMetalLayer layer] retain] -- a fresh, owned CAMetalLayer. We retain it so it
         // outlives the autorelease pool; setLayer: also retains it on the view.

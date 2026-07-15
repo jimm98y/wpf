@@ -18,6 +18,9 @@ namespace SystemDrawingWebGpu
             NativeLibrary.SetDllImportResolver(typeof(GdiPlusResolver).Assembly, (name, asm, searchPath) =>
             {
                 if (name != "gdiplus") return IntPtr.Zero;   // let other imports resolve normally
+                // WF_NO_GDIPLUS=1 refuses to load libgdiplus — proves the GPU-raster path is truly
+                // libgdiplus-free (the browser has no libgdiplus). Any remaining gdip call then throws.
+                if (Environment.GetEnvironmentVariable("WF_NO_GDIPLUS") == "1") return IntPtr.Zero;
                 foreach (string candidate in Candidates)
                     if (NativeLibrary.TryLoad(candidate, out IntPtr handle))
                         return handle;

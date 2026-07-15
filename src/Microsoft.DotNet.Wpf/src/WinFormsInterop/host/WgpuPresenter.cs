@@ -33,7 +33,18 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private readonly WGPUTextureFormat _format;
     private readonly bool _srgb;          // sRGB surface -> renderer applies gamma-correct text coverage
     private int _width, _height;          // logical (point) size
-    private readonly float _scale;        // backing scale (2 on Retina): render at device pixels
+    private float _scale;                 // backing scale (2 on Retina): render at device pixels
+
+    internal float Scale => _scale;
+    // Update the backing scale at runtime (window moved to a different-DPI display) and resize the
+    // swap chain to the new device-pixel size.
+    internal void SetScale(double scale)
+    {
+        float s = (float)(scale > 0 ? scale : 1.0);
+        if (s == _scale) return;
+        _scale = s;
+        Configure();
+    }
 
     // Device (physical) pixel dimensions the surface is configured to.
     internal int DeviceWidth => (int)System.Math.Round(_width * _scale);

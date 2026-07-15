@@ -53,9 +53,18 @@ namespace System.Drawing
 		private const byte DefaultCharSet = 1;
 		private static int CharSetOffset = -1;
 
+		// WebGPU GPU-raster: build a managed-only Font (no native FontFamily, no GdipCreateFont) — the
+		// last libgdiplus dependency in the paint path. Rendering uses the recorder's font and
+		// measurement is managed, so the native font/family are never needed. fontObject stays Zero.
+		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+
 		private void CreateFont (string familyName, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
 			originalFontName = familyName;
+			if (s_gpuRasterMode) {
+				SetPropertiesManaged (familyName, emSize, style, unit, charSet, isVertical);
+				return;   // no native font
+			}
                         FontFamily family;
 			// NOTE: If family name is null, empty or invalid,
 			// MS creates Microsoft Sans Serif font.
@@ -66,7 +75,7 @@ namespace System.Drawing
 				family = FontFamily.GenericSansSerif;
 			}
 
-			setProperties (family, emSize, style, unit, charSet, isVertical);           
+			setProperties (family, emSize, style, unit, charSet, isVertical);
 			Status status = GDIPlus.GdipCreateFont (family.NativeFamily, emSize,  style, unit, out fontObject);
 			
 			if (status == Status.FontStyleNotFound)
@@ -171,6 +180,24 @@ namespace System.Drawing
 			default:
 				throw new ArgumentException("Invalid GraphicsUnit");
 			}
+		}
+
+		// Managed-only property init (no FontFamily): used in GPU-raster mode where there is no native
+		// font/family. Mirrors setProperties minus family.Name (uses the requested name directly).
+		void SetPropertiesManaged (string name, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
+		{
+			_name = string.IsNullOrEmpty (name) ? "Microsoft Sans Serif" : name;
+			_fontFamily = new FontFamily (_name, true);   // managed-only family (no libgdiplus)
+			_size = emSize;
+			_unit = unit;
+			_style = style;
+			_gdiCharSet = charSet;
+			_gdiVerticalFont = isVertical;
+			unitConversion (unit, GraphicsUnit.Point, emSize, out _sizeInPoints);
+			_bold = (style & FontStyle.Bold) != 0;
+			_italic = (style & FontStyle.Italic) != 0;
+			_strikeout = (style & FontStyle.Strikeout) != 0;
+			_underline = (style & FontStyle.Underline) != 0;
 		}
 
 		void setProperties (FontFamily family, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
@@ -678,6 +705,8 @@ namespace System.Drawing
 		{
 			if (graphics == null)
 				throw new ArgumentNullException ("graphics");
+			if (fontObject == IntPtr.Zero)
+				return GetHeight (graphics.DpiY);   // managed (recording-only font)
 
 			float size;
 			Status status = GDIPlus.GdipGetFontHeight (fontObject, graphics.NativeObject, out size);
@@ -687,6 +716,10 @@ namespace System.Drawing
 
 		public float GetHeight (float dpi)
 		{
+			// Managed line height for a recording-only font (no native): em pixels * ~1.16 leading.
+			if (fontObject == IntPtr.Zero)
+				return _sizeInPoints * dpi / 72f * 1.16f;
+
 			float size;
 			Status status = GDIPlus.GdipGetFontHeightGivenDPI (fontObject, dpi, out size);
 			GDIPlus.CheckStatus (status);

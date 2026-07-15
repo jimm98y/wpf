@@ -46,7 +46,16 @@ namespace System.Drawing {
 				
 		internal FontFamily(IntPtr fntfamily)
 		{
-			nativeFontFamily = fntfamily;		
+			nativeFontFamily = fntfamily;
+		}
+
+		// A managed-only FontFamily (WebGPU GPU-raster): no native family, no libgdiplus. Metrics
+		// below return Arial-like design units (matching what the scene renderer draws). The bool
+		// distinguishes this from the public string ctor (which resolves a native family via gdip).
+		internal FontFamily(string managedName, bool managed)
+		{
+			name = string.IsNullOrEmpty(managedName) ? "Microsoft Sans Serif" : managedName;
+			nativeFontFamily = IntPtr.Zero;
 		}
 		
 		internal unsafe void refreshName()
@@ -113,13 +122,19 @@ namespace System.Drawing {
 		
 		public string Name {
 			get {
-				if (nativeFontFamily == IntPtr.Zero)
+				if (nativeFontFamily == IntPtr.Zero) {
+					if (name != null) return name;   // managed-only family (GPU-raster)
 					throw new ArgumentException ("Name", Locale.GetText ("Object was disposed."));
+				}
 				if (name == null)
 					refreshName ();
 				return name;
 			}
 		}
+
+		// Arial-like design metrics (em units) for a managed-only family — what the scene renderer
+		// draws — so line heights/ascent/descent are consistent when there's no native family.
+		private bool Managed => nativeFontFamily == IntPtr.Zero && name != null;
 		
 		public static FontFamily GenericMonospace {
 			get { return new FontFamily (GenericFontFamilies.Monospace); }
@@ -135,6 +150,7 @@ namespace System.Drawing {
 		
 		public int GetCellAscent (FontStyle style) 
 		{
+			if (Managed) return 1854;   // Arial ascent (em units)
 			short outProperty;
 			Status status = GDIPlus.GdipGetCellAscent (nativeFontFamily, (int)style, out outProperty);
 			GDIPlus.CheckStatus (status);
@@ -144,6 +160,7 @@ namespace System.Drawing {
 		
 		public int GetCellDescent (FontStyle style) 
 		{
+			if (Managed) return 434;    // Arial descent (em units)
 			short outProperty;
 			Status status = GDIPlus.GdipGetCellDescent (nativeFontFamily, (int)style, out outProperty);
 			GDIPlus.CheckStatus (status);
@@ -153,6 +170,7 @@ namespace System.Drawing {
 		
 		public int GetEmHeight (FontStyle style) 
 		{
+			if (Managed) return 2048;   // Arial unitsPerEm
 			short outProperty;
 			Status status = GDIPlus.GdipGetEmHeight (nativeFontFamily, (int)style, out outProperty);
 			GDIPlus.CheckStatus (status);
@@ -162,6 +180,7 @@ namespace System.Drawing {
 		
 		public int GetLineSpacing (FontStyle style)
 		{
+			if (Managed) return 2355;   // Arial line spacing (em units)
 			short outProperty;
 			Status status = GDIPlus.GdipGetLineSpacing (nativeFontFamily, (int)style, out outProperty);
 			GDIPlus.CheckStatus (status);	
@@ -172,6 +191,7 @@ namespace System.Drawing {
 		[MonoDocumentationNote ("When used with libgdiplus this method always return true (styles are created on demand).")]
 		public bool IsStyleAvailable (FontStyle style)
 		{
+			if (Managed) return true;
 			bool outProperty;
 			Status status = GDIPlus.GdipIsStyleAvailable (nativeFontFamily, (int)style, out outProperty);
 			GDIPlus.CheckStatus (status);

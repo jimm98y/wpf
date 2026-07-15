@@ -155,7 +155,9 @@ namespace System.Windows.Forms
 			IntPtr handle = (IntPtr)(next_handle++);
 			hwnd.WholeWindow = handle;
 			hwnd.ClientWindow = handle;   // registers in Hwnd's handle->object table
-			backing[handle] = new Bitmap(w, h);
+			// GPU-raster mode records scenes (no per-window bitmap); keep the key as the window
+			// registry that GetPresentWindows walks, but allocate no libgdiplus Bitmap.
+			backing[handle] = s_gpuRaster ? null : new Bitmap(w, h);
 
 			// Child controls are created WS_VISIBLE when their parent is shown; honor that so
 			// invalidation isn't dropped by the visibility guard (top-level Forms get an explicit
@@ -179,7 +181,7 @@ namespace System.Windows.Forms
 
 		internal override void DestroyWindow(IntPtr handle)
 		{
-			if (backing.TryGetValue(handle, out Bitmap b)) { b.Dispose(); backing.Remove(handle); }
+			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.Remove(handle); }
 			captions.Remove(handle);
 			_scenes.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
@@ -216,8 +218,11 @@ namespace System.Windows.Forms
 			if (width > 0 && height > 0 && (width != hwnd.width || height != hwnd.height))
 			{
 				hwnd.width = width; hwnd.height = height;
-				if (backing.TryGetValue(handle, out Bitmap old)) old.Dispose();
-				backing[handle] = new Bitmap(width, height);
+				if (!s_gpuRaster)
+				{
+					if (backing.TryGetValue(handle, out Bitmap old)) old?.Dispose();
+					backing[handle] = new Bitmap(width, height);
+				}
 			}
 			_paintVersion++;   // a window moved/resized
 			PerformNCCalc(hwnd);
@@ -274,21 +279,28 @@ namespace System.Windows.Forms
 		internal override PaintEventArgs PaintEventStart(ref Message msg, IntPtr handle, bool client)
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
-			if (!backing.TryGetValue(handle, out Bitmap bmp))
-			{
-				bmp = new Bitmap(Math.Max(1, hwnd.width), Math.Max(1, hwnd.height));
-				backing[handle] = bmp;
-			}
 			T($"PaintEventStart h=0x{handle.ToInt64():x} client={client}");
-			Graphics dc = Graphics.FromImage(bmp);
+			Graphics dc;
+			if (s_gpuRaster)
+			{
+				if (!backing.ContainsKey(handle)) backing[handle] = null;      // keep the window registry
+				dc = System.Drawing.WebGpuBackend.GpuRaster.NewRecording();    // records; NO libgdiplus backing
+			}
+			else
+			{
+				if (!backing.TryGetValue(handle, out Bitmap bmp))
+				{
+					bmp = new Bitmap(Math.Max(1, hwnd.width), Math.Max(1, hwnd.height));
+					backing[handle] = bmp;
+				}
+				dc = Graphics.FromImage(bmp);
+			}
 			Rectangle invalid = hwnd.Invalid;
-			// GPU-raster mode rebuilds the whole backing from a WebGPU scene (RasterizeInto overwrites
-			// the bitmap), so paint the entire window rather than a partial invalid region.
+			// GPU-raster mode records the whole window as a scene, so paint the entire window rather
+			// than a partial invalid region.
 			if (invalid.Width <= 0 || invalid.Height <= 0 || s_gpuRaster)
 				invalid = new Rectangle(0, 0, hwnd.width, hwnd.height);
-			dc.SetClip(invalid);
-			if (s_gpuRaster)
-				System.Drawing.WebGpuBackend.GpuRaster.Begin(dc);   // verbs record a WebGPU scene
+			dc.SetClip(invalid);   // no-op for a recording-only Graphics
 			var pe = new PaintEventArgs(dc, invalid);
 			hwnd.expose_pending = false;
 			hwnd.ClearInvalidArea();
@@ -332,12 +344,24 @@ namespace System.Windows.Forms
 		// GPU-raster mode we attach a recorder to that offscreen Graphics so the control's verbs are
 		// captured, and at blit time store the recorded scene as the window's scene (no libgdiplus).
 
+		// GPU-raster: the offscreen "drawable" is a marker (no libgdiplus Bitmap); the paint records
+		// into a recording-only Graphics whose scene is captured at BlitFromOffscreen.
+		internal override void CreateOffscreenDrawable(IntPtr handle, int width, int height, out object offscreen_drawable)
+		{
+			if (s_gpuRaster) { offscreen_drawable = new object(); return; }
+			base.CreateOffscreenDrawable(handle, width, height, out offscreen_drawable);
+		}
+
+		internal override void DestroyOffscreenDrawable(object offscreen_drawable)
+		{
+			if (offscreen_drawable is Bitmap bmp) bmp.Dispose();   // marker (object) -> nothing to free
+		}
+
 		internal override Graphics GetOffscreenGraphics(object offscreen_drawable)
 		{
-			Graphics g = Graphics.FromImage((Bitmap)offscreen_drawable);
 			if (s_gpuRaster)
-				System.Drawing.WebGpuBackend.GpuRaster.Begin(g);
-			return g;
+				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording();   // records; no libgdiplus
+			return Graphics.FromImage((Bitmap)offscreen_drawable);
 		}
 
 		internal override void BlitFromOffscreen(IntPtr dest_handle, Graphics dest_dc, object offscreen_drawable, Graphics offscreen_dc, Rectangle r)
@@ -367,6 +391,10 @@ namespace System.Windows.Forms
 		// fallback keeps callers alive if the window has no backing yet.
 		internal override Graphics GetHwndGraphics(IntPtr handle)
 		{
+			// GPU-raster: a recording-only Graphics (measurement is managed; any draw records/no-ops)
+			// — no libgdiplus. Otherwise draw over the window's backing bitmap.
+			if (s_gpuRaster)
+				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording();
 			if (!backing.TryGetValue(handle, out Bitmap b))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(handle);

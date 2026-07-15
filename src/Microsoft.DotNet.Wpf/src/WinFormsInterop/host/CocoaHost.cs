@@ -167,6 +167,17 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         if (_wgpu != null && _gpuRaster)
         {
+            // Runtime DPI detection: re-read the window's backing scale each present; if it changed
+            // (e.g. the window moved to a Retina/non-Retina display, or the startup value was stale),
+            // resync the CAMetalLayer contentsScale + resize the swap chain so text stays crisp
+            // (a wrong 1x on a 2x display would upscale to a pixelated result).
+            double curScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
+            if ((float)curScale != _wgpu.Scale)
+            {
+                Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.SetContentsScale(_imageView, curScale);
+                _wgpu.SetScale(curScale);
+                _lastVer = -1;   // force a present at the new scale
+            }
             // GPU-raster mode: composite each window's RECORDED scene in one pass (no per-control
             // readback / bitmap re-upload). Present ONLY when something changed (driver paint version)
             // or the caret blink toggled — and keep retrying while a present fails (e.g. Occluded until
