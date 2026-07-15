@@ -16,7 +16,9 @@
     <!-- Shared WebGPU present path (surface + WgpuSceneRenderer); internals exposed via
          InternalsVisibleTo("WinFormsHost") in WgpuInterop/AssemblyInfo.cs. -->
     <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
-    <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
+    <!-- Our own vendored System.Drawing (flows in via the S.W.F project ref too; referenced here so
+         the host's own Bitmap/Graphics usage binds to the same assembly). -->
+    <ProjectReference Include="../sysdrawing/System.Drawing.WebGpu.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- wgpu-native backend (Metal on mac). Copied next to the host so the DllImport resolves. -->
@@ -25,4 +27,13 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!-- Strip the framework System.Drawing.Common/Primitives (dragged in transitively) so our own
+       System.Drawing is the sole provider of System.Drawing.* types (avoids CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -72,6 +72,23 @@ things differ per platform, and `WgpuInterop` already has all three surface type
 
 `WgpuInterop` internals are exposed to the host via `InternalsVisibleTo("WinFormsHost")`.
 
+## GPU rasterization (`gpuraster/`)
+
+Today the control PIXELS come from libgdiplus (CPU) and are uploaded to WebGPU as textures. The next
+tier draws the controls *themselves* with WGSL. `gpuraster/` proves that vocabulary end to end:
+`SceneGraphics.cs` is a `System.Drawing.Graphics`-shaped translator that records into a
+`WgpuSceneRenderer` scene (FillRectangle → `GeometryFill`, DrawLine/edges → thin fills, FillEllipse →
+`EllipseGeometry`, FillPolygon → `PolygonGeometry`, DrawString → `GlyphRunDraw`, gradients →
+`LinearGradientBrush`). `Program.cs` draws a whole classic dialog (GroupBox, radios, checkbox,
+combo, listbox with selection, textbox, progress bar, button) through it, renders offscreen
+(`RenderToRgba`), and writes a PNG with a built-in encoder — **no libgdiplus, no System.Drawing at
+all**. Run: `dotnet run --project gpuraster -c Release -- out.png` (uses an Arial TTF for glyphs).
+
+The full tier drives *every* control's `Graphics` through `SceneGraphics` by replacing the
+System.Drawing backend (Mono's `System.Drawing` has one seam, `gdipFunctions.cs`) — `SceneGraphics`
+is the reusable translation layer that backend calls. `System.Drawing.Common`'s `Graphics` is
+`sealed`, so a backend swap (not interception) is the only seam.
+
 ## Build & run (macOS)
 
 ```sh

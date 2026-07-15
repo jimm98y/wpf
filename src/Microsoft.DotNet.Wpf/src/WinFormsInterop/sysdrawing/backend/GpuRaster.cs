@@ -1,0 +1,38 @@
+// Public entry point for the GPU-rasterization seam. A paint host (the XplatUIWebGpu driver) brackets
+// its drawing with Begin/EndScene on the Graphics it hands to the control/theme: Begin attaches a
+// recorder so the drawing verbs build a WebGPU scene (no GPU work — pure data), and EndScene returns
+// that scene (as object, so callers need no WgpuInterop reference) for the present path to render.
+
+namespace System.Drawing.WebGpuBackend
+{
+    public static class GpuRaster
+    {
+        /// <summary>Route <paramref name="g"/>'s subsequent draw verbs into a WebGPU scene.</summary>
+        public static void Begin(Graphics g)
+        {
+            if (g != null) g.GpuRecorder = new SceneRecorder();
+        }
+
+        /// <summary>Detach the recorder and return the scene it recorded (a WgpuInterop SceneVisual,
+        /// boxed as object). Null if Begin wasn't called.</summary>
+        public static object EndScene(Graphics g)
+        {
+            if (g?.GpuRecorder is SceneRecorder r)
+            {
+                g.GpuRecorder = null;
+                return r.Scene;
+            }
+            return null;
+        }
+
+        /// <summary>Detach the recorder without returning its scene (the scene was already captured
+        /// elsewhere, e.g. a double-buffer blit).</summary>
+        public static void Cancel(Graphics g)
+        {
+            if (g != null) g.GpuRecorder = null;
+        }
+
+        /// <summary>Whether a recorder is currently attached (GPU-raster mode is active).</summary>
+        public static bool IsActive(Graphics g) => g?.GpuRecorder != null;
+    }
+}

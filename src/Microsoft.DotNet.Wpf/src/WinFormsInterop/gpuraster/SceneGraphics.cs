@@ -48,5 +48,28 @@ namespace WinFormsGpuRaster
             float y = bounds.Y + (bounds.Height - emSize) / 2f;
             DrawString(text, x, y, emSize, color);
         }
+
+        // Graphics.FillEllipse / DrawEllipse (RadioButton glyph). cx,cy = center.
+        public void FillEllipse(RgbaColor color, float cx, float cy, float rx, float ry)
+            => _target.Content.Add(new GeometryFill(new EllipseGeometry(new Vector2(cx, cy), rx, ry), color));
+
+        // 1px ellipse outline = fill ring (outer solid ellipse of `color`, inner hole of `fill`).
+        public void DrawEllipse(RgbaColor color, RgbaColor fill, float cx, float cy, float rx, float ry)
+        {
+            FillEllipse(color, cx, cy, rx, ry);
+            FillEllipse(fill, cx, cy, rx - 1, ry - 1);
+        }
+
+        // Graphics.FillPolygon (checkmarks, arrows, etc.).
+        public void FillPolygon(RgbaColor color, params Vector2[] points)
+            => _target.Content.Add(new GeometryFill(new PolygonGeometry(points), color));
+
+        // Graphics.FillRectangle with a vertical two-stop gradient (some themes shade control faces).
+        public void FillVerticalGradient(RgbaColor top, RgbaColor bottom, float x, float y, float w, float h)
+        {
+            var brush = new LinearGradientBrush(new Vector2(x, y), new Vector2(x, y + h),
+                new[] { new GradientStop(0f, top), new GradientStop(1f, bottom) });
+            _target.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(x, y, w, h)), brush));
+        }
     }
 }

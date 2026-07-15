@@ -6,6 +6,7 @@
 // theme drawing (rects, bevels, text) maps onto the GPU scene graph.
 
 using System;
+using System.Numerics;
 using System.IO;
 using System.IO.Compression;
 using Microsoft.Wpf.Interop.WebGpu;
@@ -23,22 +24,35 @@ namespace WinFormsGpuRaster
         static readonly RgbaColor Dark          = RgbaColor.FromBytes(128, 128, 128, 255);
         static readonly RgbaColor DarkDark      = RgbaColor.FromBytes( 64,  64,  64, 255);
         static readonly RgbaColor Text          = RgbaColor.FromBytes(  0,   0,   0, 255);
+        static readonly RgbaColor White         = RgbaColor.FromBytes(255, 255, 255, 255);
+        static readonly RgbaColor Highlight     = RgbaColor.FromBytes( 49, 106, 197, 255);  // selection blue
 
         private static int Main(string[] args)
         {
-            const int W = 300, H = 140;
-            string outPath = args.Length > 0 ? args[0] : "gpu-button.png";
+            const int W = 460, H = 300;
+            string outPath = args.Length > 0 ? args[0] : "gpu-form.png";
 
             var root = new SceneVisual();
             var g = new SceneGraphics(root);
 
-            // Dialog background.
+            // A whole WinForms-style dialog drawn ONLY as WebGPU scene primitives (rects, ellipses,
+            // polygons, gradients, text) — the same vocabulary Mono's ThemeWin32Classic uses.
             g.FillRectangle(Face, 0, 0, W, H);
 
-            // A raised push-button and a pressed one (bevel inverted + label nudged), like a WinForms
-            // Button's normal vs MouseDown paint.
-            DrawButton(g, new Rect(30, 30, 110, 34), "Click me", pressed: false);
-            DrawButton(g, new Rect(30, 84, 110, 34), "Pressed",  pressed: true);
+            DrawGroupBox(g, new Rect(12, 8, 210, 120), "Options");
+            DrawRadio(g, 26, 34, "Fast", selected: true);
+            DrawRadio(g, 26, 60, "Accurate", selected: false);
+            DrawCheck(g, 26, 90, "Verbose", checkedState: true);
+
+            DrawCombo(g, new Rect(236, 12, 200, 22), "Metal");
+            DrawListBox(g, new Rect(236, 48, 200, 96),
+                new[] { "alpha", "bravo", "charlie", "delta", "echo" }, selected: 1);
+
+            g.DrawString("Name:", 12, 152, 12f, Text);
+            DrawTextBox(g, new Rect(70, 147, 150, 22), "Ada Lovelace");
+            DrawProgressBar(g, new Rect(12, 182, 210, 20), 0.4f);
+            DrawButton(g, new Rect(12, 220, 120, 32), "Click me", pressed: false);
+            g.DrawString("Clicks: 0", 148, 228, 12f, Text);
 
             using var ctx = WgpuContext.Create();
             // A real TrueType font so lowercase renders (the BuiltinBitmapFont is uppercase-only);
@@ -49,8 +63,105 @@ namespace WinFormsGpuRaster
             byte[] rgba = renderer.RenderToRgba(root, W, H, Face);   // GPU rasterization, offscreen
 
             WritePng(outPath, rgba, W, H);
-            Console.WriteLine($"GPU-rasterized {rgba.Length / 4} px -> {outPath} (no libgdiplus)");
+            Console.WriteLine($"GPU-rasterized {rgba.Length / 4} px form -> {outPath} (no libgdiplus)");
             return 0;
+        }
+
+        // GroupBox: an etched (two-tone) rectangle with a label gap in the top edge.
+        private static void DrawGroupBox(SceneGraphics g, Rect b, string title)
+        {
+            float x = b.X, y = b.Y + 6, w = b.Width, h = b.Height - 6;
+            g.DrawHLine(Dark, x, x + w, y);       g.DrawHLine(LightLight, x, x + w, y + 1);
+            g.DrawHLine(Dark, x, x + w, y + h);   g.DrawHLine(LightLight, x, x + w, y + h + 1);
+            g.DrawVLine(Dark, x, y, y + h);       g.DrawVLine(LightLight, x + 1, y, y + h);
+            g.DrawVLine(Dark, x + w, y, y + h);   g.DrawVLine(LightLight, x + w + 1, y, y + h);
+            g.FillRectangle(Face, b.X + 8, b.Y, title.Length * 7 + 6, 12);   // gap for the title
+            g.DrawString(title, b.X + 12, b.Y, 12f, Text);
+        }
+
+        // RadioButton: a white circle with a gray ring, a black dot when selected, and a label.
+        private static void DrawRadio(SceneGraphics g, float x, float y, string label, bool selected)
+        {
+            float cx = x + 6, cy = y + 6;
+            g.DrawEllipse(Dark, White, cx, cy, 6, 6);
+            if (selected) g.FillEllipse(Text, cx, cy, 2.5f, 2.5f);
+            g.DrawString(label, x + 16, y - 1, 12f, Text);
+        }
+
+        // CheckBox: a sunken white box, a checkmark polygon when checked, and a label.
+        private static void DrawCheck(SceneGraphics g, float x, float y, string label, bool checkedState)
+        {
+            g.FillRectangle(White, x, y, 13, 13);
+            // sunken border: dark top/left, light bottom/right.
+            g.DrawHLine(Dark, x, x + 12, y);      g.DrawVLine(Dark, x, y, y + 12);
+            g.DrawHLine(LightLight, x, x + 13, y + 13); g.DrawVLine(LightLight, x + 13, y, y + 13);
+            if (checkedState)
+                g.FillPolygon(Text,
+                    new Vector2(x + 3, y + 6), new Vector2(x + 5, y + 8), new Vector2(x + 10, y + 3),
+                    new Vector2(x + 10, y + 5), new Vector2(x + 5, y + 10), new Vector2(x + 3, y + 8));
+            g.DrawString(label, x + 18, y - 1, 12f, Text);
+        }
+
+        // ComboBox (DropDownList): a white field with the selection text + a raised drop-arrow button.
+        private static void DrawCombo(SceneGraphics g, Rect b, string text)
+        {
+            g.FillRectangle(White, b.X, b.Y, b.Width, b.Height);
+            Sunken(g, b);
+            g.DrawString(text, b.X + 4, b.Y + 4, 12f, Text);
+            var btn = new Rect(b.X + b.Width - 18, b.Y + 1, 16, b.Height - 2);
+            g.FillRectangle(Face, btn.X, btn.Y, btn.Width, btn.Height);
+            Raised(g, btn);
+            float ax = btn.X + 8, ay = btn.Y + btn.Height / 2 + 1;   // down triangle
+            g.FillPolygon(Text, new Vector2(ax - 3, ay - 2), new Vector2(ax + 3, ay - 2), new Vector2(ax, ay + 2));
+        }
+
+        // ListBox: a white field with items; the selected row is a blue bar with white text.
+        private static void DrawListBox(SceneGraphics g, Rect b, string[] items, int selected)
+        {
+            g.FillRectangle(White, b.X, b.Y, b.Width, b.Height);
+            Sunken(g, b);
+            for (int i = 0; i < items.Length; i++)
+            {
+                float iy = b.Y + 2 + i * 16;
+                if (i == selected) { g.FillRectangle(Highlight, b.X + 2, iy, b.Width - 4, 16); }
+                g.DrawString(items[i], b.X + 4, iy, 12f, i == selected ? White : Text);
+            }
+        }
+
+        // TextBox: a white sunken field with left-aligned text.
+        private static void DrawTextBox(SceneGraphics g, Rect b, string text)
+        {
+            g.FillRectangle(White, b.X, b.Y, b.Width, b.Height);
+            Sunken(g, b);
+            g.DrawString(text, b.X + 4, b.Y + 4, 12f, Text);
+        }
+
+        // ProgressBar: a sunken trough with classic segmented blue chunks.
+        private static void DrawProgressBar(SceneGraphics g, Rect b, float fraction)
+        {
+            g.FillRectangle(White, b.X, b.Y, b.Width, b.Height);
+            Sunken(g, b);
+            int chunks = (int)((b.Width - 4) * fraction / 8);
+            for (int i = 0; i < chunks; i++)
+                g.FillRectangle(Highlight, b.X + 3 + i * 8, b.Y + 3, 6, b.Height - 6);
+        }
+
+        // Sunken 3D border (fields): dark top/left, white bottom/right.
+        private static void Sunken(SceneGraphics g, Rect b)
+        {
+            g.DrawHLine(Dark, b.X, b.X + b.Width - 1, b.Y);
+            g.DrawVLine(Dark, b.X, b.Y, b.Y + b.Height - 1);
+            g.DrawHLine(LightLight, b.X, b.X + b.Width - 1, b.Y + b.Height - 1);
+            g.DrawVLine(LightLight, b.X + b.Width - 1, b.Y, b.Y + b.Height - 1);
+        }
+
+        // Raised 3D border (buttons): white top/left, dark bottom/right.
+        private static void Raised(SceneGraphics g, Rect b)
+        {
+            g.DrawHLine(LightLight, b.X, b.X + b.Width - 1, b.Y);
+            g.DrawVLine(LightLight, b.X, b.Y, b.Y + b.Height - 1);
+            g.DrawHLine(DarkDark, b.X, b.X + b.Width - 1, b.Y + b.Height - 1);
+            g.DrawVLine(DarkDark, b.X + b.Width - 1, b.Y, b.Y + b.Height - 1);
         }
 
         // Classic raised/sunken 3D button (CPDrawBorder3D-style): face fill, a two-tone bevel on each

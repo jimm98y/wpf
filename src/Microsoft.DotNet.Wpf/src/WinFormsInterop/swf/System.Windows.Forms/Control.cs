@@ -133,6 +133,10 @@ namespace System.Windows.Forms
 		ContextMenu             context_menu; // Context menu associated with the control
 		internal bool		use_compatible_text_rendering;
 		private bool		use_wait_cursor;
+		// WebGPU GPU-raster mode forces GDI+ (Graphics.DrawString) text so the scene recorder captures
+		// it — even if the app opted into the GDI TextRenderer path (SetCompatibleTextRenderingDefault
+		// (false), as the VS WinForms template does). Set from the driver's env; no host-side setup.
+		private static readonly bool webgpu_gpu_raster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
 
 		//accessibility
 		string accessible_name;
@@ -918,7 +922,7 @@ namespace System.Windows.Forms
 			use_wait_cursor = false;
 
 			backgroundimage_layout = ImageLayout.Tile;
-			use_compatible_text_rendering = Application.use_compatible_text_rendering;
+			use_compatible_text_rendering = webgpu_gpu_raster || Application.use_compatible_text_rendering;
 			padding = this.DefaultPadding;
 			maximum_size = new Size();
 			minimum_size = new Size();

@@ -71,7 +71,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         // back to the main screen), mirroring CocoaWindow.GetBackingScale so the CAMetalLayer's
         // contentsScale agrees with the HwndTarget DPI scale and the device-pixel client rects.
         // WPF_MAC_FORCE_SCALE overrides it (to exercise the Retina path on a 1x display).
-        private static double BackingScale(IntPtr nsView)
+        internal static double BackingScale(IntPtr nsView)
         {
             string force = Environment.GetEnvironmentVariable("WPF_MAC_FORCE_SCALE");
             if (!string.IsNullOrEmpty(force) &&

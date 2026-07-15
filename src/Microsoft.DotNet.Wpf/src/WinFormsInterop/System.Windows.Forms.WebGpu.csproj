@@ -59,12 +59,25 @@
     <Reference Include="Accessibility">
       <HintPath>lib/Accessibility.dll</HintPath>
     </Reference>
-    <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
+    <!-- Our own vendored Mono System.Drawing (the GPU-raster backend target), replacing the
+         System.Drawing.Common 6.0.0 NuGet package. -->
+    <ProjectReference Include="sysdrawing/System.Drawing.WebGpu.csproj" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
     <PackageReference Include="System.CodeDom" Version="10.0.0" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.0" />
     <PackageReference Include="System.Resources.Extensions" Version="10.0.0" />
   </ItemGroup>
+
+  <!-- System.Security.Permissions transitively drags in System.Drawing.Common + System.Drawing.
+       Primitives, which duplicate every type our own System.Drawing provides (Color/Rectangle/
+       Graphics/…) → CS0433. Strip those two resolved references so our System.Drawing is the sole
+       provider of the System.Drawing.* types. -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
 
   <Import Project="gen/Resources.targets" />
 </Project>

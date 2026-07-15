@@ -16,9 +16,13 @@ internal sealed class CocoaHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent;
+    private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion;
     private IntPtr _window, _imageView;
     private WgpuPresenter _wgpu;   // when non-null, present through WebGPU instead of CoreGraphics
+    private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
+    // Present-on-change: skip re-rendering when the driver's paint version and caret blink are unchanged.
+    private int _lastVer = -1;
+    private bool _lastCaretOn, _lastPresentOk;
     private readonly string _tempPng = Path.Combine(Path.GetTempPath(), "wf-host-" + Guid.NewGuid().ToString("N") + ".png");
 
     internal CocoaHost(Form form)
@@ -36,6 +40,8 @@ internal sealed class CocoaHost
         _keyDown = dt.GetMethod("InjectKeyDown", BindingFlags.NonPublic | BindingFlags.Instance);
         _getCaret = dt.GetMethod("GetCaret", BindingFlags.NonPublic | BindingFlags.Instance);
         _getPresent = dt.GetMethod("GetPresentWindows", BindingFlags.NonPublic | BindingFlags.Instance);
+        _getScene = dt.GetMethod("GetWindowScene", BindingFlags.NonPublic | BindingFlags.Instance);
+        _getVersion = dt.GetMethod("GetPaintVersion", BindingFlags.NonPublic | BindingFlags.Instance);
     }
 
     // ---- composite the WinForms window tree into one bitmap ----------------------
@@ -76,6 +82,22 @@ internal sealed class CocoaHost
         return layers;
     }
 
+    // Build the per-window RECORDED scenes (form + children + popups) in paint order, positioned in
+    // form space — the GPU-raster present input (each window's WebGPU scene, composited in one pass).
+    private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy)
+    {
+        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        ox = wins.Length >= 3 ? (int)wins[1] : 0;
+        oy = wins.Length >= 3 ? (int)wins[2] : 0;
+        var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
+        for (int i = 0; i + 2 < wins.Length; i += 3)
+        {
+            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+        }
+        return list;
+    }
+
     // The blinking text caret as a form-space rect (null when hidden/off-blink); the backing bitmaps
     // don't contain it, so it's a per-frame overlay quad.
     private Rectangle? GetCaretRect(int ox, int oy)
@@ -85,6 +107,15 @@ internal sealed class CocoaHost
         if (!(bool)_getCaret.Invoke(_driver, a)) return null;
         if ((_blink.ElapsedMilliseconds / 530) % 2 != 0) return null;   // ~530ms blink
         return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
+    }
+
+    // Caret on/off state only (no position) — the cheap change-check for present-on-change.
+    private bool CaretOn()
+    {
+        if (_getCaret == null) return false;
+        object[] a = { 0, 0, 0, 0 };
+        if (!(bool)_getCaret.Invoke(_driver, a)) return false;
+        return (_blink.ElapsedMilliseconds / 530) % 2 == 0;
     }
 
     // ---- window + present -------------------------------------------------------
@@ -113,15 +144,17 @@ internal sealed class CocoaHost
         // HWND source, the browser a canvas), then present each composite as a textured quad.
         if (Environment.GetEnvironmentVariable("WF_WEBGPU") == "1")
         {
-            // Force contentsScale=1 so the CAMetalLayer drawable is point-sized (== the composite's
-            // pixel size), mapping 1:1. (Retina 2x crispness would need the WinForms scene rendered at
-            // 2x — a later refinement.) Read by MacInterop.BackingScale.
-            Environment.SetEnvironmentVariable("WPF_MAC_FORCE_SCALE", "1");
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.CreateSurface(ctx.Instance, _imageView);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("MacInterop.CreateSurface returned null (no Metal surface)");
-            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height);
-            Console.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format})");
+            // Render at the real backing scale (2x on Retina) so text/geometry are crisp rather than a
+            // 1x surface upscaled by the display. The CAMetalLayer's contentsScale (set by CreateSurface)
+            // and the surface config must both be device-pixel sized; the presenter scales the scene.
+            double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
+            // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
+            // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
+            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
+            Console.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
         }
 
         Present();
@@ -129,6 +162,33 @@ internal sealed class CocoaHost
 
     internal void Present()
     {
+        if (_wgpu != null && _gpuRaster)
+        {
+            // GPU-raster mode: composite each window's RECORDED scene in one pass (no per-control
+            // readback / bitmap re-upload). Present ONLY when something changed (driver paint version)
+            // or the caret blink toggled — and keep retrying while a present fails (e.g. Occluded until
+            // the window is front-most). This makes an idle window cost ~nothing.
+            int ver = (int)_getVersion.Invoke(_driver, null);
+            bool caretOn = CaretOn();
+            string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
+            bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
+            if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave)
+                return;   // nothing changed
+
+            var scenes = GetScenes(out int ox, out int oy);
+            Rectangle? caret = GetCaretRect(ox, oy);
+            _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
+            _lastVer = ver; _lastCaretOn = caretOn;
+            if (Environment.GetEnvironmentVariable("WF_TRACE") != null) Console.Error.WriteLine("[present]");
+            if (wantSave)
+            {
+                _savedGpu = true;
+                byte[] rgba = _wgpu.RenderScenesToRgba(scenes, caret);
+                SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, save);   // device-pixel sized
+                Console.WriteLine($"saved GPU-rendered frame -> {save}");
+            }
+            return;
+        }
         if (_wgpu != null)
         {
             var layers = GetLayers(out int ox, out int oy);
@@ -175,7 +235,7 @@ internal sealed class CocoaHost
     private bool _savedGpu;
 
     // Save an RGBA byte buffer (WgpuSceneRenderer readback layout: R,G,B,A) to a PNG via System.Drawing.
-    private static void SaveRgbaPng(byte[] rgba, int w, int h, string path)
+    internal static void SaveRgbaPng(byte[] rgba, int w, int h, string path)
     {
         using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
         BitmapData bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);

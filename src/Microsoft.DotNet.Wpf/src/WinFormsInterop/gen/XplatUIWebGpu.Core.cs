@@ -181,6 +181,8 @@ namespace System.Windows.Forms
 		{
 			if (backing.TryGetValue(handle, out Bitmap b)) { b.Dispose(); backing.Remove(handle); }
 			captions.Remove(handle);
+			_scenes.Remove(handle);
+			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
 		}
@@ -191,6 +193,7 @@ namespace System.Windows.Forms
 			if (hwnd == null) return false;
 			hwnd.visible = visible;
 			hwnd.Mapped = visible;
+			_paintVersion++;   // visibility change alters the composite
 			if (visible)
 			{
 				SendMessage(handle, Msg.WM_SHOWWINDOW, (IntPtr)1, IntPtr.Zero);
@@ -216,6 +219,7 @@ namespace System.Windows.Forms
 				if (backing.TryGetValue(handle, out Bitmap old)) old.Dispose();
 				backing[handle] = new Bitmap(width, height);
 			}
+			_paintVersion++;   // a window moved/resized
 			PerformNCCalc(hwnd);
 			// WinForms' SetBoundsCore does not update Control.bounds directly; it waits for
 			// WM_WINDOWPOSCHANGED to call UpdateBounds (which reads GetWindowPos). Without this,
@@ -278,20 +282,73 @@ namespace System.Windows.Forms
 			T($"PaintEventStart h=0x{handle.ToInt64():x} client={client}");
 			Graphics dc = Graphics.FromImage(bmp);
 			Rectangle invalid = hwnd.Invalid;
-			if (invalid.Width <= 0 || invalid.Height <= 0)
+			// GPU-raster mode rebuilds the whole backing from a WebGPU scene (RasterizeInto overwrites
+			// the bitmap), so paint the entire window rather than a partial invalid region.
+			if (invalid.Width <= 0 || invalid.Height <= 0 || s_gpuRaster)
 				invalid = new Rectangle(0, 0, hwnd.width, hwnd.height);
 			dc.SetClip(invalid);
+			if (s_gpuRaster)
+				System.Drawing.WebGpuBackend.GpuRaster.Begin(dc);   // verbs record a WebGPU scene
 			var pe = new PaintEventArgs(dc, invalid);
 			hwnd.expose_pending = false;
 			hwnd.ClearInvalidArea();
 			return pe;
 		}
 
+		private static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
+		// Per-window recorded WebGPU scene (boxed SceneVisual). The present path renders these directly
+		// — no per-control GPU readback, no re-upload, one device. GetWindowScene exposes them.
+		private readonly Dictionary<IntPtr, object> _scenes = new Dictionary<IntPtr, object>();
+		// Handles whose scene was captured this cycle via a double-buffer blit, so PaintEventEnd just
+		// detaches the (empty) window-DC recorder instead of overwriting the stored scene.
+		private readonly HashSet<IntPtr> _paintedViaOffscreen = new HashSet<IntPtr>();
+
+		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
+		internal object GetWindowScene(IntPtr handle) => _scenes.TryGetValue(handle, out object s) ? s : null;
+
+		// Bumped on anything that changes what the compositor should show (a control repaints, or a
+		// window is created/moved/shown/hidden/destroyed). The host presents only when this advances
+		// (or the caret blink toggles), instead of re-rendering every frame.
+		private int _paintVersion;
+		internal int GetPaintVersion() => _paintVersion;
+
 		internal override void PaintEventEnd(ref Message msg, IntPtr handle, bool client, PaintEventArgs pevent)
 		{
+			if (s_gpuRaster)
+			{
+				if (_paintedViaOffscreen.Remove(handle))
+					System.Drawing.WebGpuBackend.GpuRaster.Cancel(pevent.Graphics);       // scene captured by the blit
+				else
+					_scenes[handle] = System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics);
+				_paintVersion++;   // content changed
+			}
 			pevent.Graphics?.Dispose();
 			pevent.SetGraphics(null);
 			pevent.Dispose();
+		}
+
+		// ---- double buffering (preserved) --------------------------------------------
+		// A double-buffered control paints into an offscreen Graphics, then blits it to the window. In
+		// GPU-raster mode we attach a recorder to that offscreen Graphics so the control's verbs are
+		// captured, and at blit time store the recorded scene as the window's scene (no libgdiplus).
+
+		internal override Graphics GetOffscreenGraphics(object offscreen_drawable)
+		{
+			Graphics g = Graphics.FromImage((Bitmap)offscreen_drawable);
+			if (s_gpuRaster)
+				System.Drawing.WebGpuBackend.GpuRaster.Begin(g);
+			return g;
+		}
+
+		internal override void BlitFromOffscreen(IntPtr dest_handle, Graphics dest_dc, object offscreen_drawable, Graphics offscreen_dc, Rectangle r)
+		{
+			if (s_gpuRaster && System.Drawing.WebGpuBackend.GpuRaster.IsActive(offscreen_dc))
+			{
+				_scenes[dest_handle] = System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc);
+				_paintedViaOffscreen.Add(dest_handle);
+				return;
+			}
+			dest_dc.DrawImage((Bitmap)offscreen_drawable, r, r, GraphicsUnit.Pixel);
 		}
 
 		internal override void UpdateWindow(IntPtr handle) { }

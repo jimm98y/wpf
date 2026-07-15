@@ -59,3 +59,6 @@ using System.Runtime.CompilerServices;
 // GPU-rasterization proof: draws WinForms-style controls (bevels + text) as WgpuSceneRenderer
 // primitives (no libgdiplus), de-risking the System.Drawing-backend swap.
 [assembly: InternalsVisibleTo("WinFormsGpuRaster")]
+// Our vendored System.Drawing's GPU-raster backend (SceneRecorder) records Graphics verbs into the
+// scene graph, so it needs the internal Scene/renderer types.
+[assembly: InternalsVisibleTo("Mono.System.Drawing")]
