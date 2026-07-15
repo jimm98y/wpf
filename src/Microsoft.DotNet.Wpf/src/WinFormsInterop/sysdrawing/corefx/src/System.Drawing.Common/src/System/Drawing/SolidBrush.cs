@@ -24,11 +24,16 @@ namespace System.Drawing
         {
             _color = color;
 
-            IntPtr nativeBrush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateSolidFill(_color.ToArgb(), out nativeBrush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
+            // No libgdiplus (browser/WebAssembly): keep the managed colour only; the GPU-raster recorder
+            // reads SolidBrush.Color directly and never dereferences the native brush.
+            if (GDIPlus.Initialized)
+            {
+                IntPtr nativeBrush = IntPtr.Zero;
+                int status = SafeNativeMethods.Gdip.GdipCreateSolidFill(_color.ToArgb(), out nativeBrush);
+                SafeNativeMethods.Gdip.CheckStatus(status);
 
-            SetNativeBrushInternal(nativeBrush);
+                SetNativeBrushInternal(nativeBrush);
+            }
 
 #if FEATURE_SYSTEM_EVENTS
             if (ColorUtil.IsSystemColor(_color))

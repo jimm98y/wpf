@@ -34,7 +34,8 @@ namespace System.Drawing.WebGpuBackend
         {
             foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
                                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                         "C:\\Windows\\Fonts\\arial.ttf" })
+                                         "C:\\Windows\\Fonts\\arial.ttf",
+                                         "/fonts/Arial.ttf", "/fonts/LiberationSans-Regular.ttf" })   // browser VFS
                 if (System.IO.File.Exists(p)) return new TrueTypeFont(System.IO.File.ReadAllBytes(p));
             return new BuiltinBitmapFont();
         }

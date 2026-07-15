@@ -198,10 +198,15 @@ namespace System.Drawing
 		static internal float systemDpiX {
 			get {
 				if (defDpiX == 0) {
-					Bitmap bmp = new Bitmap (1, 1);
-					Graphics g = Graphics.FromImage (bmp);
-					defDpiX = g.DpiX;
-					defDpiY = g.DpiY;
+					// No libgdiplus (browser): can't create a probe Bitmap; assume 96 DPI. The GPU-raster
+					// path renders at the real backing scale separately, so control layout uses 96 like Windows.
+					if (!GDIPlus.Initialized) { defDpiX = 96f; defDpiY = 96f; }
+					else {
+						Bitmap bmp = new Bitmap (1, 1);
+						Graphics g = Graphics.FromImage (bmp);
+						defDpiX = g.DpiX;
+						defDpiY = g.DpiY;
+					}
 				}
 				return defDpiX;
 			}
@@ -210,10 +215,13 @@ namespace System.Drawing
 		static internal float systemDpiY {
 			get {
 				if (defDpiY == 0) {
-					Bitmap bmp = new Bitmap (1, 1);
-					Graphics g = Graphics.FromImage (bmp);
-					defDpiX = g.DpiX;
-					defDpiY = g.DpiY;
+					if (!GDIPlus.Initialized) { defDpiX = 96f; defDpiY = 96f; }
+					else {
+						Bitmap bmp = new Bitmap (1, 1);
+						Graphics g = Graphics.FromImage (bmp);
+						defDpiX = g.DpiX;
+						defDpiY = g.DpiY;
+					}
 				}
 				return defDpiY;
 			}
@@ -2001,6 +2009,12 @@ namespace System.Drawing
 			if (image == null) 
 				throw new ArgumentNullException ("image");
 
+			// No libgdiplus (browser): the image has no native handle -> return a null-native Graphics.
+			// The GPU-raster path records verbs / measures text managed, so it never touches the (absent)
+			// native drawing surface. This backs Hwnd.GraphicsContext (the shared measurement Graphics).
+			if (image.nativeObject == IntPtr.Zero)
+				return new Graphics (IntPtr.Zero, image);
+
 			if ((image.PixelFormat & PixelFormat.Indexed) != 0)
 				throw new Exception (Locale.GetText ("Cannot create Graphics from an indexed bitmap."));
 
@@ -2698,6 +2712,7 @@ namespace System.Drawing
 		public Matrix Transform {
 			get {
                                 Matrix matrix = new Matrix ();
+                                if (nativeObject == IntPtr.Zero) return matrix;   // recording-only: identity
                                 Status status = GDIPlus.GdipGetWorldTransform (nativeObject, matrix.nativeMatrix);
 				GDIPlus.CheckStatus (status);
                                 return matrix;

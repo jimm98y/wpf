@@ -68,7 +68,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private static IFont LoadFont()
     {
         foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
-                                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" })
+                                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                     "/fonts/Arial.ttf", "/fonts/LiberationSans-Regular.ttf" })   // browser VFS
             if (System.IO.File.Exists(p)) return new TrueTypeFont(System.IO.File.ReadAllBytes(p));
         return new BuiltinBitmapFont();
     }

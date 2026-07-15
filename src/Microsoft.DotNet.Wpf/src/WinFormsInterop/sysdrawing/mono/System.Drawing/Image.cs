@@ -53,6 +53,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	private object tag;
 	
 	internal IntPtr nativeObject = IntPtr.Zero;
+	// Managed dimensions for a null-native image (browser/no-libgdiplus): set by the Bitmap(w,h) ctors.
+	internal int managedWidth = -1, managedHeight = -1;
 	// when using MS GDI+ and IStream we must ensure the stream stays alive for all the life of the Image
 	// http://groups.google.com/group/microsoft.public.win32.programmer.gdi/browse_thread/thread/4967097db1469a27/4d36385b83532126?lnk=st&q=IStream+gdi&rnum=3&hl=en#4d36385b83532126
 	internal Stream stream;
@@ -592,10 +594,11 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 	public int Height {
 		get {
-			uint height;			
-			Status status = GDIPlus.GdipGetImageHeight (nativeObject, out height);		
-			GDIPlus.CheckStatus (status);			
-			
+			if (nativeObject == IntPtr.Zero) return managedHeight < 0 ? 0 : managedHeight;
+			uint height;
+			Status status = GDIPlus.GdipGetImageHeight (nativeObject, out height);
+			GDIPlus.CheckStatus (status);
+
 			return (int)height;
 		}
 	}
@@ -781,10 +784,11 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 	public int Width {
 		get {
-			uint width;			
-			Status status = GDIPlus.GdipGetImageWidth (nativeObject, out width);		
-			GDIPlus.CheckStatus (status);			
-			
+			if (nativeObject == IntPtr.Zero) return managedWidth < 0 ? 0 : managedWidth;
+			uint width;
+			Status status = GDIPlus.GdipGetImageWidth (nativeObject, out width);
+			GDIPlus.CheckStatus (status);
+
 			return (int)width;
 		}
 	}

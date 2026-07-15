@@ -46,6 +46,9 @@ namespace System.Drawing.Drawing2D
                 
                 public Matrix ()
                 {
+			// No libgdiplus (browser): null-native identity matrix. The GPU-raster path never applies a
+			// GDI+ world transform; TextRenderer only reads Transform.OffsetX/Y (0 for identity).
+			if (!GDIPlus.Initialized) return;
 			Status status = GDIPlus.GdipCreateMatrix (out nativeMatrix);
 			GDIPlus.CheckStatus (status);
                 }
@@ -81,6 +84,7 @@ namespace System.Drawing.Drawing2D
                 // properties
                 public float[] Elements {
                         get {
+				if (nativeMatrix == IntPtr.Zero) return new float [] { 1f, 0f, 0f, 1f, 0f, 0f };
 				float [] retval = new float [6];
 				IntPtr tmp = Marshal.AllocHGlobal (Marshal.SizeOf (typeof (float)) * 6);
 				try {
@@ -97,6 +101,7 @@ namespace System.Drawing.Drawing2D
         
                 public bool IsIdentity {
                         get {
+                                if (nativeMatrix == IntPtr.Zero) return true;
                                 bool retval;
 				Status status = GDIPlus.GdipIsMatrixIdentity (nativeMatrix, out retval);
 				GDIPlus.CheckStatus (status);

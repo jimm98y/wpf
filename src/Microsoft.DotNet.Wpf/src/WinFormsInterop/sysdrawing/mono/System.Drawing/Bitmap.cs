@@ -89,12 +89,16 @@ namespace System.Drawing
 		}
 
 		public Bitmap (int width, int height, PixelFormat format)
-		{	
-			IntPtr bmp;
-			Status s = GDIPlus.GdipCreateBitmapFromScan0 (width, height, 0, format, IntPtr.Zero, out bmp);
-			GDIPlus.CheckStatus (s);
-			nativeObject = bmp;
-			
+		{
+			managedWidth = width; managedHeight = height;
+			// No libgdiplus (browser): null-native bitmap. Used only as a measurement-context backer in
+			// GPU-raster mode (Hwnd.GraphicsContext); real pixel access would need libgdiplus.
+			if (GDIPlus.Initialized) {
+				IntPtr bmp;
+				Status s = GDIPlus.GdipCreateBitmapFromScan0 (width, height, 0, format, IntPtr.Zero, out bmp);
+				GDIPlus.CheckStatus (s);
+				nativeObject = bmp;
+			}
 		}
 
 		public Bitmap (Image original) : this (original, original.Width, original.Height) {}

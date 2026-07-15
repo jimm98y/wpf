@@ -579,7 +579,10 @@ namespace System.Windows.Forms {
 			int			biHeight;
 			int			bytesPerLine;
 
-			if (cursor_data == null)
+			// Browser/WebAssembly: no libgdiplus for indexed-bitmap/palette/SetPixel decoding, and the
+			// cursor shape is applied via CSS, not a bitmap. Return a placeholder so Cursor construction
+			// (e.g. the SizeGrip's SizeNWSE) succeeds without touching native GDI+.
+			if (OperatingSystem.IsBrowser () || cursor_data == null)
 				return new Bitmap(32, 32);
 
 			ci = cursor_data[this.id];

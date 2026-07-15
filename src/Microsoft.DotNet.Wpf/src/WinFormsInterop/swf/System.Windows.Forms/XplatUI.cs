@@ -112,8 +112,13 @@ namespace System.Windows.Forms {
 
 		public static bool RunningOnUnix {
 			get {
+				// The browser/WebAssembly has no Win32 GDI; treat it as "Unix" so TextRenderer and the
+				// themes take the GDI+/DrawString path (which our GPU-raster hooks intercept) rather than
+				// GetHdc/Win32DrawText.
+				if (OperatingSystem.IsBrowser ())
+					return true;
 				int p = (int) Environment.OSVersion.Platform;
-				
+
 				return (p == 4 || p == 6 || p == 128);
 			}
 		}

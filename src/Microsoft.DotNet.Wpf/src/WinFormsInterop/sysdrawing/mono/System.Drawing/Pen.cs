@@ -43,6 +43,10 @@ namespace System.Drawing
 		private Color color;
 		private CustomLineCap startCap;
 		private CustomLineCap endCap;
+		// Managed backing for the no-libgdiplus (browser) path: the GPU-raster recorder reads a pen's
+		// Color/Brush/Width from these directly (no native pen object).
+		private float managedWidth = 1f;
+		private Brush managedBrush;
 
                 internal Pen (IntPtr p)
                 {
@@ -62,16 +66,22 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 
-			Status status = GDIPlus.GdipCreatePen2 (brush.NativeBrush, width, GraphicsUnit.World, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			color = Color.Empty;
+			managedWidth = width; managedBrush = brush;
+			color = (brush as SolidBrush)?.Color ?? Color.Empty;
+			if (GDIPlus.Initialized) {
+				Status status = GDIPlus.GdipCreatePen2 (brush.NativeBrush, width, GraphicsUnit.World, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				color = Color.Empty;
+			}
 		}
 
 		public Pen (Color color, float width)
 		{
-			Status status = GDIPlus.GdipCreatePen1 (color.ToArgb (), width, GraphicsUnit.World, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			this.color = color;
+			this.color = color; managedWidth = width;
+			if (GDIPlus.Initialized) {
+				Status status = GDIPlus.GdipCreatePen1 (color.ToArgb (), width, GraphicsUnit.World, out nativeObject);
+				GDIPlus.CheckStatus (status);
+			}
 		}
 
 		//
@@ -100,6 +110,8 @@ namespace System.Drawing
 
 		public Brush Brush {
 			get {
+				if (!GDIPlus.Initialized)
+					return managedBrush ?? new SolidBrush (color);
 				IntPtr brush;
 				Status status = GDIPlus.GdipGetPenBrushFill (nativeObject, out brush);
 				GDIPlus.CheckStatus (status);
@@ -120,7 +132,7 @@ namespace System.Drawing
 
 		public Color Color {
 			get {
-				if (color.Equals (Color.Empty)) {
+				if (color.Equals (Color.Empty) && GDIPlus.Initialized) {
 					int c;
 					Status status = GDIPlus.GdipGetPenColor (nativeObject, out c);
 					GDIPlus.CheckStatus (status);
@@ -133,9 +145,10 @@ namespace System.Drawing
 				if (!isModifiable)
 					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
 
+				color = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetPenColor (nativeObject, value.ToArgb ());
 				GDIPlus.CheckStatus (status);
-				color = value;
 			}
 		}
 
@@ -411,6 +424,7 @@ namespace System.Drawing
 
 		public float Width {
 			get {
+				if (!GDIPlus.Initialized) return managedWidth;
 				float f;
                                 Status status = GDIPlus.GdipGetPenWidth (nativeObject, out f);
 				GDIPlus.CheckStatus (status);
@@ -418,6 +432,8 @@ namespace System.Drawing
 			}
 			set {
 				if (isModifiable) {
+					managedWidth = value;
+					if (!GDIPlus.Initialized) return;
 					Status status = GDIPlus.GdipSetPenWidth (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else

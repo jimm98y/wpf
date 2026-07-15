@@ -39,15 +39,27 @@ namespace System.Drawing {
 //		private static StringFormat genericDefault;
 		private IntPtr nativeStrFmt = IntPtr.Zero;
                 private int language = GDIPlus.LANG_NEUTRAL;
-				
+
+		// Managed backing for the browser/no-libgdiplus path (GDIPlus.Initialized == false): the theme
+		// and TextRenderer create StringFormats and read Alignment/LineAlignment/FormatFlags/Trimming/
+		// HotkeyPrefix, all of which the GPU-raster path consumes from managed state (no native object).
+		private StringAlignment _align, _lineAlign;
+		private StringFormatFlags _flags;
+		private StringTrimming _trimming;
+		private HotkeyPrefix _hotkey;
+
 		public StringFormat() : this (0, GDIPlus.LANG_NEUTRAL)
-		{					   
-		}		
-		
+		{
+		}
+
 		public StringFormat(StringFormatFlags options, int language)
 		{
-			Status status = GDIPlus.GdipCreateStringFormat (options, language, out nativeStrFmt);        			
-			GDIPlus.CheckStatus (status);
+			this.language = language;
+			_flags = options;
+			if (GDIPlus.Initialized) {
+				Status status = GDIPlus.GdipCreateStringFormat (options, language, out nativeStrFmt);
+				GDIPlus.CheckStatus (status);
+			}
 		}
 		
 		internal StringFormat(IntPtr native)
@@ -80,18 +92,27 @@ namespace System.Drawing {
 			if (format == null)
 				throw new ArgumentNullException ("format");
 
-			Status status = GDIPlus.GdipCloneStringFormat (format.NativeObject, out nativeStrFmt);
-			GDIPlus.CheckStatus (status);
+			this.language = format.language;
+			_align = format._align; _lineAlign = format._lineAlign;
+			_flags = format._flags; _trimming = format._trimming; _hotkey = format._hotkey;
+			if (GDIPlus.Initialized) {
+				Status status = GDIPlus.GdipCloneStringFormat (format.NativeObject, out nativeStrFmt);
+				GDIPlus.CheckStatus (status);
+			}
 		}
 
 		public StringFormat (StringFormatFlags options)
 		{
-			Status status = GDIPlus.GdipCreateStringFormat (options, GDIPlus.LANG_NEUTRAL, out nativeStrFmt);
-			GDIPlus.CheckStatus (status);			
+			_flags = options;
+			if (GDIPlus.Initialized) {
+				Status status = GDIPlus.GdipCreateStringFormat (options, GDIPlus.LANG_NEUTRAL, out nativeStrFmt);
+				GDIPlus.CheckStatus (status);
+			}
 		}
-		
+
 		public StringAlignment Alignment {
 			get {
+				if (!GDIPlus.Initialized) return _align;
                                 StringAlignment align;
 				Status status = GDIPlus.GdipGetStringFormatAlign (nativeStrFmt, out align);
 				GDIPlus.CheckStatus (status);
@@ -103,6 +124,8 @@ namespace System.Drawing {
 				if ((value < StringAlignment.Near) || (value > StringAlignment.Far))
 					throw new InvalidEnumArgumentException ("Alignment");
 
+				_align = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetStringFormatAlign (nativeStrFmt, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -110,6 +133,7 @@ namespace System.Drawing {
 
 		public StringAlignment LineAlignment {
 			get {
+				if (!GDIPlus.Initialized) return _lineAlign;
 				StringAlignment align;
 				Status status = GDIPlus.GdipGetStringFormatLineAlign (nativeStrFmt, out align);
 				GDIPlus.CheckStatus (status);
@@ -121,28 +145,34 @@ namespace System.Drawing {
 				if ((value < StringAlignment.Near) || (value > StringAlignment.Far))
 					throw new InvalidEnumArgumentException ("Alignment");
 
+				_lineAlign = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetStringFormatLineAlign (nativeStrFmt, value);
 				GDIPlus.CheckStatus (status);
         		}
 		}
 
 		public StringFormatFlags FormatFlags {
-			get {				
+			get {
+				if (!GDIPlus.Initialized) return _flags;
 				StringFormatFlags flags;
 				Status status = GDIPlus.GdipGetStringFormatFlags (nativeStrFmt, out flags);
 				GDIPlus.CheckStatus (status);
 
-        			return flags;			
+        			return flags;
 			}
 
 			set {
+				_flags = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetStringFormatFlags (nativeStrFmt, value);
 				GDIPlus.CheckStatus (status);
 			}
 		}
 
 		public HotkeyPrefix HotkeyPrefix {
-			get {				
+			get {
+				if (!GDIPlus.Initialized) return _hotkey;
 				HotkeyPrefix hotkeyPrefix;
 				Status status = GDIPlus.GdipGetStringFormatHotkeyPrefix (nativeStrFmt, out hotkeyPrefix);
 				GDIPlus.CheckStatus (status);
@@ -154,6 +184,8 @@ namespace System.Drawing {
 				if ((value < HotkeyPrefix.None) || (value > HotkeyPrefix.Hide))
 					throw new InvalidEnumArgumentException ("HotkeyPrefix");
 
+				_hotkey = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetStringFormatHotkeyPrefix (nativeStrFmt, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -162,6 +194,7 @@ namespace System.Drawing {
 
 		public StringTrimming Trimming {
 			get {
+				if (!GDIPlus.Initialized) return _trimming;
 				StringTrimming trimming;
 				Status status = GDIPlus.GdipGetStringFormatTrimming (nativeStrFmt, out trimming);
 				GDIPlus.CheckStatus (status);
@@ -172,6 +205,8 @@ namespace System.Drawing {
 				if ((value < StringTrimming.None) || (value > StringTrimming.EllipsisPath))
 					throw new InvalidEnumArgumentException ("Trimming");
 
+				_trimming = value;
+				if (!GDIPlus.Initialized) return;
 				Status status = GDIPlus.GdipSetStringFormatTrimming (nativeStrFmt, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -179,11 +214,12 @@ namespace System.Drawing {
 
 		public static StringFormat GenericDefault {
 			get {
+				if (!GDIPlus.Initialized) return new StringFormat ();
 				IntPtr ptr;
-				
+
 				Status status = GDIPlus.GdipStringFormatGetGenericDefault (out ptr);
 				GDIPlus.CheckStatus (status);
-	
+
 				return new StringFormat (ptr);
 			}
 		}
@@ -198,52 +234,57 @@ namespace System.Drawing {
 		
 		public static StringFormat GenericTypographic {
 			get {
+				if (!GDIPlus.Initialized) return new StringFormat (StringFormatFlags.NoWrap);
 				IntPtr ptr;
-						
+
 				Status status = GDIPlus.GdipStringFormatGetGenericTypographic (out ptr);
 				GDIPlus.CheckStatus (status);
-	
+
 				return new StringFormat (ptr);
 			}
 		}
 
                 public StringDigitSubstitute  DigitSubstitutionMethod  {
 			get {
+				if (!GDIPlus.Initialized) return StringDigitSubstitute.User;
                                 StringDigitSubstitute substitute;
-                                
+
                                 Status status = GDIPlus.GdipGetStringFormatDigitSubstitution(nativeStrFmt, language, out substitute);
 				GDIPlus.CheckStatus (status);
 
-                                return substitute;     
+                                return substitute;
 			}
 		}
 
 
       		public void SetMeasurableCharacterRanges (CharacterRange [] ranges)
-		{					
-			Status status = GDIPlus.GdipSetStringFormatMeasurableCharacterRanges (nativeStrFmt, 
+		{
+			if (!GDIPlus.Initialized) return;
+			Status status = GDIPlus.GdipSetStringFormatMeasurableCharacterRanges (nativeStrFmt,
 				ranges.Length,	ranges);
-				
+
 			GDIPlus.CheckStatus (status);
 		}
-		
-		internal int GetMeasurableCharacterRangeCount () 
+
+		internal int GetMeasurableCharacterRangeCount ()
 		{
-			int cnt;		
+			if (!GDIPlus.Initialized) return 0;
+			int cnt;
 			Status status = GDIPlus.GdipGetStringFormatMeasurableCharacterRangeCount (nativeStrFmt, out cnt);
-				
-			GDIPlus.CheckStatus (status);			
-			return cnt;			
-		}			
+
+			GDIPlus.CheckStatus (status);
+			return cnt;
+		}
 			
 		public object Clone()
 		{
+			if (!GDIPlus.Initialized) return new StringFormat (this);
 			IntPtr native;
-				
+
 			Status status = GDIPlus.GdipCloneStringFormat (nativeStrFmt, out native);
 			GDIPlus.CheckStatus (status);
-	
-			return new StringFormat (native);			
+
+			return new StringFormat (native);
 		}
 
 		public override string ToString()
@@ -271,12 +312,14 @@ namespace System.Drawing {
 
                 public void SetTabStops(float firstTabOffset, float[] tabStops)
                 {
+			if (!GDIPlus.Initialized) return;
 			Status status = GDIPlus.GdipSetStringFormatTabStops(nativeStrFmt, firstTabOffset, tabStops.Length, tabStops);
 			GDIPlus.CheckStatus (status);
                 }
 
                 public void SetDigitSubstitution(int language,  StringDigitSubstitute substitute)
                 {
+			if (!GDIPlus.Initialized) return;
 			Status status = GDIPlus.GdipSetStringFormatDigitSubstitution(nativeStrFmt, this.language, substitute);
 			GDIPlus.CheckStatus (status);
                 }
@@ -285,7 +328,8 @@ namespace System.Drawing {
                 {
                         int count = 0;
                         firstTabOffset = 0;
-                        
+                        if (!GDIPlus.Initialized) return new float[0];
+
                         Status status = GDIPlus.GdipGetStringFormatTabStopCount(nativeStrFmt, out count);
 			GDIPlus.CheckStatus (status);
 

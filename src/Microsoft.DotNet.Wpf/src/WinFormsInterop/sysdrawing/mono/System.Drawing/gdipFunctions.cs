@@ -74,6 +74,12 @@ namespace System.Drawing
 
 		internal static ulong GdiPlusToken = 0;
 
+		// False when libgdiplus could not be loaded (e.g. the browser/WebAssembly, which has no native
+		// GDI+). In that case the GPU-raster path is the ONLY drawing path: System.Drawing objects keep
+		// their managed state but create no native handle, and the scene recorder reads that managed
+		// state directly. Any actual gdip* call would still throw — but the GPU-raster path makes none.
+		internal static readonly bool Initialized;
+
 		static void ProcessExit (object sender, EventArgs e)
 		{
 			// Called all pending objects and claim any pending handle before
@@ -113,17 +119,19 @@ namespace System.Drawing
 				} else {
 					IntPtr buf = Marshal.AllocHGlobal (8192);
 					// This is kind of a hack but gets us sysname from uname (struct utsname *name) on
-					// linux and darwin
-					if (uname (buf) != 0) {
-						// WTH: We couldn't detect the OS; lets default to X11
-						UseX11Drawable = true;
-					} else {
-						string os = Marshal.PtrToStringAnsi (buf);
-						if (os == "Darwin")
-							UseCarbonDrawable = true;
-						else
+					// linux and darwin. uname may be unavailable (browser/wasm) -> default to X11.
+					try {
+						if (uname (buf) != 0) {
+							// WTH: We couldn't detect the OS; lets default to X11
 							UseX11Drawable = true;
-					}
+						} else {
+							string os = Marshal.PtrToStringAnsi (buf);
+							if (os == "Darwin")
+								UseCarbonDrawable = true;
+							else
+								UseX11Drawable = true;
+						}
+					} catch (Exception) { UseX11Drawable = true; }
 					Marshal.FreeHGlobal (buf);
 				}
 			}
@@ -132,12 +140,13 @@ namespace System.Drawing
 			GdiplusStartupOutput output = GdiplusStartupOutput.MakeGdiplusStartupOutput();
 			try {
 				GdiplusStartup (ref GdiPlusToken, ref input, ref output);
+				Initialized = true;
 			}
-			catch (TypeInitializationException) {
+			// DllNotFoundException (no libgdiplus, e.g. the browser) as well as the classic
+			// TypeInitializationException: leave Initialized = false so the managed-only path is used.
+			catch (Exception) {
 				Console.Error.WriteLine (
-					"* ERROR: Can not initialize GDI+ library{0}{0}" +
-					"Please check http://www.mono-project.com/Problem:GDIPlusInit for details",
-					Environment.NewLine);
+					"* System.Drawing: libgdiplus unavailable; running managed-only (GPU-raster) drawing path.");
 			}
 
 			// under MS 1.x this event is raised only for the default application domain

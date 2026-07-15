@@ -9,6 +9,11 @@ namespace System.Drawing.Drawing2D
 {
     public sealed class HatchBrush : Brush
     {
+        // Managed backing for the no-libgdiplus (browser) path: the GPU-raster recorder reads
+        // HatchStyle/ForegroundColor/BackgroundColor from these to build the hatch tile.
+        private readonly HatchStyle _style;
+        private readonly Color _foreColor, _backColor;
+
         public HatchBrush(HatchStyle hatchstyle, Color foreColor) : this(hatchstyle, foreColor, Color.FromArgb(unchecked((int)0xff000000)))
         {
         }
@@ -20,11 +25,15 @@ namespace System.Drawing.Drawing2D
                 throw new ArgumentException(SR.Format(SR.InvalidEnumArgument, nameof(hatchstyle), hatchstyle, nameof(HatchStyle)), nameof(hatchstyle));
             }
 
-            IntPtr nativeBrush;
-            int status = SafeNativeMethods.Gdip.GdipCreateHatchBrush(unchecked((int)hatchstyle), foreColor.ToArgb(), backColor.ToArgb(), out nativeBrush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
+            _style = hatchstyle; _foreColor = foreColor; _backColor = backColor;
+            if (GDIPlus.Initialized)
+            {
+                IntPtr nativeBrush;
+                int status = SafeNativeMethods.Gdip.GdipCreateHatchBrush(unchecked((int)hatchstyle), foreColor.ToArgb(), backColor.ToArgb(), out nativeBrush);
+                SafeNativeMethods.Gdip.CheckStatus(status);
 
-            SetNativeBrushInternal(nativeBrush);
+                SetNativeBrushInternal(nativeBrush);
+            }
         }
 
         internal HatchBrush(IntPtr nativeBrush)
@@ -46,6 +55,7 @@ namespace System.Drawing.Drawing2D
         {
             get
             {
+                if (!GDIPlus.Initialized) return _style;
                 int hatchStyle;
                 int status = SafeNativeMethods.Gdip.GdipGetHatchStyle(new HandleRef(this, NativeBrush), out hatchStyle);
                 SafeNativeMethods.Gdip.CheckStatus(status);
@@ -58,6 +68,7 @@ namespace System.Drawing.Drawing2D
         {
             get
             {
+                if (!GDIPlus.Initialized) return _foreColor;
                 int foregroundArgb;
                 int status = SafeNativeMethods.Gdip.GdipGetHatchForegroundColor(new HandleRef(this, NativeBrush), out foregroundArgb);
                 SafeNativeMethods.Gdip.CheckStatus(status);
@@ -70,6 +81,7 @@ namespace System.Drawing.Drawing2D
         {
             get
             {
+                if (!GDIPlus.Initialized) return _backColor;
                 int backgroundArgb;
                 int status = SafeNativeMethods.Gdip.GdipGetHatchBackgroundColor(new HandleRef(this, NativeBrush), out backgroundArgb);
                 SafeNativeMethods.Gdip.CheckStatus(status);
