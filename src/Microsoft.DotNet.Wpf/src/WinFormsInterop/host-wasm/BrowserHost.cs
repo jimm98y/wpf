@@ -17,7 +17,7 @@ internal sealed class BrowserHost : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret;
+    private readonly MethodInfo _down, _up, _move, _char, _keyDown, _wheel, _getPresent, _getScene, _getVersion, _getCaret;
     private WgpuPresenter _wgpu;
     private readonly System.Diagnostics.Stopwatch _blink = System.Diagnostics.Stopwatch.StartNew();
     private int _lastVer = -1;
@@ -32,7 +32,7 @@ internal sealed class BrowserHost : IWinFormsHost
             .GetField("driver", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
         MethodInfo M(string n) => dt.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Instance);
         _down = M("InjectMouseDown"); _up = M("InjectMouseUp"); _move = M("InjectMouseMove");
-        _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
+        _char = M("InjectChar"); _keyDown = M("InjectKeyDown"); _wheel = M("InjectWheel");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
     }
@@ -114,6 +114,11 @@ internal sealed class BrowserHost : IWinFormsHost
                     case 1: _leftDown = true; _down.Invoke(_driver, new object[] { x, y }); break;
                     case 2: _leftDown = false; _up.Invoke(_driver, new object[] { x, y }); break;
                 }
+            }
+            else if (t == "w")
+            {
+                int x = e.GetProperty("x").GetInt32(), y = e.GetProperty("y").GetInt32();
+                _wheel?.Invoke(_driver, new object[] { x, y, e.GetProperty("d").GetInt32() });
             }
             else if (t == "k" && e.GetProperty("d").GetInt32() == 1)
             {

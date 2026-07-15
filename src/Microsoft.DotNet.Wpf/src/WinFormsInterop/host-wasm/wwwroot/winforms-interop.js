@@ -52,6 +52,12 @@ export function createCanvas(widthPoints, heightPoints) {
     canvas.addEventListener("mousedown", (e) => { canvas.focus(); pushMouse(1, e); });
     window.addEventListener("mouseup", (e) => pushMouse(2, e));   // window: catch release outside canvas
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        // DOM deltaY>0 = scroll down; Win32 WM_MOUSEWHEEL delta is +120 per notch scrolling UP.
+        const p = pos(e);
+        queue.push({ t: "w", x: p.x, y: p.y, d: e.deltaY > 0 ? -120 : 120 });
+    }, { passive: false });
     canvas.addEventListener("keydown", (e) => pushKey(true, e));
     canvas.addEventListener("keyup", (e) => pushKey(false, e));
     canvas.focus();

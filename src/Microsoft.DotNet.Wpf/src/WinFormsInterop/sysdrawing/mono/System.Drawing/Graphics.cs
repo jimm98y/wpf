@@ -1266,6 +1266,14 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (RecordPen (pen)) {
+				int c = ArgbOf (pen);
+				for (int i = 0; i < points.Length; i++) {
+					var a = points[i]; var b = points[(i + 1) % points.Length];   // closed
+					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c);
+				}
+				return;
+			}
 			Status status = GDIPlus.GdipDrawPolygonI (nativeObject, pen.NativePen, points, points.Length);
 			GDIPlus.CheckStatus (status);
 		}
@@ -1276,6 +1284,14 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (RecordPen (pen)) {
+				int c = ArgbOf (pen);
+				for (int i = 0; i < points.Length; i++) {
+					var a = points[i]; var b = points[(i + 1) % points.Length];   // closed
+					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c);
+				}
+				return;
+			}
 			Status status = GDIPlus.GdipDrawPolygon (nativeObject, pen.NativePen, points, points.Length);
 			GDIPlus.CheckStatus (status);
 		}

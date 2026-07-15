@@ -33,7 +33,9 @@ internal static class WasmBoot
             var combo = new ComboBox { Left = 236, Top = 12, Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
             combo.Items.AddRange(new object[] { "Direct3D 12", "Vulkan", "Metal", "OpenGL" }); combo.SelectedIndex = 2;
             var list = new ListBox { Left = 236, Top = 48, Width = 200, Height = 96 };
-            list.Items.AddRange(new object[] { "alpha", "bravo", "charlie", "delta", "echo" }); list.SelectedIndex = 1;
+            list.Items.AddRange(new object[] { "alpha", "bravo", "charlie", "delta", "echo", "foxtrot",
+                "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar" });
+            list.SelectedIndex = 1;
             var lbl = new Label { Text = "Name:", Left = 12, Top = 150 };
             var tb = new TextBox { Left = 70, Top = 147, Width = 150, Text = "Ada Lovelace" };
             var prog = new ProgressBar { Left = 12, Top = 182, Width = 210, Height = 20, Value = 40 };

@@ -128,6 +128,18 @@ namespace System.Windows.Forms
 		internal void InjectMouseUp(int screenX, int screenY)
 			=> InjectMouse(screenX, screenY, Msg.WM_LBUTTONUP, 0);
 
+		/// <summary>Route a mouse-wheel notch to the window under the cursor. WM_MOUSEWHEEL carries the
+		/// signed delta (multiples of WHEEL_DELTA=120, positive = scroll up) in the wParam high word and
+		/// SCREEN coordinates in lParam — matching what ScrollableControl/ListBox expect.</summary>
+		internal void InjectWheel(int screenX, int screenY, int delta)
+		{
+			IntPtr target = WindowAtPoint(screenX, screenY);
+			if (target == IntPtr.Zero) return;
+			IntPtr wParam = (IntPtr)((delta << 16) & unchecked((int)0xFFFF0000));
+			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+			SendMessage(target, Msg.WM_MOUSEWHEEL, wParam, lp);
+		}
+
 		/// <summary>Full click (down+up together) — for headless self-tests; real input uses the
 		/// separate down/up hooks so pressed/hover states animate between frames.</summary>
 		internal IntPtr InjectClick(int screenX, int screenY)
