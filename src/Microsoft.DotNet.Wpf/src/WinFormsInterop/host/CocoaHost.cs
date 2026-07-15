@@ -12,7 +12,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-internal sealed class CocoaHost
+internal sealed class CocoaHost : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
@@ -120,7 +120,7 @@ internal sealed class CocoaHost
 
     // ---- window + present -------------------------------------------------------
 
-    internal void Show()
+    public void Show()
     {
         EnsureApp();
         double w = _form.Width, h = _form.Height;
@@ -145,8 +145,11 @@ internal sealed class CocoaHost
         if (Environment.GetEnvironmentVariable("WF_WEBGPU") == "1")
         {
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
-            IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.CreateSurface(ctx.Instance, _imageView);
-            if (surface == IntPtr.Zero) throw new InvalidOperationException("MacInterop.CreateSurface returned null (no Metal surface)");
+            // Cross-platform surface creation: NativePlatform dispatches to the CAMetalLayer (mac),
+            // HWND (Windows), Xlib (Linux) or canvas (browser) source by detected OS. Here we pass the
+            // NSView*; a Win32 host passes its HWND. The present path below is identical everywhere.
+            IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _imageView);
+            if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
             // Render at the real backing scale (2x on Retina) so text/geometry are crisp rather than a
             // 1x surface upscaled by the display. The CAMetalLayer's contentsScale (set by CreateSurface)
             // and the surface config must both be device-pixel sized; the presenter scales the scene.
@@ -160,7 +163,7 @@ internal sealed class CocoaHost
         Present();
     }
 
-    internal void Present()
+    public void Present()
     {
         if (_wgpu != null && _gpuRaster)
         {
@@ -276,14 +279,14 @@ internal sealed class CocoaHost
     }
 
     /// <summary>Inject a click at a WinForms screen point (as a real NSEvent click would route).</summary>
-    internal void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
+    public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
 
     /// <summary>Save the current composited frame (what's on screen) to a PNG for verification.</summary>
-    internal void SaveFrame(string path) { using Bitmap b = Composite(); b.Save(path, ImageFormat.Png); }
+    public void SaveFrame(string path) { using Bitmap b = Composite(); b.Save(path, ImageFormat.Png); }
 
     // Drain pending NSEvents; route mouse messages to the driver as SEPARATE down/up/move so
     // WinForms' pressed/hover repaints happen between frames. Non-blocking (nil-date poll).
-    internal bool Pump()
+    public bool Pump()
     {
         while (true)
         {

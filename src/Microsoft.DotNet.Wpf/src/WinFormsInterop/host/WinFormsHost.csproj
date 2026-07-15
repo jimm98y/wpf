@@ -20,10 +20,18 @@
          the host's own Bitmap/Graphics usage binds to the same assembly). -->
     <ProjectReference Include="../sysdrawing/System.Drawing.WebGpu.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <!-- wgpu-native backend (Metal on mac). Copied next to the host so the DllImport resolves. -->
+  <!-- wgpu-native backend, per OS, copied next to the host so the DllImport resolves. Only the
+       osx-arm64 lib is downloaded in this fork; a Windows/Linux run needs the matching native lib
+       dropped under WgpuInterop/native/<rid>/lib (wgpu_native.dll / libwgpu_native.so). -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <None Include="../../WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib">
       <Link>libwgpu_native.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('../../WgpuInterop/native/win-x64/lib/wgpu_native.dll')">
+    <None Include="../../WgpuInterop/native/win-x64/lib/wgpu_native.dll">
+      <Link>wgpu_native.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

@@ -48,9 +48,10 @@ internal static class Host
         foreach (Control c in Flatten(f)) c.Invalidate(true);
         Application.DoEvents();
 
-        var host = new CocoaHost(f);
+        // Pick the platform windowing shell; the WebGPU present path below is identical on both.
+        IWinFormsHost host = OperatingSystem.IsWindows() ? new Win32Host(f) : new CocoaHost(f);
         host.Show();
-        Console.WriteLine("WinForms window shown on macOS. Interact with it, or wait for timeout.");
+        Console.WriteLine($"WinForms window shown ({(OperatingSystem.IsWindows() ? "Win32" : "Cocoa")}). Interact with it, or wait for timeout.");
 
         // Self-test (arg "selftest"): inject clicks through the driver like real NSEvent clicks do,
         // proving the on-screen window is interactive (click -> handler -> label update -> re-present).

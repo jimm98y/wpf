@@ -60,10 +60,14 @@ the composite bitmap, it does `RGBA → ImageBrush → full-window quad → Wgpu
 → wgpuSurfacePresent`. The API, WGSL, renderer and loop are **identical** on all targets; only two
 things differ per platform, and `WgpuInterop` already has all three surface types:
 
-| Platform | Surface (WebGPU struct in `Wgpu.Surface.cs`) | Windowing host | Status |
-|----------|----------------------------------------------|----------------|--------|
-| macOS | `WGPUSurfaceSourceMetalLayer` (`MacInterop.CreateSurface`) | `CocoaHost` | ✅ validated |
-| Windows | `WGPUSurfaceSourceWindowsHWND` | Win32 host (TODO) | surface struct ready |
+Surface creation is already cross-platform: `Platform.NativePlatform.CreateWindowSurface(instance,
+nativeWindow)` dispatches to the Metal/HWND/Xlib/canvas source by detected OS. The host picks its
+windowing shell (`IWinFormsHost`) by OS in `Host.Main`; the `WgpuPresenter` path below is identical.
+
+| Platform | Surface (via `NativePlatform`) | Windowing host | Status |
+|----------|--------------------------------|----------------|--------|
+| macOS | `WGPUSurfaceSourceMetalLayer` | `host/CocoaHost.cs` | ✅ validated |
+| Windows | `WGPUSurfaceSourceWindowsHWND` | `host/Win32Host.cs` | ✅ builds; ⚠ not yet run on Windows (needs `native/win-x64/wgpu_native.dll`) |
 | WebAssembly | canvas (`Browser/Wgpu.Browser.cs`) | JS/DOM host + WASM AOT (TODO) | browser interop ready |
 
 > **WebGPU, not Metal.** wgpu-native presents on macOS only through a CAMetalLayer — that is a

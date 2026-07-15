@@ -50,6 +50,11 @@ namespace System.Drawing
 		// else falls through to libgdiplus so nothing regresses.
 		internal IGpuSceneRecorder GpuRecorder;
 
+		// GPU-raster mode: route ALL text measurement to the managed metrics (no libgdiplus) — for
+		// both layout (control sizing) and paint. Correct because we render every run with the same
+		// font, so controls are sized to fit what's actually drawn. A browser prerequisite.
+		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+
 		static int ArgbOf (Brush b) => (b as SolidBrush)?.Color.ToArgb () ?? 0;
 		static int ArgbOf (Pen p) => (p != null && p.Brush is SolidBrush sb) ? sb.Color.ToArgb () : (p?.Color.ToArgb () ?? 0);
 		bool RecordSolid (Brush b) => GpuRecorder != null && b is SolidBrush;
@@ -1302,14 +1307,15 @@ namespace System.Drawing
 				float emPx = font.SizeInPoints * 96f / 72f;
 				float tx = layoutRectangle.X, ty = layoutRectangle.Y;
 				if (format != null && (layoutRectangle.Width > 0 || layoutRectangle.Height > 0)) {
-					SizeF sz = MeasureString (s, font);
+					// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
+					WebGpuBackend.GpuRaster.MeasureText (s, emPx, out float mw, out float mh);
 					if (layoutRectangle.Width > 0) {
-						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - sz.Width) / 2f;
-						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - sz.Width;
+						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
+						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
 					}
 					if (layoutRectangle.Height > 0) {
-						if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - sz.Height) / 2f;
-						else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - sz.Height;
+						if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - mh) / 2f;
+						else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - mh;
 					}
 				}
 				GpuRecorder.DrawText (s, tx, ty, emPx, ArgbOf (brush));
@@ -2086,9 +2092,15 @@ namespace System.Drawing
 			if (font == null)
 				throw new ArgumentNullException ("font");
 
+			if (s_gpuRasterMode) {
+				// Managed measurement (no libgdiplus), consistent with the WGSL-rendered font.
+				WebGpuBackend.GpuRaster.MeasureText (text, font.SizeInPoints * 96f / 72f, out float mw, out float mh);
+				return new SizeF (mw, mh);
+			}
+
 			RectangleF boundingBox = new RectangleF ();
 
-			Status status = GDIPlus.GdipMeasureString (nativeObject, text, text.Length, font.NativeObject, 
+			Status status = GDIPlus.GdipMeasureString (nativeObject, text, text.Length, font.NativeObject,
 				ref layoutRect, stringFormat, out boundingBox, null, null);
 			GDIPlus.CheckStatus (status);
 

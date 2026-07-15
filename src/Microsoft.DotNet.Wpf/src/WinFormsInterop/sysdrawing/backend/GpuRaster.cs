@@ -34,5 +34,10 @@ namespace System.Drawing.WebGpuBackend
 
         /// <summary>Whether a recorder is currently attached (GPU-raster mode is active).</summary>
         public static bool IsActive(Graphics g) => g?.GpuRecorder != null;
+
+        /// <summary>Measure a text run (managed, no libgdiplus) with the font the renderer draws with,
+        /// so DrawString alignment can centre exactly. emPx = pixel em size.</summary>
+        public static void MeasureText(string text, float emPx, out float width, out float height)
+            => TextMetrics.Measure(text, emPx, out width, out height);
     }
 }
