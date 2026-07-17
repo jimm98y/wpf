@@ -17,6 +17,10 @@ internal static partial class WinFormsBrowserJs
     [JSImport("dpr", ModuleName)]
     internal static partial double Dpr();
 
+    // Resize the presentation canvas (points; backing scaled by dpr) so popups extending past the form fit.
+    [JSImport("resizeCanvas", ModuleName)]
+    internal static partial void ResizeCanvas(int widthPoints, int heightPoints);
+
     // JSON array of queued DOM events since the last call (mouse/key), or "" when empty.
     [JSImport("drainEvents", ModuleName)]
     internal static partial string DrainEvents();

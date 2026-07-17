@@ -39,6 +39,14 @@ namespace System.Windows.Forms
 		/// children), then other top-level windows (e.g. ComboBox WS_POPUP dropdowns) in creation
 		/// order. The host blits each window's backing at its screen position. This is what makes
 		/// popups (separate top-level windows) appear.</summary>
+		/// <summary>A window's client size packed (width&lt;&lt;32 | height) — lets the browser host size its
+		/// presentation canvas to the union of the form and any popups (dropdowns extending past the form).</summary>
+		internal long GetWindowSizePacked(IntPtr handle)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			return h == null ? 0 : (((long)h.width << 32) | (uint)h.height);
+		}
+
 		internal long[] GetPresentWindows(IntPtr form)
 		{
 			IntPtr Root(IntPtr k) { Hwnd h = Hwnd.ObjectFromHandle(k); while (h?.parent != null) h = h.parent; return h?.Handle ?? k; }

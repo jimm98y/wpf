@@ -57,6 +57,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly string? s_dumpPath =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_SINK_DUMP");
 
+        // WF_SURF_DUMP names a PNG path for a readback of the REAL swapchain surface (the exact on-screen
+        // pixels, unlike the offscreen VerifyOffscreen render). Adds CopySrc to the surface usage when set.
+        private static readonly string? s_surfDump =
+            Environment.GetEnvironmentVariable("WF_SURF_DUMP");
+        private bool _surfDumped;
+
         // Diagnostics: also print the periodic PERF lines to the console (browser DevTools)
         // so live perf can be inspected without pulling the VFS log (?perf=1 in the wasm head).
         private static readonly bool s_perfToConsole =
@@ -338,14 +344,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
-            _renderer!.RenderSceneToView(root, view, ts.Format, t.Width, t.Height, t.ClearColor);
+            // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
+            // type + same renderer, so no bitmap/readback.
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, t.ClearColor);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
+
+            // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
+            // offscreen render), so what we inspect is exactly what's presented. Once, after settle.
+            if (s_surfDump != null && !_surfDumped && AcquiredFrames == 40)
+            {
+                _surfDumped = true;
+                DumpSurface(surfaceTexture.texture, ts, s_surfDump);
+            }
 
             // Offscreen PNG dump keyed to ACQUIRED (rendered) frames, so it fires even when the window
             // is occluded/off-screen (present never succeeds in a detached/headless run). Env-gated by
             // WPF_WEBGPU_SINK_DUMP; fires once around frame 90 so animation has settled.
-            if (s_dumpPath != null && AcquiredFrames == 90)
-                VerifyOffscreen(root, t, AcquiredFrames);
+            if (s_dumpPath != null && AcquiredFrames == 40)
+                VerifyOffscreen(EmbeddedContent.Compose(root), t, AcquiredFrames);
 
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
             WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
@@ -359,11 +375,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Log(_engine.DumpOps());
                 }
                 if (s_logPath != null && (PresentedFrames == 30 || PresentedFrames == 90 || PresentedFrames == 150))
-                    VerifyOffscreen(root, t, PresentedFrames);
+                    VerifyOffscreen(EmbeddedContent.Compose(root), t, PresentedFrames);
             }
 
             wgpuTextureViewRelease(view);
             wgpuTextureRelease(surfaceTexture.texture);
+        }
+
+        // Read back the REAL swapchain texture (the exact presented pixels) and write a PNG. Unlike
+        // VerifyOffscreen (a separate offscreen render), this proves what the surface actually shows —
+        // including any drawable-size / scale mismatch between t.Width and the CAMetalLayer.
+        private void DumpSurface(IntPtr texture, TargetSurface ts, string path)
+        {
+            try
+            {
+                int w = ts.Width, h = ts.Height;
+                int bytesPerRow = (w * 4 + 255) & ~255;
+                ulong size = (ulong)bytesPerRow * (ulong)h;
+                IntPtr buf = _ctx!.CreateBuffer(size, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
+                IntPtr enc = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
+                var src = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
+                var dst = new WGPUTexelCopyBufferInfo
+                {
+                    layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)bytesPerRow, rowsPerImage = (uint)h },
+                    buffer = buf,
+                };
+                var ext = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &ext);
+                IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+                IntPtr* cmds = stackalloc IntPtr[1]; cmds[0] = cmd;
+                wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+
+                byte[] padded = _ctx.MapRead(buf, size);
+                var px = new byte[w * h * 4];
+                for (int row = 0; row < h; row++)
+                    Buffer.BlockCopy(padded, row * bytesPerRow, px, row * w * 4, w * 4);
+
+                // Surface is typically BGRA; PngWriter expects RGBA — swap R/B when needed.
+                bool bgra = ts.Format is WGPUTextureFormat.BGRA8Unorm or WGPUTextureFormat.BGRA8UnormSrgb;
+                if (bgra)
+                    for (int i = 0; i < px.Length; i += 4) { byte b0 = px[i]; px[i] = px[i + 2]; px[i + 2] = b0; }
+
+                PngWriter.Write(path, px, w, h, maxWidth: 4000);
+                Log($"WF_SURF_DUMP wrote real surface {w}x{h} (format={ts.Format}) to {path}");
+            }
+            catch (Exception ex) { Log($"WF_SURF_DUMP failed: {ex.Message}"); }
         }
 
         // One-time sanity render: composite the decoded tree off-screen and count how
@@ -442,13 +498,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 // Browser async brush rasterization lives in WpfCompositionSink.Browser.cs (a
         // non-unsafe partial part: await is illegal inside this unsafe class declaration).
 
+        // Default font for text-STRING glyph runs from embedded content (a real TrueType face so lowercase
+        // renders; the built-in fallback is uppercase-only). Glyphs rasterize on the GPU at present time.
+        private static Text.IFont LoadDefaultFont()
+        {
+            foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf",
+                                         "/System/Library/Fonts/HelveticaNeue.ttc", "/Library/Fonts/Arial.ttf",
+                                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" })
+                if (System.IO.File.Exists(p)) return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(p));
+            return new Text.BuiltinBitmapFont();
+        }
+
         private void EnsureGpu()
         {
             if (_ctx is null)
             {
                 if (s_logPath != null) WgpuContext.LogSink = Log;
                 _ctx = WgpuContext.Create();
-                _renderer = new WgpuSceneRenderer(_ctx);
+                // A real default font + shaper so text-STRING glyph runs (GlyphRunDraw with .Text) —
+                // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent — shape
+                // and rasterize with actual glyphs. WPF's own text arrives as pre-shaped glyph-INDEX runs
+                // with per-run fonts, so this default is only used for those string runs.
+                _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.SimpleTextShaper());
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
                 // (rendered sRGB for display, then un-premultiplied since the image path re-premultiplies).
@@ -531,7 +602,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 device = _ctx!.Device,
                 format = ts.Format,
-                usage = WGPUTextureUsage.RenderAttachment,
+                usage = WGPUTextureUsage.RenderAttachment | (s_surfDump != null ? WGPUTextureUsage.CopySrc : 0),
                 width = (uint)ts.Width,
                 height = (uint)ts.Height,
                 alphaMode = WGPUCompositeAlphaMode.Auto,

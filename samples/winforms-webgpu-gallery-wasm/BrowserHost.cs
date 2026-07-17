@@ -17,10 +17,11 @@ internal sealed class BrowserHost : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _down, _up, _move, _char, _keyDown, _wheel, _getPresent, _getScene, _getVersion, _getCaret;
+    private readonly MethodInfo _down, _up, _move, _char, _keyDown, _wheel, _getPresent, _getScene, _getVersion, _getCaret, _getSize;
     private WgpuPresenter _wgpu;
     private readonly System.Diagnostics.Stopwatch _blink = System.Diagnostics.Stopwatch.StartNew();
     private int _lastVer = -1;
+    private int _presentW, _presentH;     // current canvas/surface size (grows to fit popups)
     private bool _lastCaretOn, _lastPresentOk, _leftDown;
 
     internal BrowserHost(Form form)
@@ -34,7 +35,8 @@ internal sealed class BrowserHost : IWinFormsHost
         _down = M("InjectMouseDown"); _up = M("InjectMouseUp"); _move = M("InjectMouseMove");
         _char = M("InjectChar"); _keyDown = M("InjectKeyDown"); _wheel = M("InjectWheel");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
-        _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
+        _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret"); _getSize = M("GetWindowSizePacked");
+        _presentW = _form.Width; _presentH = _form.Height;
     }
 
     // ---- present (identical scene path to CocoaHost) ---------------------------------
@@ -47,6 +49,10 @@ internal sealed class BrowserHost : IWinFormsHost
         IntPtr surface = NativePlatform.CreateWindowSurface(ctx.Instance, (IntPtr)handle);
         if (surface == IntPtr.Zero) throw new InvalidOperationException("CreateWindowSurface returned null");
         _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: true);
+        // Clear the canvas area outside the form (exposed when a popup grows it) to the form's BackColor,
+        // sRGB->linear (the renderer treats RgbaColor as linear on the sRGB surface) so it blends in.
+        var bc = _form.BackColor;
+        _wgpu.ClearColor = new RgbaColor(SrgbToLinear(bc.R / 255f), SrgbToLinear(bc.G / 255f), SrgbToLinear(bc.B / 255f), 1f);
         Console.WriteLine($"BrowserHost: canvas={handle} surface=0x{surface:x} scale={scale}");
         Present();
     }
@@ -58,25 +64,44 @@ internal sealed class BrowserHost : IWinFormsHost
         bool caretOn = CaretOn();
         if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk) return;   // present-on-change
 
-        var scenes = GetScenes(out int ox, out int oy);
+        var scenes = GetScenes(out int ox, out int oy, out int needW, out int needH);
+        if (needW != _presentW || needH != _presentH)   // a popup grew (or closed and shrank) the extent
+        {
+            _presentW = needW; _presentH = needH;
+            WinFormsBrowserJs.ResizeCanvas(needW, needH);
+        }
         Rectangle? caret = GetCaretRect(ox, oy);
-        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
+        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, needW, needH);
         _lastVer = ver; _lastCaretOn = caretOn;
     }
 
-    private List<(object, int, int)> GetScenes(out int ox, out int oy)
+    // Gathers each window's scene positioned in form space, and the size the canvas must be to contain
+    // them all (the form plus any popups extending past it — dropdowns grow down/right on our big
+    // virtual screen, so tracking the max right/bottom edge suffices).
+    private List<(object, int, int)> GetScenes(out int ox, out int oy, out int needW, out int needH)
     {
         long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
+        needW = _form.Width; needH = _form.Height;
         var list = new List<(object, int, int)>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
-            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
-            if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+            IntPtr h = (IntPtr)wins[i];
+            object scene = _getScene.Invoke(_driver, new object[] { h });
+            if (scene == null) continue;
+            int px = (int)wins[i + 1] - ox, py = (int)wins[i + 2] - oy;
+            list.Add((scene, px, py));
+            long sz = (long)_getSize.Invoke(_driver, new object[] { h });
+            int w = (int)(sz >> 32), hh = (int)(sz & 0xFFFFFFFF);
+            if (px + w > needW) needW = px + w;
+            if (py + hh > needH) needH = py + hh;
         }
         return list;
     }
+
+    private static float SrgbToLinear(float c)
+        => c <= 0.04045f ? c / 12.92f : (float)Math.Pow((c + 0.055) / 1.055, 2.4);
 
     private Rectangle? GetCaretRect(int ox, int oy)
     {

@@ -64,6 +64,18 @@ export function createCanvas(widthPoints, heightPoints) {
     return HANDLE;
 }
 
+// Grow/shrink the presentation canvas (css = point size, backing = points*dpr) so popups that extend
+// past the form (dropdowns/menus) still fall within it. The form stays anchored at the top-left.
+export function resizeCanvas(widthPoints, heightPoints) {
+    if (!theCanvas) return;
+    const d = dpr();
+    const bw = Math.round(widthPoints * d), bh = Math.round(heightPoints * d);
+    if (theCanvas.width !== bw) theCanvas.width = bw;
+    if (theCanvas.height !== bh) theCanvas.height = bh;
+    theCanvas.style.width = widthPoints + "px";
+    theCanvas.style.height = heightPoints + "px";
+}
+
 export function drainEvents() {
     if (queue.length === 0) return "";
     return JSON.stringify(queue.splice(0));

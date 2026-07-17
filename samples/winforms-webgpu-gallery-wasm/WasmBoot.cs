@@ -41,8 +41,11 @@ internal static class WasmBoot
             var prog = new ProgressBar { Left = 12, Top = 182, Width = 210, Height = 20, Value = 40 };
             var btn = new Button { Text = "Click me", Left = 12, Top = 220, Width = 120, Height = 32 };
             var counter = new Label { Text = "Clicks: 0", Left = 148, Top = 226, Width = 140 };
+            // Near the form's bottom edge: its dropdown overflows the form, exercising the canvas-grow path.
+            var combo2 = new ComboBox { Left = 236, Top = 300, Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
+            combo2.Items.AddRange(new object[] { "Low", "Medium", "High", "Ultra", "Cinematic" }); combo2.SelectedIndex = 1;
             f.Controls.Add(gb); f.Controls.Add(combo); f.Controls.Add(list); f.Controls.Add(lbl);
-            f.Controls.Add(tb); f.Controls.Add(prog); f.Controls.Add(btn); f.Controls.Add(counter);
+            f.Controls.Add(tb); f.Controls.Add(prog); f.Controls.Add(btn); f.Controls.Add(counter); f.Controls.Add(combo2);
 
             int clicks = 0;
             btn.Click += (s, e) => { clicks++; counter.Text = $"Clicks: {clicks}"; counter.Invalidate(); prog.Value = Math.Min(100, prog.Value + 10); prog.Invalidate(); Console.WriteLine($"Button.Click -> {clicks}"); };

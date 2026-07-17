@@ -78,6 +78,7 @@
   <ItemGroup>
     <Compile Include="..\wpf-webgpu-gallery\Program.cs" Link="Program.cs" />
     <Compile Include="..\wpf-webgpu-gallery\InputDemo.cs" Link="InputDemo.cs" />
+    <Compile Include="..\wpf-webgpu-gallery\WinFormsHost.cs" Link="WinFormsHost.cs" />
   </ItemGroup>
 
   <!-- Fonts live under wwwroot/fonts as plain static assets; main.js fetches them
@@ -110,7 +111,28 @@
          sites are OS-guarded off-Windows). PresentationUI's System.Windows.Forms refs
          don't need this treatment: it is on the interpreter list, so it is not AOT'd. -->
     <Reference Include="Accessibility"><HintPath>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref\10.0.8\ref\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the shared WinFormsHost card). The
+         browser WinForms driver is not yet proven, so the card is guarded (CreateDemoCardOrFallback);
+         these are here so the shared gallery sources compile and the card can attempt to init. -->
+    <Reference Include="System.Windows.Forms"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
+
+  <!-- swf + sysdrawing are reflection-heavy and not on the render hot path; keep them interpreted so
+       the AOT compiler needn't resolve their (libgdiplus/native) seams. -->
+  <ItemGroup>
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Mono.System.Drawing.dll" />
+  </ItemGroup>
+
+  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
+       framework System.Drawing.Common WPF drags in). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="System.IO.Packaging" Version="10.0.10" />

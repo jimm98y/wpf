@@ -1,0 +1,4 @@
+<Project>
+  <!-- Isolate this standalone sample from the WPF repo's Directory.Build machinery (artifacts output
+       layout, SR-resource generation, strict analyzers). The empty file stops MSBuild's upward search. -->
+</Project>

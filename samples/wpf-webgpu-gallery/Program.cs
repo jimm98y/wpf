@@ -20,11 +20,17 @@ internal static class Program
     private static readonly Color Ink = Color.FromRgb(0x22, 0x28, 0x33);
     private static readonly Color CardBg = Colors.White;
 
+
     // internal (not private): the WebAssembly head (wpf-webgpu-gallery-wasm) compiles this
     // file and chains here from its own async entry point after GPU pre-initialization.
     [STAThread]
     internal static int Main(string[] args)
     {
+        // Enable the managed WebGPU compositor (the Windows run script and the browser boot also set this;
+        // setting it here lets the macOS head just launch the exe).
+        if (Environment.GetEnvironmentVariable("WPF_USE_WEBGPU_COMPOSITION") == null)
+            Environment.SetEnvironmentVariable("WPF_USE_WEBGPU_COMPOSITION", "1");
+
         var app = new Application();
 
         // Animated / interactive controls (state driven by the timer below -> live re-composition).
@@ -55,6 +61,9 @@ internal static class Program
 
         var cards = new WrapPanel { Margin = new Thickness(16, 8, 16, 16) };
         cards.Children.Add(Card("Interactive", interactive));
+        // A Mono WinForms control tree hosted via WindowsFormsHost — its scene composites DIRECTLY into
+        // this same WebGPU frame (no bitmap). Shared across all heads (mac / Windows / browser).
+        cards.Children.Add(Card("WinForms (WindowsFormsHost)", WinFormsHost.CreateDemoCardOrFallback()));
         cards.Children.Add(Card("Shapes", ShapesDemo()));
         cards.Children.Add(Card("Gradients", GradientsDemo()));
         cards.Children.Add(Card("Strokes & dashes", StrokesDemo()));

@@ -68,7 +68,7 @@ internal static class Host
             Application.DoEvents();     // drain any WinForms-side messages (repaints from Invalidate)
             host.Present();             // reflect current state on screen
             if (!host.Pump()) break;    // route OS input; false when the window closes
-            if (selftest && frame == 40) { host.SaveFrame("/private/tmp/claude-501/-Users-lukasvolf-Documents-GitHub/7c297698-2b54-41c1-8a9a-246a02fe657a/scratchpad/wf-onscreen.png"); Console.WriteLine("saved on-screen frame"); break; }
+            if (selftest && frame == 40) { host.SaveFrame(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wf-onscreen.png")); Console.WriteLine("saved on-screen frame"); break; }
             if (seconds > 0 && sw.Elapsed.TotalSeconds > seconds) break;
             frame++;
             Thread.Sleep(16);

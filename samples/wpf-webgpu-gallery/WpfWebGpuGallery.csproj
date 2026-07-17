@@ -8,20 +8,39 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>WpfWebGpuGallery</AssemblyName>
     <SelfContained>false</SelfContained>
+    <!-- Sample app: don't fail the build on code-quality analyzer suggestions (CA18xx/CA13xx). -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
     <!-- Allows compiling this Windows-only WPF app on non-Windows dev machines; it still can't run here. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Inbox WPF here has no MS.Internal.Interop.CocoaWindow (that's the from-source macOS fork type),
+         so take the platform-neutral fallback in the shared gallery's 3D input self-test. -->
+    <DefineConstants>$(DefineConstants);LIBREWPF</DefineConstants>
   </PropertyGroup>
 
-  <!-- Deploy the WebGPU backend so PresentationCore's reflection loader can resolve it
-       (deployment only; PresentationCore takes no compile-time dependency).
-       Guarded with Exists() so this still compiles on machines (or platforms) where the
-       from-source WPF checkout hasn't been built / the native lib hasn't been fetched yet. -->
+  <!-- From-source WebGPU interop + our Mono System.Windows.Forms (the shared WinFormsHost card
+       composites a WinForms control tree into the same WebGPU frame). In-repo paths; the WgpuInterop
+       ref is now a COMPILE dependency (WinFormsHost uses EmbeddedContent), not deployment-only. -->
+  <PropertyGroup>
+    <_Src>..\..\src\Microsoft.DotNet.Wpf\src</_Src>
+  </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="Exists('..\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll')">
-      <HintPath>..\wpf\src\Microsoft.DotNet.Wpf\src\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Src)\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_Src)\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
-  
+
+  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
+       framework System.Drawing.Common WPF drags in). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

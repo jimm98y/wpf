@@ -35,6 +35,11 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private int _width, _height;          // logical (point) size
     private float _scale;                 // backing scale (2 on Retina): render at device pixels
 
+    // Background the present clears to (the area outside the form/popups). Defaults to opaque white
+    // (the desktop hosts present exactly form-sized, so it never shows); the browser host sets it to the
+    // form's BackColor so the canvas area beyond the form — exposed when a popup grows the canvas — blends in.
+    internal RgbaColor ClearColor = RgbaColor.FromBytes(255, 255, 255, 255);
+
     internal float Scale => _scale;
     // Update the backing scale at runtime (window moved to a different-DPI display) and resize the
     // swap chain to the new device-pixel size.
@@ -139,7 +144,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             st.status != WGPUSurfaceGetCurrentTextureStatus.Occluded) return false;
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
-        _renderer.RenderSceneToView(root, view, _format, DeviceWidth, DeviceHeight, RgbaColor.FromBytes(255, 255, 255, 255));
+        _renderer.RenderSceneToView(root, view, _format, DeviceWidth, DeviceHeight, ClearColor);
         bool ok = wgpuSurfacePresent(_surface) == WGPUStatus.Success;
         wgpuTextureViewRelease(view);
         wgpuTextureRelease(st.texture);
@@ -158,9 +163,16 @@ internal sealed unsafe class WgpuPresenter : IDisposable
                 root.Children.Add(wrap);
             }
         }
+        // The caret must sit ON TOP of every control — add it as the LAST child, because a visual's
+        // Content is drawn before its Children (so a caret in root.Content would render under the
+        // control scenes and be hidden behind the TextBox's own background).
         if (caret is Rectangle c)
-            root.Content.Add(new GeometryFill(
+        {
+            var caretVisual = new SceneVisual();
+            caretVisual.Content.Add(new GeometryFill(
                 new RectangleGeometry(new Rect(c.X, c.Y, c.Width, c.Height)), RgbaColor.FromBytes(0, 0, 0, 255)));
+            root.Children.Add(caretVisual);
+        }
         // Render the point-space scene at device resolution (Retina): scale the whole tree by the
         // backing scale so glyphs (GPU-rasterized in device space) and geometry are crisp, not upscaled.
         root.Transform = Matrix3x2.CreateScale(_scale);

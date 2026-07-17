@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- macOS WPF host (WebGPU compositor) that embeds a Windows Forms control via WindowsFormsHost.
+       Both WPF (MilcoreEngine) and our WinForms driver emit the SAME WgpuInterop SceneVisual into the
+       SAME WgpuSceneRenderer, so the WinForms content composites DIRECTLY into the WPF scene (no bitmap).
+       Runs the from-source WPF assemblies (artifacts/bin) with WPF_USE_WEBGPU_COMPOSITION=1. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WinFormsInWpf</AssemblyName>
+    <StartupObject>Program</StartupObject>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <PublishTrimmed>false</PublishTrimmed>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <_Wpf>..\..\artifacts\bin</_Wpf>
+    <_Src>..\..\src\Microsoft.DotNet.Wpf\src</_Src>
+  </PropertyGroup>
+
+  <!-- The macOS head runs the SHARED gallery (all WPF control cards) + the shared WinForms host card. -->
+  <ItemGroup>
+    <Compile Include="..\wpf-webgpu-gallery\Program.cs" Link="Program.cs" />
+    <Compile Include="..\wpf-webgpu-gallery\InputDemo.cs" Link="InputDemo.cs" />
+    <Compile Include="..\wpf-webgpu-gallery\WinFormsHost.cs" Link="WinFormsHost.cs" />
+  </ItemGroup>
+
+  <!-- From-source WPF (built into artifacts/) + the DESKTOP WebGPU interop. -->
+  <ItemGroup>
+    <Reference Include="PresentationFramework"><HintPath>$(_Wpf)\PresentationFramework\Release\net10.0\PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(_Wpf)\PresentationCore\Release\net10.0\PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(_Wpf)\WindowsBase\Release\net10.0\WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>$(_Wpf)\System.Xaml\Release\net10.0\System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework"><HintPath>$(_Wpf)\ReachFramework\Release\net10.0\ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Input.Manipulations"><HintPath>$(_Wpf)\System.Windows.Input.Manipulations\Release\net10.0\System.Windows.Input.Manipulations.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes"><HintPath>$(_Wpf)\UIAutomationTypes\Release\net10.0\UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider"><HintPath>$(_Wpf)\UIAutomationProvider\Release\net10.0\UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Primitives"><HintPath>$(_Wpf)\System.Windows.Primitives\Release\net10.0\System.Windows.Primitives.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder"><HintPath>$(_Wpf)\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Wpf)\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Classic"><HintPath>$(_Wpf)\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI"><HintPath>$(_Wpf)\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Printing"><HintPath>$(_Wpf)\System.Printing-ref\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Src)\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the embedded WinForms content). -->
+    <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_Src)\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (WPF drags the framework
+       System.Drawing.Common, which would collide on the System.Drawing.* types — CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- wgpu-native next to the app so PresentationCore's reflection loader resolves it. -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="$(_Src)\WgpuInterop\native\osx-arm64\lib\libwgpu_native.dylib">
+      <Link>libwgpu_native.dylib</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

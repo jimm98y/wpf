@@ -633,6 +633,24 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // the CPU rasterizing bitmaps that are re-uploaded). Set in the constructor.
         private readonly Text.IGlyphOutlineFont? _outlineFont;
         private bool _gpuGlyphs;
+
+        // Copy a glyph outline figure (PixelsPerEm units, y-down) into run-local space at the given pen
+        // origin and em scale. Used by the crisp glyph-outline text path.
+        private static PathFigure ScaleTranslateFigure(PathFigure f, float s, float ox, float oy)
+        {
+            Vector2 T(Vector2 p) => new(ox + p.X * s, oy + p.Y * s);
+            var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
+            foreach (PathSegment seg in f.Segments)
+            {
+                switch (seg)
+                {
+                    case LineSegment ls: nf.Segments.Add(new LineSegment(T(ls.Point))); break;
+                    case QuadraticBezierSegment qs: nf.Segments.Add(new QuadraticBezierSegment(T(qs.Control), T(qs.Point))); break;
+                    case CubicBezierSegment cs: nf.Segments.Add(new CubicBezierSegment(T(cs.Control1), T(cs.Control2), T(cs.Point))); break;
+                }
+            }
+            return nf;
+        }
         private bool _gpuAtlasCreated;   // persistent atlas texture allocated (RenderAttachment)
 
         // GPU hit-test id buffer, retained across frames and rendered LAZILY: RenderSceneToView
@@ -1143,7 +1161,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr atlasBindGroup = IntPtr.Zero;
                 if (lp.Data.HasText && atlasView != IntPtr.Zero)
                 {
-                    atlasBindGroup = CreateSampledBindGroup(lp.Format, FillKind.Text, atlasView, NearestSampler());
+                    // Linear (not nearest): glyphs rasterize into the atlas at BaseEmPixels (48) and are
+                    // minified to the run's em size — small text (e.g. WinForms 11px) is a ~4x downscale,
+                    // where nearest sampling drops every few texels (thin strokes vanish -> pixelated/gray).
+                    atlasBindGroup = CreateSampledBindGroup(lp.Format, FillKind.Text, atlasView, LinearSampler());
                     IntPtr bg = atlasBindGroup;
                     DeferReleaseBindGroup(bg);
                 }
@@ -1707,7 +1728,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     EmitGeometryDrawing(drawing, world, opacity, clip, width, height, format, data);
                     break;
                 case GlyphRunDraw run:
-                    EmitText(run, world, opacity, clip, width, height, data);
+                    EmitText(run, world, opacity, clip, width, height, format, data);
                     break;
             }
         }
@@ -2654,7 +2675,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // Glyph layout happens in local space (so transforms/opacity carry the
         // text like any other content); the shared atlas bind group is supplied
         // at record time.
-        private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, DrawData data)
+        private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
 
@@ -2664,6 +2685,33 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             _shaper.Shape(_font, run.Text, _shapeScratch);
 
             float scale = run.EmSize / _font.PixelsPerEm;
+
+            // Prefer CRISP outline coverage (the same analytic-AA path WPF's glyph fills take) over the
+            // fixed-size glyph atlas: the atlas rasterizes at BaseEmPixels (48) and MINIFIES to the run's
+            // em size, so small runs (e.g. embedded WinForms at ~13px) alias/pixelate. Rasterizing each
+            // glyph's outline at the exact display size matches WPF's quality. (WPF text arrives as
+            // FillPath glyph outlines already; only string runs like WinForms reach here.)
+            if (_outlineFont != null)
+            {
+                var figures = new List<PathFigure>();
+                float pen = run.Origin.X;
+                foreach (Text.ShapedGlyph g in _shapeScratch)
+                {
+                    if (_outlineFont.TryGetGlyphOutline(g.GlyphId, out List<PathFigure> gf))
+                    {
+                        float gx = pen + g.XOffset * scale;
+                        float gy = run.Origin.Y + g.YOffset * scale;
+                        foreach (PathFigure f in gf) figures.Add(ScaleTranslateFigure(f, scale, gx, gy));
+                    }
+                    pen += g.Advance * scale;
+                }
+                if (figures.Count > 0)
+                    EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, figures),
+                                              new SolidColorBrush(run.Color), isGlyph: true),
+                             world, opacity, clip, width, height, format, data);
+                return;
+            }
+
             float a = (float)Math.Clamp(run.Color.A * opacity, 0.0, 1.0);
             float penX = run.Origin.X;
             float baseline = run.Origin.Y;
