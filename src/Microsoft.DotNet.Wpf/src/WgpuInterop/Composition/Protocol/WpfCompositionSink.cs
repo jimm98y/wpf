@@ -504,7 +504,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf",
                                          "/System/Library/Fonts/HelveticaNeue.ttc", "/Library/Fonts/Arial.ttf",
-                                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" })
+                                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                         // Browser (wasm): fonts live in the VFS at /fonts (main.js writes them
+                                         // before Main). Without this the fallback is uppercase-only, so embedded
+                                         // WinForms text renders as fragmented capitals.
+                                         "/fonts/LiberationSans-Regular.ttf", "/fonts/DejaVuSans.ttf" })
                 if (System.IO.File.Exists(p)) return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(p));
             return new Text.BuiltinBitmapFont();
         }

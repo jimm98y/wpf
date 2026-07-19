@@ -24,6 +24,7 @@ internal sealed class WinFormsHost : FrameworkElement
         try { return CreateDemoCard(); }
         catch (Exception ex)
         {
+            Console.Error.WriteLine("WINFORMS-CARD-FAILED: " + ex);
             return new System.Windows.Controls.TextBlock
             {
                 Text = "WinForms host unavailable on this platform\n(" + ex.GetType().Name + ")",
@@ -48,9 +49,10 @@ internal sealed class WinFormsHost : FrameworkElement
         // NOT subject to WPF's card clip, so an oversized form would spill past the card — size to fit.
         const int FormW = 196, FormH = 132;
         var form = new SWF.Form { Width = FormW, Height = FormH, BackColor = SD.Color.FromArgb(0xF2, 0xF2, 0xEC) };
-        // WinForms' 8.25pt default (~11px) is the smallest text in the gallery and is minified hardest
-        // from the 48px glyph atlas -> thin/gray. Match WPF's ~13px body text so it renders crisply.
-        form.Font = new SD.Font(SD.FontFamily.GenericSansSerif, 9.75f);
+        // Bump from the 8.25pt default (~11px) to ~13px for readability. Reuse the form's EXISTING default
+        // family (already constructed) rather than SD.FontFamily.GenericSansSerif — the generic-family ctor
+        // P/Invokes gdiplus, which is absent in the browser (libgdiplus-free) and throws DllNotFoundException.
+        form.Font = new SD.Font(form.Font.FontFamily, 9.75f);
         var btn = new SWF.Button { Text = "WinForms Button", Left = 10, Top = 8, Width = 176, Height = 26 };
         var chk = new SWF.CheckBox { Text = "A WinForms checkbox", Left = 10, Top = 42, Width = 176, Checked = true };
         var lbl = new SWF.Label { Text = "Clicks: 0", Left = 10, Top = 70, Width = 176 };

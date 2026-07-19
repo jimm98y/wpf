@@ -106,6 +106,10 @@ namespace System.Drawing
 
 		static GDIPlus ()
 		{
+			// Register the "gdiplus" -> libgdiplus DllImportResolver here (a normal class cctor) rather than
+			// via a [ModuleInitializer]: the wasm interpreter NIYs on running a <Module>.cctor in mixed
+			// AOT+interp mode. This runs before the first GdiplusStartup P/Invoke below. No-op on browser.
+			SystemDrawingWebGpu.GdiPlusResolver.Init ();
 #if NETSTANDARD1_6
 			bool isUnix = !RuntimeInformation.IsOSPlatform (OSPlatform.Windows);
 #else

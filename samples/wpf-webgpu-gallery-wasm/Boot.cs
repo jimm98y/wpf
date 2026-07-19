@@ -13,6 +13,19 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Wpf.Interop.WebGpu;
 
+// AOT-profile collection trigger. In a -p:CollectAotProfile=true build (<WasmProfilers>aot),
+// main.js points the mono AOT profiler's write-at-method at AotProfiling.Stop; INVOKING it from
+// JS (after the gallery has rendered/scrolled) flushes the collected generic instantiations to
+// INTERNAL.aotProfileData, which the Playwright driver saves as gallery.aotprofile. No-op in
+// normal builds (the profiler isn't linked in, so nothing hooks this call).
+internal static partial class AotProfiling
+{
+    // Unique name so the mono AOT profiler's write-at-method desc can't collide with a common
+    // method like DispatcherTimer.Stop (the profiler matches loosely by method name).
+    [System.Runtime.InteropServices.JavaScript.JSExport]
+    internal static void WpfAotProfileFlush() { }
+}
+
 internal static class WasmBoot
 {
     private static async Task<int> Main(string[] args)

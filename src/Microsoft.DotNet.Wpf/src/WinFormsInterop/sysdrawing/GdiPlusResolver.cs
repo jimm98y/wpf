@@ -12,9 +12,20 @@ namespace SystemDrawingWebGpu
 {
     internal static class GdiPlusResolver
     {
-        [ModuleInitializer]
+        private static bool s_done;
+
+        // Called from the GDIPlus static ctor (NOT a [ModuleInitializer]: the wasm interpreter NIYs on
+        // running a <Module>.cctor in mixed AOT+interp mode, which is fatal).
         internal static void Init()
         {
+            if (s_done) return;
+            s_done = true;
+
+            // The browser (wasm) has NO libgdiplus, and registering a managed DllImportResolver delegate
+            // traps on the mono-wasm interpreter (native callback / GetFunctionPointerForDelegate is NIY
+            // there). The GPU-raster path is libgdiplus-free, so skip it entirely.
+            if (OperatingSystem.IsBrowser()) return;
+
             NativeLibrary.SetDllImportResolver(typeof(GdiPlusResolver).Assembly, (name, asm, searchPath) =>
             {
                 if (name != "gdiplus") return IntPtr.Zero;   // let other imports resolve normally

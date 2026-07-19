@@ -326,9 +326,10 @@ namespace System.Drawing
 		{
 			// no null checks, MS throws a NullReferenceException if original is null
 			setProperties (prototype.FontFamily, prototype.Size, newStyle, prototype.Unit, prototype.GdiCharSet, prototype.GdiVerticalFont);
-				
+			if (s_gpuRasterMode) return;   // managed-only: no native font (libgdiplus-free)
+
 			Status status = GDIPlus.GdipCreateFont (_fontFamily.NativeFamily, Size, Style, Unit, out fontObject);
-			GDIPlus.CheckStatus (status);			
+			GDIPlus.CheckStatus (status);
 		}
 
 		public Font (FontFamily family, float emSize,  GraphicsUnit unit)
@@ -368,7 +369,8 @@ namespace System.Drawing
 				throw new ArgumentNullException ("family");
 
 			Status status;
-			setProperties (family, emSize, style, unit, gdiCharSet,  gdiVerticalFont );		
+			setProperties (family, emSize, style, unit, gdiCharSet,  gdiVerticalFont );
+			if (s_gpuRasterMode) return;   // managed-only: no native font (libgdiplus-free)
 			status = GDIPlus.GdipCreateFont (family.NativeFamily, emSize,  style,   unit,  out fontObject);
 			GDIPlus.CheckStatus (status);
 		}

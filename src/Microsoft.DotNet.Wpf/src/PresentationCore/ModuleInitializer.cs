@@ -17,9 +17,16 @@ internal static class ModuleInitializer
     /// as the module constructor for DirectWriteForwarder would do this anyway.
     /// </summary>
 #pragma warning disable CA2255
-    [ModuleInitializer]
+    // NOTE: intentionally NOT a [ModuleInitializer]. mono-aot-cross does not AOT-compile a <Module>.cctor,
+    // and the wasm interpreter cannot run one in AOT mode ("NIY encountered in method <Module>:.cctor" ->
+    // fatal g_assert). This init is a no-op off-Windows anyway (DPI awareness + native DirectWrite load),
+    // so on wasm/mac nothing is lost. On Windows it must be invoked from an early startup path instead
+    // (before the first window) to preserve process DPI awareness.
     public static void Initialize()
     {
+        if (!System.OperatingSystem.IsWindows())
+            return;
+
         IsProcessDpiAware();
 
         // Native text backend (DirectWrite) load + teardown. All platform decisions live in

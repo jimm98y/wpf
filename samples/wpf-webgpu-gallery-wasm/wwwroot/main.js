@@ -22,8 +22,26 @@ try {
         .withEnvironmentVariable('WPF_USE_WEBGPU_COMPOSITION', '1')
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
+    // AOT-profile collection: only meaningful in a -p:CollectAotProfile=true build (the mono AOT
+    // profiler is linked in there). Point its write-at-method at our AotProfiling.Stop trigger.
+    if (params.has('aotprofile'))
+        // NOTE: the runtime's default sendTo ('Interop/Runtime::DumpAotProfileData') is stale in
+        // .NET 10 — the method lives in JavaScriptExports now. Spell it out or the dump can't resolve.
+        builder = builder.withConfig({ aotProfilerOptions: { writeAt: 'AotProfiling::WpfAotProfileFlush', sendTo: 'System.Runtime.InteropServices.JavaScript.JavaScriptExports::DumpAotProfileData' } });
     if (args) builder = builder.withApplicationArguments(...args.split(','));
     const runtime = await builder.create();
+    globalThis.__dotnetRuntime = runtime;
+    // Driver hook: invoke the profiler write-at trigger, then hand back the dumped bytes.
+    globalThis.__dumpAotProfile = async () => {
+        const ex = await runtime.getAssemblyExports('WpfWebGpuGalleryWasm');
+        ex.AotProfiling.WpfAotProfileFlush();
+        for (let i = 0; i < 50; i++) {
+            const d = runtime.INTERNAL && runtime.INTERNAL.aotProfileData;
+            if (d && d.length) return Array.from(d);
+            await new Promise(r => setTimeout(r, 100));
+        }
+        return { error: 'no aotProfileData', internalKeys: Object.keys(runtime.INTERNAL || {}) };
+    };
     const { setModuleImports, runMain, Module } = runtime;
     // Diagnostics: lets the host/driver read files the app wrote into the wasm VFS
     // (e.g. the compositor's /sink.log).
