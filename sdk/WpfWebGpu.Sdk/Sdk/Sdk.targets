@@ -67,6 +67,22 @@
           CopyToOutputDirectory="PreserveNewest" Link="libwgpu_native.dylib" Visible="false" />
   </ItemGroup>
 
+  <!-- Microsoft.Win32.SystemEvents arrives transitively (System.Drawing.Common) as the Windows-only
+       runtime package, which throws PlatformNotSupportedException off-Windows. It's referenced for
+       COMPILE via the lib/wpf-desktop/*.dll glob above (identical API), but to guarantee the RUNTIME
+       assembly is the cross-platform shim, overlay-copy it over whatever landed in the output/publish
+       dir as the last step (same strong-name identity, so the load binds cleanly). -->
+  <Target Name="_WpfWebGpuOverlaySystemEventsShim"
+          AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
+          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+  </Target>
+
   <!-- ================================ browser ================================ -->
 
   <PropertyGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">

@@ -236,13 +236,22 @@ namespace System.Windows.Media.Composition
 
             private static bool IsSwitchEnabled()
             {
+                // The WebGPU managed compositor is the DEFAULT. It is used whenever the backend
+                // assembly (Microsoft.Wpf.Interop.WebGpu) can be loaded; if it can't (e.g. a plain
+                // Windows WPF app that doesn't ship it), EnsureAutoRegistered silently falls back to
+                // native milcore. Opt out explicitly via the AppContext switch or WPF_USE_WEBGPU_COMPOSITION=0.
                 if (AppContext.TryGetSwitch(EnableSwitch, out bool enabled))
                 {
                     return enabled;
                 }
 
                 string env = Environment.GetEnvironmentVariable(EnableEnvVar);
-                return env == "1" || string.Equals(env, "true", StringComparison.OrdinalIgnoreCase);
+                if (!string.IsNullOrEmpty(env))
+                {
+                    return env == "1" || string.Equals(env, "true", StringComparison.OrdinalIgnoreCase);
+                }
+
+                return true;
             }
         }
 

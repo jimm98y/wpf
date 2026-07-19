@@ -48,9 +48,16 @@ namespace MS.Internal.Text.TextInterface.Managed
         // Keys are lower-cased; each maps to an ordered list of candidate replacements.
         private static readonly Dictionary<string, string[]> s_substitutes = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["segoe ui"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
-            ["segoe ui semibold"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["segoe ui symbol"] = new[] { "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            // Selawik is Microsoft's open, metric-compatible Segoe UI replacement (github.com/microsoft/Selawik);
+            // prefer it so text lays out like Windows, with Helvetica etc. as last-resort fallbacks.
+            ["segoe ui"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
+            ["segoe ui semibold"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["segoe ui variable"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            // Fluent/MDL2 icon glyphs: "Symbols" (github.com/robloo/SymbolIconManager, WinSymbols3) maps the
+            // Segoe Fluent Icons / Segoe MDL2 Assets PUA codepoints, so control glyphs render off-Windows.
+            ["segoe fluent icons"] = new[] { "Symbols" },
+            ["segoe mdl2 assets"] = new[] { "Symbols" },
+            ["segoe ui symbol"] = new[] { "Symbols", "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans" },
             ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
             ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
             ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },

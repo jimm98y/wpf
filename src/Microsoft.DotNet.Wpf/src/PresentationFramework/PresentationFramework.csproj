@@ -1399,7 +1399,10 @@
 
   <ItemGroup>
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="$(SystemConfigurationConfigurationManagerPackageVersion)" />
-    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" />
+    <!-- Aliased: System.Windows.Extensions still defines System.Xaml.Permissions.XamlAccessLevel (now
+         also owned cross-platform by System.Xaml). Aliasing it keeps global-scope XamlAccessLevel bound to
+         System.Xaml's (avoids CS0433); only SoundPlayerAction needs System.Media.SoundPlayer via the alias. -->
+    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" Aliases="SystemWindowsExtensions" />
     <PackageReference Include="$(SystemIOPackagingPackage)" Version="$(SystemIOPackagingVersion)" />
   </ItemGroup>
 

@@ -249,11 +249,20 @@ namespace Microsoft.Windows.Shell
 
             _FixupTemplateIssues();
 
-            // Force this the first time.
-            _UpdateSystemMenu(_window.WindowState);
-            _UpdateFrameState(true);
+            // Non-client-area customization below is Win32-only (system menu, DWM frame extension,
+            // window-style bits, SetWindowPos) and P/Invokes the native presentation library that
+            // doesn't exist off-Windows. There the platform window owns its chrome; the managed
+            // template fixup above already lets the app's custom title-bar content fill the client
+            // area, so skip the native calls rather than crash. (_WndProc, hooked above, is likewise
+            // never invoked off-Windows since there is no Win32 message loop.)
+            if (System.OperatingSystem.IsWindows())
+            {
+                // Force this the first time.
+                _UpdateSystemMenu(_window.WindowState);
+                _UpdateFrameState(true);
 
-            NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, _SwpFlags);
+                NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, _SwpFlags);
+            }
         }
 
         /// <summary>

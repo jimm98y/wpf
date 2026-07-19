@@ -453,6 +453,14 @@ internal static class ThemeManager
 
     private static bool IsSystemThemeLight()
     {
+        // The system light/dark setting lives in the Windows registry (Personalize key), which is
+        // unavailable off-Windows. Default to light there, consistent with the cross-platform port's
+        // light SystemColors palette.
+        if (!OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
         var useLightTheme = Registry.GetValue(RegPersonalizeKeyPath,
             "AppsUseLightTheme", null) as int?;
 

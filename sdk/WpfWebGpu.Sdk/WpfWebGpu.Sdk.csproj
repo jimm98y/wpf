@@ -40,13 +40,16 @@
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" />
 
     <!-- Shared WPF assemblies (same set the gallery heads reference). -->
-    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Classic;PresentationFramework.Aero2;PresentationUI" />
+    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Classic;PresentationFramework.Aero2;PresentationFramework.Fluent;PresentationUI" />
     <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
     <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
 
     <!-- Desktop flavor: P/Invoke WebGPU interop + the api-cycle System.Printing. -->
     <None Include="$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)System.Printing-PresentationFramework-api-cycle/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <!-- Cross-platform Microsoft.Win32.SystemEvents shim (shadows the Windows-only runtime package by
+         matching strong-name identity); Sdk.targets both references it and evicts the real one. -->
+    <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
 
     <!-- Browser flavor: JS-interop WebGPU + the fuller System.Printing-ref (mono-wasm
          resolves XpsDocumentWriter eagerly) + Accessibility ref (AOT resolution only). -->
