@@ -1185,6 +1185,7 @@
     <Compile Include="System\Windows\Media\Imaging\BitmapFrameEncode.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapImage.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedImageDecoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedJpegDecoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedPngEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapInitialize.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapMetadata.cs" />

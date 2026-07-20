@@ -1855,6 +1855,24 @@ namespace MS.Internal.TextFormatting
                 );
         }
 
+        /// <summary>
+        /// Like <see cref="GetRun"/> but returns null instead of throwing when the plsrun does not
+        /// resolve to a real run (e.g. the synthetic Text_chp object-id used by the managed line
+        /// services blank-line height fallback). Callers on hot paths must avoid throwing: an
+        /// exception thrown per line per format pass pegs the CPU even when it is caught.
+        /// </summary>
+        internal LSRun TryGetRun(Plsrun plsrun)
+        {
+            plsrun = ToIndex(plsrun);
+            if (IsContent(plsrun))
+            {
+                int i = (int)(plsrun - Plsrun.FormatAnchor);
+                return (i >= 0 && i < _lsrunList.Count) ? (LSRun)_lsrunList[i] : null;
+            }
+            int c = (int)plsrun;
+            return (c >= 0 && ControlRuns != null && c < ControlRuns.Length) ? ControlRuns[c] : null;
+        }
+
 
         /// <summary>
         /// Check if plsrun is marker

@@ -58,10 +58,14 @@ namespace System.Windows.Media.Imaging
             {
                 bgra = DecodeBmp(data, out width, out height);
             }
+            else if (data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+            {
+                bgra = ManagedJpegDecoder.Decode(data, out width, out height);
+            }
             else
             {
                 throw new PlatformNotSupportedException(
-                    "Only PNG and uncompressed BMP can be decoded without native WIC on this platform.");
+                    "Only PNG, JPEG and uncompressed BMP can be decoded without native WIC on this platform.");
             }
 
             var source = BitmapSource.Create(width, height, dpiX, dpiY, PixelFormats.Bgra32, null, bgra, width * 4);

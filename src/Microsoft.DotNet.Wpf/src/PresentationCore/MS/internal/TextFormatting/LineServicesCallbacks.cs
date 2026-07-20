@@ -412,18 +412,49 @@ namespace MS.Internal.TextFormatting
             {
                 FullTextState fullText = FullText;
                 TextStore store = fullText.StoreFrom(plsrun);
-                lsrun = store.GetRun(plsrun);
 
-                if (lsrun.Height > 0)
+                // The managed line-services blank-line height fallback asks for metrics with a
+                // synthetic object-id plsrun (TextStore.ObjectId.Text_chp == 0xFFFF) that does not
+                // map to any real run. TryGetRun returns null instead of throwing for it; we then
+                // fall back to the paragraph's default typeface metrics. This must not THROW (not
+                // merely be caught): a first-chance exception per line per format pass pegs the CPU
+                // (freeze) on text-heavy pages even when the exception is handled, because a
+                // 0-height line never lets text layout settle so it re-formats continuously.
+                lsrun = store.TryGetRun(plsrun);
+
+                if (lsrun != null && lsrun.Height > 0)
                 {
                     lstTextMetrics.dvAscent = lsrun.BaselineOffset;
                     lstTextMetrics.dvMultiLineHeight = lsrun.Height;
                 }
                 else
                 {
-                    Typeface typeface = store.Pap.DefaultTypeface;
-                    lstTextMetrics.dvAscent = (int)Math.Round(typeface.Baseline(store.Pap.EmSize, Constants.DefaultIdealToReal, store.Settings.TextSource.PixelsPerDip, fullText.TextFormattingMode));
-                    lstTextMetrics.dvMultiLineHeight = (int)Math.Round(typeface.LineSpacing(store.Pap.EmSize, Constants.DefaultIdealToReal, store.Settings.TextSource.PixelsPerDip, fullText.TextFormattingMode));
+                    // No resolved run. Use the paragraph's default typeface metrics, but the default
+                    // typeface's font-family resolution can itself throw on non-Windows font stacks
+                    // (composite-font OS-version matching). Try it once; if it throws, remember that
+                    // and approximate the line height from the em size on every subsequent call so we
+                    // never throw again.
+                    int ascent = 0, height = 0;
+                    if (!_defaultMetricsFailed)
+                    {
+                        try
+                        {
+                            Typeface typeface = store.Pap.DefaultTypeface;
+                            ascent = (int)Math.Round(typeface.Baseline(store.Pap.EmSize, Constants.DefaultIdealToReal, store.Settings.TextSource.PixelsPerDip, fullText.TextFormattingMode));
+                            height = (int)Math.Round(typeface.LineSpacing(store.Pap.EmSize, Constants.DefaultIdealToReal, store.Settings.TextSource.PixelsPerDip, fullText.TextFormattingMode));
+                        }
+                        catch (Exception)
+                        {
+                            _defaultMetricsFailed = true;
+                        }
+                    }
+                    if (_defaultMetricsFailed)
+                    {
+                        height = store.Pap.EmSize;
+                        ascent = (int)(store.Pap.EmSize * 0.8);
+                    }
+                    lstTextMetrics.dvAscent = ascent;
+                    lstTextMetrics.dvMultiLineHeight = height;
                 }
 
                 lstTextMetrics.dvDescent = lstTextMetrics.dvMultiLineHeight - lstTextMetrics.dvAscent;
@@ -3457,6 +3488,11 @@ namespace MS.Internal.TextFormatting
 
 
         private Rect _boundingBox;
+
+        // Set once if the default typeface's metrics throw (non-Windows font stacks); thereafter the
+        // blank-line height fallback approximates from the em size instead of re-attempting (and
+        // re-throwing). See GetRunTextMetrics.
+        private bool _defaultMetricsFailed;
 
         /// <summary>
         /// Empty the bounding box

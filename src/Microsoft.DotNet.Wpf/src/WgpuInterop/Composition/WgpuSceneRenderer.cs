@@ -2295,7 +2295,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 case ImageBrush img:
                 {
                     IntPtr view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
-                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, NearestSampler());
+                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 

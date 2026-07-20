@@ -181,9 +181,12 @@ namespace MS.Internal.TextFormatting
             const int MaxCharsGuard = 1 << 20;
             char[] fetchBuf = new char[512];
 
+            int __iter = 0; bool __dbg = false;
             while (!lineFull)
             {
                 if (cp - cpFirst > MaxCharsGuard) { forced = true; break; }
+                if (++__iter == 2000 && !System.IO.File.Exists("/tmp/cl.log"))
+                { __dbg = true; try { System.IO.File.WriteAllText("/tmp/cl.log", $"RUNAWAY cpFirst={cpFirst} ccpLim={ccpLim} durColumn={durColumn} column={column}\n"); } catch { } }
 
                 LsChp chp = new LsChp();
                 int fBufUsed = 0, cchText = 0, fHidden = 0;
@@ -214,6 +217,8 @@ namespace MS.Internal.TextFormatting
                 Plsrun plsrun = (Plsrun)(uint)plsrunPtr.ToInt64();
 
                 bool isText = chp.idObj == (ushort)TextStore.ObjectId.Text_chp;
+                if (__dbg && __iter < 2030)
+                { try { System.IO.File.AppendAllText("/tmp/cl.log", $"it={__iter} cp={cp} cchText={cchText} idObj=0x{chp.idObj:X} isText={isText} fHidden={fHidden} isBreak={IsLineOrParaBreak(runText)} plsrun=0x{(uint)plsrun:X} c0=0x{(runText!=null&&runText.Length>0?(int)runText[0]:-1):X}\n"); } catch { } }
 
                 // Line/paragraph breaks are delivered as Text_chp runs whose characters are the
                 // separator markers (LS routes LineBreak/ParaBreak runs through the text object id).
