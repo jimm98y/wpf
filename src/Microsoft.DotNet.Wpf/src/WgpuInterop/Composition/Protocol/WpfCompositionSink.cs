@@ -342,30 +342,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             ts.NullAcquires = 0;
             AcquiredFrames++;
 
+            IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
-            // Render the scene into the PERSISTENT OFFSCREEN target (not straight into the drawable):
-            // its command buffer completes on GPU finish and RenderSceneToView's own post-submit poll
-            // reclaims the scene's hundreds of per-frame upload command buffers. Rendering directly into
-            // the drawable would gate that completion on drawable PRESENTATION (a display refresh), so
-            // those command buffers pile up to Metal's 4096 in-flight limit between refreshes → device
-            // lost → the "What's New after a while" crash. Only the offscreen→drawable copy below is
-            // presentation-gated (one command buffer per frame). Composites hosted WinFormsHost scenes too.
-            // syncTex = the offscreen target: RenderSceneToView folds a 1-texel readback into its own
-            // command buffer and maps it, which triages the submission and reclaims the scene's hundreds
-            // of per-frame upload command buffers (a bare poll does not free them).
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), ts.OffscreenView, ts.Format, t.Width, t.Height, t.ClearColor, ts.OffscreenTex);
-
-            // Copy the finished offscreen frame into the acquired drawable, then present it.
-            IntPtr blitEnc = wgpuDeviceCreateCommandEncoder(_ctx!.Device, IntPtr.Zero);
-            var blitSrc = new WGPUTexelCopyTextureInfo { texture = ts.OffscreenTex, aspect = WGPUTextureAspect.All };
-            var blitDst = new WGPUTexelCopyTextureInfo { texture = surfaceTexture.texture, aspect = WGPUTextureAspect.All };
-            var blitExt = new WGPUExtent3D { width = (uint)ts.Width, height = (uint)ts.Height, depthOrArrayLayers = 1 };
-            wgpuCommandEncoderCopyTextureToTexture(blitEnc, &blitSrc, &blitDst, &blitExt);
-            IntPtr blitCb = wgpuCommandEncoderFinish(blitEnc, IntPtr.Zero);
-            IntPtr* blitCmds = stackalloc IntPtr[1]; blitCmds[0] = blitCb;
-            wgpuQueueSubmit(_ctx.Queue, 1, blitCmds);
-            wgpuCommandBufferRelease(blitCb);
-            wgpuCommandEncoderRelease(blitEnc);
+            // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
+            // type + same renderer, so no bitmap/readback.
+            long _m0 = WgpuContext.DbgMapped, _t0 = WgpuContext.DbgTex;
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, t.ClearColor);
+            if (s_logPath != null)
+                Log($"F acq={AcquiredFrames} drawables={CountDrawables(root)} mapped={WgpuContext.DbgMapped - _m0} tex={WgpuContext.DbgTex - _t0}");
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
@@ -397,11 +381,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     VerifyOffscreen(EmbeddedContent.Compose(root), t, PresentedFrames);
             }
 
+            wgpuTextureViewRelease(view);
             wgpuTextureRelease(surfaceTexture.texture);
-
-            // Pump device maintenance once per frame so wgpu reclaims completed command buffers
-            // (the offscreen→drawable copy + present, the only presentation-gated ones).
-            wgpuDevicePoll(_ctx.Device, WGPU_FALSE, null);
         }
 
         // Read back the REAL swapchain texture (the exact presented pixels) and write a PNG. Unlike
@@ -628,30 +609,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 device = _ctx!.Device,
                 format = ts.Format,
-                // CopyDst: we render the scene into an offscreen texture and copy it into the drawable
-                // (see Present) so the scene's per-frame command buffers complete + reclaim independent
-                // of drawable presentation.
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopyDst | (s_surfDump != null ? WGPUTextureUsage.CopySrc : 0),
+                usage = WGPUTextureUsage.RenderAttachment | (s_surfDump != null ? WGPUTextureUsage.CopySrc : 0),
                 width = (uint)ts.Width,
                 height = (uint)ts.Height,
                 alphaMode = WGPUCompositeAlphaMode.Auto,
                 presentMode = mode,
             };
             wgpuSurfaceConfigure(ts.Surface, &config);
-
-            // (Re)create the persistent offscreen scene target to match the surface.
-            if (ts.OffscreenView != IntPtr.Zero) { wgpuTextureViewRelease(ts.OffscreenView); wgpuTextureRelease(ts.OffscreenTex); ts.OffscreenTex = ts.OffscreenView = IntPtr.Zero; }
-            var otd = new WGPUTextureDescriptor
-            {
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopySrc,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = (uint)ts.Width, height = (uint)ts.Height, depthOrArrayLayers = 1 },
-                format = ts.Format,
-                mipLevelCount = 1,
-                sampleCount = 1,
-            };
-            ts.OffscreenTex = wgpuDeviceCreateTexture(_ctx.Device, &otd);
-            ts.OffscreenView = wgpuTextureCreateView(ts.OffscreenTex, IntPtr.Zero);
         }
 
         // Fifo is guaranteed by the spec; any other requested mode is honoured only if the surface
@@ -674,7 +638,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _disposed = true;
             foreach (TargetSurface ts in _surfaces.Values)
             {
-                if (ts.OffscreenView != IntPtr.Zero) { wgpuTextureViewRelease(ts.OffscreenView); wgpuTextureRelease(ts.OffscreenTex); }
                 if (ts.Surface != IntPtr.Zero) wgpuSurfaceRelease(ts.Surface);
             }
             _surfaces.Clear();
@@ -690,9 +653,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public int Height;
             /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>
             public int NullAcquires;
-            /// <summary>Persistent offscreen scene target (surface-sized/-formatted); copied into the drawable each frame.</summary>
-            public IntPtr OffscreenTex;
-            public IntPtr OffscreenView;
         }
     }
 }

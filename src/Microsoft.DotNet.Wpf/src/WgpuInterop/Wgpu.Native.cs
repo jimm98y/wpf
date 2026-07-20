@@ -79,9 +79,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static extern void wgpuCommandEncoderCopyBufferToTexture(
             IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize);
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void wgpuCommandEncoderCopyTextureToTexture(
-            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor);

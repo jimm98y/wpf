@@ -65,6 +65,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public int LastFrame;
         }
         private readonly Dictionary<long, CachedMask> _maskCache = new();
+        // Gradient ramp textures keyed by their stops: a 256x1 RGBA ramp was rebuilt + re-uploaded EVERY
+        // frame per gradient fill (each an unreclaimable Metal command buffer on wgpu-native), so a
+        // gradient-heavy page bursts past the 4096 limit. Cached across frames like masks; evicted when unused.
+        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, long LastFrame)> _rampCache = new();
+        // Local-space coverage masks for gradient/image BRUSH fills (EmitGpuGradientMask/EmitGpuImageMask):
+        // these were re-rasterized to a fresh R8 texture EVERY frame per fill (each an unreclaimable Metal
+        // command buffer → a gradient/image-heavy page bursts past the 4096 limit). The mask is in the
+        // geometry's LOCAL space (transform-independent), so it caches by geometry hash like solid masks.
+        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame)> _covCache = new();
+        // Per-fill brush-param UNIFORM buffers, keyed by their 64-byte contents (were a fresh
+        // mappedAtCreation buffer every frame per gradient/image fill).
+        private readonly Dictionary<long, (IntPtr Buf, long LastFrame)> _uniCache = new();
+        // Image-brush textures, keyed by the source pixel array's identity (were re-uploaded every frame).
+        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, long LastFrame)> _imgCache = new();
         private int _frameId;
 
         // Static-layer cache: an effect/opacity card whose subtree is unchanged from a previous
@@ -112,6 +126,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (c.MaskTex != IntPtr.Zero) { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
+            }
+
+            if (_rampCache.Count > 0)
+            {
+                List<long>? deadR = null;
+                foreach (KeyValuePair<long, (IntPtr Tex, IntPtr View, long LastFrame)> kv in _rampCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadR ??= new List<long>()).Add(kv.Key);
+                    wgpuTextureViewRelease(kv.Value.View);
+                    wgpuTextureRelease(kv.Value.Tex);
+                }
+                if (deadR != null) foreach (long k in deadR) _rampCache.Remove(k);
+            }
+
+            if (_covCache.Count > 0)
+            {
+                List<long>? deadC = null;
+                foreach (KeyValuePair<long, (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame)> kv in _covCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadC ??= new List<long>()).Add(kv.Key);
+                    wgpuTextureViewRelease(kv.Value.View);
+                    wgpuTextureRelease(kv.Value.Tex);
+                }
+                if (deadC != null) foreach (long k in deadC) _covCache.Remove(k);
+            }
+
+            if (_imgCache.Count > 0)
+            {
+                List<long>? deadI = null;
+                foreach (KeyValuePair<long, (IntPtr Tex, IntPtr View, long LastFrame)> kv in _imgCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadI ??= new List<long>()).Add(kv.Key);
+                    wgpuTextureViewRelease(kv.Value.View);
+                    wgpuTextureRelease(kv.Value.Tex);
+                }
+                if (deadI != null) foreach (long k in deadI) _imgCache.Remove(k);
+            }
+
+            if (_uniCache.Count > 0)
+            {
+                List<long>? deadU = null;
+                foreach (KeyValuePair<long, (IntPtr Buf, long LastFrame)> kv in _uniCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadU ??= new List<long>()).Add(kv.Key);
+                    wgpuBufferRelease(kv.Value.Buf);
+                }
+                if (deadU != null) foreach (long k in deadU) _uniCache.Remove(k);
             }
 
             if (_maskCache.Count == 0) return;
@@ -742,6 +807,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             DrawData d = _drawDataPool.Count > 0 ? _drawDataPool.Pop() : new DrawData();
             d.Verts.Clear(); d.Indices.Clear(); d.Draws.Clear(); d.HasText = false;
+            d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
         }
@@ -791,6 +857,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             public readonly List<uint> Indices = new();
             public readonly List<DrawItem> Draws = new();
             public bool HasText;
+            // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
+            // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
+            public int VbOffset = -1, IbOffset = -1;
         }
 
         // A render pass: draw a DrawData into a target view. Offscreen opacity
@@ -865,13 +934,15 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     mipLevelCount = 1,
                     sampleCount = 1,
                 };
-                IntPtr targetTex = wgpuDeviceCreateTexture(device, &texDesc);
+                WgpuContext.DbgTexInc("rgba"); IntPtr targetTex = wgpuDeviceCreateTexture(device, &texDesc);
                 IntPtr targetView = wgpuTextureCreateView(targetTex, IntPtr.Zero);
                 IntPtr readback = _ctx.CreateBuffer(readbackSize, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
 
                 IntPtr atlasView = EnsureAtlasView(AnyText(mainData, plan));
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
+                BuildBatchedGeometry(plan, mainData);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
@@ -907,8 +978,6 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
-        private IntPtr _drainBuf;   // 1-texel readback target used by RenderSceneToView's reclamation drain
-
 // Browser async readback lives in WgpuSceneRenderer.Browser.cs (a non-unsafe
         // partial part: await is illegal inside this unsafe class declaration).
 
@@ -917,7 +986,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// Renders the scene into an externally owned texture view (e.g. a
         /// swap-chain back buffer) using the given target format. No readback.
         /// </summary>
-        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background, IntPtr syncTex = default)
+        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background)
         {
             try
             {
@@ -935,31 +1004,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
 
                 long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                BuildBatchedGeometry(plan, mainData);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
-
-                // Command-buffer reclamation drain (see DrainViaReadback): append a 1-texel readback of the
-                // just-rendered target to THIS SAME command buffer, then map it after submit. wgpu-native's
-                // Metal backend only frees the per-buffer command buffers that mapped-buffer / texture
-                // uploads commit when a buffer-map poll-loop triages the owning submission — and that must be
-                // the SAME submission that created them (a separate drain submit does not reliably free
-                // them). The sink passes its offscreen target here (CopySrc); without this the upload
-                // command buffers pile up to Metal's 4096 in-flight limit → device lost → fatal panic.
-                if (syncTex != IntPtr.Zero)
-                {
-                    if (_drainBuf == IntPtr.Zero)
-                        _drainBuf = _ctx.CreateBuffer(256, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
-                    var dsrc = new WGPUTexelCopyTextureInfo { texture = syncTex, aspect = WGPUTextureAspect.All };
-                    var ddst = new WGPUTexelCopyBufferInfo
-                    {
-                        layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = 256, rowsPerImage = 1 },
-                        buffer = _drainBuf,
-                    };
-                    var dext = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 };
-                    wgpuCommandEncoderCopyTextureToBuffer(encoder, &dsrc, &ddst, &dext);
-                }
-
                 PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
                 IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
                 PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
@@ -968,8 +1017,6 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 cmds[0] = commandBuffer;
                 long s0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 wgpuQueueSubmit(_ctx.Queue, 1, cmds);
-                if (syncTex != IntPtr.Zero)
-                    _ = _ctx.MapRead(_drainBuf, 256);   // map poll-loop triages THIS submission → frees its upload command buffers
                 PerfSubmitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - s0;
 
                 DeferReleaseEncoder(encoder);
@@ -1038,7 +1085,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     mipLevelCount = 1,
                     sampleCount = 1,
                 };
-                _idTex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+                WgpuContext.DbgTexInc("id"); _idTex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
                 _idView = wgpuTextureCreateView(_idTex, IntPtr.Zero);
                 _idTexW = _idW; _idTexH = _idH;
             }
@@ -1051,6 +1098,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
                 // Coverage-rasterization plan passes first, then the id pass (clear to 0 = "no visual").
+                BuildBatchedGeometry(plan, idData);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, IntPtr.Zero);
                 ExecutePass(encoder, new LayerPass(_idView, true, default, idData, ReadbackFormat), IntPtr.Zero);
@@ -1657,7 +1706,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("layer"); IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
         }
 
@@ -2229,9 +2278,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 }
                 case LinearGradientBrush grad:
                 {
-                    var (tex, view) = CreateRgbaTexture(BuildGradientRamp(grad.Stops), GradientRampTexels, 1);
+                    IntPtr view = GetOrCreateRampView(grad.Stops);
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
-                    DeferReleaseSampled(tex, view, bindGroup);
+                    DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 
                     Vector2 axis = grad.End - grad.Start;
@@ -2245,9 +2294,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 }
                 case ImageBrush img:
                 {
-                    var (tex, view) = CreateImageTexture(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                    IntPtr view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, NearestSampler());
-                    DeferReleaseSampled(tex, view, bindGroup);
+                    DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 
                     Bounds(mesh.Positions, out Vector2 min, out Vector2 size);
@@ -2380,11 +2429,21 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 // Half-pixel phase (4 variants): fewer variants than quarter-px means a fast
                 // fractional scroll cycles through cached phases instead of missing on most
                 // frames (16 phases + a short eviction window re-rasterized nearly every frame).
-                float qx = MathF.Round(world.M31 * 2f) * 0.5f;
-                float qy = MathF.Round(world.M32 * 2f) * 0.5f;
+                // Normalize the geometry's OWN translation (e.g. a glyph's layout position) into the same
+                // integer-offset + half-pixel-phase split we already apply to the world translation, and
+                // hash the shape at its local origin — so the same glyph shape at any position shares ONE
+                // mask (≤4 phase variants) instead of one mask per instance.
+                GeometryMin(coverageGeometry, out float gminX, out float gminY);
+                float dx = world.M11 * gminX + world.M21 * gminY + world.M31;
+                float dy = world.M12 * gminX + world.M22 * gminY + world.M32;
+                float qx = MathF.Round(dx * 2f) * 0.5f;
+                float qy = MathF.Round(dy * 2f) * 0.5f;
                 float ox = MathF.Floor(qx), oy = MathF.Floor(qy);
                 int phase = (int)((qx - ox) * 2f) * 2 + (int)((qy - oy) * 2f);
-                long key = HashGeometry(coverageGeometry);
+                PathGeometry normGeom = (gminX == 0f && gminY == 0f)
+                    ? coverageGeometry
+                    : TransformGeometry(coverageGeometry, Matrix3x2.CreateTranslation(-gminX, -gminY));
+                long key = HashGeometry(normGeom);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M11);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M12);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
@@ -2394,6 +2453,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
+                    // normGeom is at local origin; transform by the world LINEAR part + the sub-pixel phase.
                     Matrix3x2 phased = world;
                     phased.M31 = qx - ox;
                     phased.M32 = qy - oy;
@@ -2401,13 +2461,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     int mox, moy, mw, mh;
                     if (s_gpuRaster)
                     {
-                        if (!GpuRasterizeCoverage(TransformGeometry(coverageGeometry, phased), gamma,
+                        if (!GpuRasterizeCoverage(TransformGeometry(normGeom, phased), gamma,
                                 out tex, out view, out mox, out moy, out mw, out mh))
                             return;
                     }
                     else
                     {
-                        CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(coverageGeometry, phased));
+                        CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, phased));
                         if (m.IsEmpty) return;
                         if (gamma) ApplyTextGamma(m.Coverage);
                         (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
@@ -2460,6 +2520,28 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, c.BindGroup));
+        }
+
+        // Local bounding-box minimum of a geometry (over all figure start/segment points). Used to make
+        // the coverage-mask cache TRANSLATION-INVARIANT: WPF sends each glyph as an outline fill positioned
+        // in local space, so without normalizing by this origin every glyph instance hashes uniquely and
+        // never dedups (a text-heavy page then rasterizes thousands of masks — the "What's New" crash).
+        private static void GeometryMin(PathGeometry g, out float minX, out float minY)
+        {
+            minX = float.MaxValue; minY = float.MaxValue;
+            static void Acc(Vector2 v, ref float mnX, ref float mnY) { if (v.X < mnX) mnX = v.X; if (v.Y < mnY) mnY = v.Y; }
+            foreach (PathFigure f in g.Figures)
+            {
+                Acc(f.Start, ref minX, ref minY);
+                foreach (PathSegment s in f.Segments)
+                    switch (s)
+                    {
+                        case LineSegment l: Acc(l.Point, ref minX, ref minY); break;
+                        case QuadraticBezierSegment q: Acc(q.Control, ref minX, ref minY); Acc(q.Point, ref minX, ref minY); break;
+                        case CubicBezierSegment c: Acc(c.Control1, ref minX, ref minY); Acc(c.Control2, ref minX, ref minY); Acc(c.Point, ref minX, ref minY); break;
+                    }
+            }
+            if (minX == float.MaxValue) { minX = 0; minY = 0; }
         }
 
         private static long HashGeometry(PathGeometry g)
@@ -2828,32 +2910,107 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             return wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
         }
 
+        // Frame-wide shared geometry: ALL 2D passes' vertices/indices are concatenated into ONE vertex +
+        // ONE index buffer per frame (BuildBatchedGeometry), instead of a mappedAtCreation buffer PER pass.
+        // wgpu-native's Metal backend commits a command buffer per mapped-buffer upload that a normal poll
+        // never reclaims; a busy scene has hundreds of passes, so per-pass buffers pile up to Metal's 4096
+        // in-flight limit → device lost. Batching turns "hundreds per frame" into two.
+        private readonly List<float> _batchVerts = new();
+        private readonly List<uint> _batchIndices = new();
+        private IntPtr _frameVbuf, _frameIbuf;
+
+        // Frame-wide shared STORAGE buffer for coverage/stroke/glyph masks: instead of a mappedAtCreation
+        // storage buffer PER mask (the dominant per-frame command-buffer source when a page first rasterizes
+        // its masks — a mask-heavy page like "What's New" bursts past Metal's 4096 limit), all masks' edge
+        // data lives in ONE buffer and each mask's bind group references it at a 256-aligned offset. Because
+        // the shared buffer doesn't exist until every mask is collected, the coverage passes record a PENDING
+        // bind (their DrawItem starts with a null bind group) and BuildBatchedStorage patches them in after
+        // sealing the buffer. Only populated on cache-MISS frames (new masks); cached masks skip all of this.
+        private readonly List<byte> _batchStorage = new();
+        private readonly List<(DrawData Data, int DrawIndex, int Offset, int Size)> _pendingStorageBinds = new();
+        private IntPtr _frameStorageBuf;
+
+        // Reserves a 256-aligned region in the shared storage arena for a mask's edge data (256 =
+        // minStorageBufferOffsetAlignment). Returns its byte offset; the region is exactly maxLen bytes.
+        private int AllocStorage(ReadOnlySpan<byte> data, int maxLen)
+        {
+            int off = (_batchStorage.Count + 255) & ~255;
+            while (_batchStorage.Count < off) _batchStorage.Add(0);
+            _batchStorage.AddRange(data);
+            for (int pad = data.Length; pad < maxLen; pad++) _batchStorage.Add(0);
+            return off;
+        }
+
+        // Seals the shared storage arena into one buffer and creates+patches the deferred coverage-mask bind
+        // groups. Call after collection, before the ExecutePass loop (alongside BuildBatchedGeometry).
+        private void BuildBatchedStorage()
+        {
+            _frameStorageBuf = IntPtr.Zero;
+            if (_pendingStorageBinds.Count == 0) { _batchStorage.Clear(); return; }
+
+            _frameStorageBuf = _ctx.CreateBufferMapped(CollectionsMarshal.AsSpan(_batchStorage), WGPUBufferUsage.Storage);
+            DeferReleaseBuffer(_frameStorageBuf);
+
+            foreach ((DrawData d, int idx, int off, int size) in _pendingStorageBinds)
+            {
+                DrawItem di = d.Draws[idx];
+                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, di.Kind), 0);
+                var entry = new WGPUBindGroupEntry { binding = 0, buffer = _frameStorageBuf, offset = (ulong)off, size = (ulong)size };
+                var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
+                IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
+                DeferReleaseBindGroup(bg);
+                d.Draws[idx] = new DrawItem(di.FirstIndex, di.IndexCount, di.Clip, di.Kind, bg);
+            }
+            _pendingStorageBinds.Clear();
+            _batchStorage.Clear();
+        }
+
+        // Concatenates every 2D pass's geometry (the plan's LayerPasses + the main pass) into the two
+        // shared buffers and records each DrawData's byte offset. Each AddVertex appends a fixed
+        // VertexStride (8 floats), so a pass's vertex block is naturally VertexStride-aligned when
+        // concatenated (a valid SetVertexBuffer offset); indices are uint (4-byte, a valid index offset).
+        // Draw indices stay pass-local (baseVertex 0 / firstIndex relative), resolved by binding the
+        // shared buffers at the pass's offset. Call once, after collection, before the ExecutePass loop.
+        private void BuildBatchedGeometry(List<LayerPass> plan, DrawData? mainData)
+        {
+            _batchVerts.Clear();
+            _batchIndices.Clear();
+            _frameVbuf = _frameIbuf = IntPtr.Zero;
+
+            void Assign(DrawData d)
+            {
+                if (d.Indices.Count == 0) { d.VbOffset = d.IbOffset = -1; return; }
+                d.VbOffset = _batchVerts.Count * sizeof(float);
+                d.IbOffset = _batchIndices.Count * sizeof(uint);
+                _batchVerts.AddRange(d.Verts);
+                _batchIndices.AddRange(d.Indices);
+            }
+
+            foreach (LayerPass lp in plan)
+                if (lp.Models3D == null) Assign(lp.Data);   // 3D passes carry their own per-mesh buffers
+            if (mainData != null) Assign(mainData);
+
+            if (_batchIndices.Count == 0) return;
+            _frameVbuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(_batchVerts)), WGPUBufferUsage.Vertex);
+            _frameIbuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(_batchIndices)), WGPUBufferUsage.Index);
+            DeferReleaseBuffer(_frameVbuf);
+            DeferReleaseBuffer(_frameIbuf);
+        }
+
         private void BuildGeometryBuffers(DrawData data, out IntPtr vbuf, out IntPtr ibuf, out bool hasGeometry)
         {
-            vbuf = IntPtr.Zero;
-            ibuf = IntPtr.Zero;
-            hasGeometry = data.Indices.Count > 0;
-            if (!hasGeometry) return;
-
-            // Write straight from the lists' backing arrays as byte spans -- no ToArray()/byte[] copies.
-            ReadOnlySpan<byte> vbytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Verts));
-            ReadOnlySpan<byte> ibytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Indices));
-
-            // mappedAtCreation upload (pure CPU copy) instead of RentBuffer + queue.write_buffer: the
-            // latter commits a Metal blit command buffer per call in wgpu-native that is never reclaimed
-            // and exhausts Metal's 4096 in-flight limit within a few frames. Fresh per frame, released in
-            // FlushFrameReleases (wgpu keeps them alive until the submission that reads them completes).
-            vbuf = _ctx.CreateBufferMapped(vbytes, WGPUBufferUsage.Vertex);
-            ibuf = _ctx.CreateBufferMapped(ibytes, WGPUBufferUsage.Index);
-            DeferReleaseBuffer(vbuf);
-            DeferReleaseBuffer(ibuf);
+            // Geometry was uploaded once for the whole frame by BuildBatchedGeometry; just hand back the
+            // shared buffers. RecordDraws binds them at this pass's VbOffset/IbOffset.
+            hasGeometry = data.Indices.Count > 0 && data.VbOffset >= 0;
+            vbuf = _frameVbuf;
+            ibuf = _frameIbuf;
         }
 
         private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup,
             int originX = 0, int originY = 0, int texW = 0, int texH = 0)
         {
-            wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vbuf, 0, (ulong)(data.Verts.Count * sizeof(float)));
-            wgpuRenderPassEncoderSetIndexBuffer(pass, ibuf, WGPUIndexFormat.Uint32, 0, (ulong)(data.Indices.Count * sizeof(uint)));
+            wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vbuf, (ulong)data.VbOffset, (ulong)(data.Verts.Count * sizeof(float)));
+            wgpuRenderPassEncoderSetIndexBuffer(pass, ibuf, WGPUIndexFormat.Uint32, (ulong)data.IbOffset, (ulong)(data.Indices.Count * sizeof(uint)));
 
             foreach (DrawItem d in data.Draws)
             {
@@ -3161,8 +3318,24 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // Texture uploads staged during scene collection (CreateTexture) and flushed as
         // CopyBufferToTexture into the frame's single command encoder (FlushPendingTexUploads),
         // so they add ZERO command buffers — see the note on CreateTexture.
-        private struct PendingTexUpload { public IntPtr Staging; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; }
+        private struct PendingTexUpload { public int StagingOffset; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; }
         private readonly List<PendingTexUpload> _pendingTexUploads = new();
+
+        // Frame-shared texture-upload staging: all this frame's texture pixels (gradient ramps, images,
+        // CPU masks) live in ONE CopySrc buffer instead of one mappedAtCreation buffer PER texture. Each
+        // upload's CopyBufferToTexture reads from it at a 256-aligned offset. An image/gradient-heavy page
+        // otherwise commits a per-texture command buffer each and bursts past Metal's 4096 limit.
+        private readonly List<byte> _batchTexStaging = new();
+
+        // Reserves a 256-aligned region in the texture-staging arena and copies the rows in; returns its
+        // byte offset (256 satisfies the CopyBufferToTexture bufferOffset + bytesPerRow alignment rules).
+        private int AllocTexStaging(byte[] data, int length)
+        {
+            int off = (_batchTexStaging.Count + 255) & ~255;
+            while (_batchTexStaging.Count < off) _batchTexStaging.Add(0);
+            _batchTexStaging.AddRange(data.AsSpan(0, length));
+            return off;
+        }
 
         // Records the staged texture uploads collected this frame into the frame's command encoder,
         // BEFORE any render pass that samples them. Called right after the encoder is created and
@@ -3170,19 +3343,22 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // submit); wgpu keeps them alive until the submission completes.
         private void FlushPendingTexUploads(IntPtr encoder)
         {
-            if (_pendingTexUploads.Count == 0) return;
+            if (_pendingTexUploads.Count == 0) { _batchTexStaging.Clear(); return; }
+            IntPtr staging = _ctx.CreateBufferMapped(CollectionsMarshal.AsSpan(_batchTexStaging), WGPUBufferUsage.CopySrc);
+            DeferReleaseBuffer(staging);
             foreach (PendingTexUpload u in _pendingTexUploads)
             {
                 var src = new WGPUTexelCopyBufferInfo
                 {
-                    layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)u.BytesPerRow, rowsPerImage = (uint)u.Height },
-                    buffer = u.Staging,
+                    layout = new WGPUTexelCopyBufferLayout { offset = (ulong)u.StagingOffset, bytesPerRow = (uint)u.BytesPerRow, rowsPerImage = (uint)u.Height },
+                    buffer = staging,
                 };
                 var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, aspect = WGPUTextureAspect.All };
                 var size = new WGPUExtent3D { width = (uint)u.Width, height = (uint)u.Height, depthOrArrayLayers = 1 };
                 wgpuCommandEncoderCopyBufferToTexture(encoder, &src, &dst, &size);
             }
             _pendingTexUploads.Clear();
+            _batchTexStaging.Clear();
         }
 
         private (IntPtr Texture, IntPtr View) CreateTexture(byte[] pixels, int width, int height, WGPUTextureFormat format, int bytesPerPixel)
@@ -3197,7 +3373,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("tex"); IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
 #if WGPU_BROWSER
             // The browser's JS WebGPU backend has no Metal command-buffer accounting problem;
             // queue.writeTexture is simplest and mapped ranges can't be marshaled to JS.
@@ -3226,9 +3402,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 for (int r = 0; r < height; r++)
                     Buffer.BlockCopy(pixels, r * unpaddedBpr, staging, r * alignedBpr, unpaddedBpr);
             }
-            IntPtr sbuf = _ctx.CreateBufferMapped(staging, WGPUBufferUsage.CopySrc);
-            DeferReleaseBuffer(sbuf);
-            _pendingTexUploads.Add(new PendingTexUpload { Staging = sbuf, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr });
+            int soff = AllocTexStaging(staging, alignedBpr * height);
+            _pendingTexUploads.Add(new PendingTexUpload { StagingOffset = soff, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr });
 #endif
             return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
         }
@@ -3241,6 +3416,38 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // single gamma encode on the final write. For the linear (test) target, pass them through.
         private (IntPtr Texture, IntPtr View) CreateImageTexture(byte[] rgba, int width, int height)
             => CreateTexture(rgba, width, height, _srgbOutput ? WGPUTextureFormat.RGBA8UnormSrgb : WGPUTextureFormat.RGBA8Unorm, 4);
+
+        // Cached image texture: the engine stores each bitmap's pixel array once, so its identity keys a
+        // texture reused across frames (was re-created + re-uploaded every frame per image fill). Includes
+        // _srgbOutput in the key since the format depends on it. Caller must NOT release the returned view.
+        private IntPtr GetOrCreateImageView(byte[] rgba, int width, int height)
+        {
+            long key = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(rgba) * 2 + (_srgbOutput ? 1 : 0);
+            if (_imgCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
+            {
+                _imgCache[key] = (e.Tex, e.View, _frameId);
+                return e.View;
+            }
+            var (tex, view) = CreateImageTexture(rgba, width, height);
+            _imgCache[key] = (tex, view, _frameId);
+            return view;
+        }
+
+        // Cached brush-param uniform buffer, keyed by its bytes (small, 64B). Caller must NOT release it.
+        private IntPtr GetOrCreateUniform(byte[] uni)
+        {
+            var h = new HashCode();
+            h.AddBytes(uni);
+            long key = h.ToHashCode();
+            if (_uniCache.TryGetValue(key, out (IntPtr Buf, long LastFrame) e))
+            {
+                _uniCache[key] = (e.Buf, _frameId);
+                return e.Buf;
+            }
+            IntPtr buf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
+            _uniCache[key] = (buf, _frameId);
+            return buf;
+        }
 
         private (IntPtr Texture, IntPtr View) CreateR8Texture(byte[] r8, int width, int height)
             => CreateTexture(r8, width, height, WGPUTextureFormat.R8Unorm, 1);
@@ -3258,6 +3465,23 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// before any pass that samples the mask). Bounds are the curves' tight extents. Returns
         /// false for an empty path. The caller owns tex/view.
         /// </summary>
+        // Cached local-space coverage for brush fills: rasterizes once per unique local geometry and keeps
+        // the R8 mask across frames (see _covCache). The caller must NOT release the returned view.
+        private bool GetOrRasterizeLocalCoverage(PathGeometry localGeom, out IntPtr view, out int ox, out int oy, out int w, out int h)
+        {
+            long key = HashGeometry(localGeom);
+            if (_covCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame) e))
+            {
+                _covCache[key] = (e.Tex, e.View, e.Ox, e.Oy, e.W, e.H, _frameId);
+                view = e.View; ox = e.Ox; oy = e.Oy; w = e.W; h = e.H;
+                return true;
+            }
+            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr tex, out view, out ox, out oy, out w, out h))
+                return false;
+            _covCache[key] = (tex, view, ox, oy, w, h, _frameId);
+            return true;
+        }
+
         private bool GpuRasterizeCoverage(PathGeometry path, bool gamma,
             out IntPtr tex, out IntPtr view, out int ox, out int oy, out int w, out int h)
         {
@@ -3291,7 +3515,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            _atlasTexture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("atlas"); _atlasTexture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             _atlasView = wgpuTextureCreateView(_atlasTexture, IntPtr.Zero);
             _atlasValid = true;
             _gpuAtlasCreated = true;
@@ -3403,7 +3627,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("stroke"); tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             PerfBindGroups++;
@@ -3443,8 +3667,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
             int byteLen = Math.Max(16, es.Length * sizeof(float));   // never a zero-sized binding
-            IntPtr ebuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
-            DeferReleaseBuffer(ebuf);
+            if (WgpuContext.LogSink != null && WgpuContext.DbgTex % 400 == 0)
+                WgpuContext.LogSink($"MASK #{WgpuContext.DbgTex} {w}x{h} segs={segCount} cache={_maskCache.Count}");
+            // Reserve this mask's edges in the frame-shared storage arena; the bind group is created +
+            // patched in later by BuildBatchedStorage once the whole arena is one buffer (see _batchStorage).
+            int soff = AllocStorage(MemoryMarshal.AsBytes(es), byteLen);
 
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
@@ -3456,16 +3683,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("mask"); IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Coverage), 0);
-            var entry = new WGPUBindGroupEntry { binding = 0, buffer = ebuf, offset = 0, size = (ulong)byteLen };
-            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
-            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
-            DeferReleaseBindGroup(bg);
-
             // One full-target quad in the mask texture's own NDC — deliberately NOT ToNdc,
             // which offsets by the ambient layer-bake origin (_devOX/_devOY): a mask created
             // during a region-sized card bake would render shifted off its own target (and
@@ -3478,7 +3699,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(d.Verts, new Vector2(1f, -1f), segCount, flags, 0f, 0f, w, h);
             AddVertex(d.Verts, new Vector2(-1f, -1f), segCount, flags, 0f, 0f, 0f, h);
             AddQuadIndices(d.Indices, 0);
-            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, bg));
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, IntPtr.Zero));
+            _pendingStorageBinds.Add((d, d.Draws.Count - 1, soff, byteLen));
             _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
             return (tex, view);
         }
@@ -3565,21 +3787,17 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private bool EmitGpuGradientMask(PathGeometry localGeom, Brush gradient, Matrix3x2 world, double opacity,
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
-            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr covTex, out IntPtr covView,
-                    out int ox, out int oy, out int w, out int h))
+            if (!GetOrRasterizeLocalCoverage(localGeom, out IntPtr covView, out int ox, out int oy, out int w, out int h))
                 return false;
-            DeferReleaseTexView(covTex, covView);
 
-            var (rampTex, rampView) = CreateRgbaTexture(BuildGradientRamp(BrushStops(gradient)), GradientRampTexels, 1);
-            DeferReleaseTexView(rampTex, rampView);
+            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
 
             (Vector2 g0, Vector2 g1) = gradient is LinearGradientBrush lg
                 ? (lg.Start, lg.End)
                 : (((RadialGradientBrush)gradient).Center,
                    new Vector2(((RadialGradientBrush)gradient).RadiusX, ((RadialGradientBrush)gradient).RadiusY));
             byte[] uni = BuildBrushParams(gradient, g0, g1, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
-            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
-            DeferReleaseBuffer(ubuf);
+            IntPtr ubuf = GetOrCreateUniform(uni);
 
             IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskBrush, covView, rampView, ubuf, uni.Length);
             DeferReleaseBindGroup(bg);
@@ -3605,17 +3823,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (img.PixelWidth <= 0 || img.PixelHeight <= 0)
                 return false;
-            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr covTex, out IntPtr covView,
-                    out int ox, out int oy, out int w, out int h))
+            if (!GetOrRasterizeLocalCoverage(localGeom, out IntPtr covView, out int ox, out int oy, out int w, out int h))
                 return false;
-            DeferReleaseTexView(covTex, covView);
 
-            var (imgTex, imgView) = CreateImageTexture(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
-            DeferReleaseTexView(imgTex, imgView);
+            IntPtr imgView = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
 
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
-            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
-            DeferReleaseBuffer(ubuf);
+            IntPtr ubuf = GetOrCreateUniform(uni);
 
             IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length);
             DeferReleaseBindGroup(bg);
@@ -3671,11 +3885,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                                  rg.RadiusY * new Vector2(world.M21, world.M22).Length());
             }
             byte[] uni = BuildBrushParams(brush, g0, g1, originX, originY, width, height, 1f);
-            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
-            DeferReleaseBuffer(ubuf);
+            IntPtr ubuf = GetOrCreateUniform(uni);
 
-            var (rampTex, rampView) = CreateRgbaTexture(BuildGradientRamp(BrushStops(brush)), GradientRampTexels, 1);
-            DeferReleaseTexView(rampTex, rampView);
+            IntPtr rampView = GetOrCreateRampView(BrushStops(brush));
 
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
@@ -3687,7 +3899,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            WgpuContext.DbgTexInc("opacity"); tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             IntPtr bg = CreateBrushBindGroup(WGPUTextureFormat.R8Unorm, FillKind.BrushAlpha, IntPtr.Zero, rampView, ubuf, uni.Length);
@@ -3737,6 +3949,23 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         }
 
         // ---- gradient ramp ----
+
+        // Returns a cached (across frames) gradient ramp texture VIEW for these stops, creating+uploading
+        // it only on a miss. The cache owns the texture (do NOT defer-release it); callers just bind the view.
+        private IntPtr GetOrCreateRampView(GradientStop[] stops)
+        {
+            var h = new HashCode();
+            foreach (GradientStop s in stops) { h.Add(s.Offset); h.Add(s.Color.R); h.Add(s.Color.G); h.Add(s.Color.B); h.Add(s.Color.A); }
+            long key = h.ToHashCode();
+            if (_rampCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
+            {
+                _rampCache[key] = (e.Tex, e.View, _frameId);
+                return e.View;
+            }
+            var (tex, view) = CreateRgbaTexture(BuildGradientRamp(stops), GradientRampTexels, 1);
+            _rampCache[key] = (tex, view, _frameId);
+            return view;
+        }
 
         private static byte[] BuildGradientRamp(GradientStop[] stops)
         {

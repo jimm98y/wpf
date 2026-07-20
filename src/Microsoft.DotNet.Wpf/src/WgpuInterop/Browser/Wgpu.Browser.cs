@@ -501,11 +501,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
             IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
             => throw new NotSupportedException("Buffer->texture copy is not wired on the browser backend (uploads use queue.writeTexture).");
 
-        // The browser renders straight to the swap-chain texture (no offscreen-copy detour needed —
-        // no Metal command-buffer accounting problem), so this is never invoked there.
-        internal static void wgpuCommandEncoderCopyTextureToTexture(
-            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
-            => throw new NotSupportedException("Texture->texture copy is not wired on the browser backend.");
+
 
         internal static IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor)
             => (IntPtr)WgpuBrowserJs.FinishEncoder((int)commandEncoder);
