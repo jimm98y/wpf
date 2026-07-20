@@ -495,6 +495,18 @@ namespace Microsoft.Wpf.Interop.WebGpu
             IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize)
             => throw new NotSupportedException("GPU->CPU readback is not wired on the browser backend yet.");
 
+        // The browser CreateTexture path uploads via queue.writeTexture (no command-buffer leak there),
+        // so FlushPendingTexUploads is always a no-op on the browser and this is never invoked.
+        internal static void wgpuCommandEncoderCopyBufferToTexture(
+            IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
+            => throw new NotSupportedException("Buffer->texture copy is not wired on the browser backend (uploads use queue.writeTexture).");
+
+        // The browser renders straight to the swap-chain texture (no offscreen-copy detour needed —
+        // no Metal command-buffer accounting problem), so this is never invoked there.
+        internal static void wgpuCommandEncoderCopyTextureToTexture(
+            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
+            => throw new NotSupportedException("Texture->texture copy is not wired on the browser backend.");
+
         internal static IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor)
             => (IntPtr)WgpuBrowserJs.FinishEncoder((int)commandEncoder);
 
@@ -504,6 +516,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
                 throw new NotSupportedException("Browser backend expects single-command-buffer submits.");
             WgpuBrowserJs.Submit((int)queue, (int)commands[0]);
         }
+
 
         // ---- Buffer readback (async-only in the browser; not wired yet) -------------
 

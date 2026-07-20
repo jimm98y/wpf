@@ -137,6 +137,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return wgpuDeviceCreateBuffer(Device, &desc);
         }
 
+        // Uploads data by creating the buffer already-mapped and memcpy'ing CPU-side, then unmapping —
+        // NO queue.write_buffer, so no per-call Metal blit command buffer. wgpu-native's Metal backend
+        // commits (and never reclaims) a command buffer for every queue.write_buffer/write_texture; a
+        // frame issues dozens, which pile up to Metal's hard 4096 in-flight limit ("N outstanding command
+        // buffers exceeds the limit" → device lost → fatal). mappedAtCreation writes are pure CPU copies.
+        public IntPtr CreateBufferMapped(ReadOnlySpan<byte> data, WGPUBufferUsage usage, ulong minSize = 0)
+        {
+            ulong size = ((ulong)data.Length + 3UL) & ~3UL;   // mappedAtCreation requires a size multiple of 4
+            if (size < minSize) size = (minSize + 3UL) & ~3UL;
+            if (size == 0) size = 4;
+#if WGPU_BROWSER
+            // The browser's WebGPU (JS) backend has no Metal command-buffer accounting problem, and raw
+            // mapped-range pointers can't be marshaled to JS — so just create + queue.writeBuffer there.
+            var bdesc = new WGPUBufferDescriptor { usage = usage | WGPUBufferUsage.CopyDst, size = size };
+            IntPtr bbuf = wgpuDeviceCreateBuffer(Device, &bdesc);
+            if (data.Length > 0) WriteBuffer(bbuf, data);
+            return bbuf;
+#else
+            var desc = new WGPUBufferDescriptor { usage = usage, size = size, mappedAtCreation = 1 };
+            IntPtr buf = wgpuDeviceCreateBuffer(Device, &desc);
+            if (data.Length > 0)
+            {
+                void* range = wgpuBufferGetMappedRange(buf, 0, (nuint)size);
+                fixed (byte* src = data)
+                    System.Buffer.MemoryCopy(src, range, size, (ulong)data.Length);
+            }
+            wgpuBufferUnmap(buf);
+            return buf;
+#endif
+        }
+
         public void WriteBuffer(IntPtr buffer, ReadOnlySpan<byte> data)
         {
             fixed (byte* p = data)

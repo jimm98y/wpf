@@ -708,6 +708,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             foreach (IntPtr x in _relViews) wgpuTextureViewRelease(x); _relViews.Clear();
             foreach (IntPtr x in _relTextures) wgpuTextureRelease(x); _relTextures.Clear();
             foreach (IntPtr x in _relBuffers) wgpuBufferRelease(x); _relBuffers.Clear();
+            // Any staging uploads not flushed into an encoder this frame have had their buffers
+            // released above; drop the now-dangling records so a later flush can't copy from them.
+            _pendingTexUploads.Clear();
             foreach ((IntPtr Tex, IntPtr View, int W, int H) t in _relPoolTex) ReturnLayerTexture(t.Tex, t.View, t.W, t.H);
             _relPoolTex.Clear();
             // Return this frame's geometry buffers to the free pool (reused next frame). By the time
@@ -869,6 +872,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr atlasView = EnsureAtlasView(AnyText(mainData, plan));
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
+                FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
 
@@ -903,6 +907,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
+        private IntPtr _drainBuf;   // 1-texel readback target used by RenderSceneToView's reclamation drain
+
 // Browser async readback lives in WgpuSceneRenderer.Browser.cs (a non-unsafe
         // partial part: await is illegal inside this unsafe class declaration).
 
@@ -911,7 +917,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// Renders the scene into an externally owned texture view (e.g. a
         /// swap-chain back buffer) using the given target format. No readback.
         /// </summary>
-        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background)
+        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background, IntPtr syncTex = default)
         {
             try
             {
@@ -929,8 +935,31 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
 
                 long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
+
+                // Command-buffer reclamation drain (see DrainViaReadback): append a 1-texel readback of the
+                // just-rendered target to THIS SAME command buffer, then map it after submit. wgpu-native's
+                // Metal backend only frees the per-buffer command buffers that mapped-buffer / texture
+                // uploads commit when a buffer-map poll-loop triages the owning submission — and that must be
+                // the SAME submission that created them (a separate drain submit does not reliably free
+                // them). The sink passes its offscreen target here (CopySrc); without this the upload
+                // command buffers pile up to Metal's 4096 in-flight limit → device lost → fatal panic.
+                if (syncTex != IntPtr.Zero)
+                {
+                    if (_drainBuf == IntPtr.Zero)
+                        _drainBuf = _ctx.CreateBuffer(256, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
+                    var dsrc = new WGPUTexelCopyTextureInfo { texture = syncTex, aspect = WGPUTextureAspect.All };
+                    var ddst = new WGPUTexelCopyBufferInfo
+                    {
+                        layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = 256, rowsPerImage = 1 },
+                        buffer = _drainBuf,
+                    };
+                    var dext = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 };
+                    wgpuCommandEncoderCopyTextureToBuffer(encoder, &dsrc, &ddst, &dext);
+                }
+
                 PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
                 IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
                 PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
@@ -939,6 +968,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 cmds[0] = commandBuffer;
                 long s0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+                if (syncTex != IntPtr.Zero)
+                    _ = _ctx.MapRead(_drainBuf, 256);   // map poll-loop triages THIS submission → frees its upload command buffers
                 PerfSubmitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - s0;
 
                 DeferReleaseEncoder(encoder);
@@ -1020,6 +1051,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
                 // Coverage-rasterization plan passes first, then the id pass (clear to 0 = "no visual").
+                FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, IntPtr.Zero);
                 ExecutePass(encoder, new LayerPass(_idView, true, default, idData, ReadbackFormat), IntPtr.Zero);
 
@@ -2807,11 +2839,14 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             ReadOnlySpan<byte> vbytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Verts));
             ReadOnlySpan<byte> ibytes = MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Indices));
 
-            vbuf = RentBuffer((ulong)vbytes.Length, index: false);
-            ibuf = RentBuffer((ulong)ibytes.Length, index: true);
-            _ctx.WriteBuffer(vbuf, vbytes);
-            _ctx.WriteBuffer(ibuf, ibytes);
-            // Buffers are recycled (not released) in FlushFrameReleases.
+            // mappedAtCreation upload (pure CPU copy) instead of RentBuffer + queue.write_buffer: the
+            // latter commits a Metal blit command buffer per call in wgpu-native that is never reclaimed
+            // and exhausts Metal's 4096 in-flight limit within a few frames. Fresh per frame, released in
+            // FlushFrameReleases (wgpu keeps them alive until the submission that reads them completes).
+            vbuf = _ctx.CreateBufferMapped(vbytes, WGPUBufferUsage.Vertex);
+            ibuf = _ctx.CreateBufferMapped(ibytes, WGPUBufferUsage.Index);
+            DeferReleaseBuffer(vbuf);
+            DeferReleaseBuffer(ibuf);
         }
 
         private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup,
@@ -3123,6 +3158,33 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
         }
 
+        // Texture uploads staged during scene collection (CreateTexture) and flushed as
+        // CopyBufferToTexture into the frame's single command encoder (FlushPendingTexUploads),
+        // so they add ZERO command buffers — see the note on CreateTexture.
+        private struct PendingTexUpload { public IntPtr Staging; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; }
+        private readonly List<PendingTexUpload> _pendingTexUploads = new();
+
+        // Records the staged texture uploads collected this frame into the frame's command encoder,
+        // BEFORE any render pass that samples them. Called right after the encoder is created and
+        // before the plan/main passes. The staging buffers are freed by FlushFrameReleases (after
+        // submit); wgpu keeps them alive until the submission completes.
+        private void FlushPendingTexUploads(IntPtr encoder)
+        {
+            if (_pendingTexUploads.Count == 0) return;
+            foreach (PendingTexUpload u in _pendingTexUploads)
+            {
+                var src = new WGPUTexelCopyBufferInfo
+                {
+                    layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)u.BytesPerRow, rowsPerImage = (uint)u.Height },
+                    buffer = u.Staging,
+                };
+                var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, aspect = WGPUTextureAspect.All };
+                var size = new WGPUExtent3D { width = (uint)u.Width, height = (uint)u.Height, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyBufferToTexture(encoder, &src, &dst, &size);
+            }
+            _pendingTexUploads.Clear();
+        }
+
         private (IntPtr Texture, IntPtr View) CreateTexture(byte[] pixels, int width, int height, WGPUTextureFormat format, int bytesPerPixel)
         {
             PerfTextures++;
@@ -3136,13 +3198,38 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 sampleCount = 1,
             };
             IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
-
+#if WGPU_BROWSER
+            // The browser's JS WebGPU backend has no Metal command-buffer accounting problem;
+            // queue.writeTexture is simplest and mapped ranges can't be marshaled to JS.
             var dest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
             var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
             var writeSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
             fixed (byte* p = pixels)
                 wgpuQueueWriteTexture(_ctx.Queue, &dest, p, (nuint)pixels.Length, &layout, &writeSize);
-
+#else
+            // Desktop (Metal/…): stage into a mappedAtCreation buffer (a pure CPU copy, no command
+            // buffer) and record a CopyBufferToTexture into the frame's single command encoder later
+            // (FlushPendingTexUploads). wgpu-native's Metal backend commits an UNRECLAIMED command
+            // buffer for every queue.write_texture; per-frame uploads pile up to Metal's hard 4096
+            // in-flight limit ("outstanding command buffers exceeds the limit" → device lost → fatal).
+            // CopyBufferToTexture requires bytesPerRow be a multiple of 256, so pad rows if needed.
+            int unpaddedBpr = width * bytesPerPixel;
+            int alignedBpr = AlignUp(unpaddedBpr, 256);
+            byte[] staging;
+            if (alignedBpr == unpaddedBpr)
+            {
+                staging = pixels;
+            }
+            else
+            {
+                staging = new byte[alignedBpr * height];
+                for (int r = 0; r < height; r++)
+                    Buffer.BlockCopy(pixels, r * unpaddedBpr, staging, r * alignedBpr, unpaddedBpr);
+            }
+            IntPtr sbuf = _ctx.CreateBufferMapped(staging, WGPUBufferUsage.CopySrc);
+            DeferReleaseBuffer(sbuf);
+            _pendingTexUploads.Add(new PendingTexUpload { Staging = sbuf, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr });
+#endif
             return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
         }
 
@@ -3257,8 +3344,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= originX; es[i + 1] -= originY; }
 
             int byteLen = Math.Max(16, es.Length * sizeof(float));
-            IntPtr ebuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
-            if (es.Length > 0) _ctx.WriteBuffer(ebuf, MemoryMarshal.AsBytes(es));
+            IntPtr ebuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
             DeferReleaseBuffer(ebuf);
 
             PerfBindGroups++;
@@ -3304,8 +3390,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
             int byteLen = Math.Max(16, es.Length * sizeof(float));
-            IntPtr sbuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
-            if (es.Length > 0) _ctx.WriteBuffer(sbuf, MemoryMarshal.AsBytes(es));
+            IntPtr sbuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
             DeferReleaseBuffer(sbuf);
 
             PerfTextures++;
@@ -3358,8 +3443,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
             int byteLen = Math.Max(16, es.Length * sizeof(float));   // never a zero-sized binding
-            IntPtr ebuf = _ctx.CreateBuffer((ulong)byteLen, WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
-            if (es.Length > 0) _ctx.WriteBuffer(ebuf, MemoryMarshal.AsBytes(es));
+            IntPtr ebuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
             DeferReleaseBuffer(ebuf);
 
             PerfTextures++;
@@ -3494,8 +3578,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 : (((RadialGradientBrush)gradient).Center,
                    new Vector2(((RadialGradientBrush)gradient).RadiusX, ((RadialGradientBrush)gradient).RadiusY));
             byte[] uni = BuildBrushParams(gradient, g0, g1, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
-            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
-            _ctx.WriteBuffer(ubuf, uni);
+            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
             DeferReleaseBuffer(ubuf);
 
             IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskBrush, covView, rampView, ubuf, uni.Length);
@@ -3531,8 +3614,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             DeferReleaseTexView(imgTex, imgView);
 
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
-            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
-            _ctx.WriteBuffer(ubuf, uni);
+            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
             DeferReleaseBuffer(ubuf);
 
             IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length);
@@ -3589,8 +3671,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                                  rg.RadiusY * new Vector2(world.M21, world.M22).Length());
             }
             byte[] uni = BuildBrushParams(brush, g0, g1, originX, originY, width, height, 1f);
-            IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
-            _ctx.WriteBuffer(ubuf, uni);
+            IntPtr ubuf = _ctx.CreateBufferMapped(uni, WGPUBufferUsage.Uniform);
             DeferReleaseBuffer(ubuf);
 
             var (rampTex, rampView) = CreateRgbaTexture(BuildGradientRamp(BrushStops(brush)), GradientRampTexels, 1);

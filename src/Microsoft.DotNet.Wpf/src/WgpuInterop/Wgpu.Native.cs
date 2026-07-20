@@ -76,6 +76,14 @@ namespace Microsoft.Wpf.Interop.WebGpu
             IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuCommandEncoderCopyBufferToTexture(
+            IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuCommandEncoderCopyTextureToTexture(
+            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
@@ -89,6 +97,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void* wgpuBufferGetConstMappedRange(IntPtr buffer, nuint offset, nuint size);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void* wgpuBufferGetMappedRange(IntPtr buffer, nuint offset, nuint size);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void wgpuBufferUnmap(IntPtr buffer);
