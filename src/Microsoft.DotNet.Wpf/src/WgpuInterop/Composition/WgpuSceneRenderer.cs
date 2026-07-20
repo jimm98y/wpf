@@ -934,7 +934,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     mipLevelCount = 1,
                     sampleCount = 1,
                 };
-                WgpuContext.DbgTexInc("rgba"); IntPtr targetTex = wgpuDeviceCreateTexture(device, &texDesc);
+                IntPtr targetTex = wgpuDeviceCreateTexture(device, &texDesc);
                 IntPtr targetView = wgpuTextureCreateView(targetTex, IntPtr.Zero);
                 IntPtr readback = _ctx.CreateBuffer(readbackSize, WGPUBufferUsage.CopyDst | WGPUBufferUsage.MapRead);
 
@@ -1085,7 +1085,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     mipLevelCount = 1,
                     sampleCount = 1,
                 };
-                WgpuContext.DbgTexInc("id"); _idTex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+                _idTex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
                 _idView = wgpuTextureCreateView(_idTex, IntPtr.Zero);
                 _idTexW = _idW; _idTexH = _idH;
             }
@@ -1706,7 +1706,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("layer"); IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
         }
 
@@ -3373,7 +3373,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("tex"); IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
 #if WGPU_BROWSER
             // The browser's JS WebGPU backend has no Metal command-buffer accounting problem;
             // queue.writeTexture is simplest and mapped ranges can't be marshaled to JS.
@@ -3515,7 +3515,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("atlas"); _atlasTexture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            _atlasTexture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             _atlasView = wgpuTextureCreateView(_atlasTexture, IntPtr.Zero);
             _atlasValid = true;
             _gpuAtlasCreated = true;
@@ -3627,7 +3627,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("stroke"); tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             PerfBindGroups++;
@@ -3667,8 +3667,6 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
             int byteLen = Math.Max(16, es.Length * sizeof(float));   // never a zero-sized binding
-            if (WgpuContext.LogSink != null && WgpuContext.DbgTex % 400 == 0)
-                WgpuContext.LogSink($"MASK #{WgpuContext.DbgTex} {w}x{h} segs={segCount} cache={_maskCache.Count}");
             // Reserve this mask's edges in the frame-shared storage arena; the bind group is created +
             // patched in later by BuildBatchedStorage once the whole arena is one buffer (see _batchStorage).
             int soff = AllocStorage(MemoryMarshal.AsBytes(es), byteLen);
@@ -3683,7 +3681,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("mask"); IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             PerfBindGroups++;
@@ -3899,7 +3897,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            WgpuContext.DbgTexInc("opacity"); tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             view = wgpuTextureCreateView(tex, IntPtr.Zero);
 
             IntPtr bg = CreateBrushBindGroup(WGPUTextureFormat.R8Unorm, FillKind.BrushAlpha, IntPtr.Zero, rampView, ubuf, uni.Length);

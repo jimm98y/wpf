@@ -142,13 +142,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // commits (and never reclaims) a command buffer for every queue.write_buffer/write_texture; a
         // frame issues dozens, which pile up to Metal's hard 4096 in-flight limit ("N outstanding command
         // buffers exceeds the limit" → device lost → fatal). mappedAtCreation writes are pure CPU copies.
-        public static long DbgMapped, DbgTex;
-        public static readonly System.Collections.Generic.Dictionary<string,long> DbgTexSites = new(); public static void DbgTexInc(string site) { DbgTex++; DbgTexSites.TryGetValue(site, out long c); DbgTexSites[site] = c + 1; if (LogSink != null && (DbgMapped + DbgTex) % 1000 == 0) LogSink($"BURST tex={DbgTex}: " + string.Join(", ", System.Linq.Enumerable.Select(DbgTexSites, kv => kv.Key + "=" + kv.Value))); }
 
         public IntPtr CreateBufferMapped(ReadOnlySpan<byte> data, WGPUBufferUsage usage, ulong minSize = 0)
         {
-            DbgMapped++;
-            if (LogSink != null && (DbgMapped + DbgTex) % 500 == 0) LogSink($"BURST mapped={DbgMapped} tex={DbgTex} lastUsage={usage}");
             ulong size = ((ulong)data.Length + 3UL) & ~3UL;   // mappedAtCreation requires a size multiple of 4
             if (size < minSize) size = (minSize + 3UL) & ~3UL;
             if (size == 0) size = 4;

@@ -346,10 +346,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            long _m0 = WgpuContext.DbgMapped, _t0 = WgpuContext.DbgTex;
             _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, t.ClearColor);
-            if (s_logPath != null)
-                Log($"F acq={AcquiredFrames} drawables={CountDrawables(root)} mapped={WgpuContext.DbgMapped - _m0} tex={WgpuContext.DbgTex - _t0}");
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
