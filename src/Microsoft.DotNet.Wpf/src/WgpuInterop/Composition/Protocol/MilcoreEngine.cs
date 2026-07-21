@@ -1863,12 +1863,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     figure.Segments.Add(new QuadraticBezierSegment(P(16), P(32)));
                     return 48;
                 case 4: // Arc (MIL_SEGMENT_ARC) -> cubic beziers. Point@16, Size(radii)@32,
-                {       // XRotation(deg)@48, fLargeArc@56, eSweepDirection@60 (0=CCW, 1=CW).
+                {       // XRotation(deg)@48, eSweepDirection@56 (0=CCW, 1=CW), fLargeArc@60.
                     Vector2 end = P(16);
                     Vector2 rad = P(32);
                     r.Position = segPos + 48; double xRotDeg = r.F64();
-                    r.Position = segPos + 56; bool largeArc = r.U32() != 0;
-                    r.Position = segPos + 60; bool sweepClockwise = r.U32() == 0;
+                    r.Position = segPos + 56; bool sweepClockwise = r.U32() != 0;
+                    r.Position = segPos + 60; bool largeArc = r.U32() != 0;
                     AddArcAsBeziers(figure, CurrentPoint(figure), end, (float)rad.X, (float)rad.Y,
                         (float)xRotDeg, largeArc, sweepClockwise);
                     return 64;
