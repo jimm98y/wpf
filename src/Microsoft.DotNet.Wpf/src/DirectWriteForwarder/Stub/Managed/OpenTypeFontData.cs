@@ -242,7 +242,29 @@ namespace MS.Internal.Text.TextInterface.Managed
         }
 
         public ushort GlyphIndex(uint codepoint)
-            => _cmap == null ? (ushort)0 : (ushort)_cmap.Map(codepoint);
+        {
+            if (_cmap == null) return 0;
+            ushort g = (ushort)_cmap.Map(codepoint);
+            if (g == 0 && TryRemapFluentIcon(codepoint, out uint alt))
+                g = (ushort)_cmap.Map(alt);
+            return g;
+        }
+
+        // "Segoe Fluent Icons" moved/renamed several glyphs relative to the older
+        // "Segoe MDL2 Assets". Off-Windows we substitute an MDL2-based icon font
+        // (WinSymbols3 / Symbols.ttf), which lacks the Fluent-only PUA codepoints,
+        // so those glyphs would render as .notdef tofu. When a codepoint is absent,
+        // fall back to its MDL2 equivalent so control glyphs still appear. This only
+        // triggers for fonts that don't contain the native glyph, so a real Segoe
+        // Fluent Icons install is unaffected.
+        private static bool TryRemapFluentIcon(uint codepoint, out uint mdl2)
+        {
+            switch (codepoint)
+            {
+                case 0xE9AE: mdl2 = 0xE738; return true; // CheckBox indeterminate dash -> "Remove" (minus)
+                default: mdl2 = 0; return false;
+            }
+        }
 
         public bool HasCharacter(uint codepoint) => GlyphIndex(codepoint) != 0;
 

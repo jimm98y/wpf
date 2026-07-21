@@ -97,13 +97,39 @@ namespace MS.Internal.Text.TextInterface.Managed
 
     internal static class FontMetricsBuilder
     {
+        // OS/2 fsSelection bit 7 (USE_TYPO_METRICS): the font asks consumers to use the
+        // sTypo* metrics for line spacing instead of the usWin* metrics.
+        private const ushort FsSelectionUseTypoMetrics = 0x80;
+
         public static FontMetrics Build(OpenTypeFontData d)
         {
-            // Prefer OS/2 typographic metrics (present on virtually all modern fonts); fall
-            // back to hhea. DWrite reports ascent/descent as positive magnitudes.
-            short asc = d.HasOS2 && d.STypoAscender != 0 ? d.STypoAscender : d.Ascender;
-            short desc = d.HasOS2 && d.STypoDescender != 0 ? d.STypoDescender : d.Descender;
-            short gap = d.HasOS2 && d.STypoAscender != 0 ? d.STypoLineGap : d.LineGap;
+            // Match DWrite's DWRITE_FONT_METRICS. DWrite reports the OS/2 *Windows* metrics
+            // (usWinAscent/usWinDescent) by default and only switches to the typographic
+            // metrics when the font sets USE_TYPO_METRICS. The usWin* box is taller and
+            // carries the internal leading above the caps that WPF control templates (e.g.
+            // the Fluent CheckBox, which top-aligns its content with a fixed padding) rely
+            // on. Using sTypo* unconditionally made the line box too tight, so top-aligned
+            // text rendered a few pixels too high relative to the box.
+            int asc, desc, gap;
+            bool useTypo = d.HasOS2 && (d.FsSelection & FsSelectionUseTypoMetrics) != 0;
+            if (d.HasOS2 && !useTypo && (d.UsWinAscent != 0 || d.UsWinDescent != 0))
+            {
+                asc = d.UsWinAscent;
+                desc = d.UsWinDescent;   // stored as a positive magnitude
+                gap = 0;                 // usWin* already envelop the full character box
+            }
+            else if (d.HasOS2 && d.STypoAscender != 0)
+            {
+                asc = d.STypoAscender;
+                desc = d.STypoDescender;
+                gap = d.STypoLineGap;
+            }
+            else
+            {
+                asc = d.Ascender;
+                desc = d.Descender;
+                gap = d.LineGap;
+            }
 
             ushort cap = (ushort)(d.SCapHeight != 0 ? d.SCapHeight : (int)(asc * 0.72));
             ushort xh = (ushort)(d.SxHeight != 0 ? d.SxHeight : (int)(asc * 0.5));
@@ -113,7 +139,7 @@ namespace MS.Internal.Text.TextInterface.Managed
                 DesignUnitsPerEm = d.UnitsPerEm,
                 Ascent = (ushort)Math.Abs(asc),
                 Descent = (ushort)Math.Abs(desc),
-                LineGap = gap,
+                LineGap = (short)gap,
                 CapHeight = cap,
                 XHeight = xh,
                 UnderlinePosition = d.UnderlinePosition,
