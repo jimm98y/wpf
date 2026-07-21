@@ -181,12 +181,9 @@ namespace MS.Internal.TextFormatting
             const int MaxCharsGuard = 1 << 20;
             char[] fetchBuf = new char[512];
 
-            int __iter = 0; bool __dbg = false;
             while (!lineFull)
             {
                 if (cp - cpFirst > MaxCharsGuard) { forced = true; break; }
-                if (++__iter == 2000 && !System.IO.File.Exists("/tmp/cl.log"))
-                { __dbg = true; try { System.IO.File.WriteAllText("/tmp/cl.log", $"RUNAWAY cpFirst={cpFirst} ccpLim={ccpLim} durColumn={durColumn} column={column}\n"); } catch { } }
 
                 LsChp chp = new LsChp();
                 int fBufUsed = 0, cchText = 0, fHidden = 0;
@@ -217,8 +214,6 @@ namespace MS.Internal.TextFormatting
                 Plsrun plsrun = (Plsrun)(uint)plsrunPtr.ToInt64();
 
                 bool isText = chp.idObj == (ushort)TextStore.ObjectId.Text_chp;
-                if (__dbg && __iter < 2030)
-                { try { System.IO.File.AppendAllText("/tmp/cl.log", $"it={__iter} cp={cp} cchText={cchText} idObj=0x{chp.idObj:X} isText={isText} fHidden={fHidden} isBreak={IsLineOrParaBreak(runText)} plsrun=0x{(uint)plsrun:X} c0=0x{(runText!=null&&runText.Length>0?(int)runText[0]:-1):X}\n"); } catch { } }
 
                 // Line/paragraph breaks are delivered as Text_chp runs whose characters are the
                 // separator markers (LS routes LineBreak/ParaBreak runs through the text object id).
@@ -226,14 +221,12 @@ namespace MS.Internal.TextFormatting
                 // the end of the paragraph (which would request an out-of-range cp).
                 bool isBreak = IsLineOrParaBreak(runText);
 
-                if (!isText || fHidden != 0 || isBreak)
+                if (isBreak)
                 {
-                    // A control/object/hidden run or a hard line/paragraph break. Record it as a
-                    // zero-width non-text run so its codepoints stay QUERYABLE: a selection that
-                    // spans lines includes the break cp as the last cp of the first line's range,
-                    // and FullTextLine.GetTextBounds hard-requires QueryLineCpPpoint to resolve it
-                    // (an unresolved cp returns degenerate bounds and the segment's highlight
-                    // vanishes). DisplayLine skips non-text runs, so nothing is drawn for it.
+                    // A hard line/paragraph break terminates the line. Record it as a zero-width
+                    // non-text run so its codepoints stay QUERYABLE (a selection that spans lines
+                    // includes the break cp; FullTextLine.GetTextBounds needs QueryLineCpPpoint to
+                    // resolve it). DisplayLine skips non-text runs, so nothing is drawn for it.
                     line.Runs.Add(new ManagedLsRun
                     {
                         Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
@@ -245,6 +238,27 @@ namespace MS.Internal.TextFormatting
                     cp += cchText;
                     forced = true;
                     break;
+                }
+
+                if (!isText || fHidden != 0)
+                {
+                    // A control / embedded-object (U+FFFC) / hidden run. Unlike a hard break it does
+                    // NOT terminate the line -- it is a zero-width, non-drawn placeholder that the
+                    // line steps over. Consume it and CONTINUE so the line runs on to the real line/
+                    // paragraph break. Force-breaking here instead produced a degenerate object-only
+                    // line whose length the caller (FullTextLine/TextBlock) could not advance past, so
+                    // it re-formatted from the same cp forever -> 100% CPU hang on any page with an
+                    // inline object (the RadioButton page's control content is one).
+                    line.Runs.Add(new ManagedLsRun
+                    {
+                        Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
+                        Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
+                        CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
+                        Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
+                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false,
+                    });
+                    cp += cchText;
+                    continue;
                 }
 
                 // Measure the run (ideal char widths), capped to the remaining column width.
