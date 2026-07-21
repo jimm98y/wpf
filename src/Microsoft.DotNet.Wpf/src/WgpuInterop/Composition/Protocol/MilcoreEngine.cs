@@ -1862,9 +1862,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case 3: // Quadratic Bezier
                     figure.Segments.Add(new QuadraticBezierSegment(P(16), P(32)));
                     return 48;
-                case 4: // Arc -- not converted; approximate with a line to the endpoint.
-                    figure.Segments.Add(new LineSegment(P(16)));
+                case 4: // Arc (MIL_SEGMENT_ARC) -> cubic beziers. Point@16, Size(radii)@32,
+                {       // XRotation(deg)@48, fLargeArc@56, eSweepDirection@60 (0=CCW, 1=CW).
+                    Vector2 end = P(16);
+                    Vector2 rad = P(32);
+                    r.Position = segPos + 48; double xRotDeg = r.F64();
+                    r.Position = segPos + 56; bool largeArc = r.U32() != 0;
+                    r.Position = segPos + 60; bool sweepClockwise = r.U32() != 0;
+                    AddArcAsBeziers(figure, CurrentPoint(figure), end, (float)rad.X, (float)rad.Y,
+                        (float)xRotDeg, largeArc, sweepClockwise);
                     return 64;
+                }
                 case 5: // PolyLine: Count@12, then Count points
                 case 6: // PolyBezier: points in triples
                 case 7: // PolyQuadraticBezier: points in pairs
@@ -1883,6 +1891,114 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 default:
                     return 16; // unknown -- skip the header and hope to resync
             }
+        }
+
+        // Current pen position of a figure = the last segment's endpoint (or the figure start).
+        private static Vector2 CurrentPoint(PathFigure figure)
+        {
+            if (figure.Segments.Count == 0) return figure.Start;
+            return figure.Segments[figure.Segments.Count - 1] switch
+            {
+                LineSegment l => l.Point,
+                QuadraticBezierSegment q => q.Point,
+                CubicBezierSegment c => c.Point,
+                _ => figure.Start,
+            };
+        }
+
+        // Endpoint-parameterised elliptical arc -> cubic beziers (SVG/W3C implementation-notes
+        // algorithm). WPF serialises a Border's non-uniform CornerRadius corners as MIL arc
+        // segments; approximating them with a straight line produced chamfered ("triangular")
+        // corners. Splits the arc into <=90 deg pieces, each a cubic bezier.
+        private static void AddArcAsBeziers(PathFigure figure, Vector2 start, Vector2 end,
+            float rx, float ry, float xRotDeg, bool largeArc, bool sweepClockwise)
+        {
+            if (rx == 0f || ry == 0f || (start.X == end.X && start.Y == end.Y))
+            {
+                figure.Segments.Add(new LineSegment(end));
+                return;
+            }
+
+            rx = MathF.Abs(rx);
+            ry = MathF.Abs(ry);
+            float phi = xRotDeg * MathF.PI / 180f;
+            float cosPhi = MathF.Cos(phi), sinPhi = MathF.Sin(phi);
+
+            // Step 1: (x1', y1') in the rotated frame.
+            float dx = (start.X - end.X) * 0.5f, dy = (start.Y - end.Y) * 0.5f;
+            float x1p = cosPhi * dx + sinPhi * dy;
+            float y1p = -sinPhi * dx + cosPhi * dy;
+
+            // Ensure radii are large enough.
+            float lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+            if (lambda > 1f) { float s = MathF.Sqrt(lambda); rx *= s; ry *= s; }
+
+            float rx2 = rx * rx, ry2 = ry * ry, x1p2 = x1p * x1p, y1p2 = y1p * y1p;
+
+            // Step 2: centre (cx', cy') in the rotated frame.
+            float num = rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2;
+            float den = rx2 * y1p2 + ry2 * x1p2;
+            float co = MathF.Sqrt(MathF.Max(0f, num / den));
+            if (largeArc == sweepClockwise) co = -co;
+            float cxp = co * (rx * y1p / ry);
+            float cyp = co * (-ry * x1p / rx);
+
+            // Step 3: centre in the original frame.
+            float cx = cosPhi * cxp - sinPhi * cyp + (start.X + end.X) * 0.5f;
+            float cy = sinPhi * cxp + cosPhi * cyp + (start.Y + end.Y) * 0.5f;
+
+            // Step 4: start angle and sweep.
+            float ux = (x1p - cxp) / rx, uy = (y1p - cyp) / ry;
+            float vx = (-x1p - cxp) / rx, vy = (-y1p - cyp) / ry;
+            float theta1 = SignedAngle(1f, 0f, ux, uy);
+            float dtheta = SignedAngle(ux, uy, vx, vy);
+            if (!sweepClockwise && dtheta > 0f) dtheta -= 2f * MathF.PI;
+            else if (sweepClockwise && dtheta < 0f) dtheta += 2f * MathF.PI;
+
+            int segs = (int)MathF.Ceiling(MathF.Abs(dtheta) / (MathF.PI * 0.5f));
+            if (segs < 1) segs = 1;
+            float delta = dtheta / segs;
+            float sinHalf = MathF.Sin(delta * 0.5f);
+            float alpha = sinHalf == 0f ? 0f : (4f / 3f) * (1f - MathF.Cos(delta * 0.5f)) / sinHalf;
+
+            float theta = theta1;
+            Vector2 cur = start;
+            for (int i = 0; i < segs; i++)
+            {
+                float theta2 = theta + delta;
+                float cosT = MathF.Cos(theta), sinT = MathF.Sin(theta);
+                float cosT2 = MathF.Cos(theta2), sinT2 = MathF.Sin(theta2);
+
+                Vector2 p2 = new Vector2(
+                    cx + rx * cosT2 * cosPhi - ry * sinT2 * sinPhi,
+                    cy + rx * cosT2 * sinPhi + ry * sinT2 * cosPhi);
+
+                // Ellipse tangents (unnormalised d/dtheta).
+                Vector2 d1 = new Vector2(
+                    -rx * sinT * cosPhi - ry * cosT * sinPhi,
+                    -rx * sinT * sinPhi + ry * cosT * cosPhi);
+                Vector2 d2 = new Vector2(
+                    -rx * sinT2 * cosPhi - ry * cosT2 * sinPhi,
+                    -rx * sinT2 * sinPhi + ry * cosT2 * cosPhi);
+
+                figure.Segments.Add(new CubicBezierSegment(
+                    new Vector2(cur.X + alpha * d1.X, cur.Y + alpha * d1.Y),
+                    new Vector2(p2.X - alpha * d2.X, p2.Y - alpha * d2.Y),
+                    p2));
+
+                cur = p2;
+                theta = theta2;
+            }
+        }
+
+        // Signed angle from (ux,uy) to (vx,vy).
+        private static float SignedAngle(float ux, float uy, float vx, float vy)
+        {
+            float dot = ux * vx + uy * vy;
+            float len = MathF.Sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy));
+            float ang = len == 0f ? 0f : MathF.Acos(Math.Clamp(dot / len, -1f, 1f));
+            if (ux * vy - uy * vx < 0f) ang = -ang;
+            return ang;
         }
 
         private static Rect GeometryBounds(Geometry g) => g switch
