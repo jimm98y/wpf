@@ -57,6 +57,7 @@ namespace MS.Internal.TextFormatting
         public int Width;                   // ideal width including trailing spaces
         public int WidthNoTrailing;         // ideal width excluding trailing whitespace
         public bool ForcedBreak;            // ended at a hard line/para break
+        public bool RightToLeft;            // paragraph flow direction is right-to-left
     }
 
     internal sealed class ManagedLsContext
@@ -171,6 +172,15 @@ namespace MS.Internal.TextFormatting
             if (cb == null) return LsErr.InvalidContext;
 
             var line = new ManagedLsLine { CpFirst = cpFirst };
+
+            // Paragraph flow direction. FetchPap reports it as the text flow (WS = right-to-left).
+            // We position runs left-to-right (penX) in logical order regardless; the RTL flag tells
+            // DisplayLine / the query entry points to mirror the run x-origin so an RTL paragraph's
+            // text lands on the correct (right) side instead of overrunning to the left.
+            LsPap pap = new LsPap();
+            cb.FetchPap(ploc, cpFirst, ref pap);
+            line.RightToLeft = pap.lstflow == LsTFlow.lstflowWS;
+
             int column = (durColumn <= 0) ? int.MaxValue : durColumn;
             int penX = 0;
             int cp = cpFirst;
@@ -240,15 +250,50 @@ namespace MS.Internal.TextFormatting
                     break;
                 }
 
+                // A real inline object (an embedded UIElement) is delivered with idObj ==
+                // ObjectId.InlineObject. Unlike a break it does not terminate the line and unlike a
+                // control run it reserves horizontal space: format it through the object handler
+                // (InlineFormat -> TextEmbeddedObject.Format) to get its width/height, place it at the
+                // current pen, extend the line metrics, and CONTINUE the line. The object's own visual
+                // is drawn by the framework (InlineUIContainer), so the run itself carries no glyphs.
+                if (chp.idObj == (ushort)TextStore.ObjectId.InlineObject)
+                {
+                    ObjDim objDim = new ObjDim();
+                    int rightMargin = (column == int.MaxValue) ? int.MaxValue : column;
+                    LsErr ofr = cb.InlineFormat(ploc, plsrun, cp, penX, rightMargin,
+                        ref objDim, out _, out _, out _, out _);
+
+                    int objWidth  = ofr == LsErr.None ? objDim.dur : 0;
+                    int objHeight = ofr == LsErr.None ? objDim.heightsRef.dvMultiLineHeight : 0;
+                    int objAscent = ofr == LsErr.None ? objDim.heightsRef.dvAscent : 0;
+                    if (objAscent < 0) objAscent = 0;
+                    if (objHeight < objAscent) objHeight = objAscent;
+
+                    line.Runs.Add(new ManagedLsRun
+                    {
+                        Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
+                        Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
+                        CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
+                        Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
+                        GlyphCount = 0, PenX = penX, Width = objWidth,
+                        Ascent = objAscent, Descent = objHeight - objAscent, IsText = false,
+                    });
+                    lineAscent = Math.Max(lineAscent, objAscent);
+                    lineDescent = Math.Max(lineDescent, objHeight - objAscent);
+                    penX += objWidth;
+                    cp += cchText;
+                    continue;
+                }
+
                 if (!isText || fHidden != 0)
                 {
-                    // A control / embedded-object (U+FFFC) / hidden run. Unlike a hard break it does
-                    // NOT terminate the line -- it is a zero-width, non-drawn placeholder that the
-                    // line steps over. Consume it and CONTINUE so the line runs on to the real line/
-                    // paragraph break. Force-breaking here instead produced a degenerate object-only
-                    // line whose length the caller (FullTextLine/TextBlock) could not advance past, so
-                    // it re-formatted from the same cp forever -> 100% CPU hang on any page with an
-                    // inline object (the RadioButton page's control content is one).
+                    // A control (e.g. bidi Reverse, whose placeholder char is also U+FFFC) or hidden
+                    // run. Unlike a hard break it does NOT terminate the line -- it is a zero-width,
+                    // non-drawn placeholder that the line steps over. Consume it and CONTINUE so the
+                    // line runs on to the real line/paragraph break. Force-breaking here instead
+                    // produced a degenerate control-run-only line whose length the caller
+                    // (FullTextLine/TextBlock) could not advance past, so it re-formatted from the same
+                    // cp forever -> 100% CPU hang on any page whose text carries such a run.
                     line.Runs.Add(new ManagedLsRun
                     {
                         Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
@@ -455,7 +500,16 @@ namespace MS.Internal.TextFormatting
             {
                 if (!run.IsText || run.GlyphCount == 0) continue;
 
-                LSPOINT ptRun = new LSPOINT(pt.x + run.PenX, baseline);
+                // Run x-origin. For LTR it is the run's left edge (pt.x + penX). For an RTL paragraph
+                // ComputeShapedGlyphRun negates the origin (native LS supplies a NEGATIVE run x from
+                // the line origin). This engine is single-direction greedy (it does not reorder runs),
+                // so to keep an LTR span readable AND flush against the paragraph's right edge we shift
+                // the whole line left by its width (penX - Width) and let upstream negate it: run 0
+                // lands at the right edge and later runs sit to its right in reading order. Without
+                // this an LTR run in an RTL paragraph starts at the right edge and runs off leftward
+                // across whatever sits there (e.g. the RadioButton's circle).
+                int runX = line.RightToLeft ? (pt.x + run.PenX - line.Width) : (pt.x + run.PenX);
+                LSPOINT ptRun = new LSPOINT(runX, baseline);
                 var lsHeights = new LsHeights { dvAscent = run.Ascent, dvDescent = run.Descent, dvMultiLineHeight = run.Ascent + run.Descent };
                 var clip = clipRect;
                 var expTypes = new LsExpType[run.GlyphCount];
