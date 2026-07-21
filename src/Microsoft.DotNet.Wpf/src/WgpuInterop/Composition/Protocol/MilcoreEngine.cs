@@ -1868,7 +1868,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Vector2 rad = P(32);
                     r.Position = segPos + 48; double xRotDeg = r.F64();
                     r.Position = segPos + 56; bool largeArc = r.U32() != 0;
-                    r.Position = segPos + 60; bool sweepClockwise = r.U32() != 0;
+                    r.Position = segPos + 60; bool sweepClockwise = r.U32() == 0;
                     AddArcAsBeziers(figure, CurrentPoint(figure), end, (float)rad.X, (float)rad.Y,
                         (float)xRotDeg, largeArc, sweepClockwise);
                     return 64;
