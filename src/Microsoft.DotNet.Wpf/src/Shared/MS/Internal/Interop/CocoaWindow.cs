@@ -163,6 +163,29 @@ namespace MS.Internal.Interop
             {
                 s_byView[_contentView] = this;
             }
+
+            // A freshly-ordered-front window's CAMetalLayer stays occluded until the Cocoa run loop has
+            // run enough for the window-server compositing handshake to complete. While occluded, wgpu
+            // hands back no Metal drawable, so the window paints nothing and the first frame can stall
+            // for many seconds until some unrelated event happens to run the loop. Pump the run loop
+            // here (bounded) so the handshake completes synchronously and the first present succeeds.
+            if (!borderless)
+                PumpUntilVisible();
+        }
+
+        // Run the Cocoa run loop until the window server reports this window on-screen (its occlusion
+        // state includes Visible), bounded so we never block window creation indefinitely.
+        private void PumpUntilVisible()
+        {
+            const ulong NSWindowOcclusionStateVisible = 1UL << 1;
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            SendVoidBool(app, Sel("activateIgnoringOtherApps:"), true);
+            for (int i = 0; i < 120; i++)   // ~ up to 120 * 8ms; breaks as soon as visible (usually a few iterations)
+            {
+                PumpEvents(8);
+                if (((ulong)(long)Send(_window, Sel("occlusionState")) & NSWindowOcclusionStateVisible) != 0)
+                    break;
+            }
         }
 
         private bool _borderless;

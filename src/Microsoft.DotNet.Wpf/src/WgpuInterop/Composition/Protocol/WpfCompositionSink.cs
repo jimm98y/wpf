@@ -520,9 +520,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (s_logPath != null) WgpuContext.LogSink = Log;
                 _ctx = WgpuContext.Create();
                 // A real default font + shaper so text-STRING glyph runs (GlyphRunDraw with .Text) —
-                // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent — shape
-                // and rasterize with actual glyphs. WPF's own text arrives as pre-shaped glyph-INDEX runs
-                // with per-run fonts, so this default is only used for those string runs.
+                // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent —
+                // shape and rasterize with actual glyphs. WPF's own text arrives as pre-shaped
+                // glyph-INDEX runs with per-run fonts, so this default is only used for those string runs.
                 _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.SimpleTextShaper());
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
