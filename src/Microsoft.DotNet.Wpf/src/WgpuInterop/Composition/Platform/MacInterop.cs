@@ -34,20 +34,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
-        /// Recompute a window's AppKit drop shadow from its current (alpha) content. Needed for a
-        /// non-opaque CAMetalLayer-backed popup: AppKit doesn't notice the Metal drawable changing,
-        /// so its shadow stays shaped to whatever was there when the window was shown. Main thread only.
-        /// The handle is the NSView (as passed to CreateSurface); resolve its NSWindow first —
-        /// invalidateShadow is an NSWindow selector and throws on an NSView.
-        /// </summary>
-        public static void InvalidateWindowShadow(IntPtr nsView)
-        {
-            if (nsView == IntPtr.Zero) return;
-            IntPtr window = Send(nsView, Sel("window"));
-            if (window != IntPtr.Zero) Send(window, Sel("invalidateShadow"));
-        }
-
-        /// <summary>
         /// Create a wgpu Metal surface for an NSView*. Makes the view layer-backed and
         /// installs a CAMetalLayer, then wraps that layer in WGPUSurfaceSourceMetalLayer.
         /// Must be called on the main (UI) thread, like all AppKit view mutation.
