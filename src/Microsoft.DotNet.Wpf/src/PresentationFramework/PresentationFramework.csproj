@@ -325,6 +325,7 @@
     <Compile Include="MS\Internal\PtsHost\FloaterParaClient.cs" />
     <Compile Include="MS\Internal\PtsHost\FloaterParagraph.cs" />
     <Compile Include="MS\Internal\PtsHost\FlowDocumentPage.cs" />
+    <Compile Include="MS\Internal\PtsHost\ManagedFlowLayout.cs" />
     <Compile Include="MS\Internal\PtsHost\Line.cs" />
     <Compile Include="MS\Internal\PtsHost\LineBase.cs" />
     <Compile Include="MS\Internal\PtsHost\LineBreakRecord.cs" />

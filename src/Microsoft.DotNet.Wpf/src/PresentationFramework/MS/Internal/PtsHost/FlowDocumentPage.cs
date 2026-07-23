@@ -39,8 +39,16 @@ namespace MS.Internal.PtsHost
         internal FlowDocumentPage(StructuralCache structuralCache) : base(null)
         {
             _structuralCache = structuralCache;
-            _ptsPage = new PtsPage(structuralCache.Section);
+            // Off-Windows the native PTS engine (PresentationNative_cor3.dll) is absent, so
+            // structuralCache.Section (which acquires a PtsContext) would throw. Use a fully-managed
+            // block layout instead; _ptsPage stays null and every PTS path is guarded by s_managed.
+            if (!s_managed)
+                _ptsPage = new PtsPage(structuralCache.Section);
         }
+
+        // True when the native PTS document engine is unavailable (non-Windows). See ManagedFlowLayout.
+        private static readonly bool s_managed = !OperatingSystem.IsWindows();
+        private ManagedFlowLayout _managedLayout;
 
         // ------------------------------------------------------------------
         // Finalizer
@@ -115,6 +123,8 @@ namespace MS.Internal.PtsHost
         internal void FormatBottomless(Size pageSize, Thickness pageMargin)
         {
             Invariant.Assert(!IsDisposed);
+
+            if (s_managed) { FormatBottomlessManaged(pageSize, pageMargin); return; }
 
             // Every time full format is done reset formatted lines count to 0.
             _formattedLinesCount = 0;
@@ -228,6 +238,8 @@ namespace MS.Internal.PtsHost
 
             _partitionSize = partitionSize;
 
+            if (s_managed) { _visualNeedsUpdate = true; return; }
+
             using(_structuralCache.SetDocumentArrangeContext(this))
             {
                 _ptsPage.ArrangePage();
@@ -235,6 +247,87 @@ namespace MS.Internal.PtsHost
             }
 
             ValidateTextView();
+        }
+
+        // ---- Managed (no-PTS) layout path ------------------------------------------------
+        // Lay the FlowDocument's blocks out with ManagedFlowLayout (FormattedText on the fork's
+        // managed text stack) and render them into the PageVisual, so RichTextBox / FlowDocument
+        // controls work where the native PTS engine is unavailable.
+        private void FormatBottomlessManaged(Size pageSize, Thickness pageMargin)
+        {
+            _formattedLinesCount = 0;
+            TextDpi.EnsureValidPageSize(ref pageSize);
+            _pageMargin = pageMargin;
+            _lastFormatWidth = pageSize.Width;
+
+            // Mark the cache formatted AND subscribe to TextContainer changes, so edits (typing) invalidate
+            // and re-format. The PTS path does this via SetDocumentFormatContext, which we never enter.
+            _structuralCache.EnsureInitializedForFirstFormat();
+
+            _managedLayout ??= new ManagedFlowLayout();
+            // Only the blocks the edit touched (per StructuralCache's dirty text ranges) are re-measured;
+            // the rest reuse their cached FormattedText. Then consume the ranges.
+            System.Collections.Generic.HashSet<System.Windows.Documents.Block> dirty = ComputeManagedDirtyBlocks();
+            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty);
+            _structuralCache.ClearUpdateInfo(false);
+
+            Size size = _managedLayout.Size;
+            SetSize(size);
+            SetContentBox(new Rect(pageMargin.Left, pageMargin.Top,
+                Math.Max(0, size.Width - pageMargin.Left - pageMargin.Right),
+                Math.Max(0, size.Height - pageMargin.Top - pageMargin.Bottom)));
+            _partitionSize = size;
+            _visualNeedsUpdate = true;
+        }
+
+        // Map StructuralCache's dirty text ranges to the top-level blocks they touch, so the managed
+        // layout re-measures only those. Returns null when there is no change info (first format /
+        // re-measure with no edit) — the layout then relies on its per-block cache.
+        private System.Collections.Generic.HashSet<System.Windows.Documents.Block> ComputeManagedDirtyBlocks()
+        {
+            DtrList dtrs = _structuralCache.DtrList;
+            if (dtrs == null || dtrs.Length == 0) return null;
+            FlowDocument doc = _structuralCache.PropertyOwner as FlowDocument;
+            if (doc == null) return null;
+
+            ITextPointer containerStart = _structuralCache.TextContainer.Start;
+            var dirty = new System.Collections.Generic.HashSet<System.Windows.Documents.Block>();
+            foreach (System.Windows.Documents.Block b in doc.Blocks)
+            {
+                int bs = containerStart.GetOffsetToPosition(b.ContentStart);
+                int be = containerStart.GetOffsetToPosition(b.ContentEnd);
+                for (int i = 0; i < dtrs.Length; i++)
+                {
+                    DirtyTextRange dtr = dtrs[i];
+                    int ds = dtr.StartIndex;
+                    int de = dtr.StartIndex + Math.Max(dtr.PositionsAdded, dtr.PositionsRemoved);
+                    if (ds <= be && de >= bs) { dirty.Add(b); break; }
+                }
+            }
+            // A structural edit at a block boundary may not fall inside any block's content range; re-measure
+            // everything rather than render stale layout.
+            if (dirty.Count == 0)
+                foreach (System.Windows.Documents.Block b in doc.Blocks) dirty.Add(b);
+            return dirty;
+        }
+
+        private DrawingVisual _managedContentVisual;
+        private void UpdateVisualManaged()
+        {
+            if (!_visualNeedsUpdate)
+                return;
+
+            this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), new Rect(_partitionSize));
+
+            // Reuse a single content visual (RenderOpen clears it) — reconnecting a fresh child each
+            // update trips VisualCollection ("index already in use").
+            _managedContentVisual ??= new DrawingVisual();
+            using (DrawingContext dc = _managedContentVisual.RenderOpen())
+            {
+                _managedLayout?.Render(dc);
+            }
+            this.PageVisual.Child = _managedContentVisual;   // same reference after the first set -> no-op
+            _visualNeedsUpdate = false;
         }
 
         //-------------------------------------------------------------------
@@ -615,6 +708,13 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         internal void UpdateViewport(ref PTS.FSRECT viewport, bool drawBackground)
         {
+            if (s_managed)
+            {
+                if (!IsDisposed && drawBackground && this.PageVisual != null)
+                    this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), viewport.FromTextDpi());
+                return;
+            }
+
             Rect contentViewport;
 
             // Transform point to PtsPage coordinate system.
@@ -676,7 +776,7 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         // Is this page already disposed?
         //-------------------------------------------------------------------
-        internal bool IsDisposed { get { return _disposed || _structuralCache.PtsContext.Disposed; } }
+        internal bool IsDisposed { get { return _disposed || (!s_managed && _structuralCache.PtsContext.Disposed); } }
 
         //-------------------------------------------------------------------
         // Size of content on page.
@@ -685,6 +785,8 @@ namespace MS.Internal.PtsHost
         {
             get
             {
+                if (s_managed)
+                    return _managedLayout != null ? _managedLayout.Size : Size;
                 Size size = _ptsPage.ContentSize;
                 size.Width += _pageMargin.Left + _pageMargin.Right;
                 size.Height += _pageMargin.Top + _pageMargin.Bottom;
@@ -695,7 +797,11 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         // Is it finite page or bottomless?
         //-------------------------------------------------------------------
-        internal bool FinitePage { get { return _ptsPage.FinitePage; } }
+        internal bool FinitePage { get { return _ptsPage != null && _ptsPage.FinitePage; } }
+
+        /// <summary>The native PTS engine is unavailable; this page uses the managed block layout.</summary>
+        internal bool IsManaged => s_managed;
+        internal ManagedFlowLayout ManagedLayout => _managedLayout;
 
         //-------------------------------------------------------------------
         // Page context
@@ -845,6 +951,7 @@ namespace MS.Internal.PtsHost
             {
                 SetVisual(new PageVisual(this));
             }
+            if (s_managed) { UpdateVisualManaged(); return; }
             if (_visualNeedsUpdate)
             {
                 // Draw background

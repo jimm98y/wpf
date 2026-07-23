@@ -74,12 +74,22 @@ namespace MS.Internal.PtsHost
         /// <returns>Reference to object compatible with IDisposable to re-initialize page context</returns>
         internal IDisposable SetDocumentFormatContext(FlowDocumentPage currentPage)
         {
+            EnsureInitializedForFirstFormat();
+            return (new DocumentFormatContext(this, currentPage) as IDisposable);
+        }
+
+        /// <summary>
+        /// Marks the cache formatted and subscribes the owner to TextContainer changes (so edits
+        /// invalidate + re-format). The PTS path does this inside SetDocumentFormatContext; the managed
+        /// FlowDocumentPage path calls it directly since it never enters a PTS format context.
+        /// </summary>
+        internal void EnsureInitializedForFirstFormat()
+        {
             if (!CheckFlags(Flags.FormattedOnce))
             {
                 SetFlags(true, Flags.FormattedOnce);
                 _owner.InitializeForFirstFormatting();
             }
-            return (new DocumentFormatContext(this, currentPage) as IDisposable);
         }
 
         /// <summary>
