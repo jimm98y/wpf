@@ -147,6 +147,20 @@ namespace MS.Internal.Interop
 
             if (borderless)
             {
+                // Popups (menus/ComboBox/ToolTip) are per-pixel-alpha on Windows. Make the NSWindow
+                // non-opaque with a clear background so the WebGPU surface's alpha is honoured -- the
+                // popup's drop shadow + rounded corners then composite over the content behind the
+                // window instead of a filled (white) rectangle. The CAMetalLayer is matched to the
+                // window's opacity in MacInterop.CreateSurface, and the surface is configured with a
+                // premultiplied alpha mode + a transparent clear for layered targets.
+                SendVoidBool(_window, Sel("setOpaque:"), false);
+                SendVoidPtr(_window, Sel("setBackgroundColor:"),
+                            Send(objc_getClass("NSColor"), Sel("clearColor")));
+                // No AppKit window shadow: it cannot follow a CAMetalLayer sublayer's alpha, so on a
+                // transparent popup it renders as a hard rectangular border around the whole window.
+                // The popup's shadow comes from WPF's own DropShadowEffect, rendered by the compositor.
+                SendVoidBool(_window, Sel("setHasShadow:"), false);
+
                 // Float above normal windows and appear without stealing key focus, and place it at the
                 // requested screen position instead of centering. NSFloatingWindowLevel = 3.
                 SendVoidNInt(_window, Sel("setLevel:"), 3);

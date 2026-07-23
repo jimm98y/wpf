@@ -51,6 +51,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             }
         }
 
+        /// <summary>Recompute a transparent popup window's native drop shadow from its current content
+        /// (macOS: NSWindow.invalidateShadow). No-op where the OS shadow tracks content automatically.</summary>
+        public static void InvalidateWindowShadow(IntPtr nativeWindow)
+        {
+            if (Current == PlatformKind.MacOS) MacInterop.InvalidateWindowShadow(nativeWindow);
+        }
+
         /// <summary>
         /// Push a premultiplied, top-down RGBA frame to a transparent/layered popup
         /// window (WPF Popups on Windows). Returns false when the platform has no

@@ -344,9 +344,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
+            // A layered popup composites over what's behind its window, so clear fully transparent
+            // (premultiplied 0,0,0,0) rather than the target's opaque clear colour. WPF sends a popup
+            // clear of (1,1,1,0) — white RGB, alpha 0 — which an opaque surface would show as a white
+            // rectangle; on a premultiplied surface it must be zeroed or it tints the transparent areas.
+            RgbaColor clear = ts.Transparent ? new RgbaColor(0, 0, 0, 0) : t.ClearColor;
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, t.ClearColor);
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, clear);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
@@ -549,7 +554,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
                 WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter);
-                ts = new TargetSurface { Surface = surface, Format = format, Width = t.Width, Height = t.Height };
+                ts = new TargetSurface { Surface = surface, Format = format, Width = t.Width, Height = t.Height, Transparent = t.IsLayered };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }
@@ -602,6 +607,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             Log($"CONFIGURE surface {ts.Width}x{ts.Height} present={s_presentMode}");
             WGPUPresentMode mode = SurfaceSupportsPresentMode(ts.Surface, s_presentMode) ? s_presentMode : WGPUPresentMode.Fifo;
+            // Layered popups composite over the content behind them. Pick any non-opaque alpha mode the
+            // surface advertises so wgpu sets the CAMetalLayer non-opaque (an Opaque mode would force it
+            // back to opaque and the transparent clear would show as black). wgpu-native's Metal backend
+            // reports Opaque + Unpremultiplied (not Premultiplied), so prefer whichever transparent mode
+            // is available; CoreAnimation composites the CAMetalLayer's drawable regardless of the label.
+            WGPUCompositeAlphaMode alpha = WGPUCompositeAlphaMode.Auto;
+            if (ts.Transparent)
+            {
+                if (SurfaceSupportsAlphaMode(ts.Surface, WGPUCompositeAlphaMode.Premultiplied)) alpha = WGPUCompositeAlphaMode.Premultiplied;
+                else if (SurfaceSupportsAlphaMode(ts.Surface, WGPUCompositeAlphaMode.Unpremultiplied)) alpha = WGPUCompositeAlphaMode.Unpremultiplied;
+                else if (SurfaceSupportsAlphaMode(ts.Surface, WGPUCompositeAlphaMode.Inherit)) alpha = WGPUCompositeAlphaMode.Inherit;
+            }
             var config = new WGPUSurfaceConfiguration
             {
                 device = _ctx!.Device,
@@ -609,7 +626,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 usage = WGPUTextureUsage.RenderAttachment | (s_surfDump != null ? WGPUTextureUsage.CopySrc : 0),
                 width = (uint)ts.Width,
                 height = (uint)ts.Height,
-                alphaMode = WGPUCompositeAlphaMode.Auto,
+                alphaMode = alpha,
                 presentMode = mode,
             };
             wgpuSurfaceConfigure(ts.Surface, &config);
@@ -625,6 +642,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             bool found = false;
             for (nuint i = 0; i < caps.presentModeCount; i++)
                 if (caps.presentModes[i] == mode) { found = true; break; }
+            wgpuSurfaceCapabilitiesFreeMembers(caps);
+            return found;
+        }
+
+        private bool SurfaceSupportsAlphaMode(IntPtr surface, WGPUCompositeAlphaMode mode)
+        {
+            var caps = new WGPUSurfaceCapabilities();
+            wgpuSurfaceGetCapabilities(surface, _ctx!.Adapter, &caps);
+            bool found = false;
+            for (nuint i = 0; i < caps.alphaModeCount; i++)
+                if (caps.alphaModes[i] == mode) { found = true; break; }
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return found;
         }
@@ -650,6 +678,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public int Height;
             /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>
             public int NullAcquires;
+            /// <summary>Layered popup target: configure with premultiplied alpha + clear transparent so
+            /// the popup's shadow/rounded corners composite over the content behind the window.</summary>
+            public bool Transparent;
         }
     }
 }

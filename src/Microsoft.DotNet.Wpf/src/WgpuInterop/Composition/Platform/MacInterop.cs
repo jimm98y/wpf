@@ -34,6 +34,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
+        /// Recompute a window's AppKit drop shadow from its current (alpha) content. Needed for a
+        /// non-opaque CAMetalLayer-backed popup: AppKit doesn't notice the Metal drawable changing,
+        /// so its shadow stays shaped to whatever was there when the window was shown. Main thread only.
+        /// The handle is the NSView (as passed to CreateSurface); resolve its NSWindow first —
+        /// invalidateShadow is an NSWindow selector and throws on an NSView.
+        /// </summary>
+        public static void InvalidateWindowShadow(IntPtr nsView)
+        {
+            if (nsView == IntPtr.Zero) return;
+            IntPtr window = Send(nsView, Sel("window"));
+            if (window != IntPtr.Zero) Send(window, Sel("invalidateShadow"));
+        }
+
+        /// <summary>
         /// Create a wgpu Metal surface for an NSView*. Makes the view layer-backed and
         /// installs a CAMetalLayer, then wraps that layer in WGPUSurfaceSourceMetalLayer.
         /// Must be called on the main (UI) thread, like all AppKit view mutation.
@@ -69,6 +83,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // so the result is crisp. Must match CocoaWindow.GetBackingScale / the HwndTarget DPI scale.
             SendVoidDouble(metalLayer, Sel("setContentsScale:"), BackingScale(nsView));
             s_metalLayers[nsView] = metalLayer;   // remembered so contentsScale can track DPI at runtime
+
+            // Match the CAMetalLayer's opacity to the hosting window's. Popup windows (menus, ComboBox,
+            // ToolTip) are created non-opaque (CocoaWindow) so their drop shadow / rounded corners can
+            // composite over the content behind them; the layer must also be non-opaque or Core Animation
+            // fills the untouched (alpha-0) pixels black/white. Normal windows stay opaque (faster).
+            IntPtr hostWindow = Send(nsView, Sel("window"));
+            bool windowOpaque = hostWindow == IntPtr.Zero || SendBool(hostWindow, Sel("isOpaque"));
+            SendVoidBool(metalLayer, Sel("setOpaque:"), windowOpaque);
 
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {
@@ -183,6 +205,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 
         // objc_msgSend is variadic in C; declare one typed alias per call shape we use.
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
