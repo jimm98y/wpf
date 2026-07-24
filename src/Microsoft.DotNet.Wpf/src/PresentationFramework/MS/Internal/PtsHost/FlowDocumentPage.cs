@@ -264,6 +264,12 @@ namespace MS.Internal.PtsHost
             // and re-format. The PTS path does this via SetDocumentFormatContext, which we never enter.
             _structuralCache.EnsureInitializedForFirstFormat();
 
+            // Reset background-format bookkeeping. Crucially this sets CPInterrupted back to -1: without it
+            // the field sits at its default 0, and TextDocumentView.GetTextSegments would then truncate the
+            // bottomless page's single TextSegment to [Start, Start], making ITextView.Contains -- and hence
+            // the caret's HasValidLayout -- fail. The PTS path calls this from FormatBottomless.
+            _structuralCache.BackgroundFormatInfo.UpdateBackgroundFormatInfo();
+
             _managedLayout ??= new ManagedFlowLayout();
             // Only the blocks the edit touched (per StructuralCache's dirty text ranges) are re-measured;
             // the rest reuse their cached FormattedText. Then consume the ranges.
@@ -712,6 +718,17 @@ namespace MS.Internal.PtsHost
             {
                 if (!IsDisposed && drawBackground && this.PageVisual != null)
                     this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), viewport.FromTextDpi());
+                // Raise TextView.Updated so deferred consumers (e.g. the caret's
+                // _pendingUpdateCaretStateCallback in TextSelection.OnTextViewUpdated) run now that
+                // layout is valid. The PTS path does this at the end of UpdateViewport; mirror it here.
+                // First invalidate the view's cached TextSegments/Columns so they rebuild against the
+                // current TextContainer.End (otherwise a segment cached while the document was empty
+                // makes ITextView.Contains -- and thus caret HasValidLayout -- fail after edits).
+                if (!IsDisposed)
+                {
+                    _textView?.Invalidate();
+                    ValidateTextView();
+                }
                 return;
             }
 

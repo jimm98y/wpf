@@ -116,9 +116,13 @@ namespace MS.Internal.Documents
         {
             var layout = _owner.ManagedLayout;
             System.Windows.Documents.Paragraph para = (position as TextPointer)?.Paragraph;
-            if (layout == null || para == null || position is not TextPointer tp) return Rect.Empty;
-            int charOffset = new TextRange(para.ContentStart, tp).Text.Length;
-            return layout.CaretRect(para, charOffset) ?? Rect.Empty;
+            Rect result = Rect.Empty;
+            if (layout != null && para != null && position is TextPointer tp)
+            {
+                int charOffset = new TextRange(para.ContentStart, tp).Text.Length;
+                result = layout.CaretRect(para, charOffset) ?? Rect.Empty;
+            }
+            return result;
         }
 
         // Walk a paragraph's content forward by charCount plain-text characters and return that pointer.

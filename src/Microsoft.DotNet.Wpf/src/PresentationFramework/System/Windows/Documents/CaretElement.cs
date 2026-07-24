@@ -1144,6 +1144,14 @@ namespace System.Windows.Documents
         {
             Invariant.Assert(_isSelectionActive, "Blink animation should only be required for an owner with active selection.");
 
+            // GetCaretBlinkTime is a user32.dll call that doesn't exist off-Windows (unlike the other
+            // Win32 caret helpers here, this one drives the *visual* blink, so leaving it unguarded made
+            // the whole caret throw and never render). Use the Windows default so the caret blinks.
+            if (!OperatingSystem.IsWindows())
+            {
+                return 530;
+            }
+
             // Win32 GetCaretBlinkTime can return "0" without the error if SetCaretBlinkTime set as "0".
             int caretBlinkTime = (int)SafeNativeMethods.GetCaretBlinkTime();
             if (caretBlinkTime == 0)
