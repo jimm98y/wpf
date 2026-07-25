@@ -32,7 +32,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
     internal sealed unsafe partial class WgpuSceneRenderer : IDisposable
     {
-        private const int FloatsPerVertex = 8;            // pos.xy, color.rgba, uv.xy
+        private const int FloatsPerVertex = 12;           // pos.xy, color.rgba, uv.xy, shape params.xyzw (last 4 used only by fs_shape)
         private const int VertexStride = FloatsPerVertex * sizeof(float);
         // Intermediate layers/masks store LINEAR values (WPF colours arrive as linear scRGB).
         private const WGPUTextureFormat ReadbackFormat = WGPUTextureFormat.RGBA8Unorm;
@@ -473,6 +473,64 @@ fn fs_stroke(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
+        // Analytic closed-form shapes (ellipse, rectangle, rounded rectangle -- filled or stroked),
+        // drawn straight into the frame with per-fragment AA. NO coverage texture and NO per-frame GPU
+        // resource creation, so a continuously animated shape (a growing circle, a resizing card) costs
+        // nothing to re-realize -- unlike the coverage-mask path, which cache-misses on every geometry
+        // change and re-bakes a texture per frame. The vertex carries uv = local position relative to the
+        // shape centre and prm = (halfX, halfY, cornerR, strokeHalf), ALL in the shape's local units:
+        //   cornerR <  0  -> ellipse with radii (halfX, halfY)
+        //   cornerR >= 0  -> rounded rectangle of half-extents (halfX, halfY) and corner radius cornerR
+        //                    (cornerR == 0 is a sharp rectangle)
+        //   strokeHalf < 0 -> filled;  strokeHalf >= 0 -> stroked ring/outline of that half-thickness
+        // Distance is computed in local units and the AA width comes from fwidth(), so the result is
+        // correct under ANY affine world transform (rotation, non-uniform scale) with no special-casing.
+        private const string ShapeShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+    @location(2) prm : vec4<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    o.prm = prm;
+    return o;
+}
+
+@fragment
+fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
+    let p = in.uv;
+    let hx = in.prm.x; let hy = in.prm.y; let cr = in.prm.z; let sh = in.prm.w;
+    var d : f32;   // signed distance to the shape's centre-line, local units (>0 outside)
+    if (cr < 0.0) {
+        // ellipse with radii (hx, hy); first-order distance from the implicit function and its gradient
+        let qx = p.x / hx;
+        let qy = p.y / hy;
+        let f = qx * qx + qy * qy - 1.0;
+        let g = max(length(vec2<f32>(2.0 * qx / hx, 2.0 * qy / hy)), 1e-8);
+        d = f / g;
+    } else {
+        // rounded rectangle (exact SDF); cr == 0 gives a sharp rectangle
+        let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
+        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
+    }
+    let fw = max(fwidth(d), 1e-6);
+    var cov : f32;
+    if (sh < 0.0) {
+        cov = clamp(0.5 - d / fw, 0.0, 1.0);                 // filled
+    } else {
+        cov = clamp(0.5 - (abs(d) - sh) / fw, 0.0, 1.0);     // stroked ring/outline of half-width sh
+    }
+    return in.color * cov;                                    // in.color is premultiplied
+}
+";
+
         // GPU brush evaluation: gradients are computed per pixel in the fragment shader
         // (sampling the same 256-texel ramp the tessellated gradient path uses) instead
         // of the CPU per-texel bake. fs_maskbrush composites GPU-rasterized coverage
@@ -656,7 +714,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
@@ -671,6 +729,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _brushAlphaShaderModule;
         private IntPtr _idShaderModule;
         private IntPtr _strokeShaderModule;
+        private IntPtr _shapeShaderModule;
         private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
 
         // GPU path rasterization is the default; WPF_WEBGPU_CPU_RASTER=1 restores the
@@ -2236,6 +2295,22 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
+            // A solid-filled closed-form shape (ellipse, rounded rect, or plain rectangle) is drawn
+            // analytically (per-fragment SDF, no coverage texture), so animated/resizing shapes don't
+            // re-bake a mask every frame -- and even a rotated rect (which used to hit the coverage path)
+            // gets a crisp analytic edge. The SDF stays pixel-crisp on axis-aligned edges (full/zero
+            // coverage right at the pixel boundary) and only anti-aliases fractional edges, so it also
+            // improves the mesh path's hard-aliased rects. Non-solid brushes fall through to the coverage
+            // path (the SDF only outputs solid * coverage), as do rounded rects with elliptical corners
+            // (TryShapeParams returns false).
+            if (s_gpuRaster && fill.Brush is SolidColorBrush shapeFillBrush && !fill.IsGlyph
+                && fill.Geometry is EllipseGeometry or RoundedRectangleGeometry or RectangleGeometry
+                && TryShapeParams(fill.Geometry, out Vector2 sc, out float shx, out float shy, out float scr))
+            {
+                EmitShape(sc, shx, shy, scr, -1f, shapeFillBrush, world, opacity, clip, width, height, format, data);
+                return;
+            }
+
             // Curved/composite geometries (rounded rect, ellipse, group) go through
             // the analytic-AA coverage path rather than flat tessellation.
             if (fill.Geometry is RoundedRectangleGeometry or EllipseGeometry or GeometryGroup)
@@ -2342,6 +2417,18 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
             if (drawing.Stroke is { } strokeBrush && drawing.StrokeStyle.Thickness > 0)
             {
+                // A solid-stroked closed-form shape (ellipse, rounded rect, rectangle) becomes an analytic
+                // outline (per-fragment SDF, no coverage texture) instead of CPU stroke-to-outline + a
+                // re-baked mask every frame. These shapes have no meaningful caps, and rounded/elliptical
+                // corners already round the joins, so cap/join style is irrelevant. Distance is computed
+                // in local units with fwidth AA, so any affine transform is fine; no dashes.
+                if (s_gpuRaster && strokeBrush is SolidColorBrush solidRing
+                    && (drawing.StrokeStyle.DashArray is null || drawing.StrokeStyle.DashArray.Length == 0)
+                    && TryShapeParams(drawing.Geometry, out Vector2 rc, out float rhx, out float rhy, out float rcr))
+                {
+                    EmitShape(rc, rhx, rhy, rcr, (float)(drawing.StrokeStyle.Thickness / 2.0), solidRing, world, opacity, clip, width, height, format, data);
+                    return;
+                }
                 PathGeometry path = drawing.Geometry as PathGeometry ?? GeometryToPath(drawing.Geometry);
                 EmitStroke(new GeometryStroke(path, strokeBrush, drawing.StrokeStyle), world, opacity, clip, width, height, format, data);
             }
@@ -2414,6 +2501,73 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
             cm.LastFrame = _frameId;
             EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
+        }
+
+        // Extracts the analytic-shape parameters of a closed-form geometry (ellipse / rounded rect /
+        // rectangle). Returns false for anything else -- or a rounded rect with unequal corner radii,
+        // which the single-radius SDF can't represent (it keeps the coverage-mask path). centreLocal and
+        // the half-extents/cornerR are in the geometry's local units; cornerR < 0 marks an ellipse.
+        private static bool TryShapeParams(Geometry geom, out Vector2 centreLocal, out float halfX, out float halfY, out float cornerR)
+        {
+            centreLocal = default; halfX = halfY = cornerR = 0f;
+            switch (geom)
+            {
+                case EllipseGeometry e:
+                    if (e.RadiusX <= 0f || e.RadiusY <= 0f) return false;
+                    centreLocal = e.Center; halfX = e.RadiusX; halfY = e.RadiusY; cornerR = -1f;   // ellipse
+                    return true;
+                case RoundedRectangleGeometry rr:
+                    if (MathF.Abs(rr.RadiusX - rr.RadiusY) > 0.01f) return false;                  // elliptical corners: not this SDF
+                    halfX = (float)rr.Rect.Width * 0.5f; halfY = (float)rr.Rect.Height * 0.5f;
+                    if (halfX <= 0f || halfY <= 0f) return false;
+                    centreLocal = new Vector2((float)(rr.Rect.X + rr.Rect.Width * 0.5), (float)(rr.Rect.Y + rr.Rect.Height * 0.5));
+                    cornerR = Math.Clamp(rr.RadiusX, 0f, MathF.Min(halfX, halfY));
+                    return true;
+                case RectangleGeometry r:
+                    halfX = (float)r.Rect.Width * 0.5f; halfY = (float)r.Rect.Height * 0.5f;
+                    if (halfX <= 0f || halfY <= 0f) return false;
+                    centreLocal = new Vector2((float)(r.Rect.X + r.Rect.Width * 0.5), (float)(r.Rect.Y + r.Rect.Height * 0.5));
+                    cornerR = 0f;                                                                   // sharp rectangle
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // Draws an analytic closed-form shape -- filled (halfLocal < 0) or stroked outline of half-width
+        // halfLocal -- as a single device-space quad shaded by fs_shape. No coverage texture and no
+        // per-frame GPU resource creation, so a resizing shape costs nothing to re-realize each frame.
+        // All shape params are in local units; the shader does the AA (fwidth), so any affine world works.
+        private void EmitShape(Vector2 centreLocal, float halfX, float halfY, float cornerR, float halfLocal,
+            SolidColorBrush brush, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        {
+            if (clip.IsEmpty || halfX <= 0f || halfY <= 0f) return;
+
+            float scale = MathF.Sqrt(world.M11 * world.M11 + world.M12 * world.M12);
+            float hwLocal = MathF.Max(0f, halfLocal);
+            float padLocal = scale > 1e-6f ? 2f / scale : 2f;          // ~2px of AA margin, in local units
+            float extentX = halfX + hwLocal + padLocal;
+            float extentY = halfY + hwLocal + padLocal;
+            float sh = halfLocal < 0f ? -1f : hwLocal;                 // <0 selects a filled shape in the shader
+
+            float a = (float)Math.Clamp(brush.Color.A * opacity, 0.0, 1.0);
+            float pr = brush.Color.R * a, pg = brush.Color.G * a, pb = brush.Color.B * a;   // premultiplied
+
+            // Four corners of the local bounding box; uv = local position relative to the shape centre.
+            Span<Vector2> corner = stackalloc Vector2[4]
+            {
+                new(-extentX, -extentY), new(extentX, -extentY), new(extentX, extentY), new(-extentX, extentY),
+            };
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            foreach (Vector2 lc in corner)
+            {
+                Vector2 dev = Vector2.Transform(centreLocal + lc, world);
+                AddVertex(data.Verts, ToNdc(dev, width, height), pr, pg, pb, a, lc.X, lc.Y, halfX, halfY, cornerR, sh);
+            }
+            uint firstIndex = (uint)data.Indices.Count;
+            data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 1); data.Indices.Add(baseVertex + 2);
+            data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 2); data.Indices.Add(baseVertex + 3);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Shape, IntPtr.Zero));
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
@@ -2900,11 +3054,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             indices.Add(baseVertex); indices.Add(baseVertex + 2); indices.Add(baseVertex + 3);
         }
 
-        private static void AddVertex(List<float> verts, Vector2 ndc, float r, float g, float b, float a, float u, float v)
+        private static void AddVertex(List<float> verts, Vector2 ndc, float r, float g, float b, float a, float u, float v,
+            float p0 = 0f, float p1 = 0f, float p2 = 0f, float p3 = 0f)
         {
             verts.Add(ndc.X); verts.Add(ndc.Y);
             verts.Add(r); verts.Add(g); verts.Add(b); verts.Add(a);
             verts.Add(u); verts.Add(v);
+            verts.Add(p0); verts.Add(p1); verts.Add(p2); verts.Add(p3);   // shape params; used only by fs_shape (0 elsewhere)
         }
 
         // The current render target's absolute device origin (non-zero when rendering into a
@@ -3147,11 +3303,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_brushAlphaShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_brushAlphaShaderModule);
             if (_idShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_idShaderModule);
             if (_strokeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeShaderModule);
+            if (_shapeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shapeShaderModule);
             if (_whiteView != IntPtr.Zero) { wgpuTextureViewRelease(_whiteView); wgpuTextureRelease(_whiteTex); }
             if (_linearSampler != IntPtr.Zero) wgpuSamplerRelease(_linearSampler);
             if (_nearestSampler != IntPtr.Zero) wgpuSamplerRelease(_nearestSampler);
             _shaderModule = _clipShaderModule = _coverageShaderModule = IntPtr.Zero;
-            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = IntPtr.Zero;
+            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = _shapeShaderModule = IntPtr.Zero;
             _whiteTex = _whiteView = _linearSampler = _nearestSampler = IntPtr.Zero;
         }
 
@@ -3188,6 +3345,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.BrushAlpha => GetBrushAlphaShaderModule(),
                 FillKind.Id => GetIdShaderModule(),
                 FillKind.Stroke => GetStrokeShaderModule(),
+                FillKind.Shape => GetShapeShaderModule(),
                 _ => GetShaderModule(),
             };
             IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind);
@@ -3200,6 +3358,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_coverageShaderModule != IntPtr.Zero) return _coverageShaderModule;
             _coverageShaderModule = CompileWgsl(CoverageShaderWgsl);
             return _coverageShaderModule;
+        }
+
+        private IntPtr GetShapeShaderModule()
+        {
+            if (_shapeShaderModule != IntPtr.Zero) return _shapeShaderModule;
+            _shapeShaderModule = CompileWgsl(ShapeShaderWgsl);
+            return _shapeShaderModule;
         }
 
         private IntPtr GetBrushShaderModule()
@@ -3285,6 +3450,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.BrushAlpha => "fs_brushalpha",
                 FillKind.Id => "fs_id",
                 FillKind.Stroke => "fs_stroke",
+                FillKind.Shape => "fs_shape",
                 _ => "fs_solid",
             };
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -3293,16 +3459,20 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             fixed (byte* pVs = vsEntry)
             fixed (byte* pFs = fsEntry)
             {
-                var attributes = stackalloc WGPUVertexAttribute[3];
+                // All pipelines share the 12-float vertex stride. The shape pipeline additionally reads the
+                // last 4 floats as location 3 (shape params: halfX, halfY, cornerR, strokeHalf); every other
+                // pipeline reads only locations 0-2 and ignores the trailing shape params.
+                var attributes = stackalloc WGPUVertexAttribute[4];
                 attributes[0] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 0, shaderLocation = 0 };
                 attributes[1] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x4, offset = 2 * sizeof(float), shaderLocation = 1 };
                 attributes[2] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 6 * sizeof(float), shaderLocation = 2 };
+                attributes[3] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x4, offset = 8 * sizeof(float), shaderLocation = 3 };
 
                 var bufferLayout = new WGPUVertexBufferLayout
                 {
                     stepMode = WGPUVertexStepMode.Vertex,
                     arrayStride = VertexStride,
-                    attributeCount = 3,
+                    attributeCount = kind == FillKind.Shape ? 4u : 3u,
                     attributes = attributes,
                 };
 
