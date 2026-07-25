@@ -842,6 +842,7 @@ namespace MS.Internal.FontCache
             _layout = layout;
             _gsubTable = new FontTable(_layout.Gsub());
             _gposTable = new FontTable(_layout.Gpos());
+            _gdefTable = new FontTable(_layout.Gdef());
 }
 
         /// <summary>
@@ -858,6 +859,13 @@ namespace MS.Internal.FontCache
                 case OpenTypeTags.GPOS:
                     {
                         return _gposTable;
+                    }
+                case OpenTypeTags.GDEF:
+                    {
+                        // GDEF is required by OpenTypeLayout glyph classification
+                        // (UpdateGlyphFlags) during GSUB/GPOS application. It is absent
+                        // in the FontTable when the font has no GDEF table.
+                        return _gdefTable;
                     }
                 default:
                     {
@@ -892,6 +900,7 @@ namespace MS.Internal.FontCache
 
         private FontTable _gsubTable;
         private FontTable _gposTable;
+        private FontTable _gdefTable;
         private FontFaceLayoutInfo _layout;
     }
 

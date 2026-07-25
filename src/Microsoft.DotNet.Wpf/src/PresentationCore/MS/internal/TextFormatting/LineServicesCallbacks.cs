@@ -1668,10 +1668,23 @@ namespace MS.Internal.TextFormatting
                         );
 
                     glyphCount = (int)actualGlyphCount;
-                   
+
                     if (glyphCount <= cgiGlyphBuffers)
                     {
                         fIsGlyphBuffersUsed = 1;
+
+                        // The off-Windows text backend produces only nominal cmap glyphs
+                        // (no OpenType features). Apply GSUB substitution (ligatures /
+                        // contextual alternates) here, using WPF's managed layout engine,
+                        // so ligature fonts (e.g. Cascadia Code's "-->") shape correctly.
+                        // Ligation only removes glyphs, so the filled buffer never overflows.
+                        glyphCount = ManagedGsubShaper.Substitute(
+                            glyphTypeface,
+                            cchText,
+                            puGlyphsBuffer,
+                            glyphCount,
+                            puClusterMap,
+                            pfCanGlyphAlone);
                     }
                     else
                     {

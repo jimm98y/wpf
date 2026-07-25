@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
@@ -16,6 +17,10 @@ namespace MS.Internal.WindowsRuntime
             private UISettingsRCW.IUISettings3 _uisettings;
 
             private static readonly Color _fallbackAccentColor = Color.FromArgb(0xff, 0x00, 0x78, 0xd4);
+
+            private static readonly Color s_white = Color.FromArgb(0xff, 0xff, 0xff, 0xff);
+
+            private static readonly Color s_black = Color.FromArgb(0xff, 0x00, 0x00, 0x00);
 
             private Color _accentColor, _accentLight1, _accentLight2, _accentLight3;
             private Color _accentDark1, _accentDark2, _accentDark3;
@@ -47,11 +52,13 @@ namespace MS.Internal.WindowsRuntime
             ///     Gets the accent color value for the desired color type.
             /// </summary>
             /// <returns>
-            ///     Returns true if fetching value from UISettings was successful.
-            ///     If the fetch fails, we return false and return the default accent color.
+            ///     Always returns a usable color. When the native UISettings provider is
+            ///     unavailable (e.g. on non-Windows platforms) or the fetch fails, this shim
+            ///     synthesizes a shade of the fallback accent color so that the light/dark
+            ///     variations are still visually distinct rather than a single flat color.
             /// </returns>
             internal bool TryGetColorValue(UISettingsRCW.UIColorType desiredColor, out Color color)
-            {                
+            {
                 if(_isSupported)
                 {
                     try
@@ -63,11 +70,51 @@ namespace MS.Internal.WindowsRuntime
                     catch (COMException)
                     {
                         // We don't want to throw any exceptions here.
-                        // If we can't get the instance, we will use the default accent color.
+                        // If we can't get the instance, we will use the fallback accent color.
                     }
                 }
-                color = _fallbackAccentColor;
-                return false;
+
+                // The native WinRT UISettings provider isn't available to hand back the
+                // light/dark shade variations, so synthesize them from the fallback accent
+                // color instead. Without this every AccentColor*Brush would resolve to the
+                // exact same flat color. We report success because the shim has supplied a
+                // usable value.
+                color = GetFallbackShade(desiredColor);
+                return true;
+            }
+
+            /// <summary>
+            ///   Derives a light or dark shade of <see cref="_fallbackAccentColor"/> for the
+            ///   requested accent color type. Light shades blend the accent toward white and dark
+            ///   shades blend it toward black, approximating the variations Windows exposes.
+            /// </summary>
+            private static Color GetFallbackShade(UISettingsRCW.UIColorType desiredColor)
+            {
+                return desiredColor switch
+                {
+                    UISettingsRCW.UIColorType.AccentLight1 => Blend(_fallbackAccentColor, s_white, 0.30),
+                    UISettingsRCW.UIColorType.AccentLight2 => Blend(_fallbackAccentColor, s_white, 0.50),
+                    UISettingsRCW.UIColorType.AccentLight3 => Blend(_fallbackAccentColor, s_white, 0.70),
+                    UISettingsRCW.UIColorType.AccentDark1 => Blend(_fallbackAccentColor, s_black, 0.20),
+                    UISettingsRCW.UIColorType.AccentDark2 => Blend(_fallbackAccentColor, s_black, 0.40),
+                    UISettingsRCW.UIColorType.AccentDark3 => Blend(_fallbackAccentColor, s_black, 0.55),
+                    _ => _fallbackAccentColor,
+                };
+            }
+
+            /// <summary>
+            ///   Linearly interpolates between <paramref name="from"/> and <paramref name="to"/> by
+            ///   <paramref name="amount"/> (0 returns <paramref name="from"/>, 1 returns <paramref name="to"/>).
+            /// </summary>
+            private static Color Blend(Color from, Color to, double amount)
+            {
+                static byte Lerp(byte a, byte b, double t) => (byte)Math.Round(a + (b - a) * t);
+
+                return Color.FromArgb(
+                    from.A,
+                    Lerp(from.R, to.R, amount),
+                    Lerp(from.G, to.G, amount),
+                    Lerp(from.B, to.B, amount));
             }
 
             /// <summary>

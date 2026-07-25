@@ -298,6 +298,7 @@
     <Compile Include="MS\Internal\TextFormatting\LineServices.cs" />
     <Compile Include="MS\Internal\TextFormatting\ManagedLineServices.cs" />
     <Compile Include="MS\Internal\TextFormatting\LineServicesCallbacks.cs" />
+    <Compile Include="MS\Internal\TextFormatting\ManagedGsubShaper.cs" />
     <Compile Include="MS\Internal\TextFormatting\LineServicesRun.cs" />
     <Compile Include="MS\Internal\TextFormatting\NumberSubstitution.cs" />
     <Compile Include="MS\Internal\TextFormatting\SimpleTextLine.cs" />
