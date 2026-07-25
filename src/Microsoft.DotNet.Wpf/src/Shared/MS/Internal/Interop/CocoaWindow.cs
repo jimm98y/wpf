@@ -107,8 +107,20 @@ namespace MS.Internal.Interop
         /// </summary>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
         {
+            Create(title, x, y, width, height, borderless, owner: IntPtr.Zero);
+        }
+
+        /// <summary>
+        /// As above, but <paramref name="owner"/> is the handle of the window this one belongs to (for a
+        /// popup, its owner window). A popup uses the owner's backing scale so its DPI, placement math and
+        /// render surface all match the display the owner is on -- while a popup is being positioned it is
+        /// not yet associated with that display, so its own NSScreen can report the wrong (primary) scale.
+        /// </summary>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner)
+        {
             EnsureApplication();
 
+            _ownerHandle = owner;
             _borderless = borderless;
             if (width <= 0) width = borderless ? 1 : 800;
             if (height <= 0) height = borderless ? 1 : 600;
@@ -203,6 +215,7 @@ namespace MS.Internal.Interop
         }
 
         private bool _borderless;
+        private IntPtr _ownerHandle;
 
         /// <summary>True for popup/menu windows (borderless, floating); they get moved to their
         /// requested screen position by SetWindowPos, unlike AppKit-placed top-level windows.</summary>
@@ -212,7 +225,25 @@ namespace MS.Internal.Interop
         public void SetContentSize(int width, int height)
         {
             if (_window == IntPtr.Zero || width <= 0 || height <= 0) return;
+
+            if (!_borderless)
+            {
+                // Top-level windows are placed/resized by AppKit; just size them.
+                SendVoidSize(_window, Sel("setContentSize:"), new NSSize { width = width, height = height });
+                return;
+            }
+
+            // Popups: WPF drives programmatic resizes (popup auto-sizing) through SetWindowPos with
+            // SWP_NOMOVE, whose Win32 contract keeps the window's TOP-LEFT corner fixed while the size
+            // changes. Cocoa's -setContentSize: instead keeps the BOTTOM-LEFT origin fixed and grows the
+            // window upward, so an auto-sizing popup's top edge would jump up as its content lays out (then
+            // Reposition would yank it back down -- the menu "jumps up and down until it settles"). Preserve
+            // the top-left corner to match the Win32 semantics WPF relies on.
+            NSRect before = SendRect(_window, Sel("frame"));           // screen points, bottom-left origin
+            double topPt = before.y + before.height;                   // top edge, measured from screen bottom
             SendVoidSize(_window, Sel("setContentSize:"), new NSSize { width = width, height = height });
+            NSRect after = SendRect(_window, Sel("frame"));
+            SendVoidPoint(_window, Sel("setFrameOrigin:"), new NSPoint { x = before.x, y = topPt - after.height });
         }
 
         /// <summary>
@@ -227,15 +258,13 @@ namespace MS.Internal.Interop
             double xPt = xPixels / scale;
             double yTopPt = yPixels / scale;
 
-            double screenH = 0;
-            IntPtr screen = Send(_window, Sel("screen"));
-            if (screen == IntPtr.Zero) screen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
-            if (screen != IntPtr.Zero) screenH = SendRect(screen, Sel("frame")).height;
-
-            NSRect frame = SendRect(_window, Sel("frame"));
-            // Cocoa origin is the window's bottom-left, measured from the screen bottom.
-            double yBottomPt = screenH - yTopPt - frame.height;
-            SendVoidPoint(_window, Sel("setFrameOrigin:"), new NSPoint { x = xPt, y = yBottomPt });
+            // Flip about the PRIMARY screen height, matching GetClientScreenOriginPixels (which produced
+            // the top-left screen coordinates handed back here) so the round-trip is consistent across
+            // monitors. Set the window's TOP-LEFT corner directly with setFrameTopLeftPoint: rather than
+            // computing a bottom-left origin from the window's current frame height -- during a popup's
+            // create-then-resize the height is transiently 1px, which made the Y land far off on reopen.
+            double screenH = PrimaryScreenHeightPoints();
+            SendVoidPoint(_window, Sel("setFrameTopLeftPoint:"), new NSPoint { x = xPt, y = screenH - yTopPt });
         }
 
         /// <summary>Current content-view size in points (device-independent units).</summary>
@@ -341,12 +370,32 @@ namespace MS.Internal.Interop
                 return forced;
             }
 
+            // A borderless popup (menu/dropdown/tooltip) is not yet on its owner's display while it is
+            // being positioned, so its own NSScreen can report the primary display's scale instead of the
+            // owner's -- which puts the popup on the wrong monitor. Defer to the owner window's scale so
+            // the popup's DPI, its placement math and its render surface all match the owner's display.
+            if (_borderless && _ownerHandle != IntPtr.Zero)
+            {
+                CocoaWindow owner = FromHandle(_ownerHandle);
+                if (owner != null && !ReferenceEquals(owner, this))
+                {
+                    return owner.GetBackingScale();
+                }
+            }
+
             double scale = 0;
             if (_window != IntPtr.Zero)
             {
-                IntPtr screen = Send(_window, Sel("screen"));
-                if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
-                if (scale <= 0) scale = SendDouble(_window, Sel("backingScaleFactor"));
+                // Prefer the NSWindow's own backingScaleFactor: it is the canonical, reliable value for a
+                // shown window and reflects the display the window is primarily on. window.screen's
+                // backingScaleFactor can be transiently wrong/stale (it reported 1 on a Retina display in
+                // most reads), which is what made this flaky. Fall back to the screen only if needed.
+                scale = SendDouble(_window, Sel("backingScaleFactor"));
+                if (scale <= 0)
+                {
+                    IntPtr screen = Send(_window, Sel("screen"));
+                    if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
+                }
             }
             if (scale <= 0)
             {
@@ -490,11 +539,32 @@ namespace MS.Internal.Interop
         /// <summary>Raised (on the UI/pump thread) when the content size changes, in points.</summary>
         public event Action<int, int> Resized;
 
+        /// <summary>Raised (on the UI/pump thread) when the backing scale factor changes (window moved
+        /// to a different-DPI display). Carries the new scale.</summary>
+        public event Action<double> ScaleChanged;
+
         private int _lastReportedW = -1, _lastReportedH = -1;
+        private double _lastReportedScale = -1;
 
         private void CheckResize()
         {
             if (_contentView == IntPtr.Zero) return;
+
+            // Detect a backing-scale change first: when the window is dragged onto a different-DPI
+            // display its point size is unchanged, so the Resized path below won't fire. Raise
+            // ScaleChanged so the host updates its DPI scale, re-lays-out, and reconfigures the
+            // render surface to the new device-pixel size.
+            double scale = GetBackingScale();
+            if (_lastReportedScale < 0)
+            {
+                _lastReportedScale = scale;
+            }
+            else if (Math.Abs(scale - _lastReportedScale) > 0.01)
+            {
+                _lastReportedScale = scale;
+                ScaleChanged?.Invoke(scale);
+            }
+
             GetContentSize(out int w, out int h);
             if (w <= 0 || h <= 0) return;
             if (w != _lastReportedW || h != _lastReportedH)
@@ -599,13 +669,19 @@ namespace MS.Internal.Interop
                 }
             }
 
-            // locationInWindow is in window points, bottom-left origin. Flip Y against the content
-            // height and scale to device pixels so it matches WPF's top-left device-pixel client rect.
-            NSPoint loc = SendPoint(evt, Sel("locationInWindow"));
-            w.GetContentSize(out int _, out int contentH);
+            // Convert the event location to WPF top-left client device pixels using the SAME screen-space
+            // math as the mouse-moved branch above (which is known-correct on Retina: hover/hit-testing
+            // tracks properly). Deriving the client point via global-screen coordinates minus the window's
+            // client screen origin avoids the earlier local-flip that mixed a window content-height (pixels)
+            // with a location (points) and mapped clicks to the top of the window on scale-2 displays.
+            NSPoint loc = SendPoint(evt, Sel("locationInWindow"));                       // window points, bottom-left
+            NSPoint bloc = SendPointPoint(window, Sel("convertPointToScreen:"), loc);    // screen points, bottom-left
             double scale = w.GetBackingScale();
-            int x = (int)Math.Round(loc.x * scale);
-            int y = (int)Math.Round((contentH - loc.y) * scale);
+            int bx = (int)Math.Round(bloc.x * scale);
+            int by = (int)Math.Round((PrimaryScreenHeightPoints() - bloc.y) * scale);
+            w.GetClientScreenOriginPixels(out int cox, out int coy);
+            int x = bx - cox;
+            int y = by - coy;
 
             int wheel = 0;
             if (type == NSScrollWheel)

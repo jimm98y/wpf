@@ -45,6 +45,12 @@ namespace MS.Internal.Interop
         /// <summary>Raised when the window's content size changed (args in device pixels).</summary>
         public event Action<int, int> Resized;
 
+        // The browser backend has no multi-monitor DPI change; the event exists only to satisfy
+        // IPlatformWindow and is never raised here.
+#pragma warning disable CS0067
+        public event Action<double> ScaleChanged;
+#pragma warning restore CS0067
+
         public static BrowserWindow FromHandle(IntPtr handle)
             => s_byHandle.TryGetValue(handle, out BrowserWindow w) ? w : null;
 

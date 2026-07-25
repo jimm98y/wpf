@@ -27,6 +27,11 @@ namespace MS.Internal.Interop
         void GetClientScreenOriginPixels(out int sx, out int sy);
         double GetBackingScale();
         void Destroy();
+
+        /// <summary>Raised (on the UI/pump thread) when the window's backing scale factor changes,
+        /// e.g. it was dragged onto a display with a different DPI. Carries the new scale. The host
+        /// (HwndTarget) updates its DPI scale, re-lays-out, and reconfigures the render surface.</summary>
+        event Action<double> ScaleChanged;
     }
 
     /// <summary>Dispatches the handle-based windowing queries to the platform backend.</summary>

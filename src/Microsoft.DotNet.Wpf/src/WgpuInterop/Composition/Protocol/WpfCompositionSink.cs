@@ -554,7 +554,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
                 WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter);
-                ts = new TargetSurface { Surface = surface, Format = format, Width = t.Width, Height = t.Height, Transparent = t.IsLayered };
+                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, Width = t.Width, Height = t.Height, Transparent = t.IsLayered };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }
@@ -630,6 +630,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 presentMode = mode,
             };
             wgpuSurfaceConfigure(ts.Surface, &config);
+
+            // Keep the native layer's contents/backing scale in step with the surface's device-pixel
+            // size. Configure runs on creation and whenever the pixel size changes -- including when a
+            // window is dragged to a different-DPI display (same points, new pixel size) -- so this is
+            // where the CAMetalLayer contentsScale must be refreshed, else the new drawable would be
+            // mapped onto the view at the old scale.
+            Platform.NativePlatform.UpdateContentsScale(ts.Hwnd);
         }
 
         // Fifo is guaranteed by the spec; any other requested mode is honoured only if the surface
@@ -673,6 +680,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private sealed class TargetSurface
         {
             public IntPtr Surface;
+            /// <summary>The native window/view handle (NSView* on macOS) backing this surface, kept so
+            /// the CAMetalLayer contentsScale can be re-synced when the window's DPI changes.</summary>
+            public IntPtr Hwnd;
             public WGPUTextureFormat Format;
             public int Width;
             public int Height;

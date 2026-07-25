@@ -67,8 +67,13 @@ namespace MS.Win32
 
                     int cw = width > 0 ? width : (borderless ? 1 : 1024);
                     int ch = height > 0 ? height : (borderless ? 1 : 768);
-                    int cx = x > 0 ? x : 100;
-                    int cy = y > 0 ? y : 100;
+                    // A borderless popup is given a real screen position (device pixels), which is
+                    // legitimately NEGATIVE when it belongs to a display arranged to the left of / above
+                    // the primary monitor. Preserve it verbatim -- do NOT treat x<=0 as "unspecified", or
+                    // the popup gets yanked to the default (100) on the primary monitor. Only top-level
+                    // windows (created at CW_USEDEFAULT-ish coordinates) get the default substitution.
+                    int cx = borderless ? x : (x > 0 ? x : 100);
+                    int cy = borderless ? y : (y > 0 ? y : 100);
                     if (OperatingSystem.IsBrowser())
                     {
                         // Browser: the window is a canvas element (see BrowserWindow). Popups are
@@ -85,7 +90,9 @@ namespace MS.Win32
                     else
                     {
                         var cocoa = new MS.Internal.Interop.CocoaWindow();
-                        cocoa.Create(name, cx, cy, cw, ch, borderless);
+                        // Pass the owner handle so a popup inherits its owner's display/backing scale
+                        // (and therefore opens on the same monitor as the window it belongs to).
+                        cocoa.Create(name, cx, cy, cw, ch, borderless, parent);
                         // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
                         // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
                         cocoa.Resized += OnCocoaResized;

@@ -52,6 +52,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
+        /// Re-sync the native surface's backing/contents scale to the window's current backing scale.
+        /// Called when a window's DPI changes (dragged to a different-density display) so the
+        /// CAMetalLayer keeps mapping its device-pixel drawable 1:1 onto the point-sized view. No-op
+        /// where there is no such concept.
+        /// </summary>
+        public static void UpdateContentsScale(IntPtr nativeWindow)
+        {
+            if (Current == PlatformKind.MacOS && nativeWindow != IntPtr.Zero)
+            {
+                MacInterop.SetContentsScale(nativeWindow, MacInterop.BackingScale(nativeWindow));
+            }
+        }
+
+        /// <summary>
         /// Push a premultiplied, top-down RGBA frame to a transparent/layered popup
         /// window (WPF Popups on Windows). Returns false when the platform has no
         /// layered-window compositing path (macOS/Linux today), in which case the

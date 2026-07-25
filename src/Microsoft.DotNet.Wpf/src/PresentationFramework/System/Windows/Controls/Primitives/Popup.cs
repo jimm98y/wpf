@@ -2661,11 +2661,14 @@ namespace System.Windows.Controls.Primitives
             }
 
             // Off-Windows there is no Win32 monitor enumeration (MonitorFromRect/GetMonitorInfo).
-            // Return a large screen rect so the popup is sized to its content and placed at its
-            // requested location without monitor-edge clamping (adequate for a single display).
+            // Return a large screen rect so the popup is placed at its requested location without
+            // monitor-edge clamping. It MUST be centered on the origin (cover negative coordinates):
+            // a display arranged to the left of / above the primary has negative screen coordinates, and
+            // a rect anchored at (0,0) would clamp any popup there back onto the primary monitor -- which
+            // is what made a menu on such a display jump to the primary screen.
             if (!System.OperatingSystem.IsWindows())
             {
-                return new Rect(0, 0, 1_000_000, 1_000_000);
+                return new Rect(-4_000_000, -4_000_000, 8_000_000, 8_000_000);
             }
 
             NativeMethods.RECT rect = new NativeMethods.RECT(0, 0, 0, 0);
@@ -3352,6 +3355,15 @@ namespace System.Windows.Controls.Primitives
                     param.UsesPerPixelOpacity = transparent;
                     if ((parent != IntPtr.Zero) && ConnectedToForegroundWindow(parent))
                     {
+                        param.ParentWindow = parent;
+                    }
+                    else if (!System.OperatingSystem.IsWindows() && parent != IntPtr.Zero)
+                    {
+                        // Off-Windows the popup is still a standalone NSWindow (WS_POPUP, not WS_CHILD), but
+                        // it must know its owner so it can inherit the owner's display/backing scale and open
+                        // on the SAME monitor as the window it belongs to. The macOS/browser window backends
+                        // consume ParentWindow only as an owner handle for that -- it does not reparent the
+                        // popup into a Win32 child. (On Windows this branch is skipped, preserving behavior.)
                         param.ParentWindow = parent;
                     }
                 }

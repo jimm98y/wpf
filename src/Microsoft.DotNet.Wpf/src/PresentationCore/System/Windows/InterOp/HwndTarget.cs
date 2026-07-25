@@ -328,8 +328,16 @@ namespace System.Windows.Interop
                 AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
                 DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
-                double scale = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h)?.GetBackingScale() ?? 1.0;
+                var platformWindow = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h);
+                double scale = platformWindow?.GetBackingScale() ?? 1.0;
                 CurrentDpiScale = new DpiScale2(scale, scale);
+                // Track later backing-scale changes (window dragged onto a different-DPI display) so the
+                // DPI scale, layout and render surface follow it -- macOS/browser have no WM_DPICHANGED.
+                if (platformWindow != null)
+                {
+                    _platformWindow = platformWindow;
+                    platformWindow.ScaleChanged += OnPlatformScaleChanged;
+                }
                 return;
             }
 
@@ -713,6 +721,13 @@ namespace System.Windows.Interop
                 if (!IsDisposed)
                 {
                     RootVisual = null;
+
+                    // Detach the off-Windows backing-scale-change handler (no-op on Windows).
+                    if (_platformWindow != null)
+                    {
+                        _platformWindow.ScaleChanged -= OnPlatformScaleChanged;
+                        _platformWindow = null;
+                    }
 
                     // VisualTarget_DetachFromHwnd is milcore; there is no native visual target to detach
                     // off-Windows (the managed compositor owns teardown), so skip it there.
@@ -1805,6 +1820,45 @@ namespace System.Windows.Interop
                     _worldTransform.Matrix,
                     clipBounds
                 });
+        }
+
+        // The non-Windows platform window whose ScaleChanged we subscribed to (null on Windows / when
+        // there is no platform window). Held so the handler can be detached on Dispose.
+        private MS.Internal.Interop.IPlatformWindow _platformWindow;
+
+        /// <summary>
+        /// Off-Windows equivalent of WM_DPICHANGED. Raised by the platform window (on the UI/pump
+        /// thread) when its backing scale changes because it was dragged onto a different-DPI display.
+        /// Unlike Win32 there is no OS-suggested rect and the window's point size is unchanged -- only
+        /// the device-pixel size changes -- so we update the DPI scale + world transform, re-lay-out,
+        /// tell the renderer, then refresh the client rect and reconfigure the render surface to the
+        /// new pixel size (which also re-syncs the CAMetalLayer contentsScale via Configure).
+        /// </summary>
+        private void OnPlatformScaleChanged(double newScale)
+        {
+            if (IsDisposed || newScale <= 0)
+            {
+                return;
+            }
+
+            var oldDpi = CurrentDpiScale;
+            var newDpi = new DpiScale2(newScale, newScale);
+            if (oldDpi == newDpi)
+            {
+                return;
+            }
+
+            CurrentDpiScale = newDpi;
+            UpdateWorldTransform(newDpi);
+            PropagateDpiChangeToRootVisual(oldDpi, newDpi);
+            NotifyListenersOfWorldTransformAndClipBoundsChanged();
+            NotifyRendererOfDpiChange(afterParent: false);
+
+            // The client's device-pixel size changed even though its point size did not; refresh the
+            // client rect and reconfigure/repaint the surface at the new scale.
+            UpdateWindowAndClientCoordinates();
+            OnResize();
+            DoPaint();
         }
 
         /// <summary>
