@@ -21,6 +21,11 @@ namespace MS.Internal.Interop
     {
         bool IsBorderless { get; }
         void SetContentSize(int width, int height);
+
+        /// <summary>Resize the content area to a size given in DEVICE PIXELS (as WPF's SetWindowPos
+        /// supplies it). Platforms convert to their own content units; macOS keeps fractional points
+        /// so an odd pixel width round-trips exactly at Retina scale (see CocoaWindow).</summary>
+        void SetContentSizePixels(int cx, int cy);
         void SetFrameOrigin(int xPixels, int yPixels);
         void GetContentSize(out int width, out int height);
         void GetPixelSize(out int width, out int height);

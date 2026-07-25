@@ -75,6 +75,15 @@ namespace MS.Internal.Interop
 
         public void SetContentSize(int width, int height) => Js.SetContentSize((int)Handle, width, height);
 
+        // Device pixels -> content units. Matches the prior in-caller conversion (round(pixels / scale));
+        // the browser backend does not have the Retina odd-width issue the macOS path corrects for.
+        public void SetContentSizePixels(int cx, int cy)
+        {
+            double scale = GetBackingScale();
+            if (scale <= 0) scale = 1.0;
+            SetContentSize((int)System.Math.Round(cx / scale), (int)System.Math.Round(cy / scale));
+        }
+
         public void SetFrameOrigin(int xPixels, int yPixels) => Js.SetFrameOrigin((int)Handle, xPixels, yPixels);
 
         public void GetContentSize(out int width, out int height)

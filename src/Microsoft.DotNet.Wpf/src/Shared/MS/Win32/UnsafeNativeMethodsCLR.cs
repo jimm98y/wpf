@@ -93,11 +93,10 @@ namespace MS.Win32
                 if ((flags & SWP_NOSIZE) == 0)
                 {
                     // cx/cy arrive in DEVICE PIXELS (WPF computed them via LogicalToDeviceUnits = DIPs *
-                    // DPI). NSWindow.setContentSize: takes POINTS, so divide by the backing scale; on a
-                    // Retina display a 640-DIP window is 1280 px here and must become 640 points.
-                    double scale = cocoa.GetBackingScale();
-                    if (scale <= 0) scale = 1.0;
-                    cocoa.SetContentSize((int)System.Math.Round(cx / scale), (int)System.Math.Round(cy / scale));
+                    // DPI). Hand the device size to the platform window, which converts to its own content
+                    // units. macOS keeps fractional points so an odd pixel width round-trips exactly at
+                    // Retina scale -- rounding to whole points here would drop a popup's right 1px column.
+                    cocoa.SetContentSizePixels(cx, cy);
                 }
 
                 // Move only popups (borderless windows) to their requested screen position; normal

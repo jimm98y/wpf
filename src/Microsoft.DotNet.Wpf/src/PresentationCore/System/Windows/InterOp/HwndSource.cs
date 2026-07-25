@@ -906,8 +906,15 @@ namespace System.Windows.Interop
         private void RoundDeviceSize(ref Point size)
         {
             UIElement root = _rootVisual as UIElement;
-            if (root != null && root.SnapsToDevicePixels)
+            if (root != null && root.SnapsToDevicePixels && OperatingSystem.IsWindows())
             {
+                // Content that snaps to device pixels is already integral on Windows, so rounding to
+                // the nearest device pixel is exact. Off-Windows our text metrics differ and a menu /
+                // popup's content can measure to a FRACTIONAL device size (e.g. 110.4px). Rounding a
+                // size-to-content window to the nearest pixel then rounds it DOWN below the content
+                // (110.4 -> 110), so the content's right/bottom edge -- a menu's 1px border -- spills
+                // past the surface and is clipped. A "size to content" window must contain its content:
+                // fall through to Ceiling below so the window is never smaller than what it hosts.
                 size = new Point(DoubleUtil.DoubleToInt(size.X), DoubleUtil.DoubleToInt(size.Y));
             }
             else

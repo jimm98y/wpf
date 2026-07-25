@@ -195,17 +195,26 @@ namespace MS.Internal.Interop
             // hands back no Metal drawable, so the window paints nothing and the first frame can stall
             // for many seconds until some unrelated event happens to run the loop. Pump the run loop
             // here (bounded) so the handshake completes synchronously and the first present succeeds.
-            if (!borderless)
-                PumpUntilVisible();
+            //
+            // Popups (borderless: menus/ComboBox/ToolTip) need this too. A classic-themed menu opened on
+            // mouse-down has no entrance animation, so it produces no further commits after it opens --
+            // nothing re-drives Present, and the popup shows nothing until an unrelated event (a mouse
+            // move) happens to run the loop. Pump it the same way, but don't activateIgnoringOtherApps:
+            // for a popup -- it floats above without taking key focus, and stealing focus here would
+            // dismiss the very menu we're opening.
+            PumpUntilVisible(activate: !borderless);
         }
 
         // Run the Cocoa run loop until the window server reports this window on-screen (its occlusion
         // state includes Visible), bounded so we never block window creation indefinitely.
-        private void PumpUntilVisible()
+        private void PumpUntilVisible(bool activate = true)
         {
             const ulong NSWindowOcclusionStateVisible = 1UL << 1;
-            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
-            SendVoidBool(app, Sel("activateIgnoringOtherApps:"), true);
+            if (activate)
+            {
+                IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+                SendVoidBool(app, Sel("activateIgnoringOtherApps:"), true);
+            }
             for (int i = 0; i < 120; i++)   // ~ up to 120 * 8ms; breaks as soon as visible (usually a few iterations)
             {
                 PumpEvents(8);
@@ -333,7 +342,26 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>Resize the window's content area to the given size in points.</summary>
-        public void SetContentSize(int width, int height)
+        public void SetContentSize(int width, int height) => SetContentSizePoints(width, height);
+
+        /// <summary>
+        /// Resize the window's content area to a size given in DEVICE PIXELS. Converts to points by
+        /// dividing by the backing scale but keeps the FRACTIONAL result -- it does not round to whole
+        /// points. This matters on Retina (2x): an integer point size always maps to an even pixel size
+        /// (points * 2), so rounding the incoming pixels to whole points first makes an ODD pixel width
+        /// unrepresentable and it comes back 1px short from GetPixelSize (round(points * scale)). WPF then
+        /// lays out and clips the window's content 1px narrow, which drops a popup's rightmost column --
+        /// e.g. a menu's right 1px border. Passing fractional points (110.5pt -> 221px at 2x, pixel-grid
+        /// aligned) round-trips exactly.
+        /// </summary>
+        public void SetContentSizePixels(int cx, int cy)
+        {
+            double scale = GetBackingScale();
+            if (scale <= 0) scale = 1.0;
+            SetContentSizePoints(cx / scale, cy / scale);
+        }
+
+        private void SetContentSizePoints(double width, double height)
         {
             if (_window == IntPtr.Zero || width <= 0 || height <= 0) return;
 
