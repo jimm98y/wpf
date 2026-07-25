@@ -531,6 +531,55 @@ fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
+        // Analytic stroke drawn STRAIGHT into the frame (no baked coverage texture): the round-cap/round-
+        // join solid-stroke distance field (min distance to the flattened centre-line segments, minus the
+        // half-width) evaluated per fragment. Segments live in a per-frame BATCHED storage buffer shared by
+        // all such strokes (bound per draw at the stroke's byte offset), so an animated/resizing stroke
+        // costs nothing to re-realize -- unlike fs_stroke, which bakes the same SDF into a cached texture
+        // that thrashes when the geometry changes every frame. Used only for modest segment counts (the
+        // per-fragment loop is O(segments)); complex strokes stay on the cached-texture path. uv carries the
+        // fragment's DEVICE-pixel position; prm = (segmentCount, halfWidthPx, _, _).
+        private const string StrokeDrawShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+    @location(2) prm : vec4<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    o.prm = prm;
+    return o;
+}
+
+@group(0) @binding(0) var<storage, read> spts : array<vec2<f32>>;   // 2 per segment: a, b (device px)
+
+fn segDist(p : vec2<f32>, a : vec2<f32>, b : vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let t = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
+    return length(pa - ba * t);
+}
+
+@fragment
+fn fs_strokedraw(in : VSOut) -> @location(0) vec4<f32> {
+    let p = in.uv;                                 // device-pixel position at this fragment
+    let segCount = u32(in.prm.x);
+    let half = in.prm.y;
+    var d = 1e30;
+    for (var i = 0u; i < segCount; i = i + 1u) {
+        d = min(d, segDist(p, spts[2u * i], spts[2u * i + 1u]));
+    }
+    let cov = clamp(0.5 + (half - d), 0.0, 1.0);   // 1px analytic AA ramp at the stroke edge
+    return in.color * cov;                          // in.color is premultiplied
+}
+";
+
         // GPU brush evaluation: gradients are computed per pixel in the fragment shader
         // (sampling the same 256-texel ramp the tessellated gradient path uses) instead
         // of the CPU per-texel bake. fs_maskbrush composites GPU-rasterized coverage
@@ -714,7 +763,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, StrokeDraw }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
@@ -730,6 +779,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _idShaderModule;
         private IntPtr _strokeShaderModule;
         private IntPtr _shapeShaderModule;
+        private IntPtr _strokeDrawShaderModule;
         private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
 
         // GPU path rasterization is the default; WPF_WEBGPU_CPU_RASTER=1 restores the
@@ -1009,7 +1059,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
                 BuildBatchedGeometry(plan, mainData);
-                BuildBatchedStorage();
+                BuildBatchedStorage(outFormat);
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
@@ -1073,7 +1123,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
                 long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 BuildBatchedGeometry(plan, mainData);
-                BuildBatchedStorage();
+                BuildBatchedStorage(format);
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
@@ -1167,7 +1217,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
                 // Coverage-rasterization plan passes first, then the id pass (clear to 0 = "no visual").
                 BuildBatchedGeometry(plan, idData);
-                BuildBatchedStorage();
+                BuildBatchedStorage(ReadbackFormat);
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, IntPtr.Zero);
                 ExecutePass(encoder, new LayerPass(_idView, true, default, idData, ReadbackFormat), IntPtr.Zero);
@@ -2449,7 +2499,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 && (style.DashArray is null || style.DashArray.Length == 0)
                 && IsUniformScale(world))
             {
-                EmitGpuStroke(stroke.Geometry, (float)(style.Thickness / 2.0), solidStroke, world, opacity, clip, width, height, format, data);
+                float half = (float)(style.Thickness / 2.0);
+                // Prefer drawing the stroke SDF straight into the frame (no baked texture); fall back to
+                // the cached-texture path for strokes too complex for the per-fragment segment loop.
+                if (!EmitStrokeDrawDirect(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, data))
+                    EmitGpuStroke(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, format, data);
                 return;
             }
             PathGeometry outline = PathStroker.Stroke(stroke.Geometry, style);
@@ -2464,6 +2518,55 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             float sx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12);
             float sy = MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22);
             return MathF.Abs(sx - sy) <= 0.01f * MathF.Max(sx, sy);
+        }
+
+        // Max centre-line segments drawn analytically per stroke: fs_strokedraw loops over every segment
+        // per fragment, so past this a cached-texture bake (fs_stroke) is cheaper for a static stroke.
+        private const int MaxStrokeDrawSegments = 256;
+
+        // Draws a round-cap/round-join solid stroke analytically STRAIGHT into the frame (no baked coverage
+        // texture): flattens the centre-line to DEVICE-space segments, stashes them in the frame-shared
+        // storage arena (one buffer for all such strokes), and emits a bounding-box quad shaded by
+        // fs_strokedraw (min segment distance − half-width). Zero per-frame GPU resource creation, so an
+        // animated/resizing stroke doesn't re-bake. Returns false (declining to the cached-texture path) for
+        // strokes with too many segments, whose O(segments) per-fragment loop would be costly.
+        private bool EmitStrokeDrawDirect(PathGeometry centerline, float localHalf, SolidColorBrush solid, Matrix3x2 world,
+            double opacity, Scissor clip, int width, int height, DrawData data)
+        {
+            if (clip.IsEmpty) return false;
+            float scale = MathF.Sqrt(world.M11 * world.M11 + world.M12 * world.M12);
+            float deviceHalf = localHalf * scale;
+            if (deviceHalf <= 0f) return false;
+
+            _edgeScratch.Clear();
+            int segCount = PathRasterizer.FlattenCenterlineSegments(TransformGeometry(centerline, world), _edgeScratch,
+                out float minX, out float minY, out float maxX, out float maxY);
+            if (segCount == 0 || minX > maxX) return false;
+            if (segCount > MaxStrokeDrawSegments) return false;   // complex stroke: use the cached-texture path
+
+            // Segments stay in ABSOLUTE device coords (so does the quad's uv), so the fragment's sample
+            // point matches them whether or not this draw sits inside a region-offset layer bake.
+            Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
+            int byteLen = Math.Max(16, es.Length * sizeof(float));
+            int soff = AllocStorage(MemoryMarshal.AsBytes(es), byteLen);
+
+            float pad = deviceHalf + 2f;                          // half-width + ~2px AA/margin
+            float x0 = minX - pad, y0 = minY - pad, x1 = maxX + pad, y1 = maxY + pad;
+
+            float a = (float)Math.Clamp(solid.Color.A * opacity, 0.0, 1.0);
+            float pr = solid.Color.R * a, pg = solid.Color.G * a, pb = solid.Color.B * a;   // premultiplied
+            float sc = segCount;
+
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), pr, pg, pb, a, x0, y0, sc, deviceHalf);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), pr, pg, pb, a, x1, y0, sc, deviceHalf);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), pr, pg, pb, a, x1, y1, sc, deviceHalf);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), pr, pg, pb, a, x0, y1, sc, deviceHalf);
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, IntPtr.Zero));
+            _pendingStorageBinds.Add((data, data.Draws.Count - 1, soff, byteLen));
+            return true;
         }
 
         // GPU signed-distance stroke (round join + cap, solid): translation-invariant mask cache
@@ -3133,7 +3236,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // Seals the shared storage arena into one buffer and creates+patches the deferred coverage-mask bind
         // groups. Call after collection, before the ExecutePass loop (alongside BuildBatchedGeometry).
-        private void BuildBatchedStorage()
+        private void BuildBatchedStorage(WGPUTextureFormat mainFormat)
         {
             _frameStorageBuf = IntPtr.Zero;
             if (_pendingStorageBinds.Count == 0) { _batchStorage.Clear(); return; }
@@ -3144,7 +3247,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             foreach ((DrawData d, int idx, int off, int size) in _pendingStorageBinds)
             {
                 DrawItem di = d.Draws[idx];
-                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, di.Kind), 0);
+                // Coverage/brush-alpha binds are for R8 mask passes; StrokeDraw is drawn straight into the
+                // main colour pass. The storage bind-group layout is the same either way, but use a matching
+                // pipeline format so we don't compile a stray unused pipeline.
+                WGPUTextureFormat layoutFmt = di.Kind == FillKind.StrokeDraw ? mainFormat : WGPUTextureFormat.R8Unorm;
+                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(layoutFmt, di.Kind), 0);
                 var entry = new WGPUBindGroupEntry { binding = 0, buffer = _frameStorageBuf, offset = (ulong)off, size = (ulong)size };
                 var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
                 IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
@@ -3219,6 +3326,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     case FillKind.BrushAlpha:
                     case FillKind.Id:
                     case FillKind.Stroke:
+                    case FillKind.StrokeDraw:   // group 0 = the batched segment storage buffer (patched in by BuildBatchedStorage)
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup, 0, null);
                         break;
                     case FillKind.Text:
@@ -3304,11 +3412,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_idShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_idShaderModule);
             if (_strokeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeShaderModule);
             if (_shapeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shapeShaderModule);
+            if (_strokeDrawShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeDrawShaderModule);
             if (_whiteView != IntPtr.Zero) { wgpuTextureViewRelease(_whiteView); wgpuTextureRelease(_whiteTex); }
             if (_linearSampler != IntPtr.Zero) wgpuSamplerRelease(_linearSampler);
             if (_nearestSampler != IntPtr.Zero) wgpuSamplerRelease(_nearestSampler);
             _shaderModule = _clipShaderModule = _coverageShaderModule = IntPtr.Zero;
-            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = _shapeShaderModule = IntPtr.Zero;
+            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = _shapeShaderModule = _strokeDrawShaderModule = IntPtr.Zero;
             _whiteTex = _whiteView = _linearSampler = _nearestSampler = IntPtr.Zero;
         }
 
@@ -3346,6 +3455,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.Id => GetIdShaderModule(),
                 FillKind.Stroke => GetStrokeShaderModule(),
                 FillKind.Shape => GetShapeShaderModule(),
+                FillKind.StrokeDraw => GetStrokeDrawShaderModule(),
                 _ => GetShaderModule(),
             };
             IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind);
@@ -3365,6 +3475,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_shapeShaderModule != IntPtr.Zero) return _shapeShaderModule;
             _shapeShaderModule = CompileWgsl(ShapeShaderWgsl);
             return _shapeShaderModule;
+        }
+
+        private IntPtr GetStrokeDrawShaderModule()
+        {
+            if (_strokeDrawShaderModule != IntPtr.Zero) return _strokeDrawShaderModule;
+            _strokeDrawShaderModule = CompileWgsl(StrokeDrawShaderWgsl);
+            return _strokeDrawShaderModule;
         }
 
         private IntPtr GetBrushShaderModule()
@@ -3451,6 +3568,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.Id => "fs_id",
                 FillKind.Stroke => "fs_stroke",
                 FillKind.Shape => "fs_shape",
+                FillKind.StrokeDraw => "fs_strokedraw",
                 _ => "fs_solid",
             };
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -3459,9 +3577,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             fixed (byte* pVs = vsEntry)
             fixed (byte* pFs = fsEntry)
             {
-                // All pipelines share the 12-float vertex stride. The shape pipeline additionally reads the
-                // last 4 floats as location 3 (shape params: halfX, halfY, cornerR, strokeHalf); every other
-                // pipeline reads only locations 0-2 and ignores the trailing shape params.
+                // All pipelines share the 12-float vertex stride. The shape and stroke-draw pipelines
+                // additionally read the last 4 floats as location 3 (shape params / stroke params); every
+                // other pipeline reads only locations 0-2 and ignores the trailing floats.
+                bool usesParams = kind is FillKind.Shape or FillKind.StrokeDraw;
                 var attributes = stackalloc WGPUVertexAttribute[4];
                 attributes[0] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 0, shaderLocation = 0 };
                 attributes[1] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x4, offset = 2 * sizeof(float), shaderLocation = 1 };
@@ -3472,7 +3591,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 {
                     stepMode = WGPUVertexStepMode.Vertex,
                     arrayStride = VertexStride,
-                    attributeCount = kind == FillKind.Shape ? 4u : 3u,
+                    attributeCount = usesParams ? 4u : 3u,
                     attributes = attributes,
                 };
 
