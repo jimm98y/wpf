@@ -62,6 +62,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             SendVoidNUInt(metalLayer, Sel("setAutoresizingMask:"), kCALayerWidthSizable | kCALayerHeightSizable);
             SendVoidPtr(rootLayer, Sel("addSublayer:"), metalLayer);
 
+            // Pin the metal content ABOVE any sibling sublayers (e.g. a Mica NSVisualEffectView added as a
+            // sibling behind the content). Sublayer array order alone is fragile: when the system appearance
+            // toggles (Dark/Light), AppKit relayouts the view and can reorder the effect view above the metal
+            // layer, which would occlude the whole WPF scene (window goes "blank"). A higher zPosition keeps
+            // the drawable in front regardless of sublayer order.
+            SendVoidDouble(metalLayer, Sel("setZPosition:"), 1.0);
+
             // Set the layer's contents scale to the backing scale so its drawable (which wgpu sizes to
             // the surface config = the view's DEVICE-PIXEL size) maps 1:1 onto the point-sized frame:
             // drawableSize(2N px) == frame(N pt) * contentsScale(2) on Retina. WPF renders its DIP scene

@@ -57,11 +57,14 @@ internal static class WindowBackdropManager
 
         bool result = SetBackdropCore(handle, backdropType);
 
-        // Off-Windows there is no DWM to make the window frame transparent, so the window keeps
-        // whatever opaque Background it resolved to (the Fluent WindowBackground fallback, or the
-        // Window's default SystemColors.WindowBrush) which would paint over the native backdrop.
-        // Mirror the Windows-under-Mica state by making the window content transparent so the
-        // NSVisualEffectView shows through; restore the themed value when the backdrop is removed.
+        // Off-Windows the native Mica material (NSVisualEffectView) is kept in DARK appearance so it always
+        // shows the wallpaper. Tint the window's own background with the theme's translucent LAYER fill
+        // (LayerFillColorDefault: ~50% white in light, ~30% dark in dark) rather than leaving it fully
+        // transparent -- otherwise fully-transparent window regions (nav pane, title bar, gaps) show the raw
+        // dark backdrop and light-theme black text on them is illegible. The semi-transparent fill still
+        // lets the wallpaper show through while giving those regions a legible, theme-appropriate tint (the
+        // off-Windows stand-in for the light/dark tint DWM Mica applies). Tracks the theme via a resource
+        // reference; cleared when the backdrop is removed.
         if (result && OperatingSystem.IsMacOS())
         {
             if (backdropType == WindowBackdropType.None)
@@ -70,7 +73,7 @@ internal static class WindowBackdropManager
             }
             else
             {
-                window.Background = System.Windows.Media.Brushes.Transparent;
+                window.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "LayerFillColorDefaultBrush");
             }
         }
 

@@ -2599,6 +2599,19 @@ namespace System.Windows
 
         internal void SetImmersiveDarkMode(bool useDarkMode)
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                // Off-Windows there is no DWM immersive-dark-mode; instead force the native window's
+                // AppKit appearance to match the APP's resolved theme, so the Mica NSVisualEffectView
+                // renders its dark/light material to match -- independent of the OS appearance. Without
+                // this, app-Dark on a light system keeps a light material and the (light) text is
+                // illegible. Set unconditionally (don't gate on _useDarkMode) so the first light-on-dark
+                // apply isn't skipped by the struct-default false.
+                MS.Internal.Interop.CocoaWindow.FromHandle(Handle)?.SetWindowAppearance(useDarkMode);
+                _useDarkMode = useDarkMode;
+                return;
+            }
+
             if(!Standard.Utility.IsOSWindows11OrNewer) return;
 
             if(_useDarkMode == useDarkMode) return;

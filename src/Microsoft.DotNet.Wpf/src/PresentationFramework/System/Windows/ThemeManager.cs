@@ -9,6 +9,40 @@ namespace System.Windows;
 
 internal static class ThemeManager
 {
+    static ThemeManager()
+    {
+        // Off-Windows there is no WM_SETTINGCHANGE to drive a runtime theme change. On macOS the Cocoa
+        // event pump polls the system appearance and raises SystemAppearanceChanged when the user toggles
+        // Dark/Light; re-apply the Fluent theme for ThemeMode.System, mirroring the Windows path.
+        if (OperatingSystem.IsMacOS())
+        {
+            MS.Internal.Interop.CocoaWindow.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
+        }
+    }
+
+    // Runs when the macOS Dark/Light setting flips at runtime. The event fires on the UI/pump thread;
+    // post to the dispatcher so the re-apply runs outside the pump. IsSystemThemeLight() then reads the
+    // now-current appearance and OnSystemThemeChanged swaps the Fluent Light/Dark dictionary.
+    private static void OnMacSystemAppearanceChanged()
+    {
+        Application app = Application.Current;
+        if (app == null)
+        {
+            return;
+        }
+
+        // Re-apply on the UI thread via the SAME path the Settings theme switch uses
+        // (OnApplicationThemeChanged) -- passing the current ThemeMode as both old and new re-evaluates
+        // GetUseLightColors (which now reads the new macOS appearance) and swaps the Fluent dictionary.
+        // NB: do NOT call OnSystemThemeChanged here -- its per-window ApplyFluentOnWindow re-merge blanks
+        // the WebGPU-composited window off-Windows, whereas ApplyStyleOnWindow (this path) works.
+        app.Dispatcher?.BeginInvoke(new Action(() =>
+        {
+            ThemeMode mode = Application.Current?.ThemeMode ?? ThemeMode.System;
+            OnApplicationThemeChanged(mode, mode);
+        }));
+    }
+
     #region Internal Methods
 
     internal static void OnSystemThemeChanged()
@@ -454,10 +488,14 @@ internal static class ThemeManager
     private static bool IsSystemThemeLight()
     {
         // The system light/dark setting lives in the Windows registry (Personalize key), which is
-        // unavailable off-Windows. Default to light there, consistent with the cross-platform port's
-        // light SystemColors palette.
+        // unavailable off-Windows. On macOS read the system appearance (AppleInterfaceStyle) so
+        // ThemeMode.System tracks the OS Dark/Light setting; other platforms default to light.
         if (!OperatingSystem.IsWindows())
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                return !MS.Internal.Interop.CocoaWindow.IsSystemDarkTheme();
+            }
             return true;
         }
 

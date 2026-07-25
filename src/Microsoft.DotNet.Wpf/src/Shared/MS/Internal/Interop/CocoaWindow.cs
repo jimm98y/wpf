@@ -262,9 +262,12 @@ namespace MS.Internal.Interop
             SendVoidRect(vev, Sel("setFrame:"), bounds);
             SendVoidNUInt(vev, Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
 
-            // material (default NSVisualEffectMaterialUnderWindowBackground = 21: a window-tinted
-            // behind-window blur, the closest match to Mica), overridable via env for tuning;
-            // blendingMode = BehindWindow (0); state = Active (1) so it always blurs, not only when key.
+            // Always give the effect view a DARK appearance so it uses the translucent, desktop-showing
+            // material in BOTH themes -- macOS LIGHT-appearance materials are opaque white frosts that hide
+            // the wallpaper. The light/dark WPF content composited on top provides the tint, so light theme
+            // becomes a light-tinted view of the wallpaper (Windows-Mica-like) instead of flat white.
+            IntPtr darkAppearance = MakeAppearance(dark: true);
+            if (darkAppearance != IntPtr.Zero) SendVoidPtr(vev, Sel("setAppearance:"), darkAppearance);
             SendVoidNInt(vev, Sel("setMaterial:"), MicaMaterial());
             SendVoidNInt(vev, Sel("setBlendingMode:"), 0);
             SendVoidNInt(vev, Sel("setState:"), 1);
@@ -275,11 +278,43 @@ namespace MS.Internal.Interop
             _visualEffectView = vev;
         }
 
+        // NSVisualEffectMaterial for the Mica backdrop (the effect view is always rendered in dark
+        // appearance so this is the desktop-showing material in both themes). Default
+        // UnderWindowBackground (21); override with WPF_MAC_MICA_MATERIAL.
         private static nint MicaMaterial()
         {
             string env = Environment.GetEnvironmentVariable("WPF_MAC_MICA_MATERIAL");
             if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int m)) return m;
             return 21;   // NSVisualEffectMaterialUnderWindowBackground
+        }
+
+        // A named NSAppearance (Dark/Light Aqua), or Zero if unavailable.
+        private static IntPtr MakeAppearance(bool dark)
+        {
+            IntPtr cls = objc_getClass("NSAppearance");
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr name = MakeNSString(dark ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua");
+            return SendPtrRet(cls, Sel("appearanceNamed:"), name);
+        }
+
+        /// <summary>
+        /// Force this window's AppKit appearance to Dark or Light (NSAppearanceNameDarkAqua / Aqua), so
+        /// the Mica <c>NSVisualEffectView</c> renders the matching material regardless of the OS
+        /// appearance. Called when the WPF theme is applied so app-Light uses a light material and
+        /// app-Dark a dark one (else app-Dark on a light system keeps a light frost and the light text is
+        /// illegible). Setting it on the window cascades to its views, including the effect view.
+        /// </summary>
+        public void SetWindowAppearance(bool dark)
+        {
+            if (_window == IntPtr.Zero) return;
+            IntPtr appearance = MakeAppearance(dark);
+            if (appearance != IntPtr.Zero)
+                SendVoidPtr(_window, Sel("setAppearance:"), appearance);
+
+            // The Mica effect view keeps its OWN (dark) appearance so the wallpaper shows through in both
+            // themes; do not re-appearance it here -- a light effect view would be an opaque white frost.
+            if (_visualEffectView != IntPtr.Zero)
+                SendVoidPtr(_visualEffectView, Sel("setAppearance:"), MakeAppearance(dark: true));
         }
 
         /// <summary>Undo <see cref="EnableMicaBackdrop"/>: remove the effect view and make the window
@@ -546,6 +581,113 @@ namespace MS.Internal.Interop
             }
         }
 
+        // ---- system appearance (dark/light) -----------------------------------------
+
+        /// <summary>
+        /// True when macOS is in Dark mode. Reads the global <c>AppleInterfaceStyle</c> user default,
+        /// which is the string "Dark" in dark mode and absent (nil) in light mode -- the standard,
+        /// AppKit-free way to query the system appearance. Lets WPF's <c>ThemeMode.System</c> select the
+        /// matching Fluent Light/Dark dictionary off-Windows (mirrors the Windows registry read).
+        /// </summary>
+        public static bool IsSystemDarkTheme()
+        {
+            try
+            {
+                // Once NSApplication exists, NSApp.effectiveAppearance is the reliable, LIVE source (it
+                // updates when the user toggles Dark/Light at runtime); its name is e.g.
+                // "NSAppearanceNameDarkAqua" in dark mode. Before the app is up, fall back to the global
+                // AppleInterfaceStyle default (works without AppKit, for the very first theme resolution).
+                if (s_appInitialized)
+                {
+                    IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+                    if (app != IntPtr.Zero)
+                    {
+                        IntPtr appearance = Send(app, Sel("effectiveAppearance"));
+                        if (appearance != IntPtr.Zero)
+                        {
+                            IntPtr name = Send(appearance, Sel("name"));
+                            IntPtr u = name != IntPtr.Zero ? Send(name, Sel("UTF8String")) : IntPtr.Zero;
+                            string appName = u != IntPtr.Zero ? Marshal.PtrToStringUTF8(u) : null;
+                            if (!string.IsNullOrEmpty(appName))
+                                return appName.Contains("Dark", StringComparison.OrdinalIgnoreCase);
+                        }
+                    }
+                }
+
+                // NSUserDefaults lives in Foundation; make sure it is loaded before asking for the class.
+                const int RTLD_NOW = 2;
+                dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", RTLD_NOW);
+
+                IntPtr cls = objc_getClass("NSUserDefaults");
+                if (cls == IntPtr.Zero) return false;
+                IntPtr defaults = Send(cls, Sel("standardUserDefaults"));
+                if (defaults == IntPtr.Zero) return false;
+
+                IntPtr key = MakeNSString("AppleInterfaceStyle");
+                IntPtr val = SendPtrRet(defaults, Sel("stringForKey:"), key);
+                if (val == IntPtr.Zero) return false;   // key absent => Light mode
+
+                IntPtr utf8 = Send(val, Sel("UTF8String"));
+                string s = utf8 != IntPtr.Zero ? Marshal.PtrToStringUTF8(utf8) : null;
+                return string.Equals(s, "Dark", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Raised (on the UI/pump thread) when the macOS system appearance toggles Dark/Light.
+        /// WPF's ThemeManager subscribes and re-applies the Fluent dictionary for ThemeMode.System, the
+        /// off-Windows equivalent of the WM_SETTINGCHANGE theme-change path.</summary>
+        public static event Action SystemAppearanceChanged;
+
+        private static IntPtr s_appearanceObserver;   // retained NSObject observer, or Zero
+
+        // The Objective-C -appearanceChanged: IMP: (id self, SEL _cmd, id notification) -> void. Kept in
+        // a static field so the delegate (and thus the native thunk) is never collected.
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void AppearanceChangedDelegate(IntPtr self, IntPtr cmd, IntPtr notification);
+        private static readonly AppearanceChangedDelegate s_appearanceChangedDel = OnAppearanceChangedNative;
+
+        private static void OnAppearanceChangedNative(IntPtr self, IntPtr cmd, IntPtr notification)
+        {
+            try { SystemAppearanceChanged?.Invoke(); } catch { /* handler failure shouldn't cross the ABI */ }
+        }
+
+        // Register (once) for the macOS Dark/Light toggle instead of polling: AppKit posts the distributed
+        // notification "AppleInterfaceThemeChangedNotification" when the user switches appearance. We create
+        // a tiny NSObject subclass at runtime whose -appearanceChanged: selector is backed by the managed
+        // thunk above, and add it as an observer on NSDistributedNotificationCenter. The notification is
+        // delivered on the main run loop (pumped by PumpEvents), so the handler runs on the UI thread.
+        private static void EnsureAppearanceObserver()
+        {
+            if (s_appearanceObserver != IntPtr.Zero) return;
+
+            IntPtr nsobject = objc_getClass("NSObject");
+            if (nsobject == IntPtr.Zero) return;
+
+            IntPtr cls = objc_getClass("WpfAppearanceObserver");
+            if (cls == IntPtr.Zero)
+            {
+                cls = objc_allocateClassPair(nsobject, "WpfAppearanceObserver", UIntPtr.Zero);
+                if (cls == IntPtr.Zero) return;
+                IntPtr imp = Marshal.GetFunctionPointerForDelegate(s_appearanceChangedDel);
+                class_addMethod(cls, Sel("appearanceChanged:"), imp, "v@:@");  // void, (id, SEL, id)
+                objc_registerClassPair(cls);
+            }
+
+            IntPtr obs = Send(Send(cls, Sel("alloc")), Sel("init"));
+            if (obs == IntPtr.Zero) return;
+
+            IntPtr center = Send(objc_getClass("NSDistributedNotificationCenter"), Sel("defaultCenter"));
+            if (center == IntPtr.Zero) return;
+            IntPtr name = MakeNSString("AppleInterfaceThemeChangedNotification");
+            SendVoidPtr4(center, Sel("addObserver:selector:name:object:"),
+                         obs, Sel("appearanceChanged:"), name, IntPtr.Zero);
+            s_appearanceObserver = obs;   // keep the observer alive
+        }
+
         // ---- NSApplication ----------------------------------------------------------
 
         private static bool s_appInitialized;
@@ -571,6 +713,9 @@ namespace MS.Internal.Interop
             SendVoidNInt(app, Sel("setActivationPolicy:"), 0);
             Send(app, Sel("finishLaunching"));
             SendVoidBool(app, Sel("activateIgnoringOtherApps:"), true);
+
+            // Observe runtime Dark/Light toggles so ThemeMode.System re-themes live.
+            EnsureAppearanceObserver();
         }
 
         /// <summary>
@@ -1000,6 +1145,14 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC)] private static extern IntPtr objc_getClass(string name);
         [DllImport(ObjC)] private static extern IntPtr sel_registerName(string name);
+
+        // Runtime class creation, for the distributed-notification observer's callback method.
+        [DllImport(ObjC)] private static extern IntPtr objc_allocateClassPair(IntPtr superclass, string name, UIntPtr extraBytes);
+        [DllImport(ObjC)] private static extern void objc_registerClassPair(IntPtr cls);
+        [DllImport(ObjC)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool class_addMethod(IntPtr cls, IntPtr sel, IntPtr imp, string types);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidPtr4(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b, IntPtr c, IntPtr d);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
 
         // objc_msgSend is variadic in C; declare one typed alias per call shape we use.

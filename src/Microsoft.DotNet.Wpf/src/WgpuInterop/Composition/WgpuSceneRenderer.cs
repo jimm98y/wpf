@@ -48,6 +48,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // colours and images are kept linear internally and gamma-encoded once on the final write.
         private bool _srgbOutput;
 
+        // True when the current target is a transparent surface (Mica backdrop / layered popup). Text
+        // then uses plain linear grayscale AA -- the sRGB text-gamma (cov^(1/2.2)) is tuned for blending
+        // over an OPAQUE destination in the framebuffer, but on a transparent target the coverage becomes
+        // the alpha that CoreAnimation later composites over the backdrop, so the gamma distorts the edges
+        // (WPF likewise drops ClearType/text-gamma on layered windows).
+        private bool _transparentTarget;
+
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
@@ -918,6 +925,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 PerfReadbacks++;
                 WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
                 _srgbOutput = srgbOutput;
+                _transparentTarget = false;
                 List<LayerPass> plan = _plan; plan.Clear();
                 DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
@@ -986,11 +994,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// Renders the scene into an externally owned texture view (e.g. a
         /// swap-chain back buffer) using the given target format. No readback.
         /// </summary>
-        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background)
+        public void RenderSceneToView(SceneVisual root, IntPtr view, WGPUTextureFormat format, int width, int height, RgbaColor background, bool transparentTarget = false)
         {
             try
             {
                 _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
+                _transparentTarget = transparentTarget;
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 long ca0 = GC.GetAllocatedBytesForCurrentThread();
                 List<LayerPass> plan = _plan; plan.Clear();
@@ -2413,7 +2422,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (clip.IsEmpty) return;
 
-            bool gamma = isGlyph && _srgbOutput;
+            bool gamma = isGlyph && _srgbOutput && !_transparentTarget;
 
             // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
@@ -2598,7 +2607,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (clip.IsEmpty || mask.IsEmpty) return;
 
-            if (isGlyph && _srgbOutput) ApplyTextGamma(mask.Coverage);
+            if (isGlyph && _srgbOutput && !_transparentTarget) ApplyTextGamma(mask.Coverage);
 
             IntPtr view, bindGroup;
             FillKind kind;

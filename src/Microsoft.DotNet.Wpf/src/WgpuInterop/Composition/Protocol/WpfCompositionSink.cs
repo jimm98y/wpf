@@ -351,7 +351,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             RgbaColor clear = ts.Transparent ? new RgbaColor(0, 0, 0, 0) : t.ClearColor;
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, clear);
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, clear, ts.Transparent);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
