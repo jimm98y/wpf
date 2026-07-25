@@ -101,6 +101,15 @@ namespace Standard
         /// </summary>
         public static bool IsWindows11_22H2OrNewer => _osVersion.Build >= 22621;
 
+        /// <summary>
+        /// Whether this platform can provide a translucent window backdrop behind a transparent
+        /// window: Windows 11 (Mica/Acrylic via DWM), or the WebGPU compositor on macOS, which
+        /// installs an NSVisualEffectView (behind-window blur) as the Mica substitute. When true
+        /// the Fluent Window style leaves the window Background Transparent so the backdrop shows
+        /// through; otherwise it paints a solid WindowBackground. Referenced from Window.xaml.
+        /// </summary>
+        public static bool IsBackdropSupported => IsOSWindows11OrNewer || !OperatingSystem.IsWindows();
+
         public static BitmapFrame GetBestMatch(IList<BitmapFrame> frames, int width, int height)
         {
             return _GetBestMatch(frames, _GetBitDepth(), width, height);

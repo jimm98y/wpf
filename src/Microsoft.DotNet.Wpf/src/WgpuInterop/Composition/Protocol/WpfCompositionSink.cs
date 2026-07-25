@@ -554,7 +554,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
                 WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter);
-                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, Width = t.Width, Height = t.Height, Transparent = t.IsLayered };
+                // Layered popups (per-pixel alpha) OR a window made non-opaque for a translucent Mica
+                // backdrop both present through a transparent surface so the material behind shows through.
+                bool transparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
+                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, Width = t.Width, Height = t.Height, Transparent = transparent };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }

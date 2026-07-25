@@ -87,6 +87,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             return Wgpu.wgpuInstanceCreateSurface(instance, &desc);
         }
 
+        /// <summary>
+        /// Whether the NSView's host window is opaque. A window turned non-opaque for a translucent
+        /// backdrop (Mica substitute / layered popup) needs its swap-chain surface configured with an
+        /// alpha mode and a transparent clear so the material behind shows through. Treats a view with
+        /// no window as opaque.
+        /// </summary>
+        public static bool IsWindowOpaque(IntPtr nsView)
+        {
+            if (nsView == IntPtr.Zero) return true;
+            IntPtr window = Send(nsView, Sel("window"));
+            return window == IntPtr.Zero || SendBool(window, Sel("isOpaque"));
+        }
+
         // The view's backing scale factor (2.0 on Retina). Sourced from the window's screen (falling
         // back to the main screen), mirroring CocoaWindow.GetBackingScale so the CAMetalLayer's
         // contentsScale agrees with the HwndTarget DPI scale and the device-pixel client rects.

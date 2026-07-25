@@ -86,5 +86,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// normal swap-chain surface instead.
         /// </summary>
         public static bool SupportsLayeredWindows => Current == PlatformKind.Windows;
+
+        /// <summary>
+        /// Whether the native window backing a surface is opaque. A window made non-opaque for a
+        /// translucent backdrop (the macOS Mica substitute installs an NSVisualEffectView and clears
+        /// the window) must present through a transparent surface (alpha mode + transparent clear).
+        /// Opaque everywhere without a notion of window transparency.
+        /// </summary>
+        public static bool IsWindowOpaque(IntPtr nativeWindow)
+        {
+            return Current != PlatformKind.MacOS || MacInterop.IsWindowOpaque(nativeWindow);
+        }
     }
 }

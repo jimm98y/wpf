@@ -221,6 +221,82 @@ namespace MS.Internal.Interop
         /// requested screen position by SetWindowPos, unlike AppKit-placed top-level windows.</summary>
         public bool IsBorderless => _borderless;
 
+        // ---- Mica backdrop (macOS translucency) -------------------------------------
+
+        private IntPtr _visualEffectView;   // NSVisualEffectView* installed behind the content, or Zero
+        private bool _micaEnabled;
+
+        /// <summary>True once <see cref="EnableMicaBackdrop"/> has made this window translucent.</summary>
+        public bool MicaEnabled => _micaEnabled;
+
+        /// <summary>
+        /// Turn this top-level window into a translucent "Mica" backdrop: make the NSWindow non-opaque
+        /// with a clear background and install an NSVisualEffectView (behind-window blur) as a sibling
+        /// behind the layer-backed content view. Windows 11 Mica composites the desktop wallpaper behind
+        /// a transparent window; AppKit's NSVisualEffectView is the macOS equivalent (it blurs whatever
+        /// is behind the window). Wherever WPF paints the (Fluent-Transparent) window background the blur
+        /// shows through. The CAMetalLayer's opacity follows the window's (see MacInterop.CreateSurface)
+        /// and the WebGPU compositor configures the surface with an alpha mode + transparent clear so the
+        /// alpha is honoured. Called from WindowBackdropManager when the Fluent theme requests a backdrop.
+        /// </summary>
+        public void EnableMicaBackdrop()
+        {
+            if (_window == IntPtr.Zero || _contentView == IntPtr.Zero || _micaEnabled) return;
+
+            IntPtr vevClass = objc_getClass("NSVisualEffectView");
+            if (vevClass == IntPtr.Zero) return;   // AppKit unavailable -- leave the window opaque
+
+            _micaEnabled = true;
+
+            // Non-opaque window with a clear background so the surface's alpha reaches the compositor and
+            // the material behind shows through the transparent parts of the scene.
+            SendVoidBool(_window, Sel("setOpaque:"), false);
+            SendVoidPtr(_window, Sel("setBackgroundColor:"),
+                        Send(objc_getClass("NSColor"), Sel("clearColor")));
+
+            IntPtr vev = Send(Send(vevClass, Sel("alloc")), Sel("init"));
+            if (vev == IntPtr.Zero) return;
+
+            // Fill the content view and track its size as the window resizes.
+            NSRect bounds = SendRect(_contentView, Sel("bounds"));
+            SendVoidRect(vev, Sel("setFrame:"), bounds);
+            SendVoidNUInt(vev, Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
+
+            // material (default NSVisualEffectMaterialUnderWindowBackground = 21: a window-tinted
+            // behind-window blur, the closest match to Mica), overridable via env for tuning;
+            // blendingMode = BehindWindow (0); state = Active (1) so it always blurs, not only when key.
+            SendVoidNInt(vev, Sel("setMaterial:"), MicaMaterial());
+            SendVoidNInt(vev, Sel("setBlendingMode:"), 0);
+            SendVoidNInt(vev, Sel("setState:"), 1);
+
+            // Insert BELOW the metal content. NSWindowBelow = -1; the CAMetalLayer is added later (at
+            // surface creation) as a top-most sublayer, so the effect view renders behind the WPF scene.
+            SendVoidPtrNIntPtr(_contentView, Sel("addSubview:positioned:relativeTo:"), vev, -1, IntPtr.Zero);
+            _visualEffectView = vev;
+        }
+
+        private static nint MicaMaterial()
+        {
+            string env = Environment.GetEnvironmentVariable("WPF_MAC_MICA_MATERIAL");
+            if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int m)) return m;
+            return 21;   // NSVisualEffectMaterialUnderWindowBackground
+        }
+
+        /// <summary>Undo <see cref="EnableMicaBackdrop"/>: remove the effect view and make the window
+        /// opaque again (WindowBackdropType.None off-Windows).</summary>
+        public void DisableMicaBackdrop()
+        {
+            if (!_micaEnabled) return;
+            _micaEnabled = false;
+            if (_visualEffectView != IntPtr.Zero)
+            {
+                Send(_visualEffectView, Sel("removeFromSuperview"));
+                _visualEffectView = IntPtr.Zero;
+            }
+            if (_window != IntPtr.Zero)
+                SendVoidBool(_window, Sel("setOpaque:"), true);
+        }
+
         /// <summary>Resize the window's content area to the given size in points.</summary>
         public void SetContentSize(int width, int height)
         {
@@ -957,6 +1033,15 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern NSPoint SendPointPoint(IntPtr receiver, IntPtr selector, NSPoint point);
 
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, NSRect arg);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidNUInt(IntPtr receiver, IntPtr selector, nuint arg);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidPtrNIntPtr(IntPtr receiver, IntPtr selector, IntPtr arg1, nint arg2, IntPtr arg3);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct NSRect
         {
@@ -985,5 +1070,9 @@ namespace MS.Internal.Interop
         private const ulong NSWindowStyleMaskMiniaturizable = 1 << 2;
         private const ulong NSWindowStyleMaskResizable = 1 << 3;
         private const ulong NSBackingStoreBuffered = 2;
+
+        // NSAutoresizingMaskOptions: the effect view fills its superview on resize.
+        private const nuint NSViewWidthSizable = 2;
+        private const nuint NSViewHeightSizable = 16;
     }
 }
