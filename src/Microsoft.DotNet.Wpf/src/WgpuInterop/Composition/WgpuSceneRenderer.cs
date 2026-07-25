@@ -2321,7 +2321,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
         private void EmitPath(GeometryFill fill, PathGeometry path, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
-            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph);
+            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph, fill.BaselineAnchor);
 
         // Fills a geometry and/or strokes its outline in one primitive (the fill
         // first, then the stroke on top), reusing the fill and stroke paths.
@@ -2408,7 +2408,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
-            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false)
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false,
+            Vector2? baselineAnchor = null)
         {
             if (clip.IsEmpty) return;
 
@@ -2437,9 +2438,33 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 float dx = world.M11 * gminX + world.M21 * gminY + world.M31;
                 float dy = world.M12 * gminX + world.M22 * gminY + world.M32;
                 float qx = MathF.Round(dx * 2f) * 0.5f;
-                float qy = MathF.Round(dy * 2f) * 0.5f;
-                float ox = MathF.Floor(qx), oy = MathF.Floor(qy);
-                int phase = (int)((qx - ox) * 2f) * 2 + (int)((qy - oy) * 2f);
+                float ox = MathF.Floor(qx);
+                float phaseX = qx - ox;
+
+                // Vertical snap. For glyphs, snap the RUN's shared baseline (baselineAnchor)
+                // to the half-pixel grid and shift every glyph by that same amount, so all
+                // glyphs land on one snapped baseline. Snapping each glyph by its own ink-box
+                // top (dy) instead rounds glyphs with different ascents in different directions,
+                // scattering baselines by up to half a pixel — the ~1px "sunken letters" bug.
+                // Non-glyph fills keep the per-geometry snap. In both cases the vertical phase
+                // stays shape-stable (≤2 values across a scroll), so the mask cache still dedups.
+                float oy, phaseY;
+                if (baselineAnchor is Vector2 anchor)
+                {
+                    float bdy = world.M12 * anchor.X + world.M22 * anchor.Y + world.M32;
+                    float shift = MathF.Round(bdy * 2f) * 0.5f - bdy; // baseline snap, shared by the run
+                    float ty = dy + shift;                            // this glyph's top, shifted with the run
+                    oy = MathF.Floor(ty);
+                    phaseY = ty - oy;
+                }
+                else
+                {
+                    float qy = MathF.Round(dy * 2f) * 0.5f;
+                    oy = MathF.Floor(qy);
+                    phaseY = qy - oy;
+                }
+                // Key must distinguish the (now finer) vertical phase; X stays half-pixel (2 variants).
+                int phase = (int)(phaseX * 2f) * 512 + (int)MathF.Round(phaseY * 255f);
                 PathGeometry normGeom = (gminX == 0f && gminY == 0f)
                     ? coverageGeometry
                     : TransformGeometry(coverageGeometry, Matrix3x2.CreateTranslation(-gminX, -gminY));
@@ -2455,8 +2480,8 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     PerfCoverage++;
                     // normGeom is at local origin; transform by the world LINEAR part + the sub-pixel phase.
                     Matrix3x2 phased = world;
-                    phased.M31 = qx - ox;
-                    phased.M32 = qy - oy;
+                    phased.M31 = phaseX;
+                    phased.M32 = phaseY;
                     IntPtr tex, view;
                     int mox, moy, mw, mh;
                     if (s_gpuRaster)

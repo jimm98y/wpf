@@ -1470,7 +1470,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     glyph = TransformGeometry(glyph, state.Transform);
                     if (state.Clip is not null)
                         glyph = new CombinedGeometry(GeometryCombineMode.Intersect, glyph, state.Clip);
-                    output.Add(new GeometryFill(glyph, brush, isGlyph: true));
+                    // Baseline anchor (glyph baseline point in the geometry's space) so the
+                    // coverage cache snaps the whole run to one baseline instead of snapping
+                    // each glyph by its own ink box (which sinks some letters ~1px).
+                    Vector2 baseline = Vector2.Transform(new Vector2(gx, gy), state.Transform);
+                    output.Add(new GeometryFill(glyph, brush, isGlyph: true, baselineAnchor: baseline));
                 }
                 penX += i < run.Advances.Length ? run.Advances[i] : 0f;
             }

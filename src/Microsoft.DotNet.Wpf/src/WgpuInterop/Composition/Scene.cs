@@ -312,11 +312,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// which blends text in gamma space.</summary>
         public bool IsGlyph { get; }
 
-        public GeometryFill(Geometry geometry, Brush brush, bool isGlyph = false)
+        /// <summary>For a glyph fill, the run's baseline point in this geometry's local
+        /// space (i.e. after the run's own transform, before the render-time world
+        /// transform). The coverage cache pixel-snaps text by this shared anchor so every
+        /// glyph in a run lands on ONE snapped baseline; snapping each glyph by its own ink
+        /// bounding box instead scatters baselines by up to half a pixel (some letters sink
+        /// ~1px). Null for non-glyph fills, which snap by their own bounds as before.</summary>
+        public Vector2? BaselineAnchor { get; }
+
+        public GeometryFill(Geometry geometry, Brush brush, bool isGlyph = false, Vector2? baselineAnchor = null)
         {
             Geometry = geometry;
             Brush = brush;
             IsGlyph = isGlyph;
+            BaselineAnchor = baselineAnchor;
         }
 
         /// <summary>Convenience overload for the common solid-colour fill.</summary>
