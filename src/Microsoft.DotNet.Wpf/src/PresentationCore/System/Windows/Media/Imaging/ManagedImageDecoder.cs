@@ -62,10 +62,14 @@ namespace System.Windows.Media.Imaging
             {
                 bgra = ManagedJpegDecoder.Decode(data, out width, out height);
             }
+            else if (data.Length > 6 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0)
+            {
+                bgra = DecodeIco(data, out width, out height);
+            }
             else
             {
                 throw new PlatformNotSupportedException(
-                    "Only PNG, JPEG and uncompressed BMP can be decoded without native WIC on this platform.");
+                    "Only PNG, JPEG, ICO and uncompressed BMP can be decoded without native WIC on this platform.");
             }
 
             var source = BitmapSource.Create(width, height, dpiX, dpiY, PixelFormats.Bgra32, null, bgra, width * 4);
@@ -338,6 +342,162 @@ namespace System.Windows.Media.Imaging
                 bgra[o] = b; bgra[o + 1] = g; bgra[o + 2] = r; bgra[o + 3] = a;
             }
         }
+
+        // ---- ICO -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Decodes a Windows .ico: picks the largest/deepest entry and decodes it. Each entry is
+        /// either an embedded PNG or a BMP DIB (BITMAPINFOHEADER, no file header) whose biHeight is
+        /// doubled to cover the trailing 1-bpp AND mask. Supports 1/4/8-bit indexed, 24-bit and
+        /// 32-bit color, applying the AND mask (and the 32-bit alpha when present).
+        /// </summary>
+        private static byte[] DecodeIco(byte[] data, out int width, out int height)
+        {
+            int count = data[4] | (data[5] << 8);
+            if (count <= 0 || 6 + count * 16 > data.Length)
+            {
+                throw new InvalidDataException("Corrupt ICO directory.");
+            }
+
+            // Choose the best entry: largest area, then greatest bit depth.
+            int best = -1;
+            long bestScore = -1;
+            for (int i = 0; i < count; i++)
+            {
+                int e = 6 + i * 16;
+                int w = data[e] == 0 ? 256 : data[e];
+                int h = data[e + 1] == 0 ? 256 : data[e + 1];
+                int bits = data[e + 6] | (data[e + 7] << 8);
+                long score = (long)w * h * 100 + bits;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = e;
+                }
+            }
+
+            int imgSize = ReadU32LE(data, best + 8);
+            int imgOff = ReadU32LE(data, best + 12);
+            if (imgOff < 0 || imgSize < 0 || imgOff + imgSize > data.Length || imgOff + 8 > data.Length)
+            {
+                throw new InvalidDataException("Corrupt ICO entry.");
+            }
+
+            // PNG-compressed entry (common for 256x256): decode directly.
+            if (data[imgOff] == 0x89 && data[imgOff + 1] == 'P' && data[imgOff + 2] == 'N' && data[imgOff + 3] == 'G')
+            {
+                byte[] png = new byte[imgSize];
+                Array.Copy(data, imgOff, png, 0, imgSize);
+                return DecodePng(png, out width, out height, out _, out _);
+            }
+
+            // BMP DIB entry.
+            int p = imgOff;
+            int hdrSize = ReadU32LE(data, p);
+            int biWidth = ReadU32LE(data, p + 4);
+            int biHeight = ReadU32LE(data, p + 8);
+            int bitCount = data[p + 14] | (data[p + 15] << 8);
+            int compression = ReadU32LE(data, p + 16);
+            int clrUsed = ReadU32LE(data, p + 32);
+            if (compression != 0)
+            {
+                throw new PlatformNotSupportedException("Only uncompressed ICO DIB entries are supported without native WIC.");
+            }
+
+            width = biWidth;
+            height = biHeight / 2;   // biHeight covers colour rows + AND-mask rows
+            if (width <= 0 || height <= 0)
+            {
+                throw new InvalidDataException("Invalid ICO DIB dimensions.");
+            }
+
+            int palOff = p + hdrSize;
+            int palCount = bitCount <= 8 ? (clrUsed != 0 ? clrUsed : 1 << bitCount) : 0;
+            int xorOff = palOff + palCount * 4;
+
+            int colorStride = ((width * bitCount + 31) / 32) * 4;
+            int maskStride = ((width + 31) / 32) * 4;
+            int maskOff = xorOff + colorStride * height;
+
+            var bgra = new byte[width * height * 4];
+            bool anyAlpha = false;
+
+            for (int y = 0; y < height; y++)
+            {
+                int srcY = height - 1 - y;   // DIB rows are bottom-up
+                int colorRow = xorOff + srcY * colorStride;
+                int maskRow = maskOff + srcY * maskStride;
+                for (int x = 0; x < width; x++)
+                {
+                    byte r, g, b, a = 255;
+                    if (bitCount == 32)
+                    {
+                        int s = colorRow + x * 4;
+                        b = data[s]; g = data[s + 1]; r = data[s + 2]; a = data[s + 3];
+                        if (a != 0) { anyAlpha = true; }
+                    }
+                    else if (bitCount == 24)
+                    {
+                        int s = colorRow + x * 3;
+                        b = data[s]; g = data[s + 1]; r = data[s + 2];
+                    }
+                    else
+                    {
+                        int idx = ReadIndex(data, colorRow, x, bitCount);
+                        int pe = palOff + idx * 4;
+                        b = data[pe]; g = data[pe + 1]; r = data[pe + 2];
+                    }
+
+                    if (bitCount != 32)
+                    {
+                        // AND mask: 1 = transparent, 0 = opaque.
+                        int bit = (data[maskRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+                        a = bit == 1 ? (byte)0 : (byte)255;
+                    }
+
+                    int o = (y * width + x) * 4;
+                    bgra[o] = b; bgra[o + 1] = g; bgra[o + 2] = r; bgra[o + 3] = a;
+                }
+            }
+
+            // Some 32-bit icons ship an all-zero alpha channel; fall back to the AND mask.
+            if (bitCount == 32 && !anyAlpha)
+            {
+                for (int y = 0; y < height; y++)
+                {
+                    int srcY = height - 1 - y;
+                    int maskRow = maskOff + srcY * maskStride;
+                    for (int x = 0; x < width; x++)
+                    {
+                        int bit = (data[maskRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+                        bgra[(y * width + x) * 4 + 3] = bit == 1 ? (byte)0 : (byte)255;
+                    }
+                }
+            }
+
+            return bgra;
+        }
+
+        /// <summary>Reads a 1/2/4/8-bit big-endian-packed palette index at pixel x in a DIB color row.</summary>
+        private static int ReadIndex(byte[] data, int rowOff, int x, int bitCount)
+        {
+            switch (bitCount)
+            {
+                case 8:
+                    return data[rowOff + x];
+                case 4:
+                    return (data[rowOff + (x >> 1)] >> ((x & 1) == 0 ? 4 : 0)) & 0x0F;
+                case 2:
+                    return (data[rowOff + (x >> 2)] >> (6 - (x & 3) * 2)) & 0x03;
+                case 1:
+                    return (data[rowOff + (x >> 3)] >> (7 - (x & 7))) & 0x01;
+                default:
+                    throw new PlatformNotSupportedException($"Unsupported ICO DIB bit depth {bitCount}.");
+            }
+        }
+
+        private static int ReadU32LE(byte[] data, int pos) =>
+            data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24);
 
         // ---- BMP -----------------------------------------------------------------------
 
