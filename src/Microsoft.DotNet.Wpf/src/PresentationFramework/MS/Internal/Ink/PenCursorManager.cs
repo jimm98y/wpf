@@ -195,6 +195,16 @@ namespace MS.Internal.Ink
         /// <returns></returns>
         private static Cursor CreateCursorFromDrawing(Drawing drawing, Point hotspot)
         {
+            // Off-Windows there is no native cursor pipeline: rendering the cursor drawing to a bitmap and
+            // building an HCURSOR goes through FormatConvertedBitmap -> the native imaging factory
+            // (MILFactory2 / wpfgfx_cor3.dll) and IconHelper.CreateIconCursor (a Win32 icon), neither of
+            // which exists here. WPF calls this every time the pointer moves over an InkCanvas (QueryCursor),
+            // so it would crash on hover. Fall back to a standard drawing cursor instead.
+            if (!OperatingSystem.IsWindows())
+            {
+                return Cursors.Cross;
+            }
+
             // A default cursor.
             Cursor cursor = Cursors.Arrow;
 
