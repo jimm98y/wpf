@@ -1252,6 +1252,18 @@ namespace System.Windows.Media
         /// </summary>
         private void EnterInterlockedPresentation()
         {
+            // Off-Windows the WebGPU compositor presents SYNCHRONOUSLY (Channel.Commit -> SyncFlush ->
+            // present) and never posts back the async "Presented" channel notification the interlock
+            // pattern waits for. Entering interlocked presentation would therefore stall the render loop
+            // after the first commit (InterlockState.WaitingForResponse, RenderMessageHandler's post-render
+            // when some unrelated event forces a render (the menu's entrance easing "terminating early",
+            // then inching forward as you move the mouse). Stay in the simpler timer-driven mode where each
+            // render schedules the next (the !InterlockIsEnabled branch), so animations play continuously.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!InterlockIsEnabled)
             {
                 if (MediaSystem.AnimationSmoothing
