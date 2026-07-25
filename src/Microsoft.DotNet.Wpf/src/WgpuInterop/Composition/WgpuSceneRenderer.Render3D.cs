@@ -78,8 +78,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     let n = normalize(in.normal) * select(1.0, -1.0, u.params.w > 0.5);
     let viewDir = normalize(u.camPos.xyz - in.worldPos);
     var diffuseColor = u.diffuse.rgb;
+    var alpha = 1.0;                    // solid materials stay opaque (unchanged)
     if (u.params.y > 0.5) {
-        diffuseColor = diffuseColor * textureSampleLevel(texd, samp, in.uv, 0.0).rgb;
+        let tex = textureSampleLevel(texd, samp, in.uv, 0.0);
+        diffuseColor = diffuseColor * tex.rgb;
+        alpha = tex.a;                 // a textured material's transparency comes from its texture (e.g. an
+                                       // EmissiveMaterial ImageBrush with transparent regions -> see-through)
     }
     // Emissive is unlit; ambient modulates the diffuse albedo. An emissive-textured surface
     // (params.z) shows its diffuse texture at full brightness -- a live 2D UI reads like a screen.
@@ -112,7 +116,10 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             rgb = rgb + u.specular.rgb * L.colorRange.rgb * (spec * atten);
         }
     }
-    return vec4<f32>(rgb, 1.0);   // opaque (premultiplied, alpha 1)
+    // Fully-transparent texels are discarded so they write no depth and the geometry behind shows
+    // through (matching WPF's transparent 3D faces); the rest blends premultiplied.
+    if (alpha < 0.004) { discard; }
+    return vec4<f32>(rgb * alpha, alpha);   // premultiplied
 }
 ";
 
