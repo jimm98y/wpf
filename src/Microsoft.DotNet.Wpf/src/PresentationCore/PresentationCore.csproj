@@ -336,6 +336,7 @@
     <Compile Include="System\Windows\AutoResizedEvent.cs" />
     <Compile Include="System\Windows\ClassHandlersStore.cs" />
     <Compile Include="System\Windows\clipboard.cs" />
+    <Compile Include="System\Windows\MacDataObject.cs" />
     <Compile Include="System\Windows\ContentElement.cs" />
     <Compile Include="System\Windows\ContentOperations.cs" />
     <Compile Include="System\Windows\CoreCompatibilityPreferences.cs" />

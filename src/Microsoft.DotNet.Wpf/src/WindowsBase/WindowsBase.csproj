@@ -271,6 +271,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceEnumerator.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\MacClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
