@@ -113,7 +113,9 @@ namespace MS.Win32
 
         public static IntPtr GetCursor()
         {
-            return SafeNativeMethodsPrivate.GetCursor();
+            // user32 GetCursor is Windows-only. Off-Windows report "no cursor" (IntPtr.Zero); callers such
+            // as Popup.GetMouseCursorSize already handle a null cursor by using a zero-sized cursor rect.
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetCursor() : IntPtr.Zero;
         }
 
         public static int ShowCursor(bool show)

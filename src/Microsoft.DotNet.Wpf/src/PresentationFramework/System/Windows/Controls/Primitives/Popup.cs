@@ -2755,7 +2755,7 @@ namespace System.Windows.Controls.Primitives
             // If there is no mouse cursor, these should be 0
             width = height = hotX = hotY = 0;
 
-            // First, retrieve the mouse cursor
+            // First, retrieve the mouse cursor (off-Windows this returns IntPtr.Zero -> the no-cursor path below).
             IntPtr hCursor = SafeNativeMethods.GetCursor();
             if (hCursor != IntPtr.Zero)
             {

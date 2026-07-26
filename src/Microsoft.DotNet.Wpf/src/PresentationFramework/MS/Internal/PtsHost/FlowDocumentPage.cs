@@ -375,7 +375,10 @@ namespace MS.Internal.PtsHost
             }
 
             IInputElement ie = null;
-            if (this.IsLayoutDataValid)
+            // The managed (off-Windows) layout path has no PtsPage, so PTS hit-testing below would NRE
+            // (crash on mouse-move over a FlowDocument/RichTextBox). Fall through to the FormattingOwner;
+            // caret placement uses the managed TextView.GetTextPositionFromPoint, not this element hit-test.
+            if (this.IsLayoutDataValid && !s_managed)
             {
                 // Transform point to PtsPage coordinate system.
                 // NOTE: TransformToAncestor is safe (will never throw an exception).
