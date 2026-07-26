@@ -217,6 +217,16 @@ namespace Microsoft.Internal.Interop
 
         internal static bool IsOsVersionOrGreater(OperatingSystemVersion osVer)
         {
+            // Off-Windows the native Is*OrGreater probes are all false (see the static ctor), but
+            // GetOsVersion() reports the newest known version (Windows10RS5). Keep this query consistent
+            // with that: our reported OS is >= any queried version. Without this, OS-version-gated
+            // resources -- notably the system .CompositeFont FontFamilyCollection entries, which are keyed
+            // by minimum OS -- find no matching entry and throw (breaks Fonts.SystemFontFamilies).
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             switch (osVer)
             {
                 case OperatingSystemVersion.Windows10RS5:
