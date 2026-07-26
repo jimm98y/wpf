@@ -49,6 +49,7 @@ namespace MS.Internal.PtsHost
         // True when the native PTS document engine is unavailable (non-Windows). See ManagedFlowLayout.
         private static readonly bool s_managed = !OperatingSystem.IsWindows();
         private ManagedFlowLayout _managedLayout;
+        private Vector _managedViewportOffset;
 
         // ------------------------------------------------------------------
         // Finalizer
@@ -729,6 +730,12 @@ namespace MS.Internal.PtsHost
                 // makes ITextView.Contains -- and thus caret HasValidLayout -- fail after edits).
                 if (!IsDisposed)
                 {
+                    // The managed layout renders content at page-absolute coordinates translated by the
+                    // page visual's Offset (= -scroll). Record the scroll offset (the viewport origin) so
+                    // the caret/selection geometry can be made viewport-relative (see TextDocumentView) --
+                    // the adorner layer is NOT scrolled, so page-absolute geometry would stay fixed.
+                    Rect vp = viewport.FromTextDpi();
+                    _managedViewportOffset = new Vector(vp.X, vp.Y);
                     _textView?.Invalidate();
                     ValidateTextView();
                 }
@@ -822,6 +829,10 @@ namespace MS.Internal.PtsHost
         /// <summary>The native PTS engine is unavailable; this page uses the managed block layout.</summary>
         internal bool IsManaged => s_managed;
         internal ManagedFlowLayout ManagedLayout => _managedLayout;
+        // Scroll offset (viewport origin) recorded by the managed UpdateViewport; used to convert
+        // page-absolute caret/selection geometry to viewport-relative coordinates for the (unscrolled)
+        // adorner layer. See UpdateViewport / TextDocumentView.ManagedCaretRect.
+        internal Vector ManagedViewportOffset => _managedViewportOffset;
 
         //-------------------------------------------------------------------
         // Page context

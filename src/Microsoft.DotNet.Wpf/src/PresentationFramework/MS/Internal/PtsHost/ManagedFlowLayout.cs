@@ -64,6 +64,12 @@ namespace MS.Internal.PtsHost
         }
 
         private readonly Dictionary<Block, BlockBox> _cache = new();
+        // Per-character bounds cache, keyed by the paragraph's FormattedText. Building a highlight
+        // geometry per character (CharRect) is costly and is hit hard during drag-select / caret
+        // hit-testing (once per character, per mouse move). Cache the whole row of char rects on first
+        // use; a ConditionalWeakTable drops the entry automatically when the FormattedText is replaced
+        // on reflow, so no manual eviction is needed.
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<FormattedText, Rect[]> _charRectCache = new();
         private readonly List<(FormattedText Text, Point Origin)> _draw = new();
         private readonly List<ParaLayout> _paras = new();
         private double _lastWidth = double.NaN;
@@ -154,12 +160,12 @@ namespace MS.Internal.PtsHost
                 }
                 else if (charOffset < len)
                 {
-                    Rect r = CharRect(pl.Text, charOffset);
+                    Rect r = CharRects(pl.Text, len)[charOffset];
                     x = pl.Origin.X + r.Left; top = pl.Origin.Y + r.Top; height = r.Height;
                 }
                 else
                 {
-                    Rect r = CharRect(pl.Text, len - 1);
+                    Rect r = CharRects(pl.Text, len)[len - 1];
                     x = pl.Origin.X + r.Right; top = pl.Origin.Y + r.Top; height = r.Height;
                 }
                 return new Rect(x, top, 0, height > 0 ? height : pl.Text.Height);
@@ -182,18 +188,51 @@ namespace MS.Internal.PtsHost
             if (!found) return false;
             para = best.Para;
             double localX = p.X - best.Origin.X;
-            charOffset = 0;
-            for (int i = 0; i < best.Length; i++)
+            double localY = p.Y - best.Origin.Y;
+            int len = best.Length;
+
+            // A single paragraph's FormattedText may wrap across several visual lines. Resolve the
+            // offset on the visual line nearest localY (grouping chars that share a line by their
+            // rect.Top), then pick the X position within that line. Using X alone would always map a
+            // click on line 2+ back onto line 1.
+            Rect[] rects = CharRects(best.Text, len);
+            charOffset = len;
+            double bestRowDy = double.MaxValue;
+            int i = 0;
+            while (i < len)
             {
-                Rect r = CharRect(best.Text, i);
-                if (localX < r.Left + r.Width / 2) { charOffset = i; return true; }
+                Rect r0 = rects[i];
+                double top = r0.Top, bot = r0.Bottom;
+                int lineStart = i, j = i;
+                while (j < len)
+                {
+                    Rect rj = rects[j];
+                    if (rj.Top > top + 0.5) break;   // start of the next visual line
+                    if (rj.Bottom > bot) bot = rj.Bottom;
+                    j++;
+                }
+                double dy = localY < top ? top - localY : (localY > bot ? localY - bot : 0);
+                if (dy < bestRowDy)
+                {
+                    bestRowDy = dy;
+                    int cand = j;   // past the last char on this line
+                    for (int k = lineStart; k < j; k++)
+                    {
+                        if (localX < rects[k].Left + rects[k].Width / 2) { cand = k; break; }
+                    }
+                    charOffset = cand;
+                }
+                i = j;
             }
-            charOffset = best.Length;
             return true;
         }
 
         /// <summary>Highlight geometry (absolute) for a character range within a laid-out paragraph.</summary>
-        public Geometry ParagraphHighlight(Paragraph para, int startChar, int endChar)
+        // viewportOffset is baked into the geometry's points (the origin) rather than applied as a
+        // Geometry.Transform: the WebGPU compositor ignores Geometry.Transform (MilcoreEngine drops the
+        // PathGeometry hTransform), so the selection highlight would otherwise render page-absolute and
+        // not track the text as it scrolls. See TextDocumentView.ManagedSelectionGeometry.
+        public Geometry ParagraphHighlight(Paragraph para, int startChar, int endChar, Vector viewportOffset)
         {
             foreach (ParaLayout pl in _paras)
             {
@@ -202,7 +241,8 @@ namespace MS.Internal.PtsHost
                 int s = Math.Max(0, Math.Min(startChar, len));
                 int e = Math.Max(s, Math.Min(endChar, len));
                 if (e <= s) return null;
-                return pl.Text.BuildHighlightGeometry(pl.Origin, s, e - s);
+                var origin = new Point(pl.Origin.X - viewportOffset.X, pl.Origin.Y - viewportOffset.Y);
+                return pl.Text.BuildHighlightGeometry(origin, s, e - s);
             }
             return null;
         }
@@ -219,6 +259,18 @@ namespace MS.Internal.PtsHost
             Geometry g = ft.BuildHighlightGeometry(new Point(0, 0), index, 1);
             Rect r = g != null ? g.Bounds : Rect.Empty;
             return r.IsEmpty ? new Rect(0, 0, 0, ft.Height) : r;
+        }
+
+        // Cached row of per-character rects for a laid-out paragraph's FormattedText.
+        private Rect[] CharRects(FormattedText ft, int len)
+        {
+            if (!_charRectCache.TryGetValue(ft, out Rect[] arr))
+            {
+                arr = new Rect[len];
+                for (int i = 0; i < len; i++) arr[i] = CharRect(ft, i);
+                _charRectCache.Add(ft, arr);
+            }
+            return arr;
         }
 
         // ---- per-block layout (produces a cacheable BlockBox, positions relative to the block top) ----

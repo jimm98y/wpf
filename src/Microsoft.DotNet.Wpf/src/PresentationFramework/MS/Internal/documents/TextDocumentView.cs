@@ -121,6 +121,11 @@ namespace MS.Internal.Documents
             {
                 int charOffset = new TextRange(para.ContentStart, tp).Text.Length;
                 result = layout.CaretRect(para, charOffset) ?? Rect.Empty;
+                if (!result.IsEmpty)
+                {
+                    Vector off = _owner.ManagedViewportOffset;
+                    result.Offset(-off.X, -off.Y);
+                }
             }
             return result;
         }
@@ -157,8 +162,11 @@ namespace MS.Internal.Documents
             if (sPara == null || ePara == null) return null;
             int sOff = new TextRange(sPara.ContentStart, sp).Text.Length;
             int eOff = new TextRange(ePara.ContentStart, ep).Text.Length;
+            // Bake the scroll offset into the geometry points (the adorner layer is not scrolled, and the
+            // compositor ignores Geometry.Transform -- see ManagedFlowLayout.ParagraphHighlight).
+            Vector off = _owner.ManagedViewportOffset;
             if (sPara == ePara)
-                return layout.ParagraphHighlight(sPara, sOff, eOff);
+                return layout.ParagraphHighlight(sPara, sOff, eOff, off);
 
             Geometry result = null;
             bool inRange = false;
@@ -168,7 +176,7 @@ namespace MS.Internal.Documents
                 if (p == sPara) inRange = true;
                 if (inRange)
                 {
-                    Geometry g = layout.ParagraphHighlight(p, p == sPara ? sOff : 0, p == ePara ? eOff : int.MaxValue);
+                    Geometry g = layout.ParagraphHighlight(p, p == sPara ? sOff : 0, p == ePara ? eOff : int.MaxValue, off);
                     if (g != null) result = result == null ? g : Geometry.Combine(result, g, GeometryCombineMode.Union, null);
                 }
                 if (p == ePara) break;
