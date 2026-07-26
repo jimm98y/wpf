@@ -45,7 +45,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private long _gcBytes0, _perfRealizeAlloc, _perfRenderAlloc;
         private int _gc0, _gc1, _gc2;
         private int _perfFrames;
-        private bool _offDumped;   // TEMP DIAG WF_OFF_DUMP
         private bool _disposed;
 
         // Optional diagnostics: when WPF_WEBGPU_SINK_LOG names a file, the sink appends
@@ -251,15 +250,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // popup through its own swap-chain surface instead (opaque, but its content shows).
                     PresentLayered(root, t);
                     continue;
-                }
-                {   // TEMP DIAG WF_OFF_DUMP (display sRGB path, first frame, occlusion-independent)
-                    string? offd = Environment.GetEnvironmentVariable("WF_OFF_DUMP");
-                    if (offd != null && !_offDumped)
-                    {
-                        _offDumped = true;
-                        byte[] rgba = _renderer!.RenderToRgba(EmbeddedContent.Compose(root), t.Width, t.Height, t.ClearColor, srgbOutput: true);
-                        PngWriter.Write(offd, rgba, t.Width, t.Height, maxWidth: 4000);
-                    }
                 }
                 TargetSurface ts = EnsureSurface(kv.Key, t);
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -590,18 +580,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // source and blends in gamma space, so prefer a plain UNORM surface that stores those encoded
             // values verbatim (an sRGB surface would gamma-encode AGAIN -> washed out). Linear mode: prefer
             // an sRGB surface so the one linear->sRGB encode happens on the display write. Avoid BGRA (swap).
+            // Metal (macOS) surfaces advertise BGRA, not RGBA — so we must consider BOTH channel orders,
+            // or we fall through to formats[0] which on Metal is often the sRGB variant and, in gamma
+            // mode, double-encodes (colours too bright / washed). Gamma mode: pick any UNORM (non-sRGB)
+            // format so the pre-encoded values store verbatim. Linear mode: pick an sRGB format so the one
+            // linear->sRGB encode happens on store. Prefer RGBA over BGRA when both exist (no channel swap).
             bool gamma = WgpuSceneRenderer.s_gammaComposite;
-            WGPUTextureFormat chosen = caps.formats[0];
-            bool haveSrgb = false, haveRgba = false;
+            bool haveRgbaU = false, haveBgraU = false, haveRgbaS = false, haveBgraS = false;
             for (nuint i = 0; i < caps.formatCount; i++)
             {
-                if (caps.formats[i] == WGPUTextureFormat.RGBA8UnormSrgb) haveSrgb = true;
-                if (caps.formats[i] == WGPUTextureFormat.RGBA8Unorm) haveRgba = true;
+                switch (caps.formats[i])
+                {
+                    case WGPUTextureFormat.RGBA8Unorm: haveRgbaU = true; break;
+                    case WGPUTextureFormat.BGRA8Unorm: haveBgraU = true; break;
+                    case WGPUTextureFormat.RGBA8UnormSrgb: haveRgbaS = true; break;
+                    case WGPUTextureFormat.BGRA8UnormSrgb: haveBgraS = true; break;
+                }
             }
-            if (gamma && haveRgba) chosen = WGPUTextureFormat.RGBA8Unorm;
-            else if (!gamma && haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
-            else if (haveRgba) chosen = WGPUTextureFormat.RGBA8Unorm;
-            else if (haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
+            WGPUTextureFormat chosen;
+            if (gamma)
+                chosen = haveRgbaU ? WGPUTextureFormat.RGBA8Unorm
+                       : haveBgraU ? WGPUTextureFormat.BGRA8Unorm
+                       : haveRgbaS ? WGPUTextureFormat.RGBA8UnormSrgb
+                       : haveBgraS ? WGPUTextureFormat.BGRA8UnormSrgb : caps.formats[0];
+            else
+                chosen = haveRgbaS ? WGPUTextureFormat.RGBA8UnormSrgb
+                       : haveBgraS ? WGPUTextureFormat.BGRA8UnormSrgb
+                       : haveRgbaU ? WGPUTextureFormat.RGBA8Unorm
+                       : haveBgraU ? WGPUTextureFormat.BGRA8Unorm : caps.formats[0];
+            Log($"ChooseFormat gamma={gamma} formats[0]={caps.formats[0]} chosen={chosen}");
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return chosen;
         }

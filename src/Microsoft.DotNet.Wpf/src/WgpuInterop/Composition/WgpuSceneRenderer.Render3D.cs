@@ -30,10 +30,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private readonly Dictionary<(WGPUTextureFormat Format, WGPUCullMode Cull, bool DepthWrite), IntPtr> _pipelines3D = new();
         private IntPtr _shader3D;
-        // Emissive brush strength (A/B knob via WPF_EMIT_SCALE; 1 = full, matching WPF).
-        private static readonly float _emitScale =
-            float.TryParse(Environment.GetEnvironmentVariable("WPF_EMIT_SCALE"),
-                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 1f;
 
         private const int MaxLights3D = 8;
 
@@ -124,15 +120,11 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     // through (matching WPF's transparent 3D faces); the rest blends premultiplied.
     if (alpha < 0.004) { discard; }
     // WPF EmissiveMaterial with no diffuse material (emissive.w) is UNLIT + ADDITIVE: it EMITS light,
-    // adding its colour to whatever is behind, with ZERO coverage so the premultiplied over-blend
-    // src + dst*(1-a) becomes dst + emissive. The honeycomb texture is STRAIGHT alpha (rgb glows at its
-    // FULL value even where its own alpha is low), so the lines must emit at full rgb, not rgb*alpha
-    // (that reads dim/SDR). Ramp emission up quickly with alpha: full at the lines, fading smoothly
-    // across the thin AA border to the transparent cells. Front+back both add, and where more lattice
-    // layers overlap (grazing silhouette / dense curvature) the additive sum shines BRIGHTER -- the
-    // glow accumulation WPF shows. (Colour richness comes from LINEAR compositing, s_gammaComposite.)
-    let emitAmt = clamp(alpha * 3.0, 0.0, 1.0);
-    if (u.emissive.w > 0.5) { return vec4<f32>(emissive * emitAmt, 0.0); }
+    // adding to whatever is behind with ZERO coverage (does NOT occlude -- coverage != 0 turns it into
+    // a dead, opaque alpha-over web). The light it adds is the brush colour PREMULTIPLIED by its
+    // coverage: emissive.rgb * alpha -- exactly WPF's additive emissive. Front+back faces both add, so
+    // overlapping lattice layers accumulate brighter over the (correctly gamma-composited) fire.
+    if (u.emissive.w > 0.5) { return vec4<f32>(emissive * alpha, 0.0); }
     return vec4<f32>(rgb * alpha, alpha);   // premultiplied
 }
 ";
@@ -590,8 +582,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             f[o++] = ambient.R; f[o++] = ambient.G; f[o++] = ambient.B; f[o++] = 1f;
             f[o++] = mat.Diffuse.R; f[o++] = mat.Diffuse.G; f[o++] = mat.Diffuse.B; f[o++] = mat.Diffuse.A;
             f[o++] = mat.Specular.R; f[o++] = mat.Specular.G; f[o++] = mat.Specular.B; f[o++] = mat.SpecularPower;
-            float es = _emitScale;
-            f[o++] = mat.Emissive.R * es; f[o++] = mat.Emissive.G * es; f[o++] = mat.Emissive.B * es; f[o++] = mat.EmissiveOnly ? 1f : 0f;
+            f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = mat.EmissiveOnly ? 1f : 0f;
             int count = Math.Min(lights.Count, MaxLights3D);
             f[o++] = count; f[o++] = mat.HasTexture ? 1f : 0f; f[o++] = mat.EmissiveTextured ? 1f : 0f; f[o++] = flipNormals ? 1f : 0f;
             for (int i = 0; i < count; i++)
