@@ -124,11 +124,22 @@ namespace System.Windows.Media.TextFormatting
             bool                     sideways
             )
         {
-            Invariant.Assert(_shapeTypeface != null);
             Invariant.Assert(glyphIndices   != null);
             // Device fonts are only used through the LS non-glyphed code path. Only when a DigitCulture is set
             // will a potential device font be ignored and come through shaping.
-            Invariant.Assert(_shapeTypeface.DeviceFont == null  || _textItem.DigitCulture != null);
+            Invariant.Assert(_shapeTypeface == null || _shapeTypeface.DeviceFont == null  || _textItem.DigitCulture != null);
+
+            // On Windows font linking always resolves a shaped run to a non-null ShapeTypeface. Off-Windows
+            // it can be null when no physical font family matches (e.g. a FontChooser previewing a family that
+            // has no macOS glyph typeface); fall back to the Typeface's own glyph typeface (missing glyphs
+            // render via NullFont) rather than FailFast -- mirrors GetGlyphTypeface's unshaped-path handling.
+            GlyphTypeface shapedGlyphTypeface = _shapeTypeface != null
+                ? _shapeTypeface.GlyphTypeface
+                : _properties.Typeface.TryGetGlyphTypeface();
+            if (shapedGlyphTypeface == null)
+            {
+                return null;
+            }
 
             bool[] caretStops = null;
 
@@ -157,7 +168,7 @@ namespace System.Windows.Media.TextFormatting
             }
 
             return GlyphRun.TryCreate(
-                _shapeTypeface.GlyphTypeface,
+                shapedGlyphTypeface,
                 (rightToLeft ? 1 : 0),
                 sideways,
                 _emSize,

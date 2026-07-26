@@ -208,6 +208,11 @@ namespace MS.Win32
 
         internal static bool ReleaseCapture()
         {
+            // Mouse capture off-Windows is managed by the platform input provider, not a user32 HWND.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             bool returnValue = SafeNativeMethodsPrivate.IntReleaseCapture();
 
             if (!returnValue)

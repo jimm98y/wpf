@@ -291,8 +291,13 @@ namespace MS.Win32
             return IntOleInitialize(IntPtr.Zero);
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool EnumThreadWindows(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam);
+        [DllImport(ExternDll.User32, EntryPoint = "EnumThreadWindows", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool EnumThreadWindowsNative(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam);
+
+        // Off-Windows there is no HWND thread-window list; enumerate nothing (no callback invoked). Used by
+        // Window.ShowDialog to collect/disable sibling windows for modality -- harmless to skip off-Windows.
+        public static bool EnumThreadWindows(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam)
+            => OperatingSystem.IsWindows() ? EnumThreadWindowsNative(dwThreadId, lpfn, lParam) : true;
 
         [DllImport(ExternDll.Ole32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern int OleUninitialize();
@@ -341,6 +346,12 @@ namespace MS.Win32
 
         public static bool EnableWindow(HandleRef hWnd, bool enable)
         {
+            // Win32 window enable/disable (used by modal dialog ownership) has no off-Windows analog;
+            // the Cocoa/browser window drivers manage modality themselves. Treat as a no-op.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             bool result = NativeMethodsSetLastError.EnableWindow(hWnd, enable);
             if (!result)
             {
@@ -358,6 +369,10 @@ namespace MS.Win32
         {
             // This method is not throwing because the caller don't want to fail after calling this.
             // If the window was not previously disabled, the return value is zero, else it is non-zero.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             return NativeMethodsSetLastError.EnableWindow(hWnd, enable);
         }
 
@@ -546,6 +561,11 @@ namespace MS.Win32
 
         internal static IntPtr GetParent(HandleRef hWnd)
         {
+            // Win32 parent-window concept; off-Windows WPF top-level windows have no HWND parent.
+            if (!OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
             IntPtr retVal = NativeMethodsSetLastError.GetParent(hWnd);
             int errorCode = Marshal.GetLastWin32Error();
 
@@ -987,8 +1007,13 @@ namespace MS.Win32
             }
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern IntPtr GetDesktopWindow();
+        [DllImport(ExternDll.User32, EntryPoint = "GetDesktopWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern IntPtr GetDesktopWindowNative();
+
+        // Off-Windows there is no desktop HWND; return zero so callers (e.g. Window.ShowDialog's owner
+        // top-level resolution) skip the desktop special-case instead of P/Invoking the missing user32.
+        public static IntPtr GetDesktopWindow() =>
+            OperatingSystem.IsWindows() ? GetDesktopWindowNative() : IntPtr.Zero;
 
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern IntPtr GetForegroundWindow();
@@ -1092,8 +1117,12 @@ namespace MS.Win32
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern unsafe bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, NativeMethods.POINT* pptDst, NativeMethods.POINT* pSizeDst, IntPtr hdcSrc, NativeMethods.POINT* pptSrc, int crKey, ref NativeMethods.BLENDFUNCTION pBlend, int dwFlags);
 
-        [DllImport(ExternDll.User32, SetLastError = true)]
-        public static extern IntPtr SetActiveWindow(HandleRef hWnd);
+        [DllImport(ExternDll.User32, EntryPoint = "SetActiveWindow", SetLastError = true)]
+        private static extern IntPtr SetActiveWindowNative(HandleRef hWnd);
+
+        // Off-Windows activation is handled by the platform window driver; no HWND to activate.
+        public static IntPtr SetActiveWindow(HandleRef hWnd)
+            => OperatingSystem.IsWindows() ? SetActiveWindowNative(hWnd) : IntPtr.Zero;
 
         //Refactor shared native methods so that parser dependency
         // is in separate file. 
@@ -1206,8 +1235,13 @@ namespace MS.Win32
             return hIcon;
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool IsWindow(HandleRef hWnd);
+        [DllImport(ExternDll.User32, EntryPoint = "IsWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool IsWindowNative(HandleRef hWnd);
+
+        // Off-Windows there is no user32 HWND validity check; a non-zero handle is a live platform
+        // window (Window.ShowDialog uses this to validate the dialog owner handle).
+        public static bool IsWindow(HandleRef hWnd)
+            => OperatingSystem.IsWindows() ? IsWindowNative(hWnd) : hWnd.Handle != IntPtr.Zero;
 
 #if BASE_NATIVEMETHODS
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, EntryPoint = "DeleteDC", CharSet = CharSet.Auto)]
