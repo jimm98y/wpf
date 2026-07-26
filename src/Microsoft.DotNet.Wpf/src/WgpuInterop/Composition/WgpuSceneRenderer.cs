@@ -789,10 +789,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // Gamma-space compositing (the default) matches legacy WPF/GDI: colours are sRGB-encoded
         // (gamma) at their source and ALL blending/accumulation happens on those gamma values, with a
-        // plain UNORM (non-sRGB) target so nothing re-encodes on store. WPF does NOT composite in
-        // linear space, so this is what reproduces its look (e.g. emissive glow over a gradient, overlap
-        // saturation, AA edges). WPF_WEBGPU_GAMMA=0 restores physically-linear compositing (sRGB target
-        // + linear colours) for A/B comparison. Read by MilcoreEngine (colour encode) too.
+        // plain UNORM (non-sRGB) target so nothing re-encodes on store. This reproduces WPF's ADDITIVE
+        // emissive look (HexSphere's honeycomb: the raw sRGB emissive brush accumulates, so overlapping
+        // lattice layers shine brighter). WPF_WEBGPU_GAMMA=0 restores physically-linear compositing
+        // (sRGB target + linear colours) for A/B. Read by MilcoreEngine (colour encode) too.
         internal static readonly bool s_gammaComposite =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_GAMMA") != "0";
         private IntPtr _linearSampler;

@@ -45,6 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private long _gcBytes0, _perfRealizeAlloc, _perfRenderAlloc;
         private int _gc0, _gc1, _gc2;
         private int _perfFrames;
+        private bool _offDumped;   // TEMP DIAG WF_OFF_DUMP
         private bool _disposed;
 
         // Optional diagnostics: when WPF_WEBGPU_SINK_LOG names a file, the sink appends
@@ -250,6 +251,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // popup through its own swap-chain surface instead (opaque, but its content shows).
                     PresentLayered(root, t);
                     continue;
+                }
+                {   // TEMP DIAG WF_OFF_DUMP (display sRGB path, first frame, occlusion-independent)
+                    string? offd = Environment.GetEnvironmentVariable("WF_OFF_DUMP");
+                    if (offd != null && !_offDumped)
+                    {
+                        _offDumped = true;
+                        byte[] rgba = _renderer!.RenderToRgba(EmbeddedContent.Compose(root), t.Width, t.Height, t.ClearColor, srgbOutput: true);
+                        PngWriter.Write(offd, rgba, t.Width, t.Height, maxWidth: 4000);
+                    }
                 }
                 TargetSurface ts = EnsureSurface(kv.Key, t);
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
