@@ -225,6 +225,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, uint> _visualContent = new();      // visual handle -> render-data handle
         private readonly Dictionary<uint, byte[]> _parsedDataRef = new();     // visual handle -> render-data byte[] last parsed (ref-equality change check)
         private readonly HashSet<uint> _contentBrushConsumers = new();        // visual handles that paint a VisualBrush/DrawingBrush (must re-parse every frame)
+        private readonly List<uint> _reparseScratch = new();                  // snapshot of consumers to re-parse after brush rasterization
         private bool _parseTouchedContentBrush;                               // set during ParseRenderData when a content-brush fill is resolved
         private readonly Dictionary<uint, uint> _visualOpacityMask = new();  // visual handle -> mask brush handle
         private uint _rootHandle;
@@ -625,6 +626,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     SceneVisual parent = Visual(r.U32());
                     SceneVisual child = Visual(r.U32());
                     int index = (int)r.U32();
+                    // A child occurs at most once under a parent: milcore's InsertChildAt has move/replace
+                    // semantics, so WPF may re-insert an already-present child (to reposition or re-realize
+                    // it) WITHOUT a preceding RemoveChild. Implementing this as a plain List.Insert then
+                    // DUPLICATES the child every time — e.g. an InkCanvas grew +1 subtree visual per frame,
+                    // which churned VisualBrush hashes and starved presents. Remove any existing occurrence
+                    // first so a re-insert just repositions.
+                    parent.Children.Remove(child);
                     if (index < 0 || index > parent.Children.Count) index = parent.Children.Count;
                     parent.Children.Insert(index, child);
                     break;
@@ -1051,6 +1059,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
             RealizeContentBrushes();
             PerfBrushTicks = System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+
+            // A content-brush consumer resolves its fill's bitmap at PARSE time (ResolveBrush reads
+            // _bitmaps), but the source bitmaps were only just rasterized above -- AFTER the parse loop.
+            // So on the frame a brush first appears, the consumer parsed with no bitmap and drew nothing.
+            // Re-parse the consumers now that the bitmaps exist so the fill resolves THIS frame; otherwise
+            // it stays blank until some later frame re-parses, and with no per-frame invalidation there may
+            // be no later frame -- e.g. a VisualBrush drop-shadow that never appears until you click/resize.
+            if (_contentBrushConsumers.Count > 0)
+            {
+                _reparseScratch.Clear();
+                _reparseScratch.AddRange(_contentBrushConsumers);   // snapshot: ParseRenderData may mutate the set
+                foreach (uint consumer in _reparseScratch)
+                {
+                    if (_visuals.TryGetValue(consumer, out SceneVisual? cv)
+                        && _visualContent.TryGetValue(consumer, out uint cdh) && cdh != 0
+                        && _renderData.TryGetValue(cdh, out byte[]? cdata))
+                    {
+                        cv.Content.Clear();
+                        _parseTransformRefs.Clear();
+                        ParseRenderData(cdata, cv.Content);
+                    }
+                }
+            }
 
             Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
 
