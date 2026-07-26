@@ -433,8 +433,15 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
         private bool MaterialIsTransparent(Material3D mat)
         {
-            // Sub-1 colour alpha on any lobe -> translucent.
-            if (mat.Diffuse.A < 0.996f || mat.Emissive.A < 0.996f || mat.Specular.A < 0.996f) return true;
+            // An emissive-only material is ADDITIVE (it adds light, does not occlude), so it's drawn after
+            // opaque geometry with depth-write off (front+back both survive). That is the ONLY lobe-based
+            // reason to treat a material as non-occluding: Emissive/Specular are additive contributions
+            // whose colour ALPHA is NOT surface coverage. A plain DiffuseMaterial leaves them at alpha 0,
+            // so testing Emissive.A/Specular.A here wrongly flagged every diffuse material transparent ->
+            // depth-write was disabled -> far geometry painted over near (broke depth occlusion, e.g.
+            // PhotoFlipper's flip and the depth test). Transparency comes from the DIFFUSE alpha / texture.
+            if (mat.EmissiveOnly) return true;
+            if (mat.Diffuse.A < 0.996f) return true;
             // A static diffuse texture with any translucent texel (e.g. a PNG with an alpha channel).
             if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
             {
