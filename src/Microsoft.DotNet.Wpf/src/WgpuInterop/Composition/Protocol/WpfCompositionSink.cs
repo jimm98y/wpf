@@ -120,10 +120,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         }
 
         public bool ReleaseOnChannel(int channelId, uint handle)
-        {
-            _engine.Release(handle);
-            return true;
-        }
+            // Return whether the resource actually LEFT the channel (refcount hit 0). DUCE.Resource only
+            // then clears its cached handle; returning true unconditionally zeroed the handle of resources
+            // still shared by other owners (broke PhotoFlipper's reused DiffuseMaterials).
+            => _engine.Release(handle);
 
         public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch)
             => _engine.SubmitCommand(data);

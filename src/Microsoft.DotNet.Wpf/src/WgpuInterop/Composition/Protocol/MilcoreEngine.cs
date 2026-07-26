@@ -369,12 +369,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         /// <summary>Models DUCE.Channel.ReleaseOnChannel: decrement the refcount and only
         /// destroy the resource when the last reference goes away.</summary>
-        public void Release(uint handle)
+        /// <summary>Drops one reference. Returns true iff the resource LEFT the channel (its last
+        /// reference was released) -- the caller (DUCE.Resource.ReleaseOnChannel) only then resets the
+        /// resource's cached handle to Null. Returning true while the resource is still referenced by
+        /// another owner would zero a live handle (e.g. a DiffuseMaterial shared by several
+        /// GeometryModel3Ds and reassigned -> the still-referencing models see handle 0 -> render nothing).</summary>
+        public bool Release(uint handle)
         {
             if (_refCounts.TryGetValue(handle, out int rc) && rc > 1)
             {
                 _refCounts[handle] = rc - 1;   // still referenced elsewhere; keep it alive
-                return;
+                return false;
             }
             _refCounts.Remove(handle);
             _visuals.Remove(handle);
@@ -395,6 +400,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _effects.Remove(handle);
             _bitmaps.Remove(handle);
             _imageBrushes.Remove(handle);
+            return true;   // last reference gone -> the resource left the channel
         }
 
         /// <summary>
