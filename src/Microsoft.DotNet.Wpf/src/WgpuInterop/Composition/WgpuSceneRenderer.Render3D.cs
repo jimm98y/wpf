@@ -28,7 +28,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // shapes/text), so their silhouette edges alias without multisampling.
         private const uint Msaa3D = 4;
 
-        private readonly Dictionary<(WGPUTextureFormat Format, WGPUCullMode Cull), IntPtr> _pipelines3D = new();
+        private readonly Dictionary<(WGPUTextureFormat Format, WGPUCullMode Cull, bool DepthWrite), IntPtr> _pipelines3D = new();
         private IntPtr _shader3D;
 
         private const int MaxLights3D = 8;
@@ -47,7 +47,7 @@ struct U {
     ambient  : vec4<f32>,     // rgb ambient light
     diffuse  : vec4<f32>,     // material diffuse rgba
     specular : vec4<f32>,     // rgb specular, w = specular power (0 = none)
-    emissive : vec4<f32>,     // rgb emissive
+    emissive : vec4<f32>,     // rgb emissive; w = 1 -> emissive-only (additive, unlit) material
     params   : vec4<f32>,     // x = light count, y = hasTexture, z = emissive-textured, w = flip normals (back faces)
     lights   : array<Light, 8>,
 };
@@ -119,6 +119,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     // Fully-transparent texels are discarded so they write no depth and the geometry behind shows
     // through (matching WPF's transparent 3D faces); the rest blends premultiplied.
     if (alpha < 0.004) { discard; }
+    // WPF EmissiveMaterial with no diffuse material (emissive.w) is additive + unlit: it ADDS its
+    // colour to whatever is behind and does not occlude it. Emit the (textured) emissive colour with
+    // ZERO coverage so the premultiplied over-blend src + dst*(1-a) becomes dst + emissive -- a white
+    // shape over the bright fire glows instead of covering it. Coverage still weights by texel alpha
+    // (holes add nothing) and front+back faces accumulate additively.
+    if (u.emissive.w > 0.5) { return vec4<f32>(emissive * alpha, 0.0); }
     return vec4<f32>(rgb * alpha, alpha);   // premultiplied
 }
 ";
@@ -212,12 +218,28 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 DeferReleaseBuffer(vbuf);
                 DeferReleaseBuffer(ibuf);
 
+                // A model is semi-transparent if either side's material has a sub-1 colour alpha or a
+                // texture that contains any translucent texel. Such models render with depth-write off,
+                // after opaque geometry, far side first -- so a sphere's front and back hemispheres blend
+                // (see-through) rather than the near hemisphere occluding the far one (opaque with holes).
+                bool transparent = (model.HasFrontMaterial && MaterialIsTransparent(model.Material))
+                                 || (model.HasBackMaterial && MaterialIsTransparent(model.BackMaterial));
+
                 // WPF sidedness: Material paints front faces, BackMaterial paints back faces (with
                 // normals flipped so lighting is correct); a missing side is culled away entirely.
-                if (model.HasFrontMaterial) AddDraw(model.Material, backFace: false);
-                if (model.HasBackMaterial) AddDraw(model.BackMaterial, backFace: true);
+                if (transparent)
+                {
+                    // Back-to-front for a convex mesh: far (back) side before near (front) side.
+                    if (model.HasBackMaterial) AddDraw(model.BackMaterial, backFace: true, transparent);
+                    if (model.HasFrontMaterial) AddDraw(model.Material, backFace: false, transparent);
+                }
+                else
+                {
+                    if (model.HasFrontMaterial) AddDraw(model.Material, backFace: false, transparent);
+                    if (model.HasBackMaterial) AddDraw(model.BackMaterial, backFace: true, transparent);
+                }
 
-                void AddDraw(Material3D mat, bool backFace)
+                void AddDraw(Material3D mat, bool backFace, bool isTransparent)
                 {
                     byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, cam.Position,
                         viewport.Lights, viewport.AmbientColor, mat, backFace);
@@ -250,11 +272,11 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                         texView = White3DView();
                     }
 
-                    IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView, backFace);
+                    IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView, backFace, depthWrite: !isTransparent);
                     DeferReleaseBindGroup(bindGroup);
                     DeferReleaseBuffer(ubuf);
 
-                    models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length, backFace));
+                    models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length, backFace, isTransparent));
                 }
             }
 
@@ -292,16 +314,27 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             };
             IntPtr pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
-            foreach (Draw3D m in models)
+            // Two ordered passes over the draw list: opaque first (writes depth so it occludes correctly),
+            // then transparent with depth-write OFF (tests against opaque depth but doesn't self-occlude, so
+            // a model's far and near sides both survive and blend). The list already has transparent models
+            // ordered far-side-before-near-side.
+            void DrawSubset(bool transparent)
             {
-                // Front-material draws cull back faces; back-material draws cull front faces
-                // (WPF sidedness). Same shader/layout, so bind groups are interchangeable.
-                wgpuRenderPassEncoderSetPipeline(pass, Get3DPipeline(format, m.BackFace ? WGPUCullMode.Front : WGPUCullMode.Back));
-                wgpuRenderPassEncoderSetBindGroup(pass, 0, m.BindGroup, 0, null);
-                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m.Vbuf, 0, WholeSize);
-                wgpuRenderPassEncoderSetIndexBuffer(pass, m.Ibuf, WGPUIndexFormat.Uint32, 0, WholeSize);
-                wgpuRenderPassEncoderDrawIndexed(pass, m.IndexCount, 1, 0, 0, 0);
+                foreach (Draw3D m in models)
+                {
+                    if (m.Transparent != transparent) continue;
+                    // Front-material draws cull back faces; back-material draws cull front faces
+                    // (WPF sidedness). Same shader/layout, so bind groups are interchangeable.
+                    wgpuRenderPassEncoderSetPipeline(pass, Get3DPipeline(format,
+                        m.BackFace ? WGPUCullMode.Front : WGPUCullMode.Back, depthWrite: !transparent));
+                    wgpuRenderPassEncoderSetBindGroup(pass, 0, m.BindGroup, 0, null);
+                    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m.Vbuf, 0, WholeSize);
+                    wgpuRenderPassEncoderSetIndexBuffer(pass, m.Ibuf, WGPUIndexFormat.Uint32, 0, WholeSize);
+                    wgpuRenderPassEncoderDrawIndexed(pass, m.IndexCount, 1, 0, 0, 0);
+                }
             }
+            DrawSubset(false);
+            DrawSubset(true);
             wgpuRenderPassEncoderEnd(pass);
             IntPtr passLocal = pass;
             DeferReleasePass(passLocal);
@@ -380,12 +413,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return _white3DView;
         }
 
-        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView, bool backFace)
+        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView, bool backFace, bool depthWrite)
         {
-            // Auto pipeline layouts are only compatible with the pipeline they came from, so the
-            // bind group must be created against the SAME cull variant it will be drawn with.
+            // Auto pipeline layouts are only compatible with the pipeline they came from, so the bind
+            // group must be created against the SAME cull AND depth-write variant it will be drawn with.
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(
-                Get3DPipeline(ReadbackFormat, backFace ? WGPUCullMode.Front : WGPUCullMode.Back), 0);
+                Get3DPipeline(ReadbackFormat, backFace ? WGPUCullMode.Front : WGPUCullMode.Back, depthWrite), 0);
             var entries = stackalloc WGPUBindGroupEntry[3];
             entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = 0, size = size };
             entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = textureView };
@@ -394,11 +427,32 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
         }
 
-        private IntPtr Get3DPipeline(WGPUTextureFormat format, WGPUCullMode cull = WGPUCullMode.Back)
+        // Cache of "does this diffuse-texture byte[] contain any translucent texel" (keyed by the array
+        // instance, which is stable per decoded image), so the per-frame transparency test is O(1).
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], object> _texHasAlpha = new();
+
+        private bool MaterialIsTransparent(Material3D mat)
         {
-            if (_pipelines3D.TryGetValue((format, cull), out IntPtr cached)) return cached;
-            IntPtr pipeline = Create3DPipeline(format, cull);
-            _pipelines3D[(format, cull)] = pipeline;
+            // Sub-1 colour alpha on any lobe -> translucent.
+            if (mat.Diffuse.A < 0.996f || mat.Emissive.A < 0.996f || mat.Specular.A < 0.996f) return true;
+            // A static diffuse texture with any translucent texel (e.g. a PNG with an alpha channel).
+            if (mat.Texture is { } px && mat.TexWidth > 0 && mat.TexHeight > 0)
+            {
+                if (_texHasAlpha.TryGetValue(px, out object? cached)) return (bool)cached;
+                bool hasAlpha = false;
+                for (int i = 3; i < px.Length; i += 4) { if (px[i] < 250) { hasAlpha = true; break; } }
+                _texHasAlpha.Add(px, hasAlpha);
+                return hasAlpha;
+            }
+            // Live 2D-in-3D content is treated as opaque (UI screens); no cheap alpha test available.
+            return false;
+        }
+
+        private IntPtr Get3DPipeline(WGPUTextureFormat format, WGPUCullMode cull = WGPUCullMode.Back, bool depthWrite = true)
+        {
+            if (_pipelines3D.TryGetValue((format, cull, depthWrite), out IntPtr cached)) return cached;
+            IntPtr pipeline = Create3DPipeline(format, cull, depthWrite);
+            _pipelines3D[(format, cull, depthWrite)] = pipeline;
             return pipeline;
         }
 
@@ -419,7 +473,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return _shader3D;
         }
 
-        private IntPtr Create3DPipeline(WGPUTextureFormat targetFormat, WGPUCullMode cull)
+        private IntPtr Create3DPipeline(WGPUTextureFormat targetFormat, WGPUCullMode cull, bool depthWrite = true)
         {
             IntPtr shader = Get3DShaderModule();
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
@@ -464,7 +518,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 var depthState = new WGPUDepthStencilState
                 {
                     format = DepthFormat,
-                    depthWriteEnabled = WGPUOptionalBool.True,
+                    depthWriteEnabled = depthWrite ? WGPUOptionalBool.True : WGPUOptionalBool.False,
                     depthCompare = WGPUCompareFunction.Less,
                     stencilFront = stencil,
                     stencilBack = stencil,
@@ -528,7 +582,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             f[o++] = ambient.R; f[o++] = ambient.G; f[o++] = ambient.B; f[o++] = 1f;
             f[o++] = mat.Diffuse.R; f[o++] = mat.Diffuse.G; f[o++] = mat.Diffuse.B; f[o++] = mat.Diffuse.A;
             f[o++] = mat.Specular.R; f[o++] = mat.Specular.G; f[o++] = mat.Specular.B; f[o++] = mat.SpecularPower;
-            f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = 1f;
+            f[o++] = mat.Emissive.R; f[o++] = mat.Emissive.G; f[o++] = mat.Emissive.B; f[o++] = mat.EmissiveOnly ? 1f : 0f;
             int count = Math.Min(lights.Count, MaxLights3D);
             f[o++] = count; f[o++] = mat.HasTexture ? 1f : 0f; f[o++] = mat.EmissiveTextured ? 1f : 0f; f[o++] = flipNormals ? 1f : 0f;
             for (int i = 0; i < count; i++)

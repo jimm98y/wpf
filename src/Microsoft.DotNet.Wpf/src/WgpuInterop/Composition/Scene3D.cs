@@ -122,16 +122,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>When true, the diffuse texture is also added as EMISSIVE (self-lit) — a
         /// WPF EmissiveMaterial sharing the diffuse brush; makes a live 2D UI read like a screen.</summary>
         public readonly bool EmissiveTextured;
+        /// <summary>True when the material tree is EmissiveMaterial only (no Diffuse/Specular material).
+        /// WPF's EmissiveMaterial is additive + unlit: it ADDS its colour to whatever is behind and does
+        /// not occlude it (a white shape over a bright background glows). Rendered with a zero-coverage
+        /// premultiplied output so the over-blend becomes dest + emissive.</summary>
+        public readonly bool EmissiveOnly;
 
         public bool HasTexture => (Texture is not null && TexWidth > 0) || TextureVisual is not null;
 
         public Material3D(RgbaColor diffuse, RgbaColor specular, float specularPower, RgbaColor emissive,
             byte[]? texture = null, int texWidth = 0, int texHeight = 0,
-            SceneVisual? textureVisual = null, Rect texVisualBounds = default, bool emissiveTextured = false)
+            SceneVisual? textureVisual = null, Rect texVisualBounds = default, bool emissiveTextured = false,
+            bool emissiveOnly = false)
         {
             Diffuse = diffuse; Specular = specular; SpecularPower = specularPower; Emissive = emissive;
             Texture = texture; TexWidth = texWidth; TexHeight = texHeight;
             TextureVisual = textureVisual; TexVisualBounds = texVisualBounds; EmissiveTextured = emissiveTextured;
+            EmissiveOnly = emissiveOnly;
         }
 
         public static Material3D Diffuse3D(RgbaColor c)

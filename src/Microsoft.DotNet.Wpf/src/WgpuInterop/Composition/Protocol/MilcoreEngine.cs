@@ -1840,6 +1840,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static Vector2 MapToBounds(Vector2 rel, Rect b)
             => new(b.X + rel.X * b.Width, b.Y + rel.Y * b.Height);
 
+        // Stable insertion sort of gradient stops by ascending Offset (keeps declaration order for
+        // equal offsets so hard-edge stops render as WPF does). Stop counts are small.
+        private static GradientStop[] StableSortByOffset(GradientStop[] stops)
+        {
+            for (int i = 1; i < stops.Length; i++)
+            {
+                GradientStop key = stops[i];
+                int j = i - 1;
+                while (j >= 0 && stops[j].Offset > key.Offset) { stops[j + 1] = stops[j]; j--; }
+                stops[j + 1] = key;
+            }
+            return stops;
+        }
+
         private static GradientStop[] ReadGradientStops(ref MilReader r, uint sizeBytes, double opacity)
         {
             int count = (int)(sizeBytes / 24);   // MIL_GRADIENTSTOP = double Position + MilColorF (24 bytes)
@@ -1850,7 +1864,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32();
                 stops[i] = new GradientStop(pos, new RgbaColor(cr, cg, cb, (float)(ca * opacity)));
             }
-            return stops;
+            // WPF interpolates gradient stops by Offset, not declaration order (XAML may list them
+            // in any order, e.g. descending). Our ramp/sampler assume ascending offsets, so sort
+            // here. A stable sort preserves declaration order for coincident offsets (hard stops).
+            return count > 1 ? StableSortByOffset(stops) : stops;
         }
 
         // Parse a serialized WPF path blob (MIL_PATHGEOMETRY header + MIL_PATHFIGURE figures

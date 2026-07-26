@@ -987,9 +987,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             public readonly uint IndexCount;
             /// <summary>True for a BackMaterial draw: cull front faces and flip normals.</summary>
             public readonly bool BackFace;
-            public Draw3D(IntPtr vbuf, IntPtr ibuf, IntPtr bindGroup, uint indexCount, bool backFace = false)
+            /// <summary>Semi-transparent material: render with depth-write OFF after opaque geometry, and
+            /// (per model) draw the far/back side before the near/front side, so front + back blend
+            /// (a see-through sphere) instead of the near side alone occluding the far side.</summary>
+            public readonly bool Transparent;
+            public Draw3D(IntPtr vbuf, IntPtr ibuf, IntPtr bindGroup, uint indexCount, bool backFace = false, bool transparent = false)
             {
-                Vbuf = vbuf; Ibuf = ibuf; BindGroup = bindGroup; IndexCount = indexCount; BackFace = backFace;
+                Vbuf = vbuf; Ibuf = ibuf; BindGroup = bindGroup; IndexCount = indexCount; BackFace = backFace; Transparent = transparent;
             }
         }
 

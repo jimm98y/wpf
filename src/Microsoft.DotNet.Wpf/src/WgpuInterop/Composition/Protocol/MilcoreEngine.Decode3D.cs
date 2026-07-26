@@ -457,6 +457,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public byte[]? TexPx; public int TexW, TexH;
             public SceneVisual? TexVisual; public Rect TexBounds;
             public bool EmissiveTex;
+            public bool SawDiffuse, SawSpecular, SawEmissive;
         }
 
         // Resolves a WPF material (Diffuse/Specular/Emissive, possibly a MaterialGroup) into the
@@ -474,8 +475,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 SpecPower = 1f,
             };
             AccMaterial(handle, ref acc);
+            // EmissiveMaterial with no Diffuse/Specular material -> additive, unlit (WPF glow semantics).
+            bool emissiveOnly = acc.SawEmissive && !acc.SawDiffuse && !acc.SawSpecular;
             return new Material3D(acc.Diffuse, acc.Specular, acc.SpecPower, acc.Emissive,
-                acc.TexPx, acc.TexW, acc.TexH, acc.TexVisual, acc.TexBounds, acc.EmissiveTex);
+                acc.TexPx, acc.TexW, acc.TexH, acc.TexVisual, acc.TexBounds, acc.EmissiveTex, emissiveOnly);
         }
 
         private void AccMaterial(uint handle, ref MatAcc acc)
@@ -484,6 +487,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             switch (def.Kind)
             {
                 case 0:   // diffuse (colour and/or texture)
+                    acc.SawDiffuse = true;
                     acc.Diffuse = _solidBrushes.TryGetValue(def.Brush, out RgbaColor d) ? d : def.Color;
                     // A VisualBrush/DrawingBrush -> render its LIVE 2D content into a GPU texture in
                     // the 3D pass (interactive 2D-in-3D). A plain image brush -> upload its pixels.
@@ -501,11 +505,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         acc.Diffuse = new RgbaColor(1, 1, 1, 1);
                     break;
                 case 1:   // specular
+                    acc.SawSpecular = true;
                     acc.Specular = _solidBrushes.TryGetValue(def.Brush, out RgbaColor s) ? s : def.Color;
                     acc.SpecPower = def.SpecularPower;
                     break;
                 case 2:   // emissive (solid, or a textured/visual brush -> self-lit texture)
                 {
+                    acc.SawEmissive = true;
                     (SceneVisual? etv, Rect etb) = ResolveTextureVisual(def.Brush);
                     (byte[]? epx, int ew, int eh) = etv is null ? ResolveTexture(def.Brush) : (null, 0, 0);
                     if (etv is not null || epx is not null)
