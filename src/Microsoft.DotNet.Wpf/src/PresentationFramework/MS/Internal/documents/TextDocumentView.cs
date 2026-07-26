@@ -384,7 +384,27 @@ namespace MS.Internal.Documents
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
 
+            // Managed (no-PTS) path: PTS grapheme-cluster boundaries aren't available, so treat every
+            // insertion position as a caret unit boundary. Without this, caret navigation/selection
+            // normalization (which defers to the view here when layout is valid) collapses to
+            // line granularity -- arrow keys and drag-select can't reach individual characters.
+            if (_owner.IsManaged)
+                return true;
+
             return IsAtCaretUnitBoundary(Columns, FloatingElements, position);
+        }
+
+        // Managed caret-unit navigation: move one character (symbol) in the given direction, or step
+        // over an element edge / embedded object. Gives character-granular caret movement in the
+        // no-PTS path (mirrors the symbol-based fallback WPF uses when layout is invalid).
+        private static ITextPointer ManagedNextCaretUnit(ITextPointer position, LogicalDirection direction)
+        {
+            ITextPointer next = position.CreatePointer();
+            if (next.GetPointerContext(direction) == TextPointerContext.Text)
+                next.MoveByOffset(direction == LogicalDirection.Forward ? 1 : -1);
+            else
+                next.MoveToNextContextPosition(direction);
+            return next;
         }
 
         /// <summary>
@@ -404,6 +424,9 @@ namespace MS.Internal.Documents
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
 
+            if (_owner.IsManaged)
+                return ManagedNextCaretUnit(position, direction);
+
             return GetNextCaretUnitPosition(Columns, FloatingElements, position, direction);
         }
 
@@ -422,6 +445,9 @@ namespace MS.Internal.Documents
             {
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
+
+            if (_owner.IsManaged)
+                return ManagedNextCaretUnit(position, LogicalDirection.Backward);
 
             return GetBackspaceCaretUnitPosition(Columns, FloatingElements, position);
         }
