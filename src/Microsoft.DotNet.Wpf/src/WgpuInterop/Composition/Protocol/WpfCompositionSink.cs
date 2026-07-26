@@ -576,9 +576,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus.Success || caps.formatCount == 0)
                 return WGPUTextureFormat.BGRA8Unorm;
 
-            // The renderer outputs RGBA-order, linear scRGB colours. Prefer an RGBA *sRGB* surface
-            // so the linear->sRGB gamma encode happens once on the display write (a plain UNORM
-            // surface would show WPF's linear colours too dark). Avoid BGRA formats (channel swap).
+            // Gamma-space compositing (default): the renderer already sRGB-encodes every colour at its
+            // source and blends in gamma space, so prefer a plain UNORM surface that stores those encoded
+            // values verbatim (an sRGB surface would gamma-encode AGAIN -> washed out). Linear mode: prefer
+            // an sRGB surface so the one linear->sRGB encode happens on the display write. Avoid BGRA (swap).
+            bool gamma = WgpuSceneRenderer.s_gammaComposite;
             WGPUTextureFormat chosen = caps.formats[0];
             bool haveSrgb = false, haveRgba = false;
             for (nuint i = 0; i < caps.formatCount; i++)
@@ -586,8 +588,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (caps.formats[i] == WGPUTextureFormat.RGBA8UnormSrgb) haveSrgb = true;
                 if (caps.formats[i] == WGPUTextureFormat.RGBA8Unorm) haveRgba = true;
             }
-            if (haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
+            if (gamma && haveRgba) chosen = WGPUTextureFormat.RGBA8Unorm;
+            else if (!gamma && haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
             else if (haveRgba) chosen = WGPUTextureFormat.RGBA8Unorm;
+            else if (haveSrgb) chosen = WGPUTextureFormat.RGBA8UnormSrgb;
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return chosen;
         }

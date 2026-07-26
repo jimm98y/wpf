@@ -26,7 +26,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public async Task<byte[]> RenderToRgbaAsync(SceneVisual root, int width, int height, RgbaColor background, bool srgbOutput = false)
         {
             PerfReadbacks++;
-            WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
+            // Gamma mode: colours are pre-encoded + blended in gamma space, so read back from a plain UNORM
+            // target (bytes are already the sRGB pixels); an sRGB target would encode twice. See RenderToRgba.
+            WGPUTextureFormat outFormat = (srgbOutput && !s_gammaComposite) ? OffscreenFormat : ReadbackFormat;
             IntPtr targetTex = CreateReadbackTargetTexture(_ctx.Device, width, height, outFormat);
             IntPtr targetView = wgpuTextureCreateView(targetTex, IntPtr.Zero);
             try

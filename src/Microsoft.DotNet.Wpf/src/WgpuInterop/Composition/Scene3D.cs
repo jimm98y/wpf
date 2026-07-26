@@ -123,9 +123,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// WPF EmissiveMaterial sharing the diffuse brush; makes a live 2D UI read like a screen.</summary>
         public readonly bool EmissiveTextured;
         /// <summary>True when the material tree is EmissiveMaterial only (no Diffuse/Specular material).
-        /// WPF's EmissiveMaterial is additive + unlit: it ADDS its colour to whatever is behind and does
-        /// not occlude it (a white shape over a bright background glows). Rendered with a zero-coverage
-        /// premultiplied output so the over-blend becomes dest + emissive.</summary>
+        /// WPF's EmissiveMaterial is UNLIT (self-illuminated: scene lights/ambient don't affect it) but
+        /// composites alpha-OVER by its texel alpha. Rendered as the bare emissive colour so scene
+        /// lighting can't wash a grey semi-transparent texture (e.g. a lattice) to white.</summary>
         public readonly bool EmissiveOnly;
 
         public bool HasTexture => (Texture is not null && TexWidth > 0) || TextureVisual is not null;

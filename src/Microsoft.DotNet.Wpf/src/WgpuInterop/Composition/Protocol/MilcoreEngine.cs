@@ -489,7 +489,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case Mil.TargetSetClearColor:
                 {
                     uint targetHandle = r.U32();
-                    var c = new RgbaColor(r.F32(), r.F32(), r.F32(), r.F32());
+                    var c = EncCol(r.F32(), r.F32(), r.F32(), r.F32());
                     if (_targets.TryGetValue(targetHandle, out MilTarget? t)) t.ClearColor = c;
                     break;
                 }
@@ -665,7 +665,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double opacity = r.F64();
                     // MilColorF: r,g,b,a floats. WPF brush Opacity scales the alpha.
                     float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32();
-                    _solidBrushes[handle] = new RgbaColor(cr, cg, cb, (float)(ca * opacity));
+                    _solidBrushes[handle] = EncCol(cr, cg, cb, (float)(ca * opacity));
                     break;
                 }
                 case Mil.LinearGradientBrush:
@@ -731,7 +731,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     t.Hwnd = hwnd;
                     t.Width = (int)w;
                     t.Height = (int)h;
-                    t.ClearColor = new RgbaColor(cr, cg, cb, ca);
+                    t.ClearColor = EncCol(cr, cg, cb, ca);
                     break;
                 }
                 case Mil.GenericTargetCreate:
@@ -886,7 +886,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double rad = direction * Math.PI / 180.0;
                     double ox = depth * Math.Cos(rad);
                     double oy = -depth * Math.Sin(rad);   // screen y is down; WPF direction is CCW from +x
-                    _effects[h] = new DropShadowEffect(new RgbaColor(cr, cg, cb, (float)(ca * opacity)), blur, ox, oy);
+                    _effects[h] = new DropShadowEffect(EncCol(cr, cg, cb, (float)(ca * opacity)), blur, ox, oy);
                     break;
                 }
                 case Mil.VisualSetEffect:
@@ -1854,6 +1854,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return stops;
         }
 
+        // sRGB (gamma) encode of one scRGB (linear) channel. Legacy WPF composites in gamma space, so
+        // when gamma compositing is on we encode every colour AT ITS SOURCE (here) and the whole
+        // downstream pipeline blends the encoded values against an UNORM target. Identity (passthrough)
+        // when gamma compositing is off (physically-linear pipeline + sRGB target). Alpha is never encoded.
+        internal static float EncCh(float c)
+        {
+            if (!WgpuSceneRenderer.s_gammaComposite) return c;
+            c = Math.Clamp(c, 0f, 1f);
+            return c <= 0.0031308f ? c * 12.92f : 1.055f * MathF.Pow(c, 1f / 2.4f) - 0.055f;
+        }
+        private static RgbaColor EncCol(float r, float g, float b, float a) => new(EncCh(r), EncCh(g), EncCh(b), a);
+
         private static GradientStop[] ReadGradientStops(ref MilReader r, uint sizeBytes, double opacity)
         {
             int count = (int)(sizeBytes / 24);   // MIL_GRADIENTSTOP = double Position + MilColorF (24 bytes)
@@ -1862,7 +1874,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 float pos = (float)r.F64();
                 float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32();
-                stops[i] = new GradientStop(pos, new RgbaColor(cr, cg, cb, (float)(ca * opacity)));
+                stops[i] = new GradientStop(pos, EncCol(cr, cg, cb, (float)(ca * opacity)));
             }
             // WPF interpolates gradient stops by Offset, not declaration order (XAML may list them
             // in any order, e.g. descending). Our ramp/sampler assume ascending offsets, so sort

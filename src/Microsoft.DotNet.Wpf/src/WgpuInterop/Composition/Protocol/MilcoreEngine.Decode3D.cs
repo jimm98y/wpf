@@ -79,7 +79,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         // MilReader is a value type; take it by ref so reads advance the caller's position.
         private static Vector3 Pt3(ref MilReader r) { float x = r.F32(), y = r.F32(), z = r.F32(); return new Vector3(x, y, z); }
-        private static RgbaColor Col(ref MilReader r) { float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32(); return new RgbaColor(cr, cg, cb, ca); }
+        // 3D material/light colours are sRGB-encoded at parse too (gamma mode) so the lighting math and
+        // emissive add happen in gamma space, as legacy WPF's fixed-function 3D pipeline does.
+        private static RgbaColor Col(ref MilReader r) { float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32(); return EncCol(cr, cg, cb, ca); }
 
         // Dispatches one 3D MILCMD (reader positioned just after the 4-byte command id).
         private void Decode3D(Mil id, MilReader r)

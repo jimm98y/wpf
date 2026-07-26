@@ -786,6 +786,15 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // CPU scanline rasterizer (A/B comparison, driver-bug escape hatch).
         private static readonly bool s_gpuRaster =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") != "1";
+
+        // Gamma-space compositing (the default) matches legacy WPF/GDI: colours are sRGB-encoded
+        // (gamma) at their source and ALL blending/accumulation happens on those gamma values, with a
+        // plain UNORM (non-sRGB) target so nothing re-encodes on store. WPF does NOT composite in
+        // linear space, so this is what reproduces its look (e.g. emissive glow over a gradient, overlap
+        // saturation, AA edges). WPF_WEBGPU_GAMMA=0 restores physically-linear compositing (sRGB target
+        // + linear colours) for A/B comparison. Read by MilcoreEngine (colour encode) too.
+        internal static readonly bool s_gammaComposite =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_GAMMA") != "0";
         private IntPtr _linearSampler;
         private IntPtr _nearestSampler;
 
@@ -1036,8 +1045,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             try
             {
                 PerfReadbacks++;
-                WGPUTextureFormat outFormat = srgbOutput ? OffscreenFormat : ReadbackFormat;
-                _srgbOutput = srgbOutput;
+                // Gamma mode: colours are already sRGB-encoded and the pipeline blends in gamma space, so
+                // always read back from a plain UNORM target (its bytes ARE the sRGB pixels). An sRGB target
+                // here would gamma-encode a second time and decode textures inconsistently.
+                bool srgb = srgbOutput && !s_gammaComposite;
+                WGPUTextureFormat outFormat = srgb ? OffscreenFormat : ReadbackFormat;
+                _srgbOutput = srgb;
                 _transparentTarget = false;
                 List<LayerPass> plan = _plan; plan.Clear();
                 DrawData mainData = RentDrawData();
@@ -4334,6 +4347,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // (A plain linear lerp shifts midtones -- e.g. red->orange midpoint reads too green/blue.)
         private static RgbaColor Lerp(RgbaColor a, RgbaColor b, float f)
         {
+            // Gamma mode: stops are already sRGB-encoded, so a plain lerp IS the sRGB-space interpolation
+            // (no linear<->sRGB round-trip). Linear mode: convert each endpoint to sRGB, lerp, back to linear.
+            if (s_gammaComposite)
+                return new(a.R + (b.R - a.R) * f, a.G + (b.G - a.G) * f, a.B + (b.B - a.B) * f, a.A + (b.A - a.A) * f);
             float Ch(float la, float lb) => SrgbToLinear(LinearToSrgb(la) + (LinearToSrgb(lb) - LinearToSrgb(la)) * f);
             return new(Ch(a.R, b.R), Ch(a.G, b.G), Ch(a.B, b.B), a.A + (b.A - a.A) * f);
         }

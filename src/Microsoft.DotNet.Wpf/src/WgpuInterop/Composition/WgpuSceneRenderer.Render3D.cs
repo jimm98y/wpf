@@ -47,7 +47,7 @@ struct U {
     ambient  : vec4<f32>,     // rgb ambient light
     diffuse  : vec4<f32>,     // material diffuse rgba
     specular : vec4<f32>,     // rgb specular, w = specular power (0 = none)
-    emissive : vec4<f32>,     // rgb emissive; w = 1 -> emissive-only (additive, unlit) material
+    emissive : vec4<f32>,     // rgb emissive; w = 1 -> emissive-only (unlit) material
     params   : vec4<f32>,     // x = light count, y = hasTexture, z = emissive-textured, w = flip normals (back faces)
     lights   : array<Light, 8>,
 };
@@ -119,12 +119,15 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
     // Fully-transparent texels are discarded so they write no depth and the geometry behind shows
     // through (matching WPF's transparent 3D faces); the rest blends premultiplied.
     if (alpha < 0.004) { discard; }
-    // WPF EmissiveMaterial with no diffuse material (emissive.w) is additive + unlit: it ADDS its
-    // colour to whatever is behind and does not occlude it. Emit the (textured) emissive colour with
-    // ZERO coverage so the premultiplied over-blend src + dst*(1-a) becomes dst + emissive -- a white
-    // shape over the bright fire glows instead of covering it. Coverage still weights by texel alpha
-    // (holes add nothing) and front+back faces accumulate additively.
-    if (u.emissive.w > 0.5) { return vec4<f32>(emissive * alpha, 0.0); }
+    // WPF EmissiveMaterial with no diffuse material (emissive.w) is UNLIT + ADDITIVE: it EMITS light,
+    // adding its colour to whatever is behind, with ZERO coverage so the premultiplied over-blend
+    // src + dst*(1-a) becomes dst + emissive. The honeycomb texture is STRAIGHT alpha (rgb≈0.4 on the grey
+    // lines even where its own alpha is low), so the lines must glow at their FULL rgb, not rgb*alpha
+    // (that reads dim/SDR). But adding full rgb wherever alpha>0 gives hard, aliased edges. So ramp the
+    // emission up quickly with alpha: full at the solid lines, fading smoothly across the thin AA border
+    // to the transparent cells. Bright saturated glow (needs GAMMA compositing) + smooth edges. Front+back add.
+    let emitAmt = clamp(alpha * 3.0, 0.0, 1.0);
+    if (u.emissive.w > 0.5) { return vec4<f32>(emissive * emitAmt, 0.0); }
     return vec4<f32>(rgb * alpha, alpha);   // premultiplied
 }
 ";
