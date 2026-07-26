@@ -2434,11 +2434,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     kind = FillKind.Textured;
 
                     Bounds(mesh.Positions, out Vector2 min, out Vector2 size);
+                    float imgAlpha = opacityF * img.Opacity;
                     foreach (Vector2 p in mesh.Positions)
                     {
                         float u = size.X > 0f ? (p.X - min.X) / size.X : 0f;
                         float vv = size.Y > 0f ? (p.Y - min.Y) / size.Y : 0f;
-                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, opacityF, u, vv);
+                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, imgAlpha, u, vv);
                     }
                     break;
                 }
@@ -4149,7 +4150,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
             IntPtr imgView = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
 
-            byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
+            byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity * img.Opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
 
             IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length);

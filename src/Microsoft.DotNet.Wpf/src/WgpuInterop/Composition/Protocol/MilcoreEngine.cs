@@ -73,6 +73,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         Visual3DRemoveChild = 0x2f,
         Visual3DInsertChildAt = 0x30,
         AxisAngleRotation3D = 0x57,
+        QuaternionRotation3D = 0x58,
         PerspectiveCamera = 0x59,
         OrthographicCamera = 0x5a,
         MatrixCamera = 0x5b,
@@ -208,11 +209,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public readonly uint ViewportUnits;  // BrushMappingMode: Absolute=0, RelativeToBoundingBox=1
             public readonly Rect Viewbox;        // source sub-region
             public readonly uint ViewboxUnits;
+            public readonly double Opacity;      // TileBrush.Opacity (base or animated); 1.0 = opaque
             public MilImageBrush(uint imageHandle, TileMode tile, uint stretch,
-                Rect viewport, uint viewportUnits, Rect viewbox, uint viewboxUnits)
+                Rect viewport, uint viewportUnits, Rect viewbox, uint viewboxUnits, double opacity)
             {
                 ImageHandle = imageHandle; Tile = tile; Stretch = stretch;
                 Viewport = viewport; ViewportUnits = viewportUnits; Viewbox = viewbox; ViewboxUnits = viewboxUnits;
+                Opacity = opacity;
             }
         }
 
@@ -786,6 +789,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case Mil.Visual3DRemoveChild:
                 case Mil.Visual3DInsertChildAt:
                 case Mil.AxisAngleRotation3D:
+                case Mil.QuaternionRotation3D:
                 case Mil.PerspectiveCamera:
                 case Mil.OrthographicCamera:
                 case Mil.Model3DGroup:
@@ -811,6 +815,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // MILCMD_IMAGEBRUSH: Handle@4, Opacity@8, Viewport@16, Viewbox@48,
                     // ViewportUnits@108, ViewboxUnits@112, Stretch@124, TileMode@128, hImageSource@144.
                     uint h = r.U32();
+                    r.Position = 8; double imgOpacity = r.F64();
                     r.Position = 16; var viewport = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 48; var viewbox = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 108; uint viewportUnits = r.U32();
@@ -818,7 +823,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 124; uint stretch = r.U32();
                     r.Position = 128; var tile = (TileMode)r.U32();
                     r.Position = 144; uint hImg = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits);
+                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity);
                     break;
                 }
                 case Mil.VisualBrush:
@@ -827,6 +832,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // Same TileBrush layout as ImageBrush; the source (Visual or Drawing) is at @144.
                     // We rasterize that source to a bitmap in Realize, then reuse the ImageBrush path.
                     uint h = r.U32();
+                    r.Position = 8; double srcOpacity = r.F64();
                     r.Position = 16; var viewport = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 48; var viewbox = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 108; uint viewportUnits = r.U32();
@@ -834,7 +840,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 124; uint stretch = r.U32();
                     r.Position = 128; var tile = (TileMode)r.U32();
                     r.Position = 144; uint hSource = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits);
+                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity);
                     _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
                     break;
                 }
@@ -1599,7 +1605,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // 3) TileMode != None: tile the (cropped) image every Viewport cell across the shape.
             if (ib.Tile != TileMode.None)
             {
-                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh);
+                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity);
                 return true;
             }
 
@@ -1613,7 +1619,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 int cy = Math.Clamp((ih - ch) / 2, 0, ih - ch);
                 if (vp.Width != bw || vp.Height != bh || vp.X != bounds.X || vp.Y != bounds.Y)
                     g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(vp));
-                fill = new ImageBrush(CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch, TileMode.None, vw, vh);
+                fill = new ImageBrush(CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch, TileMode.None, vw, vh, (float)ib.Opacity);
                 return true;
             }
 
@@ -1636,7 +1642,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Clip to the painted sub-rect unless it already covers the whole bounds (plain Fill).
             if (dest.X != bounds.X || dest.Y != bounds.Y || dest.Width != bw || dest.Height != bh)
                 g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(dest));
-            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height);
+            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity);
             return true;
         }
 
@@ -1792,7 +1798,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (_solidBrushes.TryGetValue(handle, out RgbaColor c)) return new SolidColorBrush(c);
             if (_gradients.TryGetValue(handle, out MilGradient? g)) return BuildGradient(g, bounds);
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
-                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height);
+                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity);
             return null;
         }
 

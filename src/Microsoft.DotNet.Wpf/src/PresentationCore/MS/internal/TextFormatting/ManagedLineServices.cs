@@ -527,6 +527,10 @@ namespace MS.Internal.TextFormatting
                         pGlyphs, pAdvances, pAdvances, pOffsets, pGlyphProps, pExp, run.GlyphCount,
                         LsTFlow.lstflowES, displayMode, ref ptRun, ref lsHeights, run.Width, ref clip);
                 }
+
+                // Native LS draws underline/strikethrough/overline/baseline during LoDisplayLine; replay
+                // that here so paragraph-/run-level TextDecorations render off-Windows too.
+                cb.DrawManagedTextDecorations(run.Plsrun, runX, baseline, run.Width, LsTFlow.lstflowES, displayMode, ref clip);
             }
             return LsErr.None;
         }

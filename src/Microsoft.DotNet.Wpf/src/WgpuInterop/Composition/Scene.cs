@@ -284,12 +284,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public TileMode TileMode { get; }
         public float TileWidth { get; }
         public float TileHeight { get; }
+        public float Opacity { get; }   // TileBrush.Opacity (incl. animated); modulates the sampled alpha
 
         public ImageBrush(byte[] pixelsRgba, int pixelWidth, int pixelHeight,
-            TileMode tileMode = TileMode.None, float tileWidth = 0f, float tileHeight = 0f)
+            TileMode tileMode = TileMode.None, float tileWidth = 0f, float tileHeight = 0f, float opacity = 1f)
         {
             PixelsRgba = pixelsRgba; PixelWidth = pixelWidth; PixelHeight = pixelHeight;
-            TileMode = tileMode; TileWidth = tileWidth; TileHeight = tileHeight;
+            TileMode = tileMode; TileWidth = tileWidth; TileHeight = tileHeight; Opacity = opacity;
         }
     }
 

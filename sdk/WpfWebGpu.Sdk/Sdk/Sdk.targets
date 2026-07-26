@@ -81,6 +81,14 @@
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+    <!-- Same story for Microsoft.Win32.Registry: the Windows-only framework copy returns null hive keys
+         off-Windows (apps NRE on Registry.CurrentUser). Overlay the in-memory shim so the runtime binds it. -->
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
   </Target>
 
   <!-- ================================ browser ================================ -->

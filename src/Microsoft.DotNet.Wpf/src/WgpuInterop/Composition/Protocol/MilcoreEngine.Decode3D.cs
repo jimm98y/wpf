@@ -25,6 +25,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, RotateXform3D> _rotateXforms = new(); // rotation resolved lazily (animated)
         private readonly Dictionary<uint, List<uint>> _xform3DGroups = new();
         private readonly Dictionary<uint, AxisAngle> _rotations = new();
+        private readonly Dictionary<uint, System.Numerics.Quaternion> _quatRotations = new(); // QuaternionRotation3D
         private readonly Dictionary<uint, Model3DNode> _models3D = new();
         private readonly Dictionary<uint, Visual3DNode> _visuals3D = new();
         private readonly Dictionary<uint, Viewport3DState> _viewports3D = new();
@@ -297,6 +298,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _rotations[h] = new AxisAngle { Axis = axis, Angle = (float)angle };
                     break;
                 }
+                case Mil.QuaternionRotation3D:
+                {
+                    // MILCMD_QUATERNIONROTATION3D: Handle@4, MilQuaternionF quaternion@8 (x,y,z,w as float32).
+                    // Used by trackball-style interactive rotation (RotateTransform3D + QuaternionRotation3D);
+                    // without this case the rotation handle resolved to nothing and the model never rotated.
+                    uint h = r.U32();
+                    float qx = r.F32(), qy = r.F32(), qz = r.F32(), qw = r.F32();
+                    _quatRotations[h] = new System.Numerics.Quaternion(qx, qy, qz, qw);
+                    break;
+                }
                 case Mil.TranslateTransform3D:
                 {
                     uint h = r.U32();
@@ -426,6 +437,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Matrix4x4 rot = Matrix4x4.Identity;
                 if (_rotations.TryGetValue(rt.RotationHandle, out AxisAngle aa) && aa.Axis.LengthSquared() > 1e-6f)
                     rot = Matrix4x4.CreateFromAxisAngle(Vector3.Normalize(aa.Axis), aa.Angle * (MathF.PI / 180f));
+                else if (_quatRotations.TryGetValue(rt.RotationHandle, out System.Numerics.Quaternion q) && q.LengthSquared() > 1e-12f)
+                    rot = Matrix4x4.CreateFromQuaternion(System.Numerics.Quaternion.Normalize(q));
                 return Matrix4x4.CreateTranslation(-rt.Center) * rot * Matrix4x4.CreateTranslation(rt.Center);
             }
             if (_xform3DGroups.TryGetValue(handle, out List<uint>? children))

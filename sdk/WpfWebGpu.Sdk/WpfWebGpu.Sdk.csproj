@@ -50,6 +50,9 @@
     <!-- Cross-platform Microsoft.Win32.SystemEvents shim (shadows the Windows-only runtime package by
          matching strong-name identity); Sdk.targets both references it and evicts the real one. -->
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <!-- Cross-platform in-memory Microsoft.Win32.Registry shim (Registry.CurrentUser etc. are null
+         off-Windows, so apps persisting settings to the registry crash on startup). Same identity trick. -->
+    <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
 
     <!-- Browser flavor: JS-interop WebGPU + the fuller System.Printing-ref (mono-wasm
          resolves XpsDocumentWriter eagerly) + Accessibility ref (AOT resolution only). -->

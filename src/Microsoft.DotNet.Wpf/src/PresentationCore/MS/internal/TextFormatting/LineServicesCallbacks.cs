@@ -813,6 +813,54 @@ namespace MS.Internal.TextFormatting
             }
         }
 
+        // Native LineServices calls DrawUnderline/DrawStrikethrough during LoDisplayLine for runs carrying
+        // those decorations. The off-Windows managed engine (ManagedLineServices.DisplayLine) replays draw
+        // callbacks itself but only drew glyphs, so paragraph-/run-level TextDecorations (underline,
+        // strikethrough, overline, baseline) never rendered. This reproduces that step: it computes the
+        // decoration line positions from the run's font metrics (mirroring GetRunUnderlineInfo /
+        // GetRunStrikethroughInfo) and invokes the existing draw callbacks. Safe to call for every content
+        // run -- DrawTextDecorations draws only the decorations that actually exist.
+        internal void DrawManagedTextDecorations(Plsrun plsrun, int leftX, int baselineY, int runWidth,
+            LsTFlow textFlow, uint displayMode, ref LSRECT clipRect)
+        {
+            if (!TextStore.IsContent(plsrun))
+                return;
+
+            LSRun lsrun = Draw.CurrentLine.GetRun(plsrun);
+            if (lsrun == null)
+                return;
+
+            // Nothing to do (the common case) unless paragraph- or run-level decorations are present.
+            if (Draw.CurrentLine.TextDecorations == null && lsrun.RunProp?.TextDecorations == null)
+                return;
+
+            // Underline sits below the baseline (UnderlinePosition is negative in font em space).
+            double ulPosEm, ulThickEm;
+            if (lsrun.Shapeable != null)
+            {
+                ulPosEm = lsrun.Shapeable.UnderlinePosition;
+                ulThickEm = lsrun.Shapeable.UnderlineThickness;
+            }
+            else
+            {
+                ulPosEm = lsrun.RunProp.Typeface.UnderlinePosition;
+                ulThickEm = lsrun.RunProp.Typeface.UnderlineThickness;
+            }
+            int ulTop = baselineY + (int)Math.Round(lsrun.EmSize * -ulPosEm);
+            int ulThick = Math.Max(1, (int)Math.Round(lsrun.EmSize * ulThickEm));
+            LSPOINT ulPt = new LSPOINT(leftX, ulTop);
+            DrawUnderline(IntPtr.Zero, plsrun, 0, ref ulPt, runWidth, ulThick, textFlow, displayMode, ref clipRect);
+
+            // Strikethrough/overline/baseline are positioned relative to the strikethrough line, which
+            // DrawStrikethrough derives from ptOrigin.y (= baseline - StrikethroughPosition).
+            double stPosEm, stThickEm;
+            GetLSRunStrikethroughMetrics(lsrun, out stPosEm, out stThickEm);
+            int stTop = baselineY - (int)Math.Round(lsrun.EmSize * stPosEm);
+            int stThick = Math.Max(1, (int)Math.Round(lsrun.EmSize * stThickEm));
+            LSPOINT stPt = new LSPOINT(leftX, stTop);
+            DrawStrikethrough(IntPtr.Zero, plsrun, 0, ref stPt, runWidth, stThick, textFlow, displayMode, ref clipRect);
+        }
+
 
         internal LsErr Hyphenate(
             IntPtr          pols,                   // Line Layout context
