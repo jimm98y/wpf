@@ -89,6 +89,21 @@ namespace System.Windows.Media.Imaging
                 rect.Height = source.PixelHeight;
             }
 
+            // Off-Windows there is no native WIC clipper: crop the source's managed (Bgra32) backing.
+            if (!OperatingSystem.IsWindows() && source?._managedPixels != null)
+            {
+                int cw = rect.Width, chh = rect.Height, sstride = source._managedStride;
+                byte[] src = source._managedPixels;
+                byte[] dst = new byte[cw * 4 * chh];
+                for (int y = 0; y < chh; y++)
+                    Array.Copy(src, (rect.Y + y) * sstride + rect.X * 4, dst, y * cw * 4, cw * 4);
+                _managedPixels = dst; _managedStride = cw * 4; _format = PixelFormats.Bgra32;
+                _pixelWidth = cw; _pixelHeight = chh; _isSourceCached = source.IsSourceCached;
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
+
             using (FactoryMaker factoryMaker = new FactoryMaker())
             {
                 try

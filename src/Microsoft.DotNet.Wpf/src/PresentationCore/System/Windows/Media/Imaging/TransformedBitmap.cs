@@ -152,6 +152,71 @@ namespace System.Windows.Media.Imaging
         ///
         /// Create the unmanaged resources
         ///
+        // Managed WIC-free scale + flip/rotate of a Bgra32 source (off-Windows). Returns false if the
+        // source has no managed pixel backing (falls back to the native path, which will throw).
+        private static bool ManagedTransform(BitmapSource source, double scaleX, double scaleY,
+            WICBitmapTransformOptions options, out byte[] result, out int outW, out int outH)
+        {
+            result = null; outW = 0; outH = 0;
+            byte[] src = source?._managedPixels;
+            if (src == null) return false;
+            int sw = source.PixelWidth, sh = source.PixelHeight, sstride = source._managedStride;
+
+            // 1) nearest-neighbour scale
+            int cw = Math.Max(1, (int)(scaleX * sw + 0.5));
+            int ch = Math.Max(1, (int)(scaleY * sh + 0.5));
+            int cstride = cw * 4;
+            byte[] scaled = new byte[cstride * ch];
+            for (int y = 0; y < ch; y++)
+            {
+                int sy = (int)((long)y * sh / ch);
+                for (int x = 0; x < cw; x++)
+                {
+                    int sx = (int)((long)x * sw / cw);
+                    Array.Copy(src, sy * sstride + sx * 4, scaled, y * cstride + x * 4, 4);
+                }
+            }
+
+            // 2) rotation (Rotate90=1, 180=2, 270=3), then optional flips
+            int rot = (int)options & 0x3;
+            bool flipH = ((int)options & (int)WICBitmapTransformOptions.WICBitmapTransformFlipHorizontal) != 0;
+            bool flipV = ((int)options & (int)WICBitmapTransformOptions.WICBitmapTransformFlipVertical) != 0;
+            int rw = (rot == 1 || rot == 3) ? ch : cw;
+            int rh = (rot == 1 || rot == 3) ? cw : ch;
+            byte[] rotated = new byte[rw * 4 * rh];
+            for (int dy = 0; dy < rh; dy++)
+            {
+                for (int dx = 0; dx < rw; dx++)
+                {
+                    int sx, sy;
+                    switch (rot)
+                    {
+                        case 1: sx = dy;          sy = ch - 1 - dx; break;  // 90 CW
+                        case 2: sx = cw - 1 - dx; sy = ch - 1 - dy; break;  // 180
+                        case 3: sx = cw - 1 - dy; sy = dx;          break;  // 270 CW
+                        default: sx = dx;         sy = dy;          break;  // 0
+                    }
+                    Array.Copy(scaled, sy * cstride + sx * 4, rotated, dy * rw * 4 + dx * 4, 4);
+                }
+            }
+
+            if (flipH || flipV)
+            {
+                byte[] flipped = new byte[rw * 4 * rh];
+                for (int y = 0; y < rh; y++)
+                    for (int x = 0; x < rw; x++)
+                    {
+                        int sx = flipH ? rw - 1 - x : x;
+                        int sy = flipV ? rh - 1 - y : y;
+                        Array.Copy(rotated, sy * rw * 4 + sx * 4, flipped, y * rw * 4 + x * 4, 4);
+                    }
+                rotated = flipped;
+            }
+
+            result = rotated; outW = rw; outH = rh;
+            return true;
+        }
+
         internal override void FinalizeCreation()
         {
             _bitmapInit.EnsureInitializedComplete();
@@ -161,6 +226,22 @@ namespace System.Windows.Media.Imaging
             WICBitmapTransformOptions options;
 
             GetParamsFromTransform(Transform, out scaleX, out scaleY, out options);
+
+            // Off-Windows there is no native WIC to scale/rotate/flip. Do it on the source's managed
+            // (Bgra32) pixel backing instead, and publish the result as this bitmap's managed backing.
+            if (!OperatingSystem.IsWindows() &&
+                ManagedTransform(_source, scaleX, scaleY, options, out byte[] mpx, out int mw, out int mh))
+            {
+                _managedPixels = mpx;
+                _managedStride = mw * 4;
+                _format = PixelFormats.Bgra32;
+                _pixelWidth = mw;
+                _pixelHeight = mh;
+                _isSourceCached = _source.IsSourceCached;
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
 
             using (FactoryMaker factoryMaker = new FactoryMaker())
             {

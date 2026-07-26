@@ -193,6 +193,22 @@ namespace System.Windows.Media.Imaging
         ///
         internal override void FinalizeCreation()
         {
+            // Off-Windows there is no native WIC imaging factory to cache into; adopt the source's managed
+            // (Bgra32) pixel backing directly (it's already fully decoded), which is exactly the cache the
+            // downstream managed transforms need.
+            if (!OperatingSystem.IsWindows() && _source?._managedPixels != null)
+            {
+                _managedPixels = _source._managedPixels;
+                _managedStride = _source._managedStride;
+                _format = _source.Format;
+                _pixelWidth = _source.PixelWidth;
+                _pixelHeight = _source.PixelHeight;
+                IsSourceCached = (_cacheOption != BitmapCacheOption.None);
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
+
             lock (_syncObject)
             {
                 WicSourceHandle = CreateCachedBitmap(_source as BitmapFrame, _source.WicSourceHandle, _createOptions, _cacheOption, _source.Palette);

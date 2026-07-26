@@ -611,6 +611,16 @@ namespace System.Windows.Media.Imaging
         {
             EnsureShouldUseVirtuals();
 
+            // Managed-backed bitmap (off-Windows): _format/_pixelWidth/_pixelHeight are already set by the
+            // producer (decoder or a managed transform). There is no native WIC source to query, so the
+            // GetPixelFormat/GetSize/GetResolution calls below would throw -- skip them.
+            if (!OperatingSystem.IsWindows() && _managedPixels != null)
+            {
+                if (_dpiX <= 0) _dpiX = 96.0;
+                if (_dpiY <= 0) _dpiY = 96.0;
+                return;
+            }
+
             uint pw, ph;
 
             lock (_syncObject)

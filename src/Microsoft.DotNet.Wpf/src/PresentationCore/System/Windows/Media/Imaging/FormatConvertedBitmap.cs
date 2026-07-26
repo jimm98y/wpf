@@ -89,6 +89,39 @@ namespace System.Windows.Media.Imaging
             _bitmapInit.EnsureInitializedComplete();
             BitmapSourceSafeMILHandle wicFormatter = null;
 
+            // Off-Windows there is no native WIC format converter. Do the conversion on the source's
+            // managed (Bgra32) pixel backing. Grayscale destination formats (Gray8/16/32Float, BlackWhite)
+            // are computed via luminance; any other destination is passed through as Bgra32 (best effort,
+            // enough to keep the image visible). Result is published as this bitmap's Bgra32 backing.
+            if (!OperatingSystem.IsWindows() && Source?._managedPixels != null)
+            {
+                int sw = Source.PixelWidth, sh = Source.PixelHeight, sstride = Source._managedStride;
+                byte[] src = Source._managedPixels;
+                byte[] dst = new byte[sw * 4 * sh];
+                Guid g = DestinationFormat.Guid;
+                bool gray = g == PixelFormats.Gray8.Guid || g == PixelFormats.Gray16.Guid
+                         || g == PixelFormats.Gray32Float.Guid || g == PixelFormats.BlackWhite.Guid;
+                for (int y = 0; y < sh; y++)
+                {
+                    int si = y * sstride, di = y * sw * 4;
+                    for (int x = 0; x < sw; x++, si += 4, di += 4)
+                    {
+                        byte b = src[si], gg = src[si + 1], r = src[si + 2], a = src[si + 3];
+                        if (gray)
+                        {
+                            byte l = (byte)((r * 77 + gg * 150 + b * 29) >> 8);   // Rec.601 luma
+                            dst[di] = dst[di + 1] = dst[di + 2] = l; dst[di + 3] = a;
+                        }
+                        else { dst[di] = b; dst[di + 1] = gg; dst[di + 2] = r; dst[di + 3] = a; }
+                    }
+                }
+                _managedPixels = dst; _managedStride = sw * 4; _format = PixelFormats.Bgra32;
+                _pixelWidth = sw; _pixelHeight = sh; _isSourceCached = Source.IsSourceCached;
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
+
             using (FactoryMaker factoryMaker = new FactoryMaker())
             {
                 try

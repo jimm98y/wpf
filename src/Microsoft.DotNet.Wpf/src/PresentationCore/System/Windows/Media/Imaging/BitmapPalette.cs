@@ -117,13 +117,18 @@ namespace System.Windows.Media.Imaging
 
             _palette = CreateInternalPalette();
 
-            HRESULT.Check(UnsafeNativeMethods.WICPalette.InitializePredefined(
-                        _palette,
-                        paletteType,
-                        addtransparentColor));
+            // Off-Windows there's no native palette to initialize or read back; the managed rendering
+            // path (e.g. FormatConvertedBitmap's managed grayscale) doesn't consume the palette colours.
+            if (OperatingSystem.IsWindows())
+            {
+                HRESULT.Check(UnsafeNativeMethods.WICPalette.InitializePredefined(
+                            _palette,
+                            paletteType,
+                            addtransparentColor));
 
-            // Fill in the Colors property.
-            UpdateManaged();
+                // Fill in the Colors property.
+                UpdateManaged();
+            }
         }
 
         internal BitmapPalette(SafeMILHandle unmanagedPalette)
@@ -244,6 +249,12 @@ namespace System.Windows.Media.Imaging
         internal static SafeMILHandle CreateInternalPalette()
         {
             SafeMILHandle palette = null;
+
+            // Off-Windows there is no native WIC imaging factory. The managed rendering/decoding path
+            // never consumes the native palette handle, so return an empty (invalid) handle instead of
+            // creating one via the native factory (which throws). UpdateUnmanaged() is likewise skipped.
+            if (!OperatingSystem.IsWindows())
+                return new SafeMILHandle();
 
             using (FactoryMaker myFactory = new FactoryMaker())
             {
