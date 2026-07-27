@@ -6363,7 +6363,13 @@ namespace System.Windows
             {
                 _hiddenWindow = new HwndWrapper(
                     0, // classStyle
-                    NativeMethods.WS_OVERLAPPEDWINDOW, // style
+                    // The hidden window is only a parking / default-dialog-owner / taskbar-suppression owner;
+                    // Windows creates it with WS_OVERLAPPEDWINDOW but never shows it (no WS_VISIBLE, no
+                    // ShowWindow). Off-Windows a styled request maps to a real, VISIBLE NSWindow (there is no
+                    // "created hidden" state — HwndWrapper shows it at creation), which made a stray "Hidden
+                    // Window" pop up next to an owner-less dialog. Use style 0 there so it becomes a synthetic
+                    // parking handle (as the Application parking window already does) with no NSWindow.
+                    OperatingSystem.IsWindows() ? NativeMethods.WS_OVERLAPPEDWINDOW : 0, // style
                     0, // exStyle
                     NativeMethods.CW_USEDEFAULT, // x
                     NativeMethods.CW_USEDEFAULT, // y
