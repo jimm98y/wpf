@@ -187,6 +187,8 @@ namespace MS.Internal.PtsHost
         {
             Invariant.Assert(!IsDisposed);
 
+            if (s_managed) { return FormatFiniteManaged(pageSize, pageMargin, breakRecord); }
+
             // Every time full format is done reset formatted lines count to 0.
             _formattedLinesCount = 0;
 
@@ -285,6 +287,43 @@ namespace MS.Internal.PtsHost
                 Math.Max(0, size.Height - pageMargin.Top - pageMargin.Bottom)));
             _partitionSize = size;
             _visualNeedsUpdate = true;
+        }
+
+        // Managed (no-PTS) finite pagination. Lay the whole document out in a single bottomless column
+        // at the content width, then present it as one fixed-size page. Multi-column layout and splitting
+        // content across pages are not modelled here, so a document taller than the page is clipped —
+        // enough to render paginated FlowDocument viewers (FlowDocumentPageViewer / DocumentViewer) where
+        // the native PTS engine is unavailable. Returns null: a single page with no continuation record,
+        // which the BreakRecordTable treats as the end of the document.
+        private PageBreakRecord FormatFiniteManaged(Size pageSize, Thickness pageMargin, PageBreakRecord breakRecord)
+        {
+            _formattedLinesCount = 0;
+            TextDpi.EnsureValidPageSize(ref pageSize);
+            TextDpi.EnsureValidPageMargin(ref pageMargin, pageSize);
+            _pageMargin = pageMargin;
+            _lastFormatWidth = pageSize.Width;
+
+            // Mark the cache formatted and reset background-format bookkeeping (see FormatBottomlessManaged
+            // for why CPInterrupted must be reset) — the PTS path does this from SetDocumentFormatContext,
+            // which we never enter.
+            _structuralCache.EnsureInitializedForFirstFormat();
+            _structuralCache.BackgroundFormatInfo.UpdateBackgroundFormatInfo();
+
+            // ManagedFlowLayout insets the margins itself, so pass the full page size and margin.
+            _managedLayout ??= new ManagedFlowLayout();
+            System.Collections.Generic.HashSet<System.Windows.Documents.Block> dirty = ComputeManagedDirtyBlocks();
+            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty);
+            _structuralCache.ClearUpdateInfo(false);
+
+            // Finite pages have a fixed size (unlike bottomless, whose height grows to fit the content).
+            SetSize(pageSize);
+            SetContentBox(new Rect(pageMargin.Left, pageMargin.Top,
+                Math.Max(0, pageSize.Width - (pageMargin.Left + pageMargin.Right)),
+                Math.Max(0, pageSize.Height - (pageMargin.Top + pageMargin.Bottom))));
+            _partitionSize = pageSize;
+            _visualNeedsUpdate = true;
+
+            return null;
         }
 
         // Map StructuralCache's dirty text ranges to the top-level blocks they touch, so the managed
