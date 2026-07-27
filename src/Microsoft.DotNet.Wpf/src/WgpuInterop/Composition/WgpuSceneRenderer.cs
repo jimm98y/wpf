@@ -1053,6 +1053,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 _srgbOutput = srgb;
                 _transparentTarget = false;
                 List<LayerPass> plan = _plan; plan.Clear();
+                _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
 
@@ -1129,6 +1130,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 long ca0 = GC.GetAllocatedBytesForCurrentThread();
                 List<LayerPass> plan = _plan; plan.Clear();
+                _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
                 PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
@@ -1228,6 +1230,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             try
             {
                 List<LayerPass> plan = _plan; plan.Clear();
+                _contentTexFrame.Clear();
                 DrawData idData = RentDrawData();
                 CollectHitIds(root, Matrix3x2.Identity, new Scissor(0, 0, _idW, _idH), idData, _idW, _idH);
 
@@ -1773,6 +1776,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     HV(13); HF(rg.Center.X); HF(rg.Center.Y); HF(rg.RadiusX); HF(rg.RadiusY);
                     foreach (GradientStop st in rg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
                     break;
+                case ImageBrush img when img.SourceVisual is not null:
+                    // GPU-live source: no pixels to hash; the source can animate, so key on the frame id so a
+                    // cached layer containing it never goes stale (re-renders every frame).
+                    HV(15); HV(img.SourceId); HF(img.U0); HF(img.V0); HF(img.U1); HF(img.V1); HV(_frameId);
+                    break;
                 case ImageBrush img:
                     HV(14); HV(img.PixelWidth); HV(img.PixelHeight); HF((float)img.TileWidth); HF((float)img.TileHeight);
                     byte[] px = img.PixelsRgba;
@@ -1915,6 +1923,28 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, kind, bindGroup));
         }
 
+        // Per-render cache: a content brush's live source (VisualBrush/DrawingBrush) rendered to a GPU
+        // texture, keyed by source id so all tiles of one chopped source render it ONCE. Cleared each render.
+        private readonly Dictionary<uint, IntPtr> _contentTexFrame = new();
+
+        private static ImageBrush? GpuSourceBrushOf(DrawingPrimitive p) => p switch
+        {
+            GeometryFill f when f.Brush is ImageBrush { SourceVisual: not null } ib => ib,
+            GeometryDrawing d when d.Fill is ImageBrush { SourceVisual: not null } ib => ib,
+            _ => null,
+        };
+
+        // Render a content brush's live source to a GPU texture ONCE per render (deduped by source id),
+        // as a plan LayerPass so it renders before the main pass samples it (same encoder, WebGPU-ordered).
+        private IntPtr EnsureContentSourceTexture(ImageBrush img, List<LayerPass> plan)
+        {
+            if (img.SourceVisual is null) return IntPtr.Zero;
+            if (_contentTexFrame.TryGetValue(img.SourceId, out IntPtr view)) return view;
+            view = RenderVisualToTexture(img.SourceVisual, img.SourceTexW, img.SourceTexH, plan);
+            _contentTexFrame[img.SourceId] = view;
+            return view;
+        }
+
         private void EmitSubtree(SceneVisual v, Matrix3x2 world, double accOpacity, Scissor clip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat format)
         {
@@ -1923,7 +1953,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 if (primitive is Viewport3DDraw viewport)
                     Emit3DViewport(viewport, world, accOpacity, clip, outData, plan, width, height, format);
                 else
+                {
+                    // Pre-render any GPU-live content-brush source (deduped) before the fill samples it.
+                    if (GpuSourceBrushOf(primitive) is { } cbImg) EnsureContentSourceTexture(cbImg, plan);
                     EmitPrimitive(primitive, world, accOpacity, clip, width, height, format, outData);
+                }
             }
             foreach (SceneVisual child in v.Children)
                 CollectVisual(child, world, accOpacity, clip, outData, plan, width, height, format);
@@ -2402,7 +2436,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             // tessellation (no MSAA on the 2D path). Route it through the analytic-AA coverage path
             // instead (same as paths/ellipses); keep the fast mesh path for axis-aligned rects, which
             // don't alias. M12/M21 are the off-diagonal (rotation/shear) terms of the world matrix.
-            if (Math.Abs(world.M12) > 1e-6f || Math.Abs(world.M21) > 1e-6f)
+            // EXCEPTION: a GPU-live content brush (SourceVisual) can't be sampled by the CPU coverage
+            // path (it has no pixels, readback was skipped), so keep it on the mesh path — a rotated
+            // textured quad is still correct, just with aliased edges.
+            if ((Math.Abs(world.M12) > 1e-6f || Math.Abs(world.M21) > 1e-6f)
+                && !(fill.Brush is ImageBrush srcIb && srcIb.SourceVisual != null))
             {
                 EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
                 return;
@@ -2445,7 +2483,21 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 }
                 case ImageBrush img:
                 {
-                    IntPtr view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                    // A GPU-live content brush samples the source texture rendered this frame (no readback),
+                    // mapping the geometry across the Viewbox UV sub-rect [U0,U1]x[V0,V1]; a plain image
+                    // brush uploads its pixels and maps the whole image [0,1].
+                    float u0 = 0f, v0 = 0f, uSpan = 1f, vSpan = 1f;
+                    IntPtr view;
+                    if (img.SourceVisual is not null)
+                    {
+                        if (!_contentTexFrame.TryGetValue(img.SourceId, out view) || view == IntPtr.Zero)
+                            return;   // source texture not rendered (unexpected) -> skip rather than sample garbage
+                        u0 = img.U0; v0 = img.V0; uSpan = img.U1 - img.U0; vSpan = img.V1 - img.V0;
+                    }
+                    else
+                    {
+                        view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                    }
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
@@ -2456,7 +2508,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     {
                         float u = size.X > 0f ? (p.X - min.X) / size.X : 0f;
                         float vv = size.Y > 0f ? (p.Y - min.Y) / size.Y : 0f;
-                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, imgAlpha, u, vv);
+                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, imgAlpha, u0 + u * uSpan, v0 + vv * vSpan);
                     }
                     break;
                 }

@@ -309,10 +309,13 @@ namespace MS.Internal.PtsHost
             _structuralCache.EnsureInitializedForFirstFormat();
             _structuralCache.BackgroundFormatInfo.UpdateBackgroundFormatInfo();
 
-            // ManagedFlowLayout insets the margins itself, so pass the full page size and margin.
+            // ManagedFlowLayout insets the margins itself, so pass the full page size and margin. The
+            // column height (page content height) enables paginated multi-column layout for a FlowDocument
+            // whose ColumnWidth is narrower than the page.
             _managedLayout ??= new ManagedFlowLayout();
             System.Collections.Generic.HashSet<System.Windows.Documents.Block> dirty = ComputeManagedDirtyBlocks();
-            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty);
+            double columnHeight = Math.Max(0, pageSize.Height - pageMargin.Top - pageMargin.Bottom);
+            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty, columnHeight);
             _structuralCache.ClearUpdateInfo(false);
 
             // Finite pages have a fixed size (unlike bottomless, whose height grows to fit the content).

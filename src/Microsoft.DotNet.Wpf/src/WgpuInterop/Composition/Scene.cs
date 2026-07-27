@@ -286,11 +286,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float TileHeight { get; }
         public float Opacity { get; }   // TileBrush.Opacity (incl. animated); modulates the sampled alpha
 
+        // GPU-live source variant (VisualBrush/DrawingBrush painted onto an axis-aligned rect, TileMode.None):
+        // instead of a CPU readback + per-tile pixel upload, the brush samples a texture rendered from
+        // SourceVisual on the GPU each frame. SourceId dedups that render across all tiles of one source
+        // (a chopped puzzle). U0..V1 select the source sub-rect (the Viewbox). For this variant PixelsRgba is
+        // empty and PixelWidth/PixelHeight are 0 (so the CPU coverage/SampleBilinear paths skip it safely).
+        public SceneVisual? SourceVisual { get; }
+        public uint SourceId { get; }
+        public int SourceTexW { get; }
+        public int SourceTexH { get; }
+        public float U0 { get; } = 0f;
+        public float V0 { get; } = 0f;
+        public float U1 { get; } = 1f;
+        public float V1 { get; } = 1f;
+
         public ImageBrush(byte[] pixelsRgba, int pixelWidth, int pixelHeight,
             TileMode tileMode = TileMode.None, float tileWidth = 0f, float tileHeight = 0f, float opacity = 1f)
         {
             PixelsRgba = pixelsRgba; PixelWidth = pixelWidth; PixelHeight = pixelHeight;
             TileMode = tileMode; TileWidth = tileWidth; TileHeight = tileHeight; Opacity = opacity;
+        }
+
+        public ImageBrush(SceneVisual sourceVisual, uint sourceId, int srcTexW, int srcTexH,
+            float u0, float v0, float u1, float v1, float tileWidth, float tileHeight, float opacity)
+        {
+            PixelsRgba = System.Array.Empty<byte>(); PixelWidth = 0; PixelHeight = 0;
+            SourceVisual = sourceVisual; SourceId = sourceId; SourceTexW = srcTexW; SourceTexH = srcTexH;
+            U0 = u0; V0 = v0; U1 = u1; V1 = v1;
+            TileMode = TileMode.None; TileWidth = tileWidth; TileHeight = tileHeight; Opacity = opacity;
         }
     }
 

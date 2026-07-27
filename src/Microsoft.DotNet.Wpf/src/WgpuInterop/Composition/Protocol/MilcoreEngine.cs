@@ -260,8 +260,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public Func<uint, SceneVisual, int, int, byte[]?>? VisualRasterizerKeyed;
 
         private readonly Dictionary<uint, (uint Source, bool IsDrawing)> _contentBrushes = new();  // Visual/DrawingBrush -> source
-        private readonly HashSet<uint> _contentBrushes2D = new();   // content brushes some 2D primitive resolved (accumulated)
+        private readonly HashSet<uint> _contentBrushes2D = new();   // content brushes a 2D primitive resolved via the CPU pixel path (needs readback; accumulated)
         private readonly HashSet<uint> _brushes3DLive = new();      // content brushes a 3D material renders live per frame
+        private readonly HashSet<uint> _brushesGpuLive = new();     // content brushes a 2D fill samples LIVE from a GPU texture (no readback; accumulated)
+
+        // Route VisualBrush/DrawingBrush plain-Fill 2D fills through a GPU texture rendered from the source
+        // each frame (no CPU render+readback+per-tile upload). Set WPF_GPU_VISUALBRUSH=0 to fall back to the
+        // CPU pixel path (readback). See TryBuildGpuSourceBrush.
+        private static readonly bool s_gpuVisualBrush = System.Environment.GetEnvironmentVariable("WPF_GPU_VISUALBRUSH") != "0";
         private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
         private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
 
@@ -392,6 +398,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _contentBrushes.Remove(handle);
             _contentBrushes2D.Remove(handle);
             _brushes3DLive.Remove(handle);
+            _brushesGpuLive.Remove(handle);
             _geometryDrawings.Remove(handle);
             _drawingGroups.Remove(handle);
             _geometries.Remove(handle);
@@ -1135,10 +1142,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if ((VisualRasterizer is null && VisualRasterizerKeyed is null) || _contentBrushes.Count == 0) return;
             foreach (KeyValuePair<uint, (uint Source, bool IsDrawing)> kv in _contentBrushes)
             {
-                // A brush consumed ONLY by a 3D material renders live on the GPU each frame
-                // (ResolveTextureVisual); rasterizing it here (GPU render + BLOCKING readback,
-                // re-done every frame for animated content) would be pure waste.
-                if (_brushes3DLive.Contains(kv.Key) && !_contentBrushes2D.Contains(kv.Key)) continue;
+                // A brush consumed ONLY by a 3D material (ResolveTextureVisual) or ONLY by the GPU 2D
+                // plain-Fill path (TryBuildGpuSourceBrush) renders live on the GPU each frame; rasterizing
+                // it here (GPU render + BLOCKING readback, re-done every frame for animated content) would
+                // be pure waste. Skip unless SOME consumer took the CPU pixel path (_contentBrushes2D),
+                // which still needs the readback bitmap.
+                if ((_brushes3DLive.Contains(kv.Key) || _brushesGpuLive.Contains(kv.Key)) && !_contentBrushes2D.Contains(kv.Key)) continue;
 
                 SceneVisual? source = kv.Value.IsDrawing
                     ? BuildDrawingVisual(kv.Value.Source)
@@ -1159,8 +1168,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Rasterizing a brush source costs a GPU render + a blocking readback (very expensive
                 // on the GL backend). Skip it when the source content + size are unchanged from the
                 // previous frame: the already-rasterized bitmap in _bitmaps is still valid.
+                // Key the raster cache by SOURCE, not consumer: a puzzle chops one animated visual (the
+                // spinning cube) into N tiles, each a separate VisualBrush over the SAME source with a
+                // different Viewbox (applied later at paint time). The bitmap (_bitmaps) is already keyed
+                // by source and the hash/size are source-only, so all N tiles produce the identical bitmap
+                // -- rasterize it ONCE per frame and let the other N-1 tiles skip, instead of N redundant
+                // GPU-render + blocking-readback passes (16x cost on a 4x4 board).
                 long hash = HashBrushSource(source) ^ ((long)pw << 21) ^ ph;
-                if (_brushHash.TryGetValue(kv.Key, out long prev) && prev == hash && _bitmaps.ContainsKey(kv.Value.Source))
+                if (_brushHash.TryGetValue(kv.Value.Source, out long prev) && prev == hash && _bitmaps.ContainsKey(kv.Value.Source))
                     continue;
 
                 // Map the source's content bounds onto the bitmap [0,pw]x[0,ph].
@@ -1172,7 +1187,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 byte[]? px = VisualRasterizerKeyed is not null
                     ? VisualRasterizerKeyed(kv.Key, wrapper, pw, ph)
                     : VisualRasterizer!(wrapper, pw, ph);
-                if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Key] = hash; }
+                if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Value.Source] = hash; }
             }
         }
 
@@ -1202,6 +1217,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     case GeometryStroke s: BMix(2); HashBGeo(s.Geometry); HashBBrush(s.Brush); BMixF((float)s.Style.Thickness); break;
                     case GeometryDrawing d: BMix(3); HashBGeo(d.Geometry); break;
                     case GlyphRunDraw g: BMix(4); BMix(g.Text.GetHashCode()); BMixF(g.Origin.X); BMixF(g.Origin.Y); BMixF(g.EmSize); break;
+                    // A Viewport3D (e.g. an animated spinning cube) painted into a VisualBrush must
+                    // re-rasterize as its camera/model transforms animate; without hashing them the brush
+                    // source looks unchanged (default:9 is constant) and the tile texture freezes until an
+                    // unrelated invalidation (mouse-over) forces a re-raster. Mirror HashPrimitive's key.
+                    case Viewport3DDraw v3:
+                        BMix(5);
+                        BMixF(v3.Camera.Position.X); BMixF(v3.Camera.Position.Y); BMixF(v3.Camera.Position.Z);
+                        BMixF(v3.Camera.LookDirection.X); BMixF(v3.Camera.LookDirection.Y); BMixF(v3.Camera.LookDirection.Z);
+                        foreach (Model3D m3 in v3.Models)
+                        {
+                            System.Numerics.Matrix4x4 t = m3.Transform;
+                            BMixF(t.M11); BMixF(t.M12); BMixF(t.M13); BMixF(t.M21); BMixF(t.M22); BMixF(t.M23);
+                            BMixF(t.M31); BMixF(t.M32); BMixF(t.M33); BMixF(t.M41); BMixF(t.M42); BMixF(t.M43);
+                            BMixF(m3.DiffuseColor.R); BMixF(m3.DiffuseColor.G); BMixF(m3.DiffuseColor.B);
+                        }
+                        break;
                     default: BMix(9); break;
                 }
             }
@@ -1594,9 +1625,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private bool TryImageBrushFill(uint hBrush, Rect bounds, ref Geometry g, out Brush? fill)
         {
             fill = null;
-            if (_contentBrushes.ContainsKey(hBrush)) { _parseTouchedContentBrush = true; _contentBrushes2D.Add(hBrush); }
-            if (!_imageBrushes.TryGetValue(hBrush, out MilImageBrush ib) ||
-                !_bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
+            bool isContent = _contentBrushes.ContainsKey(hBrush);
+            // A content brush's painter must re-parse every frame so the live source stays current; but
+            // DON'T flag it as CPU-2D here — that's decided per path below (GPU-live vs pixel readback).
+            if (isContent) _parseTouchedContentBrush = true;
+            if (!_imageBrushes.TryGetValue(hBrush, out MilImageBrush ib))
+                return false;
+
+            // GPU-live path: a VisualBrush/DrawingBrush painted as a plain axis-aligned Fill (TileMode.None,
+            // Stretch=Fill, Viewport covering the shape) over a RectangleGeometry samples the source rendered
+            // to a GPU texture -- no CPU render+readback, no per-tile crop+upload. This is the dominant case
+            // (a puzzle chops one animated visual into rectangular tiles, each a Viewbox sub-rect).
+            if (s_gpuVisualBrush && isContent && ib.Tile == TileMode.None && ib.Stretch == 1 /*Fill*/
+                && g is RectangleGeometry
+                && TryBuildGpuSourceBrush(hBrush, ib, bounds, (float)ib.Opacity, out fill))
+            {
+                _brushesGpuLive.Add(hBrush);
+                return true;
+            }
+
+            // CPU pixel path (readback bitmap): flag as CPU-2D so RealizeContentBrushes keeps rasterizing it.
+            if (isContent) _contentBrushes2D.Add(hBrush);
+            if (!_bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
                 return false;
             float bw = bounds.Width, bh = bounds.Height;
             if (bw <= 0 || bh <= 0 || bmp.Width <= 0 || bmp.Height <= 0) return false;
@@ -1649,6 +1699,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (dest.X != bounds.X || dest.Y != bounds.Y || dest.Width != bw || dest.Height != bh)
                 g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(dest));
             fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity);
+            return true;
+        }
+
+        // Build a GPU-live source brush for a content brush (see TryImageBrushFill): wrap the live source
+        // visual so its content bounds map onto a [0,pw]x[0,ph] texture (the renderer draws it on the GPU
+        // each frame, deduped across tiles), with the Viewbox carried as a UV sub-rect. Fails (-> CPU pixel
+        // path) if the Viewport doesn't cover the shape (a sub-tile/offset needs the dest-clip path) or the
+        // source has no bounds.
+        private bool TryBuildGpuSourceBrush(uint hBrush, MilImageBrush ib, Rect bounds, float opacity, out Brush? fill)
+        {
+            fill = null;
+            if (!_contentBrushes.TryGetValue(hBrush, out (uint Source, bool IsDrawing) cb)) return false;
+
+            Rect vp = ViewportRect(ib, bounds);
+            if (Math.Abs(vp.X - bounds.X) > 0.01 || Math.Abs(vp.Y - bounds.Y) > 0.01 ||
+                Math.Abs(vp.Width - bounds.Width) > 0.01 || Math.Abs(vp.Height - bounds.Height) > 0.01)
+                return false;
+
+            SceneVisual? source = cb.IsDrawing
+                ? BuildDrawingVisual(cb.Source)
+                : (_visuals.TryGetValue(cb.Source, out SceneVisual? v) ? v : null);
+            if (source is null) return false;
+            Rect b = VisualSubtreeBounds(source, source.LocalToParent);
+            if (b.Width <= 0.01f || b.Height <= 0.01f) return false;
+
+            const int supersample = 2;
+            int pw = Math.Clamp((int)MathF.Ceiling(b.Width * supersample), 1, 1024);
+            int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
+            var wrapper = new SceneVisual
+            {
+                Transform = Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
+            };
+            wrapper.Children.Add(source);
+
+            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;   // Viewbox (RelativeToBoundingBox) -> UV sub-rect.
+            if (ib.ViewboxUnits == 1 && !IsUnitRect(ib.Viewbox))
+            {
+                u0 = (float)ib.Viewbox.X; v0 = (float)ib.Viewbox.Y;
+                u1 = u0 + (float)ib.Viewbox.Width; v1 = v0 + (float)ib.Viewbox.Height;
+            }
+
+            fill = new ImageBrush(wrapper, cb.Source, pw, ph, u0, v0, u1, v1, 0f, 0f, opacity);
             return true;
         }
 
