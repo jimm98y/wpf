@@ -42,6 +42,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
     internal enum MilResourceTypeId : uint
     {
         Null = 0,
+        MediaPlayer = 1,            // TYPE_MEDIAPLAYER (managed video backend, e.g. AVFoundation on macOS)
         Visual = 39,                // TYPE_VISUAL
         Viewport3DVisual = 40,      // TYPE_VIEWPORT3DVISUAL (2D node hosting a 3D scene)
         Visual3D = 41,              // TYPE_VISUAL3D
@@ -107,6 +108,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         DrawGeometry = 0x46,
         DrawImage = 0x47,
         DrawGlyphRun = 0x49,
+        DrawVideo = 0x4b,
         PushClip = 0x4d,
         PushOpacity = 0x4f,
         PushTransform = 0x51,
@@ -225,6 +227,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         public void SetBitmap(uint handle, byte[] rgba, int width, int height)
             => _bitmaps[handle] = new MilBitmap(rgba, width, height);
+
+        // Current decoded video frame for a MediaPlayer (TYPE_MEDIAPLAYER) resource, keyed by its handle. A
+        // fresh RGBA array each frame (see WpfCompositionSink.SendVideoFrame) makes the texture re-upload.
+        public void SetVideoFrame(uint mediaHandle, byte[] rgba, int width, int height)
+            => _videoFrames[mediaHandle] = new MilBitmap(rgba, width, height);
+        private readonly Dictionary<uint, MilBitmap> _videoFrames = new();
         private readonly Dictionary<uint, uint> _visualContent = new();      // visual handle -> render-data handle
         private readonly Dictionary<uint, byte[]> _parsedDataRef = new();     // visual handle -> render-data byte[] last parsed (ref-equality change check)
         private readonly HashSet<uint> _contentBrushConsumers = new();        // visual handles that paint a VisualBrush/DrawingBrush (must re-parse every frame)
@@ -1446,6 +1454,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         uint hImg = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap bmp))
                             EmitFill(output, new RectangleGeometry(rect), new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height), state);
+                        break;
+                    }
+                    case Mil.DrawVideo:
+                    {
+                        // MILCMD_DRAW_VIDEO: rectangle@0 (4 doubles), hPlayer@32 -- byte-identical to DrawImage.
+                        // The MediaElement emits this every composition pass; the managed video backend keeps
+                        // _videoFrames[hPlayer] current via SendVideoFrame, so we draw the latest frame stretched
+                        // into the rect (Stretch/clip/DPI carried by the rect, exactly like DrawImage).
+                        var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                        uint hPlayer = r.U32();
+                        // Re-parse this visual every frame (like a VisualBrush consumer): the DrawVideo
+                        // render-data byte[] never changes, but _videoFrames[hPlayer] does, so without this the
+                        // static-skip optimization would keep sampling the first frame's texture.
+                        _parseTouchedContentBrush = true;
+                        if (_videoFrames.TryGetValue(hPlayer, out MilBitmap frame))
+                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(frame.Rgba, frame.Width, frame.Height), state);
                         break;
                     }
                     case Mil.DrawGlyphRun:

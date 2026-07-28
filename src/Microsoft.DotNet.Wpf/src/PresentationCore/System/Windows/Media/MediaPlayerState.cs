@@ -84,6 +84,7 @@ namespace System.Windows.Media
             {
                 AppDomain.CurrentDomain.ProcessExit -= _helper.ProcessExitHandler;
             }
+            _backend?.Dispose();
         }
 
         #endregion
@@ -98,6 +99,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.IsBuffering; }
                 bool isBuffering = false;
                 HRESULT.Check(MILMedia.IsBuffering(_nativeMedia, ref isBuffering));
                 return isBuffering;
@@ -112,6 +114,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.CanPause; }
                 bool canPause = false;
                 HRESULT.Check(MILMedia.CanPause(_nativeMedia, ref canPause));
                 return canPause;
@@ -126,6 +129,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.DownloadProgress; }
                 double downloadProgress = 0;
                 HRESULT.Check(MILMedia.GetDownloadProgress(_nativeMedia, ref downloadProgress));
                 return downloadProgress;
@@ -140,6 +144,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.BufferingProgress; }
                 double bufferingProgress = 0;
                 HRESULT.Check(MILMedia.GetBufferingProgress(_nativeMedia, ref bufferingProgress));
                 return bufferingProgress;
@@ -154,6 +159,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.NaturalVideoHeight; }
 
                 UInt32 height = 0;
 
@@ -170,6 +176,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.NaturalVideoWidth; }
 
                 UInt32 width = 0;
 
@@ -186,6 +193,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.HasAudio; }
 
                 bool hasAudio = true;
 
@@ -202,6 +210,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.HasVideo; }
 
                 bool hasVideo = false;
 
@@ -256,9 +265,14 @@ namespace System.Windows.Media
                 {
                     if (!_muted)
                     {
-                        int hr = MILMedia.SetVolume(_nativeMedia, value);
-
-                        HRESULT.Check(hr);
+                        if (_backend != null)
+                        {
+                            _backend.SetVolume(value);
+                        }
+                        else
+                        {
+                            HRESULT.Check(MILMedia.SetVolume(_nativeMedia, value));
+                        }
 
                         // value is changing
                         _volume = value;
@@ -302,9 +316,14 @@ namespace System.Windows.Media
                 // is not the same. No need to do extra work.
                 if (!DoubleUtil.AreClose(_balance, value))
                 {
-                    int hr = MILMedia.SetBalance(_nativeMedia, value);
-
-                    HRESULT.Check(hr);
+                    if (_backend != null)
+                    {
+                        _backend.SetBalance(value);
+                    }
+                    else
+                    {
+                        HRESULT.Check(MILMedia.SetBalance(_nativeMedia, value));
+                    }
 
                     // value is changing
                     _balance = value;
@@ -327,7 +346,14 @@ namespace System.Windows.Media
                 VerifyAPI();
                 if (value != _scrubbingEnabled)
                 {
-                    HRESULT.Check(MILMedia.SetIsScrubbingEnabled(_nativeMedia, value));
+                    if (_backend != null)
+                    {
+                        _backend.SetScrubbingEnabled(value);
+                    }
+                    else
+                    {
+                        HRESULT.Check(MILMedia.SetIsScrubbingEnabled(_nativeMedia, value));
+                    }
                     _scrubbingEnabled = value;
                 }
             }
@@ -384,7 +410,14 @@ namespace System.Windows.Media
                 VerifyAPI();
 
                 long mediaLength = 0;
-                HRESULT.Check(MILMedia.GetMediaLength(_nativeMedia, ref mediaLength));
+                if (_backend != null)
+                {
+                    mediaLength = _backend.MediaLengthTicks;
+                }
+                else
+                {
+                    HRESULT.Check(MILMedia.GetMediaLength(_nativeMedia, ref mediaLength));
+                }
                 if (mediaLength == 0)
                 {
                     return Duration.Automatic;
@@ -709,7 +742,14 @@ namespace System.Windows.Media
 
             VerifyNotControlledByClock();
 
-            HRESULT.Check(MILMedia.Close(_nativeMedia));
+            if (_backend != null)
+            {
+                _backend.Close();
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.Close(_nativeMedia));
+            }
 
             //
             // Once we successfully close, we don't have a clock anymore.
@@ -759,7 +799,14 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
-            HRESULT.Check(MILMedia.NeedUIFrameUpdate(_nativeMedia));
+            if (_backend != null)
+            {
+                _backend.NeedUIFrameUpdate();
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.NeedUIFrameUpdate(_nativeMedia));
+            }
         }
 
         #endregion
@@ -784,6 +831,20 @@ namespace System.Windows.Media
                 _nativeMedia = new SafeMediaHandle();
                 _helper = new Helper(_nativeMedia);
                 AppDomain.CurrentDomain.ProcessExit += _helper.ProcessExitHandler;
+
+                // Off-Windows a platform IMediaBackend (AVFoundation on macOS) replaces the native media
+                // object. All MILMedia.* leaf calls below route to it, and its events are marshalled onto the
+                // media dispatcher via MediaEventsHelper. It may be null (Linux / browser today) -> blank.
+                _backend = MediaBackendFactory.Create(mediaPlayer);
+                if (_backend != null)
+                {
+                    _backend.Opened += () => _mediaEventsHelper.RaiseMediaOpened();
+                    _backend.Ended += () => _mediaEventsHelper.RaiseMediaEnded();
+                    _backend.Failed += (ex) => _mediaEventsHelper.RaiseMediaFailed(ex);
+                    _backend.BufferingStarted += () => _mediaEventsHelper.RaiseBufferingStarted();
+                    _backend.BufferingEnded += () => _mediaEventsHelper.RaiseBufferingEnded();
+                    _backend.FrameAvailable += () => _mediaEventsHelper.RaiseNewFrame();
+                }
                 return;
             }
 
@@ -818,11 +879,31 @@ namespace System.Windows.Media
         /// </summary>
         private void OpenMedia(Uri source)
         {
-            // Off-Windows there is no media backend: skip the URL security-zone demand (native urlmon COM,
-            // unmarshalable off-Windows) and the native open (MILMedia.Open no-ops). The MediaElement stays
-            // blank rather than faulting when a Source is assigned.
+            // Off-Windows, resolve the source and hand it to the platform IMediaBackend (AVFoundation on
+            // macOS). Skip the URL security-zone demand (native urlmon COM, unmarshalable off-Windows); the
+            // backend opens a plain file path or http(s) URL. With no backend (Linux/browser) this is a no-op.
             if (!OperatingSystem.IsWindows())
             {
+                if (source != null && source.IsAbsoluteUri && source.Scheme == PackUriHelper.UriSchemePack)
+                {
+                    try
+                    {
+                        source = BaseUriHelper.ConvertPackUriToAbsoluteExternallyVisibleUri(source);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        source = null;
+                        _mediaEventsHelper.RaiseMediaFailed(new System.NotSupportedException(SR.Format(SR.Media_PackURIsAreNotSupported, null)));
+                    }
+                }
+
+                if (source != null && _backend != null)
+                {
+                    Uri appBase = SecurityHelper.GetBaseDirectory(AppDomain.CurrentDomain);
+                    Uri uriToOpen = ResolveUri(source, appBase);
+                    string url = uriToOpen.IsFile ? uriToOpen.LocalPath : uriToOpen.AbsoluteUri;
+                    _backend.Open(url);
+                }
                 return;
             }
 
@@ -899,7 +980,14 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
-            HRESULT.Check(MILMedia.SetPosition(_nativeMedia, value.Ticks));
+            if (_backend != null)
+            {
+                _backend.SetPositionTicks(value.Ticks);
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.SetPosition(_nativeMedia, value.Ticks));
+            }
         }
 
         /// <summary>
@@ -909,6 +997,10 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
+            if (_backend != null)
+            {
+                return TimeSpan.FromTicks(_backend.GetPositionTicks());
+            }
             long position = 0;
             HRESULT.Check(MILMedia.GetPosition(_nativeMedia, ref position));
             return TimeSpan.FromTicks(position);
@@ -922,7 +1014,14 @@ namespace System.Windows.Media
 
                 ArgumentOutOfRangeException.ThrowIfEqual(value, double.NaN);
 
-                HRESULT.Check(MILMedia.SetRate(_nativeMedia, value));
+                if (_backend != null)
+                {
+                    _backend.SetRate(value);
+                }
+                else
+                {
+                    HRESULT.Check(MILMedia.SetRate(_nativeMedia, value));
+                }
             }
         }
 
@@ -1016,11 +1115,27 @@ namespace System.Windows.Media
             bool                    notifyUceDirectly
             )
         {
-            // Off-Windows there is no native media object (the handle is intentionally invalid) and the
-            // WebGPU compositor has no media video-resource path, so skip AddRef'ing and sending the native
-            // media player -- the MediaElement renders nothing instead of faulting on the invalid handle.
+            // Off-Windows there is no native media object. Instead, pull the current decoded frame from the
+            // platform backend and ship its BGRA pixels to the managed compositor via the SendVideoFrame seam,
+            // keyed by this MediaPlayer resource handle -- the MilDrawVideo record (still emitted by
+            // MediaElement) samples it. A fresh array each pass makes the frame texture re-upload.
             if (!OperatingSystem.IsWindows())
             {
+                if (_backend != null &&
+                    _backend.TryLockFrame(out IntPtr baseAddr, out int fw, out int fh, out int rowBytes) &&
+                    baseAddr != IntPtr.Zero && fw > 0 && fh > 0)
+                {
+                    try
+                    {
+                        byte[] bgra = new byte[(long)rowBytes * fh];
+                        System.Runtime.InteropServices.Marshal.Copy(baseAddr, bgra, 0, bgra.Length);
+                        channel.SendVideoFrame(handle, fw, fh, rowBytes, bgra);
+                    }
+                    finally
+                    {
+                        _backend.UnlockFrame();
+                    }
+                }
                 return;
             }
 
@@ -1108,6 +1223,10 @@ namespace System.Windows.Media
         /// Unamanaged Media object
         /// </summary>
         private SafeMediaHandle _nativeMedia;
+
+        // Off-Windows platform media engine (AVFoundation on macOS). Non-null only off-Windows where a backend
+        // exists; every MILMedia.* leaf call in this class routes to it instead of the (no-op'd) native media.
+        private IMediaBackend _backend;
 
         private MediaEventsHelper _mediaEventsHelper;
 

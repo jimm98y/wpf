@@ -221,6 +221,57 @@ namespace System.Windows.Media
             }
         }
 
+        // ---- Managed backend event raisers (off-Windows, e.g. the macOS AVFoundation IMediaBackend) ----
+        // Mirror the AVEvent cases of IInvokable.RaiseEvent, but callable directly from managed code instead of
+        // the native byte-buffer channel. BeginInvoke marshals the raise onto the media dispatcher thread, so a
+        // backend may raise these from any thread (AVFoundation KVO / a CVDisplayLink / a decode queue).
+
+        internal void RaiseMediaOpened()
+        {
+            if (DispatcherMediaOpened != null)
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Normal, DispatcherMediaOpened, null);
+            }
+            if (DispatcherMediaPrerolled != null)
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Normal, DispatcherMediaPrerolled, null);
+            }
+        }
+
+        internal void RaiseMediaEnded()
+        {
+            if (DispatcherMediaEnded != null)
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Normal, DispatcherMediaEnded, null);
+            }
+        }
+
+        internal void RaiseBufferingStarted()
+        {
+            if (DispatcherBufferingStarted != null)
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Normal, DispatcherBufferingStarted, null);
+            }
+        }
+
+        internal void RaiseBufferingEnded()
+        {
+            if (DispatcherBufferingEnded != null)
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Normal, DispatcherBufferingEnded, null);
+            }
+        }
+
+        internal void RaiseNewFrame()
+        {
+            if (DispatcherMediaNewFrame != null)
+            {
+                // Background priority: media is high-frequency and would otherwise interfere with input
+                // (matches the native AVMediaNewFrame path).
+                _dispatcher.BeginInvoke(DispatcherPriority.Background, DispatcherMediaNewFrame, null);
+            }
+        }
+
         #endregion
 
         #region IInvokable

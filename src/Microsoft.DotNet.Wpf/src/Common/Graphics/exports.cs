@@ -134,6 +134,15 @@ namespace System.Windows.Media.Composition
         /// </summary>
         void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels);
 
+        /// <summary>
+        /// Sends the current decoded video frame for a media-player resource (managed backend only, e.g.
+        /// AVFoundation on macOS). Parallel to SendBitmap: <paramref name="pixels"/> is straight BGRA32,
+        /// top-down, <paramref name="rowBytes"/> bytes per row (may exceed width*4 -- decoders align rows).
+        /// The sink keys the frame by <paramref name="mediaHandle"/>; the MilDrawVideo record referencing the
+        /// same handle samples it. Fresh array per call, so the frame texture re-uploads each frame.
+        /// </summary>
+        void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels);
+
         /// <summary>BeginCommand analog: opens a variable-length command (header bytes).</summary>
         void BeginCommand(int channelId, byte[] data, int extraSize);
 
@@ -270,6 +279,7 @@ namespace System.Windows.Media.Composition
             private readonly System.Reflection.MethodInfo _release;
             private readonly System.Reflection.MethodInfo _sendCommand;
             private readonly System.Reflection.MethodInfo _sendBitmap;
+            private readonly System.Reflection.MethodInfo _sendVideoFrame;
             private readonly System.Reflection.MethodInfo _beginCommand;
             private readonly System.Reflection.MethodInfo _appendCommandData;
             private readonly System.Reflection.MethodInfo _endCommand;
@@ -288,6 +298,7 @@ namespace System.Windows.Media.Composition
                 _release = Bind(t, "ReleaseOnChannel");
                 _sendCommand = Bind(t, "SendCommand");
                 _sendBitmap = Bind(t, "SendBitmap");
+                _sendVideoFrame = Bind(t, "SendVideoFrame");
                 _beginCommand = Bind(t, "BeginCommand");
                 _appendCommandData = Bind(t, "AppendCommandData");
                 _endCommand = Bind(t, "EndCommand");
@@ -329,6 +340,9 @@ namespace System.Windows.Media.Composition
 
             public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels) =>
                 _sendBitmap.Invoke(_impl, new object[] { channelId, handle, width, height, stride, pixels });
+
+            public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels) =>
+                _sendVideoFrame.Invoke(_impl, new object[] { channelId, mediaHandle, width, height, rowBytes, pixels });
 
             public void BeginCommand(int channelId, byte[] data, int extraSize) =>
                 _beginCommand.Invoke(_impl, new object[] { channelId, data, extraSize });
@@ -1184,6 +1198,24 @@ namespace System.Windows.Media.Composition
             {
                 Invariant.Assert(_sink != null);
                 _sink.SendBitmap(_managedId, (uint)imageHandle, width, height, stride, pixels);
+            }
+
+            /// <summary>
+            /// Sends the current decoded video frame for a media-player resource to the managed compositor
+            /// (macOS/browser backends). Only valid when a managed sink is bound; the native backend renders
+            /// video through the native media resource instead.
+            /// </summary>
+            internal void SendVideoFrame(
+                DUCE.ResourceHandle mediaHandle,
+                int width,
+                int height,
+                int rowBytes,
+                byte[] pixels)
+            {
+                if (_sink != null)
+                {
+                    _sink.SendVideoFrame(_managedId, (uint)mediaHandle, width, height, rowBytes, pixels);
+                }
             }
 
             /// <summary>

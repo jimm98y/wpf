@@ -162,6 +162,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Log($"bitmap 0x{handle:x}: {width}x{height}");
         }
 
+        // Receive the current decoded video frame for a media-player resource (managed backend, e.g. AVFoundation
+        // on macOS). Straight BGRA32, top-down, rowBytes/row (decoders align rows, so rowBytes may exceed
+        // width*4). Convert to the engine's straight RGBA (opaque -- video has no alpha) and store keyed by the
+        // media-player handle; the MilDrawVideo record referencing that handle samples it. A fresh array each
+        // call makes the frame texture re-upload every frame.
+        public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels)
+        {
+            if (width <= 0 || height <= 0 || pixels == null || rowBytes < width * 4 ||
+                (long)rowBytes * height > pixels.Length)
+            {
+                Log($"video 0x{mediaHandle:x}: unsupported/failed ({width}x{height} rb={rowBytes})");
+                return;
+            }
+
+            var rgba = new byte[width * height * 4];
+            for (int y = 0; y < height; y++)
+            {
+                int s = y * rowBytes, d = y * width * 4;
+                for (int x = 0; x < width; x++)
+                {
+                    int si = s + x * 4, di = d + x * 4;
+                    rgba[di]     = pixels[si + 2];   // R <- B-G-R-A source
+                    rgba[di + 1] = pixels[si + 1];   // G
+                    rgba[di + 2] = pixels[si];       // B
+                    rgba[di + 3] = 255;              // opaque
+                }
+            }
+            _engine.SetVideoFrame(mediaHandle, rgba, width, height);
+        }
+
         public void BeginCommand(int channelId, byte[] data, int extraSize)
             => _engine.BeginCommand(data);
 
