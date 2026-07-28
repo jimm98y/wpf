@@ -77,8 +77,13 @@ namespace System.Windows.Media
                 return new MacMediaBackend(player);
             }
 
-            // No backend on this platform yet (Linux; browser/WASM has its own head): MediaElement stays
-            // blank without crashing, exactly as the pre-backend stub behaved.
+            if (OperatingSystem.IsBrowser())
+            {
+                return new BrowserMediaBackend(player);
+            }
+
+            // No backend on this platform yet (Linux): MediaElement stays blank without crashing, exactly
+            // as the pre-backend stub behaved.
             return null;
         }
     }

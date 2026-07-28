@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
 
   <PropertyGroup>
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+    <StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
     <!-- WebAssembly head for the WPF WebGPU gallery: compiles the same Program.cs as
          the desktop/mac heads against the from-source WPF assemblies, with the
          browser flavor of the WebGPU interop (JS interop over navigator.gpu). -->
@@ -148,9 +150,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\wpf-webgpu-gallery\Program.cs" Link="Program.cs" />
-    <Compile Include="..\wpf-webgpu-gallery\InputDemo.cs" Link="InputDemo.cs" />
-    <Compile Include="..\wpf-webgpu-gallery\WinFormsHost.cs" Link="WinFormsHost.cs" />
+    <!-- MediaProgram.cs + Boot.cs are picked up by default items. -->
   </ItemGroup>
 
   <!-- Fonts live under wwwroot/fonts as plain static assets; main.js fetches them

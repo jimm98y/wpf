@@ -801,6 +801,7 @@
     <Compile Include="System\Windows\Media\MediaPlayerState.cs" />
     <Compile Include="System\Windows\Media\IMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\MacMediaBackend.cs" />
+    <Compile Include="System\Windows\Media\Platform\BrowserMediaBackend.cs" />
     <Compile Include="System\Windows\Media\MediaSystem.cs" />
     <Compile Include="System\Windows\Media\MediaTimeline.cs" />
     <Compile Include="System\Windows\Media\MILUtilities.cs" />
