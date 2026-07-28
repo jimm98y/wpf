@@ -773,6 +773,20 @@ namespace System.Windows.Media
         {
             SafeMILHandle unmanagedProxy = null;
             MediaEventsHelper.CreateMediaEventsHelper(mediaPlayer, out _mediaEventsHelper, out unmanagedProxy);
+
+            // Off-Windows the native milcore media player (wpfgfx_cor3.dll) is unavailable. Skip creating it
+            // and use an INVALID media handle -- all MILMedia operations are guarded to no-op (see
+            // Common/Graphics/wgx_exports.cs), so the MediaElement constructs, lays out and shows its UI
+            // instead of throwing DllNotFoundException. No video is decoded/rendered (needs a macOS media
+            // backend). A zero handle is IsInvalid, so SafeMediaHandle.ReleaseHandle never runs native code.
+            if (!OperatingSystem.IsWindows())
+            {
+                _nativeMedia = new SafeMediaHandle();
+                _helper = new Helper(_nativeMedia);
+                AppDomain.CurrentDomain.ProcessExit += _helper.ProcessExitHandler;
+                return;
+            }
+
             try
             {
                 using (FactoryMaker myFactory = new FactoryMaker())
@@ -804,6 +818,14 @@ namespace System.Windows.Media
         /// </summary>
         private void OpenMedia(Uri source)
         {
+            // Off-Windows there is no media backend: skip the URL security-zone demand (native urlmon COM,
+            // unmarshalable off-Windows) and the native open (MILMedia.Open no-ops). The MediaElement stays
+            // blank rather than faulting when a Source is assigned.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             string toOpen = null;
 
             if (source != null && source.IsAbsoluteUri && source.Scheme == PackUriHelper.UriSchemePack)
@@ -961,7 +983,9 @@ namespace System.Windows.Media
             //
             _dispatcher.VerifyAccess();
 
-            if (_nativeMedia == null || _nativeMedia.IsInvalid)
+            // Off-Windows the media handle is intentionally INVALID (no native media backend; MILMedia
+            // operations no-op), so don't treat that as a version/DLL error -- just enforce UI-thread access.
+            if (OperatingSystem.IsWindows() && (_nativeMedia == null || _nativeMedia.IsInvalid))
             {
                 throw new System.NotSupportedException(SR.Image_BadVersion);
             }
@@ -992,7 +1016,15 @@ namespace System.Windows.Media
             bool                    notifyUceDirectly
             )
         {
-            // This is an interrop call, but, it does not set a last error being a COM call. 
+            // Off-Windows there is no native media object (the handle is intentionally invalid) and the
+            // WebGPU compositor has no media video-resource path, so skip AddRef'ing and sending the native
+            // media player -- the MediaElement renders nothing instead of faulting on the invalid handle.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            // This is an interrop call, but, it does not set a last error being a COM call.
 
             //
             // AddRef to ensure the media player stays alive during transport, even if the

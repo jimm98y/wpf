@@ -127,6 +127,14 @@ namespace System.Windows.Media
         {
             ArgumentNullException.ThrowIfNull(invokable);
 
+            // Off-Windows the native milcore event proxy (wpfgfx_cor3.dll) is unavailable. Return an INVALID
+            // handle; the media stack no-ops (MILMedia guards + MediaPlayerState.CreateMedia), so the proxy is
+            // never dereferenced and no media events are raised. Lets a MediaElement construct off-Windows.
+            if (!OperatingSystem.IsWindows())
+            {
+                return new SafeMediaHandle();
+            }
+
             SafeMILHandle eventProxy = null;
 
             EventProxyWrapper epw = new EventProxyWrapper(invokable);
