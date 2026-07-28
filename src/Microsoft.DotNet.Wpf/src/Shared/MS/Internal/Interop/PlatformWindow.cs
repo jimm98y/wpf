@@ -29,6 +29,12 @@ namespace MS.Internal.Interop
         void SetFrameOrigin(int xPixels, int yPixels);
         void GetContentSize(out int width, out int height);
         void GetPixelSize(out int width, out int height);
+
+        /// <summary>OUTER window (frame) size in device pixels = content view plus the non-client caption.
+        /// GetWindowRect reports this (GetClientRect reports GetPixelSize) so WPF sees a non-zero
+        /// non-client frame and Window.Width/Height behave as the outer window size like Win32. Equals
+        /// GetPixelSize where the platform has no caption (borderless popups; the browser head).</summary>
+        void GetWindowPixelSize(out int width, out int height);
         void GetClientScreenOriginPixels(out int sx, out int sy);
         double GetBackingScale();
         void Destroy();

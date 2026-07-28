@@ -167,13 +167,15 @@ namespace MS.Win32
 
         internal static void GetWindowRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
-            // Off-Windows the handle is a Cocoa NSView*; report its content size (in device pixels =
-            // points * backing scale, matching Win32 rect semantics) as the window rect (origin (0,0);
-            // title-bar geometry is owned by AppKit).
+            // Off-Windows the handle is a Cocoa NSView*; report the OUTER window (frame) size in device
+            // pixels (= content view + non-client caption) as the window rect (origin (0,0)). This is
+            // larger than GetClientRect (the content view) by the title-bar caption, so WPF computes a
+            // non-zero non-client frame and Window.Width/Height behave as the outer window size like
+            // Win32 (client = Width x Height minus the caption) instead of the whole size being client.
             if (!System.OperatingSystem.IsWindows())
             {
                 int w = 0, h = 0;
-                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetWindowPixelSize(out w, out h);
                 rect = new NativeMethods.RECT(0, 0, w, h);
                 return;
             }

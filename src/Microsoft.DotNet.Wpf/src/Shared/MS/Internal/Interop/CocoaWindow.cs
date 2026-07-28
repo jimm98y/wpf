@@ -181,6 +181,14 @@ namespace MS.Internal.Interop
             }
             else
             {
+                // The requested width/height is the OUTER window size (Win32/WPF Window.Width/Height
+                // semantics). Set the OUTER FRAME directly so the physical window (chrome included) is
+                // exactly Width x Height REGARDLESS of the title-bar height -- sizing the content view
+                // instead depends on the caption, which macOS reports inconsistently before the window is
+                // fully realized (window came out ~10px too tall). Width is shrunk by the faked side frame
+                // (macOS has none) so the client width matches Windows and a Width-relative tab fills.
+                SetOuterFramePoints(width - Win32NonClientWidthPts, height - Win32ResizeFramePts);
+
                 SendVoidPtr(_window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
                 Send(_window, Sel("center"));
             }
@@ -345,6 +353,22 @@ namespace MS.Internal.Interop
         public void SetContentSize(int width, int height) => SetContentSizePoints(width, height);
 
         /// <summary>
+        /// Set the window's OUTER frame (chrome included) to the given size in points, preserving the current
+        /// top-left corner. Makes the physical window exactly Window.Width x Height regardless of the
+        /// title-bar height -- unlike setContentSize:, whose resulting outer size depends on the caption
+        /// (which macOS reports inconsistently before the window is fully realized, leaving the window a few
+        /// px too tall). Non-borderless windows only.
+        /// </summary>
+        private void SetOuterFramePoints(double width, double height)
+        {
+            if (_window == IntPtr.Zero || width <= 0 || height <= 0) return;
+            NSRect cur = SendRect(_window, Sel("frame"));   // screen points, bottom-left origin
+            double top = cur.y + cur.height;                // keep the top edge fixed as the size changes
+            SendVoidRectBool(_window, Sel("setFrame:display:"),
+                new NSRect { x = cur.x, y = top - height, width = width, height = height }, true);
+        }
+
+        /// <summary>
         /// Resize the window's content area to a size given in DEVICE PIXELS. Converts to points by
         /// dividing by the backing scale but keeps the FRACTIONAL result -- it does not round to whole
         /// points. This matters on Retina (2x): an integer point size always maps to an even pixel size
@@ -367,8 +391,12 @@ namespace MS.Internal.Interop
 
             if (!_borderless)
             {
-                // Top-level windows are placed/resized by AppKit; just size them.
-                SendVoidSize(_window, Sel("setContentSize:"), new NSSize { width = width, height = height });
+                // The incoming size is the WPF Window size = the OUTER window size (Win32/WPF semantics).
+                // Set the OUTER FRAME directly so the physical window (chrome included) is exactly Width x
+                // Height regardless of the title-bar height. Width shrinks by the faked side frame so the
+                // client width matches Windows and a Width-relative tab fills. AppKit places/moves top-level
+                // windows, so just size.
+                SetOuterFramePoints(width - Win32NonClientWidthPts, height - Win32ResizeFramePts);
                 return;
             }
 
@@ -555,6 +583,53 @@ namespace MS.Internal.Interop
 
             width = (int)Math.Round(bounds.width * scale);
             height = (int)Math.Round(bounds.height * scale);
+        }
+
+        // Non-client insets in POINTS (DIPs) for titled (non-borderless) windows, so a WPF Window's
+        // Width/Height (the OUTER window size, Win32 semantics) yields the client area. Used CONSISTENTLY by
+        // both the SIZING path (SetContentSize/creation) and the REPORTING path (GetWindowRect): they MUST
+        // match, or WPF reconciles the discrepancy by resizing the window (reporting a bigger non-client than
+        // we physically remove makes WPF grow the window to compensate). So:
+        //  - HEIGHT = the REAL macOS title-bar height (frame - content). The macOS caption is the same height
+        //    as Windows' here, so this makes the PHYSICAL window exactly Window.Height (chrome included) AND
+        //    ActualHeight = Window.Height, matching Windows.
+        //  - WIDTH = a fixed 10 (both side frames). macOS titled windows have NO side frame, so without this
+        //    the client would be full-width and a Width-relative content offset (e.g. a Width-10 tab) would
+        //    leave a ~5px gap each side; 10 makes the client width match Windows so the tab fills.
+        private const double Win32NonClientWidthPts = 10.0;    // horizontal frame (both sides); macOS has none natively
+        // Win32's INVISIBLE resize frame -- the grab border OUTSIDE the visible window on Windows, INCLUDED in
+        // GetWindowRect/Window.Height. macOS has no such border, so to match the VISIBLE Windows window we shrink
+        // the physical frame by this (both dimensions) and add it back in GetWindowRect so ActualHeight still
+        // equals Window.Height (WPF then doesn't reconcile a mismatch by resizing the window).
+        private const double Win32ResizeFramePts = 10.0;
+
+        /// <summary>Non-client insets in points reported via GetWindowRect (0,0 for a borderless popup), so
+        /// ActualWidth/Height equal Window.Width/Height. Width = side frame; height = real macOS caption plus
+        /// the invisible resize frame the physical window was shrunk by.</summary>
+        private void NonClientInsetsPoints(out double w, out double h)
+        {
+            if (_borderless || _window == IntPtr.Zero) { w = 0; h = 0; return; }
+            w = Win32NonClientWidthPts;
+            NSRect frame = SendRect(_window, Sel("frame"));
+            NSRect content = SendRectRect(_window, Sel("contentRectForFrameRect:"), frame);
+            double cap = frame.height - content.height;   // real macOS title-bar height
+            h = (cap > 0 ? cap : 0.0) + Win32ResizeFramePts;
+        }
+
+        /// <summary>
+        /// Current OUTER window (frame) size in pixels: the content view plus the emulated Win32 non-client
+        /// frame. This is what GetWindowRect reports (whereas GetClientRect/GetPixelSize report the content
+        /// view = client), so WPF sees a non-zero non-client area and Window.Width/Height behave as the
+        /// outer window size like Win32. Equals the content size for a borderless popup (no frame).
+        /// </summary>
+        public void GetWindowPixelSize(out int width, out int height)
+        {
+            GetPixelSize(out width, out height);
+            if (_borderless || _window == IntPtr.Zero) return;
+            double scale = GetBackingScale();
+            NonClientInsetsPoints(out double wIn, out double hIn);
+            width += (int)Math.Round(wIn * scale);
+            height += (int)Math.Round(hIn * scale);
         }
 
         /// <summary>Close and release the window.</summary>
@@ -1216,6 +1291,9 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, NSRect arg);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidRectBool(IntPtr receiver, IntPtr selector, NSRect arg, [MarshalAs(UnmanagedType.I1)] bool b);
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidNUInt(IntPtr receiver, IntPtr selector, nuint arg);

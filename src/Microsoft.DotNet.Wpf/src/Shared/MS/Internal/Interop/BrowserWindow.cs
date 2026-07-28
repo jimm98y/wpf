@@ -98,6 +98,9 @@ namespace MS.Internal.Interop
             height = Js.GetHeight((int)Handle, true);
         }
 
+        // The browser head has no window caption; the outer window size equals the content size.
+        public void GetWindowPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
+
         public void GetClientScreenOriginPixels(out int sx, out int sy)
         {
             sx = Js.GetScreenOriginX((int)Handle);
