@@ -66,6 +66,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
+        /// Commit the platform compositor's pending transaction after a present, so a just-shown frame
+        /// reaches the screen immediately even when the window then goes idle (see MacInterop.FlushTransaction).
+        /// No-op where the swap-chain present already displays without a compositor transaction.
+        /// </summary>
+        public static void CommitPresent()
+        {
+            if (Current == PlatformKind.MacOS)
+                MacInterop.FlushTransaction();
+        }
+
+        /// <summary>
         /// Push a premultiplied, top-down RGBA frame to a transparent/layered popup
         /// window (WPF Popups on Windows). Returns false when the platform has no
         /// layered-window compositing path (macOS/Linux today), in which case the

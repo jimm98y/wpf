@@ -27,6 +27,7 @@
     <WpfRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</WpfRepoRoot>
     <WpfBin>$(WpfRepoRoot)artifacts/bin/</WpfBin>
     <WgpuInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/</WgpuInteropDir>
+    <WinFormsInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WinFormsInterop/</WinFormsInteropDir>
     <WindowsDesktopRefVersion>10.0.8</WindowsDesktopRefVersion>
   </PropertyGroup>
 
@@ -59,6 +60,13 @@
     <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)System.Printing-ref/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+
+    <!-- WinForms (Mono System.Windows.Forms) for UseWindowsForms apps (desktop) -> lib/wpf-winforms/:
+         the Mono WinForms build + its vendored Mono.System.Drawing + Accessibility. Referenced by
+         Sdk.targets only when the project sets UseWindowsForms. -->
+    <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" />
+    <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" />
+    <None Include="$(WinFormsInteropDir)lib/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" />
 
     <!-- Native wgpu for the macOS desktop head. -->
     <None Include="$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-arm64/" />

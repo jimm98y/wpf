@@ -88,6 +88,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Total frames successfully presented (diagnostics/tests).</summary>
         public int PresentedFrames { get; private set; }
 
+        // Per-target (HWND) timestamp of the last present, to detect an isolated/idle frame that needs a
+        // compositor flush vs. a frame inside a continuous animation burst (which composites on its own).
+        private readonly System.Collections.Generic.Dictionary<ulong, long> _lastPresentTicks = new();
+        private readonly System.Collections.Generic.Dictionary<ulong, int> _targetPresentCount = new();
+
         /// <summary>The decoded composition state (exposed for verification).</summary>
         public MilcoreEngine Engine => _engine;
 
@@ -374,6 +379,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (pres == WGPUStatus.Success)
             {
                 PresentedFrames++;
+                // Commit the compositor transaction so a frame shows immediately even if the window then goes
+                // idle (an autoresizing CAMetalLayer sublayer's contents otherwise stay uncommitted until an
+                // unrelated relayout — e.g. a resize — so a static window is blank until you resize it).
+                // CATransaction.flush is a synchronous window-server commit (~one vsync), too costly to run on
+                // every animation frame, so gate it: flush the FIRST FEW frames of each window (guarantees the
+                // startup/settle frames reach the glass regardless of their timing) AND any later ISOLATED frame
+                // (>100ms since this target's last present = an idle one-shot render). Frames inside a
+                // continuous animation burst are close together and composite on their own, so they skip it.
+                long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                _lastPresentTicks.TryGetValue((ulong)t.Hwnd, out long lastTicks);
+                double msSincePresent = lastTicks == 0 ? double.MaxValue
+                    : (nowTicks - lastTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                _targetPresentCount.TryGetValue((ulong)t.Hwnd, out int tpc);
+                _targetPresentCount[(ulong)t.Hwnd] = tpc + 1;
+                if (tpc < 8 || msSincePresent > 100.0)
+                {
+                    // Wait for the GPU to FINISH presenting this drawable before committing the compositor
+                    // transaction. wgpuSurfacePresent schedules the present asynchronously, so an immediate
+                    // CATransaction.flush races it: sometimes the drawable is ready (frame shows), sometimes
+                    // not (window stays blank until an unrelated relayout) — a random "empty until you resize"
+                    // on static windows. Polling to GPU-idle first makes the composite deterministic. Only
+                    // these rare isolated/startup frames pay the sync; animation frames skip the flush entirely.
+                    unsafe { wgpuDevicePoll(_ctx.Device, WGPU_TRUE, null); }
+                    Platform.NativePlatform.CommitPresent();
+                }
+                _lastPresentTicks[(ulong)t.Hwnd] = nowTicks;
                 if (PresentedFrames == 1 || PresentedFrames % 60 == 0)
                 {
                     Log($"presented frame {PresentedFrames} to HWND 0x{t.Hwnd:x} ({t.Width}x{t.Height})");

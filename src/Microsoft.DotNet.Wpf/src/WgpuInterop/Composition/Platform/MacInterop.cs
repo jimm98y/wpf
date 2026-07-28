@@ -24,6 +24,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
     {
         private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_metalLayers = new();
 
+        /// <summary>
+        /// Commit the current implicit Core Animation transaction so a just-presented CAMetalLayer
+        /// drawable reaches the window server NOW. The CAMetalLayer is an autoresizing SUBLAYER, whose
+        /// contents/layout updates ride an implicit CATransaction that is normally committed at the end of
+        /// a run-loop iteration. A window that renders a SINGLE frame and then goes idle (no animation,
+        /// caret, or input — e.g. a small static tool window) posts no further run-loop work, so its one
+        /// present never commits and the window shows blank until an unrelated relayout (a resize) forces a
+        /// transaction. Flushing right after present makes the frame appear immediately regardless.
+        /// </summary>
+        public static void FlushTransaction()
+        {
+            Send(objc_getClass("CATransaction"), Sel("flush"));
+        }
+
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the (runtime-detected)
         /// backing scale so the drawable maps 1:1 to the display — e.g. when the window moves to a
         /// different-DPI screen. Call together with resizing the wgpu surface to the new device size.</summary>
@@ -84,6 +98,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             IntPtr hostWindow = Send(nsView, Sel("window"));
             bool windowOpaque = hostWindow == IntPtr.Zero || SendBool(hostWindow, Sel("isOpaque"));
             SendVoidBool(metalLayer, Sel("setOpaque:"), windowOpaque);
+
+            // Commit the layer-tree change (addSublayer) to the render server NOW, synchronously. addSublayer:
+            // only mutates our in-process layer tree; the structural change reaches the window server on the next
+            // main-thread CA transaction commit. If the window is static (renders one frame then parks the
+            // dispatcher), no such commit fires before the first present -- so wgpu's presentDrawable: targets a
+            // layer the server has never instantiated and nothing appears until an unrelated relayout (a resize)
+            // finally commits it. That's the intermittent "blank until you resize" on static windows. Flushing
+            // here guarantees the server knows the CAMetalLayer before any drawable is presented into it.
+            Send(objc_getClass("CATransaction"), Sel("flush"));
 
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {

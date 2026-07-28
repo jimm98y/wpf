@@ -20,6 +20,11 @@
   <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true'">
     <_WpfWebGpuUseWpf>$(UseWPF)</_WpfWebGpuUseWpf>
     <UseWPF>false</UseWPF>
+    <!-- Same story for UseWindowsForms: off-Windows WinForms comes from the packaged Mono
+         System.Windows.Forms, not the WindowsDesktop framework reference, and NETSDK1136 would
+         otherwise demand a windows TargetPlatform. Capture the intent, then turn it off. -->
+    <_WpfWebGpuUseWinForms>$(UseWindowsForms)</_WpfWebGpuUseWinForms>
+    <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
@@ -60,6 +65,25 @@
     <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
+
+  <!-- macOS desktop WinForms: a UseWindowsForms app (often mixed with WPF, e.g. a WinForms splash /
+       dialogs beside a WPF main window) runs on the fork's Mono System.Windows.Forms. Reference it, its
+       vendored Mono.System.Drawing, and Accessibility. Browser WinForms is a separate (wasm) story. -->
+  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
+  </ItemGroup>
+
+  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider (Bitmap/Graphics/...).
+       The WPF path pulls the framework System.Drawing.Common package, which defines the same
+       System.Drawing.* types -> CS0433. Evict the framework System.Drawing assemblies from the
+       resolved references (both compile and copy-local) so only Mono.System.Drawing remains. -->
+  <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
 
   <!-- macOS desktop: WebGPU composition on by default + the native wgpu library. -->
   <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
