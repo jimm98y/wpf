@@ -36,13 +36,17 @@ using System.ComponentModel;
 using System.ComponentModel.Design;
 using System.Reflection;
 using System.Runtime.Serialization;
+#if !NO_CAS
 using System.Security.Permissions;
+#endif
 
 namespace System.Drawing.Design 
 {
 	[Serializable]
+#if !NO_CAS
 	[PermissionSet (SecurityAction.LinkDemand, Unrestricted = true)]
 	[PermissionSet (SecurityAction.InheritanceDemand, Unrestricted = true)]
+#endif
 	[MonoTODO ("Implementation is incomplete.")]
 	public class ToolboxItem : ISerializable {
 

@@ -20,7 +20,12 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
-    <DefineConstants>MONO;FEATURE_TYPECONVERTER;SUPPORTS_WINDOWS_COLORS;NET_4_5</DefineConstants>
+    <!-- NO_CAS strips Code Access Security metadata (see the Compile Remove + #if !NO_CAS sites).
+         CAS is dead in .NET Core (the attributes are inert metadata), but their typerefs
+         (System.Security.ISecurityEncodable via System.Runtime) name types the browser-wasm BCL does
+         not have, so mono-aot-cross cannot AOT this assembly with them present. Stripping them is what
+         lets Mono.System.Drawing be AOT'd instead of force-interpreted in the wasm head. -->
+    <DefineConstants>MONO;FEATURE_TYPECONVERTER;SUPPORTS_WINDOWS_COLORS;NET_4_5;NO_CAS</DefineConstants>
     <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661;CS0465;CS0436;CS3021</NoWarn>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <SignAssembly>false</SignAssembly>
@@ -35,6 +40,12 @@
     <Compile Include="build/**/*.cs" />
     <Compile Include="GdiPlusResolver.cs" />   <!-- maps "gdiplus" -> libgdiplus at runtime -->
     <Compile Include="backend/**/*.cs" />       <!-- IGpuSceneRecorder seam + WgpuInterop backend -->
+    <!-- The two CAS permission classes (they derive from CodeAccessPermission /
+         CodeAccessSecurityAttribute, which is what drags in the unresolvable CAS typerefs). Nothing
+         references them; only unrelated SR string constants mention the names. PrintingPermissionLevel
+         stays: it is a plain enum and part of the System.Drawing.Printing surface. -->
+    <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermission.cs" />
+    <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermissionAttribute.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The WgpuInterop GPU rasterizer: the SceneRecorder backend rerouted the Graphics draw verbs
@@ -42,9 +53,8 @@
     <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- PermissionSet / CodeAccessPermission / IUnrestrictedPermission are type-forwarded here. -->
-    <PackageReference Include="System.Security.Permissions" Version="10.0.0" />
-  </ItemGroup>
+  <!-- System.Security.Permissions is no longer referenced: NO_CAS removed every use of
+       PermissionSet / CodeAccessPermission / IUnrestrictedPermission. -->
+
 
 </Project>

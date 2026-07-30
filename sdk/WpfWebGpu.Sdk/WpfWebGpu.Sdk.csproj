@@ -39,6 +39,7 @@
     <None Include="web/**" Pack="true" PackagePath="web/" />
     <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" />
+    <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js" Pack="true" PackagePath="web/" />
 
     <!-- Shared WPF assemblies (same set the gallery heads reference). -->
     <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Classic;PresentationFramework.Aero2;PresentationFramework.Fluent;PresentationUI" />
@@ -60,6 +61,12 @@
     <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)System.Printing-ref/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+    <!-- The SystemEvents/Registry shims are needed in the browser too: there the framework copies are
+         throw-only stubs (PlatformNotSupported_SystemEvents; null registry hives). Unlike desktop, no
+         overlay-copy is possible (assemblies are webcil'd into _framework from the reference set), so
+         referencing them via the lib/wpf-browser glob is what puts them in the bundle. -->
+    <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+    <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
 
     <!-- WinForms (Mono System.Windows.Forms) for UseWindowsForms apps (desktop) -> lib/wpf-winforms/:
          the Mono WinForms build + its vendored Mono.System.Drawing + Accessibility. Referenced by

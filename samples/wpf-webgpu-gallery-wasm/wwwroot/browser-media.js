@@ -26,14 +26,23 @@ export function createVideo(handle) {
 export function open(handle, url) {
     const e = videos().get(handle); if (!e) return;
     e.ended = false; e.failed = false;
-    e.v.src = url;
+    // WPF may hand us a relative or file: URL; resolve to something the browser can fetch (page-relative).
+    let src = url;
+    try {
+        if (url.startsWith("file:")) src = new URL(url.replace(/^file:\/*/, ''), document.baseURI).href;
+        else src = new URL(url, document.baseURI).href;
+    } catch { /* keep url as-is */ }
+    e.v.src = src;
     e.v.load();
 }
 
 export function setRate(handle, rate) {
     const e = videos().get(handle); if (!e) return;
-    if (rate <= 0) { e.v.pause(); }
-    else { e.v.playbackRate = rate; e.v.play().catch(() => { /* autoplay may be blocked until a user gesture */ }); }
+    if (rate <= 0) { e.v.pause(); return; }
+    e.v.playbackRate = rate;
+    // Browsers block autoplay WITH audio until a user gesture; retry MUTED so video still plays (audio
+    // resumes once the page gets a gesture and SetVolume/unmute is re-applied).
+    e.v.play().catch(() => { e.v.muted = true; e.v.play().catch(() => { /* still blocked */ }); });
 }
 
 export function seek(handle, seconds) { const e = videos().get(handle); if (e) e.v.currentTime = seconds; }

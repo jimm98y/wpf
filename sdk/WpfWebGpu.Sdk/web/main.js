@@ -4,6 +4,7 @@
 import { dotnet } from './_framework/dotnet.js'
 import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserWindow from './browser-window.js'
+import * as wpfBrowserMedia from './browser-media.js'
 
 const status = document.getElementById('wpf-status');
 
@@ -11,6 +12,9 @@ const FONTS = [
     'LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf', 'LiberationSans-Italic.ttf', 'LiberationSans-BoldItalic.ttf',
     'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans-Oblique.ttf', 'DejaVuSans-BoldOblique.ttf',
     'DejaVuSansMono.ttf', 'DejaVuSansMono-Bold.ttf', 'DejaVuSerif.ttf', 'DejaVuSerif-Bold.ttf',
+    // Fluent/MDL2 icon glyphs: the font stack substitutes "Segoe Fluent Icons"/"Segoe MDL2 Assets"
+    // to "Symbols", so without this every icon in a Fluent-themed app renders as a box.
+    'Symbols.ttf',
 ];
 
 try {
@@ -31,6 +35,7 @@ try {
 
     setModuleImports('wgpuInterop', wgpuInterop);
     setModuleImports('wpfBrowserWindow', wpfBrowserWindow);
+    setModuleImports('wpfBrowserMedia', wpfBrowserMedia);
 
     // Mount the bundled fonts into the wasm VFS where WPF's managed font catalog
     // scans on the browser (SystemFontCatalog: /fonts).

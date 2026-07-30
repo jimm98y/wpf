@@ -179,6 +179,15 @@ namespace MS.Internal.FontCache
                     // We should read this font from our framework resources
                     fontStream = GetCompositeFontResourceStream();
                 }
+                else if (OperatingSystem.IsBrowser())
+                {
+                    // WebRequest is unavailable in the browser, so read the font off the package directly.
+                    fontStream = WpfWebRequestHelper.GetStreamAndContentType(_fontUri, out ContentType contentType);
+                    if (contentType != null && string.Equals(contentType.OriginalString, ObfuscatedContentType, StringComparison.Ordinal))
+                    {
+                        fontStream = new DeobfuscatingStream(fontStream, _fontUri, false);
+                    }
+                }
                 else
                 {
                     WebResponse response = WpfWebRequestHelper.CreateRequestAndGetResponse(_fontUri);
@@ -252,6 +261,15 @@ namespace MS.Internal.FontCache
             {
                 // We should read this font from our framework resources
                 fontStream = GetCompositeFontResourceStream();
+            }
+            else if (OperatingSystem.IsBrowser())
+            {
+                // WebRequest is unavailable in the browser, so read the font off the package directly.
+                fontStream = WpfWebRequestHelper.GetStreamAndContentType(_fontUri, out ContentType contentType);
+                if (contentType != null && string.Equals(contentType.OriginalString, ObfuscatedContentType, StringComparison.Ordinal))
+                {
+                    fontStream = new DeobfuscatingStream(fontStream, _fontUri, false);
+                }
             }
             else
             {

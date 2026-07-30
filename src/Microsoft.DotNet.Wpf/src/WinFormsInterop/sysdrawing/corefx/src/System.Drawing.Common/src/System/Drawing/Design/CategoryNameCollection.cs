@@ -3,7 +3,9 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Collections;
+#if !NO_CAS
 using System.Security.Permissions;
+#endif
 
 namespace System.Drawing.Design
 {

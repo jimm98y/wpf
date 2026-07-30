@@ -156,13 +156,78 @@ namespace MS.Internal
         CookieHandler.HandleWebResponse(response);
     }
 
+    /// <summary>
+    /// Gets the content of the given uri as a stream, along with its content type.
+    /// </summary>
+    /// <remarks>
+    /// Prefer this over CreateRequest+GetResponseStream for resource loading: in the browser
+    /// (wasm) System.Net.Requests is a throw-only shim -- WebRequest's protected constructor
+    /// raises PlatformNotSupportedException -- so PackWebRequest cannot even be constructed.
+    /// pack: content never needs the network, so resolve it straight off the preloaded package,
+    /// which yields the same PackagePart the WebRequest path would have returned.
+    /// </remarks>
+    internal static Stream GetStreamAndContentType(Uri uri, out ContentType contentType)
+    {
+        if (TryGetPackStreamDirect(uri, out Stream packStream, out contentType))
+        {
+            return packStream;
+        }
+
+        WebRequest request = CreateRequest(uri);
+        ConfigCachePolicy(request, false);
+        return GetResponseStream(request, out contentType);
+    }
+
+    /// <summary>
+    /// In the browser, resolves a pack: uri to its part's stream without going through WebRequest.
+    /// Returns false everywhere else (and for other schemes), leaving the WebRequest path untouched.
+    /// </summary>
+    private static bool TryGetPackStreamDirect(Uri uri, out Stream stream, out ContentType contentType)
+    {
+        stream = null;
+        contentType = null;
+
+        if (!OperatingSystem.IsBrowser() ||
+            !string.Equals(uri.Scheme, PackUriHelper.UriSchemePack, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Uri packageUri = PackUriHelper.GetPackageUri(uri);
+        Uri partUri = PackUriHelper.GetPartUri(uri);
+
+        // PreloadedPackages first (the app's ResourceContainer, registered by Application's static
+        // ctor, which also resolves ";component/" parts out of other assemblies), then PackageStore --
+        // the same order PackWebRequestFactory uses.
+        Package package = MS.Internal.IO.Packaging.PreloadedPackages.GetPackage(packageUri, out _)
+                          ?? PackageStore.GetPackage(packageUri);
+
+        PackagePart part = (package != null && partUri != null) ? package.GetPart(partUri) : null;
+        if (part == null)
+        {
+            // IOException rather than WebException: it needs no System.Net type, and it is what
+            // callers such as ResourceDictionary's theme-dictionary fallback look for.
+            throw new IOException(SR.Format(SR.GetResponseFailed, uri.ToString()));
+        }
+
+        contentType = new ContentType(part.ContentType);
+        stream = part.GetStream(FileMode.Open, FileAccess.Read);
+        return true;
+    }
+
     internal static Stream CreateRequestAndGetResponseStream(Uri uri)
     {
+        if (TryGetPackStreamDirect(uri, out Stream packStream, out _))
+            return packStream;
+
         WebRequest request = CreateRequest(uri);
         return GetResponseStream(request);
     }
     internal static Stream CreateRequestAndGetResponseStream(Uri uri, out ContentType contentType)
     {
+        if (TryGetPackStreamDirect(uri, out Stream packStream, out contentType))
+            return packStream;
+
         WebRequest request = CreateRequest(uri);
         return GetResponseStream(request, out contentType);
     }

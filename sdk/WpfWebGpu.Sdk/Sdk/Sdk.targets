@@ -134,6 +134,12 @@
     <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
     <!-- WPF needs real cultures (SystemFonts, text formatting). -->
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Trimming otherwise flips this off, and reflection-based JsonSerializer then throws
+         JsonSerializerIsReflectionDisabled. Apps that deserialize their own data files without a
+         source-generated JsonSerializerContext (e.g. WPFGallery's ControlsInfoData.json) fail at
+         static init. Same rationale as SuppressTrimAnalysisWarnings/TrimmerRootAssembly above:
+         this SDK targets existing reflection-heavy WPF apps, unmodified. -->
+    <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
   </PropertyGroup>
 
@@ -148,6 +154,11 @@
     <TrimmerRootAssembly Include="System.Xaml" />
     <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
     <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <!-- Themes are resolved reflectively (Assembly.Load of "PresentationFramework.{ThemeName}" and
+         pack://...;component/Themes/Fluent.xaml), so the trimmer cannot see they are used. Fluent is
+         what ThemeMode.System/Light/Dark resolve to, so a trimmed Fluent app dies with a
+         FileNotFoundException on its first merged dictionary. -->
+    <TrimmerRootAssembly Include="PresentationFramework.Fluent" />
     <TrimmerRootAssembly Include="PresentationUI" />
     <TrimmerRootAssembly Include="ReachFramework" />
     <TrimmerRootAssembly Include="System.Printing" />
@@ -173,6 +184,22 @@
     <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
   </ItemGroup>
 
+  <!-- Browser equivalent of _WpfWebGpuOverlaySystemEventsShim. The framework's SystemEvents/Registry
+       assemblies are throw-only stubs in wasm (PlatformNotSupported_SystemEvents; null registry hives)
+       and they win over our lib/wpf-browser Reference, so the shims must be swapped in explicitly.
+       The desktop overlay-copy trick does not work here: assemblies are webcil'd into _framework from
+       WasmAssembliesToBundle, so substitute in that item list (its final form) instead of on disk. -->
+  <Target Name="_WpfWebGpuBrowserOverlayShims"
+          AfterTargets="_GetDefaultWasmAssembliesToBundle"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','Microsoft.Win32.SystemEvents'))" />
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','Microsoft.Win32.Registry'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.SystemEvents.dll" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.Registry.dll" />
+    </ItemGroup>
+  </Target>
+
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
 
@@ -193,7 +220,7 @@
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/main.js" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/main.js')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js"
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js"
           DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
     <ItemGroup>
       <_WpfWebGpuFonts Include="$(WpfWebGpuSdkRoot)web/fonts/*.ttf" />

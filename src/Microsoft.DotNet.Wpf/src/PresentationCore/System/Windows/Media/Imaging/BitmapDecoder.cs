@@ -1018,8 +1018,10 @@ namespace System.Windows.Media.Imaging
                     // This code path executes only for pack web requests
                     if (string.Equals(uri.Scheme, PackUriHelper.UriSchemePack, StringComparison.OrdinalIgnoreCase))
                     {
-                        WebResponse response = WpfWebRequestHelper.CreateRequestAndGetResponse(uri);
-                        bitmapStream = response.GetResponseStream();
+                        // Stream rather than WebResponse: the response object is not needed past
+                        // its stream, and this overload can satisfy pack: uris without WebRequest
+                        // (which is unavailable in the browser).
+                        bitmapStream = WpfWebRequestHelper.CreateRequestAndGetResponseStream(uri);
                         uriStream = bitmapStream;
                     }
                 }

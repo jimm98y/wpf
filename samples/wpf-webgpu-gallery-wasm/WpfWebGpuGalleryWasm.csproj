@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
 
   <PropertyGroup>
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+    <StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
     <!-- WebAssembly head for the WPF WebGPU gallery: compiles the same Program.cs as
          the desktop/mac heads against the from-source WPF assemblies, with the
          browser flavor of the WebGPU interop (JS interop over navigator.gpu). -->
@@ -213,9 +215,18 @@
 
   <!-- swf + sysdrawing are reflection-heavy and not on the render hot path; keep them interpreted so
        the AOT compiler needn't resolve their (libgdiplus/native) seams. -->
+  <!-- Toggleable: dedup (needed to dodge the interp.c:3420 wrapper bug) asserts at appdomain.c:188
+       when too much is force-interpreted, and these two are the only entries this head has beyond
+       the SDK's set (WPFGallery AOTs fine with dedup and the SDK's 7). -p:AotInterpretWinForms=false
+       tries AOT'ing them instead, for uniform AOT that dedup can cope with. -->
   <ItemGroup>
-    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="Mono.System.Drawing.dll" />
+    <!-- System.Windows.Forms AOTs cleanly, so -p:AotInterpretWinForms=false lets it be AOT'd, shrinking
+         the force-interpret set (dedup, which we need to dodge interp.c:3420, asserts at appdomain.c:188
+         when Mono.System.Drawing is interpreted). Mono.System.Drawing needed its CAS metadata stripped
+         first (NO_CAS in System.Drawing.WebGpu.csproj): its CAS attributes typeref
+         System.Security.ISecurityEncodable, a type the browser-wasm BCL does not have. -->
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" Condition="'$(AotInterpretWinForms)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="Mono.System.Drawing.dll" Condition="'$(AotInterpretWinForms)' != 'false'" />
   </ItemGroup>
 
   <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
