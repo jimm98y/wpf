@@ -184,6 +184,23 @@
     <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
   </ItemGroup>
 
+  <!-- Root EVERY assembly the app publishes, so the trimmer cannot drop one that is only ever
+       reached through BAML. XAML references an assembly via its xmlns (e.g.
+       xmlns:i="http://schemas.microsoft.com/xaml/behaviors"), which leaves NO static IL reference,
+       so the linker removes the whole assembly and the page dies at runtime with
+       FileNotFoundException from Baml2006SchemaContext.ResolveAssembly. That killed the WPFGallery
+       Icons page (Microsoft.Xaml.Behaviors) and, before it was rooted by name, the Fluent theme.
+       Same rationale as SuppressTrimAnalysisWarnings: this SDK targets existing reflection-heavy
+       WPF apps, unmodified, so correctness beats bundle size. -->
+  <Target Name="_WpfWebGpuRootAppAssembliesForTrimming"
+          BeforeTargets="PrepareForILLink"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(PublishTrimmed)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuAppAsm Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <TrimmerRootAssembly Include="@(_WpfWebGpuAppAsm->'%(Filename)'->Distinct())" />
+    </ItemGroup>
+  </Target>
+
   <!-- Browser equivalent of _WpfWebGpuOverlaySystemEventsShim. The framework's SystemEvents/Registry
        assemblies are throw-only stubs in wasm (PlatformNotSupported_SystemEvents; null registry hives)
        and they win over our lib/wpf-browser Reference, so the shims must be swapped in explicitly.

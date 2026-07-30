@@ -124,13 +124,17 @@
          should not be) in the browser bundle (System.Windows.Forms, Accessibility,
          print pipeline), which the AOT compiler cannot resolve — and none of them
          are on the rendering/layout hot path. -->
-    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
-    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+    <!-- -p:AotInterpretNonHot=false AOTs these too. Point: interp.c:3420 (dotnet/runtime#80994) only
+         fires on an AOT->interp transition whose gsharedvt_in_sig wrapper was not pregenerated, so a
+         build with NOTHING interpreted cannot hit it. They were interpreted because mono-aot-cross
+         could not resolve their refs; the vendored lib/ search path may now cover that. -->
+    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -211,6 +215,18 @@
          WindowsBase's AOT'd code can call it. System.Private.Windows.Core is NOT referenced/bundled (native
          <Module>.cctor crashes the interpreter); it's resolved only via the AOT search path (lib/). -->
     <Reference Include="System.Security.Cryptography.Xml"><HintPath>lib\System.Security.Cryptography.Xml.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- -p:BundlePrivateWin32Asms=true also BUNDLES the three assemblies that are otherwise only on the
+       AOT search path. Rationale for the dedup (appdomain.c:188) hunt: dedup emits `aot-instances`, an
+       eagerly-loaded module aggregating generic instantiations from ALL AOT'd assemblies, including
+       instantiations over types from these. Resolving those at startup with the assemblies absent would
+       fail exactly where we crash (create_domain_objects during mono_runtime_init_checked). WPFGallery
+       has no resolve-only-but-unbundled assemblies, which is why dedup works there. -->
+  <ItemGroup Condition="'$(BundlePrivateWin32Asms)' == 'true'">
+    <Reference Include="System.Private.Windows.Core"><HintPath>lib\System.Private.Windows.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Private.Windows.GdiPlus"><HintPath>lib\System.Private.Windows.GdiPlus.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Formats.Nrbf"><HintPath>lib\System.Formats.Nrbf.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
   <!-- swf + sysdrawing are reflection-heavy and not on the render hot path; keep them interpreted so
