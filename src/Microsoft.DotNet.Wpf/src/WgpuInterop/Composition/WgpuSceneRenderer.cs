@@ -887,6 +887,11 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // cost is that resolution is fixed at cache time, so scaling up past it goes soft (exactly
         // WPF's BitmapCache/RenderAtScale tradeoff) and rotation is bilinear-filtered rather than
         // analytically anti-aliased.
+        // See the gate in EmitFill: the analytic gradient-shape path is correct per-pass but its
+        // bind group is bound to the emit-time pipeline, so multi-format scenes can abort.
+        private static readonly bool s_shapeBrush =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_SHAPE_BRUSH") == "1";
+
         private static readonly bool s_localCoverageCache =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_LOCAL_COVERAGE_CACHE") == "1";
 
@@ -1251,7 +1256,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
                 BuildBatchedGeometry(plan, mainData);
-                BuildBatchedStorage(outFormat);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
@@ -1316,7 +1321,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
                 long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 BuildBatchedGeometry(plan, mainData);
-                BuildBatchedStorage(format);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(view, false, background, mainData, format), atlasView);
@@ -1411,7 +1416,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
                 // Coverage-rasterization plan passes first, then the id pass (clear to 0 = "no visual").
                 BuildBatchedGeometry(plan, idData);
-                BuildBatchedStorage(ReadbackFormat);
+                BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, IntPtr.Zero);
                 ExecutePass(encoder, new LayerPass(_idView, true, default, idData, ReadbackFormat), IntPtr.Zero);
@@ -2217,6 +2222,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         private IntPtr CreateClipBindGroup(WGPUTextureFormat format, IntPtr layerView, IntPtr maskView, IntPtr sampler)
         {
+
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, FillKind.Clip), 0);
             var entries = stackalloc WGPUBindGroupEntry[3];
             entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = layerView };
@@ -2602,10 +2608,19 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             }
 
             // Same analytic path for a GRADIENT-filled closed-form shape (fs_shapebrush evaluates the
-            // ramp per fragment). Without this these dropped to a coverage mask baked at local
-            // resolution, so their corners pixelated under a DPI scale/zoom -- see ShapeBrushShaderWgsl.
+            // ramp per fragment). Without this these drop to a coverage mask baked at local
+            // resolution, so their corners pixelate under a DPI scale/zoom -- see ShapeBrushShaderWgsl.
             // Image brushes stay on the coverage path (brushT only models gradients).
-            if (s_gpuRaster && fill.Brush is LinearGradientBrush or RadialGradientBrush && !fill.IsGlyph
+            //
+            // OFF BY DEFAULT (WPF_WEBGPU_SHAPE_BRUSH=1 to enable): unlike FillKind.Shape, this kind
+            // needs a bind group, and the group is built from GetPipeline(format, ShapeBrush)'s
+            // auto-layout at EMIT time. Where a draw is later recorded into a pass with a different
+            // format, the layout belongs to another pipeline instance and wgpu rejects the draw:
+            //     Exclusive pipelines don't match ... in wgpuCommandEncoderFinish
+            // which aborts the process (the gallery hits it via its layered/effect content). The
+            // shader and emit path are correct in the single-format case; what is missing is
+            // resolving the bind group at RECORD time, against the pass actually being encoded.
+            if (s_shapeBrush && s_gpuRaster && fill.Brush is LinearGradientBrush or RadialGradientBrush && !fill.IsGlyph
                 && fill.Geometry is EllipseGeometry or RoundedRectangleGeometry or RectangleGeometry
                 && TryShapeParams(fill.Geometry, out Vector2 gc, out float ghx, out float ghy, out float gcr))
             {
@@ -2773,7 +2788,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 float half = (float)(style.Thickness / 2.0);
                 // Prefer drawing the stroke SDF straight into the frame (no baked texture); fall back to
                 // the cached-texture path for strokes too complex for the per-fragment segment loop.
-                if (!EmitStrokeDrawDirect(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, data))
+                if (!EmitStrokeDrawDirect(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, format, data))
                     EmitGpuStroke(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, format, data);
                 return;
             }
@@ -2802,7 +2817,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // animated/resizing stroke doesn't re-bake. Returns false (declining to the cached-texture path) for
         // strokes with too many segments, whose O(segments) per-fragment loop would be costly.
         private bool EmitStrokeDrawDirect(PathGeometry centerline, float localHalf, SolidColorBrush solid, Matrix3x2 world,
-            double opacity, Scissor clip, int width, int height, DrawData data)
+            double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty) return false;
             float scale = MathF.Sqrt(world.M11 * world.M11 + world.M12 * world.M12);
@@ -2836,7 +2851,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, IntPtr.Zero));
-            _pendingStorageBinds.Add((data, data.Draws.Count - 1, soff, byteLen));
+            _pendingStorageBinds.Add((data, data.Draws.Count - 1, soff, byteLen, format));
             return true;
         }
 
@@ -3585,7 +3600,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // bind (their DrawItem starts with a null bind group) and BuildBatchedStorage patches them in after
         // sealing the buffer. Only populated on cache-MISS frames (new masks); cached masks skip all of this.
         private readonly List<byte> _batchStorage = new();
-        private readonly List<(DrawData Data, int DrawIndex, int Offset, int Size)> _pendingStorageBinds = new();
+        private readonly List<(DrawData Data, int DrawIndex, int Offset, int Size, WGPUTextureFormat Format)> _pendingStorageBinds = new();
         private IntPtr _frameStorageBuf;
 
         // Reserves a 256-aligned region in the shared storage arena for a mask's edge data (256 =
@@ -3601,7 +3616,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // Seals the shared storage arena into one buffer and creates+patches the deferred coverage-mask bind
         // groups. Call after collection, before the ExecutePass loop (alongside BuildBatchedGeometry).
-        private void BuildBatchedStorage(WGPUTextureFormat mainFormat)
+        private void BuildBatchedStorage()
         {
             _frameStorageBuf = IntPtr.Zero;
             if (_pendingStorageBinds.Count == 0) { _batchStorage.Clear(); return; }
@@ -3609,13 +3624,16 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             _frameStorageBuf = _ctx.CreateBufferMapped(CollectionsMarshal.AsSpan(_batchStorage), WGPUBufferUsage.Storage);
             DeferReleaseBuffer(_frameStorageBuf);
 
-            foreach ((DrawData d, int idx, int off, int size) in _pendingStorageBinds)
+            foreach ((DrawData d, int idx, int off, int size, WGPUTextureFormat layoutFmt) in _pendingStorageBinds)
             {
                 DrawItem di = d.Draws[idx];
-                // Coverage/brush-alpha binds are for R8 mask passes; StrokeDraw is drawn straight into the
-                // main colour pass. The storage bind-group layout is the same either way, but use a matching
-                // pipeline format so we don't compile a stray unused pipeline.
-                WGPUTextureFormat layoutFmt = di.Kind == FillKind.StrokeDraw ? mainFormat : WGPUTextureFormat.R8Unorm;
+                // The layout MUST come from the pipeline of the pass this draw is actually recorded in:
+                // an auto-layout bind group is exclusive to its pipeline, and pipelines are per (format,
+                // kind). This used to assume StrokeDraw always lands in the main colour pass and used the
+                // main format - but a stroke inside an opacity/effect layer is recorded into that LAYER's
+                // pass (ReadbackFormat), so the group belonged to a different pipeline and wgpu aborted
+                // the process at wgpuCommandEncoderFinish with "Exclusive pipelines don't match". Each
+                // pending bind now carries the format of its own pass (R8Unorm for the mask passes).
                 IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(layoutFmt, di.Kind), 0);
                 var entry = new WGPUBindGroupEntry { binding = 0, buffer = _frameStorageBuf, offset = (ulong)off, size = (ulong)size };
                 var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
@@ -4425,7 +4443,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             AddVertex(d.Verts, new Vector2(-1f, -1f), segCount, flags, 0f, 0f, 0f, h);
             AddQuadIndices(d.Indices, 0);
             d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, IntPtr.Zero));
-            _pendingStorageBinds.Add((d, d.Draws.Count - 1, soff, byteLen));
+            _pendingStorageBinds.Add((d, d.Draws.Count - 1, soff, byteLen, WGPUTextureFormat.R8Unorm));
             _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
             return (tex, view);
         }
@@ -4480,6 +4498,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // auto-layout bind groups are exclusive to the exact pipeline their layout came from.
         private IntPtr CreateBrushBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr covView, IntPtr rampView, IntPtr ubuf, int uniSize)
         {
+
             PerfBindGroups++;
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
             if (kind is FillKind.MaskBrush or FillKind.MaskImage)
@@ -4643,6 +4662,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         private IntPtr CreateSampledBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr view, IntPtr sampler)
         {
+
             PerfBindGroups++;
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
             var entries = stackalloc WGPUBindGroupEntry[2];
