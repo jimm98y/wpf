@@ -531,6 +531,94 @@ fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
+        // The gradient counterpart of ShapeShaderWgsl: the SAME analytic rounded-rect/ellipse SDF,
+        // but the colour comes from the gradient ramp evaluated per fragment instead of a flat vertex
+        // colour. Without this a gradient-filled rounded rect could not take the analytic path at all
+        // (fs_shape only outputs solid * coverage) and fell back to a rasterized coverage mask baked at
+        // the geometry's LOCAL resolution -- which the GPU then magnified by the world transform, so
+        // corners visibly pixelated under a DPI scale or a zoom while solid-filled shapes and text
+        // beside them stayed crisp. Being an SDF this is resolution-independent: exact at any zoom,
+        // and it bakes no mask at all.
+        //
+        // uv is the local position relative to the shape's CENTRE (as in fs_shape), so the gradient
+        // endpoints are pre-offset by that centre on the CPU and uv feeds brushT directly.
+        // Bindings mirror BrushAlphaShaderWgsl's 3-entry layout (see CreateBrushBindGroup's else).
+        private const string ShapeBrushShaderWgsl = @"
+struct VSOut {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) uv : vec2<f32>,
+    @location(2) prm : vec4<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
+    var o : VSOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.uv = uv;
+    o.prm = prm;
+    return o;
+}
+
+struct BrushParams {
+    kindSpread : vec4<u32>,
+    g0 : vec4<f32>,
+    rect : vec4<f32>,
+    misc : vec4<f32>,
+};
+
+@group(0) @binding(0) var rampTex : texture_2d<f32>;
+@group(0) @binding(1) var rampSamp : sampler;
+@group(0) @binding(2) var<uniform> params : BrushParams;
+
+fn brushT(local : vec2<f32>) -> f32 {
+    var t = 0.0;
+    if (params.kindSpread.x == 1u) {
+        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
+    } else {
+        let d = (local - params.g0.xy) / params.g0.zw;
+        t = length(d);
+    }
+    switch params.kindSpread.y {
+        case 1u: {                                  // reflect
+            let f = t - 2.0 * floor(t / 2.0);
+            t = select(f, 2.0 - f, f > 1.0);
+        }
+        case 2u: { t = t - floor(t); }              // repeat
+        default: { t = clamp(t, 0.0, 1.0); }        // pad
+    }
+    return t;
+}
+
+@fragment
+fn fs_shapebrush(in : VSOut) -> @location(0) vec4<f32> {
+    let p = in.uv;
+    let hx = in.prm.x; let hy = in.prm.y; let cr = in.prm.z; let sh = in.prm.w;
+    var d : f32;
+    if (cr < 0.0) {
+        let qx = p.x / hx;
+        let qy = p.y / hy;
+        let f = qx * qx + qy * qy - 1.0;
+        let g = max(length(vec2<f32>(2.0 * qx / hx, 2.0 * qy / hy)), 1e-8);
+        d = f / g;
+    } else {
+        let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
+        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
+    }
+    let fw = max(fwidth(d), 1e-6);
+    var cov : f32;
+    if (sh < 0.0) {
+        cov = clamp(0.5 - d / fw, 0.0, 1.0);
+    } else {
+        cov = clamp(0.5 - (abs(d) - sh) / fw, 0.0, 1.0);
+    }
+    let c = textureSampleLevel(rampTex, rampSamp, vec2<f32>(brushT(p), 0.5), 0.0);
+    let a = cov * c.a * params.misc.x;
+    return vec4<f32>(c.rgb * a, a);                 // premultiplied
+}
+";
+
         // Analytic stroke drawn STRAIGHT into the frame (no baked coverage texture): the round-cap/round-
         // join solid-stroke distance field (min distance to the flattened centre-line segments, minus the
         // half-width) evaluated per fragment. Segments live in a per-frame BATCHED storage buffer shared by
@@ -763,7 +851,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, StrokeDraw }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
@@ -779,6 +867,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private IntPtr _idShaderModule;
         private IntPtr _strokeShaderModule;
         private IntPtr _shapeShaderModule;
+        private IntPtr _shapeBrushShaderModule;
         private IntPtr _strokeDrawShaderModule;
         private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
 
@@ -1465,10 +1554,16 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 IntPtr atlasBindGroup = IntPtr.Zero;
                 if (lp.Data.HasText && atlasView != IntPtr.Zero)
                 {
-                    // Linear (not nearest): glyphs rasterize into the atlas at BaseEmPixels (48) and are
-                    // minified to the run's em size — small text (e.g. WinForms 11px) is a ~4x downscale,
-                    // where nearest sampling drops every few texels (thin strokes vanish -> pixelated/gray).
-                    atlasBindGroup = CreateSampledBindGroup(lp.Format, FillKind.Text, atlasView, LinearSampler());
+                    // Nearest, matching every other FillKind.Text sampler (the coverage-mask paths).
+                    // This bind group is now reached ONLY by the built-in bitmap font: EmitText returns
+                    // via the crisp outline-coverage path whenever _outlineFont != null, and _gpuGlyphs
+                    // (= s_gpuRaster && _outlineFont != null) is false on the branch that draws atlas
+                    // quads — so the BaseEmPixels-atlas MINIFICATION this used to sample linearly for
+                    // (small WinForms runs losing thin strokes) no longer comes through here at all.
+                    // What does come through is a binary bitmap font MAGNIFIED to the run's em size,
+                    // where linear filtering smears its hard 0/255 coverage (a 1-texel stem at 4x read
+                    // 0.875 mid-stroke instead of 1.0) instead of reproducing it exactly.
+                    atlasBindGroup = CreateSampledBindGroup(lp.Format, FillKind.Text, atlasView, NearestSampler());
                     IntPtr bg = atlasBindGroup;
                     DeferReleaseBindGroup(bg);
                 }
@@ -2506,6 +2601,18 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 return;
             }
 
+            // Same analytic path for a GRADIENT-filled closed-form shape (fs_shapebrush evaluates the
+            // ramp per fragment). Without this these dropped to a coverage mask baked at local
+            // resolution, so their corners pixelated under a DPI scale/zoom -- see ShapeBrushShaderWgsl.
+            // Image brushes stay on the coverage path (brushT only models gradients).
+            if (s_gpuRaster && fill.Brush is LinearGradientBrush or RadialGradientBrush && !fill.IsGlyph
+                && fill.Geometry is EllipseGeometry or RoundedRectangleGeometry or RectangleGeometry
+                && TryShapeParams(fill.Geometry, out Vector2 gc, out float ghx, out float ghy, out float gcr))
+            {
+                EmitShapeBrush(gc, ghx, ghy, gcr, -1f, fill.Brush, world, opacity, clip, width, height, format, data);
+                return;
+            }
+
             // Curved/composite geometries (rounded rect, ellipse, group) go through
             // the analytic-AA coverage path rather than flat tessellation.
             if (fill.Geometry is RoundedRectangleGeometry or EllipseGeometry or GeometryGroup)
@@ -2835,6 +2942,53 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 1); data.Indices.Add(baseVertex + 2);
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 2); data.Indices.Add(baseVertex + 3);
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Shape, IntPtr.Zero));
+        }
+
+        // Gradient-filled closed-form shape, drawn analytically (fs_shapebrush): the same SDF quad as
+        // EmitShape, with the gradient evaluated per fragment instead of a flat colour. Keeps a
+        // gradient rounded rect/ellipse on the resolution-independent path rather than dropping it to a
+        // local-resolution coverage mask that the world transform then magnifies.
+        private void EmitShapeBrush(Vector2 centreLocal, float halfX, float halfY, float cornerR, float halfLocal,
+            Brush gradient, Matrix3x2 world, double opacity, Scissor clip, int width, int height,
+            WGPUTextureFormat format, DrawData data)
+        {
+            if (clip.IsEmpty || halfX <= 0f || halfY <= 0f) return;
+
+            float scale = MathF.Sqrt(world.M11 * world.M11 + world.M12 * world.M12);
+            float hwLocal = MathF.Max(0f, halfLocal);
+            float padLocal = scale > 1e-6f ? 2f / scale : 2f;
+            float extentX = halfX + hwLocal + padLocal;
+            float extentY = halfY + hwLocal + padLocal;
+            float sh = halfLocal < 0f ? -1f : hwLocal;
+
+            // The shader's `local` is uv, i.e. relative to the shape centre, so shift the gradient's
+            // geometry into that same frame. A radial brush's g1 is (radiusX, radiusY), not a point,
+            // so only the centre/start moves.
+            (Vector2 g0, Vector2 g1) = gradient is LinearGradientBrush lgb
+                ? (lgb.Start - centreLocal, lgb.End - centreLocal)
+                : (((RadialGradientBrush)gradient).Center - centreLocal,
+                   new Vector2(((RadialGradientBrush)gradient).RadiusX, ((RadialGradientBrush)gradient).RadiusY));
+
+            byte[] uni = BuildBrushParams(gradient, g0, g1, 0f, 0f, 0f, 0f, (float)Math.Clamp(opacity, 0.0, 1.0));
+            IntPtr ubuf = GetOrCreateUniform(uni);
+            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.ShapeBrush, IntPtr.Zero, rampView, ubuf, uni.Length);
+            DeferReleaseBindGroup(bg);
+
+            Span<Vector2> corner = stackalloc Vector2[4]
+            {
+                new(-extentX, -extentY), new(extentX, -extentY), new(extentX, extentY), new(-extentX, extentY),
+            };
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            foreach (Vector2 lc in corner)
+            {
+                Vector2 dev = Vector2.Transform(centreLocal + lc, world);
+                AddVertex(data.Verts, ToNdc(dev, width, height), 1f, 1f, 1f, 1f, lc.X, lc.Y, halfX, halfY, cornerR, sh);
+            }
+            uint firstIndex = (uint)data.Indices.Count;
+            data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 1); data.Indices.Add(baseVertex + 2);
+            data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 2); data.Indices.Add(baseVertex + 3);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.ShapeBrush, bg));
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
@@ -3534,6 +3688,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     case FillKind.Coverage:
                     case FillKind.MaskBrush:
                     case FillKind.MaskImage:
+                    case FillKind.ShapeBrush:   // group 0 = gradient ramp + sampler + brush params
                     case FillKind.BrushAlpha:
                     case FillKind.Id:
                     case FillKind.Stroke:
@@ -3623,12 +3778,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_idShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_idShaderModule);
             if (_strokeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeShaderModule);
             if (_shapeShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shapeShaderModule);
+            if (_shapeBrushShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shapeBrushShaderModule);
             if (_strokeDrawShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_strokeDrawShaderModule);
             if (_whiteView != IntPtr.Zero) { wgpuTextureViewRelease(_whiteView); wgpuTextureRelease(_whiteTex); }
             if (_linearSampler != IntPtr.Zero) wgpuSamplerRelease(_linearSampler);
             if (_nearestSampler != IntPtr.Zero) wgpuSamplerRelease(_nearestSampler);
             _shaderModule = _clipShaderModule = _coverageShaderModule = IntPtr.Zero;
-            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = _shapeShaderModule = _strokeDrawShaderModule = IntPtr.Zero;
+            _brushShaderModule = _brushAlphaShaderModule = _idShaderModule = _strokeShaderModule = _shapeShaderModule = _shapeBrushShaderModule = _strokeDrawShaderModule = IntPtr.Zero;
             _whiteTex = _whiteView = _linearSampler = _nearestSampler = IntPtr.Zero;
         }
 
@@ -3666,6 +3822,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.Id => GetIdShaderModule(),
                 FillKind.Stroke => GetStrokeShaderModule(),
                 FillKind.Shape => GetShapeShaderModule(),
+                FillKind.ShapeBrush => GetShapeBrushShaderModule(),
                 FillKind.StrokeDraw => GetStrokeDrawShaderModule(),
                 _ => GetShaderModule(),
             };
@@ -3686,6 +3843,13 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (_shapeShaderModule != IntPtr.Zero) return _shapeShaderModule;
             _shapeShaderModule = CompileWgsl(ShapeShaderWgsl);
             return _shapeShaderModule;
+        }
+
+        private IntPtr GetShapeBrushShaderModule()
+        {
+            if (_shapeBrushShaderModule != IntPtr.Zero) return _shapeBrushShaderModule;
+            _shapeBrushShaderModule = CompileWgsl(ShapeBrushShaderWgsl);
+            return _shapeBrushShaderModule;
         }
 
         private IntPtr GetStrokeDrawShaderModule()
@@ -3779,6 +3943,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 FillKind.Id => "fs_id",
                 FillKind.Stroke => "fs_stroke",
                 FillKind.Shape => "fs_shape",
+                FillKind.ShapeBrush => "fs_shapebrush",
                 FillKind.StrokeDraw => "fs_strokedraw",
                 _ => "fs_solid",
             };
@@ -3791,7 +3956,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 // All pipelines share the 12-float vertex stride. The shape and stroke-draw pipelines
                 // additionally read the last 4 floats as location 3 (shape params / stroke params); every
                 // other pipeline reads only locations 0-2 and ignores the trailing floats.
-                bool usesParams = kind is FillKind.Shape or FillKind.StrokeDraw;
+                bool usesParams = kind is FillKind.Shape or FillKind.ShapeBrush or FillKind.StrokeDraw;
                 var attributes = stackalloc WGPUVertexAttribute[4];
                 attributes[0] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 0, shaderLocation = 0 };
                 attributes[1] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x4, offset = 2 * sizeof(float), shaderLocation = 1 };
@@ -3999,20 +4164,48 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// before any pass that samples the mask). Bounds are the curves' tight extents. Returns
         /// false for an empty path. The caller owns tex/view.
         /// </summary>
-        // Cached local-space coverage for brush fills: rasterizes once per unique local geometry and keeps
-        // the R8 mask across frames (see _covCache). The caller must NOT release the returned view.
-        private bool GetOrRasterizeLocalCoverage(PathGeometry localGeom, out IntPtr view, out int ox, out int oy, out int w, out int h)
+        // Cached local-space coverage for brush fills: rasterizes once per unique local geometry +
+        // raster scale and keeps the R8 mask across frames (see _covCache). The caller must NOT
+        // release the returned view.
+        //
+        // A non-solid brush is evaluated per-fragment in the geometry's LOCAL space -- fs_maskbrush /
+        // fs_maskimage map uv through params.rect -- so unlike the solid path this mask cannot be
+        // rasterized in device space. Its RESOLUTION, though, is independent of that: rasterizing at
+        // the local DIP size and letting the GPU magnify it by the world transform is what made
+        // gradient-filled rounded corners and curved edges pixelate under a DPI scale (3x on a phone)
+        // or a zoom, while solid-filled text beside them stayed crisp. Rasterize at the transform's
+        // linear scale and report the SAME local-space rect, so every brush kind (linear, radial,
+        // image) keeps its existing coordinate math and only the coverage gets denser.
+        private bool GetOrRasterizeLocalCoverage(PathGeometry localGeom, Matrix3x2 world,
+            out IntPtr view, out float rx, out float ry, out float rw, out float rh)
         {
-            long key = HashGeometry(localGeom);
+            view = IntPtr.Zero;
+            rx = ry = rw = rh = 0f;
+
+            // Round the raster scale UP to a 1/4 step: rounding down would under-sample, which is the
+            // blur being fixed, while bucketing still keeps a smooth zoom from minting a mask per
+            // frame. Never below 1 -- that is the old local-DIP resolution, the floor, not a target.
+            float bucket = MathF.Ceiling(MathF.Max(LinearScale(world), 1f) * 4f) / 4f;
+            float inv = 1f / bucket;
+
+            long key = HashGeometry(localGeom) * 31 + BitConverter.SingleToInt32Bits(bucket);
             if (_covCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame) e))
             {
                 _covCache[key] = (e.Tex, e.View, e.Ox, e.Oy, e.W, e.H, _frameId);
-                view = e.View; ox = e.Ox; oy = e.Oy; w = e.W; h = e.H;
+                view = e.View;
+                rx = e.Ox * inv; ry = e.Oy * inv; rw = e.W * inv; rh = e.H * inv;
                 return true;
             }
-            if (!GpuRasterizeCoverage(localGeom, gamma: false, out IntPtr tex, out view, out ox, out oy, out w, out h))
+
+            PathGeometry rasterGeom = bucket == 1f
+                ? localGeom
+                : TransformGeometry(localGeom, Matrix3x2.CreateScale(bucket));
+            if (!GpuRasterizeCoverage(rasterGeom, gamma: false, out IntPtr tex, out view,
+                    out int ox, out int oy, out int w, out int h))
                 return false;
+
             _covCache[key] = (tex, view, ox, oy, w, h, _frameId);
+            rx = ox * inv; ry = oy * inv; rw = w * inv; rh = h * inv;
             return true;
         }
 
@@ -4319,7 +4512,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private bool EmitGpuGradientMask(PathGeometry localGeom, Brush gradient, Matrix3x2 world, double opacity,
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
-            if (!GetOrRasterizeLocalCoverage(localGeom, out IntPtr covView, out int ox, out int oy, out int w, out int h))
+            if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
             IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
@@ -4355,7 +4548,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             if (img.PixelWidth <= 0 || img.PixelHeight <= 0)
                 return false;
-            if (!GetOrRasterizeLocalCoverage(localGeom, out IntPtr covView, out int ox, out int oy, out int w, out int h))
+            if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
             IntPtr imgView = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
@@ -4380,7 +4573,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // Fills the BrushParams uniform for an image/tile brush: kindSpread.y = TileMode,
         // g0.xy = (tileWidth, tileHeight), rect = coverage bounds, misc.x = opacity.
-        private static byte[] BuildImageBrushParams(ImageBrush img, int ox, int oy, int w, int h, float opacity)
+        private static byte[] BuildImageBrushParams(ImageBrush img, float ox, float oy, float w, float h, float opacity)
         {
             var buf = new byte[64];
             Span<uint> u = MemoryMarshal.Cast<byte, uint>((Span<byte>)buf);
