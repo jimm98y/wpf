@@ -289,10 +289,15 @@ namespace System.Xaml.Schema
                     return true;
                 }
 
-                // mono-wasm: MethodBase.IsSecurityCritical throws NotImplementedException and
-                // the ctor-function-pointer trick below has no interpreter support; skip this
-                // legacy fast path so the caller uses plain reflection activation instead.
-                if (OperatingSystem.IsBrowser())
+                // Mono: MethodBase.IsSecurityCritical throws NotImplementedException (it is a
+                // CAS-era API Mono never implemented) and the ctor-function-pointer trick below has
+                // no interpreter support; skip this legacy fast path so the caller uses plain
+                // reflection activation instead. This covers every Mono target, not just wasm --
+                // on iOS it surfaced as a XamlParseException the first time BAML instantiated a
+                // user control ("the invocation of the constructor ... threw an exception").
+                if (OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() ||
+                    OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst() ||
+                    OperatingSystem.IsAndroid())
                 {
                     return false;
                 }

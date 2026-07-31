@@ -2277,6 +2277,14 @@ namespace System.Windows.Threading
                 _frameDepth--;
                 return;
             }
+
+            // Idle like every other platform: the Win32/macOS loops block in WaitForWork until
+            // something is queued, so a window that has rendered its content costs nothing until it
+            // changes. A display link left running would instead tick 60-120x/second forever --
+            // on a phone that is the difference between an idle app and a flat battery. Signal() is
+            // raised whenever work is queued or a timer's due time moves, so it is exactly the edge
+            // that must un-park the link; PumpIosTick parks it again once the queue drains.
+            _runLoop.Woken = MS.Internal.Interop.UIKitWindow.RequestWake;
         }
 
         // One CADisplayLink tick: promote due timers, then drain the operation queue. Mirrors the
@@ -2327,6 +2335,20 @@ namespace System.Windows.Threading
                        && frame.Continue);
 
                 RaiseIdleIfQuiescent();
+
+                // Park the link if nothing is left to do, so the app renders on change and then
+                // idles (the iOS spelling of WaitForWork's block). Three cases:
+                //   queue still has work  -> keep ticking, drain it next frame
+                //   only a timer pending  -> park, and schedule a one-shot wake at its due time
+                //   nothing at all        -> park; Signal() (via _runLoop.Woken) revives us
+                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                {
+                    if (_dueTimeFound)
+                    {
+                        MS.Internal.Interop.UIKitWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
+                    }
+                    MS.Internal.Interop.UIKitWindow.SetDisplayLinkPaused(true);
+                }
             }
             finally
             {

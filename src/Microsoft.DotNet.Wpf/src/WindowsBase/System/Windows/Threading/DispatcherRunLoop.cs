@@ -32,11 +32,20 @@ namespace System.Windows.Threading
         /// Wake the dispatcher thread so a pending <see cref="Wait"/> returns promptly. Safe to
         /// call from any thread; redundant signals coalesce into one.
         /// </summary>
+        /// <summary>
+        /// Optional platform hook invoked on every <see cref="Signal"/>. A pump that does not block
+        /// in <see cref="Wait"/> - iOS, where UIKit owns the run loop and the dispatcher is driven by
+        /// a CADisplayLink - parks itself when idle and needs this to learn that work has arrived.
+        /// Called from whichever thread signalled, so the handler must be thread-safe.
+        /// </summary>
+        internal Action Woken;
+
         internal void Signal()
         {
             if (!_disposed)
             {
                 _wake.Set();
+                Woken?.Invoke();
             }
         }
 

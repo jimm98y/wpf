@@ -268,6 +268,13 @@ namespace MS.Internal.Interop
             if (view == IntPtr.Zero) return IntPtr.Zero;
 
             SendVoidBool(view, Sel("setOpaque:"), true);
+
+            // Follow the superview's size. Without this the view keeps the frame it was created
+            // with, so rotating the device (or entering split view) left WPF rendering into the old
+            // portrait rectangle while the screen was landscape. UIViewAutoresizing.FlexibleWidth
+            // (1<<1) | FlexibleHeight (1<<4); CALayer.autoresizingMask is macOS-only, but the VIEW
+            // mask exists on iOS and UIKit keeps a backing layer in step with its view.
+            SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
             return view;
         }
 
@@ -294,12 +301,36 @@ namespace MS.Internal.Interop
 
             AddTouchMethods(cls);
 
+            // UIKit calls layoutSubviews whenever the view's bounds change - rotation, split view,
+            // the keyboard - which is the one place that reliably knows the new size. Raising
+            // Resized from here drives the synthetic WM_SIZE -> OnResize -> UpdateWindowSettings
+            // that relayouts WPF and reconfigures the swap chain to the new device pixel size.
+            class_addMethod(cls, Sel("layoutSubviews"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&LayoutSubviewsImp, "v@:");
+
             objc_registerClassPair(cls);
             return s_metalViewClass = cls;
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static IntPtr LayerClassImp(IntPtr self, IntPtr sel) => objc_getClass("CAMetalLayer");
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void LayoutSubviewsImp(IntPtr self, IntPtr sel)
+        {
+            // No objc_msgSendSuper: the autoresizing mask is applied by UIKit BEFORE layoutSubviews
+            // runs and this view has no constraints or subviews of its own, so there is nothing the
+            // base implementation needs to do. Never let a managed exception unwind into UIKit.
+            try
+            {
+                if (s_byView.TryGetValue(self, out UIKitWindow w))
+                    w.RaiseResized();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WPF iOS layoutSubviews failed: {e}");
+            }
+        }
 
         // ---- Touch input ----------------------------------------------------------
         //
@@ -388,6 +419,7 @@ namespace MS.Internal.Interop
         // continuation on a thread-pool thread, and ProcessQueue has hard UI-thread affinity.)
 
         private static IntPtr s_displayLink;
+        private static IntPtr s_linkTarget;   // retained: performSelector wake-ups are sent to it
         private static Action s_tick;
 
         /// <summary>
@@ -401,6 +433,7 @@ namespace MS.Internal.Interop
             IntPtr cls = objc_getClass("CADisplayLink");
             IntPtr target = CreateDisplayLinkTarget();
             if (cls == IntPtr.Zero || target == IntPtr.Zero) return false;
+            s_linkTarget = target;
 
             IntPtr link = SendPtrPtr(cls, Sel("displayLinkWithTarget:selector:"), target, Sel("wpfTick:"));
             if (link == IntPtr.Zero) return false;
@@ -428,6 +461,49 @@ namespace MS.Internal.Interop
             s_tick = tick;
             s_displayLink = link;
             return true;
+        }
+
+        /// <summary>
+        /// Pause/resume the display link. A paused link costs nothing, which is how the dispatcher
+        /// goes fully idle between changes (the macOS/Win32 loops block in WaitForWork instead);
+        /// <see cref="RequestWake"/> and <see cref="ScheduleWake"/> bring it back.
+        /// </summary>
+        public static void SetDisplayLinkPaused(bool paused)
+        {
+            if (s_displayLink != IntPtr.Zero)
+                SendVoidBool(s_displayLink, Sel("setPaused:"), paused);
+        }
+
+        /// <summary>
+        /// Resume the pump because work was queued. Callable from ANY thread (Dispatcher.BeginInvoke
+        /// off the UI thread is the whole point), so it hops to the main thread rather than touching
+        /// the display link directly - CoreAnimation objects are not thread-safe.
+        /// </summary>
+        public static void RequestWake()
+        {
+            if (s_linkTarget == IntPtr.Zero) return;
+            SendVoidSelPtrBool(s_linkTarget, Sel("performSelectorOnMainThread:withObject:waitUntilDone:"),
+                               Sel("wpfWake:"), IntPtr.Zero, false);
+        }
+
+        /// <summary>
+        /// Resume the pump in <paramref name="seconds"/>, for a pending DispatcherTimer: the link can
+        /// still be paused meanwhile, so an app waiting on a timer idles instead of spinning at the
+        /// display rate. Main thread only; replaces any previously scheduled wake.
+        /// </summary>
+        public static void ScheduleWake(double seconds)
+        {
+            if (s_linkTarget == IntPtr.Zero) return;
+            SendVoidPtr(objc_getClass("NSObject"), Sel("cancelPreviousPerformRequestsWithTarget:"), s_linkTarget);
+            SendVoidSelPtrDouble(s_linkTarget, Sel("performSelector:withObject:afterDelay:"),
+                                 Sel("wpfWake:"), IntPtr.Zero, Math.Max(0.0, seconds));
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void WakeImp(IntPtr self, IntPtr sel, IntPtr arg)
+        {
+            try { SetDisplayLinkPaused(false); }
+            catch (Exception e) { Console.WriteLine($"WPF iOS pump wake failed: {e}"); }
         }
 
         public static void StopDisplayLink()
@@ -464,6 +540,9 @@ namespace MS.Internal.Interop
                 class_addMethod(cls, Sel("wpfTick:"),
                     (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&TickImp,
                     "v@:@");   // void; (id self, SEL _cmd, CADisplayLink* sender)
+                class_addMethod(cls, Sel("wpfWake:"),
+                    (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&WakeImp,
+                    "v@:@");   // void; (id self, SEL _cmd, id arg) - unpauses the link
 
                 objc_registerClassPair(cls);
             }
@@ -522,6 +601,9 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidUIntPtr(IntPtr receiver, IntPtr selector, UIntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrBool(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, [MarshalAs(UnmanagedType.I1)] bool wait);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrDouble(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, double delay);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGPoint SendPointPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
