@@ -2057,6 +2057,24 @@ namespace System.Windows.Threading
                 return;
             }
 
+            // iOS is the same shape of problem as the browser: UIKit owns the main run loop and
+            // UIApplicationMain never returns, so the dispatcher cannot own the loop -- it has to be
+            // a guest in it, driven by CADisplayLink (the iOS analog of requestAnimationFrame).
+            // Blocking here is not merely slower, it is fatal: Application.Run/Dispatcher.Run is
+            // reached from inside a UIKit callback (scene:willConnectToSession:), so the blocking
+            // loop below would never return to UIKit, the scene would stay half-connected and its
+            // window would never be composited -- the app renders and presents every frame
+            // correctly, and the screen stays blank.
+            if (OperatingSystem.IsIOS())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on iOS.");
+                }
+                RunIosPump(frame);
+                return;
+            }
+
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
 
@@ -2236,6 +2254,83 @@ namespace System.Windows.Threading
                 {
                     _exitAllFrames = false;
                 }
+            }
+        }
+
+        // iOS replacement for PushFrameImpl's blocking loop, and the counterpart of
+        // RunBrowserPumpAsync: install a display-linked tick and RETURN, leaving the run loop to
+        // UIKit (which must get it back -- see the note in PushFrameImpl).
+        //
+        // Synchronous, unlike the browser pump: CADisplayLink delivers its callback on the main
+        // thread, which is already the dispatcher thread, so the tick body can run directly inside
+        // it. Awaiting instead would risk resuming the continuation on a thread-pool thread, and
+        // ProcessQueue has hard UI-thread affinity.
+        private void RunIosPump(DispatcherFrame frame)
+        {
+            _frameDepth++;
+
+            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+            if (!MS.Internal.Interop.UIKitWindow.StartDisplayLink(() => PumpIosTick(frame, dispatcherSyncContext)))
+            {
+                // Not running under UIKit (no CADisplayLink / no run loop): nothing can drive the
+                // queue, so unwind rather than leaving a frame pushed forever.
+                _frameDepth--;
+                return;
+            }
+        }
+
+        // One CADisplayLink tick: promote due timers, then drain the operation queue. Mirrors the
+        // browser pump's body; there is no native event drain because UIKit delivers touches
+        // straight into UIKitWindow's touch handlers rather than queueing them for us.
+        private void PumpIosTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
+        {
+            if (_runLoop is null || !frame.Continue)
+            {
+                MS.Internal.Interop.UIKitWindow.StopDisplayLink();
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                    if (_hasShutdownStarted)
+                    {
+                        ShutdownImpl();
+                    }
+                }
+                return;
+            }
+
+            if (_disableProcessingCount > 0)
+            {
+                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+            }
+
+            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+            try
+            {
+                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                {
+                    PromoteTimers(Environment.TickCount);
+                }
+
+                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
+                // loops -- bounded by a frame-ish budget so a flood cannot starve UIKit's run loop
+                // (input, animation and the present all ride it).
+                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                do
+                {
+                    ProcessQueue();
+                }
+                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                       && frame.Continue);
+
+                RaiseIdleIfQuiescent();
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
             }
         }
 

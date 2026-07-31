@@ -145,6 +145,16 @@ namespace MS.Internal.Text.TextInterface.Managed
                 // virtual filesystem under /fonts (see the GalleryWasm csproj).
                 yield return "/fonts";
             }
+            else if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
+            {
+                // iOS ships its system fonts outside the app sandbox, so an app cannot read
+                // /System/Library/Fonts the way macOS does - fonts have to travel in the app
+                // bundle (BundleResource items under a "fonts" folder), which is also what the
+                // browser head does. The bundle is the ONLY source that works: the simulator
+                // runtime has no /System/Library/Fonts at all (verified), and on device it is
+                // outside the sandbox - so unlike macOS there is no system fallback to lean on.
+                yield return Path.Combine(AppContext.BaseDirectory, "fonts");
+            }
             else if (OperatingSystem.IsMacOS())
             {
                 yield return "/System/Library/Fonts";

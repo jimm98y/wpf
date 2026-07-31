@@ -32,6 +32,10 @@ namespace System.Windows.Interop
             {
                 MS.Internal.Interop.BrowserWindow.MouseInput += OnBrowserMouseInput;
             }
+            else if (OperatingSystem.IsIOS())
+            {
+                MS.Internal.Interop.UIKitWindow.MouseInput += OnIosTouchInput;
+            }
             else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.MouseInput += OnCocoaMouseInput;
@@ -47,6 +51,8 @@ namespace System.Windows.Interop
                 // unsubscribe from Cocoa input and drop the input site.
                 if (OperatingSystem.IsBrowser())
                     MS.Internal.Interop.BrowserWindow.MouseInput -= OnBrowserMouseInput;
+                else if (OperatingSystem.IsIOS())
+                    MS.Internal.Interop.UIKitWindow.MouseInput -= OnIosTouchInput;
                 else
                     MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
                 if (_site != null)
@@ -1391,6 +1397,28 @@ namespace System.Windows.Interop
                 case CursorType.None:     return "none";
                 default:                  return "default";
             }
+        }
+
+        /// <summary>
+        /// iOS touches drive the mouse. There is no hover and no second button: a touch is an
+        /// absolute move plus a left press/release. UIKitWindow already emits the move that
+        /// precedes a press, so WPF's mouse position is current before the button-down lands.
+        /// </summary>
+        private void OnIosTouchInput(MS.Internal.Interop.UIKitWindow.TouchMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.View != _source.Handle) return;   // route to the provider that owns this view
+
+            RawMouseActions actions = msg.Kind switch
+            {
+                0 => RawMouseActions.AbsoluteMove,
+                1 => RawMouseActions.Button1Press,
+                2 => RawMouseActions.Button1Release,
+                _ => default,
+            };
+            if (actions == default) return;
+
+            ReportMacInput(actions, msg.X, msg.Y, 0, msg.TimestampMs);
         }
 
         private void OnCocoaMouseInput(MS.Internal.Interop.CocoaWindow.CocoaMouseMessage msg)

@@ -87,6 +87,19 @@ namespace MS.Win32
                         _platformWindow = browser;
                         _handle = browser.Handle;
                     }
+                    else if (OperatingSystem.IsIOS())
+                    {
+                        // iOS: one fullscreen UIWindow, so a WPF window is a Metal-backed UIView
+                        // inside it and popups are borderless sibling subviews (no child windows).
+                        // The UIView* is the handle, exactly as Cocoa uses its NSView*.
+                        // Checked BEFORE the macOS branch below: both are Darwin.
+                        var uikit = new MS.Internal.Interop.UIKitWindow();
+                        uikit.Create(name, cx, cy, cw, ch, borderless);
+                        // Same synthetic WM_SIZE routing as the other two backends.
+                        uikit.Resized += OnCocoaResized;
+                        _platformWindow = uikit;
+                        _handle = uikit.Handle;
+                    }
                     else
                     {
                         var cocoa = new MS.Internal.Interop.CocoaWindow();

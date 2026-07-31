@@ -23,19 +23,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>Optional sink for wgpu-native's own log messages (backend selection diagnostics).</summary>
         public static Action<string>? LogSink;
-        private static WGPULogCallback? s_logCallback;   // kept alive against GC
         public IntPtr Device { get; private set; }
         public IntPtr Queue { get; private set; }
 
-        // Roots for delegates handed to native as function pointers, so the GC
-        // does not collect them while wgpu may still invoke them.
-        private readonly WGPURequestAdapterCallback _adapterCb;
-        private readonly WGPURequestDeviceCallback _deviceCb;
+        //
+        // Native -> managed callbacks are STATIC [UnmanagedCallersOnly] methods rather than lambdas.
+        // A lambda that captures locals compiles to a closure instance, and calling one from native
+        // needs a reverse (native-to-managed) wrapper generated at runtime -- impossible where there
+        // is no JIT. On iOS that throws outright:
+        //     ExecutionEngineException: Attempting to JIT compile method
+        //     '(wrapper native-to-managed) WgpuContext/<>c__DisplayClass..:<Create>b__1'
+        //     while running in aot-only mode
+        // (the same constraint that made the browser flavour avoid native callbacks entirely).
+        // Static function pointers are AOT-safe on every platform, so results come back through
+        // static fields instead of captured locals. Create() is serialised by s_requestLock.
+        //
+        private static readonly object s_requestLock = new object();
+        private static IntPtr s_adapterResult;
+        private static bool s_adapterDone;
+        private static IntPtr s_deviceResult;
+        private static bool s_deviceDone;
 
-        private WgpuContext(WGPURequestAdapterCallback adapterCb, WGPURequestDeviceCallback deviceCb)
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+        private static void OnAdapterReady(WGPURequestAdapterStatus status, IntPtr adapter, WGPUStringView message, IntPtr u1, IntPtr u2)
         {
-            _adapterCb = adapterCb;
-            _deviceCb = deviceCb;
+            if (status == WGPURequestAdapterStatus.Success) s_adapterResult = adapter;
+            s_adapterDone = true;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+        private static void OnDeviceReady(WGPURequestDeviceStatus status, IntPtr device, WGPUStringView message, IntPtr u1, IntPtr u2)
+        {
+            if (status == WGPURequestDeviceStatus.Success) s_deviceResult = device;
+            s_deviceDone = true;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+        private static void OnWgpuLog(WGPULogLevel level, WGPUStringView msg, IntPtr userdata)
+        {
+            string m = msg.data == null ? "" : System.Text.Encoding.UTF8.GetString(msg.data, (int)msg.length);
+            LogSink?.Invoke($"[wgpu {level}] {m}");
+        }
+
+        private WgpuContext()
+        {
         }
 
         public static WgpuContext Create()
@@ -47,7 +78,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // interpreter thunk on mono-wasm). Same object shape, no native callbacks.
             {
                 IntPtr instance = wgpuCreateInstance(null);
-                var ctx = new WgpuContext(null!, null!) { Instance = instance };
+                var ctx = new WgpuContext { Instance = instance };
                 ctx.Adapter = (IntPtr)WgpuBrowser.AdapterHandle;
                 var info = new WGPUAdapterInfo();
                 if (wgpuAdapterGetInfo(ctx.Adapter, &info) == WGPUStatus.Success)
@@ -62,12 +93,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 #else
             if (LogSink != null)
             {
-                s_logCallback = (level, msg, ud) =>
-                {
-                    string m = msg.data == null ? "" : System.Text.Encoding.UTF8.GetString(msg.data, (int)msg.length);
-                    LogSink?.Invoke($"[wgpu {level}] {m}");
-                };
-                wgpuSetLogCallback(Marshal.GetFunctionPointerForDelegate(s_logCallback), IntPtr.Zero);
+                wgpuSetLogCallback(
+                    (IntPtr)(delegate* unmanaged[Cdecl]<WGPULogLevel, WGPUStringView, IntPtr, void>)&OnWgpuLog,
+                    IntPtr.Zero);
                 // Warn by default (errors/warnings); set WPF_WEBGPU_WGPU_LOG=debug for backend-selection traces.
                 wgpuSetLogLevel(Environment.GetEnvironmentVariable("WPF_WEBGPU_WGPU_LOG") == "debug" ? WGPULogLevel.Debug : WGPULogLevel.Warn);
             }
@@ -76,32 +104,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (instance == IntPtr.Zero)
                 throw new InvalidOperationException("wgpuCreateInstance failed.");
 
-            IntPtr adapterResult = IntPtr.Zero;
-            bool adapterDone = false;
-            WGPURequestAdapterCallback adapterCb = (status, adapter, message, u1, u2) =>
-            {
-                if (status == WGPURequestAdapterStatus.Success) adapterResult = adapter;
-                adapterDone = true;
-            };
+            IntPtr adapterResult, deviceResult;
+            var ctx = new WgpuContext { Instance = instance };
 
-            IntPtr deviceResult = IntPtr.Zero;
-            bool deviceDone = false;
-            WGPURequestDeviceCallback deviceCb = (status, device, message, u1, u2) =>
+            lock (s_requestLock)
             {
-                if (status == WGPURequestDeviceStatus.Success) deviceResult = device;
-                deviceDone = true;
-            };
-
-            var ctx = new WgpuContext(adapterCb, deviceCb) { Instance = instance };
+            s_adapterResult = IntPtr.Zero;
+            s_adapterDone = false;
+            s_deviceResult = IntPtr.Zero;
+            s_deviceDone = false;
 
             var adapterInfo = new WGPURequestAdapterCallbackInfo
             {
                 mode = WGPUCallbackMode.AllowProcessEvents,
-                callback = Marshal.GetFunctionPointerForDelegate(adapterCb),
+                callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestAdapterStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnAdapterReady,
             };
             var options = new WGPURequestAdapterOptions { powerPreference = WGPUPowerPreference.HighPerformance };
             wgpuInstanceRequestAdapter(instance, &options, adapterInfo);
-            for (int i = 0; i < 1000 && !adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
+            for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
+            adapterResult = s_adapterResult;
             if (adapterResult == IntPtr.Zero)
                 throw new InvalidOperationException("Could not acquire a WebGPU adapter.");
             ctx.Adapter = adapterResult;
@@ -118,10 +139,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var deviceInfo = new WGPURequestDeviceCallbackInfo
             {
                 mode = WGPUCallbackMode.AllowSpontaneous,
-                callback = Marshal.GetFunctionPointerForDelegate(deviceCb),
+                callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestDeviceStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnDeviceReady,
             };
             wgpuAdapterRequestDevice(adapterResult, IntPtr.Zero, deviceInfo);
-            for (int i = 0; i < 1000 && !deviceDone; i++) Thread.Sleep(1);
+            for (int i = 0; i < 1000 && !s_deviceDone; i++) Thread.Sleep(1);
+            deviceResult = s_deviceResult;
+            } // s_requestLock
+
             if (deviceResult == IntPtr.Zero)
                 throw new InvalidOperationException("Could not acquire a WebGPU device.");
             ctx.Device = deviceResult;
@@ -213,8 +237,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (Adapter != IntPtr.Zero) wgpuAdapterRelease(Adapter);
             if (Instance != IntPtr.Zero) wgpuInstanceRelease(Instance);
             Queue = Device = Adapter = Instance = IntPtr.Zero;
-            GC.KeepAlive(_adapterCb);
-            GC.KeepAlive(_deviceCb);
+            // No GC.KeepAlive needed any more: the adapter/device callbacks are static
+            // [UnmanagedCallersOnly] methods, so there is no delegate object to keep alive.
         }
     }
 }

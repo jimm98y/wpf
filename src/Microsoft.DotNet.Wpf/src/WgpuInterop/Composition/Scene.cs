@@ -47,6 +47,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     /// </summary>
     internal abstract class Geometry
     {
+        // Memo for WgpuSceneRenderer.GeometryToPath. Shapes are converted to a path for coverage
+        // rasterization on EVERY frame and the conversion allocates a whole new PathGeometry;
+        // worse, that fresh instance made PathGeometry's own Min/hash memos permanently cold.
+        // Geometry instances are stable across frames (ParseRenderData is skipped for unchanged
+        // visuals), so the conversion is cached here.
+        internal PathGeometry PathCache;
+
     }
 
     internal sealed class RectangleGeometry : Geometry
@@ -194,6 +201,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             FillRule = fillRule;
             Figures = figures;
         }
+
+        // Lazy memos for the renderer's mask-cache key (see WgpuSceneRenderer.EmitCoverageMask).
+        // Both are pure functions of Figures, which is never mutated after construction. The collect
+        // pass recomputed them for EVERY fill on EVERY frame - walking every point of every glyph
+        // outline - which is the dominant cost once the per-frame allocation is removed. Separate
+        // "valid" flags rather than sentinel values, since any float/long is a legal result.
+        internal float MinX, MinY;
+        internal bool MinValid;
+        internal long NormHash;
+        internal bool NormHashValid;
     }
 
     /// <summary>Base of the brush hierarchy that paints a fill (mirrors WPF Brush).</summary>

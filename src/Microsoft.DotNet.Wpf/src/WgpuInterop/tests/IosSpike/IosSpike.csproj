@@ -1,0 +1,127 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <!-- 14.0, not the template's 13.0: the vendored libwgpu_native.a is built with minos 14.0. -->
+    <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+    <!-- The shared binding's signatures use raw pointers (WGPUChainedStruct* etc.). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!--
+      Enable full trimming in Release mode.
+      To learn more, see: https://learn.microsoft.com/dotnet/core/deploying/trimming/trimming-options#trimming-granularity
+    -->
+    <TrimMode Condition="'$(Configuration)' == 'Release'">full</TrimMode>
+  </PropertyGroup>
+
+  <!--
+    Release/trimmed only: the managed WebGPU compositor is discovered dynamically (nothing in the
+    app references it statically), so full trimming removes it and PresentationCore silently falls
+    back to the native milcore path - which fails at run time with
+    "DllNotFoundException: wpfgfx_cor3.dll". Root the assemblies the WPF stack resolves by name.
+  -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+  </PropertyGroup>
+
+  <!--
+    wgpu-native, STATICALLY linked. iOS cannot load a third-party .dylib, so the .a is linked into the
+    app executable and every extern resolves through DllImport("__Internal") rather than a library
+    name. Frameworks are what wgpu's Metal backend pulls in.
+  -->
+  <!--
+    The iOS FLAVOUR of the binding (Library = "__Internal"), not the desktop one. A runtime
+    DllImportResolver over the desktop assembly is not sufficient: with static linking, symbols
+    that nothing references at compile time are dead-stripped, so the imports disappear.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../Ios/WgpuInterop.Ios.csproj" />
+  </ItemGroup>
+
+  <!--
+    The from-source WindowsBase, for the M3c dispatcher-pump test. It is plain net10.0, which a
+    net10.0-ios app can consume directly. Referenced as a built artifact (not a ProjectReference)
+    because WindowsBase builds through the Arcade SDK, which does not participate in the iOS build.
+  -->
+  <PropertyGroup>
+    <_Art>../../../../../../artifacts/bin</_Art>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="WindowsBase">           <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">           <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">      <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework"> <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">  <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">        <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">        <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">       <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">     <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">  <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- iOS has no readable system font directory, so the fonts travel in the app bundle; the
+       SystemFontCatalog iOS branch probes AppContext.BaseDirectory/fonts. Same set the wasm head
+       bundles (Liberation Sans is metric-compatible with Helvetica/Arial). -->
+  <ItemGroup>
+    <BundleResource Include="../../../../../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    mono-aot-cross has to RESOLVE every assembly WindowsBase references, even ones no code path
+    reaches, or AOT of the whole image fails. On Windows these come from the shared framework;
+    here each has to be brought into the app closure explicitly. (Same failure mode as the wasm
+    head - see the _AOT_InternalForceInterpretAssemblies notes there.)
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!--
+    The three Windows-only assemblies WindowsBase references but which no iOS code path can reach
+    (SplashScreen's WndProc, UnsafeNativeMethods.ObjectFromLresult). They exist only in the Windows
+    Desktop shared framework, so the REFERENCE assemblies are bundled purely to satisfy
+    mono-aot-cross's "resolve everything" rule - the runtime never loads them. Same trick the wasm
+    head uses for Accessibility.
+  -->
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+
+    <!--
+      Keep the Windows-only assemblies on the INTERPRETER instead of AOT-compiling them. The three
+      ref assemblies have no method bodies at all, so AOT of them fails outright; the rest are
+      Windows-only code no iOS path reaches. This is the iOS spelling of the wasm head's
+      _AOT_InternalForceInterpretAssemblies list. A leading "-all" would flip the meaning, so the
+      bare list = "interpret exactly these, AOT everything else".
+    -->
+    <MtouchInterpreter>System.Windows.Primitives,System.Private.Windows.Core,Accessibility,PresentationUI,ReachFramework,System.Printing,UIAutomationTypes,UIAutomationProvider,System.Drawing.Common</MtouchInterpreter>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <NativeReference Include="../../native/ios-arm64-simulator/lib/libwgpu_native.a">
+      <Kind>Static</Kind>
+      <ForceLoad>True</ForceLoad>
+      <Frameworks>Metal QuartzCore Foundation CoreGraphics IOSurface</Frameworks>
+    </NativeReference>
+  </ItemGroup>
+</Project>

@@ -787,6 +787,91 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private static readonly bool s_gpuRaster =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") != "1";
 
+        // WPF_WEBGPU_LOCAL_COVERAGE_CACHE=1: rasterize solid coverage in the geometry's OWN space and
+        // apply the world transform when COMPOSITING the quad - the same bargain as WPF's
+        // RenderTransform / BitmapCache, where content is rasterized once and the GPU transforms it.
+        // The default path bakes the world transform INTO the mask (crisper: every pixel is
+        // rasterized at its final device orientation), but then the cache key must contain the
+        // transform's linear part AND the sub-pixel phase, so an animating rotation/scale misses
+        // EVERY mask EVERY frame (measured: ~40 glyph masks/frame at ~122us).
+        // Rasterizing locally drops both from the key, so masks survive any transform change; the
+        // cost is that resolution is fixed at cache time, so scaling up past it goes soft (exactly
+        // WPF's BitmapCache/RenderAtScale tradeoff) and rotation is bilinear-filtered rather than
+        // analytically anti-aliased.
+        private static readonly bool s_localCoverageCache =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_LOCAL_COVERAGE_CACHE") == "1";
+
+        /// <summary>Uniform scale magnitude of a transform's linear part (max of the two row lengths).</summary>
+        private static float LinearScale(Matrix3x2 m)
+            => MathF.Max(MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12),
+                         MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22));
+
+        /// <summary>
+        /// Coverage rasterized in LOCAL space and composited through the full world transform.
+        /// The key holds only the shape and the (bucketed) raster scale, so it is invariant to
+        /// rotation, translation and sub-pixel phase.
+        /// </summary>
+        private void EmitLocalSpaceCoverage(PathGeometry coverageGeometry, RgbaColor color, Matrix3x2 world,
+            double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool gamma)
+        {
+            GeometryMinCached(coverageGeometry, out float gminX, out float gminY);
+
+            // Bucket the raster scale so a smooth zoom reuses masks instead of making one per frame;
+            // 1/8 steps keep the resolution error under ~6%.
+            float scale = MathF.Max(LinearScale(world), 0.01f);
+            float bucket = MathF.Max(MathF.Round(scale * 8f) / 8f, 0.125f);
+
+            long key = NormalizedHashCached(coverageGeometry, -gminX, -gminY);
+            key = key * 31 + BitConverter.SingleToInt32Bits(bucket);
+            key = (key * 397 ^ (long)format) * 4 + (gamma ? 2 : 0) + 1;   // +1 marks the local-space family
+
+            if (!_maskCache.TryGetValue(key, out CachedMask? cm))
+            {
+                PerfCoverage++;
+                PathGeometry normGeom = (gminX == 0f && gminY == 0f)
+                    ? coverageGeometry
+                    : TransformGeometry(coverageGeometry, Matrix3x2.CreateTranslation(-gminX, -gminY));
+                Matrix3x2 rasterXf = Matrix3x2.CreateScale(bucket);
+
+                IntPtr tex, view;
+                int mox, moy, mw, mh;
+                if (s_gpuRaster)
+                {
+                    if (!GpuRasterizeCoverage(TransformGeometry(normGeom, rasterXf), gamma,
+                            out tex, out view, out mox, out moy, out mw, out mh))
+                        return;
+                }
+                else
+                {
+                    CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, rasterXf));
+                    if (m.IsEmpty) return;
+                    if (gamma) ApplyTextGamma(m.Coverage);
+                    (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                    mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
+                }
+                IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, LinearSampler());
+                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
+                _maskCache[key] = cm;
+            }
+            cm.LastFrame = _frameId;
+
+            // The mask covers this rectangle in the geometry's own space; the GPU applies the
+            // world transform to its corners, so rotation/scale/translation are free.
+            float inv = 1f / bucket;
+            float lx0 = gminX + cm.Ox * inv, ly0 = gminY + cm.Oy * inv;
+            float lx1 = lx0 + cm.W * inv,    ly1 = ly0 + cm.H * inv;
+
+            float r = color.R, g = color.G, b = color.B, a = (float)Math.Clamp(color.A * opacity, 0.0, 1.0);
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(lx0, ly0), world), width, height), r, g, b, a, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(lx1, ly0), world), width, height), r, g, b, a, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(lx1, ly1), world), width, height), r, g, b, a, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(lx0, ly1), world), width, height), r, g, b, a, 0f, 1f);
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, cm.BindGroup));
+        }
+
         // Gamma-space compositing (the default) matches legacy WPF/GDI: colours are sRGB-encoded
         // (gamma) at their source and ALL blending/accumulation happens on those gamma values, with a
         // plain UNORM (non-sRGB) target so nothing re-encodes on store. This reproduces WPF's ADDITIVE
@@ -2098,7 +2183,16 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // Converts a primitive geometry to an equivalent closed PathGeometry so it
         // can go through the per-pixel coverage path.
+        /// <summary>
+        /// Converts a shape to a fillable path, memoized on the source geometry. The conversion
+        /// allocates a whole new PathGeometry, and it ran for every shape on every frame; the fresh
+        /// instance also kept PathGeometry's Min/hash memos permanently cold, so this cache is what
+        /// makes those effective.
+        /// </summary>
         private static PathGeometry GeometryToPath(Geometry geometry)
+            => geometry.PathCache ??= GeometryToPathCore(geometry);
+
+        private static PathGeometry GeometryToPathCore(Geometry geometry)
         {
             var figure = new PathFigure { Closed = true };
             switch (geometry)
@@ -2757,6 +2851,12 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             // (Non-solid brushes bake per-texel in the geometry's local space, so they stay local.)
             if (brush is SolidColorBrush solid)
             {
+                if (s_localCoverageCache)
+                {
+                    EmitLocalSpaceCoverage(coverageGeometry, solid.Color, world, opacity, clip, width, height, format, data, gamma);
+                    return;
+                }
+
                 // Translation-invariant cache: scrolling is pure translation, so the key must
                 // not contain the device-space offset or every scroll position re-rasterizes
                 // every visible path on the CPU. Split the translation into an integer pixel
@@ -2770,7 +2870,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 // integer-offset + half-pixel-phase split we already apply to the world translation, and
                 // hash the shape at its local origin — so the same glyph shape at any position shares ONE
                 // mask (≤4 phase variants) instead of one mask per instance.
-                GeometryMin(coverageGeometry, out float gminX, out float gminY);
+                GeometryMinCached(coverageGeometry, out float gminX, out float gminY);
                 float dx = world.M11 * gminX + world.M21 * gminY + world.M31;
                 float dy = world.M12 * gminX + world.M22 * gminY + world.M32;
                 float qx = MathF.Round(dx * 2f) * 0.5f;
@@ -2801,10 +2901,10 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 }
                 // Key must distinguish the (now finer) vertical phase; X stays half-pixel (2 variants).
                 int phase = (int)(phaseX * 2f) * 512 + (int)MathF.Round(phaseY * 255f);
-                PathGeometry normGeom = (gminX == 0f && gminY == 0f)
-                    ? coverageGeometry
-                    : TransformGeometry(coverageGeometry, Matrix3x2.CreateTranslation(-gminX, -gminY));
-                long key = HashGeometry(normGeom);
+                // The normalized geometry is only MATERIALIZED on a cache miss (below); the key is
+                // hashed straight off the original with the normalizing translation folded in, and
+                // memoized on the geometry (the walk is pure and the instances are stable).
+                long key = NormalizedHashCached(coverageGeometry, -gminX, -gminY);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M11);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M12);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
@@ -2814,6 +2914,9 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
+                    PathGeometry normGeom = (gminX == 0f && gminY == 0f)
+                        ? coverageGeometry
+                        : TransformGeometry(coverageGeometry, Matrix3x2.CreateTranslation(-gminX, -gminY));
                     // normGeom is at local origin; transform by the world LINEAR part + the sub-pixel phase.
                     Matrix3x2 phased = world;
                     phased.M31 = phaseX;
@@ -2887,6 +2990,33 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         // the coverage-mask cache TRANSLATION-INVARIANT: WPF sends each glyph as an outline fill positioned
         // in local space, so without normalizing by this origin every glyph instance hashes uniquely and
         // never dedups (a text-heavy page then rasterizes thousands of masks — the "What's New" crash).
+        /// <summary>Memoized <see cref="GeometryMin"/> - see the fields on PathGeometry.</summary>
+        private static void GeometryMinCached(PathGeometry g, out float minX, out float minY)
+        {
+            if (!g.MinValid)
+            {
+                GeometryMin(g, out g.MinX, out g.MinY);
+                g.MinValid = true;
+            }
+            minX = g.MinX;
+            minY = g.MinY;
+        }
+
+        /// <summary>
+        /// Memoized hash of the geometry normalized to its own minimum. (dx, dy) is always
+        /// -(MinX, MinY), i.e. itself derived from the geometry, so the result is a pure function of
+        /// the instance and safe to cache on it.
+        /// </summary>
+        private static long NormalizedHashCached(PathGeometry g, float dx, float dy)
+        {
+            if (!g.NormHashValid)
+            {
+                g.NormHash = HashGeometry(g, dx, dy);
+                g.NormHashValid = true;
+            }
+            return g.NormHash;
+        }
+
         private static void GeometryMin(PathGeometry g, out float minX, out float minY)
         {
             minX = float.MaxValue; minY = float.MaxValue;
@@ -2905,10 +3035,20 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if (minX == float.MaxValue) { minX = 0; minY = 0; }
         }
 
-        private static long HashGeometry(PathGeometry g)
+        private static long HashGeometry(PathGeometry g) => HashGeometry(g, 0f, 0f);
+
+        /// <summary>
+        /// Hash of <paramref name="g"/> as if every point had been translated by (dx, dy).
+        /// Hashing the translation in rather than materializing a translated copy matters: the
+        /// mask-cache key is computed for EVERY fill on EVERY frame, so building that copy first
+        /// allocated a full geometry per glyph per frame even when the lookup then HIT the cache
+        /// (measured at ~830KB/frame for 240 short text runs). The copy is now only built on a
+        /// miss, where it is genuinely needed for rasterization.
+        /// </summary>
+        private static long HashGeometry(PathGeometry g, float dx, float dy)
         {
             long h = 17 * 31 + (int)g.FillRule;
-            static long HashV(Vector2 v) => ((long)BitConverter.SingleToInt32Bits(v.X) << 32) ^ (uint)BitConverter.SingleToInt32Bits(v.Y);
+            long HashV(Vector2 v) => ((long)BitConverter.SingleToInt32Bits(v.X + dx) << 32) ^ (uint)BitConverter.SingleToInt32Bits(v.Y + dy);
             foreach (PathFigure f in g.Figures)
             {
                 h = h * 31 + HashV(f.Start);
@@ -2941,6 +3081,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             float r, g, b, a;
             if (brush is SolidColorBrush solid)
             {
+
                 (IntPtr tex, view) = CreateR8Texture(mask.Coverage, mask.Width, mask.Height);
                 bindGroup = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
                 DeferReleaseSampled(tex, view, bindGroup);

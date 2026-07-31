@@ -16,7 +16,7 @@ using System.Runtime.InteropServices;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 {
-    internal enum PlatformKind { Windows, MacOS, Linux, Browser, Unknown }
+    internal enum PlatformKind { Windows, MacOS, Linux, Browser, IOS, Unknown }
 
     internal static class NativePlatform
     {
@@ -27,6 +27,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         {
             if (OperatingSystem.IsBrowser()) return PlatformKind.Browser;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return PlatformKind.Windows;
+            // iOS BEFORE macOS: both are Darwin, and an OSX probe can answer true on iOS, which
+            // would send us down the AppKit path (NSView/NSWindow/NSScreen) on a UIKit process.
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
+                return PlatformKind.IOS;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return PlatformKind.MacOS;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return PlatformKind.Linux;
             return PlatformKind.Unknown;
@@ -43,6 +47,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             {
                 case PlatformKind.Windows: return Win32Interop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.MacOS: return MacInterop.CreateSurface(instance, nativeWindow);
+                case PlatformKind.IOS: return IosInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.Linux: return LinuxInterop.CreateSurface(instance, nativeWindow);
 #if WGPU_BROWSER
                 case PlatformKind.Browser: return BrowserInterop.CreateSurface(instance, nativeWindow);
@@ -62,6 +67,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (Current == PlatformKind.MacOS && nativeWindow != IntPtr.Zero)
             {
                 MacInterop.SetContentsScale(nativeWindow, MacInterop.BackingScale(nativeWindow));
+            }
+            else if (Current == PlatformKind.IOS && nativeWindow != IntPtr.Zero)
+            {
+                IosInterop.SetContentsScale(nativeWindow, IosInterop.BackingScale(nativeWindow));
             }
         }
 

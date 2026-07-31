@@ -33,7 +33,16 @@ namespace Microsoft.Wpf.Interop.WebGpu
     {
         // The wgpu-native shared library. Resolved next to the managed assembly
         // (copied there by the build) or via the OS loader search path.
+        //
+        // iOS cannot load a third-party dynamic library, so wgpu-native is linked STATICALLY into
+        // the app executable and the imports must name "__Internal" (the main image). That also
+        // gives each import a compile-time reference, without which the static linker dead-strips
+        // the symbol -- see Ios/WgpuInterop.Ios.csproj.
+#if WGPU_IOS
+        internal const string Library = "__Internal";
+#else
         internal const string Library = "wgpu_native";
+#endif
 
         // ---- Opaque handles ---------------------------------------------------
         // Every WGPU* object in webgpu.h is `typedef struct WGPU*Impl* WGPU*`,
