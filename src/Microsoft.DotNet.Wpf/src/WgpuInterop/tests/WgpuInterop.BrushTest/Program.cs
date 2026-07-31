@@ -37,12 +37,15 @@ internal static class Program
         // The gradient is continuous (~4.5/channel per pixel over 56px), so a
         // sample even a couple of pixels in is already slightly shaded; the
         // tolerances reflect that physical rate rather than demanding pure ends.
-        // Stops are interpolated in sRGB space (WPF's default SRgbLinearInterpolation), so the
-        // red->blue midpoint on this LINEAR target reads ~54 (= sRGB 127 once gamma-encoded for
-        // display), not the 128 a naive linear interpolation would give.
+        // Stops are interpolated in sRGB space either way (WPF's default SRgbLinearInterpolation), so
+        // the red->blue midpoint is sRGB 127 -- what differs is the space it is STORED in, which is
+        // the compositing mode. Gamma mode (the default) keeps those gamma values verbatim on a UNORM
+        // target, so it reads 127; linear mode (WPF_WEBGPU_GAMMA=0) decodes to linear, so it reads 54.
+        // The endpoints are 0/255, identical under both, which is why only the midpoint discriminates.
+        byte mid = WgpuSceneRenderer.s_gammaComposite ? (byte)127 : (byte)54;
         Expect(direct, 5, 12, 250, 0, 5, "gradient near start (red)", 14);
         Expect(direct, 58, 12, 5, 0, 250, "gradient near end (blue)", 14);
-        Expect(direct, 32, 12, 54, 0, 54, "gradient midpoint (purple)", 12);
+        Expect(direct, 32, 12, mid, 0, mid, "gradient midpoint (purple)", 12);
 
         // Image checker over Rect(8,36,16,16): TL red, TR green, BL blue, BR yellow.
         Expect(direct, 11, 39, 255, 0, 0, "image TL (red)", 2);

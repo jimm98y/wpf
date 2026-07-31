@@ -37,10 +37,12 @@ internal static class Program
         Console.WriteLine($"repeat:  x8={Lum(rep, 8)}, x17={Lum(rep, 17)}, x24={Lum(rep, 24)}, x31={Lum(rep, 31)}");
         Console.WriteLine($"reflect: x8={Lum(refl, 8)}, x17={Lum(refl, 17)}, x24={Lum(refl, 24)}, x31={Lum(refl, 31)}");
 
-        // Mid of the first ramp is grey for both. Stops interpolate in sRGB space (WPF default), so on
-        // this LINEAR target the midpoint reads ~60 (= sRGB 127 mid-grey once gamma-encoded), not ~128.
-        Check(Between(Lum(rep, 8), 40, 90), "repeat: first ramp midpoint is grey");
-        Check(Between(Lum(refl, 8), 40, 90), "reflect: first ramp midpoint is grey");
+        // Mid of the first ramp is grey for both. Stops interpolate in sRGB space (WPF default), so the
+        // midpoint is sRGB mid-grey; the compositing mode decides the space it is stored in. Gamma mode
+        // (the default) keeps it verbatim (~127); linear mode (WPF_WEBGPU_GAMMA=0) decodes it (~60).
+        (int lo, int hi) = WgpuSceneRenderer.s_gammaComposite ? (100, 155) : (40, 90);
+        Check(Between(Lum(rep, 8), lo, hi), "repeat: first ramp midpoint is grey");
+        Check(Between(Lum(refl, 8), lo, hi), "reflect: first ramp midpoint is grey");
 
         // Repeat restarts the ramp (dark just past x=16, light before the next boundary).
         Check(Lum(rep, 17) < 70, "repeat: ramp restarts dark just past the axis");

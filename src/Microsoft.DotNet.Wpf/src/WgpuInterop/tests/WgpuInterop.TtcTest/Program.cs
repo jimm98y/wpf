@@ -108,6 +108,15 @@ internal static class Program
             foreach (string f in Directory.EnumerateFiles(fonts, "*.ttc")) return f;
         }
         catch { }
+
+        // macOS/Linux collections.
+        foreach (string c in new[]
+        {
+            "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+            "/System/Library/Fonts/Helvetica.ttc",
+        })
+            if (File.Exists(c)) return c;
+
         return null;
     }
 

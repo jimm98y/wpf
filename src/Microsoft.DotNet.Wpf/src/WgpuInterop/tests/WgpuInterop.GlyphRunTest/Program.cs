@@ -186,6 +186,15 @@ internal static class Program
             string candidate = Path.Combine(fonts, name);
             if (File.Exists(candidate)) return candidate;
         }
+        // Common Linux/macOS locations for CI portability (mirrors WgpuInterop.FontTest).
+        foreach (string candidate in new[]
+        {
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        })
+            if (File.Exists(candidate)) return candidate;
+
         return null;
     }
 

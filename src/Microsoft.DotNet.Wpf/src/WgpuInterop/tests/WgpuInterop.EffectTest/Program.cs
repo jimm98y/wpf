@@ -36,10 +36,14 @@ internal static class Program
         }, new RectangleGeometry(new Rect(20, 20, 40, 40))); // (20,20)-(60,60)
         byte[] blur = renderer.RenderToRgba(blurScene, W, H, white);
 
-        Console.WriteLine($"blur: center={Lum(blur, 40, 40)}, edge={Lum(blur, 60, 40)}, outside={Lum(blur, 66, 40)}, far={Lum(blur, 85, 40)}");
+        // Sample the halo just OUTSIDE the rect (right edge x=60) but INSIDE the kernel's reach.
+        // The blur matches WPF (BlurLayer: sd = radius/3, kernel half-extent == radius), so a radius-5
+        // blur carries ink at most 5px past the last inked column (x=59) -- i.e. to x=64, measured.
+        // x=66 sat outside the kernel entirely and so could never show ink at this radius.
+        Console.WriteLine($"blur: center={Lum(blur, 40, 40)}, edge={Lum(blur, 60, 40)}, outside={Lum(blur, 62, 40)}, far={Lum(blur, 85, 40)}");
         Check(Lum(blur, 40, 40) < 40, "blur: interior stays solid");
         Check(Between(Lum(blur, 60, 40), 50, 205), "blur: original edge is a soft grey");
-        Check(Lum(blur, 66, 40) < 240, "blur: ink spreads beyond the original bounds");
+        Check(Lum(blur, 62, 40) < 240, "blur: ink spreads beyond the original bounds");
         Check(Lum(blur, 85, 40) > 245, "blur: far pixels stay clear");
         CheckRoundTrip(renderer, blurScene, blur, white, "blur");
 

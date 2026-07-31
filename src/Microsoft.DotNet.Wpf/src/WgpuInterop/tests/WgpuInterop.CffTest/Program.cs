@@ -100,6 +100,15 @@ internal static class Program
         })
             if (File.Exists(c)) return c;
 
+        // macOS/Linux: STIX ships with the OS and is a real CFF face with Latin coverage
+        // (the Noto *-Regular.otf here are script-specific and have no 'o').
+        foreach (string c in new[]
+        {
+            "/System/Library/Fonts/Supplemental/STIXGeneral.otf",
+            "/usr/share/fonts/opentype/stix/STIXGeneral.otf",
+        })
+            if (File.Exists(c)) return c;
+
         string fonts = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
         try
         {
