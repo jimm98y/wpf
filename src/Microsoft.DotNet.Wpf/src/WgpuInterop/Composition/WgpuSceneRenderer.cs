@@ -3076,6 +3076,91 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // the shared buffer doesn't exist until every mask is collected, the coverage passes record a PENDING
         // bind (their DrawItem starts with a null bind group) and BuildBatchedStorage patches them in after
         // sealing the buffer. Only populated on cache-MISS frames (new masks); cached masks skip all of this.
+        private readonly List<float> _bandScratch = new();
+
+        // Rows per scanline band, and the cap on how many bands one mask may have. 32 rows keeps
+        // the band table small while still cutting the per-fragment segment loop hard; the cap
+        // bounds the worst-case duplication below (a segment is copied into every band its
+        // y-range touches).
+        private const int BandRows = 32;
+        private const int MaxBands = 64;
+
+        /// <summary>
+        /// Repacks flat cubic segments into per-scanline-band lists so fs_coverage only loops
+        /// over segments that can actually cross the fragment's scanline.
+        ///
+        /// This is EXACT, not an approximation: the shader already skipped any segment whose
+        /// endpoints do not straddle the scanline, and a segment can only straddle it if its
+        /// y-range contains it. Banding just moves that rejection off the per-fragment path.
+        /// Measured, coverage cost is linear in the segments examined (587-599 us per segment
+        /// over a 1000x1000 target across a 4x range), so the win is the reduction in list
+        /// length -- roughly the ratio of a path's height to a band's.
+        ///
+        /// Layout, all in 8-byte vec2 slots so it rides in the existing single storage binding:
+        ///   slot 0            header: (bandCount as u32 bits, rows per band as f32, integral)
+        ///   slots 1..bandCount per band: (first segment's slot index, segment count) as u32 bits
+        ///   rest              each band's segments, contiguous, 4 slots each
+        /// A segment overlapping several bands is copied into each; bands are capped so that
+        /// duplication stays bounded.
+        /// </summary>
+        private static void BuildScanlineBands(ReadOnlySpan<float> segs, int height, List<float> outBuf)
+        {
+            int segCount = segs.Length / 8;
+            // Bands must be a WHOLE number of pixel rows. A fractional band height lets one
+            // pixel row straddle a boundary, and since the shader looks the band up once from
+            // the pixel row while sampling four subsample rows inside it, the rows past the
+            // boundary would consult the wrong segment list and drop crossings -- holes in the
+            // fill. Growing the row count (rather than the band count) honours the cap.
+            int bandRows = Math.Max(BandRows, (height + MaxBands - 1) / MaxBands);
+            int bandCount = Math.Max(1, (height + bandRows - 1) / bandRows);
+
+            // Which bands each segment touches. The control polygon contains the curve, so
+            // taking min/max over the four control points is conservative and never drops a
+            // crossing (dropping one would punch a hole in the fill).
+            Span<int> firstBand = segCount <= 256 ? stackalloc int[segCount] : new int[segCount];
+            Span<int> lastBand = segCount <= 256 ? stackalloc int[segCount] : new int[segCount];
+            var counts = new int[bandCount];
+            for (int i = 0; i < segCount; i++)
+            {
+                float lo = float.MaxValue, hi = float.MinValue;
+                for (int k = 0; k < 4; k++)
+                {
+                    float y = segs[i * 8 + k * 2 + 1];
+                    lo = MathF.Min(lo, y); hi = MathF.Max(hi, y);
+                }
+                int b0 = Math.Clamp((int)MathF.Floor(lo) / bandRows, 0, bandCount - 1);
+                int b1 = Math.Clamp((int)MathF.Floor(hi) / bandRows, 0, bandCount - 1);
+                firstBand[i] = b0; lastBand[i] = b1;
+                for (int b = b0; b <= b1; b++) counts[b]++;
+            }
+
+            int headerSlots = 1 + bandCount;
+            var bandStart = new int[bandCount];
+            int slot = headerSlots;
+            for (int b = 0; b < bandCount; b++) { bandStart[b] = slot; slot += counts[b] * 4; }
+
+            outBuf.Clear();
+            for (int i = 0; i < slot * 2; i++) outBuf.Add(0f);      // 2 floats per vec2 slot
+
+            outBuf[0] = BitConverter.Int32BitsToSingle(bandCount);
+            outBuf[1] = bandRows;
+            for (int b = 0; b < bandCount; b++)
+            {
+                outBuf[(1 + b) * 2] = BitConverter.Int32BitsToSingle(bandStart[b]);
+                outBuf[(1 + b) * 2 + 1] = BitConverter.Int32BitsToSingle(counts[b]);
+            }
+
+            var cursor = new int[bandCount];
+            for (int b = 0; b < bandCount; b++) cursor[b] = bandStart[b];
+            for (int i = 0; i < segCount; i++)
+                for (int b = firstBand[i]; b <= lastBand[i]; b++)
+                {
+                    int dst = cursor[b] * 2;
+                    for (int k = 0; k < 8; k++) outBuf[dst + k] = segs[i * 8 + k];
+                    cursor[b] += 4;
+                }
+        }
+
         private readonly List<byte> _batchStorage = new();
         private readonly List<(DrawData Data, int DrawIndex, int Offset, int Size, WGPUTextureFormat Format)> _pendingStorageBinds = new();
         private IntPtr _frameStorageBuf;
@@ -3909,10 +3994,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
-            int byteLen = Math.Max(16, es.Length * sizeof(float));   // never a zero-sized binding
+            _bandScratch.Clear();
+            BuildScanlineBands(es, h, _bandScratch);
+            Span<float> es2 = CollectionsMarshal.AsSpan(_bandScratch);
+
+            int byteLen = Math.Max(16, es2.Length * sizeof(float));   // never a zero-sized binding
             // Reserve this mask's edges in the frame-shared storage arena; the bind group is created +
             // patched in later by BuildBatchedStorage once the whole arena is one buffer (see _batchStorage).
-            int soff = AllocStorage(MemoryMarshal.AsBytes(es), byteLen);
+            int soff = AllocStorage(MemoryMarshal.AsBytes(es2), byteLen);
 
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor

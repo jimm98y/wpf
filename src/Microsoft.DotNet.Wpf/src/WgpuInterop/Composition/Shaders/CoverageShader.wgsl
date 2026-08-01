@@ -2,12 +2,20 @@
 
 //#include _VertexCommon.wgsl
 
-// Path outline as CUBIC Bézier segments, 4 vec2 each (p0, c1, c2, p1). Lines and
-// quadratics are degree-elevated to cubics on the CPU, exactly, so one code path here
-// covers every segment kind with no type tag and no accuracy loss. This replaced a
-// quadratic form that had to approximate each cubic with 6-12 quadratics: the loop below
-// runs per fragment per subsample row, so segment count is its cost, and a curved shape
-// now uploads roughly an order of magnitude fewer.
+// Path outline as CUBIC Bézier segments, 4 vec2 each (p0, c1, c2, p1), grouped into
+// per-scanline BANDS. Lines and quadratics are degree-elevated to cubics on the CPU,
+// exactly, so one code path here covers every segment kind with no type tag and no
+// accuracy loss.
+//
+// Buffer layout (see WgpuSceneRenderer.BuildScanlineBands):
+//   slot 0             header: (bandCount as u32 bits, rows per band as f32, integral)
+//   slots 1..bandCount per band: (first segment slot, segment count) as u32 bits
+//   rest               each band's segments, contiguous, 4 slots each
+//
+// The band lookup is an exact optimisation, not an approximation. The crossing test below
+// rejects any segment whose endpoints do not straddle the scanline, and a segment can only
+// straddle it if its y-range contains it -- so restricting the loop to the band's list
+// examines strictly fewer segments and reaches the identical result.
 @group(0) @binding(0) var<storage, read> segs : array<vec2<f32>>;
 
 const MAX_PIXEL_CROSSINGS : u32 = 16u;
@@ -33,7 +41,13 @@ fn solve_monotone_cubic(y0 : f32, y1 : f32, y2 : f32, y3 : f32, yTarget : f32) -
     let span = y3 - y0;
     var t = select(0.5, clamp((yTarget - y0) / span, 0.0, 1.0), abs(span) > 1e-20);
 
-    for (var it = 0u; it < 8u; it = it + 1u) {
+    // Five iterations. Chosen by measurement, not headroom: sweeping the count against the
+    // whole-image baselines, 5 leaves a worst-case difference of 1/255 on any pixel of any
+    // scene while 3 breaks 36 pixels by up to 58/255 and 2 is plainly wrong. Four also passes
+    // but lands exactly on the comparison tolerance, which is too little margin for a
+    // different GPU's floating point. Cost is linear in this count -- it is the dominant term
+    // in the loop, since banding already removed the segments that exit early.
+    for (var it = 0u; it < 5u; it = it + 1u) {
         let mt = 1.0 - t;
         let f = mt * mt * mt * y0 + 3.0 * mt * mt * t * y1 + 3.0 * mt * t * t * y2 + t * t * t * y3 - yTarget;
 
@@ -64,9 +78,19 @@ fn solve_monotone_cubic(y0 : f32, y1 : f32, y2 : f32, y3 : f32, yTarget : f32) -
 fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     let px = floor(in.uv.x);
     let py = floor(in.uv.y);
-    let segCount = u32(in.color.x);
     let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma
     let evenOdd = (flags & 1u) != 0u;
+
+    // This fragment's band. Bands are a whole number of pixel rows (the CPU side enforces
+    // it), so all four subsample rows of this pixel fall in the same band and one lookup
+    // serves them; a fractional band height would let rows past a boundary consult the wrong
+    // segment list and drop crossings.
+    let bandCount = bitcast<u32>(segs[0].x);
+    let bandRows = segs[0].y;
+    let band = min(u32(max(py, 0.0) / bandRows), bandCount - 1u);
+    let range = segs[1u + band];
+    let segBase = bitcast<u32>(range.x);
+    let segCount = bitcast<u32>(range.y);
     var cov = 0.0;
     for (var s = 0u; s < 4u; s = s + 1u) {
         let sy = py + (f32(s) + 0.5) / 4.0;
@@ -75,10 +99,11 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
         var cds : array<i32, MAX_PIXEL_CROSSINGS>;
         var n = 0u;
         for (var i = 0u; i < segCount; i = i + 1u) {
-            let p0 = segs[4u * i];
-            let c1 = segs[4u * i + 1u];
-            let c2 = segs[4u * i + 2u];
-            let p1 = segs[4u * i + 3u];
+            let at = segBase + 4u * i;
+            let p0 = segs[at];
+            let c1 = segs[at + 1u];
+            let c2 = segs[at + 2u];
+            let p1 = segs[at + 3u];
             // Segments are y-monotone (split at y-extrema on the CPU), so the crossing test is the
             // robust endpoint half-open rule: exactly the segments whose endpoints straddle sy cross
             // it. This uses exact float comparisons (no t-boundary epsilon), so a vertex shared by

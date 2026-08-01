@@ -36,6 +36,7 @@ internal static class Program
     private static int Main(string[] argv)
     {
         if (Array.IndexOf(argv, "--cost") >= 0) { Cost(); return 0; }
+        if (Array.IndexOf(argv, "--segscale") >= 0) { SegmentScaling(); return 0; }
 
         Console.WriteLine($"{"case",-34}{"maxErr",10}{"rmsErr",10}{"vs 1x",9}{"",6}");
         Console.WriteLine(new string('-', 63));
@@ -81,42 +82,125 @@ internal static class Program
         GpuThroughput();
     }
 
-    // GPU cost of the coverage pass, reported ABOVE A MEASURED FLOOR.
+    // GPU cost of the coverage pass, measured as a SLOPE.
     //
-    // Two things make the naive measurement useless here, both found by measuring rather
-    // than assuming: (1) WgpuSceneRenderer caches a rasterized mask per (shape, transform),
-    // so a static scene runs fs_coverage once and the rest of the frames just composite --
-    // the geometry is animated to force a miss per shape per frame; (2) RenderToRgba ends in
-    // a full GPU->CPU readback that costs ~2.3ms at 900x600, which is MORE than the entire
-    // scene's render work, so the floor has to be subtracted or the signal is invisible.
+    // Absolute frame time cannot answer this. RenderToRgba ends in a full GPU->CPU readback
+    // costing ~2.3ms at 900x600 -- more than the entire scene's render work -- so a single
+    // measurement is dominated by a constant that has nothing to do with the shader. Two
+    // earlier attempts here reported pure noise for exactly that reason.
+    //
+    // Instead render the same complex path 1, 2, 4, 8, 16 times in one frame and fit a line.
+    // Readback, buffer setup and submit are all in the intercept; the SLOPE is milliseconds
+    // per additional rasterized path, which is what a change to fs_coverage actually moves.
+    // The mask cache is defeated by giving each copy its own geometry instance and radius.
     private static void GpuThroughput()
     {
-        const int W = 900, H = 600, Frames = 100;
+        const int W = 1000, H = 1000;
+        int[] counts = { 1, 2, 4, 8, 16 };
+        var xs = new List<double>();
+        var ys = new List<double>();
+
         using var ctx = WgpuContext.Create();
         var renderer = new WgpuSceneRenderer(ctx);
         var bg = RgbaColor.FromBytes(255, 255, 255, 255);
 
-        var empty = new SceneVisual();
-        empty.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, 0, 8, 8)),
-            RgbaColor.FromBytes(0, 0, 0, 255)));
-        double floor = Time(renderer, bg, W, H, Frames, _ => empty);
-        double small = Time(renderer, bg, W, H, Frames, f => BuildScene(f, W, H));
-        double large = Time(renderer, bg, W, H, Frames, f => BuildLargeScene(f, W, H));
-
         Console.WriteLine();
-        Console.WriteLine($"gpu readback floor           : {floor,6:F2} ms/frame");
-        Console.WriteLine($"120 small shapes, animated   : {small,6:F2} ms/frame  ({small - floor,5:F2} above floor)");
-        Console.WriteLine($"6 large discs r~250, animated: {large,6:F2} ms/frame  ({large - floor,5:F2} above floor)");
+        Console.WriteLine($"{"paths",8}{"ms/frame",12}{"gpu segs",11}");
+        Console.WriteLine(new string('-', 31));
+        foreach (int n in counts)
+        {
+            int frames = 24;
+            for (int i = 0; i < 6; i++) renderer.RenderToRgba(LobedScene(n, i, W, H), W, H, bg);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int f = 0; f < frames; f++) renderer.RenderToRgba(LobedScene(n, 100 + f, W, H), W, H, bg);
+            sw.Stop();
+            double ms = sw.Elapsed.TotalMilliseconds / frames;
+
+            var probe = new List<float>();
+            int segs = PathRasterizer.SegmentsToCubics(Lobed(new Vector2(500, 500), 320f, 0), probe,
+                out _, out _, out _, out _);
+            Console.WriteLine($"{n,8}{ms,12:F2}{segs * n,11}");
+            xs.Add(n); ys.Add(ms);
+        }
+
+        // Least squares fit.
+        double mx = 0, my = 0;
+        for (int i = 0; i < xs.Count; i++) { mx += xs[i]; my += ys[i]; }
+        mx /= xs.Count; my /= ys.Count;
+        double num = 0, den = 0;
+        for (int i = 0; i < xs.Count; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) * (xs[i] - mx); }
+        double slope = num / den, intercept = my - slope * mx;
+        Console.WriteLine($"  fixed overhead (intercept): {intercept,6:F2} ms   <- readback + submit");
+        Console.WriteLine($"  COVERAGE COST (slope)     : {slope,6:F3} ms per rasterized path");
     }
 
-    private static double Time(WgpuSceneRenderer r, RgbaColor bg, int w, int h, int frames,
-        Func<int, SceneVisual> build)
+    // Does SEGMENT COUNT drive the coverage cost, and how steeply?
+    //
+    // This is the question a segment-count reduction (native cubics, a path atlas, anything
+    // that changes how much geometry the shader loops over) actually turns on, and it is
+    // answerable without an A/B against deleted code. Hold the covered AREA fixed and vary
+    // only the number of segments, by changing how many lobes the test curve has. If cost is
+    // linear in segments, a 7x segment reduction is worth ~7x of the coverage term.
+    private static void SegmentScaling()
     {
-        for (int i = 0; i < 10; i++) r.RenderToRgba(build(i), w, h, bg);
+        const int W = 1000, H = 1000;
+        Console.WriteLine($"{"lobes",7}{"segments",10}{"ms/path",11}{"us/segment",13}");
+        Console.WriteLine(new string('-', 41));
+        using var ctx = WgpuContext.Create();
+        var renderer = new WgpuSceneRenderer(ctx);
+        var bg = RgbaColor.FromBytes(255, 255, 255, 255);
+
+        foreach (int lobes in new[] { 6, 12, 24, 48 })
+        {
+            var probe = new List<float>();
+            int segs = PathRasterizer.SegmentsToCubics(Lobed(new Vector2(500, 500), 320f, 0, lobes), probe,
+                out _, out _, out _, out _);
+            // Two path counts; the difference cancels the fixed overhead exactly.
+            double t1 = TimeLobed(renderer, bg, 2, lobes, W, H);
+            double t2 = TimeLobed(renderer, bg, 10, lobes, W, H);
+            double msPerPath = (t2 - t1) / 8.0;
+            Console.WriteLine($"{lobes,7}{segs,10}{msPerPath,11:F3}{msPerPath * 1000.0 / segs,13:F1}");
+        }
+    }
+
+    private static double TimeLobed(WgpuSceneRenderer r, RgbaColor bg, int n, int lobes, int w, int h)
+    {
+        for (int i = 0; i < 5; i++) r.RenderToRgba(LobedScene(n, i, w, h, lobes), w, h, bg);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        for (int f = 0; f < frames; f++) r.RenderToRgba(build(100 + f), w, h, bg);
+        const int F = 20;
+        for (int f = 0; f < F; f++) r.RenderToRgba(LobedScene(n, 100 + f, w, h, lobes), w, h, bg);
         sw.Stop();
-        return sw.Elapsed.TotalMilliseconds / frames;
+        return sw.Elapsed.TotalMilliseconds / F;
+    }
+
+    // A many-lobed closed curve: lots of cubic segments over a large area, which is what
+    // makes fs_coverage's per-fragment segment loop the dominant term.
+    private static PathGeometry Lobed(Vector2 c, float r, int phase, int lobes = 12)
+    {
+        int Lobes = lobes;
+        var f = new PathFigure(new Vector2(c.X + r, c.Y)) { Closed = true };
+        for (int i = 0; i < Lobes; i++)
+        {
+            float a0 = i * MathF.PI * 2f / Lobes, a1 = (i + 1) * MathF.PI * 2f / Lobes;
+            float rm = r * (i % 2 == 0 ? 0.62f : 1.0f) * (1f + 0.02f * phase);
+            var mid = new Vector2(c.X + MathF.Cos((a0 + a1) * 0.5f) * rm, c.Y + MathF.Sin((a0 + a1) * 0.5f) * rm);
+            var end = new Vector2(c.X + MathF.Cos(a1) * r, c.Y + MathF.Sin(a1) * r);
+            f.Segments.Add(new CubicBezierSegment(mid, mid, end));
+        }
+        return new PathGeometry(FillRule.NonZero, new List<PathFigure> { f });
+    }
+
+    private static SceneVisual LobedScene(int n, int phase, int w, int h, int lobes = 12)
+    {
+        var root = new SceneVisual();
+        for (int i = 0; i < n; i++)
+        {
+            // Each copy gets its own radius so the mask cache misses every time.
+            float r = 300f + i * 0.5f + (phase % 7);
+            root.Content.Add(new GeometryFill(Lobed(new Vector2(w / 2f, h / 2f), r, phase + i, lobes),
+                RgbaColor.FromBytes((byte)(20 + i * 9), 90, 160, 40)));
+        }
+        return root;
     }
 
     private static SceneVisual BuildLargeScene(int frame, int w, int h)
