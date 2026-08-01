@@ -21,31 +21,36 @@ using Microsoft.Wpf.Interop.WebGpu.Composition;
 
 internal static class Program
 {
-    // Measured worst case across all scales after the change is maxErr 0.167 / rms 0.064,
-    // so these leave modest headroom; the baseline exceeds both by 4-6x.
+    // Measured worst case across all scales is maxErr 0.123 / rms 0.024, so these leave
+    // room; the pre-adaptive baseline exceeds both by 4-8x.
     //
-    // The strokes still drift ~4x from 1x to 24x. That residual is NOT flattening: sweeping
-    // the tolerance from 0.1 down to 0.0125 leaves stroke 24x rms flat at 0.053-0.067 (it
-    // even rises slightly), so the error is in the stroke-to-fill contour construction --
-    // the union of per-segment rectangles with join discs -- not in how finely curves are
-    // subdivided. Worth a separate look; tightening the flattener cannot fix it.
+    // CORRECTION, recorded because it was reported the other way for a while: the ~4x stroke
+    // drift these cases used to show was NOT a defect in stroke-to-fill. It was this harness
+    // feeding the stroker a FIXED 4-arc kappa circle, which carries ~2.7e-4*r of its own
+    // error -- 0.13px at 24x, five times the flattening tolerance -- so the stroker was being
+    // charged for its input. Ray-marching the stroker's output boundary directly (--strokegeom)
+    // shows outer-wall deviation of 0.013px at 24x with an adaptive centre-line versus 0.124px
+    // with the fixed one. The filled-annulus control that seemed to exonerate the rasterizer
+    // was itself unfair: it used EllipseGeometry, which already goes through the adaptive
+    // conversion. The stroke cases now build their centre-line the same way.
     private const double MaxErrBound = 0.25;
     private const double RmsBound = 0.09;
     private static int _failures;
     private static bool _fillControl;
+    private static bool _adaptiveArcs;
 
     private static int Main(string[] argv)
     {
         if (Array.IndexOf(argv, "--cost") >= 0) { Cost(); return 0; }
         if (Array.IndexOf(argv, "--segscale") >= 0) { SegmentScaling(); return 0; }
-        if (Array.IndexOf(argv, "--strokegeom") >= 0) { StrokeGeom(); return 0; }
+        if (Array.IndexOf(argv, "--strokegeom") >= 0) { _adaptiveArcs = Array.IndexOf(argv, "--adaptive") >= 0; StrokeGeom(); return 0; }
         if (Array.IndexOf(argv, "--strokediag") >= 0) { _fillControl = Array.IndexOf(argv, "--fill") >= 0; StrokeDiag(); return 0; }
 
         Console.WriteLine($"{"case",-34}{"maxErr",10}{"rmsErr",10}{"vs 1x",9}{"",6}");
         Console.WriteLine(new string('-', 63));
         Run("fill", (c, r) => Fill(c, r), null);
-        Run("stroke-round", (c, r) => StrokeCircle(c, r, LineJoin.Round, LineCap.Round), 6f);
-        Run("stroke-miter", (c, r) => StrokeCircle(c, r, LineJoin.Miter, LineCap.Butt), 6f);
+        RunWs("stroke-round", (c, r, ws) => StrokeCircleAdaptive(c, r, ws, LineJoin.Round, LineCap.Round), 6f);
+        RunWs("stroke-miter", (c, r, ws) => StrokeCircleAdaptive(c, r, ws, LineJoin.Miter, LineCap.Butt), 6f);
         if (_failures > 0)
         {
             Console.WriteLine($"SCALE STABILITY FAILED: {_failures} case(s) outside bounds.");
@@ -270,40 +275,96 @@ internal static class Program
     // by angle around the circle (4 spikes => the kappa arc junctions; uniform => systematic
     // offset error; scattered => contour seams) and by signed radial position (inner vs outer
     // wall => which boundary is misplaced).
-    // Direct measurement of the stroke-to-fill OUTPUT GEOMETRY, with no rasterizer involved:
-    // every vertex PathStroker emits should sit on one of the two ideal annulus walls. This
-    // separates "the outline is in the wrong place" from any rendering effect.
+    // Direct measurement of the stroke-to-fill OUTPUT GEOMETRY, with no rasterizer involved.
+    //
+    // Vertex positions alone are the wrong metric: miter/bevel join wedges legitimately
+    // include the CENTRELINE vertex, so "distance from the nearest wall" reports half the pen
+    // width for perfectly correct geometry. What matters is where the UNION's boundary lies,
+    // so this ray-marches outward from the centre along many angles and bisects the
+    // inside/outside transition under the non-zero rule -- the same rule the rasterizer fills
+    // with -- then compares each wall against the ideal annulus.
     private static void StrokeGeom()
     {
         const float localR = 20f, halfLocal = 6f;
         var c = new Vector2(0, 0);
-        Console.WriteLine($"{"scale",7}{"tol(local)",13}{"vertices",10}{"maxDev",10}{"meanDev",10}{"dev(device)",13}");
-        Console.WriteLine(new string('-', 63));
+        Console.WriteLine(_adaptiveArcs ? "centre-line: ADAPTIVE arc count" : "centre-line: fixed 4 kappa arcs");
+        Console.WriteLine($"{"scale",7}{"tol(local)",12}{"outer max",11}{"outer mean",12}{"inner max",11}{"inner mean",12}");
+        Console.WriteLine(new string('-', 65));
         foreach (float ws in new[] { 1f, 4f, 12f, 24f })
         {
             float tol = CurveFlattener.ToleranceForScale(ws);
-            PathGeometry outline = PathStroker.Stroke(CirclePath(c, localR),
+            PathGeometry centre = _adaptiveArcs
+                ? WgpuSceneRenderer.EllipseToPathForTest(c, localR, localR, tol)
+                : CirclePath(c, localR);
+            PathGeometry outline = PathStroker.Stroke(centre,
                 new StrokeStyle(halfLocal * 2, LineCap.Butt, LineJoin.Miter), tol);
+            var contours = Contours(outline);
 
-            double maxDev = 0, sum = 0; int n = 0;
-            foreach (PathFigure f in outline.Figures)
+            double oMax = 0, oSum = 0, iMax = 0, iSum = 0; int n = 0;
+            const int Rays = 2000;
+            for (int i = 0; i < Rays; i++)
             {
-                var pts = new List<Vector2> { f.Start };
-                foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) pts.Add(l.Point);
-                foreach (Vector2 v in pts)
-                {
-                    double d = v.Length();
-                    // Distance to whichever ideal wall is nearer.
-                    double dev = Math.Min(Math.Abs(d - (localR + halfLocal)), Math.Abs(d - (localR - halfLocal)));
-                    maxDev = Math.Max(maxDev, dev); sum += dev; n++;
-                }
+                double ang = i * 2 * Math.PI / Rays;
+                var dir = new Vector2((float)Math.Cos(ang), (float)Math.Sin(ang));
+                double outer = FindEdge(contours, dir, localR, localR + 3 * halfLocal, insideAtStart: true);
+                double inner = FindEdge(contours, dir, localR, localR - 3 * halfLocal, insideAtStart: true);
+                double od = Math.Abs(outer - (localR + halfLocal)) * ws;   // device px
+                double id = Math.Abs(inner - (localR - halfLocal)) * ws;
+                oMax = Math.Max(oMax, od); oSum += od;
+                iMax = Math.Max(iMax, id); iSum += id;
+                n++;
             }
-            double mean = n > 0 ? sum / n : 0;
-            Console.WriteLine($"{ws,7}{tol,13:F5}{n,10}{maxDev,10:F5}{mean,10:F5}{maxDev * ws,13:F4}");
+            Console.WriteLine($"{ws,7}{tol,12:F5}{oMax,11:F4}{oSum / n,12:F4}{iMax,11:F4}{iSum / n,12:F4}");
         }
         Console.WriteLine();
-        Console.WriteLine("  dev is in LOCAL units; dev(device) = maxDev * scale, i.e. what a pixel sees.");
+        Console.WriteLine("  all wall deviations in DEVICE pixels (local deviation x scale).");
+        Console.WriteLine($"  flattening tolerance is {CurveFlattener.DefaultTolerance} device px for comparison.");
     }
+
+    private static List<List<Vector2>> Contours(PathGeometry g)
+    {
+        var all = new List<List<Vector2>>();
+        foreach (PathFigure f in g.Figures)
+        {
+            var pts = new List<Vector2> { f.Start };
+            foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) pts.Add(l.Point);
+            if (pts.Count >= 3) all.Add(pts);
+        }
+        return all;
+    }
+
+    // Bisects along `dir` between radius `from` (assumed inside) and `to` (assumed outside).
+    private static double FindEdge(List<List<Vector2>> contours, Vector2 dir, double from, double to, bool insideAtStart)
+    {
+        double lo = from, hi = to;
+        for (int i = 0; i < 40; i++)
+        {
+            double mid = 0.5 * (lo + hi);
+            var p = new Vector2((float)(dir.X * mid), (float)(dir.Y * mid));
+            if (Inside(contours, p)) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    // Non-zero winding over every contour -- what the fill rule the stroker relies on does.
+    private static bool Inside(List<List<Vector2>> contours, Vector2 p)
+    {
+        int w = 0;
+        foreach (List<Vector2> c in contours)
+            for (int i = 0; i < c.Count; i++)
+            {
+                Vector2 a = c[i], b = c[(i + 1) % c.Count];
+                if (a.Y <= p.Y)
+                {
+                    if (b.Y > p.Y && Cross(a, b, p) > 0) w++;
+                }
+                else if (b.Y <= p.Y && Cross(a, b, p) < 0) w--;
+            }
+        return w != 0;
+    }
+
+    private static double Cross(Vector2 a, Vector2 b, Vector2 p)
+        => (double)(b.X - a.X) * (p.Y - a.Y) - (double)(p.X - a.X) * (b.Y - a.Y);
 
     private static void StrokeDiag()
     {
@@ -367,6 +428,20 @@ internal static class Program
         }
     }
 
+    private static void RunWs(string label, Func<Vector2, float, float, DrawingPrimitive> make, float? strokeHalf)
+    {
+        double base_ = 0;
+        foreach (float ws in new[] { 1f, 4f, 12f, 24f })
+        {
+            (double mx, double rms) = Measure(20f, ws, (c, r) => make(c, r, ws), strokeHalf);
+            if (base_ == 0) base_ = rms;
+            bool ok = mx <= MaxErrBound && rms <= RmsBound;
+            if (!ok) _failures++;
+            Console.WriteLine($"{label + " world " + ws + "x",-34}{mx,10:F4}{rms,10:F4}{rms / base_,9:F3}{(ok ? "  ok" : "  FAIL")}");
+        }
+        Console.WriteLine();
+    }
+
     private static void Run(string label, Func<Vector2, float, DrawingPrimitive> make, float? strokeHalf)
     {
         double base_ = 0;
@@ -419,6 +494,16 @@ internal static class Program
     private static DrawingPrimitive StrokeCircle(Vector2 c, float r, LineJoin join, LineCap cap)
         => new GeometryStroke(CirclePath(c, r), RgbaColor.FromBytes(0, 0, 0, 255),
                               new StrokeStyle(12.0, cap, join));
+
+    // Scale-aware centre-line, via the renderer's own adaptive ellipse->path conversion.
+    // The fixed-kappa CirclePath above carries ~2.7e-4*r of its OWN error, which at 24x is
+    // 0.13px -- five times the flattening tolerance. Measuring the stroker with that as input
+    // charges the stroker for the input's error; this feeds it geometry that is itself within
+    // tolerance.
+    private static DrawingPrimitive StrokeCircleAdaptive(Vector2 c, float r, float ws, LineJoin join, LineCap cap)
+        => new GeometryStroke(
+            WgpuSceneRenderer.EllipseToPathForTest(c, r, r, CurveFlattener.ToleranceForScale(ws)),
+            RgbaColor.FromBytes(0, 0, 0, 255), new StrokeStyle(12.0, cap, join));
 
     // Circle as 4 kappa cubics, authored explicitly so both trees build the SAME input
     // geometry (the ellipse->path arc count is one of the things under test).
