@@ -90,7 +90,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         SceneVisual v = Get(r.U32());
                         v.Effect = (EffectKind)r.U8() switch
                         {
-                            EffectKind.Blur => new BlurEffect(r.F64()),
+                            EffectKind.Blur => new BlurEffect(r.F64(), (BlurKernelType)r.U8()),
                             EffectKind.DropShadow => new DropShadowEffect(ReadColor(r), r.F64(), r.F64(), r.F64()),
                             _ => null,
                         };

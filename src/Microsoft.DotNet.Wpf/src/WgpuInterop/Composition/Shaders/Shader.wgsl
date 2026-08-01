@@ -30,20 +30,26 @@ fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
     return textureSample(tex, samp, in.uv) * in.color.a;
 }
 
-// Separable Gaussian blur. The blur axis step (uv units), sigma and tap radius
-// are carried in the (constant) vertex colour, so no uniform buffer is needed.
+// Separable blur. The blur axis step (uv units), sigma and tap radius are carried in
+// the (constant) vertex colour, so no uniform buffer is needed.
+//
+// A NEGATIVE sigma selects a BOX kernel (uniform weights) instead of a Gaussian one --
+// WPF's BlurEffect.KernelType. A Gaussian sigma is always positive, so the sign is free
+// to carry this and no extra vertex channel is needed.
 @fragment
 fn fs_blur(in : VSOut) -> @location(0) vec4<f32> {
     let step = in.color.xy;
     let sigma = in.color.z;
     let radius = i32(in.color.w);
+    let gaussian = sigma > 0.0;
+    let denom = 2.0 * sigma * sigma;
     var sum = vec4<f32>(0.0);
     var wsum = 0.0;
     // textureSampleLevel (not textureSample): the loop bound is per-fragment data,
     // and browser WGSL (Tint) rejects implicit-derivative sampling in non-uniform
     // control flow. The blur inputs are single-mip, so level 0 is identical.
     for (var i = -radius; i <= radius; i = i + 1) {
-        let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
+        let w = select(1.0, exp(-f32(i * i) / denom), gaussian);
         sum = sum + textureSampleLevel(tex, samp, in.uv + step * f32(i), 0.0) * w;
         wsum = wsum + w;
     }

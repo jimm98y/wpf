@@ -487,11 +487,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     }
 
     /// <summary>Gaussian blur (the analog of WPF's BlurEffect).</summary>
+    /// <summary>Blur kernel shape (WPF's System.Windows.Media.Effects.KernelType).</summary>
+    internal enum BlurKernelType
+    {
+        Gaussian = 0,
+        Box = 1,
+    }
+
     internal sealed class BlurEffect : Effect
     {
         /// <summary>Blur radius in pixels (≈ the Gaussian standard deviation).</summary>
         public double Radius { get; }
-        public BlurEffect(double radius) => Radius = radius;
+
+        /// <summary>
+        /// Gaussian (the default) or Box. WPF exposes this on BlurEffect.KernelType and
+        /// milcore honours it; it arrives in MILCMD_BLUREFFECT at offset 20.
+        /// </summary>
+        public BlurKernelType Kernel { get; }
+
+        public BlurEffect(double radius, BlurKernelType kernel = BlurKernelType.Gaussian)
+        {
+            Radius = radius;
+            Kernel = kernel;
+        }
     }
 
     /// <summary>
@@ -517,6 +535,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     /// translating by <see cref="Offset"/>. Opacity multiplies down the tree and
     /// <see cref="Clip"/> (if set) intersects the visible region.
     /// </summary>
+    /// <summary>
+    /// A custom pixel-shader effect (WPF's ShaderEffect). <see cref="Wgsl"/> is the
+    /// translation of the .ps D3D9 bytecode produced by D3D9ShaderTranslator; the
+    /// renderer compiles it once per distinct shader and runs it over the subtree's
+    /// rendered layer with s0 bound to that layer.
+    /// </summary>
+    internal sealed class ShaderEffectDef : Effect
+    {
+        /// <summary>Stable identity for the shader-module / pipeline cache.</summary>
+        public int ShaderId { get; }
+        public string Wgsl { get; }
+        /// <summary>c# float registers, 4 floats each, densely indexed from c0.</summary>
+        public float[] FloatConstants { get; }
+        /// <summary>Sampler registers the shader reads. Only a single input (s0) is supported.</summary>
+        public int[] Samplers { get; }
+
+        public ShaderEffectDef(int shaderId, string wgsl, float[] floatConstants, int[] samplers)
+        {
+            ShaderId = shaderId; Wgsl = wgsl; FloatConstants = floatConstants; Samplers = samplers;
+        }
+    }
+
     internal sealed class SceneVisual
     {
         /// <summary>Stable visual identity (the milcore protocol handle); rendered into the

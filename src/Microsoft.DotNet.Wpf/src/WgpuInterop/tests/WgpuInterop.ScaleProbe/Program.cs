@@ -32,11 +32,14 @@ internal static class Program
     private const double MaxErrBound = 0.25;
     private const double RmsBound = 0.09;
     private static int _failures;
+    private static bool _fillControl;
 
     private static int Main(string[] argv)
     {
         if (Array.IndexOf(argv, "--cost") >= 0) { Cost(); return 0; }
         if (Array.IndexOf(argv, "--segscale") >= 0) { SegmentScaling(); return 0; }
+        if (Array.IndexOf(argv, "--strokegeom") >= 0) { StrokeGeom(); return 0; }
+        if (Array.IndexOf(argv, "--strokediag") >= 0) { _fillControl = Array.IndexOf(argv, "--fill") >= 0; StrokeDiag(); return 0; }
 
         Console.WriteLine($"{"case",-34}{"maxErr",10}{"rmsErr",10}{"vs 1x",9}{"",6}");
         Console.WriteLine(new string('-', 63));
@@ -259,6 +262,109 @@ internal static class Program
         f.Segments.Add(new LineSegment(new Vector2(x, y + r)));
         f.Segments.Add(new CubicBezierSegment(new Vector2(x, y + r - k), new Vector2(x + r - k, y), new Vector2(x + r, y)));
         return new PathGeometry(FillRule.NonZero, new List<PathFigure> { f });
+    }
+
+    // WHERE does the stroke error live? A tolerance sweep already showed it is not
+    // flattening, and CPU and GPU rasterizers report identical numbers, which points at the
+    // stroke-to-fill GEOMETRY rather than either rasterizer. This bins the error two ways:
+    // by angle around the circle (4 spikes => the kappa arc junctions; uniform => systematic
+    // offset error; scattered => contour seams) and by signed radial position (inner vs outer
+    // wall => which boundary is misplaced).
+    // Direct measurement of the stroke-to-fill OUTPUT GEOMETRY, with no rasterizer involved:
+    // every vertex PathStroker emits should sit on one of the two ideal annulus walls. This
+    // separates "the outline is in the wrong place" from any rendering effect.
+    private static void StrokeGeom()
+    {
+        const float localR = 20f, halfLocal = 6f;
+        var c = new Vector2(0, 0);
+        Console.WriteLine($"{"scale",7}{"tol(local)",13}{"vertices",10}{"maxDev",10}{"meanDev",10}{"dev(device)",13}");
+        Console.WriteLine(new string('-', 63));
+        foreach (float ws in new[] { 1f, 4f, 12f, 24f })
+        {
+            float tol = CurveFlattener.ToleranceForScale(ws);
+            PathGeometry outline = PathStroker.Stroke(CirclePath(c, localR),
+                new StrokeStyle(halfLocal * 2, LineCap.Butt, LineJoin.Miter), tol);
+
+            double maxDev = 0, sum = 0; int n = 0;
+            foreach (PathFigure f in outline.Figures)
+            {
+                var pts = new List<Vector2> { f.Start };
+                foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) pts.Add(l.Point);
+                foreach (Vector2 v in pts)
+                {
+                    double d = v.Length();
+                    // Distance to whichever ideal wall is nearer.
+                    double dev = Math.Min(Math.Abs(d - (localR + halfLocal)), Math.Abs(d - (localR - halfLocal)));
+                    maxDev = Math.Max(maxDev, dev); sum += dev; n++;
+                }
+            }
+            double mean = n > 0 ? sum / n : 0;
+            Console.WriteLine($"{ws,7}{tol,13:F5}{n,10}{maxDev,10:F5}{mean,10:F5}{maxDev * ws,13:F4}");
+        }
+        Console.WriteLine();
+        Console.WriteLine("  dev is in LOCAL units; dev(device) = maxDev * scale, i.e. what a pixel sees.");
+    }
+
+    private static void StrokeDiag()
+    {
+        const float localR = 20f, halfLocal = 6f;
+        foreach (float ws in new[] { 1f, 24f })
+        {
+            float r = localR * ws, half = halfLocal * ws;
+            int size = (int)MathF.Ceiling(2 * (r + half) + 12);
+            var centre = new Vector2(size / 2f, size / 2f);
+            var lc = new Vector2(centre.X / ws, centre.Y / ws);
+            var root = new SceneVisual { Transform = Matrix3x2.CreateScale(ws) };
+            if (_fillControl)
+            {
+                // CONTROL: the same annulus as a plain even-odd FILL -- no stroker involved.
+                // If this shows the same error, the stroke-to-fill geometry is exonerated and
+                // the residual belongs to the rasterizer's treatment of curved edges.
+                var grp = new GeometryGroup(FillRule.EvenOdd, new List<Geometry>
+                {
+                    new EllipseGeometry(lc, localR + halfLocal, localR + halfLocal),
+                    new EllipseGeometry(lc, localR - halfLocal, localR - halfLocal),
+                });
+                root.Content.Add(new GeometryFill(grp, RgbaColor.FromBytes(0, 0, 0, 255)));
+            }
+            else
+            {
+                root.Content.Add(StrokeCircle(lc, localR, LineJoin.Miter, LineCap.Butt));
+            }
+
+            using var ctx = WgpuContext.Create();
+            var rend = new WgpuSceneRenderer(ctx);
+            byte[] px = rend.RenderToRgba(root, size, size, RgbaColor.FromBytes(255, 255, 255, 255));
+
+            var byAngle = new double[12]; var nAngle = new int[12];
+            var byBand = new double[6]; var nBand = new int[6];
+            double worst = 0; double worstAng = 0, worstRad = 0;
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                double refc = Coverage(x, y, centre, r - half, r + half);
+                if (refc <= 0.001 || refc >= 0.999) continue;
+                double act = 1.0 - px[(y * size + x) * 4] / 255.0;
+                double e = Math.Abs(act - refc);
+                double dx = x + 0.5 - centre.X, dy = y + 0.5 - centre.Y;
+                double ang = Math.Atan2(dy, dx); if (ang < 0) ang += 2 * Math.PI;
+                double rad = Math.Sqrt(dx * dx + dy * dy) - r;         // signed: <0 inner wall
+                int ai = Math.Min(11, (int)(ang / (2 * Math.PI) * 12));
+                byAngle[ai] += e; nAngle[ai]++;
+                int bi = Math.Clamp((int)((rad / half + 1.0) * 3.0), 0, 5);
+                byBand[bi] += e; nBand[bi]++;
+                if (e > worst) { worst = e; worstAng = ang * 180 / Math.PI; worstRad = rad; }
+            }
+
+            Console.WriteLine($"--- {(_fillControl ? "FILLED annulus (control)" : "stroke-miter")} world {ws}x  (r={r}, half={half}) ---");
+            Console.Write("  mean err by angle (30deg bins): ");
+            for (int i = 0; i < 12; i++) Console.Write($"{(nAngle[i] > 0 ? byAngle[i] / nAngle[i] : 0):F3} ");
+            Console.WriteLine();
+            Console.Write("  mean err by radial band (inner->outer): ");
+            for (int i = 0; i < 6; i++) Console.Write($"{(nBand[i] > 0 ? byBand[i] / nBand[i] : 0):F3} ");
+            Console.WriteLine();
+            Console.WriteLine($"  worst {worst:F3} at angle {worstAng:F0}deg, radial offset {worstRad:+0.0;-0.0}px");
+        }
     }
 
     private static void Run(string label, Func<Vector2, float, DrawingPrimitive> make, float? strokeHalf)

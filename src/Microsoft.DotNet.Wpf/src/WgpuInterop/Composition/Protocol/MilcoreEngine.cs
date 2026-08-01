@@ -134,8 +134,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         RotateTransform = 0x76,
         DashStyle = 0x85,
         Pen = 0x86,
+        PixelShader = 0x6c,
         BlurEffect = 0x6e,
         DropShadowEffect = 0x6f,
+        ShaderEffect = 0x70,
     }
 
     /// <summary>
@@ -185,6 +187,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // trailer appended to a glyph run when the managed WebGPU backend is active.
         private const uint FontTrailerMagic = 0x544E4657;
         private readonly Dictionary<uint, Effect> _effects = new();
+        private readonly Dictionary<uint, byte[]> _pixelShaders = new();
+        private readonly Dictionary<uint, int> _shaderIds = new();
+        private static int s_nextShaderId = 1;
+
+        private static void SkipBytes(ref MilReader r, int count)
+        {
+            if (count > 0) r.Position += Math.Min(count, r.Remaining);
+        }
+
+        /// <summary>
+        /// Realizes a ShaderEffect: translates its D3D9 bytecode to WGSL and packs the float
+        /// registers densely from c0. Returns null when the shader is outside the translator's
+        /// subset or uses register classes this renderer does not bind -- the visual then renders
+        /// unmodified, which is what milcore does with a shader it cannot compile, and is far
+        /// better than dropping the content.
+        /// </summary>
+        private Effect? BuildShaderEffect(uint hShader, int[] regIndices, float[] values, bool usesIntOrBool)
+        {
+            if (usesIntOrBool) return null;
+            if (!_pixelShaders.TryGetValue(hShader, out byte[]? code) || code.Length == 0) return null;
+            if (!D3D9ShaderTranslator.TryTranslate(code, out TranslatedShader tr, out _)) return null;
+
+            int maxReg = -1;
+            foreach (int i in regIndices) if (i > maxReg) maxReg = i;
+            int needed = Math.Max(tr.FloatRegisterCount, maxReg + 1);
+            var packed = new float[needed * 4];
+            for (int k = 0; k < regIndices.Length; k++)
+            {
+                int dst = regIndices[k] * 4;
+                if (dst + 3 < packed.Length && k * 4 + 3 < values.Length)
+                    Array.Copy(values, k * 4, packed, dst, 4);
+            }
+
+            // One id per distinct PixelShader resource: the module and pipeline are cached on it.
+            if (!_shaderIds.TryGetValue(hShader, out int id))
+            {
+                id = s_nextShaderId++;
+                _shaderIds[hShader] = id;
+            }
+            return new ShaderEffectDef(id, tr.Wgsl, packed, tr.Samplers.ToArray());
+        }
         private readonly Dictionary<uint, MilBitmap> _bitmaps = new();
         private readonly Dictionary<uint, MilImageBrush> _imageBrushes = new();
 
@@ -887,11 +930,71 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _drawingGroups[h] = (children, hTransform, opacity);
                     break;
                 }
+                case Mil.PixelShader:
+                {
+                    // MILCMD_PIXELSHADER: Handle@4, ShaderRenderMode@8, BytecodeSize@12,
+                    // CompileSoftwareShader@16, then the D3D9 bytecode blob.
+                    uint h = r.U32();
+                    r.U32();                                  // ShaderRenderMode
+                    int size = (int)r.U32();
+                    r.U32();                                  // CompileSoftwareShader
+                    _pixelShaders[h] = size > 0 && size <= r.Remaining ? r.Bytes(size) : Array.Empty<byte>();
+                    break;
+                }
+                case Mil.ShaderEffect:
+                {
+                    // MILCMD_SHADEREFFECT: Handle@4, four doubles of padding@8..40,
+                    // hPixelShader@40, DdxUvDdyUvRegisterIndex@44, then eight payload sizes,
+                    // then the payloads in that order.
+                    uint h = r.U32();
+                    r.F64(); r.F64(); r.F64(); r.F64();        // top/bottom/left/right padding
+                    uint hShader = r.U32();
+                    r.U32();                                  // DdxUvDdyUvRegisterIndex
+                    int floatRegBytes = (int)r.U32();
+                    int floatValBytes = (int)r.U32();
+                    int intRegBytes = (int)r.U32();
+                    int intValBytes = (int)r.U32();
+                    int boolRegBytes = (int)r.U32();
+                    int boolValBytes = (int)r.U32();
+                    int samplerInfoBytes = (int)r.U32();
+                    int samplerValBytes = (int)r.U32();
+
+                    // Float registers are Int16 indices; the values that follow are one
+                    // float4 each, in the same order.
+                    int floatCount = floatRegBytes / 2;
+                    var regIndices = new int[floatCount];
+                    for (int i = 0; i < floatCount; i++) regIndices[i] = r.U16();
+                    var values = new float[floatCount * 4];
+                    for (int i = 0; i < floatCount * 4 && floatValBytes >= 4; i++) values[i] = r.F32();
+                    // The remaining payloads are for register classes this renderer does not
+                    // support; skip them so the reader stays aligned for the next command.
+                    SkipBytes(ref r, intRegBytes + intValBytes + boolRegBytes + boolValBytes
+                                     + samplerInfoBytes + samplerValBytes);
+
+                    _effects[h] = BuildShaderEffect(hShader, regIndices, values,
+                        intRegBytes + boolRegBytes > 0);
+                    break;
+                }
                 case Mil.BlurEffect:
                 {
-                    // MILCMD_BLUREFFECT: Handle@4, Radius@8 (double).
+                    // MILCMD_BLUREFFECT: Handle@4, Radius@8 (double), hRadiusAnimations@16,
+                    // KernelType@20, RenderingBias@24. KernelType used to be dropped on the
+                    // floor here, so a Box blur rendered as a Gaussian one.
                     uint h = r.U32();
-                    _effects[h] = new BlurEffect(r.F64());
+                    double blurRadius = r.F64();
+                    // Guarded: this decodes an IPC byte stream, so a short or truncated
+                    // command must degrade to the default rather than index past the buffer
+                    // and take down the compositor.
+                    uint kernel = 0;
+                    if (r.Remaining >= 8)
+                    {
+                        r.U32();                                 // hRadiusAnimations
+                        kernel = r.U32();                        // 0 = Gaussian, 1 = Box
+                    }
+                    // RenderingBias@24 (Performance/Quality) is a hint about kernel accuracy;
+                    // this renderer always takes the accurate path, so it is not read.
+                    _effects[h] = new BlurEffect(blurRadius,
+                        kernel == 1 ? BlurKernelType.Box : BlurKernelType.Gaussian);
                     break;
                 }
                 case Mil.DropShadowEffect:

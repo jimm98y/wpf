@@ -287,10 +287,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
+        // Custom ShaderEffects each need their OWN module and pipeline, so they cannot live in
+        // the (format, kind) cache above; they are keyed by the shader's identity instead.
+        private readonly Dictionary<int, IntPtr> _effectModules = new();
+        private readonly Dictionary<(WGPUTextureFormat, int), IntPtr> _effectPipelines = new();
         private readonly Text.IFont _font;
         private readonly Text.ITextShaper _shaper;
         private readonly Text.GlyphAtlas _glyphAtlas = new();
@@ -585,9 +589,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public readonly Scissor Clip;
             public readonly FillKind Kind;
             public readonly IntPtr BindGroup; // per-fill texture (Textured); ignored for Solid/Text
-            public DrawItem(uint firstIndex, uint indexCount, Scissor clip, FillKind kind, IntPtr bindGroup)
+            // Identity of the custom ShaderEffect this draw uses; -1 for every built-in kind.
+            // FillKind.ShaderEffect alone is not enough to pick a pipeline -- each translated
+            // shader is a different module.
+            public readonly int EffectId;
+            public DrawItem(uint firstIndex, uint indexCount, Scissor clip, FillKind kind, IntPtr bindGroup, int effectId = -1)
             {
                 FirstIndex = firstIndex; IndexCount = indexCount; Clip = clip; Kind = kind; BindGroup = bindGroup;
+                EffectId = effectId;
             }
         }
 
@@ -1229,12 +1238,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             else if (v.Effect is BlurEffect b)
             {
-                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, b.Radius, plan, region);
+                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, b.Radius, b.Kernel, plan, region);
                 cl.Mode = 1;
+            }
+            else if (v.Effect is ShaderEffectDef sfx
+                     && ShaderEffectLayer(subView, sfx, plan, region, out IntPtr fxTex, out IntPtr fxView))
+            {
+                cl.BlurTex = fxTex; cl.BlurView = fxView;
+                cl.Mode = 1;                       // composite the shaded layer like a blurred one
             }
             else if (v.Effect is DropShadowEffect ds)
             {
-                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, plan, region);
+                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, BlurKernelType.Gaussian, plan, region);
                 cl.Mode = 2; cl.ShadowColor = ds.Color; cl.OffX = (int)ds.OffsetX; cl.OffY = (int)ds.OffsetY;
             }
             else
@@ -1309,7 +1324,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else switch (v.Effect)
             {
-                case BlurEffect b: HV(101); HF((float)b.Radius); break;
+                case BlurEffect b: HV(101); HF((float)b.Radius); HV((long)b.Kernel); break;
+                case ShaderEffectDef sx:
+                    HV(104); HV(sx.ShaderId);
+                    foreach (float fc in sx.FloatConstants) HF(fc);
+                    break;
                 case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
                 default: HV(100); break;
             }
@@ -1413,13 +1432,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Two separable blur passes over the region-sized layer textures (input is region-sized).
         // The final (v) texture is OWNED by the caller (cached or defer-released); h is transient.
-        private (IntPtr Tex, IntPtr View) BlurLayer(IntPtr input, double radius, List<LayerPass> plan, Scissor region)
+        private (IntPtr Tex, IntPtr View) BlurLayer(IntPtr input, double radius, BlurKernelType kernel, List<LayerPass> plan, Scissor region)
         {
             // Match WPF: standard deviation is 1/3rd the radius, and the Gaussian kernel
             // half-extent is the radius itself (kernel runs -radius..+radius). See
             // CMilBlurEffectDuce::CalculateSamplingWeights ("sd = radius / 3.0"). Treating
             // the radius directly as sigma (and extending taps to 3*radius) over-blurs ~3x.
-            float sigma = (float)Math.Max(0.5, radius / 3.0);
+            // A NEGATIVE sigma is the shader's sentinel for a box kernel (uniform weights);
+            // a Gaussian sigma is always positive, so no extra vertex channel is needed.
+            float sigma = kernel == BlurKernelType.Box ? -1f : (float)Math.Max(0.5, radius / 3.0);
             int taps = Math.Clamp((int)Math.Ceiling(radius), 1, 48);
             int rw = region.W, rh = region.H;
             float sOX = _devOX, sOY = _devOY;
@@ -3257,7 +3278,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (DrawItem d in data.Draws)
             {
                 if (d.Clip.IsEmpty) continue;
-                wgpuRenderPassEncoderSetPipeline(pass, GetPipeline(format, d.Kind));
+                wgpuRenderPassEncoderSetPipeline(pass, ResolvePipeline(format, d.Kind, d.EffectId));
                 switch (d.Kind)
                 {
                     case FillKind.Textured:
@@ -3273,6 +3294,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     case FillKind.Id:
                     case FillKind.Stroke:
                     case FillKind.StrokeDraw:   // group 0 = the batched segment storage buffer (patched in by BuildBatchedStorage)
+                    case FillKind.ShaderEffect: // group 0 = constants uniform (optional) + input texture + sampler
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup, 0, null);
                         break;
                     case FillKind.Text:
@@ -3350,6 +3372,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             ReleaseResources3D();
             foreach (IntPtr pipeline in _pipelines.Values) wgpuRenderPipelineRelease(pipeline);
             _pipelines.Clear();
+            foreach (IntPtr pipeline in _effectPipelines.Values) wgpuRenderPipelineRelease(pipeline);
+            _effectPipelines.Clear();
+            foreach (IntPtr module in _effectModules.Values) wgpuShaderModuleRelease(module);
+            _effectModules.Clear();
             if (_shaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_shaderModule);
             if (_clipShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_clipShaderModule);
             if (_coverageShaderModule != IntPtr.Zero) wgpuShaderModuleRelease(_coverageShaderModule);
@@ -3407,6 +3433,97 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _shaderModule = wgpuDeviceCreateShaderModule(_ctx.Device, &shaderDesc);
             }
             return _shaderModule;
+        }
+
+        /// <summary>
+        /// Pipeline for a draw. Built-in kinds are one pipeline per (format, kind); a custom
+        /// ShaderEffect is one per (format, shader) because every translated shader is its own
+        /// module, so the kind alone cannot identify it.
+        /// </summary>
+        private IntPtr ResolvePipeline(WGPUTextureFormat format, FillKind kind, int effectId)
+        {
+            if (kind != FillKind.ShaderEffect || effectId < 0) return GetPipeline(format, kind);
+            var key = (format, effectId);
+            if (_effectPipelines.TryGetValue(key, out IntPtr cached)) return cached;
+            IntPtr pipeline = CreatePipeline(_ctx.Device, _effectModules[effectId], format, FillKind.ShaderEffect);
+            _effectPipelines[key] = pipeline;
+            return pipeline;
+        }
+
+        /// <summary>
+        /// Renders the subtree layer through a custom pixel shader into a new layer.
+        /// Returns false if the shader cannot be realized, in which case the caller leaves the
+        /// subtree unmodified -- the same thing milcore does with a shader it cannot compile,
+        /// and far better than dropping the content.
+        /// </summary>
+        private bool ShaderEffectLayer(IntPtr input, ShaderEffectDef def, List<LayerPass> plan, Scissor region,
+            out IntPtr outTex, out IntPtr outView)
+        {
+            outTex = IntPtr.Zero; outView = IntPtr.Zero;
+            // Only a single input sampler is wired: s0 is the subtree's own rendered layer.
+            // Multi-input effects additionally bind other brushes, which this does not resolve.
+            if (def.Samplers.Length > 1 || (def.Samplers.Length == 1 && def.Samplers[0] != 0)) return false;
+
+            if (!_effectModules.TryGetValue(def.ShaderId, out IntPtr module))
+            {
+                module = CompileWgsl(def.Wgsl);
+                if (module == IntPtr.Zero) return false;
+                _effectModules[def.ShaderId] = module;
+            }
+
+            int rw = region.W, rh = region.H;
+            if (rw <= 0 || rh <= 0) return false;
+            (outTex, outView) = CreateOwnedLayerTexture(rw, rh);
+
+            IntPtr bindGroup = CreateEffectBindGroup(def, input);
+            if (bindGroup == IntPtr.Zero) return false;
+
+            float sOX = _devOX, sOY = _devOY;
+            DrawData d = RentDrawData();
+            _devOX = region.X; _devOY = region.Y;
+            float x0 = region.X, y0 = region.Y, x1 = region.X + rw, y1 = region.Y + rh;
+            uint baseVertex = (uint)(d.Verts.Count / FloatsPerVertex);
+            AddVertex(d.Verts, ToNdc(new Vector2(x0, y0), rw, rh), 1f, 1f, 1f, 1f, 0f, 0f);
+            AddVertex(d.Verts, ToNdc(new Vector2(x1, y0), rw, rh), 1f, 1f, 1f, 1f, 1f, 0f);
+            AddVertex(d.Verts, ToNdc(new Vector2(x1, y1), rw, rh), 1f, 1f, 1f, 1f, 1f, 1f);
+            AddVertex(d.Verts, ToNdc(new Vector2(x0, y1), rw, rh), 1f, 1f, 1f, 1f, 0f, 1f);
+            AddQuadIndices(d.Indices, baseVertex);
+            d.Draws.Add(new DrawItem(0, 6, region, FillKind.ShaderEffect, bindGroup, def.ShaderId));
+            _devOX = sOX; _devOY = sOY;
+
+            plan.Add(new LayerPass(outView, true, default, d, ReadbackFormat)
+            { OriginX = region.X, OriginY = region.Y, TexW = rw, TexH = rh });
+            return true;
+        }
+
+        // Bindings follow D3D9ShaderTranslator's emission order: the constant uniform first
+        // (only when the shader reads any c# register), then each sampler's texture + sampler.
+        private IntPtr CreateEffectBindGroup(ShaderEffectDef def, IntPtr inputView)
+        {
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(
+                ResolvePipeline(ReadbackFormat, FillKind.ShaderEffect, def.ShaderId), 0);
+
+            bool hasConsts = def.FloatConstants.Length > 0;
+            var entries = stackalloc WGPUBindGroupEntry[3];
+            uint n = 0;
+            IntPtr cbuf = IntPtr.Zero;
+            if (hasConsts)
+            {
+                // std140-ish: the shader declares array<vec4<f32>, N>, so the buffer is 16 bytes
+                // per register and must be at least one register long.
+                int bytes = Math.Max(16, def.FloatConstants.Length * sizeof(float));
+                var bufBytes = new byte[bytes];
+                Buffer.BlockCopy(def.FloatConstants, 0, bufBytes, 0, def.FloatConstants.Length * sizeof(float));
+                cbuf = _ctx.CreateBufferMapped(bufBytes, WGPUBufferUsage.Uniform, (ulong)bytes);
+                DeferReleaseBuffer(cbuf);
+                entries[n++] = new WGPUBindGroupEntry { binding = n - 1, buffer = cbuf, offset = 0, size = (ulong)bytes };
+            }
+            entries[n] = new WGPUBindGroupEntry { binding = n, textureView = inputView }; n++;
+            entries[n] = new WGPUBindGroupEntry { binding = n, sampler = LinearSampler() }; n++;
+
+            var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = (nuint)n, entries = entries };
+            return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
         }
 
         private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind)
@@ -3546,6 +3663,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.Shape => "fs_shape",
                 FillKind.ShapeBrush => "fs_shapebrush",
                 FillKind.StrokeDraw => "fs_strokedraw",
+                FillKind.ShaderEffect => "fs_effect",
                 _ => "fs_solid",
             };
             byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");

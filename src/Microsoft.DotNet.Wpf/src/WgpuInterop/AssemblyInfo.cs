@@ -23,6 +23,8 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.ShaderValidationTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.DeterminismProbe")]
 [assembly: InternalsVisibleTo("WgpuInterop.RenderBaselineTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.BlurKernelTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.ShaderEffectTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.StabilityTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.FontTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.CffTest")]

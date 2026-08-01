@@ -77,8 +77,19 @@ internal static class Program
     private static byte[] VisualSetEffect(uint handle, uint hEffect)
     { var b = new Buf(); b.U32(0x1d); b.U32(handle); b.U32(hEffect); return b.ToArray(); }
 
-    private static byte[] BlurEffect(uint handle, double radius)
-    { var b = new Buf(); b.U32(0x6e); b.U32(handle); b.F64(radius); return b.ToArray(); }
+    // MILCMD_BLUREFFECT: Handle@4, Radius@8, hRadiusAnimations@16, KernelType@20, RenderingBias@24.
+    // The full 28-byte struct, not an abbreviated prefix: the trailing fields are real wire
+    // content and KernelType selects Gaussian vs Box.
+    private static byte[] BlurEffect(uint handle, double radius, uint kernelType = 0)
+    {
+        var b = new Buf();
+        b.U32(0x6e); b.U32(handle);
+        b.F64(radius);
+        b.U32(0);                 // hRadiusAnimations
+        b.U32(kernelType);        // 0 = Gaussian, 1 = Box
+        b.U32(0);                 // RenderingBias (Performance)
+        return b.ToArray();
+    }
 
     // MILCMD_DROPSHADOWEFFECT: Handle@4, ShadowDepth@8, Color@16, Direction@32, Opacity@40, BlurRadius@48.
     private static byte[] DropShadowEffect(uint handle, double depth, double dir, double opacity, double blur,

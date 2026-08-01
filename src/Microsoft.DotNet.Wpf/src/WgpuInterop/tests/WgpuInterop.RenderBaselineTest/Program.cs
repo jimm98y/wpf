@@ -153,6 +153,7 @@ internal static class Program
         yield return ("transform-rotate", 240, 240, RotatedContent);
         yield return ("mil-arc-large", 460, 260, MilArcLarge);
         yield return ("text-run", 300, 120, TextRun);
+        yield return ("effects", 380, 160, Effects);
     }
 
     // Goes through the MIL protocol's arc-to-Bézier conversion, which nothing else in the
@@ -193,6 +194,24 @@ internal static class Program
             RgbaColor.FromBytes(15, 15, 15, 255)));
         root.Content.Add(new GlyphRunDraw("small caps", new Vector2(14, 84), 13f,
             RgbaColor.FromBytes(70, 70, 110, 255)));
+        return root;
+    }
+
+    // Effects had NO whole-image coverage, which is why adding BlurEffect.KernelType
+    // changed no baseline at all. Both kernels are here so a change to either is caught.
+    private static SceneVisual Effects()
+    {
+        var root = new SceneVisual();
+        SceneVisual Card(float x, Effect e, RgbaColor c)
+        {
+            var v = new SceneVisual { Effect = e };
+            v.Content.Add(new GeometryFill(new RoundedRectangleGeometry(new Rect(x, 40, 80, 60), 10, 10), c));
+            return v;
+        }
+        root.Children.Add(Card(20, new BlurEffect(9, BlurKernelType.Gaussian), RgbaColor.FromBytes(200, 50, 50, 255)));
+        root.Children.Add(Card(120, new BlurEffect(9, BlurKernelType.Box), RgbaColor.FromBytes(50, 120, 200, 255)));
+        root.Children.Add(Card(220, new DropShadowEffect(RgbaColor.FromBytes(0, 0, 0, 180), 8, 5, 5),
+            RgbaColor.FromBytes(40, 160, 90, 255)));
         return root;
     }
 

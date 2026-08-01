@@ -66,6 +66,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     case BlurEffect blur:
                         w.U8((byte)EffectKind.Blur);
                         w.F64(blur.Radius);
+                        w.U8((byte)blur.Kernel);
                         break;
                     case DropShadowEffect ds:
                         w.U8((byte)EffectKind.DropShadow);
