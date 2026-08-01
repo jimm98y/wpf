@@ -21,11 +21,14 @@
 // run asserts the tolerance contract and exits non-zero on violation. `--origin N`
 // re-centres the geometric cases to probe float32 coordinate precision.
 //
-// KNOWN LIMIT (measured, not fixed here): geometry is flattened in float32, so past
-// roughly 10k device units the coordinate precision itself eats into the tolerance --
-// circle r=100 measures 0.98x tol at origin 2000 but 1.59x at origin 100000. A very
-// large scrolled or zoomed document would need double-precision or origin rebasing in
-// the flattening path; nothing below that scale is affected.
+// ON LARGE COORDINATES -- previously written up here as a known renderer limit, which
+// was wrong. Section A calls the flattener DIRECTLY, so a large origin does erode the
+// tolerance in float32 (circle r=100: 0.98x tol at origin 2000, 1.59x at 100000). But the
+// renderer normalizes every shape to its own origin and carries only the sub-pixel phase
+// in the transform, so it never hands the flattener those magnitudes. The offset cases in
+// section B confirm it end to end: a disc rendered at device (0,0), (10k,10k) and
+// (100k,100k) produces bit-identical error. The section A numbers therefore bound direct
+// callers of PathRasterizer, not the render path.
 //
 
 using System;
@@ -40,11 +43,11 @@ internal static class Program
     private static int _failures;
     private const float Tol = CurveFlattener.DefaultTolerance;
     private static double _baselineRms;
-    // Device coordinate the test circles are centred on. Flattening is evaluated in
-    // float32, so a large origin costs precision that shows up directly in the
-    // deviation: measured dev/tol on circle r=100 is 0.971 at origin 100, 0.977 at
-    // 2000, 1.019 at 10000 and 1.593 at 100000. 2000 is a realistic on-screen device
-    // coordinate; --origin overrides it to probe that precision curve.
+    // Device coordinate the section A circles are centred on. These call the flattener
+    // directly, so a large origin costs float32 precision: dev/tol on circle r=100 is 0.971
+    // at origin 100, 0.977 at 2000, 1.019 at 10000, 1.593 at 100000. The renderer does not
+    // reach those magnitudes (see the header and the section B offset cases); 2000 is a
+    // realistic figure for a direct caller. --origin walks the curve.
     private static float OriginBias = 2000f;
     private static bool Diagnose;
 
@@ -73,6 +76,19 @@ internal static class Program
         MeasureRenderedDisc("disc r=20 (world 1x)", 20f, 1f, reportOnly);
         MeasureRenderedDisc("disc r=20 (world 4x)", 20f, 4f, reportOnly);
         MeasureRenderedDisc("disc r=20 (world 12x)", 20f, 12f, reportOnly);
+
+        // Does a large DEVICE offset actually degrade the render? The geometric metric above
+        // shows float32 precision eroding the tolerance past ~10k units -- but it calls the
+        // flattener directly. The renderer normalizes a shape to its own origin and keeps only
+        // the sub-pixel phase in the transform, so it may never present those magnitudes to
+        // the flattener at all. Measured rather than assumed.
+        Console.WriteLine();
+        Console.WriteLine($"{"offset case",-34}{"maxErr",10}{"rmsErr",10}{"vs origin",10}");
+        Console.WriteLine(new string('-', 64));
+        _baselineRms = 0;
+        MeasureOffsetDisc("disc at device (0,0)", 0f, reportOnly);
+        MeasureOffsetDisc("disc at device (10k,10k)", 10000f, reportOnly);
+        MeasureOffsetDisc("disc at device (100k,100k)", 100000f, reportOnly);
 
         Console.WriteLine();
         if (_failures > 0)
@@ -251,6 +267,41 @@ internal static class Program
             Console.WriteLine($"  [FAIL] {name}: maxErr={maxErr:F4} rms={rms:F4} growth-vs-1x={growth:F3}");
             _failures++;
         }
+    }
+
+    // Renders a disc whose visual is translated far from the origin, but scissored back to a
+    // small window, so the DEVICE coordinates the pipeline handles are large while the pixels
+    // compared stay in view.
+    private static void MeasureOffsetDisc(string name, float offset, bool reportOnly)
+    {
+        const int size = 64;
+        const float r = 22f;
+        var centre = new Vector2(size / 2f, size / 2f);
+        var root = new SceneVisual { Offset = new Vector2(-offset, -offset) };
+        var child = new SceneVisual { Offset = new Vector2(offset, offset) };
+        child.Content.Add(new GeometryFill(new EllipseGeometry(centre, r, r),
+            RgbaColor.FromBytes(0, 0, 0, 255)));
+        root.Children.Add(child);
+
+        using var ctx = WgpuContext.Create();
+        var renderer = new WgpuSceneRenderer(ctx);
+        byte[] px = renderer.RenderToRgba(root, size, size, RgbaColor.FromBytes(255, 255, 255, 255));
+
+        double sumSq = 0, maxErr = 0; int n = 0;
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            double reference = DiscCoverage(x, y, centre, r);
+            if (reference <= 0.001 || reference >= 0.999) continue;
+            double e = Math.Abs((1.0 - px[(y * size + x) * 4] / 255.0) - reference);
+            sumSq += e * e; n++; if (e > maxErr) maxErr = e;
+        }
+        double rms = n > 0 ? Math.Sqrt(sumSq / n) : 0;
+        if (_baselineRms == 0) _baselineRms = rms;
+        double growth = _baselineRms > 0 ? rms / _baselineRms : 1;
+        bool ok = growth <= 1.25 && n > 0;
+        Console.WriteLine($"{name,-34}{maxErr,10:F4}{rms,10:F4}{growth,10:F3}{(ok ? "  ok" : "  FAIL")}");
+        if (!reportOnly && !ok) { Console.WriteLine($"  [FAIL] {name}: rms {rms:F4} is {growth:F2}x the origin case"); _failures++; }
     }
 
     // Exact-ish coverage of pixel (x,y) by the disc, via 32x32 supersampling.
