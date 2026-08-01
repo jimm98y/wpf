@@ -2102,6 +2102,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // algorithm). WPF serialises a Border's non-uniform CornerRadius corners as MIL arc
         // segments; approximating them with a straight line produced chamfered ("triangular")
         // corners. Splits the arc into <=90 deg pieces, each a cubic bezier.
+        /// <summary>Test hook: the MIL arc-to-Bézier conversion in isolation.</summary>
+        internal static void AddArcAsBeziersForTest(PathFigure figure, Vector2 start, Vector2 end,
+            float rx, float ry, float xRotDeg, bool largeArc, bool sweepClockwise)
+            => AddArcAsBeziers(figure, start, end, rx, ry, xRotDeg, largeArc, sweepClockwise);
+
         private static void AddArcAsBeziers(PathFigure figure, Vector2 start, Vector2 end,
             float rx, float ry, float xRotDeg, bool largeArc, bool sweepClockwise)
         {
@@ -2147,7 +2152,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (!sweepClockwise && dtheta > 0f) dtheta -= 2f * MathF.PI;
             else if (sweepClockwise && dtheta < 0f) dtheta += 2f * MathF.PI;
 
-            int segs = (int)MathF.Ceiling(MathF.Abs(dtheta) / (MathF.PI * 0.5f));
+            // Split by RADIUS, not just at 90-degree boundaries. The fixed-quadrant rule leaves
+            // ~2.7e-4*r of radial error, so a large arc (a rounded panel edge, a gauge sweep)
+            // arrives already outside the flattening tolerance and no amount of downstream
+            // subdivision can recover it -- the cubics themselves are the wrong shape.
+            // This is decode time, so there is no world transform to scale against; the
+            // default device tolerance is the best available target and is strictly tighter
+            // than what the quadrant rule gave.
+            int segs = CurveFlattener.ArcCount(MathF.Max(rx, ry), dtheta, CurveFlattener.DefaultTolerance);
             if (segs < 1) segs = 1;
             float delta = dtheta / segs;
             float sinHalf = MathF.Sin(delta * 0.5f);

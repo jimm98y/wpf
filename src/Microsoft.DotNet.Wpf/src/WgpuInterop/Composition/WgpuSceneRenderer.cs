@@ -203,109 +203,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
         private const int GradientRampTexels = 256;
 
-        private const string ShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-@fragment
-fn fs_solid(in : VSOut) -> @location(0) vec4<f32> {
-    return in.color;          // already premultiplied
-}
-
-@group(0) @binding(0) var tex : texture_2d<f32>;
-@group(0) @binding(1) var samp : sampler;
-
-@fragment
-fn fs_textured(in : VSOut) -> @location(0) vec4<f32> {
-    let s = textureSample(tex, samp, in.uv);
-    let a = s.a * in.color.a;          // image/ramp alpha * accumulated opacity
-    return vec4<f32>(s.rgb * a, a);    // premultiply
-}
-
-@fragment
-fn fs_text(in : VSOut) -> @location(0) vec4<f32> {
-    let coverage = textureSample(tex, samp, in.uv).r;   // R8 glyph coverage
-    let a = coverage * in.color.a;                      // coverage * brush alpha * opacity
-    return vec4<f32>(in.color.rgb * a, a);              // premultiplied brush colour
-}
-
-@fragment
-fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
-    // The layer texture is already premultiplied; scale it by the group opacity.
-    return textureSample(tex, samp, in.uv) * in.color.a;
-}
-
-// Separable Gaussian blur. The blur axis step (uv units), sigma and tap radius
-// are carried in the (constant) vertex colour, so no uniform buffer is needed.
-@fragment
-fn fs_blur(in : VSOut) -> @location(0) vec4<f32> {
-    let step = in.color.xy;
-    let sigma = in.color.z;
-    let radius = i32(in.color.w);
-    var sum = vec4<f32>(0.0);
-    var wsum = 0.0;
-    // textureSampleLevel (not textureSample): the loop bound is per-fragment data,
-    // and browser WGSL (Tint) rejects implicit-derivative sampling in non-uniform
-    // control flow. The blur inputs are single-mip, so level 0 is identical.
-    for (var i = -radius; i <= radius; i = i + 1) {
-        let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
-        sum = sum + textureSampleLevel(tex, samp, in.uv + step * f32(i), 0.0) * w;
-        wsum = wsum + w;
-    }
-    return sum / wsum;
-}
-
-// Drop-shadow tint: use the (blurred) source alpha as coverage and paint it the
-// shadow colour (in vertex colour), premultiplied by colour.a (shadow alpha).
-@fragment
-fn fs_shadow(in : VSOut) -> @location(0) vec4<f32> {
-    let cov = textureSample(tex, samp, in.uv).a;
-    let a = cov * in.color.a;
-    return vec4<f32>(in.color.rgb * a, a);
-}
-";
+        private static string ShaderWgsl => ShaderSource.Get("Shader");
 
         // fs_clip needs a second texture (the clip mask), so it uses its own
         // shader module with a 3-entry bind group {layer, mask, sampler}.
-        private const string ClipShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-@group(0) @binding(0) var layerTex : texture_2d<f32>;
-@group(0) @binding(1) var maskTex : texture_2d<f32>;
-@group(0) @binding(2) var clipSamp : sampler;
-
-@fragment
-fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
-    let c = textureSample(layerTex, clipSamp, in.uv);   // premultiplied layer
-    let m = textureSample(maskTex, clipSamp, in.uv).r;  // clip coverage
-    return c * (m * in.color.a);                         // mask * group opacity
-}
-";
+        private static string ClipShaderWgsl => ShaderSource.Get("ClipShader");
 
         // GPU path rasterization: evaluates the SAME coverage math as PathRasterizer
         // (4 vertical subsample rows, exact horizontal span coverage per pixel) in a
@@ -316,116 +218,7 @@ fn fs_clip(in : VSOut) -> @location(0) vec4<f32> {
         // the covered fraction exactly — pixel-identical AA to the CPU rasterizer.
         // Draw encoding: uv carries mask-local pixel coords; the (flat) vertex colour
         // carries (edgeCount, flags) — no uniform buffer needed.
-        private const string CoverageShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-// Path outline as QUADRATIC Bézier segments, 3 vec2 each (p0, control, p1); a straight
-// line is the degenerate quadratic with control = midpoint, and cubics are split into a
-// few quadratics on the CPU. Curve flattening thus happens on the GPU: crossings are
-// solved analytically per scanline (exact for lines and quadratics) instead of the CPU
-// pre-subdividing every curve into ~24 line edges.
-@group(0) @binding(0) var<storage, read> segs : array<vec2<f32>>;
-
-const MAX_PIXEL_CROSSINGS : u32 = 16u;
-
-@fragment
-fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
-    let px = floor(in.uv.x);
-    let py = floor(in.uv.y);
-    let segCount = u32(in.color.x);
-    let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma
-    let evenOdd = (flags & 1u) != 0u;
-    var cov = 0.0;
-    for (var s = 0u; s < 4u; s = s + 1u) {
-        let sy = py + (f32(s) + 0.5) / 4.0;
-        var w = 0;
-        var cxs : array<f32, MAX_PIXEL_CROSSINGS>;
-        var cds : array<i32, MAX_PIXEL_CROSSINGS>;
-        var n = 0u;
-        for (var i = 0u; i < segCount; i = i + 1u) {
-            let p0 = segs[3u * i];
-            let c  = segs[3u * i + 1u];
-            let p1 = segs[3u * i + 2u];
-            // Segments are y-monotone (split at y-extrema on the CPU), so the crossing test is the
-            // robust endpoint half-open rule: exactly the segments whose endpoints straddle sy cross
-            // it. This uses exact float comparisons (no t-boundary epsilon), so a vertex shared by
-            // two segments is counted once when the path is monotone through it and twice at an
-            // extremum -- eliminating the missed/over-counted crossings that streak the fill.
-            let b0 = p0.y <= sy;
-            let b1 = p1.y <= sy;
-            if (b0 == b1) { continue; }
-            let A = p0.y - 2.0 * c.y + p1.y;
-            let B = 2.0 * (c.y - p0.y);
-            let C0 = p0.y - sy;
-            var t = 0.0;
-            if (abs(A) < 1e-7) {
-                t = -C0 / B;                              // truly linear (B != 0: endpoints straddle)
-            } else {
-                // Numerically STABLE quadratic solve. A line's control point is its midpoint, so A
-                // should be 0, but float rounding leaves a tiny A that can exceed the threshold; the
-                // naive (-B +/- sqrt)/(2A) then cancels catastrophically for small A and returns a
-                // wrong crossing x -> orientation-dependent jagged coverage (star arms) that blinks
-                // as a rect rotates. The q-formula avoids the cancellation and degrades to the linear
-                // root as A -> 0.
-                let disc = max(B * B - 4.0 * A * C0, 0.0);
-                let signB = select(-1.0, 1.0, B >= 0.0);
-                let q = -0.5 * (B + signB * sqrt(disc));  // |q| ~ |B|, never the cancelling term
-                let ra = q / A;
-                let rb = C0 / q;
-                t = select(rb, ra, ra >= 0.0 && ra <= 1.0);   // the one root in range (monotone)
-            }
-            t = clamp(t, 0.0, 1.0);
-            let mt = 1.0 - t;
-            let x = mt * mt * p0.x + 2.0 * mt * t * c.x + t * t * p1.x;
-            let dir = select(-1, 1, p1.y > p0.y);         // whole segment runs one y-direction
-            if (x <= px) {
-                w = w + dir;
-            } else if (x < px + 1.0 && n < MAX_PIXEL_CROSSINGS) {
-                var j = n;
-                loop {
-                    if (j == 0u) { break; }
-                    if (cxs[j - 1u] <= x) { break; }
-                    cxs[j] = cxs[j - 1u];
-                    cds[j] = cds[j - 1u];
-                    j = j - 1u;
-                }
-                cxs[j] = x;
-                cds[j] = dir;
-                n = n + 1u;
-            }
-        }
-        var covered = 0.0;
-        var prev = px;
-        for (var k = 0u; k < n; k = k + 1u) {
-            let inside = select(w != 0, (w & 1) != 0, evenOdd);
-            if (inside) { covered = covered + (cxs[k] - prev); }
-            w = w + cds[k];
-            prev = cxs[k];
-        }
-        let insideEnd = select(w != 0, (w & 1) != 0, evenOdd);
-        if (insideEnd) { covered = covered + (px + 1.0 - prev); }
-        cov = cov + covered * 0.25;
-    }
-    cov = clamp(cov, 0.0, 1.0);
-    // Text gamma: WPF blends glyph coverage in gamma space; cov^(1/2.2) matches the
-    // CPU rasterizer's LUT on the display-destined sRGB path.
-    if ((flags & 2u) != 0u) { cov = pow(cov, 1.0 / 2.2); }
-    return vec4<f32>(cov, 0.0, 0.0, 1.0);
-}
-";
+        private static string CoverageShaderWgsl => ShaderSource.Get("CoverageShader");
 
         // GPU stroking (round join + round cap, solid): the stroke coverage is a signed
         // distance field around the flattened centre-line polyline — coverage =
@@ -434,44 +227,7 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
         // ends round into round caps automatically, with no CPU stroke-to-fill. Non-round
         // joins/caps and dashes are not distance-field-expressible and stay on PathStroker.
         // Buffer: 2 vec2 per segment (a, b). Vertex colour: x = segCount, y = halfWidth.
-        private const string StrokeShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-@group(0) @binding(0) var<storage, read> spts : array<vec2<f32>>;   // 2 per segment: a, b
-
-fn segDist(p : vec2<f32>, a : vec2<f32>, b : vec2<f32>) -> f32 {
-    let pa = p - a;
-    let ba = b - a;
-    let t = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
-    return length(pa - ba * t);
-}
-
-@fragment
-fn fs_stroke(in : VSOut) -> @location(0) vec4<f32> {
-    let p = vec2<f32>(floor(in.uv.x) + 0.5, floor(in.uv.y) + 0.5);
-    let segCount = u32(in.color.x);
-    let half = in.color.y;
-    var d = 1e30;
-    for (var i = 0u; i < segCount; i = i + 1u) {
-        d = min(d, segDist(p, spts[2u * i], spts[2u * i + 1u]));
-    }
-    let cov = clamp(0.5 + (half - d), 0.0, 1.0);   // 1px analytic AA ramp at the stroke edge
-    return vec4<f32>(cov, 0.0, 0.0, 1.0);
-}
-";
+        private static string StrokeShaderWgsl => ShaderSource.Get("StrokeShader");
 
         // Analytic closed-form shapes (ellipse, rectangle, rounded rectangle -- filled or stroked),
         // drawn straight into the frame with per-fragment AA. NO coverage texture and NO per-frame GPU
@@ -485,51 +241,7 @@ fn fs_stroke(in : VSOut) -> @location(0) vec4<f32> {
         //   strokeHalf < 0 -> filled;  strokeHalf >= 0 -> stroked ring/outline of that half-thickness
         // Distance is computed in local units and the AA width comes from fwidth(), so the result is
         // correct under ANY affine world transform (rotation, non-uniform scale) with no special-casing.
-        private const string ShapeShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-    @location(2) prm : vec4<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    o.prm = prm;
-    return o;
-}
-
-@fragment
-fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
-    let p = in.uv;
-    let hx = in.prm.x; let hy = in.prm.y; let cr = in.prm.z; let sh = in.prm.w;
-    var d : f32;   // signed distance to the shape's centre-line, local units (>0 outside)
-    if (cr < 0.0) {
-        // ellipse with radii (hx, hy); first-order distance from the implicit function and its gradient
-        let qx = p.x / hx;
-        let qy = p.y / hy;
-        let f = qx * qx + qy * qy - 1.0;
-        let g = max(length(vec2<f32>(2.0 * qx / hx, 2.0 * qy / hy)), 1e-8);
-        d = f / g;
-    } else {
-        // rounded rectangle (exact SDF); cr == 0 gives a sharp rectangle
-        let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
-        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
-    }
-    let fw = max(fwidth(d), 1e-6);
-    var cov : f32;
-    if (sh < 0.0) {
-        cov = clamp(0.5 - d / fw, 0.0, 1.0);                 // filled
-    } else {
-        cov = clamp(0.5 - (abs(d) - sh) / fw, 0.0, 1.0);     // stroked ring/outline of half-width sh
-    }
-    return in.color * cov;                                    // in.color is premultiplied
-}
-";
+        private static string ShapeShaderWgsl => ShaderSource.Get("ShapeShader");
 
         // The gradient counterpart of ShapeShaderWgsl: the SAME analytic rounded-rect/ellipse SDF,
         // but the colour comes from the gradient ramp evaluated per fragment instead of a flat vertex
@@ -543,81 +255,7 @@ fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
         // uv is the local position relative to the shape's CENTRE (as in fs_shape), so the gradient
         // endpoints are pre-offset by that centre on the CPU and uv feeds brushT directly.
         // Bindings mirror BrushAlphaShaderWgsl's 3-entry layout (see CreateBrushBindGroup's else).
-        private const string ShapeBrushShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-    @location(2) prm : vec4<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    o.prm = prm;
-    return o;
-}
-
-struct BrushParams {
-    kindSpread : vec4<u32>,
-    g0 : vec4<f32>,
-    rect : vec4<f32>,
-    misc : vec4<f32>,
-};
-
-@group(0) @binding(0) var rampTex : texture_2d<f32>;
-@group(0) @binding(1) var rampSamp : sampler;
-@group(0) @binding(2) var<uniform> params : BrushParams;
-
-fn brushT(local : vec2<f32>) -> f32 {
-    var t = 0.0;
-    if (params.kindSpread.x == 1u) {
-        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
-    } else {
-        let d = (local - params.g0.xy) / params.g0.zw;
-        t = length(d);
-    }
-    switch params.kindSpread.y {
-        case 1u: {                                  // reflect
-            let f = t - 2.0 * floor(t / 2.0);
-            t = select(f, 2.0 - f, f > 1.0);
-        }
-        case 2u: { t = t - floor(t); }              // repeat
-        default: { t = clamp(t, 0.0, 1.0); }        // pad
-    }
-    return t;
-}
-
-@fragment
-fn fs_shapebrush(in : VSOut) -> @location(0) vec4<f32> {
-    let p = in.uv;
-    let hx = in.prm.x; let hy = in.prm.y; let cr = in.prm.z; let sh = in.prm.w;
-    var d : f32;
-    if (cr < 0.0) {
-        let qx = p.x / hx;
-        let qy = p.y / hy;
-        let f = qx * qx + qy * qy - 1.0;
-        let g = max(length(vec2<f32>(2.0 * qx / hx, 2.0 * qy / hy)), 1e-8);
-        d = f / g;
-    } else {
-        let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
-        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
-    }
-    let fw = max(fwidth(d), 1e-6);
-    var cov : f32;
-    if (sh < 0.0) {
-        cov = clamp(0.5 - d / fw, 0.0, 1.0);
-    } else {
-        cov = clamp(0.5 - (abs(d) - sh) / fw, 0.0, 1.0);
-    }
-    let c = textureSampleLevel(rampTex, rampSamp, vec2<f32>(brushT(p), 0.5), 0.0);
-    let a = cov * c.a * params.misc.x;
-    return vec4<f32>(c.rgb * a, a);                 // premultiplied
-}
-";
+        private static string ShapeBrushShaderWgsl => ShaderSource.Get("ShapeBrushShader");
 
         // Analytic stroke drawn STRAIGHT into the frame (no baked coverage texture): the round-cap/round-
         // join solid-stroke distance field (min distance to the flattened centre-line segments, minus the
@@ -627,46 +265,7 @@ fn fs_shapebrush(in : VSOut) -> @location(0) vec4<f32> {
         // that thrashes when the geometry changes every frame. Used only for modest segment counts (the
         // per-fragment loop is O(segments)); complex strokes stay on the cached-texture path. uv carries the
         // fragment's DEVICE-pixel position; prm = (segmentCount, halfWidthPx, _, _).
-        private const string StrokeDrawShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-    @location(2) prm : vec4<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>, @location(3) prm : vec4<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    o.prm = prm;
-    return o;
-}
-
-@group(0) @binding(0) var<storage, read> spts : array<vec2<f32>>;   // 2 per segment: a, b (device px)
-
-fn segDist(p : vec2<f32>, a : vec2<f32>, b : vec2<f32>) -> f32 {
-    let pa = p - a;
-    let ba = b - a;
-    let t = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
-    return length(pa - ba * t);
-}
-
-@fragment
-fn fs_strokedraw(in : VSOut) -> @location(0) vec4<f32> {
-    let p = in.uv;                                 // device-pixel position at this fragment
-    let segCount = u32(in.prm.x);
-    let half = in.prm.y;
-    var d = 1e30;
-    for (var i = 0u; i < segCount; i = i + 1u) {
-        d = min(d, segDist(p, spts[2u * i], spts[2u * i + 1u]));
-    }
-    let cov = clamp(0.5 + (half - d), 0.0, 1.0);   // 1px analytic AA ramp at the stroke edge
-    return in.color * cov;                          // in.color is premultiplied
-}
-";
+        private static string StrokeDrawShaderWgsl => ShaderSource.Get("StrokeDrawShader");
 
         // GPU brush evaluation: gradients are computed per pixel in the fragment shader
         // (sampling the same 256-texel ramp the tessellated gradient path uses) instead
@@ -675,181 +274,18 @@ fn fs_strokedraw(in : VSOut) -> @location(0) vec4<f32> {
         // alpha into an R8 target (gradient opacity masks). Params ride in a small
         // uniform buffer; localPos = rect.xy + uv * rect.zw reproduces the CPU
         // evaluator's pixel-center sampling exactly.
-        private const string BrushShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-struct BrushParams {
-    kindSpread : vec4<u32>,   // x: 1=linear 2=radial; y: 0=pad 1=reflect 2=repeat
-    g0 : vec4<f32>,           // linear: start.xy, axis.xy ; radial: center.xy, radius.xy
-    rect : vec4<f32>,         // brush-space rect of the quad: origin.xy, size.xy
-    misc : vec4<f32>,         // x: opacity, y: linear 1/|axis|^2
-};
-
-fn brushT(params : BrushParams, local : vec2<f32>) -> f32 {
-    var t = 0.0;
-    if (params.kindSpread.x == 1u) {
-        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
-    } else {
-        let d = (local - params.g0.xy) / params.g0.zw;
-        t = length(d);
-    }
-    switch params.kindSpread.y {
-        case 1u: {                                  // reflect
-            let f = t - 2.0 * floor(t / 2.0);
-            t = select(f, 2.0 - f, f > 1.0);
-        }
-        case 2u: { t = t - floor(t); }              // repeat
-        default: { t = clamp(t, 0.0, 1.0); }        // pad
-    }
-    return t;
-}
-
-@group(0) @binding(0) var covTex : texture_2d<f32>;
-@group(0) @binding(1) var rampTex : texture_2d<f32>;
-@group(0) @binding(2) var covSamp : sampler;
-@group(0) @binding(3) var rampSamp : sampler;
-@group(0) @binding(4) var<uniform> params : BrushParams;
-
-@fragment
-fn fs_maskbrush(in : VSOut) -> @location(0) vec4<f32> {
-    let local = params.rect.xy + in.uv * params.rect.zw;
-    let t = brushT(params, local);
-    let c = textureSampleLevel(rampTex, rampSamp, vec2<f32>(t, 0.5), 0.0);
-    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
-    let a = cov * c.a * params.misc.x;
-    return vec4<f32>(c.rgb * a, a);
-}
-
-// Image/tile brush composited with GPU-rasterized coverage. binding(1) is the image
-// texture (an sRGB texture on the display path, so the hardware decodes + filters in
-// linear space). kindSpread.y = TileMode (0 None -> map once across the coverage rect;
-// 1 FlipX, 2 FlipY, 3 FlipXY, 4 Tile); g0.xy = (tileWidth, tileHeight). Mirrors
-// EvaluateBrush's ImageBrush UV + SampleBilinear (hardware linear sampler).
-@fragment
-fn fs_maskimage(in : VSOut) -> @location(0) vec4<f32> {
-    let mode = params.kindSpread.y;
-    var uv : vec2<f32>;
-    if (mode == 0u) {
-        uv = in.uv;                                  // map once across geometry bounds
-    } else {
-        let local = params.rect.xy + in.uv * params.rect.zw;
-        let tu = local.x / params.g0.x;
-        let tv = local.y / params.g0.y;
-        let cx = floor(tu);
-        let cy = floor(tv);
-        var u = tu - cx;
-        var v = tv - cy;
-        if ((mode == 1u || mode == 3u) && (i32(cx) & 1) != 0) { u = 1.0 - u; }  // FlipX / FlipXY
-        if ((mode == 2u || mode == 3u) && (i32(cy) & 1) != 0) { v = 1.0 - v; }  // FlipY / FlipXY
-        uv = vec2<f32>(u, v);
-    }
-    let c = textureSampleLevel(rampTex, rampSamp, uv, 0.0);   // binding(1) = image
-    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
-    let a = c.a * cov * params.misc.x;
-    return vec4<f32>(c.rgb * a, a);                            // premultiply
-}
-";
+        private static string BrushShaderWgsl => ShaderSource.Get("BrushShader");
 
         // fs_brushalpha has a different binding set (no coverage texture), so it lives
         // in its own module for a clean auto-inferred pipeline layout.
-        private const string BrushAlphaShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-struct BrushParams {
-    kindSpread : vec4<u32>,
-    g0 : vec4<f32>,
-    rect : vec4<f32>,
-    misc : vec4<f32>,
-};
-
-fn brushT(params : BrushParams, local : vec2<f32>) -> f32 {
-    var t = 0.0;
-    if (params.kindSpread.x == 1u) {
-        t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
-    } else {
-        let d = (local - params.g0.xy) / params.g0.zw;
-        t = length(d);
-    }
-    switch params.kindSpread.y {
-        case 1u: {
-            let f = t - 2.0 * floor(t / 2.0);
-            t = select(f, 2.0 - f, f > 1.0);
-        }
-        case 2u: { t = t - floor(t); }
-        default: { t = clamp(t, 0.0, 1.0); }
-    }
-    return t;
-}
-
-@group(0) @binding(0) var rampTex : texture_2d<f32>;
-@group(0) @binding(1) var rampSamp : sampler;
-@group(0) @binding(2) var<uniform> params : BrushParams;
-
-@fragment
-fn fs_brushalpha(in : VSOut) -> @location(0) vec4<f32> {
-    let local = params.rect.xy + in.uv * params.rect.zw;
-    let a = textureSampleLevel(rampTex, rampSamp, vec2<f32>(brushT(params, local), 0.5), 0.0).a;
-    return vec4<f32>(a, 0.0, 0.0, 1.0);
-}
-";
+        private static string BrushAlphaShaderWgsl => ShaderSource.Get("BrushAlphaShader");
 
         // GPU hit testing: the scene is re-walked into a visual-id buffer where each visual's
         // content coverage writes that visual's packed id (RGBA8 = id bytes; a=1 marks a hit).
         // Painter order means the topmost covering visual wins at each pixel (no blend, and
         // uncovered fragments discard); reading back the query pixel maps a device point to its
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
-        private const string IdShaderWgsl = @"
-struct VSOut {
-    @builtin(position) pos : vec4<f32>,
-    @location(0) color : vec4<f32>,
-    @location(1) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) uv : vec2<f32>) -> VSOut {
-    var o : VSOut;
-    o.pos = vec4<f32>(pos, 0.0, 1.0);
-    o.color = color;
-    o.uv = uv;
-    return o;
-}
-
-@group(0) @binding(0) var covTex : texture_2d<f32>;
-@group(0) @binding(1) var covSamp : sampler;
-
-@fragment
-fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
-    let cov = textureSampleLevel(covTex, covSamp, in.uv, 0.0).r;
-    if (cov < 0.5) { discard; }   // outside the shape -> don't claim this pixel
-    return in.color;              // packed visual id (bytes / 255), a = 1
-}
-";
+        private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
         private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw }
 
@@ -1486,16 +922,16 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 switch (p)
                 {
                     case GeometryFill f:
-                        EmitIdCoverage(GeometryToPath(f.Geometry), world, clip, pr, pg, pb, data, width, height);
+                        EmitIdCoverage(GeometryToPath(f.Geometry, LocalTolerance(world)), world, clip, pr, pg, pb, data, width, height);
                         break;
                     case GeometryStroke s:
-                        EmitIdCoverage(PathStroker.Stroke(s.Geometry, s.Style), world, clip, pr, pg, pb, data, width, height);
+                        EmitIdCoverage(PathStroker.Stroke(s.Geometry, s.Style, LocalTolerance(world)), world, clip, pr, pg, pb, data, width, height);
                         break;
                     case GeometryDrawing d2:
                         if (d2.Fill != null)
-                            EmitIdCoverage(GeometryToPath(d2.Geometry), world, clip, pr, pg, pb, data, width, height);
+                            EmitIdCoverage(GeometryToPath(d2.Geometry, LocalTolerance(world)), world, clip, pr, pg, pb, data, width, height);
                         else if (d2.Stroke != null && d2.StrokeStyle.Thickness > 0)
-                            EmitIdCoverage(PathStroker.Stroke(GeometryToPath(d2.Geometry), d2.StrokeStyle), world, clip, pr, pg, pb, data, width, height);
+                            EmitIdCoverage(PathStroker.Stroke(GeometryToPath(d2.Geometry, LocalTolerance(world)), d2.StrokeStyle, LocalTolerance(world)), world, clip, pr, pg, pb, data, width, height);
                         break;
                     case GlyphRunDraw g:
                     {
@@ -2291,9 +1727,18 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         /// makes those effective.
         /// </summary>
         private static PathGeometry GeometryToPath(Geometry geometry)
-            => geometry.PathCache ??= GeometryToPathCore(geometry);
+            => GeometryToPath(geometry, CurveFlattener.DefaultTolerance);
 
-        private static PathGeometry GeometryToPathCore(Geometry geometry)
+        private static PathGeometry GeometryToPath(Geometry geometry, float tolerance)
+        {
+            if (geometry.PathCache is not null && geometry.PathCacheTolerance <= tolerance)
+                return geometry.PathCache;
+            geometry.PathCache = GeometryToPathCore(geometry, tolerance);
+            geometry.PathCacheTolerance = tolerance;
+            return geometry.PathCache;
+        }
+
+        private static PathGeometry GeometryToPathCore(Geometry geometry, float tolerance)
         {
             var figure = new PathFigure { Closed = true };
             switch (geometry)
@@ -2310,39 +1755,63 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                         figure.Segments.Add(new LineSegment(pg.Points[i]));
                     break;
                 case RoundedRectangleGeometry rr:
-                    return RoundedRectToPath(rr);
+                    return RoundedRectToPath(rr, tolerance);
                 case EllipseGeometry el:
-                    return EllipseToPath(el);
+                    return EllipseToPath(el, tolerance);
                 case GeometryGroup grp:
                 {
                     var merged = new List<PathFigure>();
                     foreach (Geometry child in grp.Children)
-                        merged.AddRange(GeometryToPath(child).Figures);
+                        merged.AddRange(GeometryToPath(child, tolerance).Figures);
                     return new PathGeometry(grp.FillRule, merged);
                 }
             }
             return new PathGeometry(FillRule.NonZero, new List<PathFigure> { figure });
         }
 
-        // An ellipse as four quarter-arcs (cubic Béziers with the kappa offset).
-        private static PathGeometry EllipseToPath(EllipseGeometry el)
+        /// <summary>Test hook: the ellipse-to-path conversion in isolation.</summary>
+        internal static PathGeometry EllipseToPathForTest(Vector2 centre, float rx, float ry, float tolerance)
+            => EllipseToPath(new EllipseGeometry(centre, rx, ry), tolerance);
+
+        // An ellipse as cubic-Bézier arcs. The arc COUNT follows the radius: four quarter-arcs
+        // (the classic kappa construction) carry ~2.7e-4·r of radial error, which is invisible
+        // at r=20 but is 0.16px at r=600 -- past the flattening tolerance, and measurably the
+        // dominant geometric error on a large circle even after the subdivision itself became
+        // adaptive. The error falls as the sixth power of the arc angle, so one extra split
+        // buys a factor of 64 and the count grows very slowly.
+        private static PathGeometry EllipseToPath(EllipseGeometry el, float tolerance)
         {
-            const float Kappa = 0.5522847498f;
             float cx = el.Center.X, cy = el.Center.Y;
             float rx = MathF.Abs(el.RadiusX), ry = MathF.Abs(el.RadiusY);
-            float ox = rx * Kappa, oy = ry * Kappa;
+            int arcs = CurveFlattener.ArcCount(MathF.Max(rx, ry), MathF.PI * 2f, tolerance);
 
-            var f = new PathFigure(new Vector2(cx, cy - ry)) { Closed = true }; // top
-            f.Segments.Add(new CubicBezierSegment(new Vector2(cx + ox, cy - ry), new Vector2(cx + rx, cy - oy), new Vector2(cx + rx, cy))); // -> right
-            f.Segments.Add(new CubicBezierSegment(new Vector2(cx + rx, cy + oy), new Vector2(cx + ox, cy + ry), new Vector2(cx, cy + ry))); // -> bottom
-            f.Segments.Add(new CubicBezierSegment(new Vector2(cx - ox, cy + ry), new Vector2(cx - rx, cy + oy), new Vector2(cx - rx, cy))); // -> left
-            f.Segments.Add(new CubicBezierSegment(new Vector2(cx - rx, cy - oy), new Vector2(cx - ox, cy - ry), new Vector2(cx, cy - ry))); // -> top
+            var f = new PathFigure(new Vector2(cx, cy - ry)) { Closed = true };   // start at the top
+            float step = MathF.PI * 2f / arcs;
+            for (int i = 0; i < arcs; i++)
+            {
+                float a0 = -MathF.PI / 2f + i * step;
+                AppendEllipseArc(f, cx, cy, rx, ry, a0, a0 + step);
+            }
             return new PathGeometry(FillRule.NonZero, new List<PathFigure> { f });
+        }
+
+        // One elliptical arc [a0, a1] as a cubic, using the generalized kappa
+        // alpha = (4/3)·tan((a1-a0)/4) applied to the parametric derivative.
+        private static void AppendEllipseArc(PathFigure f, float cx, float cy, float rx, float ry, float a0, float a1)
+        {
+            float alpha = 4f / 3f * MathF.Tan((a1 - a0) * 0.25f);
+            float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0);
+            float c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
+            var p0 = new Vector2(cx + rx * c0, cy + ry * s0);
+            var p1 = new Vector2(cx + rx * c1, cy + ry * s1);
+            var d0 = new Vector2(-rx * s0, ry * c0);
+            var d1 = new Vector2(-rx * s1, ry * c1);
+            f.Segments.Add(new CubicBezierSegment(p0 + alpha * d0, p1 - alpha * d1, p1));
         }
 
         // A rounded rectangle as four edges and four quarter-ellipse corners
         // (cubic Béziers using the standard kappa control-point offset).
-        private static PathGeometry RoundedRectToPath(RoundedRectangleGeometry rr)
+        private static PathGeometry RoundedRectToPath(RoundedRectangleGeometry rr, float tolerance)
         {
             const float Kappa = 0.5522847498f;
             float x = rr.Rect.X, y = rr.Rect.Y, w = rr.Rect.Width, h = rr.Rect.Height;
@@ -2632,7 +2101,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             // the analytic-AA coverage path rather than flat tessellation.
             if (fill.Geometry is RoundedRectangleGeometry or EllipseGeometry or GeometryGroup)
             {
-                EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
+                EmitCoverageMask(GeometryToPath(fill.Geometry, LocalTolerance(world)), fill.Brush, world, opacity, clip, width, height, format, data);
                 return;
             }
 
@@ -2644,7 +2113,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                 || (fill.Brush is ImageBrush ib && ib.TileMode != TileMode.None);
             if (needsPerPixelBrush)
             {
-                EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
+                EmitCoverageMask(GeometryToPath(fill.Geometry, LocalTolerance(world)), fill.Brush, world, opacity, clip, width, height, format, data);
                 return;
             }
 
@@ -2658,7 +2127,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
             if ((Math.Abs(world.M12) > 1e-6f || Math.Abs(world.M21) > 1e-6f)
                 && !(fill.Brush is ImageBrush srcIb && srcIb.SourceVisual != null))
             {
-                EmitCoverageMask(GeometryToPath(fill.Geometry), fill.Brush, world, opacity, clip, width, height, format, data);
+                EmitCoverageMask(GeometryToPath(fill.Geometry, LocalTolerance(world)), fill.Brush, world, opacity, clip, width, height, format, data);
                 return;
             }
 
@@ -2765,7 +2234,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     EmitShape(rc, rhx, rhy, rcr, (float)(drawing.StrokeStyle.Thickness / 2.0), solidRing, world, opacity, clip, width, height, format, data);
                     return;
                 }
-                PathGeometry path = drawing.Geometry as PathGeometry ?? GeometryToPath(drawing.Geometry);
+                PathGeometry path = drawing.Geometry as PathGeometry ?? GeometryToPath(drawing.Geometry, LocalTolerance(world));
                 EmitStroke(new GeometryStroke(path, strokeBrush, drawing.StrokeStyle), world, opacity, clip, width, height, format, data);
             }
         }
@@ -2792,13 +2261,21 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
                     EmitGpuStroke(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, format, data);
                 return;
             }
-            PathGeometry outline = PathStroker.Stroke(stroke.Geometry, style);
+            PathGeometry outline = PathStroker.Stroke(stroke.Geometry, style, LocalTolerance(world));
             EmitCoverageMask(outline, stroke.Brush, world, opacity, clip, width, height, format, data);
         }
 
         // The SDF stroke uses one device-space half-width, so it is exact only when the world
         // scale is (near-)uniform (rotation is fine; non-uniform scale would need an elliptical
         // pen and stays on PathStroker).
+        // Flattening tolerance for geometry that is subdivided in its LOCAL space and only
+        // afterwards scaled to device pixels by `world`. Passing the device-space default
+        // here would let the world scale magnify the chord error along with the shape --
+        // the reason a zoomed-in rounded rect or a thick round-joined stroke used to show
+        // visible facets while everything drawn analytically beside it stayed smooth.
+        private static float LocalTolerance(Matrix3x2 world)
+            => CurveFlattener.ToleranceForScale(CurveFlattener.ScaleOf(world));
+
         private static bool IsUniformScale(Matrix3x2 m)
         {
             float sx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12);
@@ -3808,6 +3285,27 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
         // ---- GPU resource creation ----
 
+        /// <summary>
+        /// Test hook: compiles one WGSL source through the runtime's own frontend and returns
+        /// the module (IntPtr.Zero on a compile error). wgpu-native embeds naga, so this is the
+        /// exact validator that would reject the shader at runtime -- a build-time check against
+        /// a separately-installed tool could disagree with it.
+        /// </summary>
+        internal IntPtr CompileShaderForTest(string wgsl)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(wgsl);
+            fixed (byte* p = bytes)
+            {
+                var src = new WGPUShaderSourceWGSL
+                {
+                    chain = new WGPUChainedStruct { next = null, sType = WGPUSType_ShaderSourceWGSL },
+                    code = new WGPUStringView { data = p, length = (nuint)bytes.Length },
+                };
+                var desc = new WGPUShaderModuleDescriptor { nextInChain = (WGPUChainedStruct*)&src };
+                return wgpuDeviceCreateShaderModule(_ctx.Device, &desc);
+            }
+        }
+
         private IntPtr GetShaderModule()
         {
             if (_shaderModule != IntPtr.Zero) return _shaderModule;
@@ -4232,7 +3730,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         {
             tex = IntPtr.Zero; view = IntPtr.Zero; ox = oy = w = h = 0;
             _edgeScratch.Clear();
-            int segCount = PathRasterizer.SegmentsToQuadratics(path, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            int segCount = PathRasterizer.SegmentsToCubics(path, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
             if (segCount == 0 || minX > maxX) return false;
             ox = (int)MathF.Floor(minX) - 1;
             oy = (int)MathF.Floor(minY) - 1;
@@ -4283,7 +3781,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
 
             _edgeScratch.Clear();
             var outline = new PathGeometry(FillRule.NonZero, figures);
-            int segCount = PathRasterizer.SegmentsToQuadratics(outline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
+            int segCount = PathRasterizer.SegmentsToCubics(outline, _edgeScratch, out float minX, out float minY, out float maxX, out float maxY);
             if (segCount == 0 || minX > maxX)
                 return _glyphAtlas.AddPacked(glyphId, 0, 0, 0, 0, _outlineFont.PixelsPerEm, out entry, out _, out _, out _, out _);
 
@@ -4400,7 +3898,7 @@ fn fs_id(in : VSOut) -> @location(0) vec4<f32> {
         private (IntPtr Tex, IntPtr View) GpuRasterizeInto(PathGeometry path, int width, int height, int originX, int originY)
         {
             _edgeScratch.Clear();
-            int segCount = PathRasterizer.SegmentsToQuadratics(path, _edgeScratch, out _, out _, out _, out _);
+            int segCount = PathRasterizer.SegmentsToCubics(path, _edgeScratch, out _, out _, out _, out _);
             return GpuCoveragePass(segCount, originX, originY, width, height, path.FillRule, gamma: false);
         }
 

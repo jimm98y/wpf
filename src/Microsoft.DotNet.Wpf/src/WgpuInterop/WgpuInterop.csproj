@@ -22,4 +22,10 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;native\**;Browser\**;Ios\**</DefaultItemExcludes>
   </PropertyGroup>
 
+
+  <ItemGroup>
+    <!-- WGSL sources ship as embedded resources; ShaderSource resolves //#include at load. -->
+    <EmbeddedResource Include="Composition\Shaders\*.wgsl" />
+  </ItemGroup>
+
 </Project>

@@ -54,6 +54,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visuals), so the conversion is cached here.
         internal PathGeometry PathCache;
 
+        // Flattening tolerance PathCache was built for. Curved shapes (ellipse, rounded rect)
+        // are converted to a number of Bézier arcs chosen for that tolerance, so a cache entry
+        // built while zoomed out is too coarse once the world scale tightens the tolerance.
+        // Zoom is stable frame to frame, so this rebuilds on a zoom change and then stays warm.
+        internal float PathCacheTolerance = float.MaxValue;
     }
 
     internal sealed class RectangleGeometry : Geometry

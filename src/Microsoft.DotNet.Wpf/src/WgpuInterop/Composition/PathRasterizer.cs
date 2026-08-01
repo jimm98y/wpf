@@ -40,7 +40,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     internal static class PathRasterizer
     {
         private const int VerticalSamples = 4;       // subsamples per pixel row
-        private const int BezierSteps = 24;          // flattening resolution
 
         private readonly struct Edge
         {
@@ -56,10 +55,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 4x-vertical-subsample exact-horizontal coverage per pixel in a fragment shader.
         /// </summary>
         public static int FlattenToEdges(PathGeometry path, List<float> edges,
-            out float minX, out float minY, out float maxX, out float maxY)
+            out float minX, out float minY, out float maxX, out float maxY,
+            float tolerance = CurveFlattener.DefaultTolerance)
         {
             minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
-            List<List<Vector2>> contours = Flatten(path);
+            List<List<Vector2>> contours = Flatten(path, tolerance);
             int count = 0;
             foreach (List<Vector2> c in contours)
             {
@@ -79,17 +79,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // ---- GPU coverage: path as quadratic Bézier segments (no CPU flattening) ----
 
-        private const int CubicToQuadSpans = 4;   // quadratics per cubic (tangent-matched)
 
         /// <summary>
-        /// Emits the path's outline as QUADRATIC Bézier segments (6 floats each: p0, control,
-        /// p1) into <paramref name="segs"/>, and reports tight point bounds. A line is the
-        /// degenerate quadratic (control = midpoint); cubics are split into a few
-        /// tangent-matched quadratics. The GPU coverage shader (fs_coverage) solves scanline
-        /// crossings analytically from these, so curves are flattened on the GPU, not here.
-        /// Returns the segment count.
+        /// Emits the path's outline as CUBIC Bézier segments (8 floats each: p0, c1, c2, p1)
+        /// into <paramref name="segs"/>, and reports tight point bounds. Returns the count.
+        ///
+        /// Unlike the quadratic form this replaced, the conversion is EXACT and needs no
+        /// tolerance: a line and a quadratic both degree-elevate to a cubic with no error, and
+        /// a cubic is carried through unchanged. The only subdivision is at y-extrema, which
+        /// the coverage shader requires for its monotone crossing test -- not an accuracy
+        /// choice. Approximating a cubic by several quadratics (what the GPU path used to do)
+        /// cost 6-12x more segments for a curved shape, and fs_coverage loops over every
+        /// segment per fragment per subsample row, so that count is its inner-loop bound.
         /// </summary>
-        public static int SegmentsToQuadratics(PathGeometry path, List<float> segs,
+        public static int SegmentsToCubics(PathGeometry path, List<float> segs,
             out float minX, out float minY, out float maxX, out float maxY)
         {
             minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
@@ -103,24 +106,138 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     switch (seg)
                     {
                         case LineSegment l:
-                            count += EmitQuad(segs, cur, (cur + l.Point) * 0.5f, l.Point, ref minX, ref minY, ref maxX, ref maxY);
+                            count += EmitLineAsCubic(segs, cur, l.Point, ref minX, ref minY, ref maxX, ref maxY);
                             cur = l.Point;
                             break;
                         case QuadraticBezierSegment q:
-                            count += EmitQuad(segs, cur, q.Control, q.Point, ref minX, ref minY, ref maxX, ref maxY);
+                            // Exact degree elevation: (p0, (p0+2c)/3, (2c+p1)/3, p1).
+                            count += EmitCubicMonotone(segs, cur, (cur + 2f * q.Control) / 3f,
+                                (2f * q.Control + q.Point) / 3f, q.Point, ref minX, ref minY, ref maxX, ref maxY);
                             cur = q.Point;
                             break;
                         case CubicBezierSegment cb:
-                            count += CubicToQuads(segs, cur, cb.Control1, cb.Control2, cb.Point, ref minX, ref minY, ref maxX, ref maxY);
+                            count += EmitCubicMonotone(segs, cur, cb.Control1, cb.Control2, cb.Point,
+                                ref minX, ref minY, ref maxX, ref maxY);
                             cur = cb.Point;
                             break;
                     }
                 }
-                // Implicitly close the figure for filling.
-                if (cur != start)
-                    count += EmitQuad(segs, cur, (cur + start) * 0.5f, start, ref minX, ref minY, ref maxX, ref maxY);
+                if (cur != start)   // implicitly close the figure for filling
+                    count += EmitLineAsCubic(segs, cur, start, ref minX, ref minY, ref maxX, ref maxY);
             }
             return count;
+        }
+
+        private static int EmitLineAsCubic(List<float> segs, Vector2 a, Vector2 b,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            Vector2 d = (b - a) / 3f;
+            // A line is y-monotone already, so it never needs splitting.
+            EmitCubicRaw(segs, a, a + d, b - d, b, ref minX, ref minY, ref maxX, ref maxY);
+            return 1;
+        }
+
+        // Splits a cubic at its y-extrema so every emitted piece is y-MONOTONE, which
+        // fs_coverage relies on: it brackets exactly one crossing per straddling segment and
+        // solves for it, so a piece that turned around in y would be miscounted.
+        private static int EmitCubicMonotone(List<float> segs, Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            // y'(t)/3 in power form: qa*t^2 + qb*t + qc, from the Bernstein differences.
+            float dA = c1.Y - p0.Y, dB = c2.Y - c1.Y, dC = p1.Y - c2.Y;
+            Span<float> ts = stackalloc float[2];
+            int nt = SolveQuadraticInUnit(dA - 2f * dB + dC, 2f * (dB - dA), dA, ts);
+            if (nt == 2 && ts[0] > ts[1]) { (ts[0], ts[1]) = (ts[1], ts[0]); }
+
+            int emitted = 0;
+            float prev = 0f;
+            for (int i = 0; i < nt; i++)
+            {
+                float t = ts[i];
+                if (t - prev < 1e-5f) continue;                     // degenerate sliver
+                SubCubic(p0, c1, c2, p1, prev, t, out Vector2 a0, out Vector2 a1, out Vector2 a2, out Vector2 a3);
+                EmitCubicRaw(segs, a0, a1, a2, a3, ref minX, ref minY, ref maxX, ref maxY);
+                emitted++;
+                prev = t;
+            }
+            if (1f - prev > 1e-5f || emitted == 0)
+            {
+                SubCubic(p0, c1, c2, p1, prev, 1f, out Vector2 b0, out Vector2 b1, out Vector2 b2, out Vector2 b3);
+                EmitCubicRaw(segs, b0, b1, b2, b3, ref minX, ref minY, ref maxX, ref maxY);
+                emitted++;
+            }
+            return emitted;
+        }
+
+        // Real roots of a*t^2 + b*t + c strictly inside (0,1). Uses the cancellation-free
+        // q-formula for the same reason fs_coverage does -- a and b are both near zero for
+        // the degree-elevated line and quadratic cases that dominate this input.
+        private static int SolveQuadraticInUnit(float a, float b, float c, Span<float> outT)
+        {
+            const float Eps = 1e-4f;
+            int n = 0;
+            if (MathF.Abs(a) < 1e-9f)
+            {
+                if (MathF.Abs(b) > 1e-9f)
+                {
+                    float t = -c / b;
+                    if (t > Eps && t < 1f - Eps) outT[n++] = t;
+                }
+                return n;
+            }
+            float disc = b * b - 4f * a * c;
+            if (disc <= 0f) return 0;
+            float sq = MathF.Sqrt(disc);
+            float q = -0.5f * (b + (b >= 0f ? sq : -sq));
+            foreach (float t in stackalloc float[] { q / a, c / q })
+                if (t > Eps && t < 1f - Eps) outT[n++] = t;
+            return n;
+        }
+
+        // The sub-cubic over [t0, t1], by two de Casteljau splits.
+        private static void SubCubic(Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1, float t0, float t1,
+            out Vector2 o0, out Vector2 o1, out Vector2 o2, out Vector2 o3)
+        {
+            // Right part at t0.
+            Vector2 a1 = Vector2.Lerp(p0, c1, t0), a2 = Vector2.Lerp(c1, c2, t0), a3 = Vector2.Lerp(c2, p1, t0);
+            Vector2 b1 = Vector2.Lerp(a1, a2, t0), b2 = Vector2.Lerp(a2, a3, t0);
+            Vector2 m = Vector2.Lerp(b1, b2, t0);
+            // Then the left part of that, at the remapped t1.
+            float u = t1 >= 1f ? 1f : (t1 - t0) / MathF.Max(1f - t0, 1e-9f);
+            Vector2 d1 = Vector2.Lerp(m, b2, u), d2 = Vector2.Lerp(b2, a3, u), d3 = Vector2.Lerp(a3, p1, u);
+            Vector2 e1 = Vector2.Lerp(d1, d2, u), e2 = Vector2.Lerp(d2, d3, u);
+            o0 = m; o1 = d1; o2 = e1; o3 = Vector2.Lerp(e1, e2, u);
+        }
+
+        private static void EmitCubicRaw(List<float> segs, Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            segs.Add(p0.X); segs.Add(p0.Y);
+            segs.Add(c1.X); segs.Add(c1.Y);
+            segs.Add(c2.X); segs.Add(c2.Y);
+            segs.Add(p1.X); segs.Add(p1.Y);
+            AccCubicBounds(p0, c1, c2, p1, ref minX, ref minY, ref maxX, ref maxY);
+        }
+
+        // Tight bounds of a cubic: endpoints plus the interior axis extrema.
+        private static void AccCubicBounds(Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1,
+            ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            Acc(p0.X, p0.Y, ref minX, ref minY, ref maxX, ref maxY);
+            Acc(p1.X, p1.Y, ref minX, ref minY, ref maxX, ref maxY);
+            Span<float> ts = stackalloc float[2];
+            for (int axis = 0; axis < 2; axis++)
+            {
+                float v0 = axis == 0 ? p0.X : p0.Y, v1 = axis == 0 ? c1.X : c1.Y;
+                float v2 = axis == 0 ? c2.X : c2.Y, v3 = axis == 0 ? p1.X : p1.Y;
+                float dA = v1 - v0, dB = v2 - v1, dC = v3 - v2;
+                int nt = SolveQuadraticInUnit(dA - 2f * dB + dC, 2f * (dB - dA), dA, ts);
+                for (int i = 0; i < nt; i++)
+                {
+                    Vector2 pt = CubicPoint(p0, c1, c2, p1, ts[i]);
+                    Acc(pt.X, pt.Y, ref minX, ref minY, ref maxX, ref maxY);
+                }
+            }
         }
 
         /// <summary>
@@ -129,7 +246,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// figures are not closed; closed figures add the wrap segment. Returns the segment count.
         /// </summary>
         public static int FlattenCenterlineSegments(PathGeometry path, List<float> segs,
-            out float minX, out float minY, out float maxX, out float maxY)
+            out float minX, out float minY, out float maxX, out float maxY,
+            float tolerance = CurveFlattener.DefaultTolerance)
         {
             minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
             int count = 0;
@@ -140,19 +258,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 pts.Add(figure.Start);
                 Vector2 cur = figure.Start;
                 foreach (PathSegment seg in figure.Segments)
-                {
-                    switch (seg)
-                    {
-                        case LineSegment l:
-                            pts.Add(l.Point); cur = l.Point; break;
-                        case QuadraticBezierSegment q:
-                            for (int i = 1; i <= BezierSteps; i++) pts.Add(Quadratic(cur, q.Control, q.Point, i / (float)BezierSteps));
-                            cur = q.Point; break;
-                        case CubicBezierSegment c:
-                            for (int i = 1; i <= BezierSteps; i++) pts.Add(Cubic(cur, c.Control1, c.Control2, c.Point, i / (float)BezierSteps));
-                            cur = c.Point; break;
-                    }
-                }
+                    cur = AppendSegment(pts, cur, seg, tolerance);
                 if (pts.Count < 2) continue;
                 foreach (Vector2 p in pts) Acc(p.X, p.Y, ref minX, ref minY, ref maxX, ref maxY);
                 for (int i = 0; i < pts.Count - 1; i++)
@@ -169,61 +275,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return count;
         }
 
-        // Emits a quadratic segment, first splitting it at its y-extremum so every emitted segment
-        // is y-MONOTONE. The GPU coverage shader relies on this for its robust endpoint-based
-        // scanline crossing test (a non-monotone segment could cross a scanline twice, which the
-        // single-root test would miscount).
-        private static int EmitQuad(List<float> segs, Vector2 p0, Vector2 c, Vector2 p1,
-            ref float minX, ref float minY, ref float maxX, ref float maxY)
-        {
-            float denom = p0.Y - 2f * c.Y + p1.Y;
-            if (MathF.Abs(denom) > 1e-9f)
-            {
-                float ts = (p0.Y - c.Y) / denom;   // y-extremum parameter
-                if (ts > 1e-4f && ts < 1f - 1e-4f)
-                {
-                    Vector2 m0 = Vector2.Lerp(p0, c, ts);
-                    Vector2 m1 = Vector2.Lerp(c, p1, ts);
-                    Vector2 mid = Vector2.Lerp(m0, m1, ts);
-                    EmitQuadRaw(segs, p0, m0, mid, ref minX, ref minY, ref maxX, ref maxY);
-                    EmitQuadRaw(segs, mid, m1, p1, ref minX, ref minY, ref maxX, ref maxY);
-                    return 2;
-                }
-            }
-            EmitQuadRaw(segs, p0, c, p1, ref minX, ref minY, ref maxX, ref maxY);
-            return 1;
-        }
 
-        private static void EmitQuadRaw(List<float> segs, Vector2 p0, Vector2 c, Vector2 p1,
-            ref float minX, ref float minY, ref float maxX, ref float maxY)
-        {
-            segs.Add(p0.X); segs.Add(p0.Y);
-            segs.Add(c.X); segs.Add(c.Y);
-            segs.Add(p1.X); segs.Add(p1.Y);
-            AccQuadBounds(p0, c, p1, ref minX, ref minY, ref maxX, ref maxY);
-        }
 
-        // Tight bounds of a quadratic: endpoints plus the interior axis extrema.
-        private static void AccQuadBounds(Vector2 p0, Vector2 c, Vector2 p1,
-            ref float minX, ref float minY, ref float maxX, ref float maxY)
-        {
-            Acc(p0.X, p0.Y, ref minX, ref minY, ref maxX, ref maxY);
-            Acc(p1.X, p1.Y, ref minX, ref minY, ref maxX, ref maxY);
-            AccQuadAxisExtremum(p0.X, c.X, p1.X, p0, c, p1, axisX: true, ref minX, ref minY, ref maxX, ref maxY);
-            AccQuadAxisExtremum(p0.Y, c.Y, p1.Y, p0, c, p1, axisX: false, ref minX, ref minY, ref maxX, ref maxY);
-        }
 
-        private static void AccQuadAxisExtremum(float a0, float a1, float a2, Vector2 p0, Vector2 c, Vector2 p1,
-            bool axisX, ref float minX, ref float minY, ref float maxX, ref float maxY)
-        {
-            float denom = a0 - 2f * a1 + a2;
-            if (MathF.Abs(denom) < 1e-9f) return;
-            float t = (a0 - a1) / denom;
-            if (t <= 0f || t >= 1f) return;
-            float mt = 1f - t;
-            Vector2 p = mt * mt * p0 + 2f * mt * t * c + t * t * p1;
-            Acc(p.X, p.Y, ref minX, ref minY, ref maxX, ref maxY);
-        }
 
         private static void Acc(float x, float y, ref float minX, ref float minY, ref float maxX, ref float maxY)
         {
@@ -231,26 +285,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             maxX = MathF.Max(maxX, x); maxY = MathF.Max(maxY, y);
         }
 
-        // Splits a cubic into tangent-matched quadratics: evaluate the cubic and its derivative
-        // at span boundaries; each quadratic's control is the intersection of the endpoint
-        // tangents (midpoint if parallel). Far more accurate per segment than line flattening.
-        private static int CubicToQuads(List<float> segs, Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1,
-            ref float minX, ref float minY, ref float maxX, ref float maxY)
-        {
-            int n = 0;
-            Vector2 prev = p0;
-            Vector2 prevTan = CubicTangent(p0, c1, c2, p1, 0f);
-            for (int i = 1; i <= CubicToQuadSpans; i++)
-            {
-                float t = i / (float)CubicToQuadSpans;
-                Vector2 pt = CubicPoint(p0, c1, c2, p1, t);
-                Vector2 tan = CubicTangent(p0, c1, c2, p1, t);
-                Vector2 ctrl = TangentIntersect(prev, prevTan, pt, tan);
-                n += EmitQuad(segs, prev, ctrl, pt, ref minX, ref minY, ref maxX, ref maxY);
-                prev = pt; prevTan = tan;
-            }
-            return n;
-        }
 
         private static Vector2 CubicPoint(Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1, float t)
         {
@@ -274,9 +308,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return a0 + s * d0;
         }
 
-        public static CoverageMask Rasterize(PathGeometry path)
+        public static CoverageMask Rasterize(PathGeometry path, float tolerance = CurveFlattener.DefaultTolerance)
         {
-            List<List<Vector2>> contours = Flatten(path);
+            List<List<Vector2>> contours = Flatten(path, tolerance);
             if (contours.Count == 0)
                 return default;
 
@@ -314,9 +348,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// maps to device pixel (<paramref name="originX"/>, <paramref name="originY"/>).
         /// Used to build a region-sized clip/opacity mask aligned to a card-sized layer.
         /// </summary>
-        public static byte[] RasterizeInto(PathGeometry path, int width, int height, int originX, int originY)
+        public static byte[] RasterizeInto(PathGeometry path, int width, int height, int originX, int originY,
+            float tolerance = CurveFlattener.DefaultTolerance)
         {
-            List<List<Vector2>> contours = Flatten(path);
+            List<List<Vector2>> contours = Flatten(path, tolerance);
             return FillCoverage(contours, path.FillRule, originX, originY, width, height);
         }
 
@@ -403,7 +438,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
-        private static List<List<Vector2>> Flatten(PathGeometry path)
+        private static List<List<Vector2>> Flatten(PathGeometry path, float tolerance)
         {
             var contours = new List<List<Vector2>>();
             foreach (PathFigure figure in path.Figures)
@@ -412,28 +447,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Vector2 current = figure.Start;
                 foreach (PathSegment seg in figure.Segments)
                 {
-                    switch (seg)
-                    {
-                        case LineSegment l:
-                            pts.Add(l.Point);
-                            current = l.Point;
-                            break;
-                        case QuadraticBezierSegment q:
-                            for (int i = 1; i <= BezierSteps; i++)
-                                pts.Add(Quadratic(current, q.Control, q.Point, i / (float)BezierSteps));
-                            current = q.Point;
-                            break;
-                        case CubicBezierSegment c:
-                            for (int i = 1; i <= BezierSteps; i++)
-                                pts.Add(Cubic(current, c.Control1, c.Control2, c.Point, i / (float)BezierSteps));
-                            current = c.Point;
-                            break;
-                    }
+                    current = AppendSegment(pts, current, seg, tolerance);
                 }
                 if (pts.Count >= 3)
                     contours.Add(pts);
             }
             return contours;
+        }
+
+        /// <summary>
+        /// Appends a segment's flattened points (excluding the start point, which the caller
+        /// already holds) and returns the new current point. Curves are subdivided to
+        /// <paramref name="tolerance"/> rather than a fixed step count, so a large curve stops
+        /// faceting and a small one stops over-tessellating. Shared by every CPU flattening
+        /// site so they cannot drift apart.
+        /// </summary>
+        internal static Vector2 AppendSegment(List<Vector2> pts, Vector2 current, PathSegment seg, float tolerance)
+        {
+            switch (seg)
+            {
+                case LineSegment l:
+                    pts.Add(l.Point);
+                    return l.Point;
+                case QuadraticBezierSegment q:
+                {
+                    int n = CurveFlattener.QuadraticSteps(current, q.Control, q.Point, tolerance);
+                    for (int i = 1; i <= n; i++) pts.Add(Quadratic(current, q.Control, q.Point, i / (float)n));
+                    return q.Point;
+                }
+                case CubicBezierSegment c:
+                {
+                    int n = CurveFlattener.CubicSteps(current, c.Control1, c.Control2, c.Point, tolerance);
+                    for (int i = 1; i <= n; i++) pts.Add(Cubic(current, c.Control1, c.Control2, c.Point, i / (float)n));
+                    return c.Point;
+                }
+                default:
+                    return current;
+            }
         }
 
         private static Vector2 Quadratic(Vector2 p0, Vector2 c, Vector2 p1, float t)

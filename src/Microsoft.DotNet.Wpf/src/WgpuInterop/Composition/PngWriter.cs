@@ -2,13 +2,18 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// A tiny dependency-free PNG encoder (zlib "stored" blocks) used only to dump a
-// screenshot of an off-screen WebGPU render for diagnostics/demos. Takes straight
-// RGBA, writes 8-bit RGB; optionally box-downsamples so the file stays viewable.
+// A tiny dependency-free PNG encoder. Takes straight RGBA, writes 8-bit RGB;
+// optionally box-downsamples so the file stays viewable.
+//
+// Originally emitted zlib "stored" (uncompressed) blocks, which was fine when the only
+// consumer was an ad-hoc diagnostic screenshot. The render-baseline test commits its
+// images, and uncompressed PNGs made that 1.7 MB for ten small scenes, so this now
+// deflates properly via the BCL. PngReader handles both forms.
 //
 
 using System;
 using System.IO;
+using System.IO.Compression;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
@@ -45,7 +50,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             using var fs = new FileStream(path, FileMode.Create);
             fs.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, 0, 8);
             WriteChunk(fs, "IHDR", Ihdr(ow, oh));
-            WriteChunk(fs, "IDAT", ZlibStore(raw));
+            WriteChunk(fs, "IDAT", ZlibDeflate(raw));
             WriteChunk(fs, "IEND", Array.Empty<byte>());
         }
 
@@ -58,21 +63,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return b;
         }
 
-        private static byte[] ZlibStore(byte[] data)
+        // zlib container: 2-byte header, raw deflate, Adler-32 of the UNCOMPRESSED data.
+        private static byte[] ZlibDeflate(byte[] data)
         {
             using var ms = new MemoryStream();
-            ms.WriteByte(0x78); ms.WriteByte(0x01);           // zlib header
-            int pos = 0;
-            while (pos < data.Length)
-            {
-                int len = Math.Min(65535, data.Length - pos);
-                bool final = pos + len >= data.Length;
-                ms.WriteByte((byte)(final ? 1 : 0));          // BFINAL, BTYPE=00 (stored)
-                ms.WriteByte((byte)(len & 0xff)); ms.WriteByte((byte)(len >> 8));
-                ms.WriteByte((byte)(~len & 0xff)); ms.WriteByte((byte)((~len >> 8) & 0xff));
-                ms.Write(data, pos, len);
-                pos += len;
-            }
+            ms.WriteByte(0x78); ms.WriteByte(0x9C);           // zlib header, default compression
+            using (var ds = new DeflateStream(ms, CompressionLevel.Optimal, leaveOpen: true))
+                ds.Write(data, 0, data.Length);
             uint adler = Adler32(data);
             ms.WriteByte((byte)(adler >> 24)); ms.WriteByte((byte)(adler >> 16));
             ms.WriteByte((byte)(adler >> 8)); ms.WriteByte((byte)adler);

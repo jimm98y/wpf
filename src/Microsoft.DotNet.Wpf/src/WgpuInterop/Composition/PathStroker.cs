@@ -23,10 +23,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
     internal static class PathStroker
     {
-        private const int BezierSteps = 24;
-        private const int DiscSegments = 24;
-
-        public static PathGeometry Stroke(PathGeometry geometry, StrokeStyle style)
+        public static PathGeometry Stroke(PathGeometry geometry, StrokeStyle style,
+            float tolerance = CurveFlattener.DefaultTolerance)
         {
             float half = (float)(style.Thickness / 2.0);
             var contours = new List<PathFigure>();
@@ -36,29 +34,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             foreach (PathFigure figure in geometry.Figures)
             {
-                List<Vector2> pts = FlattenFigure(figure);
+                List<Vector2> pts = FlattenFigure(figure, tolerance);
                 RemoveDuplicates(pts);
                 if (pts.Count < 2)
                 {
-                    if (pts.Count == 1 && style.Cap == LineCap.Round) AddDisc(contours, pts[0], half);
+                    if (pts.Count == 1 && style.Cap == LineCap.Round) AddDisc(contours, pts[0], half, tolerance);
                     continue;
                 }
 
                 if (dashed)
                 {
                     foreach (List<Vector2> run in DashPolyline(pts, figure.Closed, style.DashArray!, style.DashOffset))
-                        StrokePolyline(run, closed: false, style, half, contours);
+                        StrokePolyline(run, closed: false, style, half, contours, tolerance);
                 }
                 else
                 {
-                    StrokePolyline(pts, figure.Closed, style, half, contours);
+                    StrokePolyline(pts, figure.Closed, style, half, contours, tolerance);
                 }
             }
 
             return new PathGeometry(FillRule.NonZero, contours);
         }
 
-        private static void StrokePolyline(List<Vector2> pts, bool closed, StrokeStyle style, float half, List<PathFigure> contours)
+        private static void StrokePolyline(List<Vector2> pts, bool closed, StrokeStyle style, float half, List<PathFigure> contours,
+            float tolerance)
         {
             int n = pts.Count;
             if (n < 2) return;
@@ -83,28 +82,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Vector2 prev = pts[(i - 1 + n) % n];
                 Vector2 cur = pts[i];
                 Vector2 next = pts[(i + 1) % n];
-                AddJoin(contours, prev, cur, next, half, style.Join, style.MiterLimit);
+                AddJoin(contours, prev, cur, next, half, style.Join, style.MiterLimit, tolerance);
             }
 
             // Caps on open figures.
             if (!closed)
             {
-                AddCap(contours, pts[1], pts[0], half, style.Cap);
-                AddCap(contours, pts[n - 2], pts[n - 1], half, style.Cap);
+                AddCap(contours, pts[1], pts[0], half, style.Cap, tolerance);
+                AddCap(contours, pts[n - 2], pts[n - 1], half, style.Cap, tolerance);
             }
         }
 
-        private static void AddCap(List<PathFigure> contours, Vector2 inner, Vector2 end, float half, LineCap cap)
+        private static void AddCap(List<PathFigure> contours, Vector2 inner, Vector2 end, float half, LineCap cap, float tolerance)
         {
             Vector2 d = end - inner;
             float len = d.Length();
-            if (len < 1e-4f) { if (cap == LineCap.Round) AddDisc(contours, end, half); return; }
+            if (len < 1e-4f) { if (cap == LineCap.Round) AddDisc(contours, end, half, tolerance); return; }
             d /= len; // outward direction, past the end point
 
             switch (cap)
             {
                 case LineCap.Round:
-                    AddDisc(contours, end, half);
+                    AddDisc(contours, end, half, tolerance);
                     break;
                 case LineCap.Square:
                 {
@@ -118,7 +117,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static void AddJoin(List<PathFigure> contours, Vector2 prev, Vector2 cur, Vector2 next,
-            float half, LineJoin join, double miterLimit)
+            float half, LineJoin join, double miterLimit, float tolerance)
         {
             Vector2 d0 = prev == cur ? Vector2.Zero : Vector2.Normalize(cur - prev);
             Vector2 d1 = next == cur ? Vector2.Zero : Vector2.Normalize(next - cur);
@@ -127,7 +126,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float cross = d0.X * d1.Y - d0.Y * d1.X;
             if (MathF.Abs(cross) < 1e-4f) return; // straight (or anti-parallel): no join gap
 
-            if (join == LineJoin.Round) { AddDisc(contours, cur, half); return; }
+            if (join == LineJoin.Round) { AddDisc(contours, cur, half, tolerance); return; }
 
             // Outer side: derived so the apex lands on the convex side of the turn.
             float s = cross > 0f ? -1f : 1f;
@@ -146,12 +145,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddContour(contours, new[] { cur, pIn, pOut }); // bevel (also the miter-limit fallback)
         }
 
-        private static void AddDisc(List<PathFigure> contours, Vector2 center, float radius)
+        // The ring for a round join/cap. The segment count follows the pen radius: a fixed
+        // count (this used to be 24) visibly polygonizes a thick pen -- a 40px-radius round
+        // cap had ~1.4px of chord sag -- while wasting vertices on a hairline.
+        private static void AddDisc(List<PathFigure> contours, Vector2 center, float radius, float tolerance)
         {
-            var ring = new Vector2[DiscSegments];
-            for (int i = 0; i < DiscSegments; i++)
+            int n = CurveFlattener.CircleSteps(radius, tolerance);
+            var ring = new Vector2[n];
+            for (int i = 0; i < n; i++)
             {
-                float t = i / (float)DiscSegments * MathF.PI * 2f;
+                float t = i / (float)n * MathF.PI * 2f;
                 ring[i] = new Vector2(center.X + MathF.Cos(t) * radius, center.Y + MathF.Sin(t) * radius);
             }
             AddContour(contours, ring);
@@ -259,36 +262,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return s;
         }
 
-        private static List<Vector2> FlattenFigure(PathFigure figure)
+        // Shares PathRasterizer's flattening so the stroke centre-line and the fill of the same
+        // path can never disagree about where a curve is.
+        private static List<Vector2> FlattenFigure(PathFigure figure, float tolerance)
         {
             var pts = new List<Vector2> { figure.Start };
             Vector2 current = figure.Start;
             foreach (PathSegment seg in figure.Segments)
-            {
-                switch (seg)
-                {
-                    case LineSegment l:
-                        pts.Add(l.Point);
-                        current = l.Point;
-                        break;
-                    case QuadraticBezierSegment q:
-                        for (int i = 1; i <= BezierSteps; i++)
-                        {
-                            float t = i / (float)BezierSteps, u = 1f - t;
-                            pts.Add(u * u * current + 2f * u * t * q.Control + t * t * q.Point);
-                        }
-                        current = q.Point;
-                        break;
-                    case CubicBezierSegment c:
-                        for (int i = 1; i <= BezierSteps; i++)
-                        {
-                            float t = i / (float)BezierSteps, u = 1f - t;
-                            pts.Add(u * u * u * current + 3f * u * u * t * c.Control1 + 3f * u * t * t * c.Control2 + t * t * t * c.Point);
-                        }
-                        current = c.Point;
-                        break;
-                }
-            }
+                current = PathRasterizer.AppendSegment(pts, current, seg, tolerance);
             return pts;
         }
 
