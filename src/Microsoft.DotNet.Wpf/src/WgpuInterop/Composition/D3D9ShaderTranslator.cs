@@ -11,6 +11,15 @@
 // unchanged (MILCMD_PIXELSHADER carries the blob, MILCMD_SHADEREFFECT the constant
 // registers and samplers), so this translator is the missing piece, not the plumbing.
 //
+// VERIFIED AGAINST: d3d9types.h and WpfGfx/core/fxjit/PixelShader/pstrans.cpp, both vendored
+// in this repo -- Microsoft's own opcode table and reference D3D9 pixel-shader translator, and
+// the same header fxc targets. All 31 opcodes and the token bit layout (register-type split,
+// write mask, swizzle, modifier shifts) were diffed against it. That cross-check found two
+// real bugs a hand-assembled test could not: D3DSIO_DEF read as 40 (it is 81; 40 is IF), and
+// three source modifiers mapped to the wrong semantics. It does NOT substitute for running
+// real fxc output through this -- no compiler or .ps asset exists on macOS -- but it removes
+// the guesswork from everything the format specifies.
+//
 // SCOPE: the arithmetic and texture core of ps_2_0, which is what shipping WPF effects
 // actually use -- they are small, branchless kernels over one or two input samplers.
 // Explicitly NOT handled (rejected with a reason rather than mistranslated):
@@ -48,6 +57,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
     internal static class D3D9ShaderTranslator
     {
+        // Carries the symbol tables through translation and lets any depth abort. Rejection
+        // has to be reachable from inside source-operand decoding, so it cannot be a return
+        // value threaded back by hand without obscuring every call site.
+        private sealed class Ctx
+        {
+            public readonly Dictionary<int, string> Consts = new();
+            public readonly SortedSet<int> Temps = new();
+            public int MaxConstReg = -1;
+            public string? Reason;
+            public void Reject(string why) => Reason ??= why;
+            public bool Failed => Reason is not null;
+        }
+
+
         // D3DSIO_* opcodes actually emitted by fxc for arithmetic ps_2_0 kernels.
         private const int OpNop = 0, OpMov = 1, OpAdd = 2, OpSub = 3, OpMad = 4, OpMul = 5;
         private const int OpRcp = 6, OpRsq = 7, OpDp3 = 8, OpDp4 = 9, OpMin = 10, OpMax = 11;
@@ -94,9 +117,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
 
             var body = new StringBuilder();
-            var temps = new SortedSet<int>();
-            var consts = new Dictionary<int, string>();   // DEF-supplied literals
-            int maxConstReg = -1;
+            var ctx = new Ctx();
             bool wroteOutput = false;
 
             int p = 1;
@@ -136,7 +157,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float f1 = BitConverter.UInt32BitsToSingle(tok[a + 2]);
                         float f2 = BitConverter.UInt32BitsToSingle(tok[a + 3]);
                         float f3 = BitConverter.UInt32BitsToSingle(tok[a + 4]);
-                        consts[reg] = $"vec4<f32>({F(f0)}, {F(f1)}, {F(f2)}, {F(f3)})";
+                        ctx.Consts[reg] = $"vec4<f32>({F(f0)}, {F(f1)}, {F(f2)}, {F(f3)})";
                         break;
                     }
 
@@ -147,25 +168,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         int sreg = (int)(tok[a + 2] & 0x7FF);
                         if (RegType(tok[a + 2]) != RegSampler) { reason = "texld source 1 is not a sampler"; return false; }
                         if (!result.Samplers.Contains(sreg)) result.Samplers.Add(sreg);
-                        string coord = Src(tok[a + 1], consts, temps, ref maxConstReg);
+                        string coord = Src(tok[a + 1], ctx);
                         Emit(body, tok[a], $"textureSample(effTex{sreg}, effSamp{sreg}, ({coord}).xy)",
-                            temps, ref wroteOutput);
+                            ctx, ref wroteOutput);
                         break;
                     }
 
                     default:
                     {
-                        string? expr = Arith(opcode, tok, a, len, consts, temps, ref maxConstReg, out string why);
+                        string? expr = Arith(opcode, tok, a, len, ctx, out string why);
                         if (expr is null)
                         {
                             reason = why;
                             return false;
                         }
-                        Emit(body, tok[a], expr, temps, ref wroteOutput);
+                        Emit(body, tok[a], expr, ctx, ref wroteOutput);
                         break;
                     }
                 }
 
+                if (ctx.Failed) { reason = ctx.Reason!; return false; }
                 p += 1 + len;
             }
 
@@ -175,16 +197,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return false;
             }
 
-            result.FloatRegisterCount = maxConstReg + 1;
+            result.FloatRegisterCount = ctx.MaxConstReg + 1;
             result.Samplers.Sort();
-            result.Wgsl = Assemble(body.ToString(), temps, result);
+            result.Wgsl = Assemble(body.ToString(), ctx.Temps, result);
             return true;
         }
 
         // ---- instruction translation ----
 
-        private static string? Arith(int opcode, uint[] tok, int a, int len,
-            Dictionary<int, string> consts, SortedSet<int> temps, ref int maxConst, out string why)
+        private static string? Arith(int opcode, uint[] tok, int a, int len, Ctx ctx, out string why)
         {
             why = "";
             // Sources are resolved up front: a local function cannot capture a ref parameter,
@@ -192,7 +213,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int srcCount = Math.Max(0, len - 1);
             var src = new string[3];
             for (int i = 0; i < srcCount && i < 3; i++)
-                src[i] = Src(tok[a + 1 + i], consts, temps, ref maxConst);
+                src[i] = Src(tok[a + 1 + i], ctx);
             string S(int i) => src[i] ?? "vec4<f32>(0.0)";
 
             switch (opcode)
@@ -232,7 +253,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Writes `expr` into the destination register, honouring the write mask and the
         // saturate result modifier.
-        private static void Emit(StringBuilder body, uint dst, string expr, SortedSet<int> temps, ref bool wroteOutput)
+        private static void Emit(StringBuilder body, uint dst, string expr, Ctx ctx, ref bool wroteOutput)
         {
             int type = RegType(dst);
             int reg = (int)(dst & 0x7FF);
@@ -243,7 +264,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             string target;
             if (type == RegColorOut) { target = "oC0"; wroteOutput = true; }
-            else { temps.Add(reg); target = $"r{reg}"; }
+            else { ctx.Temps.Add(reg); target = $"r{reg}"; }
 
             if (mask is 0 or 0xF)
             {
@@ -263,7 +284,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         // Reads a source parameter: register, swizzle and source modifier.
-        private static string Src(uint t, Dictionary<int, string> consts, SortedSet<int> temps, ref int maxConst)
+        private static string Src(uint t, Ctx ctx)
         {
             int type = RegType(t);
             int reg = (int)(t & 0x7FF);
@@ -273,10 +294,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             string baseExpr;
             switch (type)
             {
-                case RegTemp: temps.Add(reg); baseExpr = $"r{reg}"; break;
+                case RegTemp: ctx.Temps.Add(reg); baseExpr = $"r{reg}"; break;
                 case RegConst:
-                    if (consts.TryGetValue(reg, out string? lit)) { baseExpr = lit; }
-                    else { if (reg > maxConst) maxConst = reg; baseExpr = $"effConst[{reg}]"; }
+                    if (ctx.Consts.TryGetValue(reg, out string? lit)) { baseExpr = lit; }
+                    else { if (reg > ctx.MaxConstReg) ctx.MaxConstReg = reg; baseExpr = $"effConst[{reg}]"; }
                     break;
                 // t# in ps_2_0 is the interpolated texture coordinate set; WPF's ShaderEffect
                 // gives every effect the same single uv set, so they all resolve to it.
@@ -294,16 +315,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 baseExpr = $"({baseExpr}){sb}";
             }
 
-            // D3DSPSM_* source modifiers.
-            return mod switch
+            // D3DSPSM_* source modifiers, per d3d9types.h and WpfGfx's own pstrans.cpp
+            // (fxjit/PixelShader), which is the reference implementation in this repo.
+            // These were previously guessed and three of them were wrong: 2 is BIAS (x-0.5),
+            // not x*2-1; 4 is SIGN (_bx2), not complement; complement is 6. Anything not
+            // expressible here REJECTS -- the old code fell through to the unmodified source,
+            // which would silently compute the wrong thing.
+            switch (mod)
             {
-                0 => baseExpr,                                        // none
-                1 => $"(-{baseExpr})",                                // negate
-                2 => $"(({baseExpr}) * 2.0 - vec4<f32>(1.0))",        // bias*2-1 (_bx2 without the bias step)
-                3 => $"(-(({baseExpr}) * 2.0 - vec4<f32>(1.0)))",     // -_bx2
-                4 => $"(vec4<f32>(1.0) - ({baseExpr}))",              // complement
-                _ => baseExpr,
-            };
+                case 0: return baseExpr;                                          // NONE
+                case 1: return $"(-{baseExpr})";                                  // NEG
+                case 2: return $"(({baseExpr}) - vec4<f32>(0.5))";                // BIAS
+                case 3: return $"(-(({baseExpr}) - vec4<f32>(0.5)))";             // BIASNEG
+                case 4: return $"((({baseExpr}) - vec4<f32>(0.5)) * 2.0)";        // SIGN (_bx2)
+                case 5: return $"(-((({baseExpr}) - vec4<f32>(0.5)) * 2.0))";     // SIGNNEG
+                case 6: return $"(vec4<f32>(1.0) - ({baseExpr}))";                // COMP
+                case 7: return $"(({baseExpr}) * 2.0)";                           // X2
+                case 8: return $"(-(({baseExpr}) * 2.0))";                        // X2NEG
+                case 11: return $"abs({baseExpr})";                               // ABS
+                case 12: return $"(-abs({baseExpr}))";                            // ABSNEG
+                default:
+                    // 9 DZ / 10 DW are projective divides; 13 NOT is predicate-only.
+                    ctx.Reject($"unsupported source modifier {mod}");
+                    return baseExpr;
+            }
         }
 
         // D3D9 splits the register type across bits [30:28] and [12:11].

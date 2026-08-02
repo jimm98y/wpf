@@ -73,6 +73,30 @@ internal static class Program
         Case("two samplers + lrp", two, samplers: new[] { 0, 1 }, constCount: 1,
              expect: new[] { "effTex1", "mix(r1, r0, effConst[0])" });
 
+        // --- Source modifiers, checked against d3d9types.h + WpfGfx/fxjit pstrans.cpp ---
+        // These were wrong before (2 read as x*2-1, 4 as complement) and no test caught it,
+        // because every case above uses modifier 0. Values verified against the header in
+        // this repo, which is the same one fxc targets.
+        foreach ((int mod, string name, string expect) in new[]
+        {
+            (1, "NEG", "(-effConst[0])"),
+            (2, "BIAS", "(effConst[0]) - vec4<f32>(0.5)"),
+            (4, "SIGN/_bx2", "((effConst[0]) - vec4<f32>(0.5)) * 2.0"),
+            (6, "COMP", "vec4<f32>(1.0) - (effConst[0])"),
+            (7, "X2", "(effConst[0]) * 2.0"),
+            (11, "ABS", "abs(effConst[0])"),
+        })
+        {
+            byte[] bc = new Ps().Op(Ps.MOV, Dst.ColorOut(), Src.Const(0).Mod(mod)).Build();
+            bool ok = D3D9ShaderTranslator.TryTranslate(bc, out TranslatedShader mr, out string mwhy)
+                      && mr.Wgsl.Contains(expect, StringComparison.Ordinal);
+            Check(ok, $"src modifier {mod} ({name}) emits \"{expect}\"{(ok ? "" : " -- " + mwhy)}");
+        }
+        // A modifier with no WGSL expression must be refused, not silently ignored.
+        Reject("projective divide modifier (DZ)",
+               new Ps().Op(Ps.MOV, Dst.ColorOut(), Src.Const(0).Mod(9)).Build(),
+               contains: "unsupported source modifier");
+
         // --- Rejections ---
         Reject("flow control (if)", new Ps().Raw(Ps.IF, 1, 0).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
                contains: "unsupported opcode");
@@ -313,6 +337,7 @@ internal static class Program
         public static Src Const(int r) => new(2, r);
         public static Src Texture(int r) => new(3, r);
         public static Src Sampler(int r) => new(10, r);
+        public Src Mod(int m) { Token = (Token & ~(0xFu << 24)) | ((uint)m << 24); return this; }
         public Src Swizzle(string s)
         {
             uint sw = 0;
