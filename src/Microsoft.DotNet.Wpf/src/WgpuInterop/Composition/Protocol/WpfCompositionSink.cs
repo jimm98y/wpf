@@ -302,7 +302,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 void Emit(string m) { Log(m); if (s_perfToConsole) Console.WriteLine(m); }
                 Emit($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
                 Emit($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
-                    $"rasterized={WgpuSceneRenderer.PerfCoverage} textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
+                    $"rasterized={WgpuSceneRenderer.PerfCoverage} (localcache={WgpuSceneRenderer.PerfLocalCoverage}) textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
                 if (_gcBytes0 != 0)

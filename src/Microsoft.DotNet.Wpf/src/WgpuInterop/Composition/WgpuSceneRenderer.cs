@@ -57,9 +57,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
+        /// <summary>Draws routed to the local-space (resampled) coverage cache rather than the exact device-space path.</summary>
+        internal static int PerfLocalCoverage;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -134,6 +136,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>End the frame: return pooled layers and evict stale coverage-cache entries.</summary>
         public void EndFrame()
         {
+            // The animation detector holds one small entry per geometry hash ever drawn under a
+            // rotation. Nothing else would ever remove them, so a long session accumulates one
+            // per shape forever; anything untouched for a few frames is not animating by
+            // definition and costs only 3 frames to re-detect.
+            if (_linearChurn.Count > 0)
+            {
+                List<long>? deadC = null;
+                foreach (KeyValuePair<long, (long Linear, int Frame, int Churn)> kv in _linearChurn)
+                    if (kv.Value.Frame < _frameId - 4) (deadC ??= new List<long>()).Add(kv.Key);
+                if (deadC != null) foreach (long k in deadC) _linearChurn.Remove(k);
+            }
+
             if (_layerCache.Count > 0)
             {
                 List<long>? deadL = null;
@@ -348,8 +362,65 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_shapeBrush =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_SHAPE_BRUSH") == "1";
 
+        // ON by default, set WPF_WEBGPU_LOCAL_COVERAGE_CACHE=0 to disable. It was opt-in while it
+        // cost fidelity -- it engaged for axis-aligned content too, where the device-space path
+        // already caches by integer offset + half-pixel phase and the local-space mask only added
+        // bilinear blur (up to 87 levels on thin strokes). Now that EmitCoverageMask gates it to
+        // rotated/skewed transforms the render baselines are pixel-exact with it on, and it is the
+        // only thing that caches a rotating visual at all: the device key holds the exact linear
+        // part, so a spinner misses every frame. Measured by WgpuInterop.LocalCacheProbe --
+        // 60 rasterizations over 60 frames of a 1-degree-per-frame spin become 1.
         private static readonly bool s_localCoverageCache =
-            Environment.GetEnvironmentVariable("WPF_WEBGPU_LOCAL_COVERAGE_CACHE") == "1";
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_LOCAL_COVERAGE_CACHE") != "0";
+
+        // Shapes whose linear transform is CHANGING frame to frame -- keyed by geometry hash,
+        // holding the last linear part seen and how many consecutive frames it changed for.
+        private readonly Dictionary<long, (long Linear, int Frame, int Churn)> _linearChurn = new();
+        // Frames of continuous change before a shape is treated as animating. 3 keeps a static
+        // rotated visual on the exact device path forever (it never changes, so Churn stays 0)
+        // while a spinner pays only its first few frames at full price.
+        private const int ChurnFramesToCache = 3;
+
+        /// <summary>
+        /// Is this shape's linear transform ANIMATING? The local-space cache resamples its mask
+        /// through the world transform, which costs real fidelity on a rotation (measured at 59
+        /// levels on the transform-rotate baseline), so it is only worth paying when the exact
+        /// device-space mask would be thrown away next frame anyway. A visual sitting still at
+        /// 30 degrees is rasterized once and reused forever by the device path -- there is
+        /// nothing to save there, and no reason to blur it.
+        /// </summary>
+        private bool IsLinearAnimating(long shapeHash, Matrix3x2 world)
+        {
+            long lin = BitConverter.SingleToInt32Bits(world.M11);
+            lin = lin * 31 + BitConverter.SingleToInt32Bits(world.M12);
+            lin = lin * 31 + BitConverter.SingleToInt32Bits(world.M21);
+            lin = lin * 31 + BitConverter.SingleToInt32Bits(world.M22);
+
+            if (!_linearChurn.TryGetValue(shapeHash, out (long Linear, int Frame, int Churn) e)
+                || e.Frame < _frameId - 2)          // a gap in the animation restarts the count
+            {
+                _linearChurn[shapeHash] = (lin, _frameId, 0);
+                return false;
+            }
+            // Several draws of one shape within a frame must not read as churn.
+            if (e.Frame == _frameId) return e.Churn >= ChurnFramesToCache;
+
+            int churn = lin == e.Linear ? 0 : e.Churn + 1;
+            _linearChurn[shapeHash] = (lin, _frameId, churn);
+            return churn >= ChurnFramesToCache;
+        }
+
+        /// <summary>
+        /// True when the linear part maps axis-aligned boxes to axis-aligned boxes: a scale/flip
+        /// (0 or 180 degrees) or a quarter turn. Coverage for these rasterizes crisply in device
+        /// space, so they do not need -- and are hurt by -- the local-space cache.
+        /// </summary>
+        private static bool IsAxisAligned(Matrix3x2 m)
+        {
+            const float Eps = 1e-4f;
+            return (MathF.Abs(m.M12) < Eps && MathF.Abs(m.M21) < Eps)
+                || (MathF.Abs(m.M11) < Eps && MathF.Abs(m.M22) < Eps);
+        }
 
         /// <summary>Uniform scale magnitude of a transform's linear part (max of the two row lengths).</summary>
         private static float LinearScale(Matrix3x2 m)
@@ -364,6 +435,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitLocalSpaceCoverage(PathGeometry coverageGeometry, RgbaColor color, Matrix3x2 world,
             double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool gamma)
         {
+            PerfLocalCoverage++;
             GeometryMinCached(coverageGeometry, out float gminX, out float gminY);
 
             // Bucket the raster scale so a smooth zoom reuses masks instead of making one per frame;
@@ -373,7 +445,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             long key = NormalizedHashCached(coverageGeometry, -gminX, -gminY);
             key = key * 31 + BitConverter.SingleToInt32Bits(bucket);
-            key = (key * 397 ^ (long)format) * 4 + (gamma ? 2 : 0) + 1;   // +1 marks the local-space family
+            key = (key * 397 ^ (long)format) * 8 + (_aliasedEdges ? 4 : 0) + (gamma ? 2 : 0) + 1;   // +1 marks the local-space family
 
             if (!_maskCache.TryGetValue(key, out CachedMask? cm))
             {
@@ -400,8 +472,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
                     mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
                 }
-                IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, LinearSampler());
-                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = LinearSampler(), Format = format,
+                // The local-space mask is blitted to a FRACTIONAL destination, so a linear sampler
+                // re-introduces partial coverage at the edges -- which is precisely what
+                // EdgeMode.Aliased asks us not to do. Sampling nearest keeps the hard 0/255 edge
+                // that ApplyAliasedEdges (CPU) / the coverage shader's aliased flag (GPU) produced.
+                IntPtr maskSampler = _aliasedEdges ? NearestSampler() : LinearSampler();
+                IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, maskSampler);
+                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = maskSampler, Format = format,
                     Ox = mox, Oy = moy, W = mw, H = mh };
                 _maskCache[key] = cm;
             }
@@ -2687,7 +2764,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // (Non-solid brushes bake per-texel in the geometry's local space, so they stay local.)
             if (brush is SolidColorBrush solid)
             {
-                if (s_localCoverageCache)
+                // ... but only where it actually buys something, because it is NOT free: it
+                // resamples a local-space mask through the world transform, and that bilinear
+                // blit costs fidelity.
+                //
+                // Two conditions have to hold before it is worth paying.
+                //
+                // Axis-aligned content fails the first: the device-space path below is ALREADY
+                // translation-invariant (integer offset on the quad + <=4 half-pixel phase
+                // variants baked into the mask), so the local cache has the same hit rate and
+                // adds nothing but blur -- up to 87 levels on thin strokes (strokes-joins,
+                // strokes-dashed, mil-arc-large), where the feature is a pixel or two wide.
+                //
+                // Static rotated content fails the second: the device key holds the exact linear
+                // part, so a visual sitting at a fixed angle is rasterized once and reused
+                // forever. Caching it locally would trade 59 levels on transform-rotate for a
+                // saving of zero.
+                //
+                // What is left is the case the cache exists for: an ANIMATING rotation, where the
+                // device path misses every single frame (measured at 60 rasterizations over 60
+                // frames of a 1-degree spin, versus 1 with the cache). There the mask would be
+                // thrown away next frame regardless, so the resample buys a 60x cut for a blur
+                // that is on a moving object for one frame at a time.
+                if (s_localCoverageCache && !IsAxisAligned(world)
+                    && IsLinearAnimating(NormalizedHashCached(coverageGeometry, 0f, 0f), world))
                 {
                     EmitLocalSpaceCoverage(coverageGeometry, solid.Color, world, opacity, clip, width, height, format, data, gamma);
                     return;
@@ -2746,7 +2846,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M22);
                 key = key * 31 + phase;
-                key = (key * 397 ^ (long)format) * 2 + (gamma ? 1 : 0);
+                key = (key * 397 ^ (long)format) * 4 + (_aliasedEdges ? 2 : 0) + (gamma ? 1 : 0);
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
