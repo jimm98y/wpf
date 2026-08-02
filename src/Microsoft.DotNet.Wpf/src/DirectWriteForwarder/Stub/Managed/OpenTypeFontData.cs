@@ -262,6 +262,13 @@ namespace MS.Internal.Text.TextInterface.Managed
             switch (codepoint)
             {
                 case 0xE9AE: mdl2 = 0xE738; return true; // CheckBox indeterminate dash -> "Remove" (minus)
+                // Fluent-only codepoints used by the WPF Gallery's navigation. Each target was
+                // checked to exist in the substitute font before being chosen; a mapping to an
+                // absent glyph would just move the tofu rather than remove it.
+                case 0xEB3C: mdl2 = 0xE790; return true; // "Colors"         -> Color (palette)
+                case 0xED58: mdl2 = 0xE76E; return true; // "Icons"          -> Emoji2
+                case 0xEF58: mdl2 = 0xE9D9; return true; // "User Dashboard" -> Analytics
+                case 0xF246: mdl2 = 0xF0E2; return true; // "Layout"         -> GridView
                 default: mdl2 = 0; return false;
             }
         }

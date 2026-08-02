@@ -1,6 +1,221 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+// Cross-platform windowing/clipboard types this fork adds to WindowsBase
+// (Cocoa, UIKit and browser hosts). Generated with -p:GenerateReferenceAssemblySource=true
+// and spliced in by hand: a wholesale regeneration drops this file's manual edits --
+// the license header, the IsBrowsable overrides the abstract base requires, and several
+// EditorBrowsable/pragma blocks.
+namespace MS.Internal.Interop
+{
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
+    public sealed partial class BrowserWindow : MS.Internal.Interop.IPlatformWindow
+    {
+        public BrowserWindow() { }
+        public System.IntPtr Handle { get { throw null; } }
+        public bool IsBorderless { get { throw null; } }
+        public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
+        public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserKeyMessage> KeyInput { add { } remove { } }
+        public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserMouseMessage> MouseInput { add { } remove { } }
+        public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<double> ScaleChanged { add { } remove { } }
+        public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Destroy() { }
+        public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
+        public double GetBackingScale() { throw null; }
+        public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetContentSize(out int width, out int height) { throw null; }
+        public void GetPixelSize(out int width, out int height) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public void GetWindowPixelSize(out int width, out int height) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static System.Threading.Tasks.Task NextFrameAsync() { throw null; }
+        public static void PumpEvents() { }
+        public void SetContentSize(int width, int height) { }
+        public void SetContentSizePixels(int cx, int cy) { }
+        public static void SetCursor(string cssCursor) { }
+        public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public readonly partial struct BrowserKeyMessage
+        {
+            private readonly object _dummy;
+            private readonly int _dummyPrimitive;
+            public BrowserKeyMessage(System.IntPtr window, bool isDown, string code, string key, bool isRepeat, bool ctrl, bool shift, bool alt, bool meta, int timestampMs) { throw null; }
+            public bool Alt { get { throw null; } }
+            public string Code { get { throw null; } }
+            public bool Ctrl { get { throw null; } }
+            public bool IsDown { get { throw null; } }
+            public bool IsRepeat { get { throw null; } }
+            public string Key { get { throw null; } }
+            public bool Meta { get { throw null; } }
+            public bool Shift { get { throw null; } }
+            public int TimestampMs { get { throw null; } }
+            public System.IntPtr Window { get { throw null; } }
+        }
+        public readonly partial struct BrowserMouseMessage
+        {
+            private readonly int _dummyPrimitive;
+            public BrowserMouseMessage(int kind, System.IntPtr window, int button, int x, int y, int wheel, int timestampMs) { throw null; }
+            public int Button { get { throw null; } }
+            public int Kind { get { throw null; } }
+            public int TimestampMs { get { throw null; } }
+            public int Wheel { get { throw null; } }
+            public System.IntPtr Window { get { throw null; } }
+            public int X { get { throw null; } }
+            public int Y { get { throw null; } }
+        }
+    }
+    public static partial class CocoaDialogs
+    {
+        public static int ShowAlert(string text, string caption, string[] buttons, int alertStyle) { throw null; }
+        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories) { throw null; }
+        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName) { throw null; }
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("macos")]
+    public sealed partial class CocoaWindow : MS.Internal.Interop.IPlatformWindow
+    {
+        public static System.IntPtr MouseCaptureHandle;
+        public CocoaWindow() { }
+        public System.IntPtr ContentView { get { throw null; } }
+        public bool IsBorderless { get { throw null; } }
+        public bool MicaEnabled { get { throw null; } }
+        public System.IntPtr Window { get { throw null; } }
+        public event System.Action<System.IntPtr> Closed { add { } remove { } }
+        public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaKeyMessage> KeyInput { add { } remove { } }
+        public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaMouseMessage> MouseInput { add { } remove { } }
+        public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<double> ScaleChanged { add { } remove { } }
+        public static event System.Action SystemAppearanceChanged { add { } remove { } }
+        public void Create(string title, int x, int y, int width, int height) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
+        public void Destroy() { }
+        public void DisableMicaBackdrop() { }
+        public void EnableMicaBackdrop() { }
+        public static MS.Internal.Interop.CocoaWindow FromHandle(System.IntPtr view) { throw null; }
+        public double GetBackingScale() { throw null; }
+        public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetContentSize(out int width, out int height) { throw null; }
+        public void GetPixelSize(out int width, out int height) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public void GetWindowPixelSize(out int width, out int height) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static bool IsSystemDarkTheme() { throw null; }
+        public void SetContentSize(int width, int height) { }
+        public void SetContentSizePixels(int cx, int cy) { }
+        public static void SetCursor(string nsCursorSelector) { }
+        public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public void SetWindowAppearance(bool dark) { }
+        public readonly partial struct CocoaKeyMessage
+        {
+            private readonly object _dummy;
+            private readonly int _dummyPrimitive;
+            public CocoaKeyMessage(System.IntPtr view, bool isDown, int keyCode, string characters, bool isRepeat, ulong modifierFlags, int timestampMs) { throw null; }
+            public string Characters { get { throw null; } }
+            public bool IsDown { get { throw null; } }
+            public bool IsRepeat { get { throw null; } }
+            public int KeyCode { get { throw null; } }
+            public ulong ModifierFlags { get { throw null; } }
+            public int TimestampMs { get { throw null; } }
+            public System.IntPtr View { get { throw null; } }
+        }
+        public readonly partial struct CocoaMouseMessage
+        {
+            private readonly int _dummyPrimitive;
+            public CocoaMouseMessage(System.IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel, int timestampMs) { throw null; }
+            public int ButtonNumber { get { throw null; } }
+            public int NSType { get { throw null; } }
+            public int TimestampMs { get { throw null; } }
+            public System.IntPtr View { get { throw null; } }
+            public int Wheel { get { throw null; } }
+            public int X { get { throw null; } }
+            public int Y { get { throw null; } }
+        }
+    }
+    public partial interface IPlatformWindow
+    {
+        bool IsBorderless { get; }
+        event System.Action<double> ScaleChanged;
+        void Destroy();
+        double GetBackingScale();
+        void GetClientScreenOriginPixels(out int sx, out int sy);
+        void GetContentSize(out int width, out int height);
+        void GetPixelSize(out int width, out int height);
+        void GetWindowPixelSize(out int width, out int height);
+        void SetContentSize(int width, int height);
+        void SetContentSizePixels(int cx, int cy);
+        void SetFrameOrigin(int xPixels, int yPixels);
+    }
+    public static partial class MacClipboard
+    {
+        public const string TypePng = "public.png";
+        public const string TypeString = "public.utf8-plain-text";
+        public static bool IsAvailable { get { throw null; } }
+        public static void Clear() { }
+        public static bool ContainsData(string type) { throw null; }
+        public static bool ContainsString() { throw null; }
+        public static byte[] GetData(string type) { throw null; }
+        public static string GetString() { throw null; }
+        public static void SetData(string type, byte[] data) { }
+        public static void SetString(string value) { }
+    }
+    public static partial class PlatformWindow
+    {
+        public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
+        public static MS.Internal.Interop.IPlatformWindow FromHandle(System.IntPtr handle) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+    }
+    public sealed partial class UIKitWindow : MS.Internal.Interop.IPlatformWindow
+    {
+        public UIKitWindow() { }
+        public System.IntPtr Handle { get { throw null; } }
+        public bool IsBorderless { get { throw null; } }
+        public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
+        public static System.IntPtr RootView { get { throw null; } set { } }
+        public static event System.Action<MS.Internal.Interop.UIKitWindow.TouchMessage> MouseInput { add { } remove { } }
+        public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<double> ScaleChanged { add { } remove { } }
+        public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Destroy() { }
+        public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
+        public double GetBackingScale() { throw null; }
+        public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetContentSize(out int width, out int height) { throw null; }
+        public void GetPixelSize(out int width, out int height) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public void GetWindowPixelSize(out int width, out int height) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static void InjectTouch(System.IntPtr view, int kind, int xPixels, int yPixels) { }
+        public void NotifyResized() { }
+        public void NotifyScaleChanged() { }
+        public static void RequestWake() { }
+        public static void ScheduleWake(double seconds) { }
+        public void SetContentSize(int width, int height) { }
+        public void SetContentSizePixels(int cx, int cy) { }
+        public static void SetDisplayLinkPaused(bool paused) { }
+        public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public static bool StartDisplayLink(System.Action tick) { throw null; }
+        public static void StopDisplayLink() { }
+        public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.UIKitWindow.TouchMessage>
+        {
+            private readonly int _dummyPrimitive;
+            public TouchMessage(System.IntPtr View, int Kind, int X, int Y, int TimestampMs) { throw null; }
+            public int Kind { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public System.IntPtr View { get { throw null; } set { } }
+            public int X { get { throw null; } set { } }
+            public int Y { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr View, out int Kind, out int X, out int Y, out int TimestampMs) { throw null; }
+            public bool Equals(MS.Internal.Interop.UIKitWindow.TouchMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.UIKitWindow.TouchMessage left, MS.Internal.Interop.UIKitWindow.TouchMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.UIKitWindow.TouchMessage left, MS.Internal.Interop.UIKitWindow.TouchMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
+    }
+}
+
 namespace System.Collections.Specialized
 {
     public partial class CollectionChangedEventManager : System.Windows.WeakEventManager

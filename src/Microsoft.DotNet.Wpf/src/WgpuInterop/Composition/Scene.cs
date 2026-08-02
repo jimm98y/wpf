@@ -591,6 +591,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public Brush? OpacityMask { get; set; }
 
+        /// <summary>
+        /// CacheMode="BitmapCache". Decoded and recorded, but intentionally not acted on: see
+        /// the note in WgpuSceneRenderer's needsLayer computation. This renderer's per-shape
+        /// coverage-mask cache already makes repeat frames of a static subtree essentially
+        /// free, so forcing a bitmap layer measured as no faster and slightly less faithful.
+        /// </summary>
+        public bool BitmapCached { get; set; }
+
+        /// <summary>
+        /// RenderOptions.EdgeMode. Aliased means the app deliberately wants hard edges (pixel
+        /// art, crisp diagrams, QR codes); coverage is thresholded instead of anti-aliased.
+        /// </summary>
+        public bool AliasedEdges { get; set; }
+
+        /// <summary>
+        /// RenderOptions.BitmapScalingMode == NearestNeighbor: sample images unfiltered, which
+        /// is the whole point when magnifying pixel art.
+        /// </summary>
+        public bool NearestBitmapScaling { get; set; }
+
+        /// <summary>
+        /// Pixel-snapping guidelines in this visual's LOCAL space (WPF's GuidelineSet, sent as
+        /// MILCMD_VISUAL_SETGUIDELINECOLLECTION). WPF controls emit these so a 1px border or
+        /// separator lands ON a device pixel boundary instead of straddling two and rendering
+        /// as a pair of half-covered rows. Sorted ascending, as milcore requires.
+        /// </summary>
+        public float[]? GuidelinesX { get; set; }
+        public float[]? GuidelinesY { get; set; }
+
         /// <summary>Drawing content recorded by this visual, in local space.</summary>
         public List<DrawingPrimitive> Content { get; } = new();
 

@@ -78,7 +78,7 @@ fn solve_monotone_cubic(y0 : f32, y1 : f32, y2 : f32, y3 : f32, yTarget : f32) -
 fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     let px = floor(in.uv.x);
     let py = floor(in.uv.y);
-    let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma
+    let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma, 4 = aliased
     let evenOdd = (flags & 1u) != 0u;
 
     // This fragment's band. Bands are a whole number of pixel rows (the CPU side enforces
@@ -146,6 +146,9 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
         cov = cov + covered * 0.25;
     }
     cov = clamp(cov, 0.0, 1.0);
+    // RenderOptions.EdgeMode=Aliased: the app asked for hard edges, so collapse the
+    // anti-aliased coverage to a binary in/out decision at the half-covered mark.
+    if ((flags & 4u) != 0u) { cov = select(0.0, 1.0, cov >= 0.5); }
     // Text gamma: WPF blends glyph coverage in gamma space; cov^(1/2.2) matches the
     // CPU rasterizer's LUT on the display-destined sRGB path.
     if ((flags & 2u) != 0u) { cov = pow(cov, 1.0 / 2.2); }

@@ -379,6 +379,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, rasterXf));
                     if (m.IsEmpty) return;
+                    if (_aliasedEdges) ApplyAliasedEdges(m.Coverage);
                     if (gamma) ApplyTextGamma(m.Coverage);
                     (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
                     mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
@@ -1035,12 +1036,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
         {
             Matrix3x2 world = v.LocalToParent * parentWorld;
+            Guides guides = ResolveGuides(v, world);
             Scissor clip = parentClip;
             if (v.Clip.HasValue)
                 clip = Intersect(parentClip, DeviceBounds(v.Clip.Value, world, width, height));
 
             double vOpacity = Math.Clamp(v.Opacity, 0.0, 1.0);
-            bool needsLayer = v.Effect != null || v.ClipGeometry != null || v.OpacityMask != null || (vOpacity < 0.999 && CountDrawables(v) > 1);
+            // NOTE: v.BitmapCached (CacheMode="BitmapCache") is deliberately NOT considered here.
+            // Routing such a subtree through the layer path was tried and measured; on repeat
+            // frames the UNCACHED path already issues zero bind groups, because the per-shape
+            // coverage-mask cache has already eliminated the work BitmapCache exists to avoid.
+            // Forcing a layer then ADDS a composite bind group and costs fidelity: the render
+            // round-trips through an 8-bit premultiplied texture, which moved 444 pixels by up
+            // to 13/255 on a 200x200 scene. Frame time over 12/120/300 drawables was
+            // 2.19/2.67/3.05 ms uncached against 2.55/2.73/2.56 ms cached -- no reliable win,
+            // and all of it inside the ~2.3 ms readback floor. The command is still decoded so
+            // the intent is recorded; honour it only if a case is found where it actually pays.
+            bool needsLayer = v.Effect != null || v.ClipGeometry != null || v.OpacityMask != null
+                || (vOpacity < 0.999 && CountDrawables(v) > 1);
 
             if (!needsLayer)
             {
@@ -1259,7 +1272,123 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return cl;
         }
 
-        // Composite a cached region layer into the parent (no render passes needed on a hit).
+        /// <summary>
+        /// Per-axis pixel-snapping guidelines resolved to device space, with the offset each
+        /// one needs to land on a pixel boundary. Mirrors milcore's CSnappingFrame
+        /// (WpfGfx/core/common/guidelinecollection.cpp): a drawn point takes the offset of the
+        /// NEAREST guideline on each axis.
+        ///
+        /// Per-point rather than one offset for the whole visual, because a uniform shift only
+        /// snaps the leading edge. A 1px logical border under a 1.5x DPI scale is 1.5 device
+        /// pixels; shifting it whole leaves the far edge mid-pixel and still soft. Snapping each
+        /// edge to its own guideline is what lets the border resize to a whole number of pixels,
+        /// which is the behaviour WPF apps are built around.
+        /// </summary>
+        private readonly struct Guides
+        {
+            public readonly float[]? X, XOff, Y, YOff;
+            public Guides(float[]? x, float[]? xo, float[]? y, float[]? yo) { X = x; XOff = xo; Y = y; YOff = yo; }
+            public bool Active => X is not null || Y is not null;
+
+            public float SnapX(float x) => x + Nearest(X, XOff, x);
+            public float SnapY(float y) => y + Nearest(Y, YOff, y);
+
+            // Offset of the guideline closest to z. Guidelines are sorted, so this is a scan of
+            // a list that is essentially always 2-4 entries long.
+            private static float Nearest(float[]? g, float[]? off, float z)
+            {
+                if (g is null || g.Length == 0) return 0f;
+                int best = 0;
+                float bestD = MathF.Abs(g[0] - z);
+                for (int i = 1; i < g.Length; i++)
+                {
+                    float d = MathF.Abs(g[i] - z);
+                    if (d < bestD) { bestD = d; best = i; }
+                }
+                return off![best];
+            }
+        }
+
+        /// <summary>
+        /// Resolves a visual's local-space guidelines into device space and precomputes each
+        /// one's snapping offset (Round(device) - device). Returns an inactive set under
+        /// rotation or skew, where an axis-aligned pixel grid is not meaningful.
+        /// </summary>
+        /// <summary>
+        /// Rebuilds a primitive with its geometry snapped to the guideline grid.
+        ///
+        /// Snapping happens in LOCAL space (device offset / scale) so everything downstream --
+        /// bounds, the mask-cache key, rasterization -- sees one consistent geometry. Only the
+        /// axis-aligned rectangle shapes are snapped: those are what borders, separators,
+        /// underlines and control backgrounds are made of, and they are what WPF emits
+        /// guidelines for. Ellipses, paths and glyph runs pass through unchanged, so this is
+        /// never worse than the previous behaviour of ignoring guidelines entirely.
+        /// </summary>
+        private static DrawingPrimitive SnapPrimitive(DrawingPrimitive p, Guides g, Matrix3x2 world)
+        {
+            switch (p)
+            {
+                case GeometryFill f when SnapGeometry(f.Geometry, g, world) is { } sg:
+                    return new GeometryFill(sg, f.Brush);
+                // Strokes take a PathGeometry specifically, and a snapped rectangle is not one;
+                // stroked borders keep their unsnapped geometry for now.
+                default:
+                    return p;
+            }
+        }
+
+        private static Geometry? SnapGeometry(Geometry geo, Guides g, Matrix3x2 world)
+        {
+            switch (geo)
+            {
+                case RectangleGeometry r: return new RectangleGeometry(SnapRect(r.Rect, g, world));
+                case RoundedRectangleGeometry rr:
+                    return new RoundedRectangleGeometry(SnapRect(rr.Rect, g, world), rr.RadiusX, rr.RadiusY);
+                default: return null;
+            }
+        }
+
+        // Snaps a local-space rect by moving each edge to its own nearest guideline. Edges move
+        // INDEPENDENTLY -- that is what lets a 1.5-device-pixel border become a whole number of
+        // pixels, rather than merely shifting and staying soft on the far side.
+        private static Rect SnapRect(Rect r, Guides g, Matrix3x2 world)
+        {
+            float sx = world.M11, sy = world.M22, tx = world.M31, ty = world.M32;
+            if (MathF.Abs(sx) < 1e-6f || MathF.Abs(sy) < 1e-6f) return r;
+
+            float dx0 = r.X * sx + tx, dx1 = (r.X + r.Width) * sx + tx;
+            float dy0 = r.Y * sy + ty, dy1 = (r.Y + r.Height) * sy + ty;
+            float x0 = r.X + (g.SnapX(dx0) - dx0) / sx;
+            float x1 = r.X + r.Width + (g.SnapX(dx1) - dx1) / sx;
+            float y0 = r.Y + (g.SnapY(dy0) - dy0) / sy;
+            float y1 = r.Y + r.Height + (g.SnapY(dy1) - dy1) / sy;
+            return new Rect(x0, y0, MathF.Max(0f, x1 - x0), MathF.Max(0f, y1 - y0));
+        }
+
+        private static Guides ResolveGuides(SceneVisual v, Matrix3x2 world)
+        {
+            if (v.GuidelinesX is null && v.GuidelinesY is null) return default;
+            if (MathF.Abs(world.M12) > 1e-6f || MathF.Abs(world.M21) > 1e-6f) return default;
+
+            static void Build(float[]? local, float scale, float translate, out float[]? dev, out float[]? off)
+            {
+                if (local is null || local.Length == 0) { dev = null; off = null; return; }
+                dev = new float[local.Length];
+                off = new float[local.Length];
+                for (int i = 0; i < local.Length; i++)
+                {
+                    float d = local[i] * scale + translate;
+                    dev[i] = d;
+                    off[i] = float.IsFinite(d) ? MathF.Round(d) - d : 0f;
+                }
+            }
+
+            Build(v.GuidelinesX, world.M11, world.M31, out float[]? gx, out float[]? ox);
+            Build(v.GuidelinesY, world.M22, world.M32, out float[]? gy, out float[]? oy);
+            return new Guides(gx, ox, gy, oy);
+        }
+
+        // Composite a cached region layer into the parent (no render passes needed on a hit).        // Composite a cached region layer into the parent (no render passes needed on a hit).
         private void EmitCachedLayer(CachedLayer cl, float groupOpacity, Scissor clip, DrawData outData, WGPUTextureFormat outFormat, int width, int height)
         {
             // Clamp to the current render target's device bounds: a reused full-target layer is
@@ -1590,8 +1719,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitSubtree(SceneVisual v, Matrix3x2 world, double accOpacity, Scissor clip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat format)
         {
-            foreach (DrawingPrimitive primitive in v.Content)
+            bool savedAliased = _aliasedEdges, savedNearest = _nearestScaling;
+            _aliasedEdges |= v.AliasedEdges;
+            _nearestScaling |= v.NearestBitmapScaling;
+
+            Guides guides = ResolveGuides(v, world);
+            foreach (DrawingPrimitive rawPrimitive in v.Content)
             {
+                // Pixel-snap the primitive's geometry against this visual's GuidelineSet before
+                // anything measures or rasterizes it, so bounds, mask keys and coverage agree.
+                DrawingPrimitive primitive = guides.Active ? SnapPrimitive(rawPrimitive, guides, world) : rawPrimitive;
                 if (primitive is Viewport3DDraw viewport)
                     Emit3DViewport(viewport, world, accOpacity, clip, outData, plan, width, height, format);
                 else
@@ -1603,6 +1740,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             foreach (SceneVisual child in v.Children)
                 CollectVisual(child, world, accOpacity, clip, outData, plan, width, height, format);
+
+            _aliasedEdges = savedAliased;
+            _nearestScaling = savedNearest;
         }
 
         private void EmitPrimitive(DrawingPrimitive primitive, Matrix3x2 world, double opacity, Scissor clip,
@@ -2089,7 +2229,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // improves the mesh path's hard-aliased rects. Non-solid brushes fall through to the coverage
             // path (the SDF only outputs solid * coverage), as do rounded rects with elliptical corners
             // (TryShapeParams returns false).
-            if (s_gpuRaster && fill.Brush is SolidColorBrush shapeFillBrush && !fill.IsGlyph
+            // EdgeMode.Aliased opts out of the analytic SDF shape path: fs_shape anti-aliases
+            // through fwidth and has no flag channel left to disable it, whereas the coverage
+            // path already thresholds on the aliased flag. Aliased rendering is opt-in and rare,
+            // so paying for a coverage mask there is a fair trade for CPU/GPU agreement.
+            if (!_aliasedEdges && s_gpuRaster && fill.Brush is SolidColorBrush shapeFillBrush && !fill.IsGlyph
                 && fill.Geometry is EllipseGeometry or RoundedRectangleGeometry or RectangleGeometry
                 && TryShapeParams(fill.Geometry, out Vector2 sc, out float shx, out float shy, out float scr))
             {
@@ -2204,7 +2348,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     {
                         view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                     }
-                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
+                    // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
+                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view,
+                        _nearestScaling ? NearestSampler() : LinearSampler());
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 
@@ -2270,7 +2416,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty || stroke.Style.Thickness <= 0) return;
             StrokeStyle style = stroke.Style;
-            if (s_gpuRaster && stroke.Brush is SolidColorBrush solidStroke
+            if (!_aliasedEdges && s_gpuRaster && stroke.Brush is SolidColorBrush solidStroke
                 && style.Cap == LineCap.Round && style.Join == LineJoin.Round
                 && (style.DashArray is null || style.DashArray.Length == 0)
                 && IsUniformScale(world))
@@ -2600,6 +2746,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     {
                         CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, phased));
                         if (m.IsEmpty) return;
+                        if (_aliasedEdges) ApplyAliasedEdges(m.Coverage);
                         if (gamma) ApplyTextGamma(m.Coverage);
                         (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
                         mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
@@ -2626,6 +2773,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return;
             }
             EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data, isGlyph);
+        }
+
+        // EdgeMode.Aliased on the CPU rasterizer: same half-covered threshold the coverage
+        // shader applies, so the two rasterizers agree on what "aliased" looks like.
+        private static void ApplyAliasedEdges(byte[] coverage)
+        {
+            for (int i = 0; i < coverage.Length; i++)
+                coverage[i] = coverage[i] >= 128 ? (byte)255 : (byte)0;
         }
 
         // Re-map glyph coverage through the text-gamma LUT (in place) so text blends
@@ -3097,6 +3252,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // the shared buffer doesn't exist until every mask is collected, the coverage passes record a PENDING
         // bind (their DrawItem starts with a null bind group) and BuildBatchedStorage patches them in after
         // sealing the buffer. Only populated on cache-MISS frames (new masks); cached masks skip all of this.
+        // Ambient RenderOptions for the subtree being walked. WPF's RenderOptions are set on a
+        // visual and apply to its descendants, so these are pushed/popped around the recursion
+        // rather than threaded through every emit signature (same idiom as _devOX/_devOY).
+        private bool _aliasedEdges;
+        private bool _nearestScaling;
+
         private readonly List<float> _bandScratch = new();
 
         // Rows per scanline band, and the cap on how many bands one mask may have. 32 rows keeps
@@ -4140,7 +4301,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // during a region-sized card bake would render shifted off its own target (and
             // the blank result would be cached). uv = mask-local pixel coords; the flat
             // vertex colour carries (segCount, flags) — matching fs_coverage's decoding.
-            float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f);
+            float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f) + (_aliasedEdges ? 4f : 0f);
             DrawData d = RentDrawData();
             AddVertex(d.Verts, new Vector2(-1f, 1f), segCount, flags, 0f, 0f, 0f, 0f);
             AddVertex(d.Verts, new Vector2(1f, 1f), segCount, flags, 0f, 0f, w, 0f);

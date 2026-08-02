@@ -135,6 +135,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         DashStyle = 0x85,
         Pen = 0x86,
         PixelShader = 0x6c,
+        VisualSetCacheMode = 0x1e,
+        VisualSetRenderOptions = 0x21,
+        BitmapCache = 0x8d,
+        VisualSetGuidelineCollection = 0x27,
+        DrawingImage = 0x71,
+        GlyphRunDrawing = 0x88,
+        ImageDrawing = 0x89,
         BlurEffect = 0x6e,
         DropShadowEffect = 0x6f,
         ShaderEffect = 0x70,
@@ -321,6 +328,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly bool s_gpuVisualBrush = System.Environment.GetEnvironmentVariable("WPF_GPU_VISUALBRUSH") != "0";
         private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
         private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
+        // The other leaf Drawing types. Without these a DrawingGroup or DrawingBrush containing
+        // an image or a glyph run silently rendered those children as nothing.
+        private readonly Dictionary<uint, (Rect Rect, uint ImageSource)> _imageDrawings = new();
+        private readonly Dictionary<uint, (uint GlyphRun, uint Brush)> _glyphRunDrawings = new();
+        // DrawingImage: a Drawing used as an ImageSource (vector icon assets).
+        private readonly Dictionary<uint, uint> _drawingImages = new();
+        private readonly HashSet<uint> _bitmapCaches = new();
 
         /// <summary>A decoded WPF glyph run: already-shaped glyph indices + advances.</summary>
         private sealed class MilGlyphRun
@@ -452,6 +466,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _brushesGpuLive.Remove(handle);
             _geometryDrawings.Remove(handle);
             _drawingGroups.Remove(handle);
+            _imageDrawings.Remove(handle);
+            _glyphRunDrawings.Remove(handle);
+            _drawingImages.Remove(handle);
+            _bitmapCaches.Remove(handle);
             _geometries.Remove(handle);
             _gradients.Remove(handle);
             _glyphRuns.Remove(handle);
@@ -916,6 +934,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _geometryDrawings[h] = (hBrush, hPen, hGeom);
                     break;
                 }
+                case Mil.ImageDrawing:
+                {
+                    // MILCMD_IMAGEDRAWING: Handle@4, Rect@8 (4 doubles), hImageSource@40.
+                    uint h = r.U32();
+                    var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    uint hImg = r.U32();
+                    _imageDrawings[h] = (rect, hImg);
+                    break;
+                }
+                case Mil.GlyphRunDrawing:
+                {
+                    // MILCMD_GLYPHRUNDRAWING: Handle@4, hGlyphRun@8, hForegroundBrush@12.
+                    uint h = r.U32();
+                    uint hRun = r.U32(), hBrush = r.U32();
+                    _glyphRunDrawings[h] = (hRun, hBrush);
+                    break;
+                }
+                case Mil.DrawingImage:
+                {
+                    // MILCMD_DRAWINGIMAGE: Handle@4, hDrawing@8.
+                    uint h = r.U32();
+                    _drawingImages[h] = r.U32();
+                    break;
+                }
                 case Mil.DrawingGroup:
                 {
                     // MILCMD_DRAWINGGROUP: Handle@4, Opacity@8, ChildrenSize@16, hTransform@32,
@@ -928,6 +970,68 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var children = new List<uint>();
                     for (uint i = 0; i + 4 <= childrenSize && r.Remaining >= 4; i += 4) children.Add(r.U32());
                     _drawingGroups[h] = (children, hTransform, opacity);
+                    break;
+                }
+                case Mil.BitmapCache:
+                {
+                    // MILCMD_BITMAPCACHE: Handle@4, RenderAtScale@8, hRenderAtScaleAnimations@16,
+                    // SnapsToDevicePixels@20, EnableClearType@24. Only the handle's existence is
+                    // used today -- the subtree is cached at screen scale, so RenderAtScale and
+                    // the ClearType hint have nothing to attach to yet.
+                    uint h = r.U32();
+                    _bitmapCaches.Add(h);
+                    break;
+                }
+                case Mil.VisualSetCacheMode:
+                {
+                    // MILCMD_VISUAL_SETCACHEMODE: Handle@4, hCacheMode@8 (0 clears it).
+                    uint vh = r.U32();
+                    uint hCache = r.U32();
+                    if (_visuals.TryGetValue(vh, out SceneVisual? cv))
+                        cv.BitmapCached = hCache != 0 && _bitmapCaches.Contains(hCache);
+                    break;
+                }
+                case Mil.VisualSetRenderOptions:
+                {
+                    // MILCMD_VISUAL_SETRENDEROPTIONS: Handle@4, then MilRenderOptions@8 --
+                    // Flags, EdgeMode, CompositingMode, BitmapScalingMode, ClearTypeHint,
+                    // TextRenderingMode, TextHintingMode (7 x u32). Flags is a bitmask saying
+                    // which of the rest were actually set by the app.
+                    uint vh = r.U32();
+                    uint flags = r.U32();
+                    uint edgeMode = r.U32();
+                    r.U32();                                   // CompositingMode
+                    uint bitmapScaling = r.U32();
+                    // ClearTypeHint / TextRenderingMode / TextHintingMode are ClearType and
+                    // hinting hints; this renderer does grayscale AA text, so they are read
+                    // past rather than honoured.
+                    if (_visuals.TryGetValue(vh, out SceneVisual? rv))
+                    {
+                        const uint FlagBitmapScalingMode = 0x1, FlagEdgeMode = 0x2;
+                        if ((flags & FlagEdgeMode) != 0)
+                            rv.AliasedEdges = edgeMode == 1;              // EdgeMode.Aliased
+                        if ((flags & FlagBitmapScalingMode) != 0)
+                            rv.NearestBitmapScaling = bitmapScaling == 3; // NearestNeighbor
+                    }
+                    break;
+                }
+                case Mil.VisualSetGuidelineCollection:
+                {
+                    // MILCMD_VISUAL_SETGUIDELINECOLLECTION: Handle@4, countX@8 (u16),
+                    // countY@12 (u16), then countX+countY FLOATS (not doubles), each axis
+                    // already sorted ascending. Local-space coordinates.
+                    uint vh = r.U32();
+                    int cx = r.U16(); r.U16();              // countX @8, padding to @12
+                    int cy = r.U16(); r.U16();              // countY @12, padding
+                    var gx = new float[cx];
+                    var gy = new float[cy];
+                    for (int i = 0; i < cx && r.Remaining >= 4; i++) gx[i] = r.F32();
+                    for (int i = 0; i < cy && r.Remaining >= 4; i++) gy[i] = r.F32();
+                    if (_visuals.TryGetValue(vh, out SceneVisual? gv))
+                    {
+                        gv.GuidelinesX = cx > 0 ? gx : null;
+                        gv.GuidelinesY = cy > 0 ? gy : null;
+                    }
                     break;
                 }
                 case Mil.PixelShader:
@@ -1374,6 +1478,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
         }
 
+        /// <summary>Test hook: materialize a decoded Drawing resource into a visual.</summary>
+        internal SceneVisual BuildDrawingVisualForTest(uint handle) => BuildDrawingVisual(handle);
+
         // Build a SceneVisual from a decoded Drawing resource (GeometryDrawing / DrawingGroup).
         private SceneVisual BuildDrawingVisual(uint handle)
         {
@@ -1382,6 +1489,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_geometries.TryGetValue(gd.Geometry, out Geometry? geom))
                     EmitDrawing(v.Content, geom, gd.Brush, gd.Pen, RenderState.Default);
+            }
+            else if (_imageDrawings.TryGetValue(handle, out (Rect Rect, uint ImageSource) idr))
+            {
+                if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
+                    EmitFill(v.Content, new RectangleGeometry(idr.Rect),
+                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height), RenderState.Default);
+            }
+            else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
+            {
+                if (_glyphRuns.TryGetValue(grd.GlyphRun, out MilGlyphRun? gr))
+                    EmitGlyphRun(v.Content, gr, grd.Brush, RenderState.Default);
+            }
+            else if (_drawingImages.TryGetValue(handle, out uint hInner))
+            {
+                // A DrawingImage just wraps another Drawing; render that.
+                return BuildDrawingVisual(hInner);
             }
             else if (_drawingGroups.TryGetValue(handle, out (List<uint> Children, uint Transform, double Opacity) dg))
             {

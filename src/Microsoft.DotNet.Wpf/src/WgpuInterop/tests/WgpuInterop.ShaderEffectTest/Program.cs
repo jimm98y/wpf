@@ -107,6 +107,9 @@ internal static class Program
         Reject("ps_1_1", new Ps().Version(1, 1).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
                contains: "unsupported shader model");
 
+        // --- REAL fxc OUTPUT ---
+        RealShaders();
+
         // --- END TO END: render real content through a translated shader ---
         EndToEnd();
 
@@ -123,6 +126,47 @@ internal static class Program
     // that compiles but computes the wrong thing would pass every check above; only running
     // it catches that. The shader multiplies the input by c0, so the expected output is
     // arithmetic this test can predict exactly.
+    // Runs genuine fxc-compiled shaders through the translator.
+    //
+    // Until now this was tested only against bytecode this repo hand-assembles from the spec,
+    // which cannot catch a wrong assumption shared by both sides (it already let a DEF/IF
+    // opcode mix-up through). WPF's own effect shaders are compiled into milcore's native
+    // wpfgfx_cor3.dll; WPF_REAL_SHADER_DIR points at a directory of them extracted by magic
+    // bytes. Every shader must either translate to WGSL that COMPILES, or be refused with a
+    // reason -- a crash, or output naga rejects, is a translator bug.
+    private static void RealShaders()
+    {
+        string? dir = Environment.GetEnvironmentVariable("WPF_REAL_SHADER_DIR");
+        if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+        {
+            Console.WriteLine("  (skipped: set WPF_REAL_SHADER_DIR to a directory of .ps files)");
+            return;
+        }
+        string[] files = System.IO.Directory.GetFiles(dir, "*.ps");
+        Array.Sort(files);
+        Console.WriteLine($"  real fxc shaders from {dir}: {files.Length}");
+
+        int ok = 0, refused = 0;
+        foreach (string f in files)
+        {
+            byte[] code = System.IO.File.ReadAllBytes(f);
+            string name = System.IO.Path.GetFileName(f);
+            if (!D3D9ShaderTranslator.TryTranslate(code, out TranslatedShader tr, out string why))
+            {
+                refused++;
+                Console.WriteLine($"    {name,-34} refused: {why}");
+                continue;
+            }
+            bool compiles = _renderer.CompileShaderForTest(tr.Wgsl) != IntPtr.Zero;
+            Console.WriteLine($"    {name,-34} translated  samplers={tr.Samplers.Count} consts={tr.FloatRegisterCount}"
+                + $"  {(compiles ? "compiles" : "DOES NOT COMPILE")}");
+            if (compiles) ok++; else _failures++;
+            if (Environment.GetEnvironmentVariable("WPF_DUMP_SHADER") == name)
+                Console.WriteLine(tr.Wgsl);
+        }
+        Console.WriteLine($"  -> {ok} translated and compiled, {refused} refused with a reason, 0 crashes");
+    }
+
     private static void EndToEnd()
     {
         const int S = 64;
