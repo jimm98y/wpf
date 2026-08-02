@@ -68,8 +68,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private sealed class CachedMask
         {
             public IntPtr Tex, View, BindGroup;
+            // An auto-layout bind group is exclusive to ONE pipeline, and CompositingMode.SourceCopy
+            // is a separate pipeline (no blend) for the same FillKind. So a cached mask needs a group
+            // per blend variant; this one is built on first source-copy use and usually stays null.
+            public IntPtr BindGroupCopy;
+            public IntPtr Sampler;               // to rebuild BindGroupCopy with the same filtering
+            public WGPUTextureFormat Format;     // ... and against the same pass format
             public int Ox, Oy, W, H;
             public int LastFrame;
+        }
+
+        // The cached mask's bind group for the compositing mode in effect at this draw.
+        private IntPtr MaskBindGroup(CachedMask c)
+        {
+            if (!_srcCopy) return c.BindGroup;
+            if (c.BindGroupCopy == IntPtr.Zero)
+                c.BindGroupCopy = CreateSampledBindGroup(c.Format, FillKind.Text, c.View, c.Sampler, sourceCopy: true);
+            return c.BindGroupCopy;
         }
         private readonly Dictionary<long, CachedMask> _maskCache = new();
         // Gradient ramp textures keyed by their stops: a 256x1 RGBA ramp was rebuilt + re-uploaded EVERY
@@ -196,6 +211,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 (dead ??= new List<long>()).Add(kv.Key);
                 CachedMask c = kv.Value;
                 wgpuBindGroupRelease(c.BindGroup);
+                if (c.BindGroupCopy != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupCopy);
                 wgpuTextureViewRelease(c.View);
                 wgpuTextureRelease(c.Tex);
             }
@@ -290,7 +306,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect }
 
         private readonly WgpuContext _ctx;
-        private readonly Dictionary<(WGPUTextureFormat, FillKind), IntPtr> _pipelines = new();
+        private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
         // Custom ShaderEffects each need their OWN module and pipeline, so they cannot live in
         // the (format, kind) cache above; they are keyed by the shader's identity instead.
         private readonly Dictionary<int, IntPtr> _effectModules = new();
@@ -385,7 +401,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
                 }
                 IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, LinearSampler());
-                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
+                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = LinearSampler(), Format = format,
+                    Ox = mox, Oy = moy, W = mw, H = mh };
                 _maskCache[key] = cm;
             }
             cm.LastFrame = _frameId;
@@ -404,7 +421,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(lx0, ly1), world), width, height), r, g, b, a, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, cm.BindGroup));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, MaskBindGroup(cm), sourceCopy: _srcCopy));
         }
 
         // Gamma-space compositing (the default) matches legacy WPF/GDI: colours are sRGB-encoded
@@ -594,10 +611,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // FillKind.ShaderEffect alone is not enough to pick a pipeline -- each translated
             // shader is a different module.
             public readonly int EffectId;
-            public DrawItem(uint firstIndex, uint indexCount, Scissor clip, FillKind kind, IntPtr bindGroup, int effectId = -1)
+            /// <summary>CompositingMode.SourceCopy: this draw replaces the target instead of blending.</summary>
+            public readonly bool SourceCopy;
+            public DrawItem(uint firstIndex, uint indexCount, Scissor clip, FillKind kind, IntPtr bindGroup,
+                int effectId = -1, bool sourceCopy = false)
             {
                 FirstIndex = firstIndex; IndexCount = indexCount; Clip = clip; Kind = kind; BindGroup = bindGroup;
-                EffectId = effectId;
+                EffectId = effectId; SourceCopy = sourceCopy;
             }
         }
 
@@ -1457,6 +1477,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case ShaderEffectDef sx:
                     HV(104); HV(sx.ShaderId);
                     foreach (float fc in sx.FloatConstants) HF(fc);
+                    foreach (Brush? sb in sx.SamplerBrushes) { if (sb is null) HV(0); else HashBrush(sb); }
                     break;
                 case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
                 default: HV(100); break;
@@ -1748,6 +1769,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitPrimitive(DrawingPrimitive primitive, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
         {
+            _srcCopy = primitive.SourceCopy;
             switch (primitive)
             {
                 case GeometryFill fill:
@@ -2371,7 +2393,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             uint firstIndex = (uint)data.Indices.Count;
             foreach (uint li in mesh.Indices)
                 data.Indices.Add(baseVertex + li);
-            data.Draws.Add(new DrawItem(firstIndex, (uint)mesh.Indices.Length, clip, kind, bindGroup));
+            data.Draws.Add(new DrawItem(firstIndex, (uint)mesh.Indices.Length, clip, kind, bindGroup, sourceCopy: _srcCopy));
         }
 
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
@@ -2494,7 +2516,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), pr, pg, pb, a, x0, y1, sc, deviceHalf);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, IntPtr.Zero));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, IntPtr.Zero, sourceCopy: _srcCopy));
             _pendingStorageBinds.Add((data, data.Draws.Count - 1, soff, byteLen, format));
             return true;
         }
@@ -2529,7 +2551,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         out IntPtr tex, out IntPtr view, out int mox, out int moy, out int mw, out int mh))
                     return;
                 IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
-                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
+                cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = NearestSampler(), Format = format,
+                    Ox = mox, Oy = moy, W = mw, H = mh };
                 _maskCache[key] = cm;
             }
             cm.LastFrame = _frameId;
@@ -2600,7 +2623,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             uint firstIndex = (uint)data.Indices.Count;
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 1); data.Indices.Add(baseVertex + 2);
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 2); data.Indices.Add(baseVertex + 3);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Shape, IntPtr.Zero));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Shape, IntPtr.Zero, sourceCopy: _srcCopy));
         }
 
         // Gradient-filled closed-form shape, drawn analytically (fs_shapebrush): the same SDF quad as
@@ -2631,7 +2654,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             byte[] uni = BuildBrushParams(gradient, g0, g1, 0f, 0f, 0f, 0f, (float)Math.Clamp(opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
             IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
-            IntPtr bg = CreateBrushBindGroup(format, FillKind.ShapeBrush, IntPtr.Zero, rampView, ubuf, uni.Length);
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.ShapeBrush, IntPtr.Zero, rampView, ubuf, uni.Length, _srcCopy);
             DeferReleaseBindGroup(bg);
 
             Span<Vector2> corner = stackalloc Vector2[4]
@@ -2647,7 +2670,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             uint firstIndex = (uint)data.Indices.Count;
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 1); data.Indices.Add(baseVertex + 2);
             data.Indices.Add(baseVertex + 0); data.Indices.Add(baseVertex + 2); data.Indices.Add(baseVertex + 3);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.ShapeBrush, bg));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.ShapeBrush, bg, sourceCopy: _srcCopy));
         }
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
@@ -2752,7 +2775,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
                     }
                     IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
-                    cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Ox = mox, Oy = moy, W = mw, H = mh };
+                    cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = NearestSampler(), Format = format,
+                        Ox = mox, Oy = moy, W = mw, H = mh };
                     _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
                 }
                 cm.LastFrame = _frameId;
@@ -2805,7 +2829,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, c.BindGroup));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, MaskBindGroup(c), sourceCopy: _srcCopy));
         }
 
         // Local bounding-box minimum of a geometry (over all figure start/segment points). Used to make
@@ -3255,6 +3279,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Ambient RenderOptions for the subtree being walked. WPF's RenderOptions are set on a
         // visual and apply to its descendants, so these are pushed/popped around the recursion
         // rather than threaded through every emit signature (same idiom as _devOX/_devOY).
+        // CompositingMode.SourceCopy for the primitive currently being emitted. Ambient for the
+        // same reason as the render options: it would otherwise have to be threaded through
+        // every emit signature down to each DrawItem.
+        private bool _srcCopy;
         private bool _aliasedEdges;
         private bool _nearestScaling;
 
@@ -3378,12 +3406,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // pass (ReadbackFormat), so the group belonged to a different pipeline and wgpu aborted
                 // the process at wgpuCommandEncoderFinish with "Exclusive pipelines don't match". Each
                 // pending bind now carries the format of its own pass (R8Unorm for the mask passes).
-                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(layoutFmt, di.Kind), 0);
+                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(layoutFmt, di.Kind, di.SourceCopy), 0);
                 var entry = new WGPUBindGroupEntry { binding = 0, buffer = _frameStorageBuf, offset = (ulong)off, size = (ulong)size };
                 var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
                 IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
                 DeferReleaseBindGroup(bg);
-                d.Draws[idx] = new DrawItem(di.FirstIndex, di.IndexCount, di.Clip, di.Kind, bg);
+                d.Draws[idx] = new DrawItem(di.FirstIndex, di.IndexCount, di.Clip, di.Kind, bg, di.EffectId, di.SourceCopy);
             }
             _pendingStorageBinds.Clear();
             _batchStorage.Clear();
@@ -3439,7 +3467,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (DrawItem d in data.Draws)
             {
                 if (d.Clip.IsEmpty) continue;
-                wgpuRenderPassEncoderSetPipeline(pass, ResolvePipeline(format, d.Kind, d.EffectId));
+                wgpuRenderPassEncoderSetPipeline(pass, ResolvePipeline(format, d.Kind, d.EffectId, d.SourceCopy));
                 switch (d.Kind)
                 {
                     case FillKind.Textured:
@@ -3601,9 +3629,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// ShaderEffect is one per (format, shader) because every translated shader is its own
         /// module, so the kind alone cannot identify it.
         /// </summary>
-        private IntPtr ResolvePipeline(WGPUTextureFormat format, FillKind kind, int effectId)
+        private IntPtr ResolvePipeline(WGPUTextureFormat format, FillKind kind, int effectId, bool sourceCopy = false)
         {
-            if (kind != FillKind.ShaderEffect || effectId < 0) return GetPipeline(format, kind);
+            if (kind != FillKind.ShaderEffect || effectId < 0) return GetPipeline(format, kind, sourceCopy);
             var key = (format, effectId);
             if (_effectPipelines.TryGetValue(key, out IntPtr cached)) return cached;
             IntPtr pipeline = CreatePipeline(_ctx.Device, _effectModules[effectId], format, FillKind.ShaderEffect);
@@ -3621,9 +3649,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             out IntPtr outTex, out IntPtr outView)
         {
             outTex = IntPtr.Zero; outView = IntPtr.Zero;
-            // Only a single input sampler is wired: s0 is the subtree's own rendered layer.
-            // Multi-input effects additionally bind other brushes, which this does not resolve.
-            if (def.Samplers.Length > 1 || (def.Samplers.Length == 1 && def.Samplers[0] != 0)) return false;
+            // Every sampler must resolve to something bindable: the subtree's own layer (WPF's
+            // ImplicitInputBrush) or an image brush we can hand to the GPU. A gradient or visual
+            // brush in a sampler slot is declined rather than bound to the wrong texture.
+            foreach (Brush? b in def.SamplerBrushes)
+                if (b is not null and not ImageBrush) return false;
 
             if (!_effectModules.TryGetValue(def.ShaderId, out IntPtr module))
             {
@@ -3666,7 +3696,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ResolvePipeline(ReadbackFormat, FillKind.ShaderEffect, def.ShaderId), 0);
 
             bool hasConsts = def.FloatConstants.Length > 0;
-            var entries = stackalloc WGPUBindGroupEntry[3];
+            // 1 uniform + 2 entries per sampler.
+            int maxEntries = 1 + def.Samplers.Length * 2;
+            var entries = stackalloc WGPUBindGroupEntry[maxEntries];
             uint n = 0;
             IntPtr cbuf = IntPtr.Zero;
             if (hasConsts)
@@ -3680,16 +3712,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 DeferReleaseBuffer(cbuf);
                 entries[n++] = new WGPUBindGroupEntry { binding = n - 1, buffer = cbuf, offset = 0, size = (ulong)bytes };
             }
-            entries[n] = new WGPUBindGroupEntry { binding = n, textureView = inputView }; n++;
-            entries[n] = new WGPUBindGroupEntry { binding = n, sampler = LinearSampler() }; n++;
+            // One texture+sampler pair per sampler register, in the order the translator
+            // emitted the bindings. A null brush is the implicit input: the subtree's layer.
+            for (int i = 0; i < def.Samplers.Length; i++)
+            {
+                IntPtr view = inputView;
+                if (def.SamplerBrushes[i] is ImageBrush ib)
+                    view = GetOrCreateImageView(ib.PixelsRgba, ib.PixelWidth, ib.PixelHeight);
+                entries[n] = new WGPUBindGroupEntry { binding = n, textureView = view }; n++;
+                entries[n] = new WGPUBindGroupEntry { binding = n, sampler = LinearSampler() }; n++;
+            }
 
             var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = (nuint)n, entries = entries };
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
         }
 
-        private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind)
+        private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind) => GetPipeline(format, kind, false);
+
+        private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind, bool sourceCopy)
         {
-            var key = (format, kind);
+            var key = (format, kind, sourceCopy);
             if (_pipelines.TryGetValue(key, out IntPtr cached))
                 return cached;
             IntPtr shader = kind switch
@@ -3705,7 +3747,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.StrokeDraw => GetStrokeDrawShaderModule(),
                 _ => GetShaderModule(),
             };
-            IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind);
+            IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind, sourceCopy);
             _pipelines[key] = pipeline;
             return pipeline;
         }
@@ -3805,7 +3847,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return _clipShaderModule;
         }
 
-        private static IntPtr CreatePipeline(IntPtr device, IntPtr shader, WGPUTextureFormat targetFormat, FillKind kind)
+        private static IntPtr CreatePipeline(IntPtr device, IntPtr shader, WGPUTextureFormat targetFormat, FillKind kind, bool sourceCopy = false)
         {
             string fsName = kind switch
             {
@@ -3862,6 +3904,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // Coverage / stroke / brush-alpha write mask values directly; the id pass writes
                 // packed ids with topmost-wins-by-paint-order (overwrite, no blend).
                 if (kind is FillKind.Coverage or FillKind.Stroke or FillKind.BrushAlpha or FillKind.Id) colorTarget.blend = null;
+                // CompositingMode.SourceCopy: write the premultiplied source straight out,
+                // replacing the destination colour AND alpha. Disabling blending is exactly
+                // that -- no separate blend factors needed.
+                if (sourceCopy) colorTarget.blend = null;
 
                 var fragment = new WGPUFragmentState
                 {
@@ -4362,11 +4408,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // format must be the pipeline format of the pass the returned bind group is drawn in:
         // auto-layout bind groups are exclusive to the exact pipeline their layout came from.
-        private IntPtr CreateBrushBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr covView, IntPtr rampView, IntPtr ubuf, int uniSize)
+        private IntPtr CreateBrushBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr covView, IntPtr rampView, IntPtr ubuf, int uniSize,
+            bool sourceCopy = false)
         {
 
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind, sourceCopy), 0);
             if (kind is FillKind.MaskBrush or FillKind.MaskImage)
             {
                 // binding(1) = ramp (gradient) or image (fs_maskimage); identical layout.
@@ -4409,7 +4456,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             byte[] uni = BuildBrushParams(gradient, g0, g1, ox, oy, w, h, (float)Math.Clamp(opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
 
-            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskBrush, covView, rampView, ubuf, uni.Length);
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskBrush, covView, rampView, ubuf, uni.Length, _srcCopy);
             DeferReleaseBindGroup(bg);
 
             float x0 = ox, y0 = oy, x1 = ox + w, y1 = oy + h;
@@ -4420,7 +4467,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), 1f, 1f, 1f, 1f, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskBrush, bg));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskBrush, bg, sourceCopy: _srcCopy));
             return true;
         }
 
@@ -4441,7 +4488,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity * img.Opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
 
-            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length);
+            IntPtr bg = CreateBrushBindGroup(format, FillKind.MaskImage, covView, imgView, ubuf, uni.Length, _srcCopy);
             DeferReleaseBindGroup(bg);
 
             float x0 = ox, y0 = oy, x1 = ox + w, y1 = oy + h;
@@ -4452,7 +4499,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), 1f, 1f, 1f, 1f, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskImage, bg));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.MaskImage, bg, sourceCopy: _srcCopy));
             return true;
         }
 
@@ -4526,11 +4573,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return true;
         }
 
-        private IntPtr CreateSampledBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr view, IntPtr sampler)
+        private IntPtr CreateSampledBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr view, IntPtr sampler,
+            bool sourceCopy = false)
         {
 
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind), 0);
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind, sourceCopy), 0);
             var entries = stackalloc WGPUBindGroupEntry[2];
             entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = view };
             entries[1] = new WGPUBindGroupEntry { binding = 1, sampler = sampler };

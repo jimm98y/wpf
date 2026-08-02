@@ -37,6 +37,11 @@ namespace System.Drawing
         void DrawImage(byte[] rgba, int pw, int ph, float dx, float dy, float dw, float dh);
         // Clip subsequent primitives to (or, if exclude, out of) a rect until ClearClip. Exclude is
         // how ThemeWin32Classic gaps the GroupBox border around its title.
+        // Graphics.CompositingMode. SourceCopy replaces the destination (colour AND alpha)
+        // instead of alpha-blending over it -- the documented way to build an off-screen
+        // bitmap whose shapes do not blend with each other but still blend with whatever it
+        // is later drawn onto.
+        void SetCompositingMode(bool sourceCopy);
         void SetClipRect(float x, float y, float w, float h, bool exclude);
         void ClearClip();
     }

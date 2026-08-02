@@ -2528,8 +2528,16 @@ namespace System.Drawing
 			}
 		}
 
+		// Mirrored in managed state so it survives on a RECORDING Graphics, which has no
+		// libgdiplus handle (GpuRaster.NewRecording -> nativeObject == 0). Previously the
+		// setter returned early there, so CompositingMode did not even round-trip, and
+		// SourceCopy silently alpha-blended.
+		private CompositingMode _compositingMode = CompositingMode.SourceOver;
+
 		public CompositingMode CompositingMode {
 			get {
+                                if (nativeObject == IntPtr.Zero || GpuRecorder != null)
+                                        return _compositingMode;
                                 CompositingMode mode;
                                 Status status = GDIPlus.GdipGetCompositingMode (nativeObject, out mode);
 				GDIPlus.CheckStatus (status);
@@ -2537,6 +2545,8 @@ namespace System.Drawing
 				return mode;
 			}
 			set {
+                                _compositingMode = value;
+                                GpuRecorder?.SetCompositingMode (value == CompositingMode.SourceCopy);
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetCompositingMode (nativeObject, value);
 				GDIPlus.CheckStatus (status);

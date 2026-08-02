@@ -30,6 +30,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.IconFallbackTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.RenderOptionsTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.BitmapCacheTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.CompositingModeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.StabilityTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.FontTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.CffTest")]

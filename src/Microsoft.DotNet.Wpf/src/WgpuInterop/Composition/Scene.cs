@@ -345,6 +345,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     /// </summary>
     internal abstract class DrawingPrimitive
     {
+        /// <summary>
+        /// System.Drawing's CompositingMode.SourceCopy: write this primitive's premultiplied
+        /// colour straight into the target, replacing whatever is there including its alpha,
+        /// instead of alpha-blending over it. Set by the GPU-raster seam from
+        /// Graphics.CompositingMode; WPF's own MIL path never requests it.
+        /// </summary>
+        public bool SourceCopy { get; set; }
+
     }
 
     /// <summary>A single fill instruction: geometry + brush.</summary>
@@ -548,12 +556,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public string Wgsl { get; }
         /// <summary>c# float registers, 4 floats each, densely indexed from c0.</summary>
         public float[] FloatConstants { get; }
-        /// <summary>Sampler registers the shader reads. Only a single input (s0) is supported.</summary>
+        /// <summary>Sampler registers the shader reads, ascending.</summary>
         public int[] Samplers { get; }
 
-        public ShaderEffectDef(int shaderId, string wgsl, float[] floatConstants, int[] samplers)
+        /// <summary>
+        /// What each entry of <see cref="Samplers"/> reads, in the same order. A null entry is
+        /// WPF's ImplicitInputBrush -- "whatever this effect was applied to" -- and binds the
+        /// subtree's own rendered layer. Anything else is an ordinary brush (a second image for
+        /// a blend or transition, a mask, and so on).
+        /// </summary>
+        public Brush?[] SamplerBrushes { get; }
+
+        public ShaderEffectDef(int shaderId, string wgsl, float[] floatConstants, int[] samplers,
+            Brush?[]? samplerBrushes = null)
         {
             ShaderId = shaderId; Wgsl = wgsl; FloatConstants = floatConstants; Samplers = samplers;
+            SamplerBrushes = samplerBrushes ?? new Brush?[samplers.Length];
         }
     }
 

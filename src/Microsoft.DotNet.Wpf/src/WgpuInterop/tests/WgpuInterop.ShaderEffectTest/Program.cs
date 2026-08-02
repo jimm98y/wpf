@@ -107,6 +107,9 @@ internal static class Program
         Reject("ps_1_1", new Ps().Version(1, 1).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
                contains: "unsupported shader model");
 
+        // --- TWO SAMPLERS: implicit input + a second brush ---
+        TwoSamplers();
+
         // --- REAL fxc OUTPUT ---
         RealShaders();
 
@@ -134,6 +137,42 @@ internal static class Program
     // wpfgfx_cor3.dll; WPF_REAL_SHADER_DIR points at a directory of them extracted by magic
     // bytes. Every shader must either translate to WGSL that COMPILES, or be refused with a
     // reason -- a crash, or output naga rejects, is a translator bug.
+    // A blend effect: s0 is WPF's ImplicitInputBrush (the content the effect is applied to)
+    // and s1 is a second image. Multi-input effects -- transitions, masks, blends -- were
+    // declined outright before the sampler payload of MILCMD_SHADEREFFECT was decoded.
+    private static void TwoSamplers()
+    {
+        const int S = 64;
+        // texld r0, t0, s0 ; texld r1, t0, s1 ; add oC0, r0, r1
+        byte[] code = new Ps()
+            .TexLd(Dst.Temp(0), Src.Texture(0), Src.Sampler(0))
+            .TexLd(Dst.Temp(1), Src.Texture(0), Src.Sampler(1))
+            .Op(Ps.ADD, Dst.ColorOut(), Src.Temp(0), Src.Temp(1))
+            .Build();
+        if (!D3D9ShaderTranslator.TryTranslate(code, out TranslatedShader tr, out string why))
+        { Fail($"two samplers: translation failed -- {why}"); return; }
+        Check(tr.Samplers.Count == 2, $"translator reports 2 samplers (got {tr.Samplers.Count})");
+
+        // s1 = a solid blue image; s0 = the red square the effect is applied to.
+        var blue = new byte[4 * 4];
+        for (int i = 0; i < 4; i++) { blue[i*4] = 0; blue[i*4+1] = 0; blue[i*4+2] = 255; blue[i*4+3] = 255; }
+        var def = new ShaderEffectDef(7, tr.Wgsl, Array.Empty<float>(), tr.Samplers.ToArray(),
+            new Brush?[] { null, new ImageBrush(blue, 2, 2) });
+
+        var root = new SceneVisual();
+        var child = new SceneVisual { Effect = def };
+        child.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(16, 16, 32, 32)),
+            RgbaColor.FromBytes(255, 0, 0, 255)));
+        root.Children.Add(child);
+
+        byte[] px = _renderer.RenderToRgba(root, S, S, RgbaColor.FromBytes(0, 0, 0, 255));
+        int o = (32 * S + 32) * 4;
+        int r = px[o], g = px[o + 1], b = px[o + 2];
+        // red input + blue second sampler, added -> magenta.
+        Check(r > 200 && g < 60 && b > 200,
+            $"input + second sampler blend to magenta, got ({r},{g},{b})");
+    }
+
     private static void RealShaders()
     {
         string? dir = Environment.GetEnvironmentVariable("WPF_REAL_SHADER_DIR");

@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
 using Microsoft.Wpf.Interop.WebGpu.Composition.Protocol;
+using Microsoft.Wpf.Interop.WebGpu.Composition.Protocol;
 
 internal static class Program
 {
@@ -36,6 +37,12 @@ internal static class Program
         Console.WriteLine($"  magnified 2x2 image, blended pixels:   default={linBlend} nearest={nnBlend}");
         Check(linBlend > 20, "default image scaling filters (blended pixels present)");
         Check(nnBlend == 0, "NearestNeighbor produces only the source colours");
+
+        // --- Field ordering through the REAL command ---
+        // MilRenderOptions is seven u32s and the two we honour sit either side of fields we
+        // skip. Decoding it with every field non-zero catches an off-by-one in the struct walk,
+        // which would otherwise read CompositingMode as EdgeMode and silently alias the two.
+        MilcorePath();
 
         Console.WriteLine();
         if (_failures > 0) { Console.WriteLine($"RENDER OPTIONS TEST FAILED: {_failures} problem(s)."); return 1; }
@@ -90,6 +97,38 @@ internal static class Program
             if (!exact) blended++;
         }
         return blended;
+    }
+
+    private static void MilcorePath()
+    {
+        // Every field non-zero and distinct, so a misread lands on the wrong value rather than
+        // coincidentally on the right one.
+        var e = new MilcoreEngine();
+        e.CreateOrAddRef(2, MilResourceTypeId.Visual);
+        e.SubmitCommand(SetRenderOptions(2,
+            flags: 0x1 | 0x2 | 0x8 | 0x10 | 0x20,   // BitmapScalingMode|EdgeMode|ClearType|TextRendering|TextHinting
+            edgeMode: 1,                            // Aliased
+            compositingMode: 5,                     // SourceUnder -- read past, must not shift the rest
+            bitmapScalingMode: 3,                   // NearestNeighbor
+            clearTypeHint: 1, textRenderingMode: 2, textHintingMode: 1));
+        e.Realize();
+
+        SceneVisual? v = e.VisualByHandle(2);
+        if (v is null) { Check(false, "milcore path: no visual"); return; }
+        Check(v.AliasedEdges, "EdgeMode read correctly with every other field populated");
+        Check(v.NearestBitmapScaling, "BitmapScalingMode read from the right offset past CompositingMode");
+    }
+
+    // MILCMD_VISUAL_SETRENDEROPTIONS: Handle@4, then MilRenderOptions@8 (7 x u32).
+    private static byte[] SetRenderOptions(uint handle, uint flags, uint edgeMode, uint compositingMode,
+        uint bitmapScalingMode, uint clearTypeHint, uint textRenderingMode, uint textHintingMode)
+    {
+        var b = new List<byte>();
+        void U32(uint v) => b.AddRange(BitConverter.GetBytes(v));
+        U32(0x21); U32(handle);
+        U32(flags); U32(edgeMode); U32(compositingMode); U32(bitmapScalingMode);
+        U32(clearTypeHint); U32(textRenderingMode); U32(textHintingMode);
+        return b.ToArray();
     }
 
     private static byte[] Render(SceneVisual root)

@@ -134,6 +134,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         RotateTransform = 0x76,
         DashStyle = 0x85,
         Pen = 0x86,
+        ImplicitInputBrush = 0x6d,
         PixelShader = 0x6c,
         VisualSetCacheMode = 0x1e,
         VisualSetRenderOptions = 0x21,
@@ -210,7 +211,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// unmodified, which is what milcore does with a shader it cannot compile, and is far
         /// better than dropping the content.
         /// </summary>
-        private Effect? BuildShaderEffect(uint hShader, int[] regIndices, float[] values, bool usesIntOrBool)
+        private Effect? BuildShaderEffect(uint hShader, int[] regIndices, float[] values, bool usesIntOrBool,
+            int[] samplerRegs, uint[] samplerHandles)
         {
             if (usesIntOrBool) return null;
             if (!_pixelShaders.TryGetValue(hShader, out byte[]? code) || code.Length == 0) return null;
@@ -233,7 +235,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 id = s_nextShaderId++;
                 _shaderIds[hShader] = id;
             }
-            return new ShaderEffectDef(id, tr.Wgsl, packed, tr.Samplers.ToArray());
+            // Bind each sampler the shader reads: null means WPF's ImplicitInputBrush (the
+            // effect's own input), anything else resolves to a real brush.
+            var brushes = new Brush?[tr.Samplers.Count];
+            for (int i = 0; i < tr.Samplers.Count; i++)
+            {
+                int reg = tr.Samplers[i];
+                int slot = Array.IndexOf(samplerRegs, reg);
+                if (slot < 0 || slot >= samplerHandles.Length) continue;      // unbound -> implicit
+                uint hb = samplerHandles[slot];
+                if (hb == 0 || _implicitInputBrushes.Contains(hb)) continue;  // implicit input
+                brushes[i] = ResolveBrush(hb, default);
+            }
+            return new ShaderEffectDef(id, tr.Wgsl, packed, tr.Samplers.ToArray(), brushes);
         }
         private readonly Dictionary<uint, MilBitmap> _bitmaps = new();
         private readonly Dictionary<uint, MilImageBrush> _imageBrushes = new();
@@ -335,6 +349,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // DrawingImage: a Drawing used as an ImageSource (vector icon assets).
         private readonly Dictionary<uint, uint> _drawingImages = new();
         private readonly HashSet<uint> _bitmapCaches = new();
+        private readonly HashSet<uint> _implicitInputBrushes = new();
 
         /// <summary>A decoded WPF glyph run: already-shaped glyph indices + advances.</summary>
         private sealed class MilGlyphRun
@@ -470,6 +485,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _glyphRunDrawings.Remove(handle);
             _drawingImages.Remove(handle);
             _bitmapCaches.Remove(handle);
+            _implicitInputBrushes.Remove(handle);
             _geometries.Remove(handle);
             _gradients.Remove(handle);
             _glyphRuns.Remove(handle);
@@ -1000,7 +1016,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     uint vh = r.U32();
                     uint flags = r.U32();
                     uint edgeMode = r.U32();
-                    r.U32();                                   // CompositingMode
+                    // CompositingMode is read past, not honoured, and that is not an omission:
+                    // WPF has no public RenderOptions.CompositingMode, and Visual.cs never sets
+                    // the field or its flag bit (the MilRenderOptions it sends is default-
+                    // initialised, so this is always 0 = SourceOver). The value exists in the
+                    // wire struct for milcore's own internal compositing passes. It still has to
+                    // be READ, because it sits between EdgeMode and BitmapScalingMode.
+                    r.U32();
                     uint bitmapScaling = r.U32();
                     // ClearTypeHint / TextRenderingMode / TextHintingMode are ClearType and
                     // hinting hints; this renderer does grayscale AA text, so they are read
@@ -1032,6 +1054,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         gv.GuidelinesX = cx > 0 ? gx : null;
                         gv.GuidelinesY = cy > 0 ? gy : null;
                     }
+                    break;
+                }
+                case Mil.ImplicitInputBrush:
+                {
+                    // MILCMD_IMPLICITINPUTBRUSH: a marker resource standing for "the content this
+                    // effect is applied to". Only its identity matters; the subtree's own layer is
+                    // what gets bound wherever it appears as a sampler source.
+                    _implicitInputBrushes.Add(r.U32());
                     break;
                 }
                 case Mil.PixelShader:
@@ -1070,13 +1100,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < floatCount; i++) regIndices[i] = r.U16();
                     var values = new float[floatCount * 4];
                     for (int i = 0; i < floatCount * 4 && floatValBytes >= 4; i++) values[i] = r.F32();
-                    // The remaining payloads are for register classes this renderer does not
-                    // support; skip them so the reader stays aligned for the next command.
-                    SkipBytes(ref r, intRegBytes + intValBytes + boolRegBytes + boolValBytes
-                                     + samplerInfoBytes + samplerValBytes);
+                    // Int and bool register classes are unsupported; skip to the sampler payload.
+                    SkipBytes(ref r, intRegBytes + intValBytes + boolRegBytes + boolValBytes);
+
+                    // 7) sampler registration info: (registerIndex, samplingMode) per sampler.
+                    int samplerCount = samplerInfoBytes / 8;
+                    var samplerRegs = new int[samplerCount];
+                    for (int i = 0; i < samplerCount; i++) { samplerRegs[i] = (int)r.U32(); r.U32(); }
+                    // 8) one brush handle per sampler, same order.
+                    var samplerHandles = new uint[samplerValBytes / 4];
+                    for (int i = 0; i < samplerHandles.Length; i++) samplerHandles[i] = r.U32();
 
                     _effects[h] = BuildShaderEffect(hShader, regIndices, values,
-                        intRegBytes + boolRegBytes > 0);
+                        intRegBytes + boolRegBytes > 0, samplerRegs, samplerHandles);
                     break;
                 }
                 case Mil.BlurEffect:
