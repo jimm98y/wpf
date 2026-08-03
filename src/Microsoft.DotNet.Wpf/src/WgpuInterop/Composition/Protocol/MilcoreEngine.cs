@@ -59,6 +59,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // DrawingContext.DrawDrawing -- how a DrawingGroup/GeometryDrawing tree gets into a
         // visual's render data (and what DrawingBrush content walks through).
         DrawDrawing = 0x4a,
+        VideoDrawing = 0x8a,
+        BitmapCacheBrush = 0x84,
+        // Animation VALUE resources. AnimationClockResource re-sends these every tick with the
+        // clock's CurrentValue, which is how a render-data *Animate record's animated property
+        // actually moves. (Distinct from Animatable's independent-animation handles, which
+        // GetAnimationResourceHandle deliberately suppresses in favour of resolved values.)
+        DoubleResource = 0x0e,
+        ColorResource = 0x0f,
+        PointResource = 0x10,
+        RectResource = 0x11,
+        SizeResource = 0x12,
+        MatrixResource = 0x13,
+        // Animated drawing records: the static payload plus handles to the resources above.
+        DrawLineAnimate = 0x3f,
+        DrawRectangleAnimate = 0x41,
+        DrawRoundedRectangleAnimate = 0x43,
+        DrawEllipseAnimate = 0x45,
+        DrawImageAnimate = 0x48,
+        DrawVideoAnimate = 0x4c,
+        PushOpacityAnimate = 0x50,
         // Render-data guideline pushes. SimpleTextLine.Draw emits PushGuidelineY1 for EVERY text
         // line and LineServicesCallbacks emits PushGuidelineY2 for underlines, so these are among
         // the most frequent records in a text-heavy tree -- they were being skipped wholesale.
@@ -204,6 +224,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, Geometry> _geometries = new();
         // GuidelineSet resources (MILCMD_GUIDELINESET), in the guideline set's own coordinates.
         private readonly Dictionary<uint, (float[] X, float[] Y)> _guidelineSets = new();
+        // Live animated values, refreshed every tick by the MilCmd*Resource commands. An animate
+        // record carries BOTH its static value and a handle in here; the handle wins when present,
+        // which is what makes the property move.
+        private readonly Dictionary<uint, (Rect Rect, uint Player, uint RectAnim)> _videoDrawings = new();
+        private readonly Dictionary<uint, double> _animDouble = new();
+        private readonly Dictionary<uint, Vector2> _animPoint = new();
+        private readonly Dictionary<uint, Rect> _animRect = new();
+        private readonly Dictionary<uint, Vector2> _animSize = new();
+        private readonly Dictionary<uint, RgbaColor> _animColor = new();
+        private readonly Dictionary<uint, Matrix3x2> _animMatrix = new();
+
+        // An animate record's value: the resource if the clock has published one, else the
+        // static value packed alongside it.
+        private double Anim(uint h, double staticValue)
+            => h != 0 && _animDouble.TryGetValue(h, out double v) ? v : staticValue;
+        private Vector2 Anim(uint h, Vector2 staticValue)
+            => h != 0 && _animPoint.TryGetValue(h, out Vector2 v) ? v : staticValue;
+        private Rect Anim(uint h, Rect staticValue)
+            => h != 0 && _animRect.TryGetValue(h, out Rect v) ? v : staticValue;
         // Guidelines supplied per-VISUAL by MILCMD_VISUAL_SETGUIDELINECOLLECTION. Kept apart from
         // the ones a render-data pass discovers so that re-parsing content cannot drop them.
         private readonly Dictionary<uint, (float[]? X, float[]? Y)> _visualGuides = new();
@@ -722,6 +761,54 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _geometries[gh] = MakeLine(start, end);
                     break;
                 }
+                case Mil.DoubleResource:
+                {
+                    uint h = r.U32(); _animDouble[h] = r.F64(); break;
+                }
+                case Mil.ColorResource:
+                {
+                    uint h = r.U32();
+                    _animColor[h] = new RgbaColor(r.F32(), r.F32(), r.F32(), r.F32());
+                    break;
+                }
+                case Mil.PointResource:
+                {
+                    uint h = r.U32();
+                    _animPoint[h] = new Vector2((float)r.F64(), (float)r.F64());
+                    break;
+                }
+                case Mil.SizeResource:
+                {
+                    uint h = r.U32();
+                    _animSize[h] = new Vector2((float)r.F64(), (float)r.F64());
+                    break;
+                }
+                case Mil.RectResource:
+                {
+                    uint h = r.U32();
+                    _animRect[h] = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    break;
+                }
+                case Mil.MatrixResource:
+                {
+                    // MilMatrix3x2D: six doubles, WPF's 3x2 affine order.
+                    uint h = r.U32();
+                    _animMatrix[h] = new Matrix3x2((float)r.F64(), (float)r.F64(), (float)r.F64(),
+                                                   (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    break;
+                }
+                case Mil.VideoDrawing:
+                {
+                    // MILCMD_VIDEODRAWING: Handle@4, Rect@8, hPlayer@40, hRectAnimations@44.
+                    // The Drawing form of a video -- what a DrawingBrush or DrawingImage wrapping
+                    // a MediaElement resolves to, as opposed to the DrawVideo render-data record.
+                    uint h = r.U32();
+                    var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                    uint hPlayer = r.U32();
+                    uint hRectAnim = r.U32();
+                    _videoDrawings[h] = (rect, hPlayer, hRectAnim);
+                    break;
+                }
                 case Mil.GuidelineSet:
                 {
                     // MILCMD_GUIDELINESET: Handle@4, GuidelinesXSize@8, GuidelinesYSize@12 (both
@@ -963,6 +1050,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case Mil.QuaternionRotation3D:
                 case Mil.PerspectiveCamera:
                 case Mil.OrthographicCamera:
+                // Decode3D has handled MatrixCamera all along, but this dispatch never routed
+                // 0x5b to it, so a <MatrixCamera> silently left the Viewport3D with no camera
+                // and the whole 3D scene dropped.
+                case Mil.MatrixCamera:
                 case Mil.Model3DGroup:
                 case Mil.AmbientLight:
                 case Mil.DirectionalLight:
@@ -1013,6 +1104,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 144; uint hSource = r.U32();
                     _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity);
                     _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
+                    break;
+                }
+                case Mil.BitmapCacheBrush:
+                {
+                    // MILCMD_BITMAPCACHEBRUSH: Handle@4, Opacity@8, hOpacityAnimations@16,
+                    // hTransform@20, hRelativeTransform@24, hBitmapCache@28, hInternalTarget@32.
+                    //
+                    // Unlike the TileBrushes this is NOT a viewport/viewbox brush: a
+                    // BitmapCacheBrush paints its cached target visual across the whole fill
+                    // area. So it maps onto the same content-brush machinery with a
+                    // bounding-box-relative unit viewport/viewbox and Stretch=Fill.
+                    //
+                    // hBitmapCache selects the cache's RenderAtScale/ClearType hints, which the
+                    // renderer has nothing to attach to yet (see the BitmapCache arm) -- the
+                    // target is rasterized at screen scale either way, so ignoring it costs
+                    // resolution tuning, not correctness.
+                    uint h = r.U32();
+                    double cacheOpacity = r.F64();
+                    r.Position = 32; uint hTarget = r.U32();
+                    if (hTarget != 0)
+                    {
+                        var unit = new Rect(0f, 0f, 1f, 1f);
+                        _imageBrushes[h] = new MilImageBrush(hTarget, TileMode.None, stretch: 1 /* Fill */,
+                            unit, viewportUnits: 1 /* RelativeToBoundingBox */,
+                            unit, viewboxUnits: 1, cacheOpacity);
+                        _contentBrushes[h] = (hTarget, false);
+                    }
                     break;
                 }
                 case Mil.GeometryDrawing:
@@ -1603,6 +1721,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
         }
 
+        /// <summary>
+        /// Test hook: the content-brush registration for a brush handle -- the source visual (or
+        /// Drawing) it paints, and how it maps onto the fill. Lets a decode test assert what a
+        /// brush command RESOLVED TO without standing up the live compositor's content-texture
+        /// plumbing, which a hand-built tree does not reproduce.
+        /// </summary>
+        internal bool TryGetContentBrushForTest(uint handle, out uint source, out bool isDrawing,
+            out uint stretch, out TileMode tile)
+        {
+            source = 0; isDrawing = false; stretch = 0; tile = TileMode.None;
+            if (!_contentBrushes.TryGetValue(handle, out (uint Source, bool IsDrawing) cb)) return false;
+            source = cb.Source; isDrawing = cb.IsDrawing;
+            if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib)) { stretch = ib.Stretch; tile = ib.Tile; }
+            return true;
+        }
+
         /// <summary>Test hook: materialize a decoded Drawing resource into a visual.</summary>
         internal SceneVisual BuildDrawingVisualForTest(uint handle) => BuildDrawingVisual(handle);
 
@@ -1625,6 +1759,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_glyphRuns.TryGetValue(grd.GlyphRun, out MilGlyphRun? gr))
                     EmitGlyphRun(v.Content, gr, grd.Brush, RenderState.Default);
+            }
+            else if (_videoDrawings.TryGetValue(handle, out (Rect Rect, uint Player, uint RectAnim) vd))
+            {
+                if (_videoFrames.TryGetValue(vd.Player, out MilBitmap vframe))
+                    EmitFill(v.Content, new RectangleGeometry(Anim(vd.RectAnim, vd.Rect)),
+                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height), RenderState.Default);
             }
             else if (_drawingImages.TryGetValue(handle, out uint hInner))
             {
@@ -1766,6 +1906,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (_glyphRuns.TryGetValue(grd.GlyphRun, out MilGlyphRun? gr))
                     EmitGlyphRun(output, gr, grd.Brush, state);
             }
+            else if (_videoDrawings.TryGetValue(handle, out (Rect Rect, uint Player, uint RectAnim) vd))
+            {
+                if (_videoFrames.TryGetValue(vd.Player, out MilBitmap vframe))
+                    EmitFill(output, new RectangleGeometry(Anim(vd.RectAnim, vd.Rect)),
+                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height), state);
+                _parseTouchedContentBrush = true;   // frames change without the render data changing
+            }
             else if (_drawingImages.TryGetValue(handle, out uint hInner))
             {
                 EmitDrawingResource(output, hInner, state, depth + 1);
@@ -1836,6 +1983,81 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         // Rect@0, hBrush@32, hPen@36.
                         var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                         EmitDrawing(output, new RectangleGeometry(rect), r.U32(), r.U32(), state);
+                        break;
+                    }
+                    // ---- animated draw records -------------------------------------------
+                    // Each carries its static value AND a handle into the animation-value tables,
+                    // which AnimationClockResource refreshes every tick. Reading the static value
+                    // alone would pin the drawing at its base; ignoring the record (what happened
+                    // before) dropped the drawing entirely.
+                    case Mil.DrawRectangleAnimate:
+                    {
+                        // rectangle@0, hBrush@32, hPen@36, hRectangleAnimations@40.
+                        var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                        uint hBrush = r.U32(), hPen = r.U32(), hAnim = r.U32();
+                        EmitDrawing(output, new RectangleGeometry(Anim(hAnim, rect)), hBrush, hPen, state);
+                        break;
+                    }
+                    case Mil.DrawRoundedRectangleAnimate:
+                    {
+                        // rectangle@0, radiusX@32, radiusY@40, hBrush@48, hPen@52,
+                        // hRectangleAnimations@56, hRadiusXAnimations@60, hRadiusYAnimations@64.
+                        var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                        double rx = r.F64(), ry = r.F64();
+                        uint hBrush = r.U32(), hPen = r.U32();
+                        uint hRectAnim = r.U32(), hRxAnim = r.U32(), hRyAnim = r.U32();
+                        EmitDrawing(output, new RoundedRectangleGeometry(Anim(hRectAnim, rect),
+                            (float)Anim(hRxAnim, rx), (float)Anim(hRyAnim, ry)), hBrush, hPen, state);
+                        break;
+                    }
+                    case Mil.DrawEllipseAnimate:
+                    {
+                        // center@0, radiusX@16, radiusY@24, hBrush@32, hPen@36,
+                        // hCenterAnimations@40, hRadiusXAnimations@44, hRadiusYAnimations@48.
+                        var center = new Vector2((float)r.F64(), (float)r.F64());
+                        double rx = r.F64(), ry = r.F64();
+                        uint hBrush = r.U32(), hPen = r.U32();
+                        uint hCenterAnim = r.U32(), hRxAnim = r.U32(), hRyAnim = r.U32();
+                        EmitDrawing(output, new EllipseGeometry(Anim(hCenterAnim, center),
+                            (float)Anim(hRxAnim, rx), (float)Anim(hRyAnim, ry)), hBrush, hPen, state);
+                        break;
+                    }
+                    case Mil.DrawLineAnimate:
+                    {
+                        // point0@0, point1@16, hPen@32, hPoint0Animations@36, hPoint1Animations@40.
+                        var p0 = new Vector2((float)r.F64(), (float)r.F64());
+                        var p1 = new Vector2((float)r.F64(), (float)r.F64());
+                        uint hPen = r.U32(), hP0Anim = r.U32(), hP1Anim = r.U32();
+                        EmitDrawing(output, MakeLine(Anim(hP0Anim, p0), Anim(hP1Anim, p1)), 0, hPen, state);
+                        break;
+                    }
+                    case Mil.DrawImageAnimate:
+                    {
+                        // rectangle@0, hImageSource@32, hRectangleAnimations@36.
+                        var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                        uint hImg = r.U32(), hAnim = r.U32();
+                        if (_bitmaps.TryGetValue(hImg, out MilBitmap abmp))
+                            EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)),
+                                new ImageBrush(abmp.Rgba, abmp.Width, abmp.Height), state);
+                        break;
+                    }
+                    case Mil.DrawVideoAnimate:
+                    {
+                        // rectangle@0, hPlayer@32, hRectangleAnimations@36.
+                        var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
+                        uint hPlayer = r.U32(), hAnim = r.U32();
+                        _parseTouchedContentBrush = true;      // as MilDrawVideo: frames change out of band
+                        if (_videoFrames.TryGetValue(hPlayer, out MilBitmap aframe))
+                            EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)),
+                                new ImageBrush(aframe.Rgba, aframe.Width, aframe.Height), state);
+                        break;
+                    }
+                    case Mil.PushOpacityAnimate:
+                    {
+                        // opacity@0, hOpacityAnimations@8.
+                        stack.Push(state);
+                        double opacity = r.F64();
+                        state.Opacity *= (float)Anim(r.U32(), opacity);
                         break;
                     }
                     case Mil.DrawRoundedRectangle:

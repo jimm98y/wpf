@@ -30,7 +30,8 @@ internal static class Program
 
     private static int Main()
     {
-        bool ok = GeometryGroupCase() & CombinedGeometryCase() & GuidelineCase() & DrawDrawingCase();
+        bool ok = GeometryGroupCase() & CombinedGeometryCase() & GuidelineCase() & DrawDrawingCase()
+                & AnimateCase() & BitmapCacheBrushCase() & UnknownCommandCase();
 
         Console.WriteLine();
         if (!ok || _failures > 0) { Console.WriteLine($"OPCODE TEST FAILED: {_failures} problem(s)."); return 1; }
@@ -134,6 +135,98 @@ internal static class Program
         return ok;
     }
 
+    // 0x41 + 0x11: DrawRectangleAnimate carries a static rect AND a handle to a RectResource
+    // that AnimationClockResource re-sends every tick. The animated value must win -- otherwise
+    // the drawing is pinned to its base value, which looks like "the animation does not run".
+    private static bool AnimateCase()
+    {
+        Console.WriteLine("MilDrawRectangleAnimate (0x41) + MilCmdRectResource (0x11)");
+        var e = new MilcoreEngine();
+        e.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e.SubmitCommand(SolidColorBrush(10, 0, 1, 0, 1));
+        // The clock's current value: far from the static rect, so the two are unmistakable.
+        e.SubmitCommand(RectResourceCmd(50, 60, 10, 40, 30));
+        byte[] img = RenderContent(e, DrawRectangleAnimateRecord(10, 0, 10, 10, 40, 30, hRectAnim: 50));
+
+        bool ok = true;
+        ok &= Px(img, 80, 25, 0, 255, 0, "the ANIMATED rect is drawn");
+        ok &= Px(img, 30, 25, 255, 255, 255, "the static rect is not");
+
+        // With no value published for the handle yet -- the first frame, before the clock ticks --
+        // the static value has to stand in, or the drawing flickers out on frame one.
+        var e2 = new MilcoreEngine();
+        e2.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e2.SubmitCommand(SolidColorBrush(10, 0, 1, 0, 1));
+        byte[] img2 = RenderContent(e2, DrawRectangleAnimateRecord(10, 0, 10, 10, 40, 30, hRectAnim: 50));
+        ok &= Px(img2, 30, 25, 0, 255, 0, "before the clock publishes, the static rect is used");
+        return ok;
+    }
+
+    // 0x84: a BitmapCacheBrush paints its cached target visual across the fill area. It is not
+    // a viewport/viewbox TileBrush, so it maps onto the content-brush machinery with a unit
+    // bounding-box-relative viewport and Stretch=Fill.
+    //
+    // Asserted at the decode boundary, not in pixels: painting a content brush needs the live
+    // compositor's content-texture plumbing, and a hand-built tree does not reproduce it -- a
+    // real VisualBrush over the same target renders nothing here either. Pixel behaviour of
+    // content brushes is covered where that plumbing exists; what is new HERE is that the
+    // command is decoded at all, and resolves to the right target with the right mapping.
+    private static bool BitmapCacheBrushCase()
+    {
+        Console.WriteLine("MilCmdBitmapCacheBrush (0x84)");
+        var e = new MilcoreEngine();
+        e.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e.CreateOrAddRef(5, MilResourceTypeId.Visual);          // the cached target
+        e.SubmitCommand(BitmapCacheBrushCmd(11, opacity: 1.0, hInternalTarget: 5));
+
+        bool found = e.TryGetContentBrushForTest(11, out uint source, out bool isDrawing,
+            out uint stretch, out TileMode tile);
+        bool ok = true;
+        ok &= Bool(found, "the command registers a content brush");
+        ok &= Bool(source == 5, $"it paints the hInternalTarget visual (got {source})");
+        ok &= Bool(!isDrawing, "the target is a Visual, not a Drawing");
+        ok &= Bool(stretch == 1, $"the target is stretched to Fill the area (got {stretch})");
+        ok &= Bool(tile == TileMode.None, $"it does not tile (got {tile})");
+
+        // No target: a BitmapCacheBrush with nothing to cache must register nothing rather
+        // than a brush pointing at handle 0.
+        e.SubmitCommand(BitmapCacheBrushCmd(12, opacity: 1.0, hInternalTarget: 0));
+        ok &= Bool(!e.TryGetContentBrushForTest(12, out _, out _, out _, out _),
+            "a targetless BitmapCacheBrush registers nothing");
+        return ok;
+    }
+
+    // The families that are deliberately NOT decoded must stay harmless. An unknown COMMAND is
+    // ignored; an unknown render-data PUSH still has to keep the state stack balanced, or its
+    // matching Pop unwinds a level that was never pushed and every later record loses its clip.
+    private static bool UnknownCommandCase()
+    {
+        Console.WriteLine("unknown opcodes stay harmless");
+        var e = new MilcoreEngine();
+        e.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e.SubmitCommand(SolidColorBrush(10, 0, 0, 1, 1));
+        e.SubmitCommand(RectangleGeometry(20, 0, 0, 30, 30));
+        // 0x14 Point3DResource: sent by IndependentAnimationStorage, referenced by nothing.
+        var q = new Buf(); q.U32(0x14); q.U32(99); q.F32(1); q.F32(2); q.F32(3);
+        e.SubmitCommand(q.ToArray());
+
+        // An unknown push (0x55 PushEffect) wrapping a clip, then Pop, then a draw. If the
+        // unknown push did not balance, the Pop would discard the clip's enclosing state.
+        byte[] content = Concat(
+            PushClipRecord(21),
+            PushEffectRecord(),
+            PopRecord(),
+            DrawGeometryRecord(10, 0, 20),
+            PopRecord());
+        e.SubmitCommand(RectangleGeometry(21, 0, 0, 15, 30));   // clip: left half only
+        byte[] img = RenderContent(e, content);
+
+        bool ok = true;
+        ok &= Px(img, 7, 15, 0, 0, 255, "inside the clip still draws");
+        ok &= Px(img, 22, 15, 255, 255, 255, "the clip survived the unknown push/pop");
+        return ok;
+    }
+
     // ---- harness -----------------------------------------------------------------------
 
     private static SceneVisual Realize(MilcoreEngine e, byte[] content)
@@ -169,6 +262,13 @@ internal static class Program
     private static bool Near((int r, int g, int b) c, int r, int g, int b, int tol, string what)
     {
         bool ok = Math.Abs(c.r - r) <= tol && Math.Abs(c.g - g) <= tol && Math.Abs(c.b - b) <= tol;
+        Console.WriteLine($"    [{(ok ? "ok " : "FAIL")}] {what}");
+        if (!ok) _failures++;
+        return ok;
+    }
+
+    private static bool Bool(bool ok, string what)
+    {
         Console.WriteLine($"    [{(ok ? "ok " : "FAIL")}] {what}");
         if (!ok) _failures++;
         return ok;
@@ -248,9 +348,40 @@ internal static class Program
         return Record(0x40, p.ToArray());
     }
 
+    // MILCMD_DRAW_RECTANGLE_ANIMATE: rectangle@0, hBrush@32, hPen@36, hRectangleAnimations@40, pad@44.
+    private static byte[] DrawRectangleAnimateRecord(uint hBrush, uint hPen,
+        double x, double y, double w, double h, uint hRectAnim)
+    {
+        var p = new Buf(); p.F64(x); p.F64(y); p.F64(w); p.F64(h);
+        p.U32(hBrush); p.U32(hPen); p.U32(hRectAnim); p.U32(0);
+        return Record(0x41, p.ToArray());
+    }
+
+    // MILCMD_RECTRESOURCE: Handle@4, Value@8 (four doubles).
+    private static byte[] RectResourceCmd(uint h, double x, double y, double w, double hh)
+    {
+        var q = new Buf(); q.U32(0x11); q.U32(h); q.F64(x); q.F64(y); q.F64(w); q.F64(hh); return q.ToArray();
+    }
+
     private static byte[] DrawDrawingRecord(uint hDrawing)
     {
         var p = new Buf(); p.U32(hDrawing); p.U32(0); return Record(0x4a, p.ToArray());
+    }
+
+    // MILCMD_BITMAPCACHEBRUSH: Handle@4, Opacity@8, hOpacityAnimations@16, hTransform@20,
+    // hRelativeTransform@24, hBitmapCache@28, hInternalTarget@32.
+    private static byte[] BitmapCacheBrushCmd(uint h, double opacity, uint hInternalTarget)
+    {
+        var q = new Buf(); q.U32(0x84); q.U32(h); q.F64(opacity);
+        q.U32(0); q.U32(0); q.U32(0); q.U32(0); q.U32(hInternalTarget);
+        return q.ToArray();
+    }
+
+    private static byte[] PushEffectRecord() { var b = new Buf(); b.U32(8); b.U32(0x55); return b.ToArray(); }
+
+    private static byte[] PushClipRecord(uint hClip)
+    {
+        var b = new Buf(); b.U32(16); b.U32(0x4d); b.U32(hClip); b.U32(0); return b.ToArray();
     }
 
     private static byte[] PushGuidelineSetRecord(uint h)
@@ -278,6 +409,11 @@ internal static class Program
     private static byte[] RenderDataHeader(uint handle, int cbData)
     {
         var b = new Buf(); b.U32(0x18); b.U32(handle); b.U32((uint)cbData); return b.ToArray();
+    }
+
+    private static byte[] VisualInsertChildAt(uint parent, uint child, uint index)
+    {
+        var b = new Buf(); b.U32(0x26); b.U32(parent); b.U32(child); b.U32(index); return b.ToArray();
     }
 
     private static byte[] VisualSetContent(uint handle, uint hContent)
