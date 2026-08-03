@@ -279,12 +279,9 @@ namespace MS.Internal.Interop
             SendVoidRect(vev, Sel("setFrame:"), bounds);
             SendVoidNUInt(vev, Sel("setAutoresizingMask:"), NSViewWidthSizable | NSViewHeightSizable);
 
-            // Always give the effect view a DARK appearance so it uses the translucent, desktop-showing
-            // material in BOTH themes -- macOS LIGHT-appearance materials are opaque white frosts that hide
-            // the wallpaper. The light/dark WPF content composited on top provides the tint, so light theme
-            // becomes a light-tinted view of the wallpaper (Windows-Mica-like) instead of flat white.
-            IntPtr darkAppearance = MakeAppearance(dark: true);
-            if (darkAppearance != IntPtr.Zero) SendVoidPtr(vev, Sel("setAppearance:"), darkAppearance);
+            // Leave the effect view's own appearance UNSET so it inherits the window's (which
+            // SetWindowAppearance keeps in sync with the WPF theme). Forcing it dark in both themes
+            // renders the light theme as a dark gray frost, where Windows light Mica is near-white.
             SendVoidNInt(vev, Sel("setMaterial:"), MicaMaterial());
             SendVoidNInt(vev, Sel("setBlendingMode:"), 0);
             SendVoidNInt(vev, Sel("setState:"), 1);
@@ -293,6 +290,7 @@ namespace MS.Internal.Interop
             // surface creation) as a top-most sublayer, so the effect view renders behind the WPF scene.
             SendVoidPtrNIntPtr(_contentView, Sel("addSubview:positioned:relativeTo:"), vev, -1, IntPtr.Zero);
             _visualEffectView = vev;
+            TraceMicaAppearance("EnableMicaBackdrop");
         }
 
         // NSVisualEffectMaterial for the Mica backdrop (the effect view is always rendered in dark
@@ -303,6 +301,23 @@ namespace MS.Internal.Interop
             string env = Environment.GetEnvironmentVariable("WPF_MAC_MICA_MATERIAL");
             if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int m)) return m;
             return 21;   // NSVisualEffectMaterialUnderWindowBackground
+        }
+
+        // TEMPORARY diagnostic: what appearance the window and its Mica effect view actually resolve to.
+        private void TraceMicaAppearance(string where)
+        {
+            if (Environment.GetEnvironmentVariable("WPF_MAC_MICA_TRACE") != "1") return;
+            Console.Error.WriteLine($"[mica] {where}: window={AppearanceName(_window)} effectView={AppearanceName(_visualEffectView)}");
+        }
+
+        private static string AppearanceName(IntPtr obj)
+        {
+            if (obj == IntPtr.Zero) return "<none>";
+            IntPtr app = Send(obj, Sel("effectiveAppearance"));
+            if (app == IntPtr.Zero) return "<null>";
+            IntPtr name = Send(app, Sel("name"));
+            IntPtr utf8 = name != IntPtr.Zero ? Send(name, Sel("UTF8String")) : IntPtr.Zero;
+            return utf8 != IntPtr.Zero ? Marshal.PtrToStringUTF8(utf8) : "<?>";
         }
 
         // A named NSAppearance (Dark/Light Aqua), or Zero if unavailable.
@@ -328,10 +343,9 @@ namespace MS.Internal.Interop
             if (appearance != IntPtr.Zero)
                 SendVoidPtr(_window, Sel("setAppearance:"), appearance);
 
-            // The Mica effect view keeps its OWN (dark) appearance so the wallpaper shows through in both
-            // themes; do not re-appearance it here -- a light effect view would be an opaque white frost.
-            if (_visualEffectView != IntPtr.Zero)
-                SendVoidPtr(_visualEffectView, Sel("setAppearance:"), MakeAppearance(dark: true));
+            // The Mica effect view carries no appearance of its own, so it follows the window set above:
+            // light theme gets the light material (near-white, like Windows Mica), dark the dark one.
+            TraceMicaAppearance($"SetWindowAppearance(dark:{dark})");
         }
 
         /// <summary>Undo <see cref="EnableMicaBackdrop"/>: remove the effect view and make the window
