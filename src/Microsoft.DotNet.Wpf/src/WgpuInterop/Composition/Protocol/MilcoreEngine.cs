@@ -53,6 +53,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
     /// <summary>MILCMD ids from src/Common/Graphics/wgx_core_types.cs.</summary>
     internal enum Mil : uint
     {
+        // Composite geometry resources. Both are Pack=1 with the child handles/operands
+        // packed straight after the 20-byte fixed struct (Generated/wgx_commands.cs).
+        GuidelineSet = 0x8c,
+        // DrawingContext.DrawDrawing -- how a DrawingGroup/GeometryDrawing tree gets into a
+        // visual's render data (and what DrawingBrush content walks through).
+        DrawDrawing = 0x4a,
+        // Render-data guideline pushes. SimpleTextLine.Draw emits PushGuidelineY1 for EVERY text
+        // line and LineServicesCallbacks emits PushGuidelineY2 for underlines, so these are among
+        // the most frequent records in a text-heavy tree -- they were being skipped wholesale.
+        PushGuidelineSet = 0x52,
+        PushGuidelineY1 = 0x53,
+        PushGuidelineY2 = 0x54,
+        GeometryGroup = 0x7b,
+        CombinedGeometry = 0x7c,
         RenderData = 0x18,
         VisualSetOffset = 0x1b,
         VisualSetTransform = 0x1c,
@@ -188,6 +202,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, MilPen> _pens = new();
         private readonly Dictionary<uint, (double Offset, double[] Dashes)> _dashStyles = new();  // thickness-relative
         private readonly Dictionary<uint, Geometry> _geometries = new();
+        // GuidelineSet resources (MILCMD_GUIDELINESET), in the guideline set's own coordinates.
+        private readonly Dictionary<uint, (float[] X, float[] Y)> _guidelineSets = new();
+        // Guidelines supplied per-VISUAL by MILCMD_VISUAL_SETGUIDELINECOLLECTION. Kept apart from
+        // the ones a render-data pass discovers so that re-parsing content cannot drop them.
+        private readonly Dictionary<uint, (float[]? X, float[]? Y)> _visualGuides = new();
+        // Guidelines accumulated from Push* records during the parse currently running.
+        private readonly List<float> _parseGuidesX = new();
+        private readonly List<float> _parseGuidesY = new();
         private readonly Dictionary<uint, MilGradient> _gradients = new();
         private readonly Dictionary<uint, MilGlyphRun> _glyphRuns = new();
 
@@ -700,6 +722,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _geometries[gh] = MakeLine(start, end);
                     break;
                 }
+                case Mil.GuidelineSet:
+                {
+                    // MILCMD_GUIDELINESET: Handle@4, GuidelinesXSize@8, GuidelinesYSize@12 (both
+                    // in BYTES), IsDynamic@16, then the X then Y arrays. These are DOUBLES --
+                    // unlike MILCMD_VISUAL_SETGUIDELINECOLLECTION, which packs floats.
+                    uint h = r.U32();
+                    uint xBytes = r.U32(), yBytes = r.U32();
+                    _ = r.U32();                                  // IsDynamic: no dynamic-guideline model yet
+                    var gx = new List<float>();
+                    var gy = new List<float>();
+                    for (uint i = 0; i + 8 <= xBytes && r.Remaining >= 8; i += 8) gx.Add((float)r.F64());
+                    for (uint i = 0; i + 8 <= yBytes && r.Remaining >= 8; i += 8) gy.Add((float)r.F64());
+                    _guidelineSets[h] = (gx.ToArray(), gy.ToArray());
+                    break;
+                }
+                case Mil.GeometryGroup:
+                {
+                    // MILCMD_GEOMETRYGROUP: Handle@4, hTransform@8, FillRule@12, ChildrenSize@16
+                    // (bytes, not count), then that many child resource handles. Emitted by any
+                    // XAML <GeometryGroup>, and by Path data that combines figures.
+                    uint gh = r.U32();
+                    uint hTransform = r.U32();
+                    var fillRule = (FillRule)r.U32();
+                    uint childrenBytes = r.U32();
+                    var children = new List<Geometry>();
+                    for (uint i = 0; i + 4 <= childrenBytes && r.Remaining >= 4; i += 4)
+                        if (_geometries.TryGetValue(r.U32(), out Geometry? child)) children.Add(child);
+                    _geometries[gh] = ApplyGeometryTransform(new GeometryGroup(fillRule, children), hTransform);
+                    break;
+                }
+                case Mil.CombinedGeometry:
+                {
+                    // MILCMD_COMBINEDGEOMETRY: Handle@4, hTransform@8, GeometryCombineMode@12,
+                    // hGeometry1@16, hGeometry2@20. A missing operand is not an empty region --
+                    // Union/Xor with nothing is the other operand, so fall back to whichever
+                    // resolved rather than dropping the shape.
+                    uint gh = r.U32();
+                    uint hTransform = r.U32();
+                    var mode = (GeometryCombineMode)r.U32();
+                    _geometries.TryGetValue(r.U32(), out Geometry? g1);
+                    _geometries.TryGetValue(r.U32(), out Geometry? g2);
+                    Geometry? combined = (g1, g2) switch
+                    {
+                        (not null, not null) => new CombinedGeometry(mode, g1, g2),
+                        (not null, null) => g1,
+                        (null, not null) => g2,
+                        _ => null,
+                    };
+                    if (combined is not null) _geometries[gh] = ApplyGeometryTransform(combined, hTransform);
+                    break;
+                }
                 case Mil.PathGeometry:
                 {
                     // MILCMD_PATHGEOMETRY: Handle@4, hTransform@8, FillRule@12, FiguresSize@16,
@@ -1049,6 +1122,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var gy = new float[cy];
                     for (int i = 0; i < cx && r.Remaining >= 4; i++) gx[i] = r.F32();
                     for (int i = 0; i < cy && r.Remaining >= 4; i++) gy[i] = r.F32();
+                    _visualGuides[vh] = (cx > 0 ? gx : null, cy > 0 ? gy : null);
                     if (_visuals.TryGetValue(vh, out SceneVisual? gv))
                     {
                         gv.GuidelinesX = cx > 0 ? gx : null;
@@ -1257,6 +1331,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// Models DUCE.Channel.BeginCommand: opens a variable-length command. The
         /// channel sends the fixed struct here and the payload via AppendCommandData.
         /// </summary>
+        /// <summary>
+        /// Bakes a geometry resource's own hTransform into its points. Geometry.Transform is a
+        /// real WPF property (&lt;GeometryGroup Transform="..."&gt;) that composes UNDER the
+        /// visual/render-data transform, and the Scene layer has no per-geometry transform slot,
+        /// so it is applied here where the handle is still resolvable.
+        /// </summary>
+        private Geometry ApplyGeometryTransform(Geometry g, uint hTransform)
+            => hTransform != 0 && _transforms.TryGetValue(hTransform, out Matrix3x2 m) && !m.IsIdentity
+                ? TransformGeometry(g, m)
+                : g;
+
         public void BeginCommand(byte[] header)
         {
             _openCommand.Clear();
@@ -1308,7 +1393,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     v.Content.Clear();
                     _parseTouchedContentBrush = false;
                     _parseTransformRefs.Clear();
+                    _parseGuidesX.Clear(); _parseGuidesY.Clear();
                     ParseRenderData(data, v.Content);
+                    ApplyParsedGuides(kv.Key, v);
                     if (_parseTouchedContentBrush) _contentBrushConsumers.Add(kv.Key); else _contentBrushConsumers.Remove(kv.Key);
                     RecordTransformDeps(kv.Key);
                     _parsedDataRef[kv.Key] = data;
@@ -1348,7 +1435,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         cv.Content.Clear();
                         _parseTransformRefs.Clear();
+                        _parseGuidesX.Clear(); _parseGuidesY.Clear();
                         ParseRenderData(cdata, cv.Content);
+                        ApplyParsedGuides(consumer, cv);
                     }
                 }
             }
@@ -1648,6 +1737,81 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// Parses a TYPE_RENDERDATA byte stream: a sequence of records framed by
         /// RecordHeader { int Size; MILCMD Id; } followed by a MILCMD_DRAW_* payload.
         /// </summary>
+        /// <summary>
+        /// Flattens a Drawing resource (GeometryDrawing / ImageDrawing / GlyphRunDrawing /
+        /// DrawingImage / DrawingGroup) into a render-data output list under <paramref name="state"/>.
+        /// The sibling of <see cref="BuildDrawingVisual"/>, which produces a standalone visual for
+        /// brush content; here the drawing composes into the surrounding record stream instead, so
+        /// group transform/opacity fold into the caller's state rather than onto a new visual.
+        /// </summary>
+        private void EmitDrawingResource(List<DrawingPrimitive> output, uint handle, RenderState state, int depth = 0)
+        {
+            // A DrawingGroup cannot contain itself through the public API, but the handles arrive
+            // off a wire we do not control, so a cycle must cost a bounded amount of work.
+            if (depth > 32) return;
+
+            if (_geometryDrawings.TryGetValue(handle, out (uint Brush, uint Pen, uint Geometry) gd))
+            {
+                if (_geometries.TryGetValue(gd.Geometry, out Geometry? geom))
+                    EmitDrawing(output, geom, gd.Brush, gd.Pen, state);
+            }
+            else if (_imageDrawings.TryGetValue(handle, out (Rect Rect, uint ImageSource) idr))
+            {
+                if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
+                    EmitFill(output, new RectangleGeometry(idr.Rect),
+                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height), state);
+            }
+            else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
+            {
+                if (_glyphRuns.TryGetValue(grd.GlyphRun, out MilGlyphRun? gr))
+                    EmitGlyphRun(output, gr, grd.Brush, state);
+            }
+            else if (_drawingImages.TryGetValue(handle, out uint hInner))
+            {
+                EmitDrawingResource(output, hInner, state, depth + 1);
+            }
+            else if (_drawingGroups.TryGetValue(handle, out (List<uint> Children, uint Transform, double Opacity) dg))
+            {
+                RenderState child = state;
+                child.Opacity *= (float)dg.Opacity;
+                if (dg.Transform != 0 && _transforms.TryGetValue(dg.Transform, out Matrix3x2 m))
+                    child.Transform = m * state.Transform;
+                foreach (uint c in dg.Children) EmitDrawingResource(output, c, child, depth + 1);
+            }
+        }
+
+        // Record a guideline in the VISUAL's local space. Guidelines are pushed in the coordinate
+        // space in effect at the push, so any enclosing PushTransform has to be undone first;
+        // guidelines are meaningless under rotation anyway (ResolveGuides bails on it), so the
+        // axis-aligned scale/translate of the current transform is the whole of it.
+        private static void AddParseGuide(List<float> into, float coord, float scale, float translate)
+        {
+            float local = coord * scale + translate;
+            if (!float.IsFinite(local) || into.Contains(local)) return;
+            // 64 is far past the point of usefulness (Nearest() is a linear scan) and stops a
+            // pathological page of text from growing an unbounded list.
+            if (into.Count < 64) into.Add(local);
+        }
+
+        // Union the visual's own guideline collection with whatever its render data pushed, and
+        // hand the result to the visual. Called after every parse: the parse-side list is rebuilt
+        // each time, and the collection-supplied one must survive that.
+        private void ApplyParsedGuides(uint visualHandle, SceneVisual v)
+        {
+            _visualGuides.TryGetValue(visualHandle, out (float[]? X, float[]? Y) own);
+            v.GuidelinesX = MergeGuides(own.X, _parseGuidesX);
+            v.GuidelinesY = MergeGuides(own.Y, _parseGuidesY);
+        }
+
+        private static float[]? MergeGuides(float[]? own, List<float> parsed)
+        {
+            if (parsed.Count == 0) return own;
+            var all = new List<float>(parsed);
+            if (own is not null) foreach (float f in own) if (!all.Contains(f)) all.Add(f);
+            all.Sort();                       // Guides.Build assumes nothing, but sorted keeps it readable
+            return all.ToArray();
+        }
+
         private void ParseRenderData(byte[] data, List<DrawingPrimitive> output)
         {
             var r = new MilReader(data);
@@ -1766,6 +1930,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         if (hTransform != 0) _parseTransformRefs.Add(hTransform);   // record for parse-skip invalidation
                         if (_transforms.TryGetValue(hTransform, out Matrix3x2 m))
                             state.Transform = m * state.Transform;
+                        break;
+                    }
+                    case Mil.DrawDrawing:
+                    {
+                        // MILCMD_DRAW_DRAWING: hDrawing@0, pad@4. The Drawing resource types are
+                        // already decoded for DrawingBrush/DrawingImage; this flattens one into the
+                        // record stream under the state in effect here.
+                        EmitDrawingResource(output, r.U32(), state);
+                        break;
+                    }
+                    case Mil.PushGuidelineSet:
+                    {
+                        // MILCMD_PUSH_GUIDELINE_SET: hGuidelines@0 (payload), pad@4.
+                        stack.Push(state);
+                        if (_guidelineSets.TryGetValue(r.U32(), out (float[] X, float[] Y) set))
+                        {
+                            foreach (float x in set.X) AddParseGuide(_parseGuidesX, x, state.Transform.M11, state.Transform.M31);
+                            foreach (float y in set.Y) AddParseGuide(_parseGuidesY, y, state.Transform.M22, state.Transform.M32);
+                        }
+                        break;
+                    }
+                    case Mil.PushGuidelineY1:
+                    {
+                        // MILCMD_PUSH_GUIDELINE_Y1: coordinate@0. One horizontal guideline -- a text
+                        // line's baseline (SimpleTextLine.Draw, Glyphs, HighlightVisual).
+                        stack.Push(state);
+                        AddParseGuide(_parseGuidesY, (float)r.F64(), state.Transform.M22, state.Transform.M32);
+                        break;
+                    }
+                    case Mil.PushGuidelineY2:
+                    {
+                        // MILCMD_PUSH_GUIDELINE_Y2: leadingCoordinate@0, offsetToDrivenCoordinate@8.
+                        // The pair a text decoration needs: snap the baseline, and carry the
+                        // underline/strikethrough along by the same correction so the rule stays
+                        // the right distance from the text instead of drifting a pixel.
+                        stack.Push(state);
+                        float lead = (float)r.F64(), offset = (float)r.F64();
+                        AddParseGuide(_parseGuidesY, lead, state.Transform.M22, state.Transform.M32);
+                        AddParseGuide(_parseGuidesY, lead + offset, state.Transform.M22, state.Transform.M32);
                         break;
                     }
                     case Mil.Pop:
