@@ -115,6 +115,27 @@
     <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
   </ItemGroup>
 
+  <!--
+    The fork's cross-platform Microsoft.Win32.SystemEvents / Microsoft.Win32.Registry shims, the same
+    ones WpfWebGpu.Sdk ships to the desktop and browser heads. The framework copies are throw-only
+    stubs off Windows, and the gallery subscribes to SystemEvents.UserPreferenceChanged from
+    HeaderTile, MainWindow and several pages, so DashboardPage failed to construct with
+        PlatformNotSupportedException: PlatformNotSupported_SystemEvents
+    wrapped in a XamlParseException, and the app came up BLACK. ExcludeAssets=all neutralises the
+    transitive packages (their identity would otherwise win resolution) so ours is the only copy.
+  -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Nothing statically reaches the shims' event plumbing; keep them whole like the other roots. -->
+    <TrimmerRootAssembly Include="Microsoft.Win32.SystemEvents" />
+    <TrimmerRootAssembly Include="Microsoft.Win32.Registry" />
+  </ItemGroup>
+
   <!-- Windows-only assemblies WindowsBase/PresentationCore reference but no iOS path reaches; the
        REFERENCE assemblies exist only to satisfy mono-aot-cross's "resolve everything" rule. -->
   <PropertyGroup>

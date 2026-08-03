@@ -23,12 +23,45 @@ internal static class GalleryHost
             WPFGallery.App.Main();
             Console.WriteLine("GALLERY: App.Main returned (pump detached, UIKit owns the loop)");
 
+            // The gallery is a DESKTOP app: MainWindow.xaml sets MinWidth=780 / MinHeight=470, which
+            // no phone screen satisfies (402x874pt portrait). WPF honours the minimums, so the window
+            // is laid out LARGER than the display and most of the UI sits outside it -- the page is
+            // clipped and much of what you touch is nav or chrome rather than content. An iOS window
+            // IS the screen (Create snaps it to the root view), so the minimums cannot apply here.
+            Window main = Application.Current?.MainWindow;
+            if (main != null)
+            {
+                main.MinWidth = 0;
+                main.MinHeight = 0;
+                Console.WriteLine($"GALLERY: relaxed window minimums, window={main.ActualWidth:F0}x{main.ActualHeight:F0}");
+
+                HideCaptionButtons(main);
+            }
+
             if (Environment.GetEnvironmentVariable("WPF_IOS_ROTATE_TEST") == "1")
                 ScheduleRotateTest(rootView);
         }
         catch (Exception e)
         {
             Console.WriteLine($"GALLERY: FAILED {e}");
+        }
+    }
+
+    /// <summary>
+    /// Drop the gallery's minimize / maximize / close buttons. They are the SAMPLE's own title-bar
+    /// buttons (MainWindow.xaml), not WPF chrome, so nothing in the fork can know to suppress them --
+    /// but there is no window to minimize, restore or close on iOS, where the app IS the screen and
+    /// the system handles app lifetime. Hidden here rather than in the sample so WPF-Samples stays
+    /// unmodified, the same way this head redirects resource lookup and relaxes the size minimums.
+    /// </summary>
+    private static void HideCaptionButtons(Window main)
+    {
+        foreach (string name in new[] { "MinimizeButton", "MaximizeButton", "CloseButton" })
+        {
+            if (main.FindName(name) is UIElement button)
+                button.Visibility = Visibility.Collapsed;
+            else
+                Console.WriteLine($"GALLERY: caption button '{name}' not found");
         }
     }
 

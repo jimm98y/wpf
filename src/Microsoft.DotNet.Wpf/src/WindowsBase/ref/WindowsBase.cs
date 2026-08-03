@@ -199,13 +199,14 @@ namespace MS.Internal.Interop
         public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.UIKitWindow.TouchMessage>
         {
             private readonly int _dummyPrimitive;
-            public TouchMessage(System.IntPtr View, int Kind, int X, int Y, int TimestampMs) { throw null; }
+            public TouchMessage(System.IntPtr View, int Kind, int X, int Y, int TimestampMs, int Wheel = 0) { throw null; }
             public int Kind { get { throw null; } set { } }
             public int TimestampMs { get { throw null; } set { } }
             public System.IntPtr View { get { throw null; } set { } }
+            public int Wheel { get { throw null; } set { } }
             public int X { get { throw null; } set { } }
             public int Y { get { throw null; } set { } }
-            public void Deconstruct(out System.IntPtr View, out int Kind, out int X, out int Y, out int TimestampMs) { throw null; }
+            public void Deconstruct(out System.IntPtr View, out int Kind, out int X, out int Y, out int TimestampMs, out int Wheel) { throw null; }
             public bool Equals(MS.Internal.Interop.UIKitWindow.TouchMessage other) { throw null; }
             public override bool Equals(object obj) { throw null; }
             public override int GetHashCode() { throw null; }

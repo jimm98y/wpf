@@ -275,7 +275,69 @@ namespace MS.Internal.Interop
             // (1<<1) | FlexibleHeight (1<<4); CALayer.autoresizingMask is macOS-only, but the VIEW
             // mask exists on iOS and UIKit keeps a backing layer in step with its view.
             SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
+            AddScrollRecognizer(view);
             return view;
+        }
+
+        /// <summary>
+        /// Lets a TRACKPAD (or mouse wheel) scroll the content. Indirect pointer scrolling is not
+        /// delivered as touches at all: iOS routes it only to a UIPanGestureRecognizer that opts in
+        /// through allowedScrollTypesMask, so a plain UIView never hears about it and the gesture
+        /// appears to do nothing. maximumNumberOfTouches = 0 keeps this recognizer off real fingers,
+        /// which touchesBegan/Moved already handle as drag-to-scroll.
+        /// </summary>
+        private static void AddScrollRecognizer(IntPtr view)
+        {
+            IntPtr cls = objc_getClass("UIPanGestureRecognizer");
+            if (cls == IntPtr.Zero) return;
+
+            IntPtr pan = SendPtrPtr(Send(cls, Sel("alloc")), Sel("initWithTarget:action:"), view, Sel("wpfScroll:"));
+            if (pan == IntPtr.Zero) return;
+
+            SendVoidUIntPtr(pan, Sel("setMaximumNumberOfTouches:"), UIntPtr.Zero);
+            SendVoidUIntPtr(pan, Sel("setAllowedScrollTypesMask:"), (UIntPtr)3);   // discrete | continuous
+            SendVoidPtr(view, Sel("addGestureRecognizer:"), pan);
+        }
+
+        // Cumulative translation already turned into wheel, so each callback only sends the delta.
+        private static double s_scrollLastTranslationY;
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void ScrollImp(IntPtr self, IntPtr sel, IntPtr recognizer)
+        {
+            // Never let a managed exception unwind into UIKit.
+            try
+            {
+                const long UIGestureRecognizerStateBegan = 1;
+                long state = (long)Send(recognizer, Sel("state"));
+                if (state == UIGestureRecognizerStateBegan)
+                {
+                    s_scrollLastTranslationY = 0;
+                    s_panAccum = 0;
+                }
+
+                CGPoint t = SendPointPtr(recognizer, Sel("translationInView:"), self);
+                double deltaLogical = t.y - s_scrollLastTranslationY;   // translation is in POINTS
+                s_scrollLastTranslationY = t.y;
+                if (deltaLogical == 0) return;
+
+                // Put the mouse under the pointer first: a wheel report carries no position of its
+                // own, so WPF would otherwise scroll whatever was last touched rather than what the
+                // pointer is over.
+                Action<TouchMessage> handler = MouseInput;
+                if (handler == null) return;
+
+                CGPoint p = SendPointPtr(recognizer, Sel("locationInView:"), self);
+                double scale = ScreenScale();
+                double x = p.x * scale, y = p.y * scale;
+                handler(new TouchMessage(self, 0, (int)Math.Round(x), (int)Math.Round(y), Environment.TickCount));
+
+                EmitWheel(self, deltaLogical, x, y);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WPF iOS scroll dispatch failed: {e}");
+            }
         }
 
         private static IntPtr EnsureMetalViewClass()
@@ -300,6 +362,10 @@ namespace MS.Internal.Interop
                 "#@:");   // returns Class; (id self, SEL _cmd)
 
             AddTouchMethods(cls);
+
+            // The action the scroll recognizer targets back at the view (see AddScrollRecognizer).
+            class_addMethod(cls, Sel("wpfScroll:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&ScrollImp, "v@:@");
 
             // UIKit calls layoutSubviews whenever the view's bounds change - rotation, split view,
             // the keyboard - which is the one place that reliably knows the new size. Raising
@@ -339,8 +405,9 @@ namespace MS.Internal.Interop
         // touch ended (the mouse position is only updated by a move). Multi-touch is out of scope
         // here; the first touch wins, as it does for a mouse.
 
-        /// <param name="Kind">0 = move, 1 = press, 2 = release.</param>
-        public readonly record struct TouchMessage(IntPtr View, int Kind, int X, int Y, int TimestampMs);
+        /// <param name="Kind">0 = move, 1 = press, 2 = release, 3 = wheel (drag-to-scroll; see
+        /// <see cref="DispatchTouch"/>). <paramref name="Wheel"/> is set only for kind 3.</param>
+        public readonly record struct TouchMessage(IntPtr View, int Kind, int X, int Y, int TimestampMs, int Wheel = 0);
 
         /// <summary>Raised on the UI thread as UIKit delivers touches; consumed by HwndMouseInputProvider.</summary>
         public static event Action<TouchMessage> MouseInput;
@@ -353,7 +420,7 @@ namespace MS.Internal.Interop
         /// of that segment.
         /// </summary>
         public static void InjectTouch(IntPtr view, int kind, int xPixels, int yPixels)
-            => MouseInput?.Invoke(new TouchMessage(view, kind, xPixels, yPixels, Environment.TickCount));
+            => Emit(view, kind, xPixels, yPixels, ScreenScale());
 
         private static void AddTouchMethods(IntPtr cls)
         {
@@ -383,6 +450,38 @@ namespace MS.Internal.Interop
         private static void TouchesEndedImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
             => DispatchTouch(self, touches, 2);
 
+        // ---- Drag-to-scroll ----
+        //
+        // A touch drives the MOUSE, and WPF scrolls a ScrollViewer from the wheel or the scrollbar --
+        // never from a mouse drag over content. So without this a finger drag moves the cursor and
+        // nothing scrolls, which on a touch screen reads as "scrolling is broken". (WPF's own touch
+        // panning is not an option here: ScrollViewer.PanningMode defaults to None, so it would need
+        // both a real TouchDevice and every ScrollViewer opting in.)
+        //
+        // Instead the drag itself becomes wheel rotation, the input WPF already scrolls from. The
+        // press is still delivered up front so taps keep working; a drag that starts on a control
+        // simply never produces a click, because that control captured the mouse and the release
+        // lands elsewhere -- which is also what a mouse drag does.
+        private static double s_panLastY;         // last reported touch Y, device px
+        private static double s_panStartY;        // where this touch went down, device px
+        private static double s_panAccum;         // drag not yet turned into a notch, logical px
+        private static bool s_panning;            // past the threshold: emitting wheel
+
+        // Below this the touch is a tap, not a pan, so a slightly unsteady finger cannot scroll.
+        private const double PanThresholdPixels = 10;
+
+        // ScrollViewer ignores the wheel MAGNITUDE -- any wheel event scrolls
+        // SystemParameters.WheelScrollLines (3) lines of 16px. So distance is converted into NOTCHES
+        // (a wheel event each time the finger covers another 48 logical px) rather than into a bigger
+        // delta, which is what makes the content track the finger instead of flying off at 2.4x.
+        private const double LogicalPixelsPerNotch = 3 * 16;
+        private const int WheelNotch = 120;
+
+        // One notch per touch event is all that lands: WPF computes each scroll from the last APPLIED
+        // VerticalOffset, so several wheels inside one event collapse into one. Carry at most a notch
+        // of unspent drag so a fast flick catches up over the next events instead of drifting forever.
+        private const double MaxCarryPixels = 2 * LogicalPixelsPerNotch;
+
         private static void DispatchTouch(IntPtr view, IntPtr touches, int kind)
         {
             // Never let a managed exception unwind into UIKit.
@@ -396,15 +495,74 @@ namespace MS.Internal.Interop
 
                 CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
                 double scale = ScreenScale();
-                handler(new TouchMessage(view, kind,
-                                         (int)Math.Round(p.x * scale),
-                                         (int)Math.Round(p.y * scale),
-                                         Environment.TickCount));
+                Emit(view, kind, p.x * scale, p.y * scale, scale);
             }
             catch (Exception e)
             {
                 Console.WriteLine($"WPF iOS touch dispatch failed: {e}");
             }
+        }
+
+        /// <summary>
+        /// Raises one touch as the mouse message(s) it stands for: the move/press/release itself, plus
+        /// the synthesized wheel that makes a drag scroll. Both UIKit delivery and
+        /// <see cref="InjectTouch"/> come through here, so the test seam exercises the real path.
+        /// </summary>
+        private static void Emit(IntPtr view, int kind, double x, double y, double scale)
+        {
+            Action<TouchMessage> handler = MouseInput;
+            if (handler == null) return;
+
+            int timestamp = Environment.TickCount;
+            handler(new TouchMessage(view, kind, (int)Math.Round(x), (int)Math.Round(y), timestamp));
+
+            switch (kind)
+            {
+                case 1:   // press: this touch has not panned yet
+                    s_panStartY = s_panLastY = y;
+                    s_panAccum = 0;
+                    s_panning = false;
+                    return;
+
+                case 2:   // release
+                    s_panning = false;
+                    s_panAccum = 0;
+                    return;
+
+                case 0:
+                    if (!s_panning)
+                    {
+                        if (Math.Abs(y - s_panStartY) < PanThresholdPixels) return;
+                        s_panning = true;     // threshold crossed; scroll from here on
+                        s_panLastY = y;
+                    }
+
+                    // Finger down moves the content down, which is a scroll UP (positive wheel).
+                    double deltaLogical = (y - s_panLastY) / scale;
+                    s_panLastY = y;
+                    EmitWheel(view, deltaLogical, x, y);
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// Turns scrolled DISTANCE into wheel notches and raises them. Shared by the finger drag and
+        /// the trackpad, which differ only in where the distance comes from.
+        /// </summary>
+        private static void EmitWheel(IntPtr view, double deltaLogical, double x = 0, double y = 0)
+        {
+            Action<TouchMessage> handler = MouseInput;
+            if (handler == null) return;
+
+            s_panAccum += deltaLogical;
+            if (Math.Abs(s_panAccum) < LogicalPixelsPerNotch) return;   // not a notch yet
+
+            int sign = Math.Sign(s_panAccum);
+            s_panAccum -= sign * LogicalPixelsPerNotch;
+            if (Math.Abs(s_panAccum) > MaxCarryPixels) s_panAccum = sign * MaxCarryPixels;
+
+            handler(new TouchMessage(view, 3, (int)Math.Round(x), (int)Math.Round(y),
+                                     Environment.TickCount, sign * WheelNotch));
         }
 
         // ---- The CADisplayLink dispatcher pump ------------------------------------

@@ -1414,11 +1414,12 @@ namespace System.Windows.Interop
                 0 => RawMouseActions.AbsoluteMove,
                 1 => RawMouseActions.Button1Press,
                 2 => RawMouseActions.Button1Release,
+                3 => RawMouseActions.VerticalWheelRotate,   // drag-to-scroll, synthesized by UIKitWindow
                 _ => default,
             };
             if (actions == default) return;
 
-            ReportMacInput(actions, msg.X, msg.Y, 0, msg.TimestampMs);
+            ReportMacInput(actions, msg.X, msg.Y, msg.Wheel, msg.TimestampMs);
         }
 
         private void OnCocoaMouseInput(MS.Internal.Interop.CocoaWindow.CocoaMouseMessage msg)

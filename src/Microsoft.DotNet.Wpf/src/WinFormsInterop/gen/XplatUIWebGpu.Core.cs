@@ -543,7 +543,27 @@ namespace System.Windows.Forms
 		/// (what TextBox inserts). Order per Win32: KEYDOWN, then CHAR for printable input.</summary>
 		internal void InjectKeyDown(int vkey)
 		{
-			if (_focusHandle != IntPtr.Zero) SendMessage(_focusHandle, Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
+			IntPtr target = _focusHandle;
+			if (target == IntPtr.Zero) return;
+
+			SendMessage(target, Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
+
+			// Win32 message loops call TranslateMessage before dispatch, which turns the CONTROL
+			// virtual-keys into a WM_CHAR carrying their ASCII control code. Editors act on that
+			// char, not on the key-down: TextBoxBase deletes on WM_CHAR 8 and breaks the line on 13,
+			// and its ProcessKey has no Keys.Back case at all -- so a driver that delivers KEYDOWN
+			// alone leaves backspace and enter doing nothing in a TextBox. Printable keys are NOT
+			// translated here; hosts deliver those through InjectChar, and translating them too
+			// would insert every character twice.
+			int ch = vkey switch
+			{
+				0x08 => 8,    // VK_BACK
+				0x09 => 9,    // VK_TAB
+				0x0D => 13,   // VK_RETURN
+				0x1B => 27,   // VK_ESCAPE
+				_ => 0,
+			};
+			if (ch != 0) SendMessage(target, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
 		}
 		internal void InjectChar(char ch)
 		{

@@ -35,4 +35,15 @@
              Exclude="..\tests\**;..\native\**;..\bin\**;..\obj\**;..\Browser\**;..\Ios\bin\**;..\Ios\obj\**" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The WGSL that ShaderSource.ReadRaw loads, under the SAME manifest names ../WgpuInterop.csproj
+         produces (RootNamespace + Composition.Shaders.<file>). The .cs glob above brings ShaderSource
+         along but not these, so without them the app builds and boots, then throws "Missing embedded
+         WGSL resource" on the first geometry fill and the screen stays black. LogicalName is explicit
+         because the sources are linked in from outside this project directory. -->
+    <EmbeddedResource Include="..\Composition\Shaders\*.wgsl">
+      <LogicalName>Microsoft.Wpf.Interop.WebGpu.Composition.Shaders.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>
