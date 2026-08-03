@@ -476,6 +476,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     /// DrawGlyphRun). The glyphs are rasterized by an <see cref="Text.IGlyphSource"/>
     /// and composited from a glyph atlas; <see cref="EmSize"/> scales the source.
     /// </summary>
+    /// <summary>
+    /// A nested visual drawn in content order. Render-data brackets some drawing verbs with a
+    /// scope that the Scene layer only models per-visual -- PushOpacityMask is the live case --
+    /// so the enclosed primitives are collected into their own <see cref="SceneVisual"/>, which
+    /// carries the mask, and that visual is drawn where the scope sat. Distinct from
+    /// <see cref="SceneVisual.Children"/>, which all draw AFTER the parent's content.
+    /// </summary>
+    internal sealed class NestedVisualDraw : DrawingPrimitive
+    {
+        public SceneVisual Visual { get; }
+        public NestedVisualDraw(SceneVisual visual) => Visual = visual;
+    }
+
     internal sealed class GlyphRunDraw : DrawingPrimitive
     {
         public string Text { get; }

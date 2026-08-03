@@ -31,7 +31,7 @@ internal static class Program
     private static int Main()
     {
         bool ok = GeometryGroupCase() & CombinedGeometryCase() & GuidelineCase() & DrawDrawingCase()
-                & AnimateCase() & BitmapCacheBrushCase() & UnknownCommandCase();
+                & AnimateCase() & BitmapCacheBrushCase() & OpacityMaskCase() & UnknownCommandCase();
 
         Console.WriteLine();
         if (!ok || _failures > 0) { Console.WriteLine($"OPCODE TEST FAILED: {_failures} problem(s)."); return 1; }
@@ -165,34 +165,83 @@ internal static class Program
     // 0x84: a BitmapCacheBrush paints its cached target visual across the fill area. It is not
     // a viewport/viewbox TileBrush, so it maps onto the content-brush machinery with a unit
     // bounding-box-relative viewport and Stretch=Fill.
-    //
-    // Asserted at the decode boundary, not in pixels: painting a content brush needs the live
-    // compositor's content-texture plumbing, and a hand-built tree does not reproduce it -- a
-    // real VisualBrush over the same target renders nothing here either. Pixel behaviour of
-    // content brushes is covered where that plumbing exists; what is new HERE is that the
-    // command is decoded at all, and resolves to the right target with the right mapping.
     private static bool BitmapCacheBrushCase()
     {
         Console.WriteLine("MilCmdBitmapCacheBrush (0x84)");
         var e = new MilcoreEngine();
         e.CreateOrAddRef(1, MilResourceTypeId.Visual);
         e.CreateOrAddRef(5, MilResourceTypeId.Visual);          // the cached target
+        e.SubmitCommand(SolidColorBrush(10, 1, 0, 0, 1));       // it paints itself red
+        byte[] targetContent = DrawRectangleRecord(10, 0, 0, 0, 20, 20);
+        e.CreateOrAddRef(6, MilResourceTypeId.RenderData);
+        e.BeginCommand(RenderDataHeader(6, targetContent.Length));
+        e.AppendCommandData(targetContent);
+        e.EndCommand();
+        e.SubmitCommand(VisualSetContent(5, 6));
+        // BitmapCacheBrush.Target is normally a visual in the tree -- that is what makes caching
+        // it worthwhile -- and the GPU content-brush path samples the texture it rendered.
+        e.SubmitCommand(VisualInsertChildAt(1, 5, 0));
         e.SubmitCommand(BitmapCacheBrushCmd(11, opacity: 1.0, hInternalTarget: 5));
+
+        // The fill sits clear of where the target draws ITSELF (0,0,20,20), so red inside it can
+        // only have arrived through the brush.
+        byte[] img = RenderContent(e, DrawRectangleRecord(11, 0, 30, 30, 60, 40));
+
+        bool ok = true;
+        ok &= Px(img, 60, 50, 255, 0, 0, "the cached target paints the filled area");
+        ok &= Px(img, 100, 50, 255, 255, 255, "outside the fill is untouched");
 
         bool found = e.TryGetContentBrushForTest(11, out uint source, out bool isDrawing,
             out uint stretch, out TileMode tile);
-        bool ok = true;
-        ok &= Bool(found, "the command registers a content brush");
-        ok &= Bool(source == 5, $"it paints the hInternalTarget visual (got {source})");
-        ok &= Bool(!isDrawing, "the target is a Visual, not a Drawing");
+        ok &= Bool(found && source == 5 && !isDrawing, $"it resolves to the hInternalTarget visual (got {source})");
         ok &= Bool(stretch == 1, $"the target is stretched to Fill the area (got {stretch})");
         ok &= Bool(tile == TileMode.None, $"it does not tile (got {tile})");
 
-        // No target: a BitmapCacheBrush with nothing to cache must register nothing rather
-        // than a brush pointing at handle 0.
-        e.SubmitCommand(BitmapCacheBrushCmd(12, opacity: 1.0, hInternalTarget: 0));
-        ok &= Bool(!e.TryGetContentBrushForTest(12, out _, out _, out _, out _),
+        // No target: must register nothing rather than a brush pointing at handle 0.
+        var e2 = new MilcoreEngine();
+        e2.SubmitCommand(BitmapCacheBrushCmd(12, opacity: 1.0, hInternalTarget: 0));
+        ok &= Bool(!e2.TryGetContentBrushForTest(12, out _, out _, out _, out _),
             "a targetless BitmapCacheBrush registers nothing");
+        return ok;
+    }
+
+    // 0x4e: PushOpacityMask brackets a run of draw records with a mask brush. The Scene layer
+    // models masks per-VISUAL, so the enclosed records are collected into a nested visual that
+    // carries the mask and draws in content order (NestedVisualDraw).
+    //
+    // The mask is an opaque->transparent horizontal gradient over a solid rect, so "the mask is
+    // applied" is visible as a fade across the rect. Asserting only "something changed" would
+    // pass even if the mask were applied inside out.
+    private static bool OpacityMaskCase()
+    {
+        Console.WriteLine("MilPushOpacityMask (0x4e)");
+        var e = new MilcoreEngine();
+        e.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e.SubmitCommand(SolidColorBrush(10, 0, 0, 0, 1));                    // opaque black fill
+        // alpha 1 at the left edge -> alpha 0 at the right, across the rect's bounding box.
+        e.SubmitCommand(LinearGradientAlphaBrush(30, 0, 0, 1, 0));
+
+        byte[] masked = RenderContent(e, Concat(
+            PushOpacityMaskRecord(30),
+            DrawRectangleRecord(10, 0, 10, 10, 100, 40),
+            PopRecord()));
+
+        // The same rect with no mask, as the control for "fully painted".
+        var e2 = new MilcoreEngine();
+        e2.CreateOrAddRef(1, MilResourceTypeId.Visual);
+        e2.SubmitCommand(SolidColorBrush(10, 0, 0, 0, 1));
+        byte[] plain = RenderContent(e2, DrawRectangleRecord(10, 0, 10, 10, 100, 40));
+
+        (int lr, int _, int _) = At(masked, 15, 30);
+        (int rr, int _, int _) = At(masked, 105, 30);
+        (int pr, int _, int _) = At(plain, 105, 30);
+        Console.WriteLine($"    masked left={lr} right={rr}   unmasked right={pr}");
+
+        bool ok = true;
+        ok &= Bool(pr < 40, "the control rect is painted solid without a mask");
+        ok &= Bool(lr < 60, $"the opaque end of the mask keeps the fill (got {lr})");
+        ok &= Bool(rr > 200, $"the transparent end of the mask reveals the background (got {rr})");
+        ok &= Bool(rr - lr > 120, "the mask actually gradates across the group, not on/off");
         return ok;
     }
 
@@ -342,9 +391,11 @@ internal static class Program
         return Record(0x46, p.ToArray());
     }
 
+    // MILCMD_DRAW_RECTANGLE: rectangle@0 (4 doubles), hBrush@32, hPen@36 -- the handles come
+    // AFTER the rect, unlike DrawGeometry where they come first.
     private static byte[] DrawRectangleRecord(uint hBrush, uint hPen, double x, double y, double w, double h)
     {
-        var p = new Buf(); p.U32(hBrush); p.U32(hPen); p.F64(x); p.F64(y); p.F64(w); p.F64(h);
+        var p = new Buf(); p.F64(x); p.F64(y); p.F64(w); p.F64(h); p.U32(hBrush); p.U32(hPen);
         return Record(0x40, p.ToArray());
     }
 
@@ -374,6 +425,31 @@ internal static class Program
     {
         var q = new Buf(); q.U32(0x84); q.U32(h); q.F64(opacity);
         q.U32(0); q.U32(0); q.U32(0); q.U32(0); q.U32(hInternalTarget);
+        return q.ToArray();
+    }
+
+    // MILCMD_PUSH_OPACITY_MASK: boundingBoxCacheLocalSpace@0 (4 floats), hOpacityMask@16, pad@20.
+    private static byte[] PushOpacityMaskRecord(uint hMask)
+    {
+        var p = new Buf(); p.F32(0); p.F32(0); p.F32(0); p.F32(0); p.U32(hMask); p.U32(0);
+        return Record(0x4e, p.ToArray());
+    }
+
+    // MILCMD_LINEARGRADIENTBRUSH, stop layout as MilDecodeTest drives it: offset (double)
+    // then colour (4 floats), 24 bytes per stop. White opaque -> white transparent; only the
+    // alpha matters for a mask.
+    private static byte[] LinearGradientAlphaBrush(uint h, double x0, double y0, double x1, double y1)
+    {
+        var q = new Buf(); q.U32(0x7f); q.U32(h); q.F64(1.0);
+        q.F64(x0); q.F64(y0); q.F64(x1); q.F64(y1);
+        q.U32(0); q.U32(0); q.U32(0);       // hOpacityAnim, hTransform, hRelativeTransform
+        q.U32(0);                           // ColorInterpolationMode
+        q.U32(1);                           // MappingMode = RelativeToBoundingBox
+        q.U32(0);                           // SpreadMethod = Pad
+        q.U32(2 * 24);                      // GradientStopsSize (bytes)
+        q.U32(0); q.U32(0);                 // hStartPointAnim, hEndPointAnim
+        q.F64(0.0); q.F32(1); q.F32(1); q.F32(1); q.F32(1);
+        q.F64(1.0); q.F32(1); q.F32(1); q.F32(1); q.F32(0);
         return q.ToArray();
     }
 

@@ -1587,6 +1587,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             switch (p)
             {
                 case GeometryFill f: HV(1); HashGeo(f.Geometry); HashBrush(f.Brush); break;
+                // Hash THROUGH a nested visual: its content is the scope's real content, and a
+                // change inside it must move the layer-cache key or the group renders stale.
+                case NestedVisualDraw nv:
+                    HV(9);
+                    if (nv.Visual.OpacityMask is { } nvm) HashBrush(nvm);
+                    foreach (DrawingPrimitive np in nv.Visual.Content) HashPrimitive(np);
+                    break;
                 case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HF((float)s.Style.Thickness); break;
                 // Must hash the fill/stroke brushes too -- a brush-only change (e.g. a menu item's
                 // hover highlight: transparent -> blue with the geometry unchanged) would otherwise
@@ -1829,6 +1836,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 DrawingPrimitive primitive = guides.Active ? SnapPrimitive(rawPrimitive, guides, world) : rawPrimitive;
                 if (primitive is Viewport3DDraw viewport)
                     Emit3DViewport(viewport, world, accOpacity, clip, outData, plan, width, height, format);
+                // A scoped group (PushOpacityMask): collect it right here so it draws in content
+                // order. CollectVisual gives it a layer of its own, because the mask it carries
+                // is exactly what needsLayer keys off.
+                else if (primitive is NestedVisualDraw nested)
+                    CollectVisual(nested.Visual, world, accOpacity, clip, outData, plan, width, height, format);
                 else
                 {
                     // Pre-render any GPU-live content-brush source (deduped) before the fill samples it.

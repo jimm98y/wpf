@@ -61,6 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         DrawDrawing = 0x4a,
         VideoDrawing = 0x8a,
         BitmapCacheBrush = 0x84,
+        PushOpacityMask = 0x4e,
         // Animation VALUE resources. AnimationClockResource re-sends these every tick with the
         // clock's CurrentValue, which is how a render-data *Animate record's animated property
         // actually moves. (Distinct from Animatable's independent-animation handles, which
@@ -1967,6 +1968,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // intersect with the active clip, and fold opacity into the brush.
             var stack = new Stack<RenderState>();
             var state = RenderState.Default;
+            // Open PushOpacityMask scopes. Each remembers the stack depth of the push that opened
+            // it, so the matching Pop is identified without every other push site having to
+            // participate. Primitives are redirected into the scope's visual until then.
+            var scopes = new Stack<(int Depth, List<DrawingPrimitive> Parent, SceneVisual Nested, uint MaskBrush)>();
 
             while (r.Remaining >= 8)
             {
@@ -2193,7 +2198,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         AddParseGuide(_parseGuidesY, lead + offset, state.Transform.M22, state.Transform.M32);
                         break;
                     }
+                    case Mil.PushOpacityMask:
+                    {
+                        // MILCMD_PUSH_OPACITY_MASK: boundingBoxCacheLocalSpace@0 (MilRectF, 4
+                        // floats), hOpacityMask@16, pad@20. The bounding box is milcore's own
+                        // cache hint; the mask brush is resolved against the scope's real content
+                        // bounds at Pop, which is what the per-visual mask path does too.
+                        stack.Push(state);
+                        r.F32(); r.F32(); r.F32(); r.F32();          // boundingBoxCacheLocalSpace
+                        uint hMask = r.U32();
+                        var scopeVisual = new SceneVisual();
+                        scopes.Push((stack.Count, output, scopeVisual, hMask));
+                        output = scopeVisual.Content;               // enclosed records land here
+                        break;
+                    }
                     case Mil.Pop:
+                        // Close an opacity-mask scope before unwinding the state it was pushed
+                        // with, so the scope and its RenderState come off together.
+                        if (scopes.Count > 0 && scopes.Peek().Depth == stack.Count)
+                        {
+                            (int _, List<DrawingPrimitive> parent, SceneVisual nested, uint hMask) = scopes.Pop();
+                            output = parent;
+                            if (nested.Content.Count > 0)
+                            {
+                                // An unresolvable mask must not black the content out: leaving the
+                                // mask null draws the group unmasked, which is the safer failure.
+                                nested.OpacityMask = hMask != 0 ? ResolveBrush(hMask, ContentBounds(nested.Content)) : null;
+                                parent.Add(new NestedVisualDraw(nested));
+                            }
+                        }
                         if (stack.Count > 0) state = stack.Pop();
                         break;
                     default:
@@ -2204,6 +2237,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 }
 
                 r.Position = recordStart + size;
+            }
+
+            // A truncated or unbalanced stream can leave a scope open. Its content is already
+            // collected and must still be drawn -- dropping it would make an opacity mask look
+            // like it erased the group.
+            while (scopes.Count > 0)
+            {
+                (int _, List<DrawingPrimitive> parent, SceneVisual nested, uint hMask) = scopes.Pop();
+                output = parent;
+                if (nested.Content.Count == 0) continue;
+                nested.OpacityMask = hMask != 0 ? ResolveBrush(hMask, ContentBounds(nested.Content)) : null;
+                parent.Add(new NestedVisualDraw(nested));
             }
         }
 
