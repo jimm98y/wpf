@@ -22,9 +22,59 @@
   <PropertyGroup>
     <UsingWpfWebGpuSdk>true</UsingWpfWebGpuSdk>
     <WpfWebGpuSdkRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</WpfWebGpuSdkRoot>
+    <!-- This is a WPF-on-WebGPU SDK: default the project into the WPF build pipeline so
+         consuming .csproj files no longer need (and must not rely on) UseWPF. Every flavor
+         supplies WPF from this SDK's packaged fork assemblies, never the WindowsDesktop
+         framework reference, so leaving this on can't pull stock milcore WPF. Sdk.targets
+         captures the intent and turns UseWPF back off before the base SDK evaluates. -->
+    <UseWPF Condition="'$(UseWPF)' == ''">true</UseWPF>
   </PropertyGroup>
 
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(WpfPlatform)' == 'browser'" />
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(WpfPlatform)' != 'browser'" />
+
+  <!-- WPF markup-compilation inputs + default XAML item globbing, added in PROPS (before the
+       project body) exactly like the WindowsDesktop SDK — so a project can still override which
+       .xaml is the ApplicationDefinition vs a Page. WPFGallery, for instance, makes App.xaml a
+       Page (<ApplicationDefinition Remove="App.xaml"/><Page Include="App.xaml"/>) because it
+       supplies its own [STAThread] Main; that Remove only works if our default was added first.
+       The markup task assembly is the fork's own PresentationBuildTasks. -->
+  <PropertyGroup Condition="'$(UseWPF)' != 'false'">
+    <XamlRuntime Condition="'$(XamlRuntime)' == ''">Wpf</XamlRuntime>
+    <DefaultXamlRuntime Condition="'$(DefaultXamlRuntime)' == ''">Wpf</DefaultXamlRuntime>
+    <_PresentationBuildTasksAssembly Condition="'$(_PresentationBuildTasksAssembly)' == ''">$(WpfWebGpuSdkRoot)tools/net10.0/PresentationBuildTasks.dll</_PresentationBuildTasksAssembly>
+    <EnableDefaultApplicationDefinition Condition="'$(EnableDefaultApplicationDefinition)' == ''">true</EnableDefaultApplicationDefinition>
+    <EnableDefaultPageItems Condition="'$(EnableDefaultPageItems)' == ''">true</EnableDefaultPageItems>
+  </PropertyGroup>
+
+  <!-- NOTE: item conditions are evaluated AFTER all properties are final, and Sdk.targets flips
+       UseWPF back to false — so this must gate on the captured intent ($(_WpfWebGpuUseWpf), set in
+       Sdk.targets during the property pass) / $(EnableDefaultPageItems), NEVER on $(UseWPF)
+       (which would read false here and silently drop every Page). -->
+  <ItemDefinitionGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true'">
+    <ApplicationDefinition>
+      <Generator>MSBuild:Compile</Generator>
+      <XamlRuntime>$(DefaultXamlRuntime)</XamlRuntime>
+      <SubType>Designer</SubType>
+    </ApplicationDefinition>
+    <Page>
+      <Generator>MSBuild:Compile</Generator>
+      <XamlRuntime>$(DefaultXamlRuntime)</XamlRuntime>
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemDefinitionGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(EnableDefaultItems)' != 'false'">
+    <ApplicationDefinition Include="App.xaml"
+                           Condition="'$(EnableDefaultApplicationDefinition)' != 'false' and Exists('$(MSBuildProjectDirectory)/App.xaml')" />
+    <ApplicationDefinition Include="Application.xaml"
+                           Condition="'$(EnableDefaultApplicationDefinition)' != 'false' and Exists('$(MSBuildProjectDirectory)/Application.xaml')" />
+    <Page Include="**/*.xaml"
+          Exclude="@(ApplicationDefinition);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)"
+          Condition="'$(EnableDefaultPageItems)' != 'false'" />
+    <!-- Keep the globbed .xaml out of the base SDK's default None items. -->
+    <None Remove="**/*.xaml"
+          Condition="'$(EnableDefaultApplicationDefinition)' != 'false' and '$(EnableDefaultPageItems)' != 'false'" />
+  </ItemGroup>
 
 </Project>

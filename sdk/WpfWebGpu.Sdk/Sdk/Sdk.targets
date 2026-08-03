@@ -1,57 +1,48 @@
 <Project>
 
   <PropertyGroup>
-    <!-- Which flavor is this (inner) build? Windows TFMs keep the stock WPF path. -->
-    <_WpfWebGpuWindows>false</_WpfWebGpuWindows>
-    <_WpfWebGpuWindows Condition="$(TargetFramework.Contains('-windows'))">true</_WpfWebGpuWindows>
+    <!-- Which flavor is this (inner) build?
+           browser : WebAssembly head (WebGPU via JS interop)
+           win     : windows desktop head — the win-arm64 fork WPF, real Win32 windowing and
+                     native platform APIs (no cross-platform shims). NOT a passthrough to the
+                     stock WindowsDesktop SDK / milcore any more.
+           unix    : macOS/Linux desktop head — the net10.0 fork WPF, Cocoa/X11 windowing,
+                     platform-API shims. -->
+    <!-- The desktop TFM is plain net10.0 on every OS (no -windows); the head is chosen by the
+         TARGET PLATFORM, not the TFM moniker: WpfPlatform=browser -> browser; otherwise the RID /
+         build OS decides windows vs unix. So the very same net10.0 gallery builds to the win-arm64
+         packaged head on Windows and the macOS head on a Mac. -->
     <_WpfWebGpuBrowser>false</_WpfWebGpuBrowser>
     <_WpfWebGpuBrowser Condition="'$(WpfPlatform)' == 'browser'">true</_WpfWebGpuBrowser>
-    <!-- Building/checking the windows TFM from a non-Windows dev machine. -->
-    <EnableWindowsTargeting Condition="'$(EnableWindowsTargeting)' == '' and '$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
+    <_WpfWebGpuWin>false</_WpfWebGpuWin>
+    <_WpfWebGpuWin Condition="'$(_WpfWebGpuBrowser)' != 'true' and ( '$(WpfPlatform)' == 'windows' or $(RuntimeIdentifier.StartsWith('win')) or $(TargetFramework.Contains('-windows')) or ( '$(WpfPlatform)' == '' and '$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT' ) )">true</_WpfWebGpuWin>
+    <_WpfWebGpuUnix>false</_WpfWebGpuUnix>
+    <_WpfWebGpuUnix Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuUnix>
+    <!-- Cross-building the windows head from a non-Windows dev machine. -->
+    <EnableWindowsTargeting Condition="'$(EnableWindowsTargeting)' == '' and '$(_WpfWebGpuWin)' == 'true' and $(TargetFramework.Contains('-windows')) and '$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <!--
-    Non-Windows flavors: WPF comes from the assemblies packaged in this SDK, not from
-    the WindowsDesktop framework reference. UseWPF must be OFF before the base SDK
-    targets evaluate (NETSDK1136 requires a windows TargetPlatform otherwise, and the
-    implicit WindowsDesktop SDK import must not fire); the user's intent is captured
-    first so XAML compilation and references still key off it.
+    WPF comes from the assemblies packaged in this SDK, not from the WindowsDesktop framework
+    reference — on EVERY flavor, including the windows head. UseWPF/UseWindowsForms must be OFF
+    before the base SDK targets evaluate (the implicit WindowsDesktop SDK import must not fire,
+    and off-Windows NETSDK1136 would otherwise demand a windows TargetPlatform); the user's
+    intent is captured first so XAML compilation and references still key off it.
   -->
-  <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true'">
+  <PropertyGroup>
     <_WpfWebGpuUseWpf>$(UseWPF)</_WpfWebGpuUseWpf>
     <UseWPF>false</UseWPF>
-    <!-- Same story for UseWindowsForms: off-Windows WinForms comes from the packaged Mono
-         System.Windows.Forms, not the WindowsDesktop framework reference, and NETSDK1136 would
-         otherwise demand a windows TargetPlatform. Capture the intent, then turn it off. -->
     <_WpfWebGpuUseWinForms>$(UseWindowsForms)</_WpfWebGpuUseWinForms>
     <UseWindowsForms>false</UseWindowsForms>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
-    <!-- XAML markup compilation (Microsoft.WinFX.targets) inputs, normally provided
-         by the WindowsDesktop SDK; the task assembly is the fork's own build. -->
-    <XamlRuntime Condition="'$(XamlRuntime)' == ''">Wpf</XamlRuntime>
-    <DefaultXamlRuntime Condition="'$(DefaultXamlRuntime)' == ''">Wpf</DefaultXamlRuntime>
-    <_PresentationBuildTasksAssembly>$(WpfWebGpuSdkRoot)tools/net10.0/PresentationBuildTasks.dll</_PresentationBuildTasksAssembly>
-    <EnableDefaultApplicationDefinition Condition="'$(EnableDefaultApplicationDefinition)' == ''">true</EnableDefaultApplicationDefinition>
-    <EnableDefaultPageItems Condition="'$(EnableDefaultPageItems)' == ''">true</EnableDefaultPageItems>
-  </PropertyGroup>
+  <!-- (WPF markup-compilation inputs + default XAML item globbing live in Sdk.props now, so a
+       project's own ApplicationDefinition/Page overrides — added in its body — take effect.) -->
 
-  <!-- WPF's default XAML globbing (WindowsDesktop SDK semantics): App.xaml (or
-       <AssemblyName>.xaml) is the application definition, every other .xaml a Page. -->
-  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(EnableDefaultItems)' != 'false'">
-    <ApplicationDefinition Include="App.xaml"
-                           Condition="'$(EnableDefaultApplicationDefinition)' == 'true' and Exists('$(MSBuildProjectDirectory)/App.xaml')" />
-    <ApplicationDefinition Include="Application.xaml"
-                           Condition="'$(EnableDefaultApplicationDefinition)' == 'true' and Exists('$(MSBuildProjectDirectory)/Application.xaml')" />
-    <Page Include="**/*.xaml"
-          Exclude="@(ApplicationDefinition);$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)"
-          Condition="'$(EnableDefaultPageItems)' == 'true'" />
-  </ItemGroup>
-
-  <!-- The packaged WPF fork. Shared set plus a per-flavor WebGPU interop:
-       desktop P/Invokes wgpu-native; browser JS-interops navigator.gpu. -->
-  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+  <!-- ============================ unix + browser WPF ============================ -->
+  <!-- The packaged WPF fork (net10.0 cross-platform build). Shared set plus a per-flavor
+       WebGPU interop: desktop P/Invokes wgpu-native; browser JS-interops navigator.gpu. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuWin)' != 'true'">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/*.dll" Private="true" />
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-desktop/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
@@ -66,47 +57,87 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- macOS desktop WinForms: a UseWindowsForms app (often mixed with WPF, e.g. a WinForms splash /
-       dialogs beside a WPF main window) runs on the fork's Mono System.Windows.Forms. Reference it, its
-       vendored Mono.System.Drawing, and Accessibility. Browser WinForms is a separate (wasm) story. -->
-  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+  <!-- ============================== windows WPF ============================== -->
+  <!-- The win-arm64 packaged fork: WPF managed assemblies + WPF/WebGPU native runtime, all
+       app-local, so the app carries WebGPU WPF and never binds to the ambient (stock milcore)
+       WindowsDesktop framework. Platform APIs pass straight through to real Win32 — the macOS
+       SystemEvents/Registry shims are NOT used here; the real Windows framework packages are. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuWin)' == 'true'">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-windows/*.dll" Private="true" />
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu">
+      <HintPath>$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- WPF native (wpfgfx/PresentationNative/PenImc/vcruntime) + WebGPU native (wgpu_native
+         and the ANGLE GL runtime) for win-arm64, copied next to the app. -->
+    <None Include="$(WpfWebGpuSdkRoot)native/win-arm64/*.dll"
+          CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
+    <!-- Support packages WPF needs off the WindowsDesktop framework reference. On Windows these
+         resolve to the real (Win32-backed) runtime packages — platform-API passthrough. -->
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- Force the managed WebGPU compositor on for the windows head (it is already the default
+       when the interop resolves; this makes the intent explicit and immune to opt-out env). -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuWin)' == 'true'">
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.UseWebGpuComposition" Value="true" Trim="false" />
+  </ItemGroup>
+
+  <!-- A -windows TFM implicitly resolves the Microsoft.WindowsDesktop.App shared framework into
+       the runtimeconfig. We carry the fork WPF (managed + native) app-local, so drop that framework
+       so the app binds ONLY to Microsoft.NETCore.App + our app-local WebGPU WPF — self-contained and
+       independent of whatever (possibly stock milcore) WindowsDesktop framework is installed. -->
+  <Target Name="_WpfWebGpuDropWindowsDesktopFramework"
+          BeforeTargets="GenerateBuildRuntimeConfigurationFiles;GeneratePublishRuntimeConfigurationFiles"
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuWin)' == 'true'">
+    <ItemGroup>
+      <RuntimeFramework Remove="@(RuntimeFramework)" Condition="'%(RuntimeFramework.FrameworkName)' == 'Microsoft.WindowsDesktop.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ============================== unix desktop extras ============================== -->
+
+  <!-- macOS/Linux desktop WinForms: a UseWindowsForms app runs on the fork's Mono
+       System.Windows.Forms, its vendored Mono.System.Drawing, and Accessibility. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
   </ItemGroup>
 
-  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider (Bitmap/Graphics/...).
-       The WPF path pulls the framework System.Drawing.Common package, which defines the same
-       System.Drawing.* types -> CS0433. Evict the framework System.Drawing assemblies from the
-       resolved references (both compile and copy-local) so only Mono.System.Drawing remains. -->
+  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider on unix; evict the
+       framework System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433. -->
   <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
-          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
                      Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
     </ItemGroup>
   </Target>
 
-  <!-- macOS desktop: WebGPU composition on by default + the native wgpu library. -->
-  <ItemGroup Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+  <!-- macOS desktop: the native wgpu library. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <None Include="$(WpfWebGpuSdkRoot)native/osx-arm64/libwgpu_native.dylib"
           CopyToOutputDirectory="PreserveNewest" Link="libwgpu_native.dylib" Visible="false" />
   </ItemGroup>
 
-  <!-- Microsoft.Win32.SystemEvents arrives transitively (System.Drawing.Common) as the Windows-only
-       runtime package, which throws PlatformNotSupportedException off-Windows. It's referenced for
-       COMPILE via the lib/wpf-desktop/*.dll glob above (identical API), but to guarantee the RUNTIME
-       assembly is the cross-platform shim, overlay-copy it over whatever landed in the output/publish
-       dir as the last step (same strong-name identity, so the load binds cleanly). -->
+  <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
+       the Windows-only runtime packages dropped in the output (same strong-name identity, so the
+       load binds the shim). These are the shims the windows head deliberately does NOT use. -->
   <Target Name="_WpfWebGpuOverlaySystemEventsShim"
           AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
-          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
-    <!-- Same story for Microsoft.Win32.Registry: the Windows-only framework copy returns null hive keys
-         off-Windows (apps NRE on Registry.CurrentUser). Overlay the in-memory shim so the runtime binds it. -->
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
@@ -217,13 +248,16 @@
     </ItemGroup>
   </Target>
 
+  <!-- ============================== base SDK + markup ============================== -->
+
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
 
-  <!-- XAML markup compilation (after the base targets, mirroring where the
-       WindowsDesktop SDK imports it). Windows TFMs get it from the stock SDK. -->
+  <!-- XAML markup compilation (after the base targets, mirroring where the WindowsDesktop SDK
+       imports it). Every WPF flavor now uses the fork's compiler — the windows head no longer
+       falls back to the stock WindowsDesktop SDK. -->
   <Import Project="$(WpfWebGpuSdkRoot)targets/Microsoft.WinFX.targets"
-          Condition="'$(_WpfWebGpuWindows)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''" />
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''" />
 
   <!-- Scaffold the browser host page into wwwroot: index.html and main.js are
        copied once (kept if the app customizes them); the two WPF JS interop
