@@ -57,15 +57,18 @@ namespace Microsoft.Win32
 
     public static class Registry
     {
-        private static readonly Dictionary<string, RegistryKey> s_hives = new(StringComparer.OrdinalIgnoreCase);
-        private static RegistryKey Hive(string n) { if (!s_hives.TryGetValue(n, out var k)) { k = new RegistryKey(n); s_hives[n] = k; } return k; }
-
-        public static readonly RegistryKey ClassesRoot = Hive("HKEY_CLASSES_ROOT");
-        public static readonly RegistryKey CurrentUser = Hive("HKEY_CURRENT_USER");
-        public static readonly RegistryKey LocalMachine = Hive("HKEY_LOCAL_MACHINE");
-        public static readonly RegistryKey Users = Hive("HKEY_USERS");
-        public static readonly RegistryKey PerformanceData = Hive("HKEY_PERFORMANCE_DATA");
-        public static readonly RegistryKey CurrentConfig = Hive("HKEY_CURRENT_CONFIG");
+        // Straight allocations, no lookup table: the hives are distinct by construction, so the
+        // dictionary this used to dedupe through bought nothing. (Simplified while chasing a mono
+        // wasm "NIY encountered in method .cctor" assertion; that turned out to be the INTERPRETER
+        // -only build -- -p:WpfWebGpuAot=false -- not this IL, so treat it as a tidy-up, not a fix.)
+        // These stay FIELDS, not properties: apps are compiled against the real assembly's
+        // static readonly fields and emit ldsfld.
+        public static readonly RegistryKey ClassesRoot = new RegistryKey("HKEY_CLASSES_ROOT");
+        public static readonly RegistryKey CurrentUser = new RegistryKey("HKEY_CURRENT_USER");
+        public static readonly RegistryKey LocalMachine = new RegistryKey("HKEY_LOCAL_MACHINE");
+        public static readonly RegistryKey Users = new RegistryKey("HKEY_USERS");
+        public static readonly RegistryKey PerformanceData = new RegistryKey("HKEY_PERFORMANCE_DATA");
+        public static readonly RegistryKey CurrentConfig = new RegistryKey("HKEY_CURRENT_CONFIG");
 
         private static RegistryKey FromPath(string keyName, out string rest)
         {

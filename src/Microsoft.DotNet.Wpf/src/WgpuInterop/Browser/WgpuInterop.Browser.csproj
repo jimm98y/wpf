@@ -21,8 +21,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- ..\Ios\bin|obj are excluded like every other build output: the iOS flavor's generated
+         AssemblyInfo.cs would otherwise be compiled in here too, and the build fails with a wall of
+         CS0579 "duplicate attribute" errors as soon as anyone has built that project. -->
     <Compile Include="..\**\*.cs"
-             Exclude="..\Wgpu.Native.cs;..\Wgpu.Lifecycle.cs;..\tests\**;..\native\**;..\bin\**;..\obj\**;..\Browser\bin\**;..\Browser\obj\**" />
+             Exclude="..\Wgpu.Native.cs;..\Wgpu.Lifecycle.cs;..\tests\**;..\native\**;..\bin\**;..\obj\**;..\Browser\bin\**;..\Browser\obj\**;..\Ios\bin\**;..\Ios\obj\**" />
   </ItemGroup>
 
   <ItemGroup>
