@@ -290,7 +290,6 @@ namespace MS.Internal.Interop
             // surface creation) as a top-most sublayer, so the effect view renders behind the WPF scene.
             SendVoidPtrNIntPtr(_contentView, Sel("addSubview:positioned:relativeTo:"), vev, -1, IntPtr.Zero);
             _visualEffectView = vev;
-            TraceMicaAppearance("EnableMicaBackdrop");
         }
 
         // NSVisualEffectMaterial for the Mica backdrop (the effect view is always rendered in dark
@@ -301,23 +300,6 @@ namespace MS.Internal.Interop
             string env = Environment.GetEnvironmentVariable("WPF_MAC_MICA_MATERIAL");
             if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int m)) return m;
             return 21;   // NSVisualEffectMaterialUnderWindowBackground
-        }
-
-        // TEMPORARY diagnostic: what appearance the window and its Mica effect view actually resolve to.
-        private void TraceMicaAppearance(string where)
-        {
-            if (Environment.GetEnvironmentVariable("WPF_MAC_MICA_TRACE") != "1") return;
-            Console.Error.WriteLine($"[mica] {where}: window={AppearanceName(_window)} effectView={AppearanceName(_visualEffectView)}");
-        }
-
-        private static string AppearanceName(IntPtr obj)
-        {
-            if (obj == IntPtr.Zero) return "<none>";
-            IntPtr app = Send(obj, Sel("effectiveAppearance"));
-            if (app == IntPtr.Zero) return "<null>";
-            IntPtr name = Send(app, Sel("name"));
-            IntPtr utf8 = name != IntPtr.Zero ? Send(name, Sel("UTF8String")) : IntPtr.Zero;
-            return utf8 != IntPtr.Zero ? Marshal.PtrToStringUTF8(utf8) : "<?>";
         }
 
         // A named NSAppearance (Dark/Light Aqua), or Zero if unavailable.
@@ -345,7 +327,6 @@ namespace MS.Internal.Interop
 
             // The Mica effect view carries no appearance of its own, so it follows the window set above:
             // light theme gets the light material (near-white, like Windows Mica), dark the dark one.
-            TraceMicaAppearance($"SetWindowAppearance(dark:{dark})");
         }
 
         /// <summary>Undo <see cref="EnableMicaBackdrop"/>: remove the effect view and make the window
