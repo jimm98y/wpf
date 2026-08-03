@@ -352,3 +352,4 @@ Temporary Items
 !src/Microsoft.DotNet.Wpf/src/WpfGfx/tools/csp/**/*.rsp
 /samples/media-wasm/lib
 /samples/wpf-gallery-ios/lib
+/samples/wpf-webgpu-gallery-wasm/out

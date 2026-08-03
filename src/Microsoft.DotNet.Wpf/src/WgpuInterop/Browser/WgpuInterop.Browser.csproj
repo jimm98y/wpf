@@ -26,6 +26,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The WGSL the renderer loads through ShaderSource.ReadRaw, embedded under the SAME manifest
+         names as ../WgpuInterop.csproj produces (RootNamespace + Composition.Shaders.<file>). Without
+         these the browser build compiles and boots, then throws "Missing embedded WGSL resource" on
+         the first geometry fill and the canvas stays black. LogicalName is explicit because the
+         sources are linked in from outside this project directory. -->
+    <EmbeddedResource Include="..\Composition\Shaders\*.wgsl">
+      <LogicalName>Microsoft.Wpf.Interop.WebGpu.Composition.Shaders.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Ship the JS half next to the assembly so app heads can copy it to wwwroot. -->
     <None Include="wgpu-interop.js" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
