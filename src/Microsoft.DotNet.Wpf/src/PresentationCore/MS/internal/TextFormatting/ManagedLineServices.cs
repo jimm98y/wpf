@@ -39,6 +39,7 @@ namespace MS.Internal.TextFormatting
         public int[] Advances;              // ideal glyph advances
         public GlyphOffset[] Offsets;       // glyph offsets
         public int GlyphCount;
+        public IntPtr PlsrunPtr;            // LS run pointer, needed to re-shape a truncated run
         public int PenX;                    // ideal x where this run starts (line-relative)
         public int Width;                   // ideal advance width of the run
         public int Ascent;
@@ -331,7 +332,14 @@ namespace MS.Internal.TextFormatting
                         }
                         else
                         {
-                            // Nothing more fits; end the line here without consuming this run.
+                            // Nothing more fits and this run carries no break opportunity of its own.
+                            // The store itemizes into one run per word / space / punctuation mark, so
+                            // ending the line at THIS run boundary would break wherever the runs happen
+                            // to meet -- e.g. a trailing "," that no longer fits would start the next
+                            // line. Backtrack to the last real break opportunity already on the line
+                            // (which also returns the runs after it to the next line); only if the line
+                            // holds no opportunity at all does it end at the run boundary.
+                            BackTrackToBreak(cb, ploc, line, ref cp, ref penX);
                             break;
                         }
                     }
@@ -356,7 +364,7 @@ namespace MS.Internal.TextFormatting
 
                 line.Runs.Add(new ManagedLsRun
                 {
-                    Plsrun = plsrun, CpFirst = cp, CchText = consume, Text = shapeText,
+                    Plsrun = plsrun, PlsrunPtr = plsrunPtr, CpFirst = cp, CchText = consume, Text = shapeText,
                     Glyphs = glyphs, ClusterMap = clusters, CharProps = charProps, GlyphProps = glyphProps,
                     Advances = advances, Offsets = offsets, GlyphCount = glyphCount,
                     PenX = penX, Width = usedWidth, Ascent = txm.dvAscent, Descent = txm.dvDescent, IsText = true,
@@ -420,11 +428,78 @@ namespace MS.Internal.TextFormatting
             int n = Math.Min(limit, text.Length);
             for (int i = n - 1; i >= 0; i--)
             {
-                char c = text[i];
-                if (c == ' ' || c == '\t' || c == '\u00A0' || c == '\u2003' || c == '\u2002')
+                if (IsBreakableSpace(text[i]))
                     return i + 1;
             }
             return 0;
+        }
+
+        // A space that a line may break after. U+00A0 (no-break space) deliberately is NOT one --
+        // that is the whole point of the character.
+        private static bool IsBreakableSpace(char c)
+            => c == ' ' || c == '\t' || c == '\u2003' || c == '\u2002';
+
+        // Ends the line at the last break opportunity among the runs already placed on it, dropping
+        // (and, where the opportunity falls inside a run, truncating) everything after it so those
+        // characters format onto the next line. Returns false -- leaving the line untouched -- when
+        // the line holds no break opportunity at all, in which case the caller's run-boundary break
+        // stands as the last resort.
+        private static unsafe bool BackTrackToBreak(
+            LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, ref int cp, ref int penX)
+        {
+            for (int i = line.Runs.Count - 1; i >= 0; i--)
+            {
+                ManagedLsRun r = line.Runs[i];
+                if (!r.IsText || r.Text == null) continue;
+
+                int brk = FindBreak(r.Text, r.CchText);
+                if (brk <= 0) continue;                       // no opportunity in this run
+
+                if (brk < r.CchText && !TruncateRun(cb, ploc, r, brk)) return false;
+
+                if (i + 1 < line.Runs.Count)
+                    line.Runs.RemoveRange(i + 1, line.Runs.Count - i - 1);
+
+                cp = r.CpFirst + r.CchText;
+                penX = r.PenX + r.Width;
+                return true;
+            }
+            return false;
+        }
+
+        // Cuts a placed run down to its first `keep` characters, re-measuring and re-shaping so the
+        // glyphs and advances match the characters that remain on the line.
+        private static unsafe bool TruncateRun(
+            LineServicesCallbacks cb, IntPtr ploc, ManagedLsRun r, int keep)
+        {
+            char[] text = r.Text[..keep];
+            int[] charWidths = new int[keep];
+            int totalWidth = 0, fitted = 0;
+            fixed (char* pText = text)
+            fixed (int* pCw = charWidths)
+            {
+                if (cb.GetRunCharWidths(ploc, r.Plsrun, LsDevice.Presentation, pText, keep, int.MaxValue,
+                                        LsTFlow.lstflowES, pCw, ref totalWidth, ref fitted) != LsErr.None)
+                {
+                    return false;
+                }
+            }
+
+            ShapeRun(cb, ploc, r.Plsrun, r.PlsrunPtr, text,
+                     out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
+                     out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
+
+            r.Text = text;
+            r.CchText = keep;
+            r.Width = totalWidth;
+            r.Glyphs = glyphs;
+            r.ClusterMap = clusters;
+            r.CharProps = charProps;
+            r.GlyphProps = glyphProps;
+            r.Advances = advances;
+            r.Offsets = offsets;
+            r.GlyphCount = glyphCount;
+            return true;
         }
 
         private static unsafe void ShapeRun(
