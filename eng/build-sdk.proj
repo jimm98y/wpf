@@ -1,0 +1,128 @@
+<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk / WpfWebGpuWasm.Sdk
+     NuGet packages under artifacts/local-feed. One implementation for macOS, Linux and
+     Windows; build-sdk.sh / build-sdk.cmd are thin wrappers that just locate dotnet.
+
+         ./eng/build-sdk.sh              (macOS/Linux)
+         eng\build-sdk.cmd               (Windows)
+
+     Why this exists instead of ./build.sh: on non-Windows, eng/Build.props restricts the
+     Arcade build to the packaging projects only (see the ProjectToBuild list there), so
+     `./build.sh` produces PresentationBuildTasks and the WindowsDesktop SDK package and
+     NOTHING ELSE. The cross-platform WPF assemblies the SDK actually ships — everything
+     under artifacts/bin/*/Release/net10.0 — have to be built by project. Miss that and the
+     pack silently reuses whatever was in artifacts/bin from a previous session, which looks
+     exactly like a successful build.
+
+     Options:
+         -p:Configuration=Debug          (default Release)
+         -p:SkipBrowser=true             skip the WebAssembly/browser flavor (needs the
+                                         wasm-tools workload)
+         -p:SkipWinForms=true            skip the WinForms-interop flavor
+         -p:SkipPack=true                build only, do not pack or touch the NuGet cache
+
+     NOTE (Windows head): the lib/wpf-windows + native/win-arm64 payload is NOT produced
+     here. It comes from a staged win-arm64 fork runtime (WpfWinRuntimeDir in
+     sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj). The pack step picks it up automatically when
+     present and warns when it is not — see _HasWinRuntime in that csproj.
+
+     Deliberately NOT an Sdk-style project: with no Sdk attribute MSBuild does not import
+     Microsoft.Common.props, so the repo's Arcade Directory.Build.props stays out of this
+     file. Each project below is built by a separate `dotnet build`, exactly as if it had
+     been built by hand. -->
+<Project DefaultTargets="Build">
+
+  <PropertyGroup>
+    <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</RepoRoot>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <!-- The wrappers pass the resolved muxer in; fall back to whatever is on PATH. -->
+    <DotNetTool Condition="'$(DotNetTool)' == ''">dotnet</DotNetTool>
+    <_Src>$(RepoRoot)src/Microsoft.DotNet.Wpf/src/</_Src>
+    <_Feed>$(RepoRoot)artifacts/local-feed</_Feed>
+    <_BuildArgs>-c $(Configuration) -v q --nologo</_BuildArgs>
+  </PropertyGroup>
+
+  <!-- ============================== what gets built ============================== -->
+  <ItemGroup>
+    <!-- The packaging project. Produces artifacts/packaging/.../PresentationBuildTasks.dll
+         and targets/Microsoft.WinFX.targets, both of which the SDK packs and every head
+         needs to compile XAML. -->
+    <_Proj Include="$(RepoRoot)packaging/Microsoft.NET.Sdk.WindowsDesktop/Microsoft.NET.Sdk.WindowsDesktop.ArchNeutral.csproj" />
+
+    <!-- PresentationFramework transitively drags in the rest of the core surface:
+         PresentationCore, WindowsBase, System.Xaml, ReachFramework, UIAutomation*,
+         System.Windows.Primitives, System.Windows.Input.Manipulations, the System.Printing
+         cycle-breaking projects, DirectWriteForwarderStub and WgpuInterop. -->
+    <_Proj Include="$(_Src)PresentationFramework/PresentationFramework.csproj" />
+
+    <!-- Loaded by name at runtime rather than referenced, so they are NOT transitive.
+         Leaving them out is how you end up running yesterday's theme. -->
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Fluent/PresentationFramework.Fluent.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Aero2/PresentationFramework.Aero2.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Classic/PresentationFramework.Classic.csproj" />
+    <_Proj Include="$(_Src)PresentationUI/PresentationUI.csproj" />
+
+    <!-- Cross-platform stand-ins for the Windows-only assemblies. -->
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
+
+    <!-- The desktop renderer. Built transitively above, but named explicitly so a failure
+         here is attributed to the renderer rather than to PresentationFramework. -->
+    <_Proj Include="$(_Src)WgpuInterop/WgpuInterop.csproj" />
+
+    <!-- Optional flavors. -->
+    <_Proj Include="$(_Src)WgpuInterop/Browser/WgpuInterop.Browser.csproj" Condition="'$(SkipBrowser)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/System.Windows.Forms.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/System.Drawing.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
+    <!-- Packed last, from everything above. -->
+    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj" />
+    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpuWasm.Sdk/WpfWebGpuWasm.Sdk.csproj" />
+  </ItemGroup>
+
+  <Target Name="Build" DependsOnTargets="Preflight;BuildProjects;Pack;EvictCache" />
+
+  <!-- wgpu-native is a prebuilt binary drop, gitignored (see WgpuInterop/.gitignore), so a
+       fresh clone does not have it and nothing else in the build will complain: the SDK
+       csproj packs the dylib under a Condition="Exists(...)" and the gallery then fails at
+       runtime with a DllNotFoundException. Say so up front instead. -->
+  <Target Name="Preflight">
+    <PropertyGroup>
+      <_WgpuMac>$(_Src)WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib</_WgpuMac>
+      <_WgpuMissing Condition="'$([MSBuild]::IsOSPlatform(OSX))' == 'true' and !Exists('$(_WgpuMac)')">true</_WgpuMissing>
+    </PropertyGroup>
+    <Warning Condition="'$(_WgpuMissing)' == 'true'"
+             Text="wgpu-native is missing: $(_WgpuMac). The macOS head will pack WITHOUT libwgpu_native.dylib and the app will fail at startup with DllNotFoundException. Drop the wgpu-native release for osx-arm64 there, or copy it from an existing build output, then rerun." />
+    <Message Importance="high" Text="==&gt; building the WPF-on-WebGPU fork ($(Configuration))" />
+  </Target>
+
+  <!-- One `dotnet build` per project, sequentially. Sequential is deliberate: several of
+       these projects write into the same artifacts/obj cycle-breaking directories. -->
+  <Target Name="BuildProjects">
+    <Message Importance="high" Text="==&gt; %(_Proj.Filename)" />
+    <Exec Command="&quot;$(DotNetTool)&quot; build &quot;%(_Proj.Identity)&quot; $(_BuildArgs)"
+          WorkingDirectory="$(RepoRoot)" />
+  </Target>
+
+  <!-- The pack projects read straight out of artifacts/bin, so they must not inherit the
+       repo's Arcade props/targets — same flags assemble.sh/assemble.cmd use. -->
+  <Target Name="Pack" Condition="'$(SkipPack)' != 'true'">
+    <Message Importance="high" Text="==&gt; packing %(_PackProj.Filename) -&gt; artifacts/local-feed" />
+    <Exec Command="&quot;$(DotNetTool)&quot; pack &quot;%(_PackProj.Identity)&quot; -c $(Configuration) -o &quot;$(_Feed)&quot; -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false --nologo -v:m"
+          WorkingDirectory="$(RepoRoot)" />
+  </Target>
+
+  <!-- The package version does not change between builds, so NuGet would happily serve the
+       previously extracted copy and the repack would have no effect whatsoever. -->
+  <Target Name="EvictCache" Condition="'$(SkipPack)' != 'true'">
+    <PropertyGroup>
+      <_NuGetHome Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetHome>
+      <_NuGetHome Condition="'$(_NuGetHome)' == '' and '$(UserProfile)' != ''">$(UserProfile)/.nuget/packages</_NuGetHome>
+      <_NuGetHome Condition="'$(_NuGetHome)' == ''">$(HOME)/.nuget/packages</_NuGetHome>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_NuGetHome)/wpfwebgpu.sdk;$(_NuGetHome)/wpfwebgpuwasm.sdk"
+               ContinueOnError="WarnAndContinue" />
+    <Message Importance="high" Text="==&gt; evicted the extracted SDK packages from $(_NuGetHome)" />
+    <Message Importance="high" Text="==&gt; DONE. Feed: $(_Feed)" />
+  </Target>
+
+</Project>
