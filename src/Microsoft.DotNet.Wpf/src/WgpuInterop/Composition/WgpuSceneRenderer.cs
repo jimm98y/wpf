@@ -342,9 +342,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private IntPtr _whiteTex, _whiteView;   // shared 1x1 white coverage (solid/bounds id quads)
 
         // GPU path rasterization is the default; WPF_WEBGPU_CPU_RASTER=1 restores the
-        // CPU scanline rasterizer (A/B comparison, driver-bug escape hatch).
-        private static readonly bool s_gpuRaster =
+        // CPU scanline rasterizer (A/B comparison, driver-bug escape hatch). Settable (not readonly)
+        // so the sink can force the CPU path on adapters that can't run the GPU rasterizer's fragment
+        // shader — notably OpenGL ES / ANGLE, where max_storage_buffers_per_shader_stage is 0 and
+        // creating the coverage pipeline (a fragment storage buffer of edges) panics wgpu.
+        internal static bool s_gpuRaster =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") != "1";
+        internal static readonly bool s_cpuRasterExplicit =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") != null;
 
         // WPF_WEBGPU_LOCAL_COVERAGE_CACHE=1: rasterize solid coverage in the geometry's OWN space and
         // apply the world transform when COMPOSITING the quad - the same bargain as WPF's
@@ -507,8 +512,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // emissive look (HexSphere's honeycomb: the raw sRGB emissive brush accumulates, so overlapping
         // lattice layers shine brighter). WPF_WEBGPU_GAMMA=0 restores physically-linear compositing
         // (sRGB target + linear colours) for A/B. Read by MilcoreEngine (colour encode) too.
-        internal static readonly bool s_gammaComposite =
+        // Settable (not readonly) so the sink can turn it OFF for backends that can't present a
+        // gamma-space (pre-encoded, plain-UNORM) swapchain faithfully — notably OpenGL/ANGLE, which
+        // scans a UNORM swapchain out too dark and lacks SURFACE_VIEW_FORMATS to view it as UNORM over
+        // an sRGB swapchain. Metal keeps the default (gamma-space, matching legacy WPF). Only overridden
+        // when the user did not pin it explicitly via WPF_WEBGPU_GAMMA (see s_gammaCompositeExplicit).
+        internal static bool s_gammaComposite =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_GAMMA") != "0";
+        internal static readonly bool s_gammaCompositeExplicit =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_GAMMA") != null;
         private IntPtr _linearSampler;
         private IntPtr _nearestSampler;
 
@@ -2588,8 +2600,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Segments stay in ABSOLUTE device coords (so does the quad's uv), so the fragment's sample
             // point matches them whether or not this draw sits inside a region-offset layer bake.
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
-            int byteLen = Math.Max(16, es.Length * sizeof(float));
-            int soff = AllocStorage(MemoryMarshal.AsBytes(es), byteLen);
+            IntPtr edgeBg = EdgeBindGroup(MemoryMarshal.AsBytes(es), format, FillKind.StrokeDraw, _srcCopy);
 
             float pad = deviceHalf + 2f;                          // half-width + ~2px AA/margin
             float x0 = minX - pad, y0 = minY - pad, x1 = maxX + pad, y1 = maxY + pad;
@@ -2605,8 +2616,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), pr, pg, pb, a, x0, y1, sc, deviceHalf);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
-            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, IntPtr.Zero, sourceCopy: _srcCopy));
-            _pendingStorageBinds.Add((data, data.Draws.Count - 1, soff, byteLen, format));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.StrokeDraw, edgeBg, sourceCopy: _srcCopy));
             return true;
         }
 
@@ -2768,7 +2778,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty) return;
 
-            bool gamma = isGlyph && _srgbOutput && !_transparentTarget;
+            // Apply WPF's text-gamma weighting whenever glyph coverage is composited for display: in
+            // GAMMA-SPACE mode (the default — colours pre-encoded, blended in sRGB space, main target
+            // UNORM so _srgbOutput is false) it's needed on the MAIN pass too, not just inside the sRGB
+            // offscreen layers (cards). Gating it on _srgbOutput alone left every glyph drawn straight to
+            // the main target (e.g. the whole nav menu) un-weighted and too light to read. Still dropped
+            // on transparent targets (layered windows), matching WPF dropping ClearType there.
+            bool gamma = isGlyph && !_transparentTarget && (s_gammaComposite || _srgbOutput);
 
             // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
@@ -3032,7 +3048,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty || mask.IsEmpty) return;
 
-            if (isGlyph && _srgbOutput && !_transparentTarget) ApplyTextGamma(mask.Coverage);
+            if (isGlyph && !_transparentTarget && (s_gammaComposite || _srgbOutput)) ApplyTextGamma(mask.Coverage);
 
             IntPtr view, bindGroup;
             FillKind kind;
@@ -4189,6 +4205,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private (IntPtr Texture, IntPtr View) CreateR8Texture(byte[] r8, int width, int height)
             => CreateTexture(r8, width, height, WGPUTextureFormat.R8Unorm, 1);
 
+        // Edge-texture width MUST equal EDGE_TW in _EdgeTexture.wgsl (the shader maps slot i to
+        // texel (i % EdgeTexWidth, i / EdgeTexWidth)); 256 => a 256-aligned bytesPerRow (256*8).
+        private const int EdgeTexWidth = 256;
+
+        // Packs vec2<f32> edge/segment slots into an RG32Uint texture so fs_coverage/fs_stroke can read
+        // them with textureLoad — the GL-ES-3.0/ANGLE stand-in for a fragment storage buffer (which that
+        // backend can't bind). The f32 bit patterns ride verbatim in the u32 channels. Each mask/stroke
+        // gets its own texture, so shader indices are relative (slot 0 = this object's header).
+        private (IntPtr Tex, IntPtr View) CreateEdgeTexture(ReadOnlySpan<byte> data)
+        {
+            int slots = Math.Max(1, (data.Length + 7) / 8);
+            int height = (slots + EdgeTexWidth - 1) / EdgeTexWidth;
+            byte[] padded = new byte[EdgeTexWidth * height * 8];
+            data.CopyTo(padded);   // trailing texels stay zero (never indexed)
+            return CreateTexture(padded, EdgeTexWidth, height, WGPUTextureFormat.RG32Uint, 8);
+        }
+
+        // Builds an edge texture and an auto-layout bind group (binding 0) for the given coverage/stroke
+        // pipeline, in one step. Replaces the old storage-buffer + BuildBatchedStorage bind.
+        private IntPtr EdgeBindGroup(ReadOnlySpan<byte> data, WGPUTextureFormat passFormat, FillKind kind, bool sourceCopy = false)
+        {
+            var (tex, view) = CreateEdgeTexture(data);
+            DeferReleaseTexView(tex, view);
+            PerfBindGroups++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(passFormat, kind, sourceCopy), 0);
+            var entry = new WGPUBindGroupEntry { binding = 0, textureView = view };
+            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
+            DeferReleaseBindGroup(bg);
+            return bg;
+        }
+
         // ---- GPU path rasterization (fs_coverage) ------------------------------
 
         // Scratch quadratic-segment list for GPU coverage (single render thread; cleared per use).
@@ -4332,16 +4380,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= originX; es[i + 1] -= originY; }
 
-            int byteLen = Math.Max(16, es.Length * sizeof(float));
-            IntPtr ebuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
-            DeferReleaseBuffer(ebuf);
-
-            PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Coverage), 0);
-            var entryB = new WGPUBindGroupEntry { binding = 0, buffer = ebuf, offset = 0, size = (ulong)byteLen };
-            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entryB };
-            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
-            DeferReleaseBindGroup(bg);
+            IntPtr bg = EdgeBindGroup(MemoryMarshal.AsBytes(es), WGPUTextureFormat.R8Unorm, FillKind.Coverage);
 
             // Quad over the atlas rectangle in atlas NDC; uv = glyph-local pixel coords for fs_coverage.
             float aw = _glyphAtlas.Width, ah = _glyphAtlas.Height;
@@ -4378,9 +4417,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Span<float> es = CollectionsMarshal.AsSpan(_edgeScratch);
             for (int i = 0; i + 1 < es.Length; i += 2) { es[i] -= ox; es[i + 1] -= oy; }
 
-            int byteLen = Math.Max(16, es.Length * sizeof(float));
-            IntPtr sbuf = _ctx.CreateBufferMapped(MemoryMarshal.AsBytes(es), WGPUBufferUsage.Storage, (ulong)byteLen);
-            DeferReleaseBuffer(sbuf);
+            IntPtr bg = EdgeBindGroup(MemoryMarshal.AsBytes(es), WGPUTextureFormat.R8Unorm, FillKind.Stroke);
 
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
@@ -4394,13 +4431,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             };
             tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             view = wgpuTextureCreateView(tex, IntPtr.Zero);
-
-            PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(WGPUTextureFormat.R8Unorm, FillKind.Stroke), 0);
-            var entry = new WGPUBindGroupEntry { binding = 0, buffer = sbuf, offset = 0, size = (ulong)byteLen };
-            var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
-            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
-            DeferReleaseBindGroup(bg);
 
             // Full-target quad in the mask's own NDC; uv = mask-local pixel coords; the flat vertex
             // colour carries (segCount, halfWidth) — matching fs_stroke's decoding.
@@ -4435,10 +4465,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             BuildScanlineBands(es, h, _bandScratch);
             Span<float> es2 = CollectionsMarshal.AsSpan(_bandScratch);
 
-            int byteLen = Math.Max(16, es2.Length * sizeof(float));   // never a zero-sized binding
-            // Reserve this mask's edges in the frame-shared storage arena; the bind group is created +
-            // patched in later by BuildBatchedStorage once the whole arena is one buffer (see _batchStorage).
-            int soff = AllocStorage(MemoryMarshal.AsBytes(es2), byteLen);
+            // This mask's edges go in their own RG32Uint texture that fs_coverage reads via textureLoad
+            // (GL ES 3.0 / ANGLE can't bind a fragment storage buffer).
+            IntPtr edgeBg = EdgeBindGroup(MemoryMarshal.AsBytes(es2), WGPUTextureFormat.R8Unorm, FillKind.Coverage);
 
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
@@ -4466,8 +4495,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(d.Verts, new Vector2(1f, -1f), segCount, flags, 0f, 0f, w, h);
             AddVertex(d.Verts, new Vector2(-1f, -1f), segCount, flags, 0f, 0f, 0f, h);
             AddQuadIndices(d.Indices, 0);
-            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, IntPtr.Zero));
-            _pendingStorageBinds.Add((d, d.Draws.Count - 1, soff, byteLen, WGPUTextureFormat.R8Unorm));
+            d.Draws.Add(new DrawItem(0, 6, new Scissor(0, 0, w, h), FillKind.Coverage, edgeBg));
             _plan.Add(new LayerPass(view, true, default, d, WGPUTextureFormat.R8Unorm) { TexW = w, TexH = h });
             return (tex, view);
         }

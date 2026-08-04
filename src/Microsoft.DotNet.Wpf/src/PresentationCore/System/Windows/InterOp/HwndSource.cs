@@ -21,6 +21,13 @@ namespace System.Windows.Interop
     {
         static HwndSource()
         {
+            // Opt the process into DPI awareness (and load the native text backend) before the first
+            // top-level HWND is created below. PresentationCore's ModuleInitializer is no longer a
+            // <Module>.cctor (mono-aot-cross/wasm cannot run one), so on Windows it must be pumped from
+            // an early pre-window path — and every WPF window funnels through HwndSource. Without this
+            // the process stays DPI-unaware and Windows bitmap-stretches the window (blurry on HiDPI).
+            global::ModuleInitializer.Initialize();
+
             _threadSlot = Thread.AllocateDataSlot();
         }
 

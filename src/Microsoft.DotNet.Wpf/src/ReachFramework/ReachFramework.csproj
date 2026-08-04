@@ -337,12 +337,9 @@
 
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
-    <!-- DirectWriteForwarder is C++/CLI (Windows-only); use the managed stub off-Windows so
-         ReachFramework still compiles. See Stub/DirectWriteForwarderStub.csproj. -->
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj" Condition="'$(OS)' == 'Windows_NT'">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" Condition="'$(OS)' != 'Windows_NT'" />
+    <!-- The managed DirectWriteForwarder stub is used on ALL platforms (the WebGPU port has no
+         C++/CLI DirectWrite dependency), so this builds with the dotnet CLI on Windows too. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
     <ProjectReference Include="$(WpfSourceDir)ReachFramework\ref\ReachFramework-ref.csproj">

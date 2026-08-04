@@ -169,12 +169,10 @@
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)PresentationFramework\PresentationFramework.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
-    <!-- System.Printing is C++/CLI (Windows-only). Off-Windows, compile against the managed
-         reference assembly (contract-only); the gallery does not exercise printing at runtime. -->
-    <ProjectReference Include="$(WpfSourceDir)System.Printing\System.Printing.vcxproj" Condition="'$(OS)' == 'Windows_NT'">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
-    <ProjectReference Include="$(WpfSourceDir)System.Printing\ref\System.Printing-ref.csproj" Condition="'$(OS)' != 'Windows_NT'" />
+    <!-- System.Printing is C++/CLI; compile against the managed reference assembly (contract-only)
+         on ALL platforms so this builds with the dotnet CLI on Windows too (no MSVC). The gallery does
+         not exercise printing at runtime; the existing System.Printing.dll supplies the impl if it is. -->
+    <ProjectReference Include="$(WpfSourceDir)System.Printing\ref\System.Printing-ref.csproj" />
     <ProjectReference Include="$(WpfSourceDir)ReachFramework\ReachFramework.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationProvider\UIAutomationProvider.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj" />

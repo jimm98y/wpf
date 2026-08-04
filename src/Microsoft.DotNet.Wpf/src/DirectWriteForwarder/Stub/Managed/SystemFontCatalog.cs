@@ -163,6 +163,16 @@ namespace MS.Internal.Text.TextInterface.Managed
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 if (!string.IsNullOrEmpty(home)) yield return Path.Combine(home, "Library", "Fonts");
             }
+            else if (OperatingSystem.IsWindows())
+            {
+                // Machine fonts (C:\Windows\Fonts) plus per-user fonts installed without admin
+                // (%LOCALAPPDATA%\Microsoft\Windows\Fonts). Without this the catalog was empty on
+                // Windows and every font-family lookup failed, FailFast-ing in FontFamily.
+                string systemFonts = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+                if (!string.IsNullOrEmpty(systemFonts)) yield return systemFonts;
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (!string.IsNullOrEmpty(localAppData)) yield return Path.Combine(localAppData, "Microsoft", "Windows", "Fonts");
+            }
             else
             {
                 // Generic *nix fallbacks.

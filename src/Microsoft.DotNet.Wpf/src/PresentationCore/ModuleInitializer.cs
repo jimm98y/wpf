@@ -22,18 +22,32 @@ internal static class ModuleInitializer
     // fatal g_assert). This init is a no-op off-Windows anyway (DPI awareness + native DirectWrite load),
     // so on wasm/mac nothing is lost. On Windows it must be invoked from an early startup path instead
     // (before the first window) to preserve process DPI awareness.
+    private static bool s_initialized;
+
     public static void Initialize()
     {
         if (!System.OperatingSystem.IsWindows())
             return;
 
+        // Idempotent: this is invoked from an early startup path (HwndSource's static ctor, before
+        // the first HWND) rather than a <Module>.cctor, so guard against a second invocation loading
+        // DirectWrite twice or re-poking DPI awareness.
+        if (s_initialized)
+            return;
+        s_initialized = true;
+
         IsProcessDpiAware();
 
+#if !WPF_DWRITE_MANAGED_STUB
         // Native text backend (DirectWrite) load + teardown. All platform decisions live in
         // NativePlatform; on non-Windows this is a no-op until a text backend is ported.
+        // Skipped entirely for the managed OpenType backend (the WebGPU port): there is no native
+        // DirectWrite to load, and pulling wpfgfx/dwrite in from HwndSource's static ctor blocks the
+        // type-initializer (spinning cursor / frozen window).
         NativePlatform.InitializeTextBackend();
 
         MS.Internal.NativeWPFDLLLoader.LoadDwrite();
+#endif
     }
 #pragma warning restore CA2255
 

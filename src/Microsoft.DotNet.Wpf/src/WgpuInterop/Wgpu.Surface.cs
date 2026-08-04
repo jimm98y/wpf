@@ -115,6 +115,37 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public WGPUSurfaceGetCurrentTextureStatus status;
         }
 
+        internal enum WGPUTextureViewDimension
+        {
+            Undefined = 0x00000000,
+            _1D = 0x00000001,
+            _2D = 0x00000002,
+            _2DArray = 0x00000003,
+            Cube = 0x00000004,
+            CubeArray = 0x00000005,
+            _3D = 0x00000006,
+        }
+
+        // wgpu-native v29 ABI. Lets us render into a surface texture through a view whose format
+        // differs from (but is view-compatible with) the swapchain format -- specifically a plain
+        // UNORM view over an sRGB swapchain, so gamma-space pre-encoded bytes store verbatim (no
+        // hardware re-encode) while the swapchain stays sRGB for correct presentation on the
+        // OpenGL/ANGLE backend (a plain-UNORM swapchain there is scanned out too dark).
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUTextureViewDescriptor
+        {
+            public WGPUChainedStruct* nextInChain;
+            public WGPUStringView label;
+            public WGPUTextureFormat format;
+            public WGPUTextureViewDimension dimension;
+            public uint baseMipLevel;
+            public uint mipLevelCount;
+            public uint baseArrayLayer;
+            public uint arrayLayerCount;
+            public WGPUTextureAspect aspect;
+            public WGPUTextureUsage usage;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUSurfaceCapabilities
         {

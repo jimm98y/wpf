@@ -16,7 +16,7 @@
 // rejects any segment whose endpoints do not straddle the scanline, and a segment can only
 // straddle it if its y-range contains it -- so restricting the loop to the band's list
 // examines strictly fewer segments and reaches the identical result.
-@group(0) @binding(0) var<storage, read> segs : array<vec2<f32>>;
+//#include _EdgeTexture.wgsl
 
 const MAX_PIXEL_CROSSINGS : u32 = 16u;
 
@@ -85,10 +85,11 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     // it), so all four subsample rows of this pixel fall in the same band and one lookup
     // serves them; a fractional band height would let rows past a boundary consult the wrong
     // segment list and drop crossings.
-    let bandCount = bitcast<u32>(segs[0].x);
-    let bandRows = segs[0].y;
+    let hdr = edgeAt(0u);
+    let bandCount = bitcast<u32>(hdr.x);
+    let bandRows = hdr.y;
     let band = min(u32(max(py, 0.0) / bandRows), bandCount - 1u);
-    let range = segs[1u + band];
+    let range = edgeAt(1u + band);
     let segBase = bitcast<u32>(range.x);
     let segCount = bitcast<u32>(range.y);
     var cov = 0.0;
@@ -100,10 +101,10 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
         var n = 0u;
         for (var i = 0u; i < segCount; i = i + 1u) {
             let at = segBase + 4u * i;
-            let p0 = segs[at];
-            let c1 = segs[at + 1u];
-            let c2 = segs[at + 2u];
-            let p1 = segs[at + 3u];
+            let p0 = edgeAt(at);
+            let c1 = edgeAt(at + 1u);
+            let c2 = edgeAt(at + 2u);
+            let p1 = edgeAt(at + 3u);
             // Segments are y-monotone (split at y-extrema on the CPU), so the crossing test is the
             // robust endpoint half-open rule: exactly the segments whose endpoints straddle sy cross
             // it. This uses exact float comparisons (no t-boundary epsilon), so a vertex shared by

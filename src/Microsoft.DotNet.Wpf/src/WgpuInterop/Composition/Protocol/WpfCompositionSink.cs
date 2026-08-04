@@ -377,7 +377,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             ts.NullAcquires = 0;
             AcquiredFrames++;
 
-            IntPtr view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
+            // Render through a view in RenderFormat. Usually identical to the swapchain format (default
+            // view), but on the OpenGL gamma path it's the UNORM view over the sRGB swapchain so
+            // pre-encoded gamma bytes store verbatim.
+            IntPtr view;
+            if (ts.RenderFormat != ts.Format)
+            {
+                var vdesc = new WGPUTextureViewDescriptor
+                {
+                    format = ts.RenderFormat,
+                    dimension = WGPUTextureViewDimension._2D,
+                    baseMipLevel = 0, mipLevelCount = 1,
+                    baseArrayLayer = 0, arrayLayerCount = 1,
+                    aspect = WGPUTextureAspect.All,
+                    usage = WGPUTextureUsage.RenderAttachment,
+                };
+                view = wgpuTextureCreateView(surfaceTexture.texture, (IntPtr)(&vdesc));
+            }
+            else
+            {
+                view = wgpuTextureCreateView(surfaceTexture.texture, IntPtr.Zero);
+            }
             long ta = System.Diagnostics.Stopwatch.GetTimestamp();
             // A layered popup composites over what's behind its window, so clear fully transparent
             // (premultiplied 0,0,0,0) rather than the target's opaque clear colour. WPF sends a popup
@@ -386,7 +406,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             RgbaColor clear = ts.Transparent ? new RgbaColor(0, 0, 0, 0) : t.ClearColor;
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.Format, t.Width, t.Height, clear, ts.Transparent);
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
@@ -585,6 +605,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (s_logPath != null) WgpuContext.LogSink = Log;
                 _ctx = WgpuContext.Create();
+
                 // A real default font + shaper so text-STRING glyph runs (GlyphRunDraw with .Text) —
                 // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent —
                 // shape and rasterize with actual glyphs. WPF's own text arrives as pre-shaped
@@ -614,24 +635,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (!_surfaces.TryGetValue(targetHandle, out TargetSurface? ts))
             {
                 IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
-                WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter);
+                bool gl = _ctx!.AdapterDescription?.Contains("backend=OpenGL") == true;
+                WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter, gl);
+                // We render straight into the swapchain view. (An sRGB-swapchain + UNORM-view scheme to
+                // keep gamma-space bytes verbatim needs SURFACE_VIEW_FORMATS, which the ANGLE/GL device
+                // does NOT support — it panics. So on GL we composite in linear space instead, see
+                // EnsureContext; the swapchain is then sRGB and RenderFormat == Format.)
+                WGPUTextureFormat renderFormat = format;
                 // Layered popups (per-pixel alpha) OR a window made non-opaque for a translucent Mica
                 // backdrop both present through a transparent surface so the material behind shows through.
                 bool transparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
-                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, Width = t.Width, Height = t.Height, Transparent = transparent };
+                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, RenderFormat = renderFormat, Width = t.Width, Height = t.Height, Transparent = transparent };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }
-            else if (ts.Width != t.Width || ts.Height != t.Height)
+            else
             {
-                ts.Width = t.Width;
-                ts.Height = t.Height;
-                Configure(ts);
+                // Re-poll opacity every frame: WPF's Fluent theme enables the DWM Mica backdrop AFTER the
+                // window (and this surface) already exist, so a surface first created opaque must flip to a
+                // transparent (premultiplied-alpha) configuration once the backdrop turns on — otherwise the
+                // opaque swapchain keeps hiding the Mica. Reconfigure on either a size or a transparency change.
+                bool wantTransparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
+                if (ts.Width != t.Width || ts.Height != t.Height || ts.Transparent != wantTransparent)
+                {
+                    ts.Width = t.Width;
+                    ts.Height = t.Height;
+                    ts.Transparent = wantTransparent;
+                    Configure(ts);
+                }
             }
             return ts;
         }
 
-        private static WGPUTextureFormat ChooseFormat(IntPtr surface, IntPtr adapter)
+        // sRGB -> plain-UNORM counterpart (view-compatible); other formats pass through unchanged.
+        private static WGPUTextureFormat UnormOf(WGPUTextureFormat f) => f switch
+        {
+            WGPUTextureFormat.RGBA8UnormSrgb => WGPUTextureFormat.RGBA8Unorm,
+            WGPUTextureFormat.BGRA8UnormSrgb => WGPUTextureFormat.BGRA8Unorm,
+            _ => f,
+        };
+
+        private static WGPUTextureFormat ChooseFormat(IntPtr surface, IntPtr adapter, bool gl)
         {
             WGPUSurfaceCapabilities caps;
             if (wgpuSurfaceGetCapabilities(surface, adapter, &caps) != WGPUStatus.Success || caps.formatCount == 0)
@@ -658,8 +702,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     case WGPUTextureFormat.BGRA8UnormSrgb: haveBgraS = true; break;
                 }
             }
+            // Gamma mode stores pre-encoded values verbatim, so on backends that scan out a UNORM
+            // swapchain faithfully (Metal) pick a UNORM surface. On OpenGL/ANGLE a UNORM swapchain is
+            // presented too dark, so pick an sRGB surface even in gamma mode and render into it through a
+            // UNORM view (RenderFormat) so the store is still verbatim. Linear mode always wants sRGB.
+            bool wantUnormSwapchain = gamma;
             WGPUTextureFormat chosen;
-            if (gamma)
+            if (wantUnormSwapchain)
                 chosen = haveRgbaU ? WGPUTextureFormat.RGBA8Unorm
                        : haveBgraU ? WGPUTextureFormat.BGRA8Unorm
                        : haveRgbaS ? WGPUTextureFormat.RGBA8UnormSrgb
@@ -669,7 +718,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                        : haveBgraS ? WGPUTextureFormat.BGRA8UnormSrgb
                        : haveRgbaU ? WGPUTextureFormat.RGBA8Unorm
                        : haveBgraU ? WGPUTextureFormat.BGRA8Unorm : caps.formats[0];
-            Log($"ChooseFormat gamma={gamma} formats[0]={caps.formats[0]} chosen={chosen}");
+            Log($"ChooseFormat gamma={gamma} gl={gl} formats[0]={caps.formats[0]} chosen={chosen}");
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return chosen;
         }
@@ -704,6 +753,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 else if (SurfaceSupportsAlphaMode(ts.Surface, WGPUCompositeAlphaMode.Unpremultiplied)) alpha = WGPUCompositeAlphaMode.Unpremultiplied;
                 else if (SurfaceSupportsAlphaMode(ts.Surface, WGPUCompositeAlphaMode.Inherit)) alpha = WGPUCompositeAlphaMode.Inherit;
             }
+            // When we render through a different-format view than the swapchain (OpenGL gamma path:
+            // UNORM view over an sRGB swapchain), that view format must be declared in viewFormats.
+            WGPUTextureFormat renderFmt = ts.RenderFormat;
             var config = new WGPUSurfaceConfiguration
             {
                 device = _ctx!.Device,
@@ -713,6 +765,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 height = (uint)ts.Height,
                 alphaMode = alpha,
                 presentMode = mode,
+                viewFormatCount = renderFmt != ts.Format ? (nuint)1 : 0,
+                viewFormats = renderFmt != ts.Format ? &renderFmt : null,
             };
             wgpuSurfaceConfigure(ts.Surface, &config);
 
@@ -768,7 +822,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             /// <summary>The native window/view handle (NSView* on macOS) backing this surface, kept so
             /// the CAMetalLayer contentsScale can be re-synced when the window's DPI changes.</summary>
             public IntPtr Hwnd;
+            /// <summary>The swapchain format (what wgpu presents). May be sRGB even in gamma-space mode
+            /// on the OpenGL/ANGLE backend, where a plain-UNORM swapchain scans out too dark.</summary>
             public WGPUTextureFormat Format;
+            /// <summary>The format we RENDER through (the surface texture view + pipelines). Equals
+            /// <see cref="Format"/> except on the OpenGL gamma-space path, where it is the UNORM
+            /// counterpart of an sRGB swapchain so pre-encoded gamma bytes store verbatim (no re-encode).</summary>
+            public WGPUTextureFormat RenderFormat;
             public int Width;
             public int Height;
             /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>

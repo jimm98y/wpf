@@ -115,7 +115,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static bool IsWindowOpaque(IntPtr nativeWindow)
         {
-            return Current != PlatformKind.MacOS || MacInterop.IsWindowOpaque(nativeWindow);
+            if (Current == PlatformKind.MacOS) return MacInterop.IsWindowOpaque(nativeWindow);
+            // Windows: a window with a DWM system backdrop (Mica/Acrylic/Tabbed) is composited by DWM
+            // OVER the desktop material and its native caption buttons — so it must present through a
+            // transparent surface (premultiplied alpha) with the WPF-cleared transparent background, or
+            // the opaque swapchain hides both the Mica and the caption buttons.
+            if (Current == PlatformKind.Windows) return Win32Interop.IsWindowOpaque(nativeWindow);
+            return true;
         }
     }
 }

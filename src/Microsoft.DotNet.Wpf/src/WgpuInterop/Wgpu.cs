@@ -152,6 +152,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
         {
             Undefined = 0x00000000,
             R8Unorm = 0x00000001,
+            RG32Uint = 0x00000022,   // 2x u32 per texel — carries edge/segment data to fs_coverage/fs_stroke as a texture (GL ES 3.0 has no fragment storage buffers)
             RGBA8Unorm = 0x00000016,
             RGBA8UnormSrgb = 0x00000017,
             BGRA8Unorm = 0x0000001B,

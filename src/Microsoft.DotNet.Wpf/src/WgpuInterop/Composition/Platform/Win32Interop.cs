@@ -121,6 +121,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport("kernel32.dll", EntryPoint = "GetModuleHandleW", CharSet = CharSet.Unicode)]
         private static extern IntPtr GetModuleHandleW(string? lpModuleName);
 
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hwnd, uint attr, out int value, int size);
+        private const uint DWMWA_SYSTEMBACKDROP_TYPE = 38;
+
+        /// <summary>
+        /// False when the window has a DWM system backdrop (Mica/Acrylic/Tabbed) enabled — WPF's Fluent
+        /// theme turns it on via DwmSetWindowAttribute and clears the window background to transparent, so
+        /// such a window is composited by DWM over the desktop material (and DWM draws its native caption
+        /// buttons). It must therefore present through a transparent (premultiplied-alpha) surface; an
+        /// opaque swapchain would hide both the Mica and the caption buttons. DWMSBT values: 0=Auto,
+        /// 1=None, 2=MainWindow(Mica), 3=Transient(Acrylic), 4=Tabbed — a backdrop is active at >= 2.
+        /// </summary>
+        public static bool IsWindowOpaque(IntPtr hwnd)
+        {
+            if (hwnd != IntPtr.Zero &&
+                DwmGetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, out int sbt, sizeof(int)) == 0 &&
+                sbt >= 2)
+            {
+                return false;
+            }
+            return true;
+        }
+
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);

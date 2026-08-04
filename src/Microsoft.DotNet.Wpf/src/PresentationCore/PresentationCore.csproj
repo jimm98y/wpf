@@ -2,9 +2,10 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <DefineConstants>$(DefineConstants);CORE_NATIVEMETHODS;PRESENTATION_CORE;COMMONDPS</DefineConstants>
-    <!-- Off-Windows the TextInterface Factory routes to the managed OpenType backend
-         (Managed.ManagedTextBackend), which only exists in the DirectWriteForwarder stub. -->
-    <DefineConstants Condition="'$(OS)' != 'Windows_NT'">$(DefineConstants);WPF_DWRITE_MANAGED_STUB</DefineConstants>
+    <!-- The TextInterface Factory routes to the managed OpenType backend (Managed.ManagedTextBackend)
+         in the DirectWriteForwarder stub on EVERY platform — the WebGPU port has no C++/CLI DirectWrite
+         dependency, so Windows uses the managed stub too (no MSVC toolchain to build). -->
+    <DefineConstants>$(DefineConstants);WPF_DWRITE_MANAGED_STUB</DefineConstants>
     <NoWarn>$(NoWarn);0618;0436;1058;1705;3001;3002;3003;3009;3024</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- SYSLIB5005: System.Formats.Nrbf is experimental -->
@@ -1411,10 +1412,10 @@
     <!-- DirectWriteForwarder.vcxproj wraps DirectWrite via C++/CLI, which only exists on
          Windows (MSVC + CLR toolchain). On macOS/Linux dev machines, substitute the managed
          stub so PresentationCore still compiles; see Stub/DirectWriteForwarderStub.csproj. -->
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj" Condition="'$(OS)' == 'Windows_NT'">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" Condition="'$(OS)' != 'Windows_NT'" />
+    <!-- The WebGPU port has NO C++/CLI dependency on any platform: Windows uses the same managed
+         DirectWriteForwarder stub (ManagedTextBackend) as macOS/Linux, so PresentationCore builds with
+         the dotnet CLI everywhere and needs no MSVC / Microsoft.Cpp toolchain. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Windows.Input.Manipulations\System.Windows.Input.Manipulations.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Windows.Primitives\System.Windows.Primitives.csproj" />
