@@ -1,0 +1,102 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Android twin of tests/IosSpike: a minimal head that boots real WPF on the WebGPU compositor.
+
+    Much SHORTER than the iOS one, and the differences are all consequences of one thing — Android
+    can load a third-party shared library. So there is no static-link flavour of the binding
+    (Wgpu.Library stays "wgpu_native", resolved to libwgpu_native.so out of the APK), no
+    __Internal/dead-stripping problem, and no NativeReference/ForceLoad dance.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <!-- The shared binding's signatures use raw pointers (WGPUChainedStruct* etc.). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationId>net.dot.wpf.androidspike</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- WPF is full of [SupportedOSPlatform("windows")] API that no Android path reaches; this is a
+         head, not a lint target. -->
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <_Art>../../../../../../artifacts/bin</_Art>
+  </PropertyGroup>
+
+  <!-- The Android windowing head (SurfaceView + Choreographer pump). Shared with
+       samples/wpf-gallery-android rather than copied; see the file's own remarks. -->
+  <ItemGroup>
+    <Compile Include="../../../Shared/MS/Internal/Interop/AndroidHost.cs" Link="AndroidHost.cs" />
+  </ItemGroup>
+
+  <!-- The same fonts the iOS and browser heads bundle. Android's /system/fonts has no Segoe
+       Fluent Icons / MDL2 substitute, so without Symbols.ttf every glyph icon renders as a box;
+       Liberation/DejaVu additionally keep text metrics identical to the other heads.
+       Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
+  <ItemGroup>
+    <AndroidAsset Include="../../../../../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- The DESKTOP flavour of the binding: on Android a DllImport("wgpu_native") resolves through
+       the normal loader to the libwgpu_native.so packed below, exactly as it does to a .dylib on
+       macOS. Only iOS needs its own flavour. -->
+  <ItemGroup>
+    <ProjectReference Include="../../WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- wgpu-native, packed into the APK under lib/<abi>/. Fetch with eng/fetch-wgpu.ps1 -Rid
+       android-arm64 (the tree is gitignored). arm64 only: every Android device made this decade is
+       arm64, and so is the emulator on an Apple-silicon Mac. -->
+  <ItemGroup>
+    <AndroidNativeLibrary Include="../../native/android-arm64/lib/libwgpu_native.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+  <!--
+    The from-source WPF fork, as built artifacts (eng/build-sdk.sh). Referenced rather than
+    ProjectReference'd because these build through the Arcade SDK, which does not participate in
+    the Android build — same arrangement as IosSpike.
+  -->
+  <ItemGroup>
+    <Reference Include="WindowsBase">           <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">           <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">      <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework"> <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">  <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">        <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">        <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">       <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">     <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">  <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- Assemblies the WPF closure names but no Android path reaches. They still have to RESOLVE for
+       the build to complete, exactly as on iOS. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Windows-only assemblies WindowsBase/PresentationCore reference from code paths Android never
+         executes (SplashScreen's WndProc, UnsafeNativeMethods.ObjectFromLresult). The REFERENCE
+         assemblies are enough: the runtime never loads them. -->
+    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+</Project>

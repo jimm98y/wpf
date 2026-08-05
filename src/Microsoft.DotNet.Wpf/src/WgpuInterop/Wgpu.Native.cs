@@ -33,7 +33,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static extern WGPUStatus wgpuAdapterGetInfo(IntPtr adapter, WGPUAdapterInfo* info);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuCreateInstance(WGPUChainedStruct* descriptor);
+        internal static extern IntPtr wgpuCreateInstance(WGPUInstanceDescriptor* descriptor);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern WGPUFuture wgpuInstanceRequestAdapter(

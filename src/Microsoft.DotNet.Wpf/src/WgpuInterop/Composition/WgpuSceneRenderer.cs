@@ -4136,6 +4136,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             fixed (byte* p = pixels)
                 wgpuQueueWriteTexture(_ctx.Queue, &dest, p, (nuint)pixels.Length, &layout, &writeSize);
 #else
+            // OpenGL/GLES: upload directly, like the browser. The staged CopyBufferToTexture below
+            // exists ONLY to avoid Metal's command-buffer accounting, and it has to PAD every row up
+            // to a 256-byte multiple -- which the GLES backend gets wrong: a texture whose natural
+            // stride is not already 256-aligned (a 48x48 icon is 192 bytes/row) came out as vertical
+            // stripe noise, while an unpadded one (512x512 = 2048) was pixel-perfect. Same asset, same
+            // code path, correct on Metal. Sidestep the padding entirely where it buys us nothing.
+            if (_ctx.IsOpenGL)
+            {
+                var glDest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
+                var glLayout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
+                var glSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
+                fixed (byte* p = pixels)
+                    wgpuQueueWriteTexture(_ctx.Queue, &glDest, p, (nuint)pixels.Length, &glLayout, &glSize);
+                return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
+            }
+
             // Desktop (Metal/…): stage into a mappedAtCreation buffer (a pure CPU copy, no command
             // buffer) and record a CopyBufferToTexture into the frame's single command encoder later
             // (FlushPendingTexUploads). wgpu-native's Metal backend commits an UNRECLAIMED command

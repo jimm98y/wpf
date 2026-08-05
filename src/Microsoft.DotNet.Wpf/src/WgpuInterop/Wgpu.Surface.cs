@@ -61,6 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal const int WGPUSType_SurfaceSourceMetalLayer = 0x00000004;
         internal const int WGPUSType_SurfaceSourceXlibWindow = 0x00000006;
         internal const int WGPUSType_SurfaceSourceWaylandSurface = 0x00000007;
+        internal const int WGPUSType_SurfaceSourceAndroidNativeWindow = 0x00000008;
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUSurfaceDescriptor
@@ -82,6 +83,13 @@ namespace Microsoft.Wpf.Interop.WebGpu
         {
             public WGPUChainedStruct chain; // chain.sType = WGPUSType_SurfaceSourceMetalLayer
             public void* layer;             // a CAMetalLayer*
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUSurfaceSourceAndroidNativeWindow
+        {
+            public WGPUChainedStruct chain; // chain.sType = WGPUSType_SurfaceSourceAndroidNativeWindow
+            public void* window;            // an ANativeWindow*
         }
 
         [StructLayout(LayoutKind.Sequential)]

@@ -261,6 +261,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
                     Log($"target 0x{tk.Key:x}: hwnd=0x{tk.Value.Hwnd:x} root={tk.Value.RootHandle} {tk.Value.Width}x{tk.Value.Height} layered={tk.Value.IsLayered} (transp=0x{tk.Value.Transparency:x})");
             }
+            // Where a popup cannot own a presentable transparent surface (Android on the GLES
+            // backend), its scene is drawn INTO the window it belongs to instead. Collect those
+            // first, translated to where the popup sits, so the owner's single render pass paints
+            // them on top of its own content -- see NativePlatform.PopupsShareOwnerSurface.
+            EnsureGpu();
+            List<SceneVisual>? popupOverlays = CollectPopupOverlays();
+
             foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
             {
                 MilTarget t = kv.Value;
@@ -268,7 +275,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
                 if (root is null) continue;
 
-                EnsureGpu();
+                // Already drawn into its owner above; it has no surface of its own to present to.
+                if (popupOverlays != null && t.IsLayered) continue;
 
                 if (s_logPath != null && (_diagCount < 5 || _diagCount % 30 == 0) && _diagCount < 200)
                 {
@@ -287,8 +295,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     continue;
                 }
                 TargetSurface ts = EnsureSurface(kv.Key, t);
+                // Android delivers the native Surface asynchronously (surfaceCreated), so a window's
+                // first frame or two legitimately have nothing to present into; EnsureSurface builds
+                // the wgpu surface as soon as one exists. No other platform can be here.
+                if (ts.Surface == IntPtr.Zero) continue;
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
-                Present(ts, root, t);
+                Present(ts, popupOverlays != null ? Overlay(root, popupOverlays) : root, t);
                 _perfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
             }
             _perfRenderAlloc += GC.GetAllocatedBytesForCurrentThread() - ra1;
@@ -311,6 +323,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 WgpuSceneRenderer.PerfCollectAlloc = 0; WgpuSceneRenderer.PerfExecAlloc = 0;
                 _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
             }
+        }
+
+        /// <summary>
+        /// The popup scenes to draw into their owner's surface this frame, each already translated to
+        /// the popup's position, or null where popups present themselves (every platform but Android
+        /// on GLES). Returns null rather than an empty list when there is nothing to composite, so the
+        /// owner's scene is passed through untouched and no wrapper visual is allocated.
+        /// </summary>
+        private List<SceneVisual>? CollectPopupOverlays()
+        {
+            if (!Platform.NativePlatform.PopupsShareOwnerSurface)
+                return null;
+
+            List<SceneVisual>? overlays = null;
+            foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
+            {
+                MilTarget t = kv.Value;
+                if (!t.IsLayered || t.IsBitmap || t.Hwnd == 0 || t.RootHandle == 0) continue;
+                if (t.Width <= 0 || t.Height <= 0) continue;
+
+                SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
+                if (root is null) continue;
+
+                // The popup's scene is in ITS window's coordinates; move it to where that window sits
+                // inside the activity. Both are device pixels, so this is a plain translation.
+                Platform.NativePlatform.GetWindowOrigin((IntPtr)t.Hwnd, out int x, out int y);
+                var placed = new SceneVisual { Offset = new System.Numerics.Vector2(x, y) };
+                placed.Children.Add(root);
+                (overlays ??= new List<SceneVisual>()).Add(placed);
+            }
+            return overlays;
+        }
+
+        /// <summary>Wraps the owner's scene and the popup overlays in one parent, so a single render
+        /// pass draws the window and then the popups above it (children draw after their parent).</summary>
+        private static SceneVisual Overlay(SceneVisual root, List<SceneVisual> overlays)
+        {
+            var composite = new SceneVisual();
+            composite.Children.Add(root);
+            foreach (SceneVisual o in overlays) composite.Children.Add(o);
+            return composite;
         }
 
         // Render a layered popup off-screen with a transparent clear (so its shadow/rounded
@@ -632,9 +685,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private TargetSurface EnsureSurface(uint targetHandle, MilTarget t)
         {
+            // Android replaces the native window under a stable WPF handle every time the activity
+            // stops and starts again (and hands it over asynchronously, so the FIRST frames of a new
+            // window legitimately have none at all). Drop a surface built on a window that is no
+            // longer the live one -- or that we never managed to build -- and try again from scratch;
+            // rendering into the old ANativeWindow would draw into a dead buffer queue. Everywhere
+            // else GetNativeWindow returns the handle itself, so neither branch can fire.
+            IntPtr liveWindow = Platform.NativePlatform.GetNativeWindow((IntPtr)t.Hwnd);
+            if (_surfaces.TryGetValue(targetHandle, out TargetSurface? stale)
+                && (stale.Surface == IntPtr.Zero || stale.NativeWindow != liveWindow))
+            {
+                if (stale.Surface != IntPtr.Zero) wgpuSurfaceRelease(stale.Surface);
+                _surfaces.Remove(targetHandle);
+            }
+
             if (!_surfaces.TryGetValue(targetHandle, out TargetSurface? ts))
             {
                 IntPtr surface = Platform.NativePlatform.CreateWindowSurface(_ctx!.Instance, (IntPtr)t.Hwnd);
+                if (surface == IntPtr.Zero)
+                {
+                    // No live native window (Android, before surfaceCreated). Cache a placeholder so
+                    // the target is known, but do NOT query capabilities or configure a null surface --
+                    // wgpu-native panics on both. The check at the top of this method throws the
+                    // placeholder away and retries as soon as a window shows up.
+                    ts = new TargetSurface { Surface = IntPtr.Zero, Hwnd = (IntPtr)t.Hwnd, NativeWindow = IntPtr.Zero, Width = t.Width, Height = t.Height };
+                    _surfaces[targetHandle] = ts;
+                    return ts;
+                }
                 bool gl = _ctx!.AdapterDescription?.Contains("backend=OpenGL") == true;
                 WGPUTextureFormat format = ChooseFormat(surface, _ctx!.Adapter, gl);
                 // We render straight into the swapchain view. (An sRGB-swapchain + UNORM-view scheme to
@@ -645,7 +722,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Layered popups (per-pixel alpha) OR a window made non-opaque for a translucent Mica
                 // backdrop both present through a transparent surface so the material behind shows through.
                 bool transparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
-                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, Format = format, RenderFormat = renderFormat, Width = t.Width, Height = t.Height, Transparent = transparent };
+                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, NativeWindow = liveWindow, Format = format, RenderFormat = renderFormat, Width = t.Width, Height = t.Height, Transparent = transparent };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }
@@ -739,7 +816,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private void Configure(TargetSurface ts)
         {
-            Log($"CONFIGURE surface {ts.Width}x{ts.Height} present={s_presentMode}");
             WGPUPresentMode mode = SurfaceSupportsPresentMode(ts.Surface, s_presentMode) ? s_presentMode : WGPUPresentMode.Fifo;
             // Layered popups composite over the content behind them. Pick any non-opaque alpha mode the
             // surface advertises so wgpu sets the CAMetalLayer non-opaque (an Opaque mode would force it
@@ -768,6 +844,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 viewFormatCount = renderFmt != ts.Format ? (nuint)1 : 0,
                 viewFormats = renderFmt != ts.Format ? &renderFmt : null,
             };
+            Log($"CONFIGURE surface {ts.Width}x{ts.Height} present={mode} transparent={ts.Transparent} alpha={alpha}");
             wgpuSurfaceConfigure(ts.Surface, &config);
 
             // Keep the native layer's contents/backing scale in step with the surface's device-pixel
@@ -822,6 +899,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             /// <summary>The native window/view handle (NSView* on macOS) backing this surface, kept so
             /// the CAMetalLayer contentsScale can be re-synced when the window's DPI changes.</summary>
             public IntPtr Hwnd;
+            /// <summary>The native window this surface was actually built on. Equals <see cref="Hwnd"/>
+            /// everywhere except Android, where the ANativeWindow behind a WPF handle is destroyed and
+            /// replaced across activity stop/start -- comparing the two is how EnsureSurface notices.</summary>
+            public IntPtr NativeWindow;
             /// <summary>The swapchain format (what wgpu presents). May be sRGB even in gamma-space mode
             /// on the OpenGL/ANGLE backend, where a plain-UNORM swapchain scans out too dark.</summary>
             public WGPUTextureFormat Format;

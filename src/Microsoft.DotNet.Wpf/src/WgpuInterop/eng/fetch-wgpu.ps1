@@ -33,6 +33,13 @@ $AssetMap = @{
     'linux-arm64' = 'wgpu-linux-aarch64-release.zip'
     'osx-x64'     = 'wgpu-macos-x86_64-release.zip'
     'osx-arm64'   = 'wgpu-macos-aarch64-release.zip'
+    # Android ships a real .so (unlike iOS, which can only link the .a statically), so the binding
+    # keeps its normal DllImport("wgpu_native") and the head packs this with @(AndroidNativeLibrary).
+    # The archives also carry a .a, which is ignored. arm64 is the only ABI worth shipping today --
+    # it is every device made this decade and the emulator on an Apple-silicon Mac.
+    'android-arm64' = 'wgpu-android-aarch64-release.zip'
+    'android-x64'   = 'wgpu-android-x86_64-release.zip'
+    'android-arm'   = 'wgpu-android-armv7-release.zip'
 }
 
 if (-not $Rid -or $Rid.Count -eq 0) {

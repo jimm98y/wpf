@@ -12,6 +12,10 @@ const FONTS = [
     'LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf', 'LiberationSans-Italic.ttf', 'LiberationSans-BoldItalic.ttf',
     'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans-Oblique.ttf', 'DejaVuSans-BoldOblique.ttf',
     'DejaVuSansMono.ttf', 'DejaVuSansMono-Bold.ttf', 'DejaVuSerif.ttf', 'DejaVuSerif-Bold.ttf',
+    // Symbols maps the Segoe Fluent Icons / MDL2 Assets PUA codepoints the Fluent theme draws its
+    // glyph icons from; Cascadia Code carries the programming ligatures ("-->" as one arrow) that
+    // samples pin by family name. Without them icons render as boxes and ligatures stay unligated.
+    'Symbols.ttf', 'CascadiaCode-Regular.ttf',
 ];
 
 try {

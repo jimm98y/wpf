@@ -100,6 +100,20 @@ namespace MS.Win32
                         _platformWindow = uikit;
                         _handle = uikit.Handle;
                     }
+                    else if (OperatingSystem.IsAndroid())
+                    {
+                        // Android: one fullscreen activity, so a WPF window is a view inside it and
+                        // popups are borderless sibling views (no child windows), exactly as on iOS.
+                        // The handle is SYNTHETIC here rather than a native pointer, because the
+                        // Surface behind an Android view is destroyed and recreated across every
+                        // activity stop/start while the WPF handle must stay put (see AndroidWindow).
+                        var android = new MS.Internal.Interop.AndroidWindow();
+                        android.Create(name, cx, cy, cw, ch, borderless);
+                        // Same synthetic WM_SIZE routing as the other backends.
+                        android.Resized += OnCocoaResized;
+                        _platformWindow = android;
+                        _handle = android.Handle;
+                    }
                     else
                     {
                         var cocoa = new MS.Internal.Interop.CocoaWindow();

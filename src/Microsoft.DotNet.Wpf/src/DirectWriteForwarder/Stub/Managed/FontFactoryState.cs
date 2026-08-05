@@ -50,28 +50,40 @@ namespace MS.Internal.Text.TextInterface.Managed
         {
             // Selawik is Microsoft's open, metric-compatible Segoe UI replacement (github.com/microsoft/Selawik);
             // prefer it so text lays out like Windows, with Helvetica etc. as last-resort fallbacks.
-            ["segoe ui"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
-            ["segoe ui semibold"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["segoe ui variable"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
+            ["segoe ui"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["segoe ui semibold"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["segoe ui variable"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
             // Fluent/MDL2 icon glyphs: "Symbols" (github.com/robloo/SymbolIconManager, WinSymbols3) maps the
             // Segoe Fluent Icons / Segoe MDL2 Assets PUA codepoints, so control glyphs render off-Windows.
             ["segoe fluent icons"] = new[] { "Symbols" },
             ["segoe mdl2 assets"] = new[] { "Symbols" },
-            ["segoe ui symbol"] = new[] { "Symbols", "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
-            ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["microsoft sans serif"] = new[] { "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" },
-            ["arial"] = new[] { "Arial", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["calibri"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans" },
-            ["consolas"] = new[] { "Menlo", "Courier New", "Monaco", "DejaVu Sans Mono" },
-            ["courier new"] = new[] { "Courier New", "Menlo", "Monaco", "DejaVu Sans Mono" },
-            ["times new roman"] = new[] { "Times New Roman", "Times", "DejaVu Serif" },
-            ["cambria"] = new[] { "Times New Roman", "Times", "DejaVu Serif" },
+            ["segoe ui symbol"] = new[] { "Symbols", "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["microsoft sans serif"] = new[] { "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["arial"] = new[] { "Arial", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["calibri"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            // Cascadia Code ships with this repo (sdk/WpfWebGpu.Sdk/web/fonts), so it normally
+            // resolves by its own name; the chain is for a head that does not bundle it. Nothing
+            // else here has its programming ligatures, so those degrade to plain characters.
+            ["cascadia code"] = new[] { "Cascadia Code", "Cascadia Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Droid Sans Mono" },
+            ["cascadia mono"] = new[] { "Cascadia Mono", "Cascadia Code", "Menlo", "Consolas", "DejaVu Sans Mono", "Droid Sans Mono" },
+            ["consolas"] = new[] { "Menlo", "Courier New", "Monaco", "DejaVu Sans Mono", "Droid Sans Mono", "Cutive Mono" },
+            ["courier new"] = new[] { "Courier New", "Menlo", "Monaco", "DejaVu Sans Mono", "Droid Sans Mono", "Cutive Mono" },
+            ["times new roman"] = new[] { "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
+            ["cambria"] = new[] { "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
         };
 
         // The ultimate fallback family when nothing else resolves (a face is guaranteed to exist).
-        private static readonly string[] s_lastResort = { "Helvetica Neue", "Helvetica", "Arial", "Times New Roman", "Liberation Sans", "DejaVu Sans" };
+        // Roboto/Droid Sans are Android's -- it ships none of the others, and without them every
+        // lookup fell through to cat[0], which on Android is AndroidClock.ttf: a font that contains
+        // digits and nothing else, so text rendered as "20" with every letter missing.
+        private static readonly string[] s_lastResort =
+        {
+            "Helvetica Neue", "Helvetica", "Arial", "Times New Roman", "Liberation Sans", "DejaVu Sans",
+            "Roboto", "Droid Sans", "Noto Sans",
+        };
 
         internal static FamilyRecord LookupFamily(string name)
         {

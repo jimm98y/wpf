@@ -200,7 +200,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         // ---- Instance / adapter / device ---------------------------------------
 
-        internal static IntPtr wgpuCreateInstance(WGPUChainedStruct* descriptor)
+        internal static IntPtr wgpuCreateInstance(WGPUInstanceDescriptor* descriptor)
         {
             WgpuBrowser.EnsureInitialized();
             return s_instanceSentinel;

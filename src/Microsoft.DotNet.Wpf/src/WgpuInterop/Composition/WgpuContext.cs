@@ -21,6 +21,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public IntPtr Adapter { get; private set; }
         public string? AdapterDescription { get; private set; }
 
+        /// <summary>
+        /// True when wgpu selected the OpenGL/GLES backend (Android without a usable Vulkan, ANGLE,
+        /// older Linux). Some upload paths differ there -- see WgpuSceneRenderer.CreateTexture.
+        /// </summary>
+        public bool IsOpenGL => AdapterDescription?.Contains("backend=OpenGL") == true;
+
         /// <summary>Optional sink for wgpu-native's own log messages (backend selection diagnostics).</summary>
         public static Action<string>? LogSink;
         public IntPtr Device { get; private set; }
@@ -69,6 +75,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
         }
 
+        // ---- Which backends the instance enables -------------------------------------
+        //
+        // Everywhere but Android: all of them (the historical behaviour). wgpu then picks the best
+        // adapter, and creating a surface for the also-enabled-but-unused backends is harmless.
+        //
+        // On Android it is NOT harmless. wgpu-core creates a native surface for EVERY enabled backend
+        // when you create a WGPUSurface, and vkCreateAndroidSurfaceKHR connects the ANativeWindow to
+        // the EGL producer API and keeps it connected for the surface's lifetime. So on a device that
+        // enables both Vulkan and GL, the GL backend's own eglCreateWindowSurface finds the window
+        // taken and fails:
+        //     BufferQueueProducer: connect: already connected (cur=1 req=1)
+        //     libEGL: eglCreateWindowSurface: native_window_api_connect ... EGL_BAD_ALLOC
+        // which wgpu-native reports through handle_error_fatal -- a Rust panic that aborts the
+        // process inside wgpuSurfaceConfigure. Enabling exactly one backend is what avoids it.
+        //
+        // Vulkan first (every Android device made this decade has it, and it is much faster), GL as
+        // the fallback for devices -- and emulators -- whose Vulkan wgpu will not accept.
+        private static ulong PreferredBackends =>
+            OperatingSystem.IsAndroid() ? WGPUInstanceBackend_Vulkan : WGPUInstanceBackend_All;
+
+        private static ulong FallbackBackends =>
+            OperatingSystem.IsAndroid() ? WGPUInstanceBackend_GL : 0;
+
+        /// <summary>Create a wgpu instance limited to <paramref name="backends"/> (0 = all).</summary>
+        private static IntPtr CreateInstance(ulong backends)
+        {
+            if (backends == WGPUInstanceBackend_All)
+                return wgpuCreateInstance(null);
+
+            var extras = new WGPUInstanceExtras
+            {
+                chain = new WGPUChainedStruct { next = null, sType = WGPUSType_InstanceExtras },
+                backends = backends,
+            };
+            var desc = new WGPUInstanceDescriptor { nextInChain = (WGPUChainedStruct*)&extras };
+            return wgpuCreateInstance(&desc);
+        }
+
         public static WgpuContext Create()
         {
 #if WGPU_BROWSER
@@ -100,7 +144,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 wgpuSetLogLevel(Environment.GetEnvironmentVariable("WPF_WEBGPU_WGPU_LOG") == "debug" ? WGPULogLevel.Debug : WGPULogLevel.Warn);
             }
 
-            IntPtr instance = wgpuCreateInstance(null);
+            IntPtr instance = CreateInstance(PreferredBackends);
             if (instance == IntPtr.Zero)
                 throw new InvalidOperationException("wgpuCreateInstance failed.");
 
@@ -123,6 +167,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             wgpuInstanceRequestAdapter(instance, &options, adapterInfo);
             for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
             adapterResult = s_adapterResult;
+
+            // The instance may be pinned to a single backend (see PreferredBackends). If that one has
+            // no adapter -- an emulator whose Vulkan wgpu rejects as non-compliant, a device with no
+            // Vulkan driver -- fall back to the next one rather than failing outright.
+            if (adapterResult == IntPtr.Zero && FallbackBackends != 0)
+            {
+                LogSink?.Invoke($"no adapter for backends 0x{PreferredBackends:x}; retrying with 0x{FallbackBackends:x}");
+                wgpuInstanceRelease(instance);
+                instance = CreateInstance(FallbackBackends);
+                ctx.Instance = instance;
+
+                s_adapterResult = IntPtr.Zero;
+                s_adapterDone = false;
+                wgpuInstanceRequestAdapter(instance, &options, adapterInfo);
+                for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
+                adapterResult = s_adapterResult;
+            }
+
             if (adapterResult == IntPtr.Zero)
                 throw new InvalidOperationException("Could not acquire a WebGPU adapter.");
             ctx.Adapter = adapterResult;

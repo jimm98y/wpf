@@ -255,6 +255,70 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public int sType; // WGPUSType
         }
 
+        // ---- Instance creation (webgpu.h + wgpu.h extension) ------------------
+        //
+        // WGPUInstanceDescriptor is the standard descriptor; WGPUInstanceExtras is wgpu-native's
+        // chained extension, and the only field we set is `backends`. That matters on Android:
+        // wgpu-core creates a native surface for EVERY backend the instance enabled, and
+        // vkCreateAndroidSurfaceKHR CONNECTS the ANativeWindow to the EGL producer API and holds it.
+        // With both Vulkan and GL enabled, the GL backend's eglCreateWindowSurface then fails with
+        //     native_window_api_connect ... failed (already connected to another API?)  EGL_BAD_ALLOC
+        // and wgpu-native turns that into a fatal Rust panic. Pinning the instance to the one backend
+        // that actually has an adapter is what keeps the window free for it.
+        //
+        // Layouts transcribed verbatim from wgpu-native v29.0.1.1 (webgpu.h / wgpu.h). Every field is
+        // present even though we only use one -- the struct is passed BY POINTER and wgpu reads it by
+        // offset, so a short struct would have it reading past the end.
+
+        internal const int WGPUSType_InstanceExtras = 0x00030004;
+
+        // WGPUInstanceBackend is a WGPUFlags (uint64_t) bitfield; zero means "all backends".
+        internal const ulong WGPUInstanceBackend_All = 0;
+        internal const ulong WGPUInstanceBackend_Vulkan = 1 << 0;
+        internal const ulong WGPUInstanceBackend_GL = 1 << 1;
+        internal const ulong WGPUInstanceBackend_Metal = 1 << 2;
+        internal const ulong WGPUInstanceBackend_DX12 = 1 << 3;
+        internal const ulong WGPUInstanceBackend_BrowserWebGPU = 1 << 5;
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUInstanceDescriptor
+        {
+            public WGPUChainedStruct* nextInChain;
+            public nuint requiredFeatureCount;
+            public int* requiredFeatures;          // WGPUInstanceFeatureName const*
+            public void* requiredLimits;           // WGPUInstanceLimits const*
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUXlibDisplayHandle { public void* display; public int screen; }
+
+        /// <summary>The tagged union in WGPUInstanceExtras. Only the GLES backend on Wayland uses it;
+        /// zero (type = None) everywhere else, but its SIZE is part of WGPUInstanceExtras' layout.
+        /// The union is modelled by its largest member -- all three are pointer + optional int.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUNativeDisplayHandle
+        {
+            public int type;                       // WGPUNativeDisplayHandleType
+            public WGPUXlibDisplayHandle data;     // union { xlib; xcb; wayland; }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUInstanceExtras
+        {
+            public WGPUChainedStruct chain;        // chain.sType = WGPUSType_InstanceExtras
+            public ulong backends;                 // WGPUInstanceBackend
+            public ulong flags;                    // WGPUInstanceFlag
+            public int dx12ShaderCompiler;
+            public int gles3MinorVersion;
+            public int glFenceBehaviour;
+            public WGPUStringView dxcPath;
+            public int dxcMaxShaderModel;
+            public int dx12PresentationSystem;
+            public byte* budgetForDeviceCreation;
+            public byte* budgetForDeviceLoss;
+            public WGPUNativeDisplayHandle displayHandle;
+        }
+
         // Callback-info structs are passed BY VALUE to the request/map functions.
         // The `callback` field is a C function pointer; we keep the managed
         // delegate alive separately and pass its function pointer here.

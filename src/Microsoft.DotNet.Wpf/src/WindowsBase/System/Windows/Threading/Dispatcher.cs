@@ -2075,6 +2075,21 @@ namespace System.Windows.Threading
                 return;
             }
 
+            // Android is the same problem again, and fatal in the same way: Dispatcher.Run is reached
+            // from inside Activity.onCreate, which is a callback on the main Looper. Blocking there
+            // never returns to the Looper, so the activity stays half-created, its window is never
+            // laid out and nothing is ever composited -- the app renders every frame correctly into a
+            // surface the system never shows.
+            if (OperatingSystem.IsAndroid())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on Android.");
+                }
+                RunAndroidPump(frame);
+                return;
+            }
+
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
 
@@ -2348,6 +2363,98 @@ namespace System.Windows.Threading
                         MS.Internal.Interop.UIKitWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
                     }
                     MS.Internal.Interop.UIKitWindow.SetDisplayLinkPaused(true);
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+            }
+        }
+
+        // Android replacement for PushFrameImpl's blocking loop, and the exact counterpart of
+        // RunIosPump: install a display-aligned per-frame callback (Choreographer, the Android
+        // spelling of CADisplayLink / requestAnimationFrame) and RETURN, leaving the main Looper to
+        // Android -- which must get it back, see the note in PushFrameImpl. Synchronous for the same
+        // reason the iOS pump is: the callback is delivered on the UI thread, which is already the
+        // dispatcher thread, and ProcessQueue has hard UI-thread affinity.
+        private void RunAndroidPump(DispatcherFrame frame)
+        {
+            _frameDepth++;
+
+            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+            if (!MS.Internal.Interop.AndroidWindow.StartFrameCallback(() => PumpAndroidTick(frame, dispatcherSyncContext)))
+            {
+                // No activity/host to drive the pump: nothing can service the queue, so unwind rather
+                // than leaving a frame pushed forever.
+                _frameDepth--;
+                return;
+            }
+
+            // Idle like every other platform -- and on a phone this is the difference between an idle
+            // app and a flat battery. Signal() is raised whenever work is queued or a timer's due time
+            // moves, which is exactly the edge that must un-park the callback; PumpAndroidTick parks
+            // it again once the queue drains.
+            _runLoop.Woken = MS.Internal.Interop.AndroidWindow.RequestWake;
+        }
+
+        // One Choreographer tick: promote due timers, then drain the operation queue. Mirrors
+        // PumpIosTick; there is no native event drain because Android delivers touches straight into
+        // AndroidWindow.NotifyTouch rather than queueing them for us.
+        private void PumpAndroidTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
+        {
+            if (_runLoop is null || !frame.Continue)
+            {
+                MS.Internal.Interop.AndroidWindow.StopFrameCallback();
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                    if (_hasShutdownStarted)
+                    {
+                        ShutdownImpl();
+                    }
+                }
+                return;
+            }
+
+            if (_disableProcessingCount > 0)
+            {
+                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+            }
+
+            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+            try
+            {
+                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                {
+                    PromoteTimers(Environment.TickCount);
+                }
+
+                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
+                // loops -- bounded by a frame-ish budget so a flood cannot starve the Looper (input,
+                // animation and the present all ride it).
+                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                do
+                {
+                    ProcessQueue();
+                }
+                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                       && frame.Continue);
+
+                RaiseIdleIfQuiescent();
+
+                // Park the pump if nothing is left to do (the Android spelling of WaitForWork's
+                // block); see the three cases spelled out in PumpIosTick.
+                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                {
+                    if (_dueTimeFound)
+                    {
+                        MS.Internal.Interop.AndroidWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
+                    }
+                    MS.Internal.Interop.AndroidWindow.SetFrameCallbackPaused(true);
                 }
             }
             finally

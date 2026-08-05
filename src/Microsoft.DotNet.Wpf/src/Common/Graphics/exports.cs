@@ -1007,6 +1007,23 @@ namespace System.Windows.Media.Composition
             /// current open batch, or whether it will be added to a new and separate batch
             /// which is then immediately closed, leaving the current batch untouched.
             /// </summary>
+            /// <summary>
+            /// Reinterpret a raw pointer as an <see cref="IntPtr"/>, deliberately UNCHECKED.
+            ///
+            /// The three command-marshalling methods below run inside `checked` blocks, which is
+            /// right for their size arithmetic but wrong for a pointer: C# range-checks a
+            /// pointer-to-integer conversion in a checked context (conv.ovf.i), and on Android an
+            /// arm64 pointer legitimately carries a non-zero TOP BYTE -- the kernel ignores bits
+            /// 56-63 (Top Byte Ignore), and the allocator uses them as a tag. Such a pointer
+            /// (observed: 0xB4007A1E5C0A59D8) is NEGATIVE as a signed 64-bit integer, so the
+            /// conversion threw OverflowException on the first glyph run WPF tried to draw. This is
+            /// not arithmetic and must never be range-checked; it is the same 64 bits either way.
+            /// </summary>
+            private static unsafe IntPtr Reinterpret(byte* p)
+            {
+                unchecked { return (IntPtr)p; }
+            }
+
             internal unsafe void SendCommand(
                 byte *pCommandData,
                 int cSize,
@@ -1021,7 +1038,7 @@ namespace System.Windows.Media.Composition
                     if (_sink != null)
                     {
                         var data = new byte[cSize];
-                        Marshal.Copy((IntPtr)pCommandData, data, 0, cSize);
+                        Marshal.Copy(Reinterpret(pCommandData), data, 0, cSize);
                         _sink.SendCommand(_managedId, data, sendInSeparateBatch);
                         return;
                     }
@@ -1065,7 +1082,7 @@ namespace System.Windows.Media.Composition
                     if (_sink != null)
                     {
                         var data = new byte[cbSize];
-                        Marshal.Copy((IntPtr)pbCommandData, data, 0, cbSize);
+                        Marshal.Copy(Reinterpret(pbCommandData), data, 0, cbSize);
                         _sink.BeginCommand(_managedId, data, cbExtra);
                         return;
                     }
@@ -1109,7 +1126,7 @@ namespace System.Windows.Media.Composition
                     if (_sink != null)
                     {
                         var data = new byte[cbSize];
-                        Marshal.Copy((IntPtr)pbCommandData, data, 0, cbSize);
+                        Marshal.Copy(Reinterpret(pbCommandData), data, 0, cbSize);
                         _sink.AppendCommandData(_managedId, data);
                         return;
                     }

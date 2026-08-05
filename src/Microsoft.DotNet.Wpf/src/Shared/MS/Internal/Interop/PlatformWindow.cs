@@ -14,7 +14,8 @@ using System;
 namespace MS.Internal.Interop
 {
     /// <summary>The per-window operations shared by the non-Windows windowing backends
-    /// (CocoaWindow on macOS, BrowserWindow on WebAssembly). All rects follow the same
+    /// (CocoaWindow on macOS, UIKitWindow on iOS, AndroidWindow on Android, BrowserWindow on
+    /// WebAssembly). All rects follow the same
     /// conventions the Win32 guards expect: content sizes in points (DIPs at scale 1),
     /// pixel sizes in device pixels, screen origins in top-left device pixels.</summary>
     public interface IPlatformWindow
@@ -56,6 +57,8 @@ namespace MS.Internal.Interop
             // into the AppKit path (see NativePlatform.Detect).
             if (OperatingSystem.IsIOS())
                 return UIKitWindow.FromHandle(handle);
+            if (OperatingSystem.IsAndroid())
+                return AndroidWindow.FromHandle(handle);
             if (OperatingSystem.IsMacOS())
                 return CocoaWindow.FromHandle(handle);
             return null;
@@ -68,6 +71,8 @@ namespace MS.Internal.Interop
                 return BrowserWindow.HitTest(x, y);
             if (OperatingSystem.IsIOS())
                 return UIKitWindow.HitTest(x, y);
+            if (OperatingSystem.IsAndroid())
+                return AndroidWindow.HitTest(x, y);
             if (OperatingSystem.IsMacOS())
                 return CocoaWindow.HitTest(x, y);
             return IntPtr.Zero;
@@ -82,6 +87,8 @@ namespace MS.Internal.Interop
                     return BrowserWindow.MouseCaptureHandle;
                 if (OperatingSystem.IsIOS())
                     return UIKitWindow.MouseCaptureHandle;
+                if (OperatingSystem.IsAndroid())
+                    return AndroidWindow.MouseCaptureHandle;
                 if (OperatingSystem.IsMacOS())
                     return CocoaWindow.MouseCaptureHandle;
                 return IntPtr.Zero;
@@ -92,6 +99,8 @@ namespace MS.Internal.Interop
                     BrowserWindow.MouseCaptureHandle = value;
                 else if (OperatingSystem.IsIOS())
                     UIKitWindow.MouseCaptureHandle = value;
+                else if (OperatingSystem.IsAndroid())
+                    AndroidWindow.MouseCaptureHandle = value;
                 else if (OperatingSystem.IsMacOS())
                     CocoaWindow.MouseCaptureHandle = value;
             }
@@ -108,6 +117,10 @@ namespace MS.Internal.Interop
                     out workLeft, out workTop, out workRight, out workBottom);
             if (OperatingSystem.IsIOS())
                 return UIKitWindow.GetPrimaryScreenPixels(
+                    out monLeft, out monTop, out monRight, out monBottom,
+                    out workLeft, out workTop, out workRight, out workBottom);
+            if (OperatingSystem.IsAndroid())
+                return AndroidWindow.GetPrimaryScreenPixels(
                     out monLeft, out monTop, out monRight, out monBottom,
                     out workLeft, out workTop, out workRight, out workBottom);
             if (OperatingSystem.IsMacOS())

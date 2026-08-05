@@ -36,6 +36,10 @@ namespace System.Windows.Interop
             {
                 MS.Internal.Interop.UIKitWindow.MouseInput += OnIosTouchInput;
             }
+            else if (OperatingSystem.IsAndroid())
+            {
+                MS.Internal.Interop.AndroidWindow.MouseInput += OnAndroidTouchInput;
+            }
             else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.MouseInput += OnCocoaMouseInput;
@@ -53,6 +57,8 @@ namespace System.Windows.Interop
                     MS.Internal.Interop.BrowserWindow.MouseInput -= OnBrowserMouseInput;
                 else if (OperatingSystem.IsIOS())
                     MS.Internal.Interop.UIKitWindow.MouseInput -= OnIosTouchInput;
+                else if (OperatingSystem.IsAndroid())
+                    MS.Internal.Interop.AndroidWindow.MouseInput -= OnAndroidTouchInput;
                 else
                     MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
                 if (_site != null)
@@ -125,8 +131,13 @@ namespace System.Windows.Interop
             {
                 if (OperatingSystem.IsBrowser())
                     MS.Internal.Interop.BrowserWindow.SetCursor(MapCursorToCssCursor(cursor));
-                else
+                else if (!OperatingSystem.IsIOS() && !OperatingSystem.IsAndroid())
                     MS.Internal.Interop.CocoaWindow.SetCursor(MapCursorToNSCursor(cursor));
+                // Touch platforms have no cursor to set, and the AppKit call above is not merely
+                // useless there -- it is fatal: CocoaWindow.SetCursor P/Invokes libobjc, which does
+                // not exist on Android, so the DllNotFoundException unwound out of the mouse-input
+                // report and every press was swallowed (the Button captured the mouse, WPF then
+                // updated the cursor, and the click never completed). Reported as handled either way.
                 return true;
             }
 
@@ -1415,6 +1426,30 @@ namespace System.Windows.Interop
                 1 => RawMouseActions.Button1Press,
                 2 => RawMouseActions.Button1Release,
                 3 => RawMouseActions.VerticalWheelRotate,   // drag-to-scroll, synthesized by UIKitWindow
+                _ => default,
+            };
+            if (actions == default) return;
+
+            ReportMacInput(actions, msg.X, msg.Y, msg.Wheel, msg.TimestampMs);
+        }
+
+        /// <summary>
+        /// Android touches drive the mouse, exactly as iOS touches do above -- same kinds, same
+        /// "move precedes press" contract, same synthesized wheel for drag-to-scroll (see
+        /// AndroidWindow.NotifyTouch). The only difference is that the message carries a synthetic
+        /// window handle rather than a native view pointer.
+        /// </summary>
+        private void OnAndroidTouchInput(MS.Internal.Interop.AndroidWindow.TouchMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.Window != _source.Handle) return;   // route to the provider that owns this window
+
+            RawMouseActions actions = msg.Kind switch
+            {
+                0 => RawMouseActions.AbsoluteMove,
+                1 => RawMouseActions.Button1Press,
+                2 => RawMouseActions.Button1Release,
+                3 => RawMouseActions.VerticalWheelRotate,   // drag-to-scroll, synthesized by AndroidWindow
                 _ => default,
             };
             if (actions == default) return;

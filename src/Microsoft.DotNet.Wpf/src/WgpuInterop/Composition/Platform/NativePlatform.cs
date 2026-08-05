@@ -6,9 +6,10 @@
 // Everything platform-specific (creating a presentable wgpu surface from a native
 // window, pushing a bitmap to a transparent/layered popup window) is funnelled
 // through here and dispatched to a per-OS backend: Win32Interop (Windows),
-// MacInterop (macOS/Metal), LinuxInterop (X11 -- stub). No raw P/Invoke to a
-// platform API lives anywhere else in the engine, so porting to a new OS means
-// adding one backend, not hunting Win32 calls across the codebase.
+// MacInterop (macOS/Metal), IosInterop (UIKit/Metal), AndroidInterop (ANativeWindow),
+// LinuxInterop (X11 -- stub). No raw P/Invoke to a platform API lives anywhere else
+// in the engine, so porting to a new OS means adding one backend, not hunting Win32
+// calls across the codebase.
 //
 
 using System;
@@ -16,7 +17,7 @@ using System.Runtime.InteropServices;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 {
-    internal enum PlatformKind { Windows, MacOS, Linux, Browser, IOS, Unknown }
+    internal enum PlatformKind { Windows, MacOS, Linux, Browser, IOS, Android, Unknown }
 
     internal static class NativePlatform
     {
@@ -32,14 +33,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
                 return PlatformKind.IOS;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return PlatformKind.MacOS;
+            // Android BEFORE Linux, for the same reason iOS comes before macOS: Android IS Linux as
+            // far as OSPlatform is concerned, so the Linux probe answers true there and would send
+            // us down the X11 path on a device that has no X server at all.
+            if (OperatingSystem.IsAndroid()) return PlatformKind.Android;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return PlatformKind.Linux;
             return PlatformKind.Unknown;
         }
 
         /// <summary>
         /// Create a presentable wgpu surface for a native window handle. The handle's
-        /// meaning is platform-specific: an HWND on Windows, an NSView* on macOS, an
-        /// X11 Window on Linux. Returns IntPtr.Zero if the platform is unsupported.
+        /// meaning is platform-specific: an HWND on Windows, an NSView* on macOS, a
+        /// UIView* on iOS, an X11 Window on Linux, and on Android a synthetic handle
+        /// standing for a view whose ANativeWindow comes and goes (see AndroidInterop).
+        /// Returns IntPtr.Zero if the platform is unsupported -- or, on Android, if the
+        /// window has no live Surface yet, in which case the caller should retry.
         /// </summary>
         public static IntPtr CreateWindowSurface(IntPtr instance, IntPtr nativeWindow)
         {
@@ -48,6 +56,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 case PlatformKind.Windows: return Win32Interop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.MacOS: return MacInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.IOS: return IosInterop.CreateSurface(instance, nativeWindow);
+                case PlatformKind.Android: return AndroidInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.Linux: return LinuxInterop.CreateSurface(instance, nativeWindow);
 #if WGPU_BROWSER
                 case PlatformKind.Browser: return BrowserInterop.CreateSurface(instance, nativeWindow);
@@ -73,6 +82,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 IosInterop.SetContentsScale(nativeWindow, IosInterop.BackingScale(nativeWindow));
             }
         }
+
+        /// <summary>
+        /// The identity of the native window a surface was actually built on, used to notice that it
+        /// has been REPLACED underneath a stable window handle. Only Android does that (its Surface is
+        /// destroyed and recreated across every activity stop/start), so everywhere else this is the
+        /// handle itself and the comparison never fires.
+        /// </summary>
+        public static IntPtr GetNativeWindow(IntPtr windowHandle)
+            => Current == PlatformKind.Android ? AndroidInterop.GetNativeWindow(windowHandle) : windowHandle;
 
         /// <summary>
         /// Commit the platform compositor's pending transaction after a present, so a just-shown frame
@@ -108,6 +126,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         public static bool SupportsLayeredWindows => Current == PlatformKind.Windows;
 
         /// <summary>
+        /// Where a window sits inside its owner, in device pixels. Only meaningful where popups are
+        /// child views of one host window (see <see cref="PopupsShareOwnerSurface"/>); elsewhere a
+        /// popup is its own OS window and presents itself, so this is never asked for.
+        /// </summary>
+        public static void GetWindowOrigin(IntPtr windowHandle, out int x, out int y)
+        {
+            x = y = 0;
+            if (Current == PlatformKind.Android) AndroidInterop.GetWindowOrigin(windowHandle, out x, out y);
+        }
+
+        /// <summary>
+        /// True where a WPF popup cannot present through its own surface and must instead be drawn
+        /// INTO the surface of the window it belongs to.
+        ///
+        /// That is Android. Its popups are child views of the one activity, so they already share the
+        /// owner's coordinate space and can simply be drawn into it -- and they MUST be, because on
+        /// the GLES backend a popup surface cannot be transparent at all: wgpu-hal hardcodes
+        /// `composite_alpha_modes: vec![Opaque]` (unchanged through trunk; gfx-rs/wgpu#687 was closed
+        /// by a PR covering only Metal and Vulkan). Clearing such a surface transparent -- which is
+        /// what a Popup's rounded chrome and drop shadow need -- scans out as solid BLACK around the
+        /// popup. Compositing sidesteps the surface entirely, and is the better arrangement even on
+        /// Vulkan: one swap chain instead of several, correct alpha, and popups stack in the order
+        /// WPF asked for rather than by SurfaceView z-order rules.
+        ///
+        /// Not applicable off Android, where a popup is its own OS window with its own presentation.
+        /// </summary>
+        public static bool PopupsShareOwnerSurface => Current == PlatformKind.Android;
+
+        /// <summary>
         /// Whether the native window backing a surface is opaque. A window made non-opaque for a
         /// translucent backdrop (the macOS Mica substitute installs an NSVisualEffectView and clears
         /// the window) must present through a transparent surface (alpha mode + transparent clear).
@@ -121,6 +168,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // transparent surface (premultiplied alpha) with the WPF-cleared transparent background, or
             // the opaque swapchain hides both the Mica and the caption buttons.
             if (Current == PlatformKind.Windows) return Win32Interop.IsWindowOpaque(nativeWindow);
+            // Android: a WPF popup is its own view with a translucent surface (see AndroidInterop).
+            if (Current == PlatformKind.Android) return AndroidInterop.IsWindowOpaque(nativeWindow);
             return true;
         }
     }

@@ -8,6 +8,61 @@
 // EditorBrowsable/pragma blocks.
 namespace MS.Internal.Interop
 {
+    public sealed partial class AndroidWindow : MS.Internal.Interop.IPlatformWindow
+    {
+        public AndroidWindow() { }
+        public System.IntPtr Handle { get { throw null; } }
+        public static MS.Internal.Interop.IAndroidHost Host { get { throw null; } set { } }
+        public bool IsBorderless { get { throw null; } }
+        public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
+        public static event System.Action<MS.Internal.Interop.AndroidWindow.TouchMessage> MouseInput { add { } remove { } }
+        public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<double> ScaleChanged { add { } remove { } }
+        public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Destroy() { }
+        public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
+        public double GetBackingScale() { throw null; }
+        public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetContentSize(out int width, out int height) { throw null; }
+        public static System.IntPtr GetNativeWindow(System.IntPtr handle) { throw null; }
+        public void GetPixelSize(out int width, out int height) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public void GetWindowPixelSize(out int width, out int height) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static void GetWindowOrigin(System.IntPtr handle, out int x, out int y) { throw null; }
+        public static bool IsWindowOpaque(System.IntPtr handle) { throw null; }
+        public static void NotifyScaleChanged() { }
+        public static void NotifyScroll(System.IntPtr handle, double deltaLogical, int xPixels, int yPixels) { }
+        public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
+        public static void NotifySurfaceDestroyed(System.IntPtr handle) { }
+        public static void NotifyTouch(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
+        public static void RequestWake() { }
+        public static void ScheduleWake(double seconds) { }
+        public void SetContentSize(int width, int height) { }
+        public void SetContentSizePixels(int cx, int cy) { }
+        public static void SetFrameCallbackPaused(bool paused) { }
+        public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public static bool StartFrameCallback(System.Action tick) { throw null; }
+        public static void StopFrameCallback() { }
+        public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.AndroidWindow.TouchMessage>
+        {
+            private readonly int _dummyPrimitive;
+            public TouchMessage(System.IntPtr Window, int Kind, int X, int Y, int TimestampMs, int Wheel = 0) { throw null; }
+            public int Kind { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public int Wheel { get { throw null; } set { } }
+            public System.IntPtr Window { get { throw null; } set { } }
+            public int X { get { throw null; } set { } }
+            public int Y { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr Window, out int Kind, out int X, out int Y, out int TimestampMs, out int Wheel) { throw null; }
+            public bool Equals(MS.Internal.Interop.AndroidWindow.TouchMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.AndroidWindow.TouchMessage left, MS.Internal.Interop.AndroidWindow.TouchMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.AndroidWindow.TouchMessage left, MS.Internal.Interop.AndroidWindow.TouchMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
+    }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public sealed partial class BrowserWindow : MS.Internal.Interop.IPlatformWindow
     {
@@ -130,6 +185,19 @@ namespace MS.Internal.Interop
             public int X { get { throw null; } }
             public int Y { get { throw null; } }
         }
+    }
+    public partial interface IAndroidHost
+    {
+        double Density { get; }
+        bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless);
+        void DestroyView(System.IntPtr handle);
+        void GetScreenPixels(out int width, out int height);
+        void RequestWake();
+        void ScheduleWake(double seconds);
+        void SetFrameCallbackPaused(bool paused);
+        void SetViewFrame(System.IntPtr handle, int x, int y, int width, int height);
+        bool StartFrameCallback(System.Action tick);
+        void StopFrameCallback();
     }
     public partial interface IPlatformWindow
     {

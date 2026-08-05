@@ -155,6 +155,17 @@ namespace MS.Internal.Text.TextInterface.Managed
                 // outside the sandbox - so unlike macOS there is no system fallback to lean on.
                 yield return Path.Combine(AppContext.BaseDirectory, "fonts");
             }
+            else if (OperatingSystem.IsAndroid())
+            {
+                // Unlike iOS, Android's system fonts ARE readable by any app: /system/fonts is
+                // world-readable and holds Roboto plus the Noto families, which is everything the
+                // fallback chain needs. Checked before the generic *nix branch below, which Android
+                // would otherwise fall into and find nothing (there is no /usr/share/fonts).
+                // A head may still bundle its own under <base>/fonts, as the iOS and browser ones must.
+                yield return "/system/fonts";
+                yield return "/product/fonts";     // GMS/OEM overlays add families here on some images
+                yield return Path.Combine(AppContext.BaseDirectory, "fonts");
+            }
             else if (OperatingSystem.IsMacOS())
             {
                 yield return "/System/Library/Fonts";
