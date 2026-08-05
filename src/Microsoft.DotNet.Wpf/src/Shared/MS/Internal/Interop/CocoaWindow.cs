@@ -52,6 +52,14 @@ namespace MS.Internal.Interop
             }
         }
 
+        /// <summary>Set a window's title-bar text (see PlatformWindow.SetTitle).</summary>
+        public static void SetTitle(IntPtr handle, string title)
+        {
+            CocoaWindow w = FromHandle(handle);
+            if (w == null || w._window == IntPtr.Zero) return;
+            SendVoidPtr(w._window, Sel("setTitle:"), MakeNSString(title ?? string.Empty));
+        }
+
         /// <summary>
         /// The content-view handle of a window whose client area (in device pixels, origin (0,0))
         /// contains the point, or Zero. Stands in for Win32 WindowFromPoint off-Windows; because

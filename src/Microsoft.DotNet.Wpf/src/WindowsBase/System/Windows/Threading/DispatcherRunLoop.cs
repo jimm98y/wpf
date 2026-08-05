@@ -29,6 +29,17 @@ namespace System.Windows.Threading
         private readonly AutoResetEvent _wake = new AutoResetEvent(false);
         private volatile bool _disposed;
 
+        internal DispatcherRunLoop()
+        {
+            // Create the wake fd UP FRONT on Linux rather than on first use. Signal() runs on
+            // arbitrary threads and can fire before this thread ever reaches Wait, and a signal that
+            // finds no fd is a signal the poll set never learns about.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                EnsureWakeFd();
+            }
+        }
+
         /// <summary>
         /// Wake the dispatcher thread so a pending <see cref="Wait"/> returns promptly. Safe to
         /// call from any thread; redundant signals coalesce into one.
@@ -46,9 +57,56 @@ namespace System.Windows.Threading
             if (!_disposed)
             {
                 _wake.Set();
+                // The managed AutoResetEvent is not a pollable file descriptor on Linux, and the
+                // Wayland pump has to block in poll() on the compositor's fd. So the signal is
+                // MIRRORED into an eventfd that can share that poll set. write(2) is thread-safe and
+                // async-signal-safe, which matters because Signal comes from arbitrary threads.
+                if (_wakeFd >= 0)
+                {
+                    WriteWakeFd();
+                }
                 Woken?.Invoke();
             }
         }
+
+        private int _wakeFd = -1;
+
+        private unsafe void WriteWakeFd()
+        {
+            ulong one = 1;
+            // A full counter (EAGAIN) means a wake is already pending, which is exactly the
+            // coalescing the AutoResetEvent provides; nothing to do.
+            write(_wakeFd, &one, 8);
+        }
+
+        /// <summary>
+        /// Create the eventfd that pairs <see cref="Signal"/> with a poll set. Done lazily so a
+        /// process that never opens a window (or is not on Linux) pays nothing.
+        /// </summary>
+        private void EnsureWakeFd()
+        {
+            if (_wakeFd >= 0) return;
+            try
+            {
+                _wakeFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                _wakeFd = -1;
+            }
+        }
+
+        private const int EFD_CLOEXEC = 0x80000;   // O_CLOEXEC
+        private const int EFD_NONBLOCK = 0x800;    // O_NONBLOCK
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int eventfd(uint initval, int flags);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern unsafe nint write(int fd, void* buf, nuint count);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern unsafe nint read(int fd, void* buf, nuint count);
 
         /// <summary>
         /// Block the dispatcher thread until <see cref="Signal"/> is called or <paramref name="timeoutMilliseconds"/>
@@ -71,11 +129,59 @@ namespace System.Windows.Threading
                 // WndProc runs and routes input into WPF (which in turn Signal()s us with real work).
                 WaitWindows(timeoutMilliseconds);
             }
+            else if (MS.Internal.Interop.Wayland.WaylandDisplay.IsActive)
+            {
+                // Linux/Wayland: the same shape as the Windows arm, for the same reason. Compositor
+                // input arrives on the connection's file descriptor, which a bare managed event wait
+                // never observes -- the window would render once and then be completely inert. Block
+                // on {wayland fd, wake eventfd}, then dispatch, so input routes into WPF (which in
+                // turn Signal()s us with real work).
+                WaitLinux(timeoutMilliseconds);
+            }
             else
             {
                 _wake.WaitOne(timeoutMilliseconds);
             }
             return !_disposed;
+        }
+
+        private unsafe void WaitLinux(int timeoutMilliseconds)
+        {
+            EnsureWakeFd();
+
+            // A held key repeats on a client-side timer (Wayland sends repeat_info and expects the
+            // client to synthesise them), so the wait must not outlast the next repeat or the key
+            // stops repeating whenever nothing else is waking the loop.
+            int deadline = MS.Internal.Interop.Wayland.WaylandWindow.NextDeadlineMs();
+            int timeout = timeoutMilliseconds;
+            if (deadline >= 0 && (timeout < 0 || deadline < timeout))
+            {
+                timeout = deadline;
+            }
+
+            // Never block on a signal that has ALREADY arrived. The managed event is the only record
+            // of a Signal that happened before this loop first created its eventfd -- and with the
+            // usual infinite timeout, missing one does not merely delay the frame, it hangs the app
+            // forever with the window mapped but blank.
+            if (_wake.WaitOne(0))
+            {
+                timeout = 0;
+            }
+
+            // ReadEvents owns the prepare_read/flush/poll/read_events sequence -- getting that order
+            // wrong deadlocks the moment the app idles (see WaylandDisplay.ReadEvents).
+            MS.Internal.Interop.Wayland.WaylandDisplay.ReadEvents(timeout, _wakeFd);
+
+            if (_wakeFd >= 0)
+            {
+                // Drain the eventfd counter. It is non-blocking, so an empty one just returns EAGAIN.
+                ulong scratch;
+                read(_wakeFd, &scratch, 8);
+            }
+
+            // Consume any managed signal too, so the AutoResetEvent and the eventfd stay in step for
+            // code paths that still wait on the event itself.
+            _wake.WaitOne(0);
         }
 
         private void WaitWindows(int timeoutMilliseconds)

@@ -61,6 +61,10 @@ namespace MS.Internal.Interop
                 return AndroidWindow.FromHandle(handle);
             if (OperatingSystem.IsMacOS())
                 return CocoaWindow.FromHandle(handle);
+            // Linux LAST among the concrete probes, and after Android: Android is Linux as far as
+            // OperatingSystem is concerned, exactly as iOS is Darwin.
+            if (OperatingSystem.IsLinux())
+                return Wayland.WaylandWindow.FromHandle(handle);
             return null;
         }
 
@@ -75,6 +79,8 @@ namespace MS.Internal.Interop
                 return AndroidWindow.HitTest(x, y);
             if (OperatingSystem.IsMacOS())
                 return CocoaWindow.HitTest(x, y);
+            if (OperatingSystem.IsLinux())
+                return Wayland.WaylandWindow.HitTest(x, y);
             return IntPtr.Zero;
         }
 
@@ -91,6 +97,8 @@ namespace MS.Internal.Interop
                     return AndroidWindow.MouseCaptureHandle;
                 if (OperatingSystem.IsMacOS())
                     return CocoaWindow.MouseCaptureHandle;
+                if (OperatingSystem.IsLinux())
+                    return Wayland.WaylandWindow.MouseCaptureHandle;
                 return IntPtr.Zero;
             }
             set
@@ -103,7 +111,26 @@ namespace MS.Internal.Interop
                     AndroidWindow.MouseCaptureHandle = value;
                 else if (OperatingSystem.IsMacOS())
                     CocoaWindow.MouseCaptureHandle = value;
+                else if (OperatingSystem.IsLinux())
+                    Wayland.WaylandWindow.MouseCaptureHandle = value;
             }
+        }
+
+        /// <summary>
+        /// Set a window's title. Exists because the off-Windows path had no route for it at all:
+        /// Window.UpdateTitle called SetWindowText, which P/Invokes user32 UNGUARDED, so setting
+        /// Window.Title after SourceInitialized threw DllNotFoundException on every non-Windows
+        /// platform -- macOS included, where CocoaWindow could have answered it all along.
+        /// </summary>
+        public static void SetTitle(IntPtr handle, string title)
+        {
+            if (handle == IntPtr.Zero) return;
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsBrowser())
+                return;   // no window chrome to put a title in
+            if (OperatingSystem.IsMacOS())
+                CocoaWindow.SetTitle(handle, title);
+            else if (OperatingSystem.IsLinux())
+                Wayland.WaylandWindow.SetTitle(handle, title);
         }
 
         /// <summary>Primary screen bounds and work area in top-left device pixels.</summary>
@@ -125,6 +152,10 @@ namespace MS.Internal.Interop
                     out workLeft, out workTop, out workRight, out workBottom);
             if (OperatingSystem.IsMacOS())
                 return CocoaWindow.GetPrimaryScreenPixels(
+                    out monLeft, out monTop, out monRight, out monBottom,
+                    out workLeft, out workTop, out workRight, out workBottom);
+            if (OperatingSystem.IsLinux())
+                return Wayland.WaylandWindow.GetPrimaryScreenPixels(
                     out monLeft, out monTop, out monRight, out monBottom,
                     out workLeft, out workTop, out workRight, out workBottom);
             monLeft = monTop = workLeft = workTop = 0;

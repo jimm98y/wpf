@@ -289,6 +289,12 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public void* requiredLimits;           // WGPUInstanceLimits const*
         }
 
+        // WGPUNativeDisplayHandleType: which variant of the display-handle union is live.
+        internal const int WGPUNativeDisplayHandleType_None = 0;
+        internal const int WGPUNativeDisplayHandleType_Xlib = 1;
+        internal const int WGPUNativeDisplayHandleType_Xcb = 2;
+        internal const int WGPUNativeDisplayHandleType_Wayland = 3;
+
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUXlibDisplayHandle { public void* display; public int screen; }
 

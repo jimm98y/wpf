@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using MS.Internal.Interop;
@@ -23,9 +24,41 @@ internal static class ModuleInitializer
     // so on wasm/mac nothing is lost. On Windows it must be invoked from an early startup path instead
     // (before the first window) to preserve process DPI awareness.
     private static bool s_initialized;
+    private static bool s_windowingInitialized;
 
     public static void Initialize()
     {
+        // Linux: bring the Wayland connection up HERE, before anything else.
+        //
+        // This is an ordering requirement, not a convenience. The compositor connection is owned by
+        // the windowing backend, and the WebGPU engine has to be handed that same wl_display when it
+        // creates its instance -- the GLES backend cannot discover it (there is no
+        // wl_proxy_get_display) and without it eglGetPlatformDisplay finds no windowing system and
+        // silently falls back to a SURFACELESS EGL platform. Every later wgpuSurfaceConfigure then
+        // fails with "Surface does not support the adapter's queue family", from inside Rust, as a
+        // process abort.
+        //
+        // The engine initializes on the first render, which is AFTER the first window exists but can
+        // be before that window's backend has connected -- so installing the seam from window
+        // creation is too late. This runs from HwndSource's static constructor, which precedes both.
+        if (System.OperatingSystem.IsLinux() && !System.OperatingSystem.IsAndroid())
+        {
+            if (!s_windowingInitialized)
+            {
+                s_windowingInitialized = true;
+                try
+                {
+                    MS.Internal.Interop.Wayland.WaylandWindow.EnsureApplication();
+                }
+                catch (Exception)
+                {
+                    // No compositor (a headless or console process that merely loads PresentationCore).
+                    // Not fatal here; window creation reports it properly, with the diagnostics.
+                }
+            }
+            return;
+        }
+
         if (!System.OperatingSystem.IsWindows())
             return;
 

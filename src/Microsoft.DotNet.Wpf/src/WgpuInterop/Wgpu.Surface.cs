@@ -101,6 +101,14 @@ namespace Microsoft.Wpf.Interop.WebGpu
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUSurfaceSourceWaylandSurface
+        {
+            public WGPUChainedStruct chain; // chain.sType = WGPUSType_SurfaceSourceWaylandSurface
+            public void* display;           // a wl_display*  -- MUST be the process's one connection
+            public void* surface;           // a wl_surface*
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUSurfaceConfiguration
         {
             public WGPUChainedStruct* nextInChain;

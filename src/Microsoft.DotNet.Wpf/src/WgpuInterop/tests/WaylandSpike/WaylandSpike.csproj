@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The Wayland backend is Linux-only by construction; suppress the platform-compatibility
+         analyzer rather than sprinkling guards through a test that only ever runs on Linux. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)..\..\native\$(WgpuRid)\lib\</WgpuNativeDir>
+    <WaylandDir>$(MSBuildThisFileDirectory)..\..\..\Shared\MS\Internal\Interop\Wayland\</WaylandDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- The platform layer, compiled straight from the shared sources rather than through
+       WindowsBase: the whole point of this spike is to exercise it with no WPF present.
+       WaylandWindow.cs is deliberately excluded - it implements IPlatformWindow, which lives in
+       WindowsBase and would drag in every other backend. -->
+  <ItemGroup>
+    <Compile Include="$(WaylandDir)Wl.cs" Link="Wayland\Wl.cs" />
+    <Compile Include="$(WaylandDir)WlProtocols.cs" Link="Wayland\WlProtocols.cs" />
+    <Compile Include="$(WaylandDir)WlDecor.cs" Link="Wayland\WlDecor.cs" />
+    <Compile Include="$(WaylandDir)WlXkb.cs" Link="Wayland\WlXkb.cs" />
+    <Compile Include="$(WaylandDir)WaylandDisplay.cs" Link="Wayland\WaylandDisplay.cs" />
+    <Compile Include="$(WaylandDir)WaylandInput.cs" Link="Wayland\WaylandInput.cs" />
+    <Compile Include="$(WaylandDir)WaylandCursor.cs" Link="Wayland\WaylandCursor.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build" Condition="!Exists('$(WgpuNativeDir)libwgpu_native.so')">
+    <Warning Text="wgpu-native binary not found in '$(WgpuNativeDir)'. Run eng/fetch-wgpu.ps1 -Rid $(WgpuRid) first." />
+  </Target>
+
+</Project>

@@ -226,6 +226,29 @@ namespace System.Windows.Media.Composition
                     return;
                 }
 
+                // Linux: the compositor connection must exist BEFORE the backend does.
+                //
+                // The engine is handed the process's wl_display when it creates its wgpu instance;
+                // the GLES backend cannot discover it on its own (libwayland exposes no
+                // wl_proxy_get_display), and without it eglGetPlatformDisplay reports "no windowing
+                // system" and quietly builds a SURFACELESS EGL platform. The failure then surfaces
+                // much later and far away, as a Rust-side abort inside wgpuSurfaceConfigure:
+                // "Surface does not support the adapter's queue family".
+                //
+                // This is the last moment that ordering can be guaranteed -- it runs immediately
+                // before the backend is constructed, whereas window creation may come after.
+                if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+                {
+                    try
+                    {
+                        MS.Internal.Interop.Wayland.WaylandWindow.EnsureApplication();
+                    }
+                    catch
+                    {
+                        // No compositor: let the backend load anyway and fail with its own message.
+                    }
+                }
+
                 try
                 {
                     System.Reflection.Assembly asm = System.Reflection.Assembly.Load(BackendAssembly);

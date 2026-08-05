@@ -597,6 +597,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public WgpuSceneRenderer(WgpuContext ctx, Text.IFont? font = null, Text.ITextShaper? shaper = null)
         {
             _ctx = ctx;
+
+            // The GPU path rasterizer mis-renders on the OpenGL backend: stroke joins and curved
+            // SHAPE geometry come out malformed (miter/bevel strokes fill solid, ellipse and
+            // rounded-rect corners flatten to straight edges), while solid device-space coverage,
+            // text and effects are pixel-exact. Measured on Mesa 25.2 / virgl with
+            // tests/WgpuInterop.RenderBaselineTest: 5 of 11 scenes fail on GL, and the SAME build
+            // passes all 11 on Vulkan (lavapipe) and all 11 on GL with the CPU rasterizer -- so it
+            // is the coverage/stroke fragment path on GL specifically, not the geometry upstream
+            // and not this architecture.
+            //
+            // Falling back to the CPU rasterizer keeps the GPU doing everything else (compositing,
+            // blending, effects, text), which is what makes GL worth selecting in the first place:
+            // under a VM exposing VirGL, GL reaches the real GPU while Vulkan is a CPU rasterizer.
+            // Correctness first; WPF_WEBGPU_CPU_RASTER=0 opts back in to reproduce the bug.
+            if (ctx.IsOpenGL && !s_cpuRasterExplicit)
+            {
+                s_gpuRaster = false;
+            }
+
             _font = font ?? new Text.BuiltinBitmapFont();
             _shaper = shaper ?? new Text.SimpleTextShaper();
             _outlineFont = _font as Text.IGlyphOutlineFont;

@@ -20,7 +20,7 @@
 
   <!-- Compile Targets -->
   <ItemGroup>
-    <Page Include="Themes\Aero.NormalColor.xaml">
+    <Page Include="themes\Aero.NormalColor.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Compile Include="$(WpfSharedDir)\RefAssemblyAttrs.cs" />

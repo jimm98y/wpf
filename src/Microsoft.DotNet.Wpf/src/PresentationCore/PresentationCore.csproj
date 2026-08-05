@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <DefineConstants>$(DefineConstants);CORE_NATIVEMETHODS;PRESENTATION_CORE;COMMONDPS</DefineConstants>
@@ -77,8 +77,8 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\PenLineJoinValidation.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\ShaderRenderModeValidation.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\StretchValidation.cs" />
-    <Compile Include="$(WpfSharedDir)\ms\internal\generated\TextDecorationLocationValidation.cs" />
-    <Compile Include="$(WpfSharedDir)\ms\internal\generated\TextDecorationUnitValidation.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\TextDecorationLocationValidation.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\TextDecorationUnitValidation.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\TileModeValidation.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\RotationValidation.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Generated\SweepDirectionValidation.cs" />
@@ -690,7 +690,7 @@
     <Compile Include="System\Windows\InterOp\Imaging.cs" />
     <Compile Include="System\Windows\InterOp\IStylusInputProvider.cs" />
     <Compile Include="System\Windows\InterOp\IWin32Window.cs" />
-    <Compile Include="System\Windows\Interop\OperatingSystemVersionCheck.cs" />
+    <Compile Include="System\Windows\InterOp\OperatingSystemVersionCheck.cs" />
     <Compile Include="System\Windows\Markup\IAddChild.cs" />
     <Compile Include="System\Windows\Markup\IProvidePropertyFallback.cs" />
     <Compile Include="System\Windows\Markup\XamlSerializerUtil.cs" />

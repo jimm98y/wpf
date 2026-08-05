@@ -50,11 +50,19 @@ internal static class Program
     {
         bool update = Array.IndexOf(args, "--update") >= 0;
         bool writeActual = Array.IndexOf(args, "--write-actual") >= 0;
-        bool cpuRaster = Environment.GetEnvironmentVariable("WPF_WEBGPU_CPU_RASTER") == "1";
+        // The EFFECTIVE raster mode, not the requested one: constructing a renderer can turn the GPU
+        // rasterizer off for the adapter it got (see WgpuSceneRenderer's ctor -- the OpenGL backend
+        // mis-renders strokes and curved shapes). Comparing CPU output against the GPU baselines
+        // would report that fallback as a pile of scene failures, so build one renderer up front and
+        // let it decide which baseline set this run belongs to.
+        using var probeCtx = WgpuContext.Create();
+        _ = new WgpuSceneRenderer(probeCtx);
+        bool cpuRaster = !WgpuSceneRenderer.s_gpuRaster;
         string dir = Path.Combine(BaselineDir(), cpuRaster ? "cpu" : "gpu");
         Directory.CreateDirectory(dir);
 
         Console.WriteLine($"raster mode: {(cpuRaster ? "cpu" : "gpu")}");
+        Console.WriteLine($"adapter: {probeCtx.AdapterDescription}");
         Console.WriteLine($"baselines: {dir}");
         Console.WriteLine($"{"scene",-26}{"size",11}{"changed",10}{"maxDelta",10}{"verdict",10}");
         Console.WriteLine(new string('-', 67));

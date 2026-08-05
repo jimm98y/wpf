@@ -276,6 +276,14 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\Wl.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlProtocols.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlDecor.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlXkb.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDisplay.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandCursor.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapper.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapperHook.cs" />

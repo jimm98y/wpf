@@ -2503,6 +2503,32 @@ namespace System.Windows.Threading
                 return _runLoop != null;
             }
 
+            // Linux/Wayland is the same arrangement as macOS -- the compositor connection is
+            // serviced on this thread -- but it does NOT need the ~120Hz polling cap, because
+            // Wayland gives us a real file descriptor to block on. DispatcherRunLoop.Wait polls
+            // {wayland fd, wake eventfd} with the full timeout, so an idle app costs nothing at all
+            // rather than waking 125 times a second.
+            //
+            // WPF_LINUX_POLL_PUMP=1 falls back to the macOS-shaped periodic slice: five lines that
+            // always make progress, kept as an escape hatch if the fd integration ever misbehaves.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid() &&
+                MS.Internal.Interop.Wayland.WaylandDisplay.IsActive)
+            {
+                if (s_linuxPollPump)
+                {
+                    int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+                    runLoop.Wait(cap <= 0 ? 0 : cap);
+                    MS.Internal.Interop.Wayland.WaylandWindow.PumpEvents(0);
+                    return _runLoop != null;
+                }
+
+                bool alive = runLoop.Wait(timeout);
+                // The blocking half already dispatched; this is the reconciliation half -- resize,
+                // scale and close notifications, plus synthetic key repeats.
+                MS.Internal.Interop.Wayland.WaylandWindow.AfterDispatch();
+                return alive && _runLoop != null;
+            }
+
             return runLoop.Wait(timeout);
         }
 
@@ -2977,6 +3003,11 @@ namespace System.Windows.Threading
 
         // ~120 Hz cap for draining the macOS Cocoa event queue from the dispatcher loop.
         private const int NativeEventPumpIntervalMs = 8;
+
+        /// <summary>WPF_LINUX_POLL_PUMP=1: drive Wayland with the macOS-shaped periodic slice
+        /// instead of blocking on its file descriptor (see WaitForWork).</summary>
+        private static readonly bool s_linuxPollPump =
+            Environment.GetEnvironmentVariable("WPF_LINUX_POLL_PUMP") == "1";
 
         private static List<WeakReference> _dispatchers;
         private static WeakReference _possibleDispatcher;

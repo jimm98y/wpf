@@ -92,16 +92,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         //
         // Vulkan first (every Android device made this decade has it, and it is much faster), GL as
         // the fallback for devices -- and emulators -- whose Vulkan wgpu will not accept.
+        //
+        // Linux desktop gets the same one-backend-at-a-time treatment as Android, for the same
+        // reason (a wgpu surface is created for EVERY enabled backend, so the GL backend would
+        // build a wl_egl_window on the very wl_surface the Vulkan backend just took), plus a
+        // second reason Android does not have: on Linux, which backend reaches the GPU is not
+        // knowable up front. Under a VM whose host exposes VirGL (OpenGL passthrough) but not
+        // Venus (Vulkan passthrough), Vulkan enumerates only lavapipe -- a CPU rasterizer --
+        // while GL reaches the real GPU. Taking "Vulkan first" on faith there costs an order of
+        // magnitude. So Linux ORDERS its candidates and lets the adapter type decide: see
+        // SelectBackends, which rejects a software adapter while a hardware one is still on the
+        // table. WPF_WEBGPU_BACKEND=vulkan|gl|all pins it for triage.
+        //
         private static ulong PreferredBackends =>
             OperatingSystem.IsAndroid() ? WGPUInstanceBackend_Vulkan : WGPUInstanceBackend_All;
 
         private static ulong FallbackBackends =>
             OperatingSystem.IsAndroid() ? WGPUInstanceBackend_GL : 0;
 
+        /// <summary>True on a Linux desktop (Android is Linux to OperatingSystem, and is handled
+        /// by the Preferred/Fallback pair above).</summary>
+        private static bool IsLinuxDesktop =>
+            OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
+
+        /// <summary>The backend masks Linux tries, in order. Vulkan first because on real hardware
+        /// it is the better backend; GL second because it is the one that works under VirGL.</summary>
+        private static ulong[] LinuxBackendCandidates()
+        {
+            switch (Environment.GetEnvironmentVariable("WPF_WEBGPU_BACKEND"))
+            {
+                case "vulkan": return new[] { WGPUInstanceBackend_Vulkan };
+                case "gl": return new[] { WGPUInstanceBackend_GL };
+                case "all": return new[] { WGPUInstanceBackend_All };
+                default: return new[] { WGPUInstanceBackend_Vulkan, WGPUInstanceBackend_GL };
+            }
+        }
+
         /// <summary>Create a wgpu instance limited to <paramref name="backends"/> (0 = all).</summary>
         private static IntPtr CreateInstance(ulong backends)
         {
-            if (backends == WGPUInstanceBackend_All)
+            IntPtr waylandDisplay = LinuxPlatform.WaylandDisplay;
+            if (backends == WGPUInstanceBackend_All && waylandDisplay == IntPtr.Zero)
                 return wgpuCreateInstance(null);
 
             var extras = new WGPUInstanceExtras
@@ -109,8 +140,72 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 chain = new WGPUChainedStruct { next = null, sType = WGPUSType_InstanceExtras },
                 backends = backends,
             };
+            // The GLES backend on Wayland cannot discover the display on its own -- there is no
+            // wl_proxy_get_display -- so it has to be handed the one connection the process owns
+            // (WaylandWindow's). Without it, eglGetPlatformDisplay opens a SECOND connection and
+            // the wl_egl_window it builds belongs to a display our surfaces do not live on.
+            if (waylandDisplay != IntPtr.Zero)
+            {
+                extras.displayHandle.type = WGPUNativeDisplayHandleType_Wayland;
+                extras.displayHandle.data.display = (void*)waylandDisplay;
+            }
             var desc = new WGPUInstanceDescriptor { nextInChain = (WGPUChainedStruct*)&extras };
+            LogSink?.Invoke($"CreateInstance backends=0x{backends:x} waylandDisplay=0x{waylandDisplay.ToInt64():x} " +
+                            $"displayHandleType={extras.displayHandle.type}");
             return wgpuCreateInstance(&desc);
+        }
+
+        /// <summary>
+        /// Create an instance for <paramref name="backends"/> and ask it for an adapter. Returns
+        /// the adapter (or Zero) and, on success, its description and whether it is a software
+        /// rasterizer. The instance is returned so an unwanted candidate can be released.
+        /// Must be called under <see cref="s_requestLock"/>.
+        /// </summary>
+        private static IntPtr TryAcquireAdapter(ulong backends, out IntPtr instance, out string? description, out bool isSoftware)
+        {
+            description = null;
+            isSoftware = false;
+
+            instance = CreateInstance(backends);
+            if (instance == IntPtr.Zero)
+                return IntPtr.Zero;
+
+            return RequestAdapter(instance, out description, out isSoftware);
+        }
+
+        /// <summary>
+        /// Ask an existing instance for an adapter, reporting its description and whether it is a
+        /// software rasterizer. Must be called under <see cref="s_requestLock"/>.
+        /// </summary>
+        private static IntPtr RequestAdapter(IntPtr instance, out string? description, out bool isSoftware)
+        {
+            description = null;
+            isSoftware = false;
+
+            s_adapterResult = IntPtr.Zero;
+            s_adapterDone = false;
+
+            var callbackInfo = new WGPURequestAdapterCallbackInfo
+            {
+                mode = WGPUCallbackMode.AllowProcessEvents,
+                callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestAdapterStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnAdapterReady,
+            };
+            var options = new WGPURequestAdapterOptions { powerPreference = WGPUPowerPreference.HighPerformance };
+            wgpuInstanceRequestAdapter(instance, &options, callbackInfo);
+            for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
+
+            IntPtr adapter = s_adapterResult;
+            if (adapter == IntPtr.Zero)
+                return IntPtr.Zero;
+
+            var info = new WGPUAdapterInfo();
+            if (wgpuAdapterGetInfo(adapter, &info) == WGPUStatus.Success)
+            {
+                static string S(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
+                description = $"backend={info.backendType} type={info.adapterType} device='{S(info.device)}' desc='{S(info.description)}'";
+                isSoftware = info.adapterType == WGPUAdapterType.CPU;
+            }
+            return adapter;
         }
 
         public static WgpuContext Create()
@@ -144,59 +239,100 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 wgpuSetLogLevel(Environment.GetEnvironmentVariable("WPF_WEBGPU_WGPU_LOG") == "debug" ? WGPULogLevel.Debug : WGPULogLevel.Warn);
             }
 
-            IntPtr instance = CreateInstance(PreferredBackends);
-            if (instance == IntPtr.Zero)
-                throw new InvalidOperationException("wgpuCreateInstance failed.");
-
+            IntPtr instance;
             IntPtr adapterResult, deviceResult;
-            var ctx = new WgpuContext { Instance = instance };
+            var ctx = new WgpuContext();
 
             lock (s_requestLock)
             {
-            s_adapterResult = IntPtr.Zero;
-            s_adapterDone = false;
             s_deviceResult = IntPtr.Zero;
             s_deviceDone = false;
 
-            var adapterInfo = new WGPURequestAdapterCallbackInfo
+            if (IsLinuxDesktop)
             {
-                mode = WGPUCallbackMode.AllowProcessEvents,
-                callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestAdapterStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnAdapterReady,
-            };
-            var options = new WGPURequestAdapterOptions { powerPreference = WGPUPowerPreference.HighPerformance };
-            wgpuInstanceRequestAdapter(instance, &options, adapterInfo);
-            for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
-            adapterResult = s_adapterResult;
+                // Try the candidates in order and keep the first HARDWARE adapter. A software
+                // adapter is remembered but not accepted while another candidate is untried, so a
+                // box where Vulkan is lavapipe but GL is the real GPU (VirGL) lands on GL.
+                IntPtr softInstance = IntPtr.Zero, softAdapter = IntPtr.Zero;
+                string? softDescription = null;
+                instance = IntPtr.Zero;
+                adapterResult = IntPtr.Zero;
 
-            // The instance may be pinned to a single backend (see PreferredBackends). If that one has
-            // no adapter -- an emulator whose Vulkan wgpu rejects as non-compliant, a device with no
-            // Vulkan driver -- fall back to the next one rather than failing outright.
-            if (adapterResult == IntPtr.Zero && FallbackBackends != 0)
+                foreach (ulong backends in LinuxBackendCandidates())
+                {
+                    IntPtr candidateAdapter = TryAcquireAdapter(backends, out IntPtr candidateInstance, out string? description, out bool isSoftware);
+                    if (candidateAdapter == IntPtr.Zero)
+                    {
+                        LogSink?.Invoke($"no adapter for backends 0x{backends:x}");
+                        if (candidateInstance != IntPtr.Zero) wgpuInstanceRelease(candidateInstance);
+                        continue;
+                    }
+
+                    if (!isSoftware)
+                    {
+                        instance = candidateInstance;
+                        adapterResult = candidateAdapter;
+                        ctx.AdapterDescription = description;
+                        break;
+                    }
+
+                    LogSink?.Invoke($"backends 0x{backends:x} offered only a software adapter ({description})");
+                    if (softAdapter == IntPtr.Zero)
+                    {
+                        softInstance = candidateInstance;
+                        softAdapter = candidateAdapter;
+                        softDescription = description;
+                    }
+                    else
+                    {
+                        wgpuInstanceRelease(candidateInstance);
+                    }
+                }
+
+                if (adapterResult == IntPtr.Zero)
+                {
+                    // Every candidate was software (or absent). Software still renders, so take it.
+                    instance = softInstance;
+                    adapterResult = softAdapter;
+                    ctx.AdapterDescription = softDescription;
+                }
+                else if (softInstance != IntPtr.Zero)
+                {
+                    wgpuInstanceRelease(softInstance);
+                }
+
+                if (instance == IntPtr.Zero)
+                    throw new InvalidOperationException("wgpuCreateInstance failed.");
+                ctx.Instance = instance;
+            }
+            else
             {
-                LogSink?.Invoke($"no adapter for backends 0x{PreferredBackends:x}; retrying with 0x{FallbackBackends:x}");
-                wgpuInstanceRelease(instance);
-                instance = CreateInstance(FallbackBackends);
+                instance = CreateInstance(PreferredBackends);
+                if (instance == IntPtr.Zero)
+                    throw new InvalidOperationException("wgpuCreateInstance failed.");
                 ctx.Instance = instance;
 
-                s_adapterResult = IntPtr.Zero;
-                s_adapterDone = false;
-                wgpuInstanceRequestAdapter(instance, &options, adapterInfo);
-                for (int i = 0; i < 1000 && !s_adapterDone; i++) { wgpuInstanceProcessEvents(instance); Thread.Sleep(1); }
-                adapterResult = s_adapterResult;
+                adapterResult = RequestAdapter(instance, out string? description, out _);
+                ctx.AdapterDescription = description;
+
+                // The instance may be pinned to a single backend (see PreferredBackends). If that one has
+                // no adapter -- an emulator whose Vulkan wgpu rejects as non-compliant, a device with no
+                // Vulkan driver -- fall back to the next one rather than failing outright.
+                if (adapterResult == IntPtr.Zero && FallbackBackends != 0)
+                {
+                    LogSink?.Invoke($"no adapter for backends 0x{PreferredBackends:x}; retrying with 0x{FallbackBackends:x}");
+                    wgpuInstanceRelease(instance);
+                    instance = CreateInstance(FallbackBackends);
+                    ctx.Instance = instance;
+
+                    adapterResult = RequestAdapter(instance, out description, out _);
+                    ctx.AdapterDescription = description;
+                }
             }
 
             if (adapterResult == IntPtr.Zero)
                 throw new InvalidOperationException("Could not acquire a WebGPU adapter.");
             ctx.Adapter = adapterResult;
-
-            // Report which backend/adapter wgpu selected (wgpu has no D3D11 backend, so on a box
-            // with only D3D11 it may fall back to a CPU/software adapter -> very slow).
-            var info = new WGPUAdapterInfo();
-            if (wgpuAdapterGetInfo(adapterResult, &info) == WGPUStatus.Success)
-            {
-                static string S(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
-                ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} device='{S(info.device)}' desc='{S(info.description)}'";
-            }
 
             var deviceInfo = new WGPURequestDeviceCallbackInfo
             {

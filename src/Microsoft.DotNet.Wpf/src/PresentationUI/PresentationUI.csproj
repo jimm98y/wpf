@@ -21,29 +21,29 @@
     <Page Include="TenFeetInstallationError.xaml" />
     <Page Include="TenFeetInstallationProgress.xaml" />
     <Page Include="MS\Internal\Documents\FindToolBar.xaml" />
-    <Page Include="themes\MediaCenterTheme.xaml" />
-    <Page Include="themes\Aero.NormalColor.xaml">
+    <Page Include="Themes\MediaCenterTheme.xaml" />
+    <Page Include="Themes\Aero.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Aero2.NormalColor.xaml">
+    <Page Include="Themes\Aero2.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\AeroLite.NormalColor.xaml">
+    <Page Include="Themes\AeroLite.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Classic.xaml">
+    <Page Include="Themes\Classic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Generic.xaml">
+    <Page Include="Themes\Generic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.Homestead.xaml">
+    <Page Include="Themes\Luna.HomeStead.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.Metallic.xaml">
+    <Page Include="Themes\Luna.Metallic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.NormalColor.xaml">
+    <Page Include="Themes\Luna.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
   </ItemGroup>

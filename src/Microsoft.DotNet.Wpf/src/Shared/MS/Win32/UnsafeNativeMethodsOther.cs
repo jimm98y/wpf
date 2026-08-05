@@ -584,6 +584,15 @@ namespace MS.Win32
 
         internal static void SetWindowText(HandleRef hWnd, string text)
         {
+            // Off-Windows this used to P/Invoke user32 unguarded, so simply setting Window.Title
+            // after SourceInitialized threw DllNotFoundException on EVERY non-Windows platform --
+            // including macOS, where the backend could always have answered it.
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.PlatformWindow.SetTitle(hWnd.Handle, text);
+                return;
+            }
+
             if (!IntSetWindowText(hWnd, text))
             {
                 throw new Win32Exception();

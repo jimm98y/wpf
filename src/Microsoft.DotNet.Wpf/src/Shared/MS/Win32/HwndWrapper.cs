@@ -114,6 +114,21 @@ namespace MS.Win32
                         _platformWindow = android;
                         _handle = android.Handle;
                     }
+                    else if (OperatingSystem.IsLinux())
+                    {
+                        // Linux/Wayland: libdecor owns the decorated toplevel and our own xdg_wm_base
+                        // owns popups; the wl_surface* is the handle, exactly as the NSView* is on
+                        // macOS. Checked BEFORE the Cocoa fallback below -- reaching that on Linux
+                        // means P/Invoking libobjc, which is an immediate DllNotFoundException.
+                        var wayland = new MS.Internal.Interop.Wayland.WaylandWindow();
+                        wayland.Create(name, cx, cy, cw, ch, borderless, parent);
+                        // Same synthetic WM_SIZE / WM_CLOSE routing as the other backends (the
+                        // handlers are named for Cocoa but are entirely generic).
+                        wayland.Resized += OnCocoaResized;
+                        wayland.Closed += OnCocoaClosed;
+                        _platformWindow = wayland;
+                        _handle = wayland.Handle;
+                    }
                     else
                     {
                         var cocoa = new MS.Internal.Interop.CocoaWindow();

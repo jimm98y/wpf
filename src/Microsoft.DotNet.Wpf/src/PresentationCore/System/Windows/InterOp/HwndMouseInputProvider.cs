@@ -40,6 +40,10 @@ namespace System.Windows.Interop
             {
                 MS.Internal.Interop.AndroidWindow.MouseInput += OnAndroidTouchInput;
             }
+            else if (OperatingSystem.IsLinux())
+            {
+                MS.Internal.Interop.Wayland.WaylandInput.MouseInput += OnLinuxMouseInput;
+            }
             else if (!OperatingSystem.IsWindows())
             {
                 MS.Internal.Interop.CocoaWindow.MouseInput += OnCocoaMouseInput;
@@ -59,6 +63,8 @@ namespace System.Windows.Interop
                     MS.Internal.Interop.UIKitWindow.MouseInput -= OnIosTouchInput;
                 else if (OperatingSystem.IsAndroid())
                     MS.Internal.Interop.AndroidWindow.MouseInput -= OnAndroidTouchInput;
+                else if (OperatingSystem.IsLinux())
+                    MS.Internal.Interop.Wayland.WaylandInput.MouseInput -= OnLinuxMouseInput;
                 else
                     MS.Internal.Interop.CocoaWindow.MouseInput -= OnCocoaMouseInput;
                 if (_site != null)
@@ -131,13 +137,18 @@ namespace System.Windows.Interop
             {
                 if (OperatingSystem.IsBrowser())
                     MS.Internal.Interop.BrowserWindow.SetCursor(MapCursorToCssCursor(cursor));
+                else if (OperatingSystem.IsLinux())
+                    MS.Internal.Interop.Wayland.WaylandWindow.SetCursor(
+                        (cursor?.CursorType ?? CursorType.Arrow).ToString());
                 else if (!OperatingSystem.IsIOS() && !OperatingSystem.IsAndroid())
                     MS.Internal.Interop.CocoaWindow.SetCursor(MapCursorToNSCursor(cursor));
                 // Touch platforms have no cursor to set, and the AppKit call above is not merely
                 // useless there -- it is fatal: CocoaWindow.SetCursor P/Invokes libobjc, which does
                 // not exist on Android, so the DllNotFoundException unwound out of the mouse-input
                 // report and every press was swallowed (the Button captured the mouse, WPF then
-                // updated the cursor, and the click never completed). Reported as handled either way.
+                // updated the cursor, and the click never completed). Linux is guarded ABOVE for
+                // exactly the same reason -- libobjc is no more present there than on Android.
+                // Reported as handled either way.
                 return true;
             }
 
@@ -1491,6 +1502,65 @@ namespace System.Windows.Interop
                             :                          RawMouseActions.Button5Release;
                     break;
                 default: return;
+            }
+
+            ReportMacInput(actions, msg.X, msg.Y, wheel, msg.TimestampMs);
+        }
+
+        private void OnLinuxMouseInput(MS.Internal.Interop.Wayland.WaylandMouseMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.Surface != _source.Handle) return;   // route to the provider owning this wl_surface
+
+            // Wayland reports evdev button codes, and its pointer coordinates are already
+            // surface-local device pixels with a top-left origin -- the exact contract
+            // ReportMacInput expects, so no coordinate fixing up is needed here (unlike Cocoa,
+            // whose origin is bottom-left).
+            const int BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112, BTN_SIDE = 0x113, BTN_EXTRA = 0x114;
+
+            RawMouseActions actions;
+            int wheel = 0;
+            switch (msg.Kind)
+            {
+                case MS.Internal.Interop.Wayland.WaylandMouseKind.Move:
+                    actions = RawMouseActions.AbsoluteMove;
+                    break;
+
+                case MS.Internal.Interop.Wayland.WaylandMouseKind.Wheel:
+                    actions = RawMouseActions.VerticalWheelRotate;
+                    wheel = msg.Wheel;
+                    break;
+
+                case MS.Internal.Interop.Wayland.WaylandMouseKind.ButtonDown:
+                    actions = msg.Button switch
+                    {
+                        BTN_LEFT => RawMouseActions.Button1Press,
+                        BTN_RIGHT => RawMouseActions.Button2Press,
+                        BTN_MIDDLE => RawMouseActions.Button3Press,
+                        BTN_SIDE => RawMouseActions.Button4Press,
+                        BTN_EXTRA => RawMouseActions.Button5Press,
+                        _ => default,
+                    };
+                    if (actions == default) return;
+                    break;
+
+                case MS.Internal.Interop.Wayland.WaylandMouseKind.ButtonUp:
+                    actions = msg.Button switch
+                    {
+                        BTN_LEFT => RawMouseActions.Button1Release,
+                        BTN_RIGHT => RawMouseActions.Button2Release,
+                        BTN_MIDDLE => RawMouseActions.Button3Release,
+                        BTN_SIDE => RawMouseActions.Button4Release,
+                        BTN_EXTRA => RawMouseActions.Button5Release,
+                        _ => default,
+                    };
+                    if (actions == default) return;
+                    break;
+
+                default:
+                    // Leave: nothing to report. WPF drives MouseLeave off hit-testing, and
+                    // synthesising a move at the last position would fight it.
+                    return;
             }
 
             ReportMacInput(actions, msg.X, msg.Y, wheel, msg.TimestampMs);

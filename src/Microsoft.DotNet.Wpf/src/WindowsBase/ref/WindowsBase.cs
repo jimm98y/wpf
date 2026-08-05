@@ -147,6 +147,7 @@ namespace MS.Internal.Interop
         public void DisableMicaBackdrop() { }
         public void EnableMicaBackdrop() { }
         public static MS.Internal.Interop.CocoaWindow FromHandle(System.IntPtr view) { throw null; }
+        public static void SetTitle(System.IntPtr handle, string title) { }
         public double GetBackingScale() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
@@ -232,6 +233,7 @@ namespace MS.Internal.Interop
         public static MS.Internal.Interop.IPlatformWindow FromHandle(System.IntPtr handle) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static void SetTitle(System.IntPtr handle, string title) { }
     }
     public sealed partial class UIKitWindow : MS.Internal.Interop.IPlatformWindow
     {
@@ -282,6 +284,43 @@ namespace MS.Internal.Interop
             public static bool operator !=(MS.Internal.Interop.UIKitWindow.TouchMessage left, MS.Internal.Interop.UIKitWindow.TouchMessage right) { throw null; }
             public override string ToString() { throw null; }
         }
+    }
+}
+
+namespace MS.Internal.Interop.Wayland
+{
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("linux")]
+    public sealed partial class WaylandWindow : MS.Internal.Interop.IPlatformWindow
+    {
+        public WaylandWindow() { }
+        public System.IntPtr Handle { get { throw null; } }
+        public bool IsBorderless { get { throw null; } }
+        public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
+        public event System.Action<System.IntPtr> Closed { add { } remove { } }
+        public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<double> ScaleChanged { add { } remove { } }
+        public static void AfterDispatch() { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
+        public void Destroy() { }
+        public static void EnsureApplication() { }
+        public static MS.Internal.Interop.Wayland.WaylandWindow FromHandle(System.IntPtr handle) { throw null; }
+        public double GetBackingScale() { throw null; }
+        public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetContentSize(out int width, out int height) { throw null; }
+        public void GetPixelSize(out int width, out int height) { throw null; }
+        public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public void GetWindowPixelSize(out int width, out int height) { throw null; }
+        public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static bool IsMaximized(System.IntPtr handle) { throw null; }
+        public static int NextDeadlineMs() { throw null; }
+        public static void PumpEvents(int maxMilliseconds) { }
+        public void SetContentSize(int width, int height) { }
+        public void SetContentSizePixels(int cx, int cy) { }
+        public static void SetCursor(string name) { }
+        public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public static void SetTitle(System.IntPtr handle, string title) { }
+        public static void SetWindowState(System.IntPtr handle, int state) { }
     }
 }
 

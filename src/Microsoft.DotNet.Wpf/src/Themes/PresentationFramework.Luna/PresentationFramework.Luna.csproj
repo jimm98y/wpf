@@ -22,7 +22,7 @@
     <Page Include="Themes\Luna.NormalColor.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Themes\Luna.Homestead.xaml">
+    <Page Include="Themes\Luna.HomeStead.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Themes\Luna.Metallic.xaml">

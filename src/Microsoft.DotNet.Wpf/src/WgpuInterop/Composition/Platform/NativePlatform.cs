@@ -101,6 +101,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         {
             if (Current == PlatformKind.MacOS)
                 MacInterop.FlushTransaction();
+            // Wayland's analogue: a just-presented frame sits in the connection's outgoing buffer
+            // until something flushes it, so an app that then goes idle shows the PREVIOUS frame
+            // until some unrelated event happens to wake the loop.
+            else if (Current == PlatformKind.Linux)
+                LinuxInterop.FlushDisplayHook?.Invoke();
         }
 
         /// <summary>
@@ -135,6 +140,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             x = y = 0;
             if (Current == PlatformKind.Android) AndroidInterop.GetWindowOrigin(windowHandle, out x, out y);
             else if (Current == PlatformKind.IOS) IosInterop.GetWindowOrigin(windowHandle, out x, out y);
+            else if (Current == PlatformKind.Linux) LinuxInterop.OriginQuery?.Invoke(windowHandle, out x, out y);
         }
 
         /// <summary>
@@ -160,8 +166,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// regardless of backend: one swap chain instead of several, correct alpha, and popups stack
         /// in the order WPF asked for rather than by the platform's own view/layer ordering rules.
         /// </summary>
+        /// <remarks>
+        /// Linux joins the mobile heads for the Android reason exactly, now measured rather than
+        /// assumed: on a GNOME/Wayland session the surface advertises `alphaModes: Opaque` and
+        /// nothing else (tests/WaylandSpike prints the capability list), because wgpu-hal's GLES
+        /// backend hardcodes `composite_alpha_modes: vec![Opaque]` and the GL backend is the one
+        /// that reaches the GPU under VirGL. A popup surface that cannot be transparent clears to
+        /// solid BLACK around the popup's rounded chrome and drop shadow.
+        ///
+        /// WPF_LINUX_COMPOSITE_POPUPS=0 opts out, for a Linux box whose Vulkan is real hardware and
+        /// therefore does advertise premultiplied alpha.
+        /// </remarks>
         public static bool PopupsShareOwnerSurface
-            => Current is PlatformKind.Android or PlatformKind.IOS;
+            => Current is PlatformKind.Android or PlatformKind.IOS
+               || (Current == PlatformKind.Linux &&
+                   Environment.GetEnvironmentVariable("WPF_LINUX_COMPOSITE_POPUPS") != "0");
 
         /// <summary>
         /// Whether the native window backing a surface is opaque. A window made non-opaque for a
@@ -179,6 +198,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (Current == PlatformKind.Windows) return Win32Interop.IsWindowOpaque(nativeWindow);
             // Android: a WPF popup is its own view with a translucent surface (see AndroidInterop).
             if (Current == PlatformKind.Android) return AndroidInterop.IsWindowOpaque(nativeWindow);
+            // Linux: borderless windows (popups, menus, tooltips) want a transparent surface where
+            // the backend can give them one; the windowing layer answers, defaulting to opaque.
+            if (Current == PlatformKind.Linux && LinuxInterop.OpaqueQuery is not null)
+                return LinuxInterop.OpaqueQuery(nativeWindow);
             return true;
         }
     }
