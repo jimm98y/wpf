@@ -33,6 +33,10 @@ $AssetMap = @{
     'linux-arm64' = 'wgpu-linux-aarch64-release.zip'
     'osx-x64'     = 'wgpu-macos-x86_64-release.zip'
     'osx-arm64'   = 'wgpu-macos-aarch64-release.zip'
+    # iOS can only link the static library into the app (see Ios/WgpuInterop.Ios.csproj); the
+    # directory names match the NativeReference paths the iOS heads use, not .NET RIDs.
+    'ios-arm64'           = 'wgpu-ios-aarch64-release.zip'
+    'ios-arm64-simulator' = 'wgpu-ios-aarch64-simulator-release.zip'
     # Android ships a real .so (unlike iOS, which can only link the .a statically), so the binding
     # keeps its normal DllImport("wgpu_native") and the head packs this with @(AndroidNativeLibrary).
     # The archives also carry a .a, which is ignored. arm64 is the only ABI worth shipping today --

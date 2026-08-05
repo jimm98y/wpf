@@ -134,25 +134,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         {
             x = y = 0;
             if (Current == PlatformKind.Android) AndroidInterop.GetWindowOrigin(windowHandle, out x, out y);
+            else if (Current == PlatformKind.IOS) IosInterop.GetWindowOrigin(windowHandle, out x, out y);
         }
 
         /// <summary>
         /// True where a WPF popup cannot present through its own surface and must instead be drawn
         /// INTO the surface of the window it belongs to.
         ///
-        /// That is Android. Its popups are child views of the one activity, so they already share the
-        /// owner's coordinate space and can simply be drawn into it -- and they MUST be, because on
-        /// the GLES backend a popup surface cannot be transparent at all: wgpu-hal hardcodes
-        /// `composite_alpha_modes: vec![Opaque]` (unchanged through trunk; gfx-rs/wgpu#687 was closed
-        /// by a PR covering only Metal and Vulkan). Clearing such a surface transparent -- which is
-        /// what a Popup's rounded chrome and drop shadow need -- scans out as solid BLACK around the
-        /// popup. Compositing sidesteps the surface entirely, and is the better arrangement even on
-        /// Vulkan: one swap chain instead of several, correct alpha, and popups stack in the order
-        /// WPF asked for rather than by SurfaceView z-order rules.
+        /// That is the two mobile heads. On both, a popup is a child VIEW of the app's single window
+        /// (an Android activity, an iOS UIWindow), so it already shares the owner's coordinate space
+        /// and can simply be drawn into it. Everywhere else a popup is its own OS window that must
+        /// present itself, and SupportsLayeredWindows/IsWindowOpaque decide how.
         ///
-        /// Not applicable off Android, where a popup is its own OS window with its own presentation.
+        /// On Android it is not merely nicer, it is the only thing that works: when wgpu falls back
+        /// to GLES a popup surface cannot be transparent at all -- wgpu-hal hardcodes
+        /// `composite_alpha_modes: vec![Opaque]` (unchanged through trunk; gfx-rs/wgpu#687 was closed
+        /// by a PR covering only Metal and Vulkan) -- so clearing it transparent, which is what a
+        /// Popup's rounded chrome and drop shadow need, scans out as solid BLACK around the popup.
+        ///
+        /// iOS has the same shape of problem for a different reason: it has no layered-window path
+        /// either (SupportsLayeredWindows is false off Windows), so popups there used to present
+        /// opaquely through their own swap chain and lost their shadow and rounded corners.
+        ///
+        /// Compositing sidesteps the popup surface entirely on both, and is the better arrangement
+        /// regardless of backend: one swap chain instead of several, correct alpha, and popups stack
+        /// in the order WPF asked for rather than by the platform's own view/layer ordering rules.
         /// </summary>
-        public static bool PopupsShareOwnerSurface => Current == PlatformKind.Android;
+        public static bool PopupsShareOwnerSurface
+            => Current is PlatformKind.Android or PlatformKind.IOS;
 
         /// <summary>
         /// Whether the native window backing a surface is opaque. A window made non-opaque for a

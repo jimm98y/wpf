@@ -83,7 +83,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             return scale > 0 ? scale : 1.0;
         }
 
+        /// <summary>
+        /// The view's top-left corner in device pixels within the app's UIWindow. Needed when a popup
+        /// is drawn into its owner's surface rather than its own (NativePlatform.PopupsShareOwnerSurface):
+        /// the popup's scene has to be translated to where the popup sits. Converting to a nil view
+        /// gives window coordinates, which is the same space the owner's own view starts from.
+        /// </summary>
+        public static void GetWindowOrigin(IntPtr uiView, out int x, out int y)
+        {
+            x = y = 0;
+            if (uiView == IntPtr.Zero) return;
+
+            CGRect bounds = SendRect(uiView, Sel("bounds"));
+            CGRect inWindow = SendRectRectPtr(uiView, Sel("convertRect:toView:"), bounds, IntPtr.Zero);
+            double scale = BackingScale(uiView);
+            x = (int)Math.Round(inWindow.x * scale);
+            y = (int)Math.Round(inWindow.y * scale);
+        }
+
         // ---- Objective-C runtime (same as MacInterop; UIKit and AppKit share the runtime) -------
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CGRect { public double x, y, width, height; }
 
         private const string ObjC = "/usr/lib/libobjc.dylib";
 
@@ -95,6 +116,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRectRectPtr(IntPtr receiver, IntPtr selector, CGRect r, IntPtr view);
 
 
     }

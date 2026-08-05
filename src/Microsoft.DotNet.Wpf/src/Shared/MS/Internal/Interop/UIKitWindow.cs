@@ -103,7 +103,9 @@ namespace MS.Internal.Interop
                     frame = rootBounds;
             }
 
-            _view = CreateMetalBackedView(frame);
+            // A popup is drawn INTO its owner's surface (NativePlatform.PopupsShareOwnerSurface), so it
+            // needs no Metal layer of its own -- only somewhere for UIKit to deliver its touches.
+            _view = borderless ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame);
             if (_view == IntPtr.Zero)
                 return;
 
@@ -277,6 +279,62 @@ namespace MS.Internal.Interop
             SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
             AddScrollRecognizer(view);
             return view;
+        }
+
+        // ---- The touch-only UIView class, for popups ------------------------------
+        //
+        // A WPF Popup on iOS is a borderless sibling view inside the same UIWindow, and its PIXELS
+        // now come from the owner's surface: the compositor draws the popup's scene into the window
+        // it belongs to, translated to the popup's position. That is what gives a Popup its rounded
+        // corners and drop shadow -- presenting it through its own opaque swap chain (iOS has no
+        // layered-window path; SupportsLayeredWindows is false off Windows) painted the transparent
+        // area around that chrome as solid black.
+        //
+        // The view still has to exist, because WPF needs the popup to be a real window for INPUT:
+        // mouse capture, hit testing and every message route key off its handle, and a touch landing
+        // on the owner's view would be delivered with the OWNER's handle and ignored by the popup.
+        // So this is the same synthesised class as WpfMetalView minus the one thing it does not
+        // need: +layerClass. Without that override the backing layer is a plain CALayer, the view
+        // draws nothing, and (being non-opaque with no background colour) it is invisible.
+
+        private static IntPtr s_touchViewClass;
+
+        private static IntPtr CreateTouchOnlyView(CGRect frame)
+        {
+            IntPtr cls = EnsureTouchViewClass();
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+
+            IntPtr view = SendRectArg(Send(cls, Sel("alloc")), Sel("initWithFrame:"), frame);
+            if (view == IntPtr.Zero) return IntPtr.Zero;
+
+            // Transparent, and NO autoresizing mask: unlike the fullscreen window view, a popup keeps
+            // the frame WPF gives it (SetContentSizePixels / SetFrameOrigin) and must not track the
+            // superview's size.
+            SendVoidBool(view, Sel("setOpaque:"), false);
+            AddScrollRecognizer(view);
+            return view;
+        }
+
+        private static IntPtr EnsureTouchViewClass()
+        {
+            if (s_touchViewClass != IntPtr.Zero) return s_touchViewClass;
+
+            // Re-registering an existing class pair aborts the process, so look it up first.
+            IntPtr existing = objc_getClass("WpfTouchView");
+            if (existing != IntPtr.Zero) return s_touchViewClass = existing;
+
+            IntPtr uiView = objc_getClass("UIView");
+            if (uiView == IntPtr.Zero) return IntPtr.Zero;    // not a UIKit process
+
+            IntPtr cls = objc_allocateClassPair(uiView, "WpfTouchView", UIntPtr.Zero);
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+
+            AddTouchMethods(cls);
+            class_addMethod(cls, Sel("wpfScroll:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&ScrollImp, "v@:@");
+
+            objc_registerClassPair(cls);
+            return s_touchViewClass = cls;
         }
 
         /// <summary>
