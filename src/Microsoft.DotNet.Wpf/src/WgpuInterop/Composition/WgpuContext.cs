@@ -27,6 +27,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public bool IsOpenGL => AdapterDescription?.Contains("backend=OpenGL") == true;
 
+        /// <summary>
+        /// True when the GL adapter is VirGL -- Mesa's virtio-gpu driver, which forwards GL from a
+        /// guest VM to the host (Parallels, QEMU, GNOME Boxes). It re-translates the driver's GLSL
+        /// for the host, and that extra translation step miscompiles the coverage rasterizer; see
+        /// WgpuSceneRenderer's constructor for the evidence and the fallback it triggers.
+        /// </summary>
+        public bool IsVirgl => AdapterDescription?.Contains("virgl", StringComparison.OrdinalIgnoreCase) == true;
+
         /// <summary>Optional sink for wgpu-native's own log messages (backend selection diagnostics).</summary>
         public static Action<string>? LogSink;
         public IntPtr Device { get; private set; }

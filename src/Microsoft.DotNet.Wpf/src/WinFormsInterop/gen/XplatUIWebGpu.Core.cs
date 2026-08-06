@@ -22,6 +22,12 @@ namespace System.Windows.Forms
 		}
 		private XplatUIWebGpu() { }
 
+		// Cursors belong to the OS compositor on every head this driver serves (Wayland sets them by
+		// shape, macOS by NSCursor, the browser by CSS), so DefineCursor ignores its bitmaps. Saying so
+		// lets Cursor skip decoding them -- which is what keeps this driver free of libgdiplus, since
+		// System.Drawing.Bitmap has no managed backend and every Bitmap is a GDI+ object.
+		internal override bool CursorBitmapsUsed { get { return false; } }
+
 		private int next_handle = 1;
 		private readonly Dictionary<IntPtr, Bitmap> backing = new Dictionary<IntPtr, Bitmap>();
 		private readonly Dictionary<IntPtr, string> captions = new Dictionary<IntPtr, string>();

@@ -16,3 +16,5 @@ fn edgeAt(i : u32) -> vec2<f32> {
     let t = textureLoad(edgeTex, vec2<i32>(i32(i % EDGE_TW), i32(i / EDGE_TW)), 0);
     return vec2<f32>(bitcast<f32>(t.x), bitcast<f32>(t.y));
 }
+
+

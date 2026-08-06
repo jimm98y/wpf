@@ -43,7 +43,7 @@ internal sealed class MacDataObject : IDataObject
     /// <summary>Empties both the system pasteboard and the in-process store.</summary>
     public void Clear()
     {
-        MacClipboard.Clear();
+        PlatformClipboard.Clear();
         _store.Clear();
     }
 
@@ -60,12 +60,12 @@ internal sealed class MacDataObject : IDataObject
 
         if (IsTextFormat(format))
         {
-            return MacClipboard.GetString();
+            return PlatformClipboard.GetString();
         }
 
         if (IsImageFormat(format))
         {
-            byte[]? png = MacClipboard.GetData(MacClipboard.TypePng);
+            byte[]? png = PlatformClipboard.GetData(ClipboardFormat.Png);
             return png is null ? null : DecodePng(png);
         }
 
@@ -85,12 +85,12 @@ internal sealed class MacDataObject : IDataObject
 
         if (IsTextFormat(format))
         {
-            return MacClipboard.ContainsString();
+            return PlatformClipboard.ContainsString();
         }
 
         if (IsImageFormat(format))
         {
-            return MacClipboard.ContainsData(MacClipboard.TypePng);
+            return PlatformClipboard.ContainsData(ClipboardFormat.Png);
         }
 
         return _store.ContainsKey(format);
@@ -101,13 +101,13 @@ internal sealed class MacDataObject : IDataObject
     public string[] GetFormats(bool autoConvert)
     {
         var formats = new List<string>();
-        if (MacClipboard.ContainsString())
+        if (PlatformClipboard.ContainsString())
         {
             formats.Add(DataFormats.UnicodeText);
             formats.Add(DataFormats.Text);
         }
 
-        if (MacClipboard.ContainsData(MacClipboard.TypePng))
+        if (PlatformClipboard.ContainsData(ClipboardFormat.Png))
         {
             formats.Add(DataFormats.Bitmap);
         }
@@ -137,13 +137,13 @@ internal sealed class MacDataObject : IDataObject
 
         if (IsTextFormat(format))
         {
-            MacClipboard.SetString(data?.ToString() ?? string.Empty);
+            PlatformClipboard.SetString(data?.ToString() ?? string.Empty);
             return;
         }
 
         if (IsImageFormat(format) && data is BitmapSource bitmap)
         {
-            MacClipboard.SetData(MacClipboard.TypePng, EncodePng(bitmap));
+            PlatformClipboard.SetData(ClipboardFormat.Png, EncodePng(bitmap));
             return;
         }
 

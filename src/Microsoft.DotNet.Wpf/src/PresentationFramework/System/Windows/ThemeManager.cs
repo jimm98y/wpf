@@ -18,6 +18,14 @@ internal static class ThemeManager
         {
             MS.Internal.Interop.CocoaWindow.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
         }
+        else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+        {
+            // Linux: the desktop's colour-scheme preference comes from xdg-desktop-portal, and its
+            // SettingChanged signal is dispatched from the same pump that drives Wayland, so this
+            // arrives on the UI thread exactly as the macOS one does.
+            MS.Internal.Interop.Wayland.LinuxDesktopSettings.EnsureWatching();
+            MS.Internal.Interop.Wayland.LinuxDesktopSettings.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
+        }
     }
 
     // Runs when the macOS Dark/Light setting flips at runtime. The event fires on the UI/pump thread;
@@ -495,6 +503,10 @@ internal static class ThemeManager
             if (OperatingSystem.IsMacOS())
             {
                 return !MS.Internal.Interop.CocoaWindow.IsSystemDarkTheme();
+            }
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                return !MS.Internal.Interop.Wayland.LinuxDesktopSettings.IsSystemDarkTheme();
             }
             return true;
         }

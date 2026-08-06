@@ -1,4 +1,4 @@
-<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk / WpfWebGpuWasm.Sdk
+﻿<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk / WpfWebGpuWasm.Sdk
      NuGet packages under artifacts/local-feed. One implementation for macOS, Linux and
      Windows; build-sdk.sh / build-sdk.cmd are thin wrappers that just locate dotnet.
 
@@ -89,9 +89,17 @@
     <PropertyGroup>
       <_WgpuMac>$(_Src)WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib</_WgpuMac>
       <_WgpuMissing Condition="'$([MSBuild]::IsOSPlatform(OSX))' == 'true' and !Exists('$(_WgpuMac)')">true</_WgpuMissing>
+      <!-- Same check for the Linux head. The RID is derived from the process architecture rather
+           than assumed, because arm64 (a VM on Apple silicon) is as common here as x64. -->
+      <_WgpuLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">linux-arm64</_WgpuLinuxRid>
+      <_WgpuLinuxRid Condition="'$(_WgpuLinuxRid)' == ''">linux-x64</_WgpuLinuxRid>
+      <_WgpuLinux>$(_Src)WgpuInterop/native/$(_WgpuLinuxRid)/lib/libwgpu_native.so</_WgpuLinux>
+      <_WgpuLinuxMissing Condition="'$([MSBuild]::IsOSPlatform(Linux))' == 'true' and !Exists('$(_WgpuLinux)')">true</_WgpuLinuxMissing>
     </PropertyGroup>
     <Warning Condition="'$(_WgpuMissing)' == 'true'"
              Text="wgpu-native is missing: $(_WgpuMac). The macOS head will pack WITHOUT libwgpu_native.dylib and the app will fail at startup with DllNotFoundException. Drop the wgpu-native release for osx-arm64 there, or copy it from an existing build output, then rerun." />
+    <Warning Condition="'$(_WgpuLinuxMissing)' == 'true'"
+             Text="wgpu-native is missing: $(_WgpuLinux). The Linux head will pack WITHOUT libwgpu_native.so and the app will fail at startup with DllNotFoundException. Run: pwsh $(_Src)WgpuInterop/eng/fetch-wgpu.ps1 -Rid $(_WgpuLinuxRid)" />
     <Message Importance="high" Text="==&gt; building the WPF-on-WebGPU fork ($(Configuration))" />
   </Target>
 

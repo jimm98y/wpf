@@ -105,6 +105,18 @@ namespace System.Windows.Forms {
 		private void CreateCursor (Stream stream)
 		{
 			InitFromStream(stream);
+
+			// Where the driver ignores the bitmaps (it lets the OS compositor draw cursors), skip
+			// decoding them. ToBitmap builds System.Drawing.Bitmaps, and Bitmap has no managed
+			// backend -- every one is a GDI+ object -- so decoding here made libgdiplus a hard
+			// requirement for constructing the very first Form, through
+			// ScrollableControl -> SizeGrip -> Cursors.SizeNWSE. The cursor still works: the
+			// hotspot and the parsed cursor_data survive, and DefineCursor returns Zero either way,
+			// which is exactly what this method already treated as "no native cursor".
+			if (!XplatUI.CursorBitmapsUsed) {
+				return;
+			}
+
 			this.shape = ToBitmap(true, false);
 			this.mask = ToBitmap(false, false);
 			handle = XplatUI.DefineCursor(shape, mask, Color.FromArgb(255, 255, 255), Color.FromArgb(255, 255, 255), cursor_dir.idEntries[id].xHotspot, cursor_dir.idEntries[id].yHotspot);

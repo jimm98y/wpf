@@ -598,20 +598,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             _ctx = ctx;
 
-            // The GPU path rasterizer mis-renders on the OpenGL backend: stroke joins and curved
-            // SHAPE geometry come out malformed (miter/bevel strokes fill solid, ellipse and
-            // rounded-rect corners flatten to straight edges), while solid device-space coverage,
-            // text and effects are pixel-exact. Measured on Mesa 25.2 / virgl with
-            // tests/WgpuInterop.RenderBaselineTest: 5 of 11 scenes fail on GL, and the SAME build
-            // passes all 11 on Vulkan (lavapipe) and all 11 on GL with the CPU rasterizer -- so it
-            // is the coverage/stroke fragment path on GL specifically, not the geometry upstream
-            // and not this architecture.
+            // The GPU path rasterizer mis-renders under VIRGL -- Mesa's virtio-gpu driver, which
+            // forwards GL from a guest VM to the host (Parallels, QEMU, Boxes). Closed paths come out
+            // with an edge MISSING, so the fill escapes to its bounding box: a clipped triangle
+            // renders as a trapezoid, an ellipse loses an arc, and a stroke outline never closes and
+            // fills solid.
             //
-            // Falling back to the CPU rasterizer keeps the GPU doing everything else (compositing,
-            // blending, effects, text), which is what makes GL worth selecting in the first place:
-            // under a VM exposing VirGL, GL reaches the real GPU while Vulkan is a CPU rasterizer.
-            // Correctness first; WPF_WEBGPU_CPU_RASTER=0 opts back in to reproduce the bug.
-            if (ctx.IsOpenGL && !s_cpuRasterExplicit)
+            // ROOT CAUSE, by elimination on Mesa 25.2 with tests/WgpuInterop.RenderBaselineTest:
+            //
+            //   Vulkan (lavapipe)            all 11 scenes pass
+            //   GL on llvmpipe               all 11 scenes pass   <- LIBGL_ALWAYS_SOFTWARE=1
+            //   GL on virgl                  5 scenes fail
+            //
+            // Same WGSL, same naga output, same Mesa GLSL front end; only the backend differs. The
+            // generated GLSL was captured (MESA_SHADER_CAPTURE_PATH) and read: the straddle test,
+            // the winding direction and the `continue` lowering are all correct in it. So the fault
+            // is in virgl's re-translation of that GLSL for the host, not in this shader, not in
+            // naga, and not in Mesa's front end. Real Linux GL hardware is unaffected -- which is
+            // why this fallback keys on the ADAPTER rather than on the GL backend as a whole.
+            //
+            // The visible effect, for anyone re-testing: on virgl the two edges of a closed contour
+            // report the SAME winding direction, so the winding never returns to zero. Summing the
+            // per-segment direction across a scanline gives 0 on Vulkan and non-zero on virgl.
+            //
+            // WPF_WEBGPU_CPU_RASTER=0 forces the GPU rasterizer back on and reproduces it.
+            if (ctx.IsVirgl && !s_cpuRasterExplicit)
             {
                 s_gpuRaster = false;
             }

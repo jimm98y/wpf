@@ -284,6 +284,11 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandCursor.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\DBusLite.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\LinuxDesktopSettings.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\PortalDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapper.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapperHook.cs" />

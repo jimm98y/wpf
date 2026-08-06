@@ -1,7 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The Linux/Wayland head, built straight against the fork's build output.
+    The gallery on the Linux/Wayland head.
+
+    Compiles the SAME code-only gallery sources the macOS, Windows and Android heads run
+    (samples/wpf-webgpu-gallery), so a screenshot here is directly comparable with theirs. The one
+    WinForms card included: it embeds a Mono System.Windows.Forms control tree whose scene
+    composites into the SAME WebGPU frame, so it needs the WinForms-interop assemblies from
+    eng/build-sdk.sh (do NOT pass -p:SkipWinForms=true).
 
     Referenced by path rather than ProjectReference'd, exactly as the Android head does
     (samples/wpf-gallery-android): those projects build through the Arcade SDK, which a plain
@@ -25,12 +31,20 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <UseWPF>false</UseWPF>
-    <AssemblyName>WpfLinuxSmoke</AssemblyName>
+    <AssemblyName>WpfGalleryLinux</AssemblyName>
     <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_WinForms>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WinFormsInterop</_WinForms>
     <_Wgpu>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/bin/Release/net10.0</_Wgpu>
     <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
     <WgpuNativeDir>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
   </PropertyGroup>
+
+  <!-- The shared gallery, compiled from the canonical copy rather than duplicated. -->
+  <ItemGroup>
+    <Compile Include="../wpf-webgpu-gallery/Program.cs" Link="Program.cs" />
+    <Compile Include="../wpf-webgpu-gallery/InputDemo.cs" Link="InputDemo.cs" />
+    <Compile Include="../wpf-webgpu-gallery/WinFormsHost.cs" Link="WinFormsHost.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="WindowsBase">                 <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
@@ -49,7 +63,20 @@
     <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(_WinForms)/bin/Release/net10.0/System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_WinForms)/sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_WinForms)/lib/Accessibility.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
+
+  <!-- The vendored Mono.System.Drawing must be the SOLE System.Drawing.* provider: the WPF closure
+       drags in the framework System.Drawing.Common, and two providers for the same namespace is
+       CS0433 on every type the WinForms card touches. -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
 
   <!-- The fork's cross-platform Microsoft.Win32.SystemEvents / Registry shims. The framework copies
        throw off Windows; ExcludeAssets=all neutralises the transitive packages so ours are the only

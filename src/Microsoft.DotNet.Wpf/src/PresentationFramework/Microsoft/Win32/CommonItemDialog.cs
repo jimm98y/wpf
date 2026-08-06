@@ -292,13 +292,42 @@ namespace Microsoft.Win32
 
         private bool RunDialogPortable()
         {
+            string title = string.IsNullOrEmpty(Title) ? null : Title;
+            string dir = string.IsNullOrEmpty(InitialDirectory) ? null : InitialDirectory;
+
+            // Linux: xdg-desktop-portal's FileChooser. The dialog is drawn by the DESKTOP, not by
+            // us, so it matches the user's file manager, bookmarks and recent files -- and it is the
+            // only route that works inside a Flatpak sandbox.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                try
+                {
+                    if (this is SaveFileDialog)
+                    {
+                        string suggestedName = MutableItemNames is { Length: > 0 }
+                            ? System.IO.Path.GetFileName(MutableItemNames[0]) : null;
+                        string saved = MS.Internal.Interop.Wayland.PortalDialogs.ShowSavePanel(title, dir, suggestedName);
+                        if (saved == null) return false;
+                        MutableItemNames = new[] { saved };
+                        return true;
+                    }
+
+                    string[] chosen = MS.Internal.Interop.Wayland.PortalDialogs.ShowOpenPanel(
+                        title, dir, GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS));
+                    if (chosen == null || chosen.Length == 0) return false;
+                    MutableItemNames = chosen;
+                    return true;
+                }
+                catch
+                {
+                    return false;   // no portal / no session bus
+                }
+            }
+
             if (!OperatingSystem.IsMacOS())
             {
                 return false;   // no native file dialog on this platform
             }
-
-            string title = string.IsNullOrEmpty(Title) ? null : Title;
-            string dir = string.IsNullOrEmpty(InitialDirectory) ? null : InitialDirectory;
 
             try
             {

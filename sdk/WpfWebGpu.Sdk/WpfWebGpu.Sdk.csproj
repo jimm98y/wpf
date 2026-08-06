@@ -1,4 +1,4 @@
-<!-- Pack-only project: builds the WpfWebGpu.Sdk MSBuild-SDK NuGet directly from the
+﻿<!-- Pack-only project: builds the WpfWebGpu.Sdk MSBuild-SDK NuGet directly from the
      repo's build outputs (no staging step — works the same on macOS, Linux, Windows):
 
          dotnet pack sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj -c Release -o artifacts/local-feed \
@@ -90,8 +90,13 @@
     <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll')" />
     <None Include="$(WinFormsInteropDir)lib/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)lib/Accessibility.dll')" />
 
-    <!-- Native wgpu for the macOS desktop head. -->
+    <!-- Native wgpu for the unix desktop heads. Each is packed only if staged on this machine
+         (eng/fetch-wgpu.ps1 -Rid <rid>), so a package built on a Mac carries the macOS backend and
+         one built on Linux carries the Linux one; Sdk.targets then picks by RID at consume time. -->
     <None Include="$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-arm64/" Condition="Exists('$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib')" />
+    <None Include="$(WgpuInteropDir)native/osx-x64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-x64/" Condition="Exists('$(WgpuInteropDir)native/osx-x64/lib/libwgpu_native.dylib')" />
+    <None Include="$(WgpuInteropDir)native/linux-arm64/lib/libwgpu_native.so" Pack="true" PackagePath="native/linux-arm64/" Condition="Exists('$(WgpuInteropDir)native/linux-arm64/lib/libwgpu_native.so')" />
+    <None Include="$(WgpuInteropDir)native/linux-x64/lib/libwgpu_native.so" Pack="true" PackagePath="native/linux-x64/" Condition="Exists('$(WgpuInteropDir)native/linux-x64/lib/libwgpu_native.so')" />
   </ItemGroup>
 
   <!-- ============================== windows head payload ============================== -->

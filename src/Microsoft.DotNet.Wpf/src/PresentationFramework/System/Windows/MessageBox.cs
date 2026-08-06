@@ -471,8 +471,24 @@ namespace System.Windows
                 }
             }
 
-            // No native dialog available: return the caller's declared default (or the safest
-            // choice for the button set) without blocking.
+            // No native message box on this platform (Linux has none, and xdg-desktop-portal does
+            // not provide one) -- so draw one with WPF. Viable because the desktop heads keep the
+            // blocking dispatcher loop, hence a real nested frame; see ManagedMessageBox.
+            if (!OperatingSystem.IsIOS() && !OperatingSystem.IsAndroid() && !OperatingSystem.IsBrowser())
+            {
+                try
+                {
+                    return ManagedMessageBox.Show(messageBoxText, caption, buttons, icon, defaultResult);
+                }
+                catch (Exception)
+                {
+                    // No dispatcher / no windowing (a headless process): fall through rather than
+                    // turning a diagnostic prompt into a crash.
+                }
+            }
+
+            // Nothing can be shown: return the caller's declared default (or the safest choice for
+            // the button set) without blocking.
             foreach ((string _, MessageBoxResult result) in buttons)
             {
                 if (result == defaultResult)

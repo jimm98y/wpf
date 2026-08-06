@@ -120,11 +120,29 @@
     </ItemGroup>
   </Target>
 
-  <!-- macOS desktop: the native wgpu library. -->
-  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
-    <None Include="$(WpfWebGpuSdkRoot)native/osx-arm64/libwgpu_native.dylib"
-          CopyToOutputDirectory="PreserveNewest" Link="libwgpu_native.dylib" Visible="false" />
+  <!--
+    unix desktop: the native wgpu library, picked by the RID this build is actually producing.
+
+    Previously this hard-coded the macOS dylib with no Exists() guard, so a Linux build of an
+    SDK-based app both failed to get a backend AND hard-errored on the missing file.
+  -->
+  <PropertyGroup Condition="'$(_WpfWebGpuUnix)' == 'true'">
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuNativeRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_WpfWebGpuNativeRid>
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuNativeRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_WpfWebGpuNativeRid>
+    <_WpfWebGpuNativeFile Condition="$(_WpfWebGpuNativeRid.StartsWith('osx'))">libwgpu_native.dylib</_WpfWebGpuNativeFile>
+    <_WpfWebGpuNativeFile Condition="'$(_WpfWebGpuNativeFile)' == ''">libwgpu_native.so</_WpfWebGpuNativeFile>
+    <_WpfWebGpuNativePath>$(WpfWebGpuSdkRoot)native/$(_WpfWebGpuNativeRid)/$(_WpfWebGpuNativeFile)</_WpfWebGpuNativePath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and Exists('$(_WpfWebGpuNativePath)')">
+    <None Include="$(_WpfWebGpuNativePath)"
+          CopyToOutputDirectory="PreserveNewest" Link="$(_WpfWebGpuNativeFile)" Visible="false" />
   </ItemGroup>
+
+  <Target Name="_WpfWebGpuWarnMissingNative" BeforeTargets="Build"
+          Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and !Exists('$(_WpfWebGpuNativePath)')">
+    <Warning Text="WpfWebGpu.Sdk carries no wgpu backend for '$(_WpfWebGpuNativeRid)' (looked for $(_WpfWebGpuNativePath)). The app will fail to start." />
+  </Target>
 
   <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
        the Windows-only runtime packages dropped in the output (same strong-name identity, so the

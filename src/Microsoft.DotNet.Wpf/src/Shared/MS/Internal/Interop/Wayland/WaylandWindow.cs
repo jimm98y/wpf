@@ -130,12 +130,18 @@ namespace MS.Internal.Interop.Wayland
         }
 
         /// <summary>
-        /// A popup's top-left corner in device pixels relative to its owner's content. Used when the
-        /// popup is drawn INTO the owner's surface rather than presenting its own -- which on Linux
-        /// is the normal case, because the GL backend advertises no premultiplied composite-alpha
-        /// mode (see NativePlatform.PopupsShareOwnerSurface). The virtual coordinate space makes
-        /// this exact: both origins live in it, so the difference is the real offset even after the
-        /// compositor slid the popup to keep it on screen.
+        /// A popup's top-left corner in device pixels relative to its owner's CONTENT origin. Used
+        /// when the popup is drawn INTO the owner's surface rather than presenting its own -- which
+        /// on Linux is the normal case, because the GL backend advertises no premultiplied
+        /// composite-alpha mode (see NativePlatform.PopupsShareOwnerSurface).
+        ///
+        /// Content origin, not the owner's virtual origin. The virtual origin is the OUTER top left
+        /// (Win32 semantics), so subtracting it leaves the caption height in the offset and the
+        /// popup is drawn one titlebar too low -- and because compositing is the path that actually
+        /// puts pixels on screen here, that is what the user sees, however correct the xdg_positioner
+        /// happens to be. Both origins live in the same virtual space, so going through
+        /// GetClientScreenOriginPixels keeps this exact even after the compositor has slid the popup
+        /// to keep it on screen.
         /// </summary>
         private static void GetOriginWithinOwner(IntPtr handle, out int x, out int y)
         {
@@ -143,10 +149,11 @@ namespace MS.Internal.Interop.Wayland
             y = 0;
             WaylandWindow? w = FromHandle(handle);
             if (w is null) return;
-            WaylandWindow? owner = FromHandle(w._ownerHandle);
+            WaylandWindow? owner = w.ResolveOwner();
             if (owner is null) return;
-            x = w._virtualX - owner._virtualX;
-            y = w._virtualY - owner._virtualY;
+            owner.GetClientScreenOriginPixels(out int clientX, out int clientY);
+            x = w._virtualX - clientX;
+            y = w._virtualY - clientY;
         }
 
         public void Create(string title, int x, int y, int width, int height, bool borderless)
@@ -241,24 +248,96 @@ namespace MS.Internal.Interop.Wayland
             Wl.Destroy(positioner, XDG_POSITIONER_DESTROY);
         }
 
+        /// <summary>
+        /// The window this popup is positioned against. Every place that reasons about a popup's
+        /// placement MUST agree on this: parenting to one window while anchoring against another's
+        /// coordinates puts the popup somewhere neither of them expects.
+        /// </summary>
+        private WaylandWindow? ResolveOwner()
+        {
+            WaylandWindow? owner = FromHandle(_ownerHandle);
+            if (owner is not null && !ReferenceEquals(owner, this)) return owner;
+
+            // No explicit owner (WPF does not always supply one for menus): fall back to the
+            // topmost mapped toplevel, which is the window the menu visually belongs to.
+            lock (s_lock)
+            {
+                for (int i = s_zOrder.Count - 1; i >= 0; i--)
+                {
+                    WaylandWindow w = s_zOrder[i];
+                    if (!ReferenceEquals(w, this) && w._frame != IntPtr.Zero) return w;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The owner's decoration inset in DIPs: the offset from its window-geometry origin to its
+        /// content origin. Measured from libdecor rather than assumed, because the GTK headerbar's
+        /// height depends on the theme and font.
+        /// </summary>
+        private static void OwnerDecorationInset(WaylandWindow owner, out int insetX, out int insetY)
+        {
+            insetX = 0;
+            insetY = 0;
+            if (owner._frame == IntPtr.Zero) return;
+            try { WlDecor.libdecor_frame_translate_coordinate(owner._frame, 0, 0, out insetX, out insetY); }
+            catch { }
+        }
+
+        /// <summary>
+        /// A point in the VIRTUAL space to the space xdg_positioner.set_anchor_rect is specified
+        /// against: the parent xdg_surface's WINDOW GEOMETRY.
+        ///
+        /// For a libdecor toplevel that window geometry is the CONTENT area. The decorations are
+        /// separate subsurfaces that sit outside it, so the geometry origin coincides with the top
+        /// left of the client area and the conversion is simply "relative to the client origin".
+        ///
+        /// It is tempting to run the point through libdecor_frame_translate_coordinate first, since
+        /// that converts content coordinates into libdecor's decorated-FRAME space. That is a
+        /// different space from the window geometry, and using it puts every popup exactly one
+        /// titlebar too low -- which is how this was found.
+        /// </summary>
+        private static void VirtualToOwnerGeometry(WaylandWindow owner, int virtualX, int virtualY,
+                                                   out int geometryX, out int geometryY)
+        {
+            double scale = owner.GetBackingScale();
+            owner.GetClientScreenOriginPixels(out int clientX, out int clientY);
+            geometryX = (int)Math.Round((virtualX - clientX) / scale);
+            geometryY = (int)Math.Round((virtualY - clientY) / scale);
+        }
+
+        /// <summary>
+        /// The exact inverse of <see cref="VirtualToOwnerGeometry"/>, for turning what the compositor
+        /// reports in xdg_popup.configure back into the virtual space.
+        ///
+        /// These two MUST remain inverses. WPF asks for a position, we convert it one way, and the
+        /// compositor answers in the same space; if the return trip is not the exact mirror, the
+        /// popup's recorded origin drifts from where WPF believes it is and hit-testing follows the
+        /// wrong rectangle -- so a menu can look right and still not respond where it is drawn.
+        /// </summary>
+        private static void OwnerGeometryToVirtual(WaylandWindow owner, int geometryX, int geometryY,
+                                                   out int virtualX, out int virtualY)
+        {
+            double scale = owner.GetBackingScale();
+            owner.GetClientScreenOriginPixels(out int clientX, out int clientY);
+            virtualX = clientX + (int)Math.Round(geometryX * scale);
+            virtualY = clientY + (int)Math.Round(geometryY * scale);
+        }
+
+        /// <summary>Diagnostics: how the owner's decoration geometry actually measures.</summary>
+        private static string DescribeOwnerFrame(WaylandWindow owner)
+        {
+            OwnerDecorationInset(owner, out int ix, out int iy);
+            owner.GetClientScreenOriginPixels(out int cx, out int cy);
+            return $" | owner inset=({ix},{iy}) caption={owner.CaptionDips():0.#} client=({cx},{cy}) content={owner._contentW}x{owner._contentH}";
+        }
+
         /// <summary>The xdg_surface a popup is parented to: its owner's, whether that owner is a
         /// libdecor toplevel or another popup (a submenu).</summary>
         private IntPtr ParentXdgSurface()
         {
-            WaylandWindow? owner = FromHandle(_ownerHandle);
-            if (owner is null)
-            {
-                // No explicit owner (WPF does not always supply one for menus): fall back to the
-                // topmost mapped toplevel, which is the window the menu visually belongs to.
-                lock (s_lock)
-                {
-                    for (int i = s_zOrder.Count - 1; i >= 0; i--)
-                    {
-                        WaylandWindow w = s_zOrder[i];
-                        if (!ReferenceEquals(w, this) && w._frame != IntPtr.Zero) { owner = w; break; }
-                    }
-                }
-            }
+            WaylandWindow? owner = ResolveOwner();
             if (owner is null) return IntPtr.Zero;
             if (owner._xdgSurface != IntPtr.Zero) return owner._xdgSurface;
             if (owner._frame != IntPtr.Zero) return WlDecor.libdecor_frame_get_xdg_surface(owner._frame);
@@ -269,10 +348,19 @@ namespace MS.Internal.Interop.Wayland
         /// An xdg_positioner placing this popup where WPF asked, expressed the only way Wayland
         /// allows: relative to the owner.
         ///
-        /// The anchor rect is in the parent's WINDOW-GEOMETRY space, which for a decorated toplevel
-        /// is offset from its content surface by the titlebar -- so the content-relative point is run
-        /// through libdecor_frame_translate_coordinate first. Skipping that displaces every menu
-        /// downward by the height of the headerbar.
+        /// Three coordinate spaces meet here and the conversion order is the whole difficulty:
+        ///
+        ///   VIRTUAL   what WPF speaks. A window's virtual origin is its OUTER top-left (Win32
+        ///             semantics), which by construction is also its window-geometry origin --
+        ///             GetWindowPixelSize and GetClientScreenOriginPixels are built around that.
+        ///   CONTENT   the owner's client area, one titlebar below its outer top-left.
+        ///   GEOMETRY  what xdg_positioner.set_anchor_rect is specified against.
+        ///
+        /// So the popup's absolute position is first taken relative to the owner's CLIENT origin,
+        /// and only then run through libdecor to land in window-geometry space. Subtracting the
+        /// owner's virtual origin instead would already yield a geometry-relative offset, and
+        /// translating that a second time adds the titlebar twice -- which is precisely how a combo
+        /// dropdown ends up one headerbar too low.
         /// </summary>
         private IntPtr BuildPositioner()
         {
@@ -280,17 +368,17 @@ namespace MS.Internal.Interop.Wayland
             IntPtr positioner = Wl.Construct(wmBase, XDG_WM_BASE_CREATE_POSITIONER, "xdg_positioner",
                 Wl.wl_proxy_get_version(wmBase), WlArgument.NewId());
 
-            WaylandWindow? owner = FromHandle(_ownerHandle);
-            double scale = GetBackingScale();
-
+            WaylandWindow? owner = ResolveOwner();
             int relX = 0, relY = 0;
             if (owner is not null)
             {
-                relX = (int)Math.Round((_virtualX - owner._virtualX) / scale);
-                relY = (int)Math.Round((_virtualY - owner._virtualY) / scale);
-                if (owner._frame != IntPtr.Zero)
-                    WlDecor.libdecor_frame_translate_coordinate(owner._frame, relX, relY, out relX, out relY);
+                VirtualToOwnerGeometry(owner, _virtualX, _virtualY, out relX, out relY);
             }
+
+            WaylandDisplay.LogSink?.Invoke(
+                $"popup anchor: virtual=({_virtualX},{_virtualY}) owner={(owner is null ? "none" : $"({owner._virtualX},{owner._virtualY})")} " +
+                $"scale={GetBackingScale():0.##} -> geometry=({relX},{relY}) size={_contentW}x{_contentH}"
+                + (owner is null ? "" : DescribeOwnerFrame(owner)));
 
             Wl.Request(positioner, XDG_POSITIONER_SET_ANCHOR_RECT,
                 WlArgument.Int(relX), WlArgument.Int(relY), WlArgument.Int(1), WlArgument.Int(1));
@@ -472,18 +560,25 @@ namespace MS.Internal.Interop.Wayland
                 // its parent, after any constraint sliding or flipping. Folding it into the virtual
                 // origin is what keeps hit-testing and ClientToScreen correct for a menu that was
                 // nudged to stay on-screen.
-                WaylandWindow? owner = FromHandle(w._ownerHandle);
-                double scale = w.GetBackingScale();
+                WaylandWindow? owner = w.ResolveOwner();
+                int ownerClientX = 0, ownerClientY = 0;
                 if (owner is not null)
                 {
-                    w._virtualX = owner._virtualX + (int)Math.Round(x * scale);
-                    w._virtualY = owner._virtualY + (int)Math.Round(y * scale);
+                    OwnerGeometryToVirtual(owner, x, y, out int vx, out int vy);
+                    w._virtualX = vx;
+                    w._virtualY = vy;
+                    owner.GetClientScreenOriginPixels(out ownerClientX, out ownerClientY);
                 }
                 if (width > 0 && height > 0)
                 {
                     w._contentW = width;
                     w._contentH = height;
                 }
+
+                WaylandDisplay.LogSink?.Invoke(
+                    $"popup configured: compositor placed it at ({x},{y}) rel. to owner geometry, " +
+                    $"size={width}x{height} -> virtual=({w._virtualX},{w._virtualY})"
+                    + $" composite-origin=({w._virtualX - ownerClientX},{w._virtualY - ownerClientY})");
             }
             catch { }
         }
@@ -843,6 +938,11 @@ namespace MS.Internal.Interop.Wayland
             if (!WaylandDisplay.IsActive) return;
 
             WaylandInput.PumpKeyRepeat();
+
+            // A Clipboard.SetText issued before the user had touched the window could not be
+            // published (the compositor validates set_selection against a real input serial), so it
+            // was held back; publish it as soon as one exists.
+            WaylandClipboard.FlushDeferred();
 
             WaylandWindow[] windows;
             lock (s_lock) windows = s_zOrder.ToArray();

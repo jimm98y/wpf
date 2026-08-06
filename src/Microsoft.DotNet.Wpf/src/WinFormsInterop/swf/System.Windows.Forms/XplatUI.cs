@@ -551,6 +551,10 @@ namespace System.Windows.Forms {
 			return driver.ClipboardRetrieve (handle, type, converter);
 		}
 
+		internal static bool CursorBitmapsUsed {
+			get { return driver.CursorBitmapsUsed; }
+		}
+
 		internal static IntPtr DefineCursor (Bitmap bitmap, Bitmap mask, Color cursor_pixel, Color mask_pixel, int xHotSpot, int yHotSpot)
 		{
 			DriverDebug ("DefineCursor (...): Called");

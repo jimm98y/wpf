@@ -489,7 +489,28 @@ namespace MS.Internal.Interop.Wayland
 
             Wl.wl_display_dispatch_pending(Display);
             if (Decor != IntPtr.Zero) WlDecor.libdecor_dispatch(Decor, 0);
+            PumpDBus();
             return read;
+        }
+
+        /// <summary>
+        /// Service the session bus from the same pass. Portals (colour-scheme changes, file-chooser
+        /// responses) arrive as D-Bus signals, and running them here rather than on a background
+        /// thread keeps everything on the UI thread with no marshalling -- and costs nothing when
+        /// there is no traffic.
+        /// </summary>
+        private static void PumpDBus()
+        {
+            if (!DBusLite.IsAvailable) return;
+            try
+            {
+                DBusLite.PumpSignals(static (iface, member, message) =>
+                {
+                    LinuxDesktopSettings.OnSignal(iface, member, message);
+                    PortalDialogs.OnSignal(iface, member, message);
+                });
+            }
+            catch { }
         }
 
         /// <summary>Dispatch without blocking; used by nested pumps (modal dialogs, clipboard reads).</summary>

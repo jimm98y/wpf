@@ -75,7 +75,7 @@ fi
 
 if [ "$REBUILD" = "1" ]; then
   echo ">> building the fork (eng/build-sdk.sh)"
-  DOTNET="$DOTNET" "$REPO/eng/build-sdk.sh" -p:SkipBrowser=true -p:SkipWinForms=true -p:SkipPack=true
+  DOTNET="$DOTNET" "$REPO/eng/build-sdk.sh" -p:SkipBrowser=true -p:SkipPack=true
 fi
 
 echo ">> building $PROJECT"

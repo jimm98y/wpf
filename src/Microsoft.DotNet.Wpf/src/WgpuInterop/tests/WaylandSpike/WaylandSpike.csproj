@@ -32,6 +32,10 @@
     <Compile Include="$(WaylandDir)WaylandDisplay.cs" Link="Wayland\WaylandDisplay.cs" />
     <Compile Include="$(WaylandDir)WaylandInput.cs" Link="Wayland\WaylandInput.cs" />
     <Compile Include="$(WaylandDir)WaylandCursor.cs" Link="Wayland\WaylandCursor.cs" />
+    <Compile Include="$(WaylandDir)WaylandClipboard.cs" Link="Wayland\WaylandClipboard.cs" />
+    <Compile Include="$(WaylandDir)DBusLite.cs" Link="Wayland\DBusLite.cs" />
+    <Compile Include="$(WaylandDir)LinuxDesktopSettings.cs" Link="Wayland\LinuxDesktopSettings.cs" />
+    <Compile Include="$(WaylandDir)PortalDialogs.cs" Link="Wayland\PortalDialogs.cs" />
   </ItemGroup>
 
   <ItemGroup>

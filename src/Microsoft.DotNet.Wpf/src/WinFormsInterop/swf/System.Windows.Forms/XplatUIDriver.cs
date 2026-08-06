@@ -355,6 +355,13 @@ namespace System.Windows.Forms {
 		internal abstract void SetCursor(IntPtr hwnd, IntPtr cursor);
 		internal abstract void ShowCursor(bool show);
 		internal abstract void OverrideCursor(IntPtr cursor);
+		// Whether DefineCursor actually consumes the bitmaps handed to it. Drivers that hand cursor
+		// duty to the OS compositor ignore them, and decoding a .cur into a System.Drawing.Bitmap just
+		// to throw it away costs a hard libgdiplus dependency on the FIRST Form ever constructed (via
+		// ScrollableControl -> SizeGrip -> Cursors.SizeNWSE). Defaults to true so the X11/Win32/Quartz
+		// drivers are unaffected.
+		internal virtual bool CursorBitmapsUsed { get { return true; } }
+
 		internal abstract IntPtr DefineCursor(Bitmap bitmap, Bitmap mask, Color cursor_pixel, Color mask_pixel, int xHotSpot, int yHotSpot);
 		internal abstract IntPtr DefineStdCursor(StdCursor id);
 		internal abstract Bitmap DefineStdCursorBitmap(StdCursor id);
