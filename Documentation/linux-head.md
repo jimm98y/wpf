@@ -377,19 +377,61 @@ phaseY: 0.011 0.024 0.056 0.102 0.127 ...  <- effectively CONTINUOUS (~255 bucke
 scale = 3.000
 ```
 
-Two things fall out:
+**The macOS profile has now been measured the same way** (gallery, `WPF_TEXT_LOG=1`, 4.9k placements
+on a 1x external display, window surface 1014x730):
 
-1. **The axes are not treated alike.** Vertical keeps each glyph's exact sub-pixel offset; horizontal
-   is snapped to two variants, so nearly half of all glyphs straddle a pixel boundary horizontally.
-   That asymmetry fits the measured symptom (stems spread across two pixels) far better than any of
-   the eliminated theories. Whether macOS shows the same split is THE question -- run the same command
-   there and diff.
-2. **`scale=3.000` is unexplained** and worth checking on its own; 1.0 was expected on a 1x display.
-   If the scene is being rendered at 3x and resampled somewhere, that is a separate defect.
+```
+phaseX: 2369 @ 0.000 | 2488 @ 0.500        <- HALF-PIXEL, only two variants; 51% straddle
+phaseY: 0.012 0.014 0.020 0.021 0.026 ...  <- effectively CONTINUOUS (116 buckets in 4.9k samples)
+scale = 1.000
+```
 
-Caveat worth checking before assuming a platform difference: this code is shared, so establish whether
-macOS actually takes this same path and the same phases -- if it does, the fix helps both platforms and
-Linux only looks worse for some other reason.
+Diffing the two answers both questions:
+
+1. **The axis asymmetry is NOT the differentiator.** macOS snaps X to the same two variants and keeps
+   Y continuous, exactly as Linux does -- and it straddles pixel boundaries slightly MORE (51% vs
+   43%) while looking BETTER. So the shared placement path is not what makes Linux muddy. Fixing the
+   asymmetry may still be worth doing on its own merits, but it cannot explain the platform gap, and
+   the "stems spread across two pixels" theory is now eliminated along with the earlier ones.
+2. **The FONT is not the differentiator either.** Installing Selawik on the Linux box (so both
+   platforms resolve "Segoe UI" to the same metric-compatible, hinted face) did not help -- Linux
+   still looks bad. Candidate 1 below is therefore eliminated too.
+
+**What DOES reproduce it: a render scale that does not match the display.** Forcing the macOS gallery
+to `--scale 3` on a 1x display (`WPF_MAC_FORCE_SCALE=3`) makes its text look bad in exactly the way
+Linux does. The numbers confirm the render itself is unchanged apart from the scale:
+
+```
+macOS --scale 3: phaseX 2032 @ 0.500 | 2029 @ 0.000 (50% straddle), phaseY 109 buckets, scale = 3.000
+                 target/surface 3042x2190 for a window that is still 1014x730 physical pixels
+```
+
+CocoaWindow.GetBackingScale is the single source of truth for the HwndTarget DPI scale, the client
+rects AND the CAMetalLayer contentsScale, so forcing 3 makes WPF render a 3042x2190 drawable for a
+1014x730-pixel window and Core Animation filters it back down. Glyph coverage -- thin, high-contrast,
+gamma-mapped -- is what visibly dies in that resample; large geometry survives it, which is why only
+text "looks bad".
+
+**This unifies every observation in this section, including the ones that looked contradictory:**
+
+| | render scale | display scale | result |
+|---|---|---|---|
+| macOS default | 1 | 1 | sharp |
+| macOS `--scale 3` | 3 | 1 | **mush** (downsampled) |
+| Linux default | 1 | ? | **mush** |
+| Linux `WPF_LINUX_FORCE_SCALE=2` | 2 | ? | sharp |
+
+Text degrades whenever the render scale differs from the display's true backing scale, in EITHER
+direction -- macOS shows the too-high case, Linux's "2x fixes it" is the too-low case. That also
+explains why more samples "help" on Linux without the rasterizer being at fault: 2x is not adding
+quality, it is removing a mismatch.
+
+**So the next measurement is not about text at all: what is the Linux display's actual backing scale,
+and what does the head report?** If the screen is 2x/3x and the head defaults to 1x, the compositor is
+upscaling every frame and that is the whole bug -- fix the scale source, the way CocoaWindow sources
+it from the window's NSScreen. Note this is compatible with the earlier "compositor resampling ruled
+out" finding: WAYLAND_DEBUG showed the protocol objects agreeing with each other, not the render scale
+agreeing with the display.
 
 Remaining candidates, if that is not enough:
 1. **A different font resolves.** "Segoe UI" substitutes to Helvetica Neue/Helvetica on macOS but to
