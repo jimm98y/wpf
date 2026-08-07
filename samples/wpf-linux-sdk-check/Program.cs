@@ -112,6 +112,12 @@ internal static class Program
             string family = got ? face.FamilyNames.Values.FirstOrDefault() : "(none)";
             Console.WriteLine($"MONO FONT: resolved={got} face='{family}' " +
                               $"(bundled Cascadia expected, not a fallback)");
+
+            // The UI face. Segoe UI substitutes onto Selawik, which the SDK now bundles; if this
+            // reports Liberation Sans or DejaVu the substitution is not taking effect.
+            var ui = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            bool uiGot = ui.TryGetGlyphTypeface(out GlyphTypeface uiFace);
+            Console.WriteLine($"UI FONT: resolved={uiGot} face='{(uiGot ? uiFace.FamilyNames.Values.FirstOrDefault() : "(none)")}' (Selawik expected)");
         }
         catch (Exception e)
         {

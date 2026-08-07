@@ -529,6 +529,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // display-destined sRGB path we re-map glyph coverage through this LUT so text
         // weight matches WPF. (Linear test targets are left untouched, so coverage
         // tests stay exact.) cov' = cov^(1/2.2), the standard sRGB text gamma.
+        // WPF_TEXT_LOG=1 dumps how each glyph run is POSITIONED and rasterized: the device offset,
+        // the snapped position, the resulting sub-pixel phase and the mask size. Text on Linux looks
+        // worse than on macOS with the same font, rasterizer and scale, and every hypothesis derived
+        // from the Linux side alone has been wrong -- so the way to make progress is to run this on
+        // BOTH platforms with the same content and diff the numbers, rather than theorise again.
+        private static readonly bool s_textLog =
+            Environment.GetEnvironmentVariable("WPF_TEXT_LOG") == "1";
+
         private const float TextGamma = 2.2f;
         private static readonly byte[] s_textGammaLut = BuildTextGammaLut();
         private static byte[] BuildTextGammaLut()
@@ -2895,6 +2903,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 // Key must distinguish the (now finer) vertical phase; X stays half-pixel (2 variants).
                 int phase = (int)(phaseX * 2f) * 512 + (int)MathF.Round(phaseY * 255f);
+                if (s_textLog && baselineAnchor is not null)
+                {
+                    DebugLog?.Invoke($"glyphpos dx={dx:F3} dy={dy:F3} -> ox={ox} oy={oy} " +
+                                     $"phaseX={phaseX:F3} phaseY={phaseY:F3} scale={LinearScale(world):F3}");
+                }
                 // The normalized geometry is only MATERIALIZED on a cache miss (below); the key is
                 // hashed straight off the original with the normalizing translation folded in, and
                 // memoized on the geometry (the walk is pure and the instances are stable).

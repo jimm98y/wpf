@@ -125,6 +125,9 @@
     <!-- Cascadia Code for its programming ligatures: the fallbacks have none. -->
     <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/CascadiaCode-Regular.ttf"
           Link="fonts/CascadiaCode-Regular.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Selawik (the Segoe UI substitute) once it is vendored; a glob matching nothing is inert. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/Selawik*.ttf"
+          Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
 </Project>

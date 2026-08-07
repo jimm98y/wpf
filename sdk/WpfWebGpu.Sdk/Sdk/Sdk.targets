@@ -170,6 +170,12 @@
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/CascadiaCode-Regular.ttf"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/CascadiaCode-Regular.ttf" Visible="false"
           Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/CascadiaCode-Regular.ttf')" />
+    <!-- Selawik: the metric-compatible open replacement for Segoe UI, and the FIRST substitute
+         FontFactoryState asks for. A wildcard so every weight vendored gets deployed, and so this is
+         inert (a glob matching nothing yields no items) until the font is actually added.
+         See eng/check-font-substitutions.py, which fails while it is missing. -->
+    <None Include="$(WpfWebGpuSdkRoot)web/fonts/Selawik*.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/%(Filename)%(Extension)" Visible="false" />
   </ItemGroup>
 
   <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever

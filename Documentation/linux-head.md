@@ -296,6 +296,109 @@ wl_surface.set_buffer_scale(1)
 wp_viewport.set_destination(1014, 731)        -> buffer is 1014x731 too
 ```
 
+**"Aliased" is the wrong word -- it is SOFT.** Reading the actual pixels of small body text (crop the
+sink dump and print values) shows proper grayscale antialiasing: 137 distinct intermediate levels in a
+112x16 crop, e.g. `39 129 255 ... 144 53 88`. The masks are not aliased. What they are is SOFT: stems
+land spread across two pixels instead of snapped to one, giving low-contrast small text. That is the
+signature of UNHINTED rendering at fractional positions, and it explains why 2x appears to fix it (a
+two-pixel stem is proportionally half as soft at twice the size).
+
+`Segoe UI` resolves to **Liberation Sans** on Linux and **Helvetica Neue** on macOS (`fc-list` shows
+Selawik/Helvetica/Arial all absent here, so the table falls through to Liberation Sans). The fonts
+therefore genuinely differ between the two platforms.
+
+**The controlled test that decides it:** Cascadia Code is now bundled on BOTH platforms, so it is the
+same font file either side. Compare the gallery's Cascadia text (the code samples) on macOS and Linux:
+
+* soft on Linux, crisp on macOS -> SAME font, different result, so it is the RENDERING (hinting /
+  stem snapping / subpixel positioning), and the font substitution is a red herring;
+* soft on both -> the font choice was the difference, and the fix is the substitution table.
+
+**Selawik is now bundled (but was NOT the cause).** `FontFactoryState` lists
+`Selawik` as the first substitute for `segoe ui` -- it is Microsoft's metric-compatible open
+replacement, i.e. exactly the right face -- but there is no Selawik anywhere in this repo and none
+installed on a normal Linux box. So the chain falls through to Helvetica Neue on macOS and all the way
+to **Liberation Sans** on Linux (Arial metrics, different weight and spacing from the UI's design).
+
+That was the SAME defect as the missing Cascadia Code: a substitution table naming a font the head did
+not bundle. **Fixed** -- Selawik 1.01 (SIL OFL 1.1, github.com/microsoft/Selawik) is vendored in
+`sdk/WpfWebGpu.Sdk/web/fonts/` as `Selawik-{Regular,Semibold,Bold,Light,Semilight}.ttf` with its
+licence beside it, and deployed by a `Selawik*.ttf` glob so added weights need no further edit. Every
+head now renders the UI in the face the substitution was designed around, on macOS and Linux alike.
+
+`eng/check-font-substitutions.py` guards against a fourth occurrence: it fails when the FIRST name in
+any chain is neither bundled nor OS-provided. Run it after touching FontFactoryState's table.
+
+**Bundling it did NOT fix the appearance.** Verified with the sdk-check probe -- `UI FONT:
+resolved=True face='Selawik'` -- and text still looks wrong, so the substituted face was never the
+cause. Keep the change (it is the face the UI was designed around), but the defect is elsewhere.
+
+**This leaves a clean controlled experiment.** The SDK deploys Selawik to every unix head, so macOS and
+Linux now render the UI from the SAME font file, with the same managed rasterizer, at the same 1x.
+macOS looks right and Linux does not, which isolates the defect to the rendering pipeline -- not the
+font, not the resolution, not the compositor (all measured, above).
+
+**The mechanism, located.** The device-space coverage path quantises a glyph's subpixel position to
+HALF-pixel phases (`WgpuSceneRenderer`, ~line 2890):
+
+```csharp
+float qy = MathF.Round(dy * 2f) * 0.5f;   // snap to nearest 0.5 px
+oy = MathF.Floor(qy);
+phaseY = qy - oy;                          // 0 or 0.5
+```
+
+So about half of all glyphs are rasterized at a 0.5-pixel offset, which spreads a stem across two
+pixels -- exactly the measured symptom, and why 2x halves its visibility (the offset is half as large
+relative to the glyph).
+
+**Whole-pixel snapping was tried and is WRONG.** Forcing `phaseX`/`phaseY` to 0 for glyphs (whole-pixel
+X and baseline) does not sharpen text -- it destroys it. The pixel row across small text goes from real
+glyph structure to a uniform grey smear:
+
+```
+before:  255 255  39 129 255 255 255 144  53  88 255 148  41 182
+after:   255 255 255 255 255 255 255 175 122 123 122 123 123 122   <- mush
+```
+
+The mask cache keys and the quad offset are computed FROM the phase, so changing the snap without
+changing everything that consumes it leaves the rasterized mask and the position it is drawn at
+disagreeing, and the result is resampled to porridge. Any future attempt has to move the mask
+geometry, the cache key and the quad offset together -- and note the half-pixel grid is deliberate:
+the comment above it records that per-glyph vertical snapping caused a "sunken letters" bug, which is
+why the baseline is snapped once per run instead.
+
+**A measured Linux profile now exists to diff against macOS.** `WPF_TEXT_LOG=1` dumps every glyph
+placement (device offset, snapped position, sub-pixel phase, scale) through the sink log. On the Linux
+gallery, ~135k placements in 20s give:
+
+```
+phaseX: 77240 @ 0.000 | 57416 @ 0.500      <- HALF-PIXEL, only two variants; 43% straddle
+phaseY: 0.011 0.024 0.056 0.102 0.127 ...  <- effectively CONTINUOUS (~255 buckets)
+scale = 3.000
+```
+
+Two things fall out:
+
+1. **The axes are not treated alike.** Vertical keeps each glyph's exact sub-pixel offset; horizontal
+   is snapped to two variants, so nearly half of all glyphs straddle a pixel boundary horizontally.
+   That asymmetry fits the measured symptom (stems spread across two pixels) far better than any of
+   the eliminated theories. Whether macOS shows the same split is THE question -- run the same command
+   there and diff.
+2. **`scale=3.000` is unexplained** and worth checking on its own; 1.0 was expected on a 1x display.
+   If the scene is being rendered at 3x and resampled somewhere, that is a separate defect.
+
+Caveat worth checking before assuming a platform difference: this code is shared, so establish whether
+macOS actually takes this same path and the same phases -- if it does, the fix helps both platforms and
+Linux only looks worse for some other reason.
+
+Remaining candidates, if that is not enough:
+1. **A different font resolves.** "Segoe UI" substitutes to Helvetica Neue/Helvetica on macOS but to
+   Liberation Sans / DejaVu Sans on Linux (see FontFactoryState's table). DejaVu in particular is
+   muddy at small sizes unhinted. Print the resolved face on both platforms before anything else --
+   this costs nothing and would explain the whole difference.
+2. **No hinting / stem snapping**, which the managed rasterizer does not implement at all. If macOS
+   resolves a different face that happens to survive it better, (1) is really the cause.
+
 **Nothing is left of the obvious explanations.** Blend space, backend, rasterizer sampling, DPI and
 compositor scaling are all eliminated by experiment, yet 2x rendering fixes it on Linux and macOS
 needs no such help at 1x. The next thing to establish is whether the two platforms are really
@@ -365,6 +468,7 @@ eng/run-linux.sh --media -- video.webm --auto 13                  # media transp
 #   sdk/WpfWebGpu.Sdk/assemble.sh && rm -rf ~/.nuget/packages/wpfwebgpu.sdk
 #   ./.dotnet/dotnet build "../WPF-Samples/Sample Applications/WPFGallery/WPFGallery.Linux.csproj" -c Release
 python3 eng/check-path-casing.py                                  # csproj paths vs the filesystem
+python3 eng/check-font-substitutions.py                           # every preferred substitute is bundled or OS-provided
 
 eng/build-sdk.sh -p:SkipBrowser=true                              # ...and PACK the SDK
 dotnet run --project samples/wpf-linux-sdk-check -- --seconds 6   # consume the packaged SDK
