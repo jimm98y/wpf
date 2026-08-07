@@ -547,6 +547,44 @@ Measured on the gallery, one 13px word, coverage normalised against the run's in
 
 After the fix we are within 1.6% of the glyph geometry.
 
+**What this does NOT explain, and nobody should pretend otherwise: why macOS looked BETTER.** The
+double correction was not Linux-specific -- `s_gammaComposite` defaults true on Metal too, so the
+macOS head was applying the same 23% ink excess and was judged to look fine. So this fixes a real
+defect on every head, but the *platform gap* that started the investigation is still unaccounted for.
+The untested hypothesis is display density: a 23% excess on a partially-covered edge pixel is a
+sub-pixel-wide halo, which is far less visible at 2x than at 1x, and the macOS head normally runs on a
+Retina panel. Test it by rendering the SAME app at 1x on both and diffing the dumps numerically --
+that comparison has still never been done, and every conclusion about "macOS looks better" rests on
+eyeballing.
+
+**Coverage gap that let this ship, now closed.** `WgpuInterop.RenderBaselineTest`'s `text-run` scene
+is unchanged by this fix (0 pixels) and `WgpuInterop.GammaTest` still passes -- because both exercise
+the LINEAR / sRGB path, and NEITHER covered the default display path (gamma-space compositing into a
+plain-UNORM target), which is what every real window uses. That is the hole the bug lived in for the
+life of the renderer.
+
+`WgpuInterop.TextCoverageTest` now covers it. It asserts a physical invariant rather than a golden
+image, so it needs no per-platform baselines and cannot rot: **anti-aliasing conserves area**, so
+summing coverage over a rendered glyph run must equal the area enclosed by its outlines. The expected
+area comes from the FONT (shoelace over the flattened contours, signed per glyph so counters subtract),
+independently of anything the renderer does, so it cannot agree with a broken rasterizer by
+construction. Verified in both directions:
+
+```
+fixed renderer : expected=1279.6  measured=1279.3  ratio=1.000   PASS
+pre-fix gate   : expected=1279.6  measured=1450.6  ratio=1.134   FAIL (as it must)
+```
+
+Any change that re-weights coverage -- a stray gamma curve, a contrast boost, a double-applied LUT --
+breaks that equality while still LOOKING like text, which is exactly the class of defect an
+"is it legible" test cannot catch.
+
+**The +13.4% there is at em 32; the gallery measured +23% at em 13.** The excess scales INVERSELY with
+glyph size, because it lands on partially-covered edge pixels and those are a smaller fraction of a
+larger glyph. That is independent support for the display-density hypothesis above: the same
+double-applied LUT would have cost the macOS head visibly less on a 2x panel than it cost Linux at 1x.
+It is support, not proof -- the 1x-on-both dump diff is still the test that would settle it.
+
 **Normalise against the ink colour, not against black.** This is why the defect survived so many
 passes: the gallery's ink is `#222833`, which is grayscale **39**, so a FULLY covered pixel reads 39
 and never 0. Every "count the dark pixels" comparison against a black reference therefore scored our
@@ -663,6 +701,8 @@ hardware is unaffected and keeps the GPU rasterizer. `WPF_WEBGPU_CPU_RASTER=0` r
 ```bash
 dotnet run --project src/.../tests/WgpuInterop.SmokeTest          # device path, no display
 dotnet run --project src/.../tests/WgpuInterop.RenderBaselineTest # 11 offscreen scenes
+dotnet run --project src/.../tests/WgpuInterop.TextCoverageTest   # glyph ink == outline area, on the DEFAULT display path
+dotnet run --project src/.../tests/WgpuInterop.GammaTest          # text gamma on the linear/sRGB path
 dotnet run --project src/.../tests/WaylandSpike -- --frames 20    # a Wayland window, no WPF
 eng/run-linux.sh -- --auto-popup                                  # popup placement, unattended
 eng/run-linux.sh -- --auto-clipboard                              # clipboard round-trip (in-process)
@@ -675,6 +715,7 @@ eng/run-linux.sh --media -- video.webm --auto 13                  # media transp
 # through a WPFGallery.Linux.csproj added ALONGSIDE the original (net10.0, not net10.0-windows), so
 # the upstream sample still builds for Windows. Repack + evict first or the build silently uses the
 # last-packed SDK:
+#   ./.dotnet/dotnet build src/.../WgpuInterop/WgpuInterop.csproj -c Release   # assemble.sh does NOT build
 #   sdk/WpfWebGpu.Sdk/assemble.sh && rm -rf ~/.nuget/packages/wpfwebgpu.sdk
 #   ./.dotnet/dotnet build "../WPF-Samples/Sample Applications/WPFGallery/WPFGallery.Linux.csproj" -c Release
 python3 eng/check-path-casing.py                                  # csproj paths vs the filesystem
