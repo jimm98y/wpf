@@ -277,11 +277,12 @@ following are NOT the cause -- do not re-try them:
 The GL-scanout theory (and the offscreen + linearizing-blit plan built on it) is dead: if Vulkan and
 GL render identically, the presentation backend is not the variable.
 
-> **ANSWERED, further down.** The cause is the Parallels VM upscaling the guest framebuffer to the
-> Retina host -- a 2x resample AFTER everything this section measures, invisible to every API inside
-> the guest. Jump to "The Linux head is measured inside a VM, and the VM is the resample". The
-> narrative below is kept because each step eliminates a real hypothesis, and because the *reasoning*
-> in it ("1x on Linux is not 1x on the glass") is exactly what took so long to see.
+> **ANSWERED, further down: jump to "SOLVED: the text-gamma correction was applied twice".** The text
+> was never aliased or soft -- it was ~23% too heavy, because the text-gamma LUT was applied on top of
+> gamma-space compositing, which is already the thing that LUT emulates. The excess landed on
+> partially-covered edge pixels, i.e. as a halo of alpha around every glyph. The narrative below is
+> kept because each step eliminates a real hypothesis, but note that its central assumption -- that a
+> difference this visible had to be a SCALE or a RESAMPLE -- is what sent it round in circles.
 
 **The cause is NOT known** *(at the time this was written)*. Rendering at `WPF_LINUX_FORCE_SCALE=2`
 makes text look right in both themes, which pointed at DPI -- but **1x on macOS looks good and 1x on
@@ -431,9 +432,9 @@ text "looks bad".
 Text degrades whenever the render scale differs from the display's true backing scale, in EITHER
 direction -- macOS shows the too-high case, Linux's "2x fixes it" is the too-low case. That also
 explains why more samples "help" on Linux without the rasterizer being at fault: 2x is not adding
-quality, it is removing a mismatch. The `display scale` column was a `?` for both Linux rows until the
-VM boundary was identified; see "The Linux head is measured inside a VM" below for how the 2 gets in
-and why nothing inside the guest can observe it.
+quality, it is removing a mismatch. **The `display scale` column stayed a `?` for both Linux rows and
+was never resolved, because there was nothing to resolve: Linux renders 1 into a 1:1 buffer on a 1:1
+display. 2x "fixing" it was 2x diluting a 23% ink excess, not correcting a mismatch.**
 
 **RESOLVED -- there is no 3. The render scale on Linux IS 1, and the `scale = 3.000` lines were a
 misread of this log.** `WPF_TEXT_LOG` did not say which PASS a placement belonged to, and it
@@ -472,12 +473,12 @@ Also re-checked while here, and NOT the cause:
   glyph's fractional INK-BOX TOP, not a fractional baseline -- it is not evidence of a snapping bug.
   Reverted; don't re-try it as a sharpness fix.
 
-**What the measurement does leave standing.** Against a FreeType render of the SAME font file at the
-SAME size (Selawik-Semibold 13px, "Interactive"), our output puts twice as many pixels at partial
-coverage -- 275 vs 137 in an identical 73x16 crop, and lighter per ink pixel (mean 94.7 vs 71.9)
-while carrying ~10% more total ink. That is the unhinted-vs-hinted signature, not a scale, gamma or
-rasterizer-quality signature: FreeType snaps stems to the pixel grid and we do not implement hinting
-at all. It is also the same on macOS, so it is a quality ceiling rather than the platform gap.
+**A FreeType comparison pointed the right way but was read wrong at first.** Rendering the SAME font
+file at the SAME size (Selawik-Semibold 13px, "Interactive") and comparing pixel counts DOES isolate
+the defect -- but only once coverage is normalised against the run's ink colour rather than black.
+Scored against black it looked like an antialiasing-quality gap ("twice as many partial-coverage
+pixels"), which was an artifact; scored correctly it is a 23% TOTAL-INK excess with a normal
+distribution. See "SOLVED" below for the corrected numbers and what they turned out to mean.
 
 **MEASURED: the presentation path does not touch the pixels.** `WF_SURF_DUMP` reads back the REAL
 swapchain texture rather than re-rendering offscreen, so diffing it against `WPF_WEBGPU_SINK_DUMP` of
@@ -521,69 +522,55 @@ ratio, rasterizer (GPU and CPU), font, blend space, backend, placement phases an
 contents are all eliminated by measurement -- everything from the scene graph to the bytes handed to
 the compositor is verifiably what we intended.
 
-## The Linux head is measured inside a VM, and the VM is the resample
+## SOLVED: the text-gamma correction was applied twice
 
-The comparison that started this section is macOS-host-versus-Linux-guest on ONE machine: the Linux
-head runs in a Parallels VM on a Mac. That is not a detail, it is the answer, because it puts a
-scaling step in the Linux path that has no counterpart in the macOS path and that NO API inside the
-guest can see.
+Text on the Linux head was not aliased and was not soft. It was **too heavy** -- every glyph carried
+about 23% more ink than its outlines contain, and the excess landed on partially-covered EDGE pixels,
+which reads as a dark halo around each glyph. `EmitCoverageMask` remapped glyph coverage through the
+text-gamma LUT (`cov' = cov^(1/2.2)`) whenever `(s_gammaComposite || _srgbOutput)`, i.e. **including
+in gamma-space mode, which is the default and is already the thing that LUT emulates.**
 
-What the guest's virtual display actually is:
+The LUT exists to make text match WPF when this engine blends in LINEAR space: an sRGB target decodes
+to linear on read and re-encodes on write, so coverage blends linearly and needs the correction. In
+gamma-space mode (colours pre-encoded at their source, blended on those encoded values, plain-UNORM
+target) the blend IS the correction, and doing both counts it twice. The gate is now `_srgbOutput`
+alone, which is exactly "this pass blends linearly" -- `_srgbOutput` can only be true when
+`s_gammaComposite` is false (see its two assignment sites).
 
-```
-/sys/class/drm/card1/card1-Virtual-1/  (virtio-gpu, PCI 1AB8:0010, prltoolsd running)
-  status  : connected
-  modes   : 1704x917          <- current + preferred, created dynamically by Parallels
-            4096x2160, 2560x1600, 1920x1440, ...   <- the static standard-mode table
-  xrandr  : 1704x917+0+0, 0mm x 0mm  (no physical size -> GNOME has no DPI to infer, stays at 1x)
-```
+Measured on the gallery, one 13px word, coverage normalised against the run's ink colour:
 
-`1704x917` is not a mode any real panel has. It is Parallels sizing the guest framebuffer to the VM
-window **in points**. On a Retina host that window is 3408x1834 physical pixels, so the host must
-scale the guest framebuffer **2x** to fill it. Decisive corroboration: the mode list contains **no
-3408x1834** -- Parallels has not created a HiDPI mode for this VM, i.e. it is not in "Best for Retina".
+| | full-coverage px | partial px | **total coverage** |
+|---|---|---|---|
+| before (LUT applied twice) | 136 | 226 | **268.7** (+23%) |
+| after (LUT gated on `_srgbOutput`) | 110 | 225 | **215.6** |
+| FreeType rasterizing the SAME outlines at the SAME size | | | 219.2 |
 
-So the real end-to-end chain on Linux is:
+After the fix we are within 1.6% of the glyph geometry.
 
-| step | scale | |
+**Normalise against the ink colour, not against black.** This is why the defect survived so many
+passes: the gallery's ink is `#222833`, which is grayscale **39**, so a FULLY covered pixel reads 39
+and never 0. Every "count the dark pixels" comparison against a black reference therefore scored our
+fully-inked pixels as partial coverage and our over-inked edge pixels as normal, and made a 23% ink
+excess look like an antialiasing-quality problem. Coverage is `(255 - v) / (255 - ink)`; measure that.
+
+**Corrections to earlier entries in this section, all from the same mistake:**
+
+* "our output puts twice as many pixels at partial coverage as FreeType" -- **wrong**, an artifact of
+  the black-ink baseline. Normalised, our partial-coverage share is 62% against FreeType's 68-72%
+  unhinted and 58% hinted: our rasterizer's coverage DISTRIBUTION is fine, better than unhinted and
+  close to hinted. Only the total was wrong.
+* "the unhinted rasterizer is the remaining quality ceiling" -- overstated on that evidence. Hinting
+  is still absent and still worth having, but it is not what made this look bad.
+
+**Also ruled out, by measurement, on the way here** (do not re-try):
+
+| hypothesis | test | result |
 |---|---|---|
-| WPF renders | 1 | measured: `scale=1.000 target=1014x731` |
-| Wayland surface -> guest framebuffer | 1 | measured: buffer/viewport 1:1, swapchain byte-identical |
-| **guest framebuffer -> Mac panel** | **2 (Parallels)** | **invisible to the guest** |
-
-Native macOS WPF renders at `backingScaleFactor` 2 and lands on the panel 1:1. The Linux guest renders
-at 1 and the host doubles it, so every glyph edge is displayed as a 2x2 block. That is a
-render-scale/display-scale mismatch of exactly 2 -- the same defect the `--scale 3` experiment
-reproduced on macOS, relocated to the VM boundary. It explains every observation that looked
-contradictory:
-
-* why the guest measures 1x everywhere and is right to (`wl_output.scale`, `preferred_scale`,
-  `Xft.dpi`, `GetBackingScale()` -- all correctly 1 for a 1704x917 framebuffer);
-* why the swapchain is provably byte-perfect and the text still looks bad;
-* why "more samples help on Linux but macOS needs none";
-* why `WPF_LINUX_FORCE_SCALE=2` "fixes" it -- WPF supersamples 2x, the compositor downsamples into the
-  1704x917 framebuffer, the host doubles it back, and the extra samples survive the round trip. That
-  is compensation for the VM, not a fix, and it costs 4x the fill.
-
-**The fix is configuration, not code.** Give the guest a display it can render 1:1 for:
-
-1. Parallels: Configure -> Hardware -> Graphics -> Resolution = **Best for Retina**. Parallels then
-   creates a ~3408x1834 guest mode (verify: `head -1 /sys/class/drm/card1/card1-Virtual-1/modes`).
-2. GNOME Settings -> Displays -> Scale = **200%**. GNOME then sends `preferred_scale(240)`,
-   `WaylandWindow.GetBackingScale()` returns 2.0, `HwndTarget` takes DPI 2, and WPF renders 2x
-   natively (verify: `WPF_TEXT_LOG=1` shows `scale=2.000` on the window's `target=`).
-
-Without step 2 the UI is crisp but half-size; without step 1 step 2 has nothing to render into.
-
-**Before acting on this, confirm the host display is 2x**, because the earlier macOS control was taken
-"on a 1x external display" -- if the VM window and that control were on different monitors the factor
-may not be 2 (on a 1x monitor there is no host upscale at all and this explanation does not apply).
-The five-second check is step 1 + step 2 above: if text sharpens to macOS quality, confirmed.
-
-**What this does NOT excuse.** The unhinted rasterizer (measured above: 2x the partial-coverage pixels
-of FreeType for the same font at the same size) is still a real quality ceiling, and it is what makes
-1x text fragile enough for a downstream resample to wreck it. Fixing the VM removes the resample; it
-does not add stem snapping.
+| A Parallels host upscale (guest framebuffer resampled to a Retina panel) | guest at 3840x1200 "More Space", GNOME at 100%, `WAYLAND_DEBUG` | Dead. `wl_output.scale(1)`, `preferred_scale(120)`, `set_buffer_scale(1)`, `set_destination(1014,731)` with a 1014x731 buffer -- 1:1 end to end, no resample anywhere. VS Code renders text well on the same display, which is the control |
+| The presentation path altering pixels | `WF_SURF_DUMP` swapchain readback vs `WPF_WEBGPU_SINK_DUMP` | Byte-identical, 0 of 741234 pixels differ |
+| The GPU coverage rasterizer | `WPF_WEBGPU_CPU_RASTER=1` vs GPU | Byte-identical text |
+| Whole-pixel baseline snapping | `MathF.Round(bdy)` | No-op at 1x: 2543 of 741234 pixels change. Baselines already land on integer DIPs |
+| Whole-pixel glyph X snapping | `MathF.Round(dx)` for runs | Not adopted -- the isolating A/B produced non-comparable frames (the gallery's scroll state differs between runs), so it is unvalidated either way. If retried, pin the scene first |
 
 **Historical: the Wayland backend was never the source of the 3 either.** Every scale the compositor
 reports is 1:
@@ -615,10 +602,9 @@ measured at 1.0. The DPI chain is correct end to end; nothing manufactures a 3.
 Remaining candidates:
 1. ~~**A different font resolves.**~~ Eliminated: the sink log shows Linux resolving the bundled
    `Selawik-{Regular,Semibold,Bold}.ttf`, the same files macOS gets.
-2. **No hinting / stem snapping**, which the managed rasterizer does not implement at all. This is
-   real and quantified (see the FreeType comparison above: 2x the partial-coverage pixels for the
-   same font at the same size) -- but it is a quality ceiling both platforms sit under, so it caps
-   how good 1x text can look without explaining why macOS looks better than Linux.
+2. **No hinting / stem snapping**, which the managed rasterizer does not implement at all. Still true
+   and still worth having, but NOT what made this look bad -- normalised, our coverage distribution
+   is better than unhinted FreeType (62% partial vs 68-72%) and close to hinted (58%). See "SOLVED".
 
 **Nothing is left of the obvious explanations.** Blend space, backend, rasterizer (GPU and CPU,
 byte-identical), DPI, render scale, font and compositor scaling are all eliminated by experiment, yet
