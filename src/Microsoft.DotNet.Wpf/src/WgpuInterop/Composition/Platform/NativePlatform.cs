@@ -183,6 +183,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                    Environment.GetEnvironmentVariable("WPF_LINUX_COMPOSITE_POPUPS") != "0");
 
         /// <summary>
+        /// Whether a window is currently on screen and worth presenting to.
+        ///
+        /// This exists for Wayland. A compositor stops delivering wl_surface.frame callbacks to a
+        /// surface that is minimised or fully occluded, and a Fifo swap chain throttles on exactly
+        /// those callbacks -- so wgpuSurfaceGetCurrentTexture blocks the UI thread until the window
+        /// comes back. The app looks frozen, and on this head Fifo is often the ONLY present mode
+        /// the surface advertises, so it cannot simply be avoided. Skipping the frame is correct
+        /// anyway: nothing would have been seen.
+        /// </summary>
+        public static bool IsWindowVisible(IntPtr windowHandle)
+        {
+            if (Current == PlatformKind.Linux && LinuxInterop.VisibleQuery is not null)
+                return LinuxInterop.VisibleQuery(windowHandle);
+            return true;
+        }
+
+        /// <summary>
         /// Whether the native window backing a surface is opaque. A window made non-opaque for a
         /// translucent backdrop (the macOS Mica substitute installs an NSVisualEffectView and clears
         /// the window) must present through a transparent surface (alpha mode + transparent clear).

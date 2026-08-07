@@ -181,9 +181,19 @@ namespace MS.Internal.Interop.Wayland
         internal const uint WL_DATA_DEVICE_SET_SELECTION = 1;
         internal const uint WL_DATA_SOURCE_OFFER = 0;
         internal const uint WL_DATA_SOURCE_DESTROY = 1;
+        internal const uint WL_DATA_DEVICE_RELEASE = 2;
+        internal const uint WL_DATA_SOURCE_SET_ACTIONS = 2;
         internal const uint WL_DATA_OFFER_ACCEPT = 0;
         internal const uint WL_DATA_OFFER_RECEIVE = 1;
         internal const uint WL_DATA_OFFER_DESTROY = 2;
+        internal const uint WL_DATA_OFFER_FINISH = 3;
+        internal const uint WL_DATA_OFFER_SET_ACTIONS = 4;
+
+        // wl_data_device_manager.dnd_action bitfield
+        internal const uint WL_DND_ACTION_NONE = 0;
+        internal const uint WL_DND_ACTION_COPY = 1;
+        internal const uint WL_DND_ACTION_MOVE = 2;
+        internal const uint WL_DND_ACTION_ASK = 4;
 
         // wl_seat capability bits
         internal const uint WL_SEAT_CAPABILITY_POINTER = 1;

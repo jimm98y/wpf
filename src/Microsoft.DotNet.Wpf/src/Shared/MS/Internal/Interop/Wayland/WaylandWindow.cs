@@ -117,6 +117,14 @@ namespace MS.Internal.Interop.Wayland
         public IntPtr Handle => _surface;
         public bool IsBorderless => _borderless;
 
+        /// <summary>
+        /// False once the compositor tells us the surface is not being shown. libdecor forwards
+        /// xdg_toplevel's SUSPENDED state, which exists for exactly this: it means "nobody can see
+        /// this, stop drawing". Presenting anyway would block the UI thread on a Fifo swap chain
+        /// (see NativePlatform.IsWindowVisible).
+        /// </summary>
+        internal bool IsVisible => !_destroyed && (_windowState & LibdecorWindowState.Suspended) == 0;
+
         // ---- Creation -----------------------------------------------------------------------
 
         public static void EnsureApplication()
@@ -126,6 +134,7 @@ namespace MS.Internal.Interop.Wayland
             // shadow have to composite over whatever is behind them.
             WaylandDisplay.WindowOpaqueQuery ??= static s => !(FromHandle(s)?.IsBorderless ?? false);
             WaylandDisplay.WindowOriginQuery ??= GetOriginWithinOwner;
+            WaylandDisplay.WindowVisibleQuery ??= static h => FromHandle(h)?.IsVisible ?? true;
             WaylandDisplay.EnsureInitialized();
         }
 
@@ -896,6 +905,26 @@ namespace MS.Internal.Interop.Wayland
         }
 
         public static void SetCursor(string name) => WaylandCursor.SetCursor(name);
+
+        /// <summary>
+        /// The pointer's position in the virtual screen space, or false when it is not over any of
+        /// our windows. Wayland reports pointer coordinates surface-locally and never globally, so
+        /// this composes the last motion with the owning window's virtual client origin -- the same
+        /// space ClientToScreen reports, which is what makes the answer consistent.
+        /// </summary>
+        public static bool TryGetPointerPosition(out int x, out int y)
+        {
+            x = 0;
+            y = 0;
+            WaylandWindow? w = FromHandle(WaylandInput.FocusSurface);
+            if (w is null) return false;
+
+            double scale = w.GetBackingScale();
+            w.GetClientScreenOriginPixels(out int clientX, out int clientY);
+            x = clientX + (int)Math.Round(WaylandInput.PointerSurfaceX * scale);
+            y = clientY + (int)Math.Round(WaylandInput.PointerSurfaceY * scale);
+            return true;
+        }
 
         /// <summary>Minimize/maximize/restore, via libdecor (which owns the toplevel).</summary>
         public static void SetWindowState(IntPtr handle, int state)

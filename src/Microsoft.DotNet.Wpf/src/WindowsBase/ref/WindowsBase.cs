@@ -321,6 +321,7 @@ namespace MS.Internal.Interop.Wayland
         public void SetFrameOrigin(int xPixels, int yPixels) { }
         public static void SetTitle(System.IntPtr handle, string title) { }
         public static void SetWindowState(System.IntPtr handle, int state) { }
+        public static bool TryGetPointerPosition(out int x, out int y) { throw null; }
     }
 }
 

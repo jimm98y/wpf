@@ -390,6 +390,16 @@ namespace System.Windows.Controls
         {
             PrintQueue printQueue = null;
 
+            // Off Windows there is no print system to ask. System.Printing is C++/CLI, so only its
+            // contract-only reference assembly ships there and every member faults with a
+            // NullReferenceException rather than the PrintSystemException caught below -- which would
+            // escape to the caller. "No default printer" is already a state this method is expected to
+            // report, so report that.
+            if (!OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
             try
             {
                 LocalPrintServer server = new LocalPrintServer();

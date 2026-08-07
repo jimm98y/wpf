@@ -393,16 +393,28 @@ namespace System.Windows
                 throw new ArgumentException(SR.ScopeMustBeUIElementOrContent, nameof(dragSource));
             }
 
-            dataObject = data as DataObject;
+            DragDropEffects ret;
 
-            if (dataObject == null)
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
             {
-                // Create DataObject for DragDrop from the data.
-                dataObject = new DataObject(data);
+                // Linux runs the drag over wl_data_device rather than OLE, and must not go near
+                // DataObject: constructing one registers in the COM Global Interface Table and
+                // P/Invokes OLE32.dll, which does not exist here.
+                ret = LinuxDragSource.DoDragDrop(dragSource, data, allowedEffects);
             }
+            else
+            {
+                dataObject = data as DataObject;
 
-            // Call OleDoDragDrop with DataObject.
-            DragDropEffects ret = OleDoDragDrop(dragSource, dataObject, allowedEffects);
+                if (dataObject == null)
+                {
+                    // Create DataObject for DragDrop from the data.
+                    dataObject = new DataObject(data);
+                }
+
+                // Call OleDoDragDrop with DataObject.
+                ret = OleDoDragDrop(dragSource, dataObject, allowedEffects);
+            }
 
             args = new RoutedEventArgs(DragDropCompletedEvent, dragSource);
             
@@ -1383,6 +1395,13 @@ namespace System.Windows
                 if (data is DataObject)
                 {
                     dataObject = (DataObject)data;
+                }
+                else if (data is IDataObject managed)
+                {
+                    // A platform drag off Windows supplies its own IDataObject (see LinuxDragDrop):
+                    // System.Windows.DataObject cannot be constructed there at all, because its
+                    // constructor registers in the COM Global Interface Table via OLE32.dll.
+                    dataObject = managed;
                 }
                 else
                 {

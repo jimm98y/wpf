@@ -25,7 +25,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <UseWPF>false</UseWPF>
-    <AssemblyName>WpfLinuxSmoke</AssemblyName>
+    <AssemblyName>WpfMediaLinux</AssemblyName>
     <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
     <_Wgpu>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/bin/Release/net10.0</_Wgpu>
     <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>

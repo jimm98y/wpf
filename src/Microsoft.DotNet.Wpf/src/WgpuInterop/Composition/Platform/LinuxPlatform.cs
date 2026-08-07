@@ -64,6 +64,18 @@ namespace Microsoft.Wpf.Interop.WebGpu
         }
 
         /// <summary>
+        /// Reports whether a window is on screen. A Wayland compositor stops sending frame callbacks
+        /// to a surface nobody can see, and with a Fifo swap chain that makes the next
+        /// wgpuSurfaceGetCurrentTexture block until it comes back -- on the UI thread. See
+        /// NativePlatform.IsWindowVisible.
+        /// </summary>
+        public static Func<IntPtr, bool>? WindowVisibleQuery
+        {
+            get => Composition.Platform.LinuxInterop.VisibleQuery;
+            set => Composition.Platform.LinuxInterop.VisibleQuery = value;
+        }
+
+        /// <summary>
         /// Flushes the Wayland connection's outgoing buffer. Called after a present so a just-shown
         /// frame reaches the compositor immediately even when the app then goes idle -- the exact
         /// analogue of MacInterop.FlushTransaction. Without it a committed frame can sit in the

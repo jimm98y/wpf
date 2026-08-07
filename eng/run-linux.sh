@@ -8,6 +8,7 @@
 # Usage:
 #   eng/run-linux.sh                        the in-repo smoke app (samples/wpf-linux-smoke)
 #   eng/run-linux.sh --gallery              the shared code-only gallery (samples/wpf-gallery-linux)
+#   eng/run-linux.sh --media -- FILE        MediaElement over GStreamer (samples/media-linux)
 #   eng/run-linux.sh --project <path>       any other app project
 #   eng/run-linux.sh --no-rebuild           skip the fork build (fast iteration on the app)
 #
@@ -42,6 +43,7 @@ APP_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --gallery)      PROJECT="$REPO/samples/wpf-gallery-linux/WpfGalleryLinux.csproj"; shift ;;
+    --media)        PROJECT="$REPO/samples/media-linux/MediaLinux.csproj"; shift ;;
     --project)      PROJECT="$2"; shift 2 ;;
     --no-rebuild)   REBUILD=0; shift ;;
     --scale)        export WPF_LINUX_FORCE_SCALE="$2"; shift 2 ;;

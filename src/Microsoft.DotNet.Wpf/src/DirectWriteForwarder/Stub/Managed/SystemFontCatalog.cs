@@ -173,6 +173,7 @@ namespace MS.Internal.Text.TextInterface.Managed
                 yield return "/Library/Fonts";
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 if (!string.IsNullOrEmpty(home)) yield return Path.Combine(home, "Library", "Fonts");
+                yield return Path.Combine(AppContext.BaseDirectory, "fonts");
             }
             else if (OperatingSystem.IsWindows())
             {
@@ -191,6 +192,13 @@ namespace MS.Internal.Text.TextInterface.Managed
                 yield return "/usr/local/share/fonts";
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 if (!string.IsNullOrEmpty(home)) yield return Path.Combine(home, ".fonts");
+
+                // App-local fonts, same as every other head. This is what carries the "Symbols" font
+                // the Fluent theme's glyph icons are substituted onto: no Linux distribution ships
+                // Segoe Fluent Icons or Segoe MDL2 Assets, and their glyphs live in a private-use
+                // range no text font covers, so without this every icon in a Fluent app renders as a
+                // missing-glyph box. The SDK deploys it (see _WpfWebGpuDeployFonts).
+                yield return Path.Combine(AppContext.BaseDirectory, "fonts");
             }
         }
 

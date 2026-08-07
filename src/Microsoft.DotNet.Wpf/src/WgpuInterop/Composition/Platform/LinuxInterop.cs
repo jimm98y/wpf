@@ -30,6 +30,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         internal static LinuxPlatform.WindowOriginCallback? OriginQuery;
         internal static Action? FlushDisplayHook;
 
+        /// <summary>Reports whether a window is currently visible; see NativePlatform.IsWindowVisible.</summary>
+        internal static Func<IntPtr, bool>? VisibleQuery;
+
         public static IntPtr CreateSurface(IntPtr instance, IntPtr windowHandle)
         {
             if (windowHandle == IntPtr.Zero) return IntPtr.Zero;

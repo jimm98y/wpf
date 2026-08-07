@@ -73,6 +73,10 @@ namespace MS.Internal.Interop.Wayland
         public delegate void WindowOriginCallback(IntPtr handle, out int x, out int y);
         public static WindowOriginCallback? WindowOriginQuery;
 
+        /// <summary>Reports whether a window is on screen; forwarded to the engine so it can skip
+        /// presenting to a surface the compositor has suspended.</summary>
+        public static Func<IntPtr, bool>? WindowVisibleQuery;
+
         /// <summary>Diagnostics sink (WPF_WAYLAND_LOG=1), mirroring the engine's LogSink pattern.</summary>
         public static Action<string>? LogSink =
             Environment.GetEnvironmentVariable("WPF_WAYLAND_LOG") == "1"
@@ -189,6 +193,8 @@ namespace MS.Internal.Interop.Wayland
 
                 if (WindowOpaqueQuery is not null)
                     t.GetProperty("WindowOpaqueQuery")?.SetValue(null, WindowOpaqueQuery);
+                if (WindowVisibleQuery is not null)
+                    t.GetProperty("WindowVisibleQuery")?.SetValue(null, WindowVisibleQuery);
 
                 // The origin callback has an `out` parameter, so its delegate type cannot be named
                 // here (it is declared in the engine). Bind our static to whatever the property's

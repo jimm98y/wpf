@@ -19,7 +19,17 @@ namespace Standard
 {
     internal static partial class Utility
     {
-        private static readonly Version _osVersion = Environment.OSVersion.Version;
+        // Off Windows this stays 0.0, so every IsOS*OrNewer below answers false.
+        //
+        // These gates all mean "is this a Windows new enough to have feature X", and each one guards a
+        // Windows-only P/Invoke (dwmapi, uxtheme, ...). Environment.OSVersion.Version returns the KERNEL
+        // version on Linux -- 7.0 here -- which sails past every comparison and lets those calls through
+        // to a DllNotFoundException. SystemParameters.WindowGlassBrush was the one that surfaced it: it
+        // reaches DwmGetColorizationColor, whose own guard is `IsOSVistaOrNewer && IsThemeActive()`, and
+        // uxtheme.dll does not exist here. Answering false off-Windows lets each call site take the
+        // downlevel path it already has, rather than needing a platform check bolted onto each one.
+        private static readonly Version _osVersion =
+            OperatingSystem.IsWindows() ? Environment.OSVersion.Version : new Version(0, 0);
 
         /// <summary>Convert a native integer that represent a color with an alpha channel into a Color struct.</summary>
         /// <param name="color">The integer that represents the color.  Its bits are of the format 0xAARRGGBB.</param>

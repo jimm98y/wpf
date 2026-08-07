@@ -74,7 +74,9 @@ namespace MS.Internal.Interop.Wayland
 
             s_dataDeviceListener = Wl.Vtable(
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&OnDataOffer,
-                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, int, int, IntPtr, void>)&OnEnter,
+                // enter is (serial, surface, x, y, id) -- the surface argument was missing here while
+                // the handler was an empty stub, which shifted every argument after it.
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, IntPtr, int, int, IntPtr, void>)&OnEnter,
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnLeave,
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, int, int, void>)&OnMotion,
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnDrop,
@@ -127,7 +129,10 @@ namespace MS.Internal.Interop.Wayland
         private static readonly HashSet<string> s_pendingTypes = new(StringComparer.Ordinal);
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnOfferSourceActions(IntPtr data, IntPtr offer, uint actions) { }
+        private static void OnOfferSourceActions(IntPtr data, IntPtr offer, uint actions)
+        {
+            try { WaylandDragDrop.SourceActions(actions); } catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnOfferAction(IntPtr data, IntPtr offer, uint action) { }
@@ -149,17 +154,40 @@ namespace MS.Internal.Interop.Wayland
             catch { }
         }
 
+        // The drag half of wl_data_device. The listener is shared with the selection half, so these
+        // forward to WaylandDragDrop rather than opening a second device.
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnEnter(IntPtr data, IntPtr device, uint serial, int x, int y, IntPtr offer) { }
+        private static void OnEnter(IntPtr data, IntPtr device, uint serial, IntPtr surface, int x, int y, IntPtr offer)
+        {
+            // The offer's mime types arrive on the offer BEFORE this event, exactly as for a selection,
+            // so the pending list is what describes this drag.
+            try
+            {
+                var types = new string[s_pendingTypes.Count];
+                s_pendingTypes.CopyTo(types);
+                s_pendingTypes.Clear();
+                WaylandDragDrop.Enter(serial, surface, x, y, offer, types);
+            }
+            catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnLeave(IntPtr data, IntPtr device) { }
+        private static void OnLeave(IntPtr data, IntPtr device)
+        {
+            try { WaylandDragDrop.Leave(); } catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnMotion(IntPtr data, IntPtr device, uint time, int x, int y) { }
+        private static void OnMotion(IntPtr data, IntPtr device, uint time, int x, int y)
+        {
+            try { WaylandDragDrop.Motion(x, y); } catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnDrop(IntPtr data, IntPtr device) { }
+        private static void OnDrop(IntPtr data, IntPtr device)
+        {
+            try { WaylandDragDrop.Drop(); } catch { }
+        }
 
         [DllImport("libc", SetLastError = true)] private static extern int pipe2(int* fds, int flags);
         [DllImport("libc", SetLastError = true)] private static extern nint read(int fd, byte* buf, nuint count);
@@ -179,6 +207,17 @@ namespace MS.Internal.Interop.Wayland
         private static byte[]? Receive(string[] mimeTypes)
         {
             EnsureDataDevice();
+
+            // If WE own the selection, answer from the bytes we are offering rather than asking the
+            // compositor to hand them back. Two reasons, and the first is a correctness bug without
+            // this: the compositor announces a new selection by sending US a wl_data_offer, and until
+            // that event is dispatched s_currentOffer still describes the PREVIOUS owner -- so
+            // Clipboard.SetText immediately followed by Clipboard.GetText read back empty (or stale),
+            // where on Windows it is plainly synchronous. Second, it skips the pipe round trip through
+            // ourselves entirely, which is the case the read loop has to pump the display to survive.
+            byte[]? own = TryReadOwnSelection(mimeTypes);
+            if (own is not null) return own;
+
             if (s_currentOffer == IntPtr.Zero) return null;
 
             string? chosen = null;
@@ -188,6 +227,18 @@ namespace MS.Internal.Interop.Wayland
             }
             if (chosen is null) return null;
 
+            return ReceiveFrom(s_currentOffer, chosen);
+        }
+
+        /// <summary>
+        /// Read one MIME type out of any wl_data_offer -- the current selection, or a drag offer
+        /// (WaylandDragDrop). The pumping in the loop is the reason this is shared rather than
+        /// duplicated: it is what keeps a self-read from deadlocking.
+        /// </summary>
+        internal static byte[]? ReceiveFrom(IntPtr offer, string chosen)
+        {
+            if (offer == IntPtr.Zero || string.IsNullOrEmpty(chosen)) return null;
+
             int* fds = stackalloc int[2];
             if (pipe2(fds, O_CLOEXEC) != 0) return null;
             int readFd = fds[0], writeFd = fds[1];
@@ -195,7 +246,7 @@ namespace MS.Internal.Interop.Wayland
             try
             {
                 IntPtr mime = Wl.Utf8(chosen);
-                Wl.Request(s_currentOffer, WL_DATA_OFFER_RECEIVE, WlArgument.Ptr(mime), WlArgument.Int(writeFd));
+                Wl.Request(offer, WL_DATA_OFFER_RECEIVE, WlArgument.Ptr(mime), WlArgument.Int(writeFd));
                 WaylandDisplay.Flush();
 
                 // The writer end must be closed HERE, or the read below never sees EOF: this process
@@ -238,7 +289,13 @@ namespace MS.Internal.Interop.Wayland
         {
             try
             {
-                byte[]? bytes = s_sourceBytes;
+                // One listener serves both the selection source and a drag source, so ask which this is.
+                // A drag source produces its bytes on demand (the requested type decides the encoding),
+                // where a selection carries one fixed payload.
+                byte[]? bytes = WaylandDragDrop.IsOurDragSource(source)
+                    ? WaylandDragDrop.WriteForSource(source, Marshal.PtrToStringUTF8(mimeType) ?? string.Empty)
+                    : s_sourceBytes;
+
                 if (bytes is not null)
                 {
                     fixed (byte* p = bytes)
@@ -266,6 +323,14 @@ namespace MS.Internal.Interop.Wayland
         {
             try
             {
+                // A drag source is cancelled when the drag is rejected or aborted; that ends the drag
+                // rather than the selection, and WaylandDragDrop owns destroying it.
+                if (WaylandDragDrop.IsOurDragSource(source))
+                {
+                    WaylandDragDrop.SourceCancelled(source);
+                    return;
+                }
+
                 // Another client took the selection; our source is dead.
                 if (s_source == source)
                 {
@@ -282,13 +347,36 @@ namespace MS.Internal.Interop.Wayland
         private static void OnSourceTarget(IntPtr data, IntPtr source, IntPtr mimeType) { }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnSourceDndDropPerformed(IntPtr data, IntPtr source) { }
+        private static void OnSourceDndDropPerformed(IntPtr data, IntPtr source)
+        {
+            try { WaylandDragDrop.SourceDropPerformed(source); } catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnSourceDndFinished(IntPtr data, IntPtr source) { }
+        private static void OnSourceDndFinished(IntPtr data, IntPtr source)
+        {
+            try { WaylandDragDrop.SourceFinished(source); } catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnSourceAction(IntPtr data, IntPtr source, uint action) { }
+        private static void OnSourceAction(IntPtr data, IntPtr source, uint action)
+        {
+            try { WaylandDragDrop.SourceAction(source, action); } catch { }
+        }
+
+        /// <summary>The data device, opened on demand. Shared with WaylandDragDrop.</summary>
+        internal static IntPtr EnsureDevice()
+        {
+            EnsureDataDevice();
+            return s_dataDevice;
+        }
+
+        /// <summary>Attach the shared wl_data_source listener to a drag source.</summary>
+        internal static void AttachSourceListener(IntPtr source)
+        {
+            EnsureDataDevice();
+            Wl.wl_proxy_add_listener(source, s_dataSourceListener, IntPtr.Zero);
+        }
 
         private static void Offer(byte[] bytes, string[] mimeTypes)
         {
@@ -323,6 +411,25 @@ namespace MS.Internal.Interop.Wayland
 
             Wl.Request(s_dataDevice, WL_DATA_DEVICE_SET_SELECTION, WlArgument.Ptr(source), WlArgument.UInt(serial));
             WaylandDisplay.Flush();
+        }
+
+        /// <summary>
+        /// The bytes we are currently offering, if we own the selection and offer one of these types.
+        /// s_source is cleared by wl_data_source.cancelled, so a non-null source really does mean we
+        /// still own it and nobody has taken it since.
+        /// </summary>
+        private static byte[]? TryReadOwnSelection(string[] mimeTypes)
+        {
+            if (s_source == IntPtr.Zero || s_sourceBytes is null || s_sourceTypes is null) return null;
+
+            foreach (string wanted in mimeTypes)
+            {
+                foreach (string offered in s_sourceTypes)
+                {
+                    if (string.Equals(wanted, offered, StringComparison.Ordinal)) return s_sourceBytes;
+                }
+            }
+            return null;
         }
 
         /// <summary>Publish anything that was set before the first input event (see Offer).</summary>
@@ -366,6 +473,7 @@ namespace MS.Internal.Interop.Wayland
         internal static bool ContainsString()
         {
             EnsureDataDevice();
+            if (TryReadOwnSelection(TextTypes) is not null) return true;
             foreach (string t in TextTypes)
             {
                 if (s_currentTypes.Contains(t)) return true;
@@ -380,7 +488,7 @@ namespace MS.Internal.Interop.Wayland
         internal static bool ContainsData(string type)
         {
             EnsureDataDevice();
-            return s_currentTypes.Contains(type);
+            return TryReadOwnSelection(new[] { type }) is not null || s_currentTypes.Contains(type);
         }
     }
 }

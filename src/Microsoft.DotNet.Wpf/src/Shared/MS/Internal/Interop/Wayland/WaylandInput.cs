@@ -114,7 +114,21 @@ namespace MS.Internal.Interop.Wayland
         // interactive move/resize. A stale or zero serial is silently ignored (or a protocol error).
         internal static uint EnterSerial { get; private set; }
         internal static uint LastInputSerial { get; private set; }
+
+        /// <summary>
+        /// Serial of the pointer-button press that is currently held, or 0 if no button is down.
+        /// This is the only serial <c>wl_data_device.start_drag</c> accepts.
+        /// </summary>
+        internal static uint LastPointerButtonSerial { get; private set; }
+
+        private static int s_buttonsDown;
         internal static IntPtr FocusSurface { get; private set; }
+
+        /// <summary>The pointer's last position, SURFACE-LOCAL and in logical units, together with
+        /// the surface it was over. Wayland never reports a global cursor position, so this plus the
+        /// window's virtual origin is the only way to answer GetCursorPos.</summary>
+        internal static double PointerSurfaceX { get; private set; }
+        internal static double PointerSurfaceY { get; private set; }
         internal static IntPtr KeyboardFocusSurface { get; private set; }
 
         // ---- Per-frame accumulator (see note 2 in the file header) --------------------------
@@ -234,6 +248,8 @@ namespace MS.Internal.Interop.Wayland
                 s_haveMotion = true;
                 s_motionX = Fixed(sx);
                 s_motionY = Fixed(sy);
+                PointerSurfaceX = s_motionX;
+                PointerSurfaceY = s_motionY;
                 // The cursor is undefined on enter until the client sets one; a window that never
                 // calls set_cursor shows whatever the previous client left behind.
                 WaylandCursor.OnPointerEnter(serial);
@@ -265,6 +281,8 @@ namespace MS.Internal.Interop.Wayland
                 s_haveMotion = true;
                 s_motionX = Fixed(sx);
                 s_motionY = Fixed(sy);
+                PointerSurfaceX = s_motionX;
+                PointerSurfaceY = s_motionY;
             }
             catch { }
         }
@@ -275,6 +293,22 @@ namespace MS.Internal.Interop.Wayland
             try
             {
                 LastInputSerial = serial;
+
+                // A drag needs the serial of a BUTTON PRESS specifically -- the compositor validates
+                // that the client holds an implicit grab, and rejects (silently, on mutter) a serial
+                // that came from anything else. Tracked separately from LastInputSerial, which any
+                // event moves along, and cleared on release so a drag cannot start after the button
+                // is already up.
+                if (state != 0)
+                {
+                    LastPointerButtonSerial = serial;
+                    s_buttonsDown++;
+                }
+                else if (s_buttonsDown > 0 && --s_buttonsDown == 0)
+                {
+                    LastPointerButtonSerial = 0;
+                }
+
                 s_frameTime = time;
                 IntPtr surface = FocusSurface;
                 if (surface == IntPtr.Zero) return;

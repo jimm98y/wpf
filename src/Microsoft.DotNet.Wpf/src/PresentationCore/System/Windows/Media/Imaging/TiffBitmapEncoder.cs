@@ -175,6 +175,17 @@ namespace System.Windows.Media.Imaging
 
         #endregion
 
+        /// <summary>
+        /// Managed encode for platforms without native WIC: baseline uncompressed RGBA, one strip. See ManagedTiffEncoder.
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            BitmapFrame frame = Frames[0];
+            BitmapSource source = (frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame;
+            ManagedTiffEncoder.Save(source, stream);
+            return true;
+        }
+
         #region Data Members
 
         private Guid _containerFormat = MILGuidData.GUID_ContainerFormatTiff;

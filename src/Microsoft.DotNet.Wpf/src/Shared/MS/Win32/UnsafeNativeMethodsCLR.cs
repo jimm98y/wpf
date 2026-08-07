@@ -148,10 +148,21 @@ namespace MS.Win32
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "ShowWindow")]
         private static extern bool ShowWindowNative(HandleRef hWnd, int nCmdShow);
 
-        // The Cocoa window is already ordered-front when created; nothing to do off-Windows.
+        // The Cocoa window is already ordered-front when created, so showing is a no-op there. The
+        // STATE changes are not: Window.WindowState = Minimized/Maximized routes through here, and
+        // returning true without doing anything is why it silently did nothing off-Windows.
         public static bool ShowWindow(HandleRef hWnd, int nCmdShow)
         {
-            return OperatingSystem.IsWindows() ? ShowWindowNative(hWnd, nCmdShow) : true;
+            if (OperatingSystem.IsWindows())
+            {
+                return ShowWindowNative(hWnd, nCmdShow);
+            }
+
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                MS.Internal.Interop.Wayland.WaylandWindow.SetWindowState(hWnd.Handle, nCmdShow);
+            }
+            return true;
         }
 
         public static void DeleteObject(HandleRef hObject)
@@ -401,10 +412,21 @@ namespace MS.Win32
 
         internal static bool TryGetCursorPos(ref NativeMethods.POINT pt)
         {
-            // user32-only; off-Windows report the origin (callers, e.g. WindowStartupLocation
-            // Center*, treat a failed cursor query as "unknown" and fall back gracefully).
+            // user32-only. On Wayland there is no "where is the pointer" query either, but the
+            // backend already tracks it: pointer events are surface-local, and the window's virtual
+            // origin turns them into the same virtual screen space WPF uses everywhere else. That is
+            // what WindowStartupLocation.CenterMouse and cursor-relative ContextMenu placement want.
             if (!System.OperatingSystem.IsWindows())
             {
+                if (System.OperatingSystem.IsLinux() && !System.OperatingSystem.IsAndroid() &&
+                    MS.Internal.Interop.Wayland.WaylandWindow.TryGetPointerPosition(out int px, out int py))
+                {
+                    pt.x = px;
+                    pt.y = py;
+                    return true;
+                }
+
+                // Elsewhere: report failure, which callers treat as "unknown" and fall back on.
                 pt.x = 0;
                 pt.y = 0;
                 return false;

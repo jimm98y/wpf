@@ -82,8 +82,15 @@ namespace System.Windows.Media
                 return new BrowserMediaBackend(player);
             }
 
-            // No backend on this platform yet (Linux): MediaElement stays blank without crashing, exactly
-            // as the pre-backend stub behaved.
+            // Desktop Linux only. Android is also "Linux" to OperatingSystem but has no GStreamer; it would
+            // need a MediaCodec/ExoPlayer backend instead.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                return new LinuxMediaBackend(player);
+            }
+
+            // No backend on this platform yet: MediaElement stays blank without crashing, exactly as the
+            // pre-backend stub behaved.
             return null;
         }
     }

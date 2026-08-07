@@ -337,14 +337,21 @@ namespace System.Windows.Interop
             }
             AddSource();
 
-            // Register dropable window. OLE drag/drop is COM-based and Windows-only; skip it
-            // off-Windows (a cross-platform drag/drop backend would hook in here later).
+            // Register dropable window. OLE drag/drop is COM-based and Windows-only.
             if (_hwndWrapper.Handle != IntPtr.Zero && OperatingSystem.IsWindows())
             {
                 // This call is safe since DragDrop.RegisterDropTarget is checking the unmanged
                 // code permission.
                 DragDrop.RegisterDropTarget(_hwndWrapper.Handle);
                 _registeredDropTargetCount++;
+            }
+            else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                // Linux drives the very same OleDropTarget from Wayland instead of from OLE, so there
+                // is nothing to register per window -- only the seam the backend calls into. Installing
+                // it here rather than at startup means an app that never opens a window never pays for
+                // it, and matches where the Windows registration happens.
+                LinuxDropTarget.Install();
             }
         }
 

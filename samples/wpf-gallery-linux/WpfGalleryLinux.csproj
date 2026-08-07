@@ -115,6 +115,17 @@
     <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
     <!-- FrameworkCompatibilityPreferences reads app.config switches during theme loading. -->
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <!-- Brings System.Private.Windows.Core, which PresentationCore's DataObject needs at runtime.
+         Without it Clipboard and DragDrop throw FileNotFoundException the moment they are used. The
+         packaged SDK already adds this (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets); samples that reference
+         the fork by path have to say so themselves. -->
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <!-- The rest of the packaged SDK's unix set, kept in step with it: DataObject's serialisation
+         path reaches System.Formats.Nrbf, and the others are named by the WPF closure. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
   </ItemGroup>
 
   <!-- The native WebGPU backend, next to the app so the loader finds it. -->
@@ -129,5 +140,18 @@
   <Target Name="ErrorIfForkNotBuilt" BeforeTargets="Build" Condition="!Exists('$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll')">
     <Error Text="The WPF fork has not been built. Run eng/build-sdk.sh first." />
   </Target>
+
+
+  <!-- The Fluent theme's glyph icons come from Segoe Fluent Icons / Segoe MDL2 Assets, which no Linux
+       box has; FontFactoryState substitutes them onto "Symbols", and SystemFontCatalog looks for it in
+       the app-local fonts folder. The packaged SDK deploys this automatically (Sdk.targets); samples
+       that reference the fork by path have to do it themselves, or every icon is a missing-glyph box. -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/Symbols.ttf"
+          Link="fonts/Symbols.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Cascadia Code for its programming ligatures: the fallbacks have none. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/CascadiaCode-Regular.ttf"
+          Link="fonts/CascadiaCode-Regular.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 
 </Project>

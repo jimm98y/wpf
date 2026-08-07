@@ -64,6 +64,13 @@ namespace System.Windows.Media.Imaging
                 ImagingCache.RemoveFromDecoderCache(bitmapUri);
             }
 
+            // See the stream constructor below: the typed decoders come through here too.
+            if (!OperatingSystem.IsWindows() && TryInitializeManaged(bitmapUri, null, createOptions, cacheOption))
+            {
+                GC.SuppressFinalize(this);
+                return;
+            }
+
             BitmapDecoder decoder = CheckCache(bitmapUri, out clsId);
             if (decoder != null)
             {
@@ -115,6 +122,15 @@ namespace System.Windows.Media.Imaging
             bool isOriginalWritable = false;
 
             ArgumentNullException.ThrowIfNull(bitmapStream);
+
+            // The typed decoders (PngBitmapDecoder, JpegBitmapDecoder, ...) chain here rather than
+            // through CreateFromUriOrStream, so they need the managed route of their own. A constructor
+            // cannot hand back a different object, so the frames are decoded straight into this one.
+            if (!OperatingSystem.IsWindows() && TryInitializeManaged(null, bitmapStream, createOptions, cacheOption))
+            {
+                GC.SuppressFinalize(this);
+                return;
+            }
 
             _decoderHandle = SetupDecoderFromUriOrStream(
                 null,
@@ -225,6 +241,24 @@ namespace System.Windows.Media.Imaging
             bool insertInDecoderCache
             )
         {
+            // Off Windows there is no WIC to create: everything below reaches wpfgfx_cor3.dll, which
+            // does not exist there. BitmapImage and BitmapFrame.Create already decode through
+            // ManagedImageDecoder; this is the same route for the decoder family. A null means the
+            // managed codecs did not recognise the image, and the native path below is left to report
+            // that in its own way.
+            if (!OperatingSystem.IsWindows())
+            {
+                ManagedBitmapDecoder managed = ManagedBitmapDecoder.TryCreate(
+                    uri is not null && baseUri is not null
+                        ? System.Windows.Navigation.BaseUriHelper.GetResolvedUri(baseUri, uri)
+                        : uri,
+                    stream);
+                if (managed is not null)
+                {
+                    return managed;
+                }
+            }
+
             Guid clsId = Guid.Empty;
             bool isOriginalWritable = false;
             SafeMILHandle decoderHandle = null;
@@ -1478,6 +1512,35 @@ namespace System.Windows.Media.Imaging
         /// <summary>
         /// Checks if the decoder is builtin. If not, throw exception
         /// </summary>
+        /// <summary>
+        /// Decode with the managed codecs into THIS instance, for the constructors that cannot return a
+        /// different object. Returns false if the managed codecs do not recognise the image, leaving the
+        /// caller to take its normal path.
+        /// </summary>
+        private bool TryInitializeManaged(Uri uri, Stream stream, BitmapCreateOptions createOptions, BitmapCacheOption cacheOption)
+        {
+            BitmapSource decoded;
+            try
+            {
+                decoded = ManagedImageDecoder.Decode(uri, stream);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                return false;
+            }
+
+            if (decoded is null) return false;
+
+            _isBuiltInDecoder = true;
+            _frames = new List<BitmapFrame> { BitmapFrame.Create(decoded) };
+            _readOnlyFrames = new ReadOnlyCollection<BitmapFrame>(_frames);
+            _uri = uri;
+            _stream = stream;
+            _createOptions = createOptions;
+            _cacheOption = cacheOption;
+            return true;
+        }
+
         private void EnsureBuiltInDecoder()
         {
             if (!_isBuiltInDecoder)

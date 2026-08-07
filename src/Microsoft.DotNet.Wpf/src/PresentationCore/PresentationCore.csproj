@@ -338,6 +338,7 @@
     <Compile Include="System\Windows\ClassHandlersStore.cs" />
     <Compile Include="System\Windows\clipboard.cs" />
     <Compile Include="System\Windows\MacDataObject.cs" />
+    <Compile Include="System\Windows\LinuxDragDrop.cs" />
     <Compile Include="System\Windows\ContentElement.cs" />
     <Compile Include="System\Windows\ContentOperations.cs" />
     <Compile Include="System\Windows\CoreCompatibilityPreferences.cs" />
@@ -803,6 +804,7 @@
     <Compile Include="System\Windows\Media\IMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\MacMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\BrowserMediaBackend.cs" />
+    <Compile Include="System\Windows\Media\Platform\LinuxMediaBackend.cs" />
     <Compile Include="System\Windows\Media\MediaSystem.cs" />
     <Compile Include="System\Windows\Media\MediaTimeline.cs" />
     <Compile Include="System\Windows\Media\MILUtilities.cs" />
@@ -1191,6 +1193,11 @@
     <Compile Include="System\Windows\Media\Imaging\BitmapFrameEncode.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapImage.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedImageDecoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedBitmapDecoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedJpegEncoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedBmpEncoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedTiffEncoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedGifEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedJpegDecoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedPngEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapInitialize.cs" />

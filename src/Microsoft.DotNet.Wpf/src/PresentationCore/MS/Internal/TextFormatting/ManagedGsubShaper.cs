@@ -24,6 +24,12 @@ namespace MS.Internal.TextFormatting
 {
     internal static class ManagedGsubShaper
     {
+        // WPF_GSUB_LOG=1 traces whether the shaper runs and what it substitutes. The fast path in
+        // Typeface.CheckFastPathNominalGlyphs bypasses LineServices entirely for plain Latin runs,
+        // so "did this even get called" is the first question to answer.
+        private static readonly bool s_log =
+            System.Environment.GetEnvironmentVariable("WPF_GSUB_LOG") == "1";
+
         // Default GSUB features applied to horizontal text of any script, matching the
         // set DWrite/WPF enable by default. 'liga'/'clig'/'calt'/'rlig' cover standard,
         // contextual and required ligatures; 'ccmp' handles glyph composition/decomposition.
@@ -63,7 +69,16 @@ namespace MS.Internal.TextFormatting
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
             if (layout == null || layout.Gsub() == null)
             {
+                if (s_log) System.Console.WriteLine($"GSUB: no table (layout={layout != null}) chars={charCount} glyphs={glyphCount}");
                 return glyphCount;   // no GSUB table -> nothing to substitute
+            }
+            if (s_log)
+            {
+                string fam = "?";
+                try { foreach (string v in glyphTypeface.FamilyNames.Values) { fam = v; break; } } catch { }
+                string ids = "";
+                for (int i = 0; i < glyphCount && i < 8; i++) ids += glyphs[i] + " ";
+                System.Console.WriteLine($"GSUB: enter face='{fam}' gsubBytes={layout.Gsub().Length} chars={charCount} glyphs={glyphCount} ids=[{ids}]");
             }
 
             IOpenTypeFont font = new GsubGposTables(layout);
@@ -139,10 +154,21 @@ namespace MS.Internal.TextFormatting
 
             if (result != OpenTypeLayoutResult.Success)
             {
+                if (s_log) System.Console.WriteLine($"GSUB: result={result}");
                 return glyphCount;
             }
 
             int newGlyphCount = glyphInfo.Length;
+            if (s_log)
+            {
+                // Glyph IDs matter as much as the count: monospaced programming fonts (Cascadia,
+                // Fira Code) implement ligatures by swapping each character for a PARTIAL glyph so
+                // the cell width is preserved, so a working "!=" ligature is 2 -> 2 glyphs with
+                // different ids, not 2 -> 1.
+                string after = "";
+                for (int i = 0; i < newGlyphCount && i < 8; i++) after += glyphInfo.Glyphs[i] + " ";
+                System.Console.WriteLine($"GSUB: success {glyphCount} -> {newGlyphCount} glyphs after=[{after}]");
+            }
 
             // Write the (possibly rewritten) glyph indices and cluster map back out. A single
             // substitution (e.g. a calt swap) can change glyph ids without changing the count.

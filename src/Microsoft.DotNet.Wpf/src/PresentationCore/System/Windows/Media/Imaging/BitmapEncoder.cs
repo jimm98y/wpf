@@ -485,7 +485,7 @@ namespace System.Windows.Media.Imaging
             if (!TryManagedEncode(stream))
             {
                 throw new PlatformNotSupportedException(
-                    $"{GetType().Name} requires native WIC, which is not available on this platform; PngBitmapEncoder is supported.");
+                    $"{GetType().Name} requires native WIC, which is not available on this platform; PNG, JPEG, BMP, TIFF and GIF encoding are supported.");
             }
 
             _hasSaved = true;

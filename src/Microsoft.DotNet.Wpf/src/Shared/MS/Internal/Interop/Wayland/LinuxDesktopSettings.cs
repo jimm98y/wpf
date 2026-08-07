@@ -106,6 +106,78 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        private static string? s_cursorTheme;
+        private static int s_cursorSize;
+
+        /// <summary>
+        /// The user's XCursor theme name, or null to let libwayland-cursor pick.
+        ///
+        /// XCURSOR_THEME first, because that is what the cursor stack itself honours. Falling back
+        /// to the "default" theme is NOT good enough on GNOME: /usr/share/icons/default commonly
+        /// inherits a distro stand-in (DMZ-White on Ubuntu) rather than the theme the user actually
+        /// selected, so the app would show different cursors from every other window on screen.
+        /// </summary>
+        internal static string? CursorTheme
+        {
+            get
+            {
+                if (s_cursorTheme is not null) return s_cursorTheme.Length == 0 ? null : s_cursorTheme;
+                string? env = Environment.GetEnvironmentVariable("XCURSOR_THEME");
+                s_cursorTheme = !string.IsNullOrEmpty(env)
+                    ? env
+                    : ReadGSetting("org.gnome.desktop.interface", "cursor-theme")?.Trim('\'', '"', '\n', ' ') ?? string.Empty;
+                return s_cursorTheme.Length == 0 ? null : s_cursorTheme;
+            }
+        }
+
+        /// <summary>The user's cursor size in logical pixels (24 is the freedesktop default).</summary>
+        internal static int CursorSize
+        {
+            get
+            {
+                if (s_cursorSize > 0) return s_cursorSize;
+                string? env = Environment.GetEnvironmentVariable("XCURSOR_SIZE");
+                if (!string.IsNullOrEmpty(env) && int.TryParse(env, out int fromEnv) && fromEnv > 0)
+                    return s_cursorSize = fromEnv;
+                string? setting = ReadGSetting("org.gnome.desktop.interface", "cursor-size");
+                if (setting is not null && int.TryParse(setting.Trim(), out int fromGSettings) && fromGSettings > 0)
+                    return s_cursorSize = fromGSettings;
+                return s_cursorSize = 24;
+            }
+        }
+
+        /// <summary>
+        /// Read one GNOME setting. Shelling out is acceptable for these: each runs at most once per
+        /// process and reads a single word, and the alternative is being visibly wrong about the
+        /// user's theme. Anything that must react to CHANGES goes through the portal instead.
+        /// </summary>
+        private static string? ReadGSetting(string schema, string key)
+        {
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "gsettings",
+                    Arguments = $"get {schema} {key}",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                });
+                if (process is null) return null;
+                if (!process.WaitForExit(2000))
+                {
+                    try { process.Kill(); } catch { }
+                    return null;
+                }
+                string output = process.StandardOutput.ReadToEnd().Trim();
+                return output.Length == 0 ? null : output;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>
         /// Subscribe to live colour-scheme changes. The signal is dispatched from the WPF pump (see
         /// WaylandDisplay.ReadEvents), so no background thread and no cross-thread marshalling.

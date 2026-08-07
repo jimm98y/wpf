@@ -144,6 +144,34 @@
     <Warning Text="WpfWebGpu.Sdk carries no wgpu backend for '$(_WpfWebGpuNativeRid)' (looked for $(_WpfWebGpuNativePath)). The app will fail to start." />
   </Target>
 
+  <!--
+    unix desktop: the app-local fonts, the two families neither Linux nor macOS has.
+
+    Symbols       the Fluent theme draws its glyph icons from Segoe Fluent Icons / Segoe MDL2 Assets,
+                  which ship on no Linux or macOS box. Their glyphs sit in a private-use range no
+                  text font covers, so every chevron, checkmark and NavigationView glyph falls
+                  through to a text font and renders as a missing-glyph box. FontFactoryState
+                  substitutes both families onto "Symbols".
+    Cascadia Code its programming LIGATURES are the point: the substitution chain's fallbacks
+                  (Menlo, Consolas, DejaVu Sans Mono) have none, so code samples lose them and
+                  render as plain characters.
+
+    Both are what SystemFontCatalog's app-local probe is for. The iOS, Android and browser heads
+    already bundle these; the desktop unix head was the one that did not.
+
+    Only these two: DejaVu and Liberation are the rest of what this repo carries, and those are
+    already installed on any normal Linux (the head lists them as prerequisites), so shipping them
+    again would add megabytes to every app for nothing.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <None Include="$(WpfWebGpuSdkRoot)web/fonts/Symbols.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/Symbols.ttf" Visible="false"
+          Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/Symbols.ttf')" />
+    <None Include="$(WpfWebGpuSdkRoot)web/fonts/CascadiaCode-Regular.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/CascadiaCode-Regular.ttf" Visible="false"
+          Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/CascadiaCode-Regular.ttf')" />
+  </ItemGroup>
+
   <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
        the Windows-only runtime packages dropped in the output (same strong-name identity, so the
        load binds the shim). These are the shims the windows head deliberately does NOT use. -->

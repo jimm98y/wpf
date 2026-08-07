@@ -403,6 +403,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private void Present(TargetSurface ts, SceneVisual root, MilTarget t)
         {
+            // Nothing to present to. Asking for the next texture of a Fifo swap chain whose surface
+            // the compositor has stopped scheduling BLOCKS -- on the UI thread, until the window is
+            // visible again -- so this check has to come before the acquire, not after.
+            if (!Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd))
+            {
+                return;
+            }
+
             WGPUSurfaceTexture surfaceTexture;
             wgpuSurfaceGetCurrentTexture(ts.Surface, &surfaceTexture);
 
