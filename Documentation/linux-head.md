@@ -698,11 +698,80 @@ hardware is unaffected and keeps the GPU rasterizer. `WPF_WEBGPU_CPU_RASTER=0` r
 
 ## Verification
 
+The suite is `eng/run-tests.sh` (`eng\run-tests.cmd` on Windows), which runs two xunit.v3 projects
+on Microsoft.Testing.Platform, so `dotnet test` and the VS Test Explorer discover them too:
+
+| project | covers | needs |
+|---|---|---|
+| `src/.../WgpuInterop/tests/WgpuInterop.Tests` | the renderer: geometry, brushes, text, compositing, shaders | a GPU adapter (skips with a reason without one) |
+| `src/.../tests/CrossPlatform/Wpf.Platform.Tests` | the per-OS windowing heads: DPI chain, sizing, geometry, screen bounds, popups, clipboard, keyboard mapping | a display, and the built fork (excludes itself otherwise) |
+
+`Wpf.Platform.Tests` is PUBLIC-SIGNED with the ECMA key (`eng/snk/ECMA.snk`) because WindowsBase
+grants it friend access for the internal `PlatformClipboard` seam, and a strong-named assembly only
+accepts strong-named friends -- without it the build fails with CS0281. The Arcade UnitTests projects
+get this from `StrongNameKeyId=ECMA`; this project sits outside Arcade on purpose, so it says so
+itself.
+
+**Keyboard: translation is tested, delivery is not.** `wl_keyboard` events come from the compositor
+and a client cannot synthesise them, so there is no way to test input DELIVERY unattended. The
+translation half is a pure function this suite supplies its own inputs to:
+`KeyboardMappingTests` compiles an inline keymap and drives the `WlXkb` P/Invoke binding directly.
+That is worth having because a DllImport compiles perfectly and fails at run time -- the same hazard
+the protocol tables carry. It pins down `EvdevOffset` (XKB keycodes are evdev + 8; forgetting it
+silently shifts the whole keyboard rather than crashing) and that control keys DO yield text
+(Escape is U+001B), which the layer above has to filter or every Escape types a control character
+into a TextBox.
+
+**The clipboard write tests skip on an idle Wayland session, and that is correct.**
+`wl_data_device.set_selection` needs a serial from REAL USER INPUT; an unattended run has produced
+none, so `WaylandClipboard` defers the publish and a set genuinely cannot be read back. A client may
+not silently seize the clipboard. They run for real on macOS and Windows. The READ path
+(`ReadPath_IsSelfConsistent_AndNeverThrows`) needs no ownership and runs everywhere.
+
+Both are plain `net10.0` and run on Linux, macOS and Windows. What a machine cannot exercise SKIPS
+with a stated reason rather than passing -- a suite that returns green on a box with no GPU reports
+coverage it did not deliver, which is worse than no suite.
+
+The wrappers exist only to set `DOTNET_ROOT`: xunit.v3 requires a native apphost, and an apphost
+resolves the runtime through `DOTNET_ROOT` or a system install, neither of which knows about this
+repo's private `./.dotnet`. Where the SDK is installed normally, plain `dotnet test` is enough.
+
+**Migration complete for everything that can be a test.** These replace the standalone
+`WgpuInterop.*Test` apps, which each had their own `Main` and their own copy of the MILCMD builders --
+byte layouts mirroring generated native struct offsets, so a drifted copy did not fail to compile, it
+silently decoded as a different command while the test still "passed". 53 apps are folded in and
+deleted; the shared builders now live in `Harness/MilCmd.cs` (~45 commands) and
+`Harness/D3D9Bytecode.cs`.
+
+**Six apps deliberately survive, because they are TOOLS rather than tests:**
+
+| app | why it stays |
+|---|---|
+| `LiveCompositionTest` | on-screen integration: needs a real window and `SurfaceDemo` |
+| `CurveFidelityTest`, `ScaleProbe` | measurement harnesses; print trend tables under `--report` / `--cost` / `--segscale` / `--strokegeom`. Their ASSERTIONS are in the suite (`ScaleStabilityTests`); the reporting has nowhere to live in a test runner |
+| `SmokeTest` | drives the raw wgpu binding with hand-built descriptors, no window and no renderer |
+| `AdapterProbe`, `LocalCacheProbe` | pure diagnostics, no pass/fail at all |
+
+Golden-image baselines live beside the source at
+`WgpuInterop.Tests/Baseline/baselines/{gpu,cpu}` so they are reviewable in a diff. Two environment
+variables replace the old CLI flags:
+
 ```bash
-dotnet run --project src/.../tests/WgpuInterop.SmokeTest          # device path, no display
-dotnet run --project src/.../tests/WgpuInterop.RenderBaselineTest # 11 offscreen scenes
-dotnet run --project src/.../tests/WgpuInterop.TextCoverageTest   # glyph ink == outline area, on the DEFAULT display path
-dotnet run --project src/.../tests/WgpuInterop.GammaTest          # text gamma on the linear/sRGB path
+WPF_BASELINE_UPDATE=1        # rewrite the baselines for the ACTIVE raster mode
+WPF_BASELINE_WRITE_ACTUAL=1  # also dump actual+diff PNGs beside them
+```
+
+`WPF_BASELINE_UPDATE` reports every scene as SKIPPED rather than passed: a run that rewrote the
+baselines has verified nothing. A MISSING baseline fails rather than being written silently -- else a
+new scene is "guarded" by whatever it happened to render first, bug included.
+
+```bash
+eng/run-tests.sh                                                  # THE test suite: renderer + platform heads
+eng/run-tests.sh --filter Text                                    # one area
+dotnet run --project src/.../tests/WgpuInterop.SmokeTest          # raw wgpu binding, no display
+dotnet run --project src/.../tests/WgpuInterop.ScaleProbe -- --cost        # flattening cost table
+dotnet run --project src/.../tests/WgpuInterop.CurveFidelityTest -- --report  # curve fidelity trend
+dotnet run --project src/.../tests/WgpuInterop.AdapterProbe      # what this box's GPU offers
 dotnet run --project src/.../tests/WaylandSpike -- --frames 20    # a Wayland window, no WPF
 eng/run-linux.sh -- --auto-popup                                  # popup placement, unattended
 eng/run-linux.sh -- --auto-clipboard                              # clipboard round-trip (in-process)
