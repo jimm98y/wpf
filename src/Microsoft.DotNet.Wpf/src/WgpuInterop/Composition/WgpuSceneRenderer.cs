@@ -530,10 +530,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // weight matches WPF. (Linear test targets are left untouched, so coverage
         // tests stay exact.) cov' = cov^(1/2.2), the standard sRGB text gamma.
         // WPF_TEXT_LOG=1 dumps how each glyph run is POSITIONED and rasterized: the device offset,
-        // the snapped position, the resulting sub-pixel phase and the mask size. Text on Linux looks
-        // worse than on macOS with the same font, rasterizer and scale, and every hypothesis derived
-        // from the Linux side alone has been wrong -- so the way to make progress is to run this on
-        // BOTH platforms with the same content and diff the numbers, rather than theorise again.
+        // the snapped position, the resulting sub-pixel phase, the world scale and the TARGET SIZE.
+        // Text on Linux looks worse than on macOS with the same font, rasterizer and scale, and every
+        // hypothesis derived from the Linux side alone has been wrong -- so the way to make progress
+        // is to run this on BOTH platforms with the same content and diff the numbers, rather than
+        // theorise again. Group by target= before diffing anything: the log interleaves the window's
+        // pass with supersampled brush/offscreen realizations, whose scale is their supersample
+        // factor and says nothing about the display.
         private static readonly bool s_textLog =
             Environment.GetEnvironmentVariable("WPF_TEXT_LOG") == "1";
 
@@ -2816,13 +2819,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty) return;
 
-            // Apply WPF's text-gamma weighting whenever glyph coverage is composited for display: in
-            // GAMMA-SPACE mode (the default — colours pre-encoded, blended in sRGB space, main target
-            // UNORM so _srgbOutput is false) it's needed on the MAIN pass too, not just inside the sRGB
-            // offscreen layers (cards). Gating it on _srgbOutput alone left every glyph drawn straight to
-            // the main target (e.g. the whole nav menu) un-weighted and too light to read. Still dropped
-            // on transparent targets (layered windows), matching WPF dropping ClearType there.
-            bool gamma = isGlyph && !_transparentTarget && (s_gammaComposite || _srgbOutput);
+            // Apply WPF's text-gamma weighting only where this pass blends in LINEAR space, which is
+            // exactly what _srgbOutput means: an sRGB target makes the GPU decode to linear on read and
+            // re-encode on write, so coverage blends linearly and needs cov^(1/2.2) to land where WPF's
+            // gamma-space blend does. It is NOT needed in gamma-space mode (the default: colours
+            // pre-encoded at their source, blended on those encoded values, plain-UNORM target) --
+            // there the blend is ALREADY the thing the LUT emulates, and applying both counts the
+            // correction twice.
+            //
+            // It used to read `(s_gammaComposite || _srgbOutput)`, i.e. it fired in gamma mode too, on
+            // the theory that gating it on _srgbOutput alone left text "too light to read". MEASURED,
+            // and that is backwards -- the double correction made every glyph ~23% too heavy. Total
+            // coverage over one 13px word, normalised against the run's own ink colour (#222833 ->
+            // grayscale 39; measuring against black instead is what made this look fine for so long):
+            //
+            //     LUT on  : 263.9      <- 23% more ink than the outlines contain
+            //     LUT off : 215.6      <- within 1.6% of the geometry
+            //     FreeType rasterizing the same outlines at the same size: 219.2
+            //
+            // The excess lands on partially-covered EDGE pixels (cov 0.25 -> 0.53), so it reads as a
+            // halo of over-dark alpha around every glyph -- which is what "the text looks aliased on
+            // Linux" turned out to be. See Documentation/linux-head.md.
+            //
+            // Still dropped on transparent targets (layered windows), matching WPF dropping ClearType
+            // there. Note _srgbOutput can only be true when s_gammaComposite is false (see the two
+            // assignment sites), so this single term expresses "this pass blends linearly".
+            bool gamma = isGlyph && !_transparentTarget && _srgbOutput;
 
             // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
@@ -2886,6 +2908,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // scattering baselines by up to half a pixel — the ~1px "sunken letters" bug.
                 // Non-glyph fills keep the per-geometry snap. In both cases the vertical phase
                 // stays shape-stable (≤2 values across a scroll), so the mask cache still dedups.
+                //
+                // Whole-pixel baseline snapping (MathF.Round(bdy)) was MEASURED and is a no-op on a
+                // 1x display: layout puts baselines on integer DIPs, so the two grids round to the
+                // same place and only 2.5k of 741k pixels in the gallery change. The continuous
+                // phaseY in WPF_TEXT_LOG is each glyph's fractional INK-BOX TOP, not a fractional
+                // baseline, so it is not evidence of a snapping fault. Don't re-try this as a text
+                // sharpness fix -- see Documentation/linux-head.md.
                 float oy, phaseY;
                 if (baselineAnchor is Vector2 anchor)
                 {
@@ -2905,8 +2934,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int phase = (int)(phaseX * 2f) * 512 + (int)MathF.Round(phaseY * 255f);
                 if (s_textLog && baselineAnchor is not null)
                 {
+                    // target=WxH is not decoration: it says WHICH PASS the placement belongs to, and
+                    // without it this log is actively misleading. Brush and offscreen realizations
+                    // rasterize their content SUPERSAMPLED into a small texture -- x3 for a
+                    // DrawingBrush motif, x2 for a VisualBrush (see MilcoreEngine RealizeTileBrush /
+                    // RealizeVisualBrush) -- so their glyphs legitimately report scale=3.000 and
+                    // scale=2.000 while the window itself renders at 1.000. Reading those lines as
+                    // the window's DPI cost one whole investigation (Documentation/linux-head.md):
+                    // they are the FIRST lines in the log, because brushes realize before the first
+                    // present. Filter on the window's target size before drawing any conclusion.
                     DebugLog?.Invoke($"glyphpos dx={dx:F3} dy={dy:F3} -> ox={ox} oy={oy} " +
-                                     $"phaseX={phaseX:F3} phaseY={phaseY:F3} scale={LinearScale(world):F3}");
+                                     $"phaseX={phaseX:F3} phaseY={phaseY:F3} scale={LinearScale(world):F3} " +
+                                     $"target={width}x{height}");
                 }
                 // The normalized geometry is only MATERIALIZED on a cache miss (below); the key is
                 // hashed straight off the original with the normalizing translation folded in, and
@@ -3091,7 +3130,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty || mask.IsEmpty) return;
 
-            if (isGlyph && !_transparentTarget && (s_gammaComposite || _srgbOutput)) ApplyTextGamma(mask.Coverage);
+            // Same gate as EmitCoverageMask: linear-blending passes only. Applying this in gamma-space
+            // mode double-counts the correction and puts ~23% excess alpha on glyph edges.
+            if (isGlyph && !_transparentTarget && _srgbOutput) ApplyTextGamma(mask.Coverage);
 
             IntPtr view, bindGroup;
             FillKind kind;

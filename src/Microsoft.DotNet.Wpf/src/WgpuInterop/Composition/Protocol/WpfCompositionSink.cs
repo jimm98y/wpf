@@ -62,6 +62,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly string? s_surfDump =
             Environment.GetEnvironmentVariable("WF_SURF_DUMP");
         private bool _surfDumped;
+        private bool _surfDumpUnsupportedLogged;
 
         // Diagnostics: also print the periodic PERF lines to the console (browser DevTools)
         // so live perf can be inspected without pulling the VFS log (?perf=1 in the wasm head).
@@ -472,7 +473,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
             // offscreen render), so what we inspect is exactly what's presented. Once, after settle.
-            if (s_surfDump != null && !_surfDumped && AcquiredFrames == 40)
+            if (s_surfDump != null && ts.CanCopySrc && !_surfDumped && AcquiredFrames == 40)
             {
                 _surfDumped = true;
                 DumpSurface(surfaceTexture.texture, ts, s_surfDump);
@@ -840,11 +841,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // When we render through a different-format view than the swapchain (OpenGL gamma path:
             // UNORM view over an sRGB swapchain), that view format must be declared in viewFormats.
             WGPUTextureFormat renderFmt = ts.RenderFormat;
+            // WF_SURF_DUMP needs to COPY the swapchain texture, but not every backend allows it: the
+            // OpenGL surface (the Linux/virgl head) advertises COLOR_TARGET only, and asking for
+            // COPY_SRC anyway is a wgpu VALIDATION ERROR, which panics across the FFI boundary and
+            // ABORTS the process. So ask the surface first and drop the diagnostic (loudly) rather
+            // than killing the app that was being diagnosed.
+            bool wantCopySrc = s_surfDump != null;
+            if (wantCopySrc && !SurfaceSupportsUsage(ts.Surface, WGPUTextureUsage.CopySrc))
+            {
+                wantCopySrc = false;
+                if (!_surfDumpUnsupportedLogged)
+                {
+                    _surfDumpUnsupportedLogged = true;
+                    Log("WF_SURF_DUMP: this backend's surface does not support CopySrc, so the swapchain " +
+                        "cannot be read back; skipping. Use WPF_WEBGPU_SINK_DUMP (offscreen re-render) instead.");
+                }
+            }
+            ts.CanCopySrc = wantCopySrc;
             var config = new WGPUSurfaceConfiguration
             {
                 device = _ctx!.Device,
                 format = ts.Format,
-                usage = WGPUTextureUsage.RenderAttachment | (s_surfDump != null ? WGPUTextureUsage.CopySrc : 0),
+                usage = WGPUTextureUsage.RenderAttachment | (wantCopySrc ? WGPUTextureUsage.CopySrc : 0),
                 width = (uint)ts.Width,
                 height = (uint)ts.Height,
                 alphaMode = alpha,
@@ -875,6 +893,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (caps.presentModes[i] == mode) { found = true; break; }
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return found;
+        }
+
+        // Surface texture usages the backend actually allows. Metal/Vulkan give COPY_SRC alongside
+        // COLOR_TARGET; the GL backend gives COLOR_TARGET only, and requesting more is fatal.
+        private bool SurfaceSupportsUsage(IntPtr surface, WGPUTextureUsage usage)
+        {
+            var caps = new WGPUSurfaceCapabilities();
+            wgpuSurfaceGetCapabilities(surface, _ctx!.Adapter, &caps);
+            bool supported = (caps.usages & usage) == usage;
+            wgpuSurfaceCapabilitiesFreeMembers(caps);
+            return supported;
         }
 
         private bool SurfaceSupportsAlphaMode(IntPtr surface, WGPUCompositeAlphaMode mode)
@@ -918,6 +947,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             /// <see cref="Format"/> except on the OpenGL gamma-space path, where it is the UNORM
             /// counterpart of an sRGB swapchain so pre-encoded gamma bytes store verbatim (no re-encode).</summary>
             public WGPUTextureFormat RenderFormat;
+            /// <summary>Whether the surface was configured with CopySrc, i.e. whether the WF_SURF_DUMP
+            /// swapchain readback is possible at all on this backend (it is not on OpenGL).</summary>
+            public bool CanCopySrc;
             public int Width;
             public int Height;
             /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>

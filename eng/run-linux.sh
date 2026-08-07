@@ -21,7 +21,11 @@
 #   --wayland-log    trace connection/globals setup
 #   --wayland-debug  WAYLAND_DEBUG=1: decode every protocol request and event
 #   --wgpu-log       wgpu-native's own debug log
-#   --dump FILE      read the presented surface back to a PNG (WPF_WEBGPU_SINK_DUMP)
+#   --dump FILE      re-render the composed frame offscreen to a PNG (WPF_WEBGPU_SINK_DUMP)
+#   --surf-dump FILE read the REAL swapchain back to a PNG (WF_SURF_DUMP). Diff it against --dump to
+#                    prove the presented buffer matches what was rendered. Needs a surface that
+#                    allows CopySrc: the GL backend does not, so pair it with --backend vulkan
+#                    (which picks the llvmpipe CPU adapter here -- slow, but it is a one-frame probe).
 #   --perf           per-frame timing to the console
 
 set -euo pipefail
@@ -55,6 +59,7 @@ while [ $# -gt 0 ]; do
     --wayland-debug) export WAYLAND_DEBUG=1; shift ;;
     --wgpu-log)     export WPF_WEBGPU_WGPU_LOG=debug; shift ;;
     --dump)         export WPF_WEBGPU_SINK_DUMP="$2"; shift 2 ;;
+    --surf-dump)    export WF_SURF_DUMP="$2"; shift 2 ;;
     --perf)         export WPF_WEBGPU_PERF_CONSOLE=1; shift ;;
     --)             shift; APP_ARGS+=("$@"); break ;;
     *)              APP_ARGS+=("$1"); shift ;;

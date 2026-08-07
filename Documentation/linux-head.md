@@ -277,15 +277,22 @@ following are NOT the cause -- do not re-try them:
 The GL-scanout theory (and the offscreen + linearizing-blit plan built on it) is dead: if Vulkan and
 GL render identically, the presentation backend is not the variable.
 
-**The cause is NOT known.** Rendering at `WPF_LINUX_FORCE_SCALE=2` makes text look right in both
-themes, which pointed at DPI -- but **1x on macOS looks good and 1x on Linux does not**, with the same
-managed rasterizer and the same 1x resolution. So resolution is not the variable and neither is the
-text code. There is no CoreText path on macOS either (the only mention in the tree is a comment about
-a possible future port), so both platforms rasterize glyphs identically.
+> **ANSWERED, further down.** The cause is the Parallels VM upscaling the guest framebuffer to the
+> Retina host -- a 2x resample AFTER everything this section measures, invisible to every API inside
+> the guest. Jump to "The Linux head is measured inside a VM, and the VM is the resample". The
+> narrative below is kept because each step eliminates a real hypothesis, and because the *reasoning*
+> in it ("1x on Linux is not 1x on the glass") is exactly what took so long to see.
+
+**The cause is NOT known** *(at the time this was written)*. Rendering at `WPF_LINUX_FORCE_SCALE=2`
+makes text look right in both themes, which pointed at DPI -- but **1x on macOS looks good and 1x on
+Linux does not**, with the same managed rasterizer and the same 1x resolution. So resolution is not the
+variable and neither is the text code. There is no CoreText path on macOS either (the only mention in
+the tree is a comment about a possible future port), so both platforms rasterize glyphs identically.
 
 More samples clearly HELP on Linux (that is what 2x shows) but macOS does not need them, so the
 deficiency is something Linux-specific between the rendered buffer and the screen -- not the glyph
-rasterizer itself.
+rasterizer itself. (That last sentence was right, and "between the rendered buffer and the screen"
+turned out to include the hypervisor.)
 
 **Compositor resampling: ruled out.** `WAYLAND_DEBUG=1` shows buffer, viewport and scale all agreeing
 at 1:1, so the surface reaches the screen unscaled:
@@ -418,36 +425,211 @@ text "looks bad".
 |---|---|---|---|
 | macOS default | 1 | 1 | sharp |
 | macOS `--scale 3` | 3 | 1 | **mush** (downsampled) |
-| Linux default | 1 | ? | **mush** |
-| Linux `WPF_LINUX_FORCE_SCALE=2` | 2 | ? | sharp |
+| Linux default | 1 | 2 (the Parallels host upscale -- see below) | **mush** (upsampled) |
+| Linux `WPF_LINUX_FORCE_SCALE=2` | 2 | 2 | sharp |
 
 Text degrades whenever the render scale differs from the display's true backing scale, in EITHER
 direction -- macOS shows the too-high case, Linux's "2x fixes it" is the too-low case. That also
 explains why more samples "help" on Linux without the rasterizer being at fault: 2x is not adding
-quality, it is removing a mismatch.
+quality, it is removing a mismatch. The `display scale` column was a `?` for both Linux rows until the
+VM boundary was identified; see "The Linux head is measured inside a VM" below for how the 2 gets in
+and why nothing inside the guest can observe it.
 
-**So the next measurement is not about text at all: what is the Linux display's actual backing scale,
-and what does the head report?** If the screen is 2x/3x and the head defaults to 1x, the compositor is
-upscaling every frame and that is the whole bug -- fix the scale source, the way CocoaWindow sources
-it from the window's NSScreen. Note this is compatible with the earlier "compositor resampling ruled
-out" finding: WAYLAND_DEBUG showed the protocol objects agreeing with each other, not the render scale
-agreeing with the display.
+**RESOLVED -- there is no 3. The render scale on Linux IS 1, and the `scale = 3.000` lines were a
+misread of this log.** `WPF_TEXT_LOG` did not say which PASS a placement belonged to, and it
+interleaves the window's pass with supersampled brush/offscreen realizations. Re-measured on the
+gallery with the pass now tagged (`target=WxH`, added for exactly this reason):
 
-Remaining candidates, if that is not enough:
-1. **A different font resolves.** "Segoe UI" substitutes to Helvetica Neue/Helvetica on macOS but to
-   Liberation Sans / DejaVu Sans on Linux (see FontFactoryState's table). DejaVu in particular is
-   muddy at small sizes unhinted. Print the resolved face on both platforms before anything else --
-   this costs nothing and would explain the whole difference.
-2. **No hinting / stem snapping**, which the managed rasterizer does not implement at all. If macOS
-   resolves a different face that happens to survive it better, (1) is really the cause.
+```
+128571  scale=1.000  target=1014x731     <- the window. 1x, matching the display.
+  5812  scale=1.000  target=264x240      <- an offscreen layer (a card), also 1x
+    26  scale=3.000  target=1024x600     <- a DrawingBrush realization, supersampled x3
+```
 
-**Nothing is left of the obvious explanations.** Blend space, backend, rasterizer sampling, DPI and
-compositor scaling are all eliminated by experiment, yet 2x rendering fixes it on Linux and macOS
-needs no such help at 1x. The next thing to establish is whether the two platforms are really
-producing the same coverage for the same glyph: dump the same string's glyph mask on both (same font,
-same size, same colour) and compare the bitmaps directly. If they match, the difference is downstream
-of rasterization; if they differ, it is in the rasterizer or what feeds it (font resolution, hinting
-flags, subpixel positioning, the em-size/transform actually used).
+The 3 is `const int supersample = 3` in `MilcoreEngine.RasterizeBrushSources` (~line 1623): a tile
+brush motif is deliberately rasterized at 3x into its bitmap so tiling/scaling it stays crisp, and
+the wrapper transform it renders through is therefore a 3x scale. The recurring `scale = 2.000` seen
+in earlier runs is the same thing one step down -- `const int supersample = 2` for a VisualBrush
+realization (~line 2483); its 11 glyphs are literally the word "VisualBrush" in the brushes card.
+Both are correct and both are platform-independent.
+
+Why it read as a platform fault: brushes realize BEFORE the first present, so those 26 lines are the
+FIRST 26 lines of a 175k-line log -- whoever read the head of the file saw nothing but `scale =
+3.000`. **Always group by `target=` before drawing a conclusion from this log.**
+
+So the earlier table's "Linux default | render scale 1" row was right all along, the DPI chain is
+correct end to end, and there is no scale mismatch to fix. What follows is the (still valid) evidence
+that got us here; the 3-specific hunt below is dead.
+
+Also re-checked while here, and NOT the cause:
+
+* **GPU vs CPU coverage rasterizer.** `WPF_WEBGPU_CPU_RASTER=1` vs the default GPU path produce
+  BYTE-IDENTICAL text (same crop: 110 levels, 362 ink px, 275 partial-coverage px, mean ink 94.7 in
+  both). The fs_coverage shader on virgl/GL is not mis-rasterizing glyphs.
+* **Whole-pixel baseline snapping.** Changing the run baseline snap from the half-pixel grid to
+  `MathF.Round(bdy)` changes 2543 of 741234 pixels and nothing visible: layout puts baselines on
+  integer DIPs at 1x, so both grids round to the same row. The continuous `phaseY` in the log is each
+  glyph's fractional INK-BOX TOP, not a fractional baseline -- it is not evidence of a snapping bug.
+  Reverted; don't re-try it as a sharpness fix.
+
+**What the measurement does leave standing.** Against a FreeType render of the SAME font file at the
+SAME size (Selawik-Semibold 13px, "Interactive"), our output puts twice as many pixels at partial
+coverage -- 275 vs 137 in an identical 73x16 crop, and lighter per ink pixel (mean 94.7 vs 71.9)
+while carrying ~10% more total ink. That is the unhinted-vs-hinted signature, not a scale, gamma or
+rasterizer-quality signature: FreeType snaps stems to the pixel grid and we do not implement hinting
+at all. It is also the same on macOS, so it is a quality ceiling rather than the platform gap.
+
+**MEASURED: the presentation path does not touch the pixels.** `WF_SURF_DUMP` reads back the REAL
+swapchain texture rather than re-rendering offscreen, so diffing it against `WPF_WEBGPU_SINK_DUMP` of
+the same frame answers "does what we render survive being handed to the compositor". On the Vulkan
+backend, where the surface allows the copy:
+
+```
+vksurf.png (swapchain readback)  vs  vkoff_040.png (offscreen re-render), 1014x731
+per-channel difference extrema: ((0,0), (0,0), (0,0))
+differing pixels: 0 of 741234
+```
+
+Byte-identical. Nothing re-encodes, resamples or gamma-shifts between the render and the buffer the
+compositor scans out. So the "GL scans a UNORM swapchain out too dark" family, and the unimplemented
+`gl` branch in `ChooseFormat` it rests on (the `gl` flag reaches only the log line -- Linux gets
+`chosen=RGBA8Unorm` regardless), cannot be what makes text look worse: there is nothing left between
+the pixels we verified and the glass except the compositor, which treats our buffer exactly as it
+treats every other client's.
+
+Two caveats worth stating rather than hiding: the readback is on **Vulkan** (llvmpipe -- the GL
+surface refuses `CopySrc`, see below), and it proves the BUFFER is right, not that the monitor shows
+it right. But GL and Vulkan agree on text to within rounding, so the Vulkan result carries:
+
+```
+'Interactive' (Selawik-Semibold 13px), same crop, GL vs Vulkan offscreen:
+  GL  110 levels, 362 ink px, 275 partial-coverage px, mean ink 94.7
+  VK  121 levels, 364 ink px, 279 partial-coverage px, mean ink 94.8
+  per-pixel deltas across the stems: <= 3/255
+```
+
+**`WF_SURF_DUMP` used to ABORT the process on this head** -- the OpenGL surface advertises
+`COLOR_TARGET` only, and configuring it with `COPY_SRC` anyway is a wgpu validation error, which
+panics across the FFI boundary and kills the app being diagnosed. It now asks
+`wgpuSurfaceGetCapabilities().usages` first and logs that the readback is unavailable instead. That is
+why the Vulkan backend had to be forced (`WPF_WEBGPU_BACKEND=vulkan`) for the measurement above; note
+it selects the llvmpipe CPU adapter here, so the gallery runs at ~8fps against ~26fps on GL/virgl.
+That is the diagnostic being slow, not a regression.
+
+**So the platform gap is cornered OUTSIDE the rendered buffer entirely.** Scale, buffer/viewport
+ratio, rasterizer (GPU and CPU), font, blend space, backend, placement phases and the swapchain
+contents are all eliminated by measurement -- everything from the scene graph to the bytes handed to
+the compositor is verifiably what we intended.
+
+## The Linux head is measured inside a VM, and the VM is the resample
+
+The comparison that started this section is macOS-host-versus-Linux-guest on ONE machine: the Linux
+head runs in a Parallels VM on a Mac. That is not a detail, it is the answer, because it puts a
+scaling step in the Linux path that has no counterpart in the macOS path and that NO API inside the
+guest can see.
+
+What the guest's virtual display actually is:
+
+```
+/sys/class/drm/card1/card1-Virtual-1/  (virtio-gpu, PCI 1AB8:0010, prltoolsd running)
+  status  : connected
+  modes   : 1704x917          <- current + preferred, created dynamically by Parallels
+            4096x2160, 2560x1600, 1920x1440, ...   <- the static standard-mode table
+  xrandr  : 1704x917+0+0, 0mm x 0mm  (no physical size -> GNOME has no DPI to infer, stays at 1x)
+```
+
+`1704x917` is not a mode any real panel has. It is Parallels sizing the guest framebuffer to the VM
+window **in points**. On a Retina host that window is 3408x1834 physical pixels, so the host must
+scale the guest framebuffer **2x** to fill it. Decisive corroboration: the mode list contains **no
+3408x1834** -- Parallels has not created a HiDPI mode for this VM, i.e. it is not in "Best for Retina".
+
+So the real end-to-end chain on Linux is:
+
+| step | scale | |
+|---|---|---|
+| WPF renders | 1 | measured: `scale=1.000 target=1014x731` |
+| Wayland surface -> guest framebuffer | 1 | measured: buffer/viewport 1:1, swapchain byte-identical |
+| **guest framebuffer -> Mac panel** | **2 (Parallels)** | **invisible to the guest** |
+
+Native macOS WPF renders at `backingScaleFactor` 2 and lands on the panel 1:1. The Linux guest renders
+at 1 and the host doubles it, so every glyph edge is displayed as a 2x2 block. That is a
+render-scale/display-scale mismatch of exactly 2 -- the same defect the `--scale 3` experiment
+reproduced on macOS, relocated to the VM boundary. It explains every observation that looked
+contradictory:
+
+* why the guest measures 1x everywhere and is right to (`wl_output.scale`, `preferred_scale`,
+  `Xft.dpi`, `GetBackingScale()` -- all correctly 1 for a 1704x917 framebuffer);
+* why the swapchain is provably byte-perfect and the text still looks bad;
+* why "more samples help on Linux but macOS needs none";
+* why `WPF_LINUX_FORCE_SCALE=2` "fixes" it -- WPF supersamples 2x, the compositor downsamples into the
+  1704x917 framebuffer, the host doubles it back, and the extra samples survive the round trip. That
+  is compensation for the VM, not a fix, and it costs 4x the fill.
+
+**The fix is configuration, not code.** Give the guest a display it can render 1:1 for:
+
+1. Parallels: Configure -> Hardware -> Graphics -> Resolution = **Best for Retina**. Parallels then
+   creates a ~3408x1834 guest mode (verify: `head -1 /sys/class/drm/card1/card1-Virtual-1/modes`).
+2. GNOME Settings -> Displays -> Scale = **200%**. GNOME then sends `preferred_scale(240)`,
+   `WaylandWindow.GetBackingScale()` returns 2.0, `HwndTarget` takes DPI 2, and WPF renders 2x
+   natively (verify: `WPF_TEXT_LOG=1` shows `scale=2.000` on the window's `target=`).
+
+Without step 2 the UI is crisp but half-size; without step 1 step 2 has nothing to render into.
+
+**Before acting on this, confirm the host display is 2x**, because the earlier macOS control was taken
+"on a 1x external display" -- if the VM window and that control were on different monitors the factor
+may not be 2 (on a 1x monitor there is no host upscale at all and this explanation does not apply).
+The five-second check is step 1 + step 2 above: if text sharpens to macOS quality, confirmed.
+
+**What this does NOT excuse.** The unhinted rasterizer (measured above: 2x the partial-coverage pixels
+of FreeType for the same font at the same size) is still a real quality ceiling, and it is what makes
+1x text fragile enough for a downstream resample to wreck it. Fixing the VM removes the resample; it
+does not add stem snapping.
+
+**Historical: the Wayland backend was never the source of the 3 either.** Every scale the compositor
+reports is 1:
+
+```
+wl_output@6.scale(1)
+wp_fractional_scale_v1@28.preferred_scale(120)   -> 120/120 = 1.0
+wl_surface@27.preferred_buffer_scale(1)
+```
+
+`WaylandWindow.GetBackingScale()` prefers `_scale120 / 120.0`, so with `preferred_scale(120)` it
+returns **1.0** -- correct, and matching the display, and that is what the window's pass actually
+renders at (measured above).
+
+Every source OUTSIDE WPF also says 1, and so does WPF:
+
+| source | value |
+|---|---|
+| `wl_output.scale`, `preferred_scale`, `preferred_buffer_scale` | 1 |
+| GNOME `text-scaling-factor` / `scaling-factor` | 1.0 / 0 |
+| `Xft.dpi` | 96 |
+| the gallery sample | no global transform (only per-shape ones) |
+| `WPF_TEXT_LOG`, `target=1014x731` (the window's pass) | 1.000 |
+
+`WPF_LINUX_FORCE_SCALE` was unset for those runs, `HwndTarget`'s off-Windows path sets
+`CurrentDpiScale` straight from `platformWindow.GetBackingScale()`, and every link in that chain is
+measured at 1.0. The DPI chain is correct end to end; nothing manufactures a 3.
+
+Remaining candidates:
+1. ~~**A different font resolves.**~~ Eliminated: the sink log shows Linux resolving the bundled
+   `Selawik-{Regular,Semibold,Bold}.ttf`, the same files macOS gets.
+2. **No hinting / stem snapping**, which the managed rasterizer does not implement at all. This is
+   real and quantified (see the FreeType comparison above: 2x the partial-coverage pixels for the
+   same font at the same size) -- but it is a quality ceiling both platforms sit under, so it caps
+   how good 1x text can look without explaining why macOS looks better than Linux.
+
+**Nothing is left of the obvious explanations.** Blend space, backend, rasterizer (GPU and CPU,
+byte-identical), DPI, render scale, font and compositor scaling are all eliminated by experiment, yet
+2x rendering fixes it on Linux and macOS needs no such help at 1x. Everything measurable from the
+rendered buffer now agrees between the platforms, so the next thing to establish is whether the buffer
+survives PRESENTATION intact on Linux -- capture the window off the screen (portal screenshot; the
+`org.gnome.Shell.Screenshot` D-Bus method is AccessDenied to non-interactive callers) and diff it
+against the `WPF_WEBGPU_SINK_DUMP` PNG of the same frame. Equal means the defect is upstream after
+all and the rasterizer comparison has to be redone glyph-mask-by-glyph-mask against macOS; different
+means it is the swapchain/scanout, and `ChooseFormat`'s unimplemented `gl` branch is the first
+suspect.
 
 Do NOT reach for SSAA or 2x glyph coverage until that comparison is done -- more samples demonstrably
 mask this, and masking it would end the investigation with the cause still unknown.
