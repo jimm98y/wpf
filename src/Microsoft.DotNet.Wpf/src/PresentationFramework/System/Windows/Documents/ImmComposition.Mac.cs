@@ -216,13 +216,36 @@ namespace System.Windows.Documents
         private void DeleteAroundCaret(int beforeChars, int afterChars)
         {
             ITextRange selection = _editor?.Selection;
-            if (selection == null) return;
+            ITextContainer container = _editor?.TextContainer;
+            if (selection == null || container == null) return;
+
+            // Clamp to what the document actually holds. An input method asks to delete relative to
+            // ITS view of the text, which can be ahead of the document -- Android sends a backspace
+            // for a composition it believes exists, and the obvious CreatePointer(-1) then runs off
+            // the start and throws ArgumentException out of an InputConnection callback, killing the
+            // app. (Seen exactly that way: backspace in an empty TextBox.)
+            int available = Math.Max(0, container.Start.GetOffsetToPosition(selection.Start));
+            int remaining = Math.Max(0, selection.End.GetOffsetToPosition(container.End));
+
+            beforeChars = Math.Min(beforeChars, available);
+            afterChars = Math.Min(afterChars, remaining);
+            if (beforeChars <= 0 && afterChars <= 0) return;
 
             ITextPointer start = selection.Start.CreatePointer();
             ITextPointer end = selection.End.CreatePointer();
 
-            if (beforeChars > 0) start = start.CreatePointer(-beforeChars);
-            if (afterChars > 0) end = end.CreatePointer(afterChars);
+            try
+            {
+                if (beforeChars > 0) start = start.CreatePointer(-beforeChars);
+                if (afterChars > 0) end = end.CreatePointer(afterChars);
+            }
+            catch (ArgumentException)
+            {
+                // The offsets above count characters, but a pointer distance also counts element
+                // edges in a RichTextBox, so a clamped count can still land outside. Nothing to
+                // delete is a better answer than an exception the input method cannot handle.
+                return;
+            }
 
             if (start != null && end != null && start.CompareTo(end) < 0)
             {
