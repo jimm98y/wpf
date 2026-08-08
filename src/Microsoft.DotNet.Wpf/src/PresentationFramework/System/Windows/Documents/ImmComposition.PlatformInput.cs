@@ -69,6 +69,55 @@ namespace System.Windows.Documents
             ReportCaretRectangleToIosInputMethod(x, y, width, height);
         }
 
+        /// <summary>
+        /// Removes text around the caret at an input method's request, counted in UTF-16 units.
+        ///
+        /// Shared rather than per-backend because there is no platform in it: it is document
+        /// editing, and Cocoa and Android both ask for exactly this (Wayland does not, counting in
+        /// UTF-8 bytes, so its own version converts first and lives with the Wayland code). It began
+        /// in the Cocoa half and was called across from the Android one, which is precisely the
+        /// coupling the per-backend split exists to prevent.
+        /// </summary>
+        private void DeleteAroundCaret(int beforeChars, int afterChars)
+        {
+            ITextRange selection = _editor?.Selection;
+            ITextContainer container = _editor?.TextContainer;
+            if (selection == null || container == null) return;
+
+            // Clamp to what the document actually holds. An input method asks to delete relative to
+            // ITS view of the text, which can be ahead of the document -- Android sends a backspace
+            // for a composition it believes exists, and the obvious CreatePointer(-1) then runs off
+            // the start and throws ArgumentException out of an InputConnection callback, killing the
+            // app. (Seen exactly that way: backspace in an empty TextBox.)
+            int available = Math.Max(0, container.Start.GetOffsetToPosition(selection.Start));
+            int remaining = Math.Max(0, selection.End.GetOffsetToPosition(container.End));
+
+            beforeChars = Math.Min(beforeChars, available);
+            afterChars = Math.Min(afterChars, remaining);
+            if (beforeChars <= 0 && afterChars <= 0) return;
+
+            ITextPointer start = selection.Start.CreatePointer();
+            ITextPointer end = selection.End.CreatePointer();
+
+            try
+            {
+                if (beforeChars > 0) start = start.CreatePointer(-beforeChars);
+                if (afterChars > 0) end = end.CreatePointer(afterChars);
+            }
+            catch (ArgumentException)
+            {
+                // The offsets above count characters, but a pointer distance also counts element
+                // edges in a RichTextBox, so a clamped count can still land outside. Nothing to
+                // delete is a better answer than an exception the input method cannot handle.
+                return;
+            }
+
+            if (start != null && end != null && start.CompareTo(end) < 0)
+            {
+                _editor.Selection.Select(start, end);
+                _editor.Selection.Text = string.Empty;
+            }
+        }
         /// <summary>Reports the text around the caret to whichever backend is live.</summary>
         private void ReportSurroundingTextToInputMethod()
         {
