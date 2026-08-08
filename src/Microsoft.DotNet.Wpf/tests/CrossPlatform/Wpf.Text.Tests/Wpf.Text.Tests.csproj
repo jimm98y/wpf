@@ -89,6 +89,42 @@
     <Warning Text="The WPF fork is not built, so the text-stack tests are excluded. Run eng/build-sdk.sh to enable them." />
   </Target>
 
+  <!--
+    Existing is not the same as current. These tests bind to artifacts/bin by path, so a checkout
+    that moved on since the last eng/build-sdk.sh runs the OLD text stack against the NEW tests, and
+    every assertion the newer code was written to satisfy fails. That reads exactly like a product
+    regression - it cost a full investigation once - so stop instead, and say which side is stale.
+
+    The comparison is against HEAD's commit date rather than the source files: globbing thousands of
+    .cs files on every build would cost more than the mistake. Uncommitted edits are therefore NOT
+    caught, and no check here can substitute for rebuilding after touching the fork. If git is
+    unavailable the check quietly passes rather than blocking a build it cannot judge.
+  -->
+  <Target Name="CheckForkNotStale" BeforeTargets="Build"
+          Condition="'$(_ForkBuilt)' == 'true' AND '$(AllowStaleFork)' != 'true'">
+    <Exec Command="git log -1 --format=%25ct" WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_HeadCommitUnix" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitExitCode" />
+    </Exec>
+
+    <!-- MSBuild has no file-time property function, so the timestamp comes off item metadata.
+         ModifiedTime is local time, hence ToLocalTime on the commit date rather than UtcNow math. -->
+    <ItemGroup Condition="'$(_GitExitCode)' == '0' AND '$(_HeadCommitUnix)' != ''">
+      <_ForkDll Include="$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll" />
+    </ItemGroup>
+
+    <PropertyGroup Condition="'$(_GitExitCode)' == '0' AND '$(_HeadCommitUnix)' != ''">
+      <_ForkModified>@(_ForkDll->'%(ModifiedTime)')</_ForkModified>
+      <_ForkTicks Condition="'$(_ForkModified)' != ''">$([System.DateTime]::Parse('$(_ForkModified)').Ticks)</_ForkTicks>
+      <_HeadCommitTicks>$([System.DateTime]::new(1970,1,1).AddSeconds($(_HeadCommitUnix)).ToLocalTime().Ticks)</_HeadCommitTicks>
+    </PropertyGroup>
+
+    <Error Condition="'$(_ForkTicks)' != '' AND $(_ForkTicks) &lt; $(_HeadCommitTicks)"
+           Text="artifacts/bin is older than the checked-out commit, so these tests would run against a stale text stack and fail for reasons that are not in the source. Run eng/build-sdk.sh, or pass -p:AllowStaleFork=true to test the old binaries deliberately." />
+  </Target>
+
   <!-- Copy the fork's assemblies next to the test binary; conflict resolution recognises names like
        PresentationCore as framework-provided and drops them from the copy set otherwise, and they
        are then missing at run time. -->

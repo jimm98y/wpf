@@ -154,6 +154,14 @@ namespace Wpf.Platform.Tests
 
             if (OperatingSystem.IsMacOS())
             {
+                // AppKit only builds windows on the process's main thread, and a test runner has no
+                // main thread to offer: xunit dispatches every test onto the thread pool, and the
+                // real main thread is inside the runner with no run loop to marshal onto. Creating
+                // one anyway used to abort the whole assembly (an Objective-C exception through
+                // managed frames), so nothing in this project reported at all on macOS.
+                Assert.SkipUnless(PlatformThread.IsMainThread,
+                    "AppKit windows require the process main thread, which the test runner does not provide");
+
                 var owner = new CocoaWindow();
                 owner.Create("Wpf.Platform.Tests owner", 0, 0, OwnerW, OwnerH);
                 var popup = new CocoaWindow();

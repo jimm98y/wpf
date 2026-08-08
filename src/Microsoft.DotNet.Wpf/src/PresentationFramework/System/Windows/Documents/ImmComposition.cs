@@ -131,10 +131,10 @@ namespace System.Windows.Documents
 
             _editor.TextContainer.Change += new TextContainerChangeEventHandler(OnTextContainerChange);
 
-            // Tell the Wayland input method a field is being edited (no-op elsewhere). This also
-            // reports the caret rectangle and surrounding text, so it precedes nothing that would
-            // need them.
-            EnableLinuxTextInput();
+            // Tell the platform's input method a field is being edited (a no-op on Windows, where
+            // IMM32 needs no such notice). This also reports the caret rectangle and surrounding
+            // text, so it precedes nothing that would need them.
+            EnablePlatformTextInput();
 
             // Update the current composition window position.
             UpdateNearCaretCompositionWindow();
@@ -157,7 +157,7 @@ namespace System.Windows.Documents
             finally
             {
                 _losingFocus = false;
-                DisableLinuxTextInput();
+                DisablePlatformTextInput();
             }
         }
 
@@ -193,9 +193,10 @@ namespace System.Windows.Documents
             hwnd = ((IWin32Window)_source).Handle;
 
             // IMM32 is the Windows input method manager; off Windows the composition is driven by
-            // zwp_text_input_v3 instead (see the Linux input-method region below), which has no
-            // equivalent "finish now" request -- the input method ends its own composition when the
-            // text field is disabled, and everything below this point is platform-neutral.
+            // zwp_text_input_v3 or NSTextInputClient instead (see ImmComposition.Linux.cs and
+            // ImmComposition.Mac.cs), neither of which has an equivalent "finish now" request -- the
+            // input method ends its own composition when the text field is disabled, and everything
+            // below this point is platform-neutral.
             if (OperatingSystem.IsWindows())
             {
                 IntPtr himc = UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd));
@@ -758,13 +759,14 @@ namespace System.Windows.Documents
             }
 
             // Off Windows there is no IMM context to write into: the same caret geometry travels to
-            // the input method as zwp_text_input_v3.set_cursor_rectangle. Compute it the same way,
-            // then hand it to whichever channel this platform has.
+            // the input method as zwp_text_input_v3.set_cursor_rectangle on Linux and as the answer
+            // to -firstRectForCharacterRange: on macOS. Compute it the same way, then hand it to
+            // whichever channel this platform has.
             IntPtr himc = OperatingSystem.IsWindows()
                 ? UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd))
                 : IntPtr.Zero;
 
-            if (himc != IntPtr.Zero || IsLinuxTextInputActive)
+            if (himc != IntPtr.Zero || IsPlatformTextInputActive)
             {
                 rectCaret = view.GetRectangleFromTextPosition(_editor.Selection.End.CreatePointer(LogicalDirection.Backward));
 
@@ -1612,6 +1614,17 @@ namespace System.Windows.Documents
         //
         private bool IsReadingWindowIme()
         {
+            // The question this asks -- does the input method draw its own window somewhere other
+            // than at the caret, so the caret position has to be pushed to it? -- is IMM32's, and so
+            // is the only API that answers it. Off Windows the answer is always yes: zwp_text_input_v3
+            // and NSTextInputClient both place the candidate window from the rectangle the client
+            // reports, so it has to be reported whenever the layout moves the caret. (Asking anyway
+            // meant a P/Invoke to imm32.dll, which off Windows is not a failed lookup but an
+            // unhandled DllNotFoundException that takes the app down on the first layout pass after
+            // a text field takes focus.)
+            if (!OperatingSystem.IsWindows())
+                return true;
+
             int prop = UnsafeNativeMethods.ImmGetProperty(new HandleRef(this, SafeNativeMethods.GetKeyboardLayout(0)), NativeMethods.IGP_PROPERTY);
             return (((prop & NativeMethods.IME_PROP_AT_CARET) == 0) || ((prop & NativeMethods.IME_PROP_SPECIAL_UI) != 0));
         }

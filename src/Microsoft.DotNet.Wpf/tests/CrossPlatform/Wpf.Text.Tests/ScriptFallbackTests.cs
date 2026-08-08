@@ -132,7 +132,8 @@ namespace Wpf.Text.Tests
         public void JapaneseAndSimplifiedChinesePreferTheirOwnFamilies()
         {
             Assert.SkipUnless(
-                TextHarness.FamilyInstalled("Noto Sans CJK JP") && TextHarness.FamilyInstalled("Noto Sans CJK SC"),
+                TextHarness.AnyFamilyInstalled(TextHarness.JapaneseFamilies) &&
+                TextHarness.AnyFamilyInstalled(TextHarness.SimplifiedChineseFamilies),
                 "requires locale-specific CJK families to tell apart");
 
             // The run's language is the input, not a guess from the characters: 漢字 is written the

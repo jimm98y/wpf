@@ -197,6 +197,36 @@ namespace Wpf.Text.Tests
             return false;
         }
 
+        /// <summary>True if any one of these families is installed.</summary>
+        public static bool AnyFamilyInstalled(params string[] names)
+        {
+            foreach (string name in names)
+            {
+                if (FamilyInstalled(name)) return true;
+            }
+            return false;
+        }
+
+        // The families a machine has to have before "Japanese and Chinese pick their own" is a
+        // question worth asking: something Japanese AND something Simplified Chinese, under whatever
+        // names this platform ships them. Naming only the Noto pair skipped the test everywhere but
+        // Linux -- macOS has had Hiragino and Heiti/Songti all along, and the behaviour under test
+        // works there, so it was going untested on the one platform where the fallback chain reaches
+        // these families by a completely different route (system fonts, not app-deployed Noto).
+        public static readonly string[] JapaneseFamilies =
+        {
+            "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP",  // Linux / Android / app-deployed
+            "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Hiragino Mincho ProN",  // macOS
+            "Yu Gothic UI", "Yu Gothic", "MS Gothic", "Meiryo",        // Windows
+        };
+
+        public static readonly string[] SimplifiedChineseFamilies =
+        {
+            "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",  // Linux / Android / app-deployed
+            "PingFang SC", "Heiti SC", "Songti SC", "Hiragino Sans GB",  // macOS
+            "Microsoft YaHei UI", "Microsoft YaHei", "SimSun",         // Windows
+        };
+
         private static string FamilyNameOf(GlyphTypeface? glyphTypeface)
         {
             if (glyphTypeface is null) return "(none)";

@@ -28,18 +28,6 @@ namespace System.Windows.Documents
 {
     internal partial class ImmComposition
     {
-        /// <summary>
-        /// Whether this platform has an input-method channel at all. Drives whether TextEditor
-        /// creates an ImmComposition off Windows; evaluated per call rather than cached because the
-        /// Wayland connection comes up lazily, after this type may already have been initialized.
-        /// </summary>
-        internal static bool IsPlatformInputMethodAvailable
-            => s_immEnabled || (OperatingSystem.IsLinux() && WaylandTextInput.IsAvailable);
-
-        // Windows' half of the answer never changes, and asking the system metric on every focus
-        // change is what the static this replaced was avoiding.
-        private static readonly bool s_immEnabled = SafeSystemMetrics.IsImmEnabled;
-
         /// <summary>True when this instance is the focused editor and the Wayland IME is live.</summary>
         private bool IsLinuxTextInputActive =>
             OperatingSystem.IsLinux() && s_linuxFocused == this &&
@@ -76,7 +64,7 @@ namespace System.Windows.Documents
             // enable() resets everything staged on the compositor side, so the context the input
             // method needs has to follow it, not precede it.
             UpdateNearCaretCompositionWindow();
-            ReportSurroundingTextToInputMethod();
+            ReportSurroundingTextToLinuxInputMethod();
         }
 
         /// <summary>Tells the input method no field is being edited. Called from OnLostFocus.</summary>
@@ -125,7 +113,7 @@ namespace System.Windows.Documents
         /// rectangle arrives in device pixels relative to the window's client area; the protocol
         /// wants surface-local logical units, which WaylandTextInput converts.
         /// </summary>
-        private void ReportCaretRectangleToInputMethod(int x, int y, int width, int height)
+        private void ReportCaretRectangleToLinuxInputMethod(int x, int y, int width, int height)
         {
             if (!IsLinuxTextInputActive || _source == null) return;
 
@@ -142,7 +130,7 @@ namespace System.Windows.Documents
         /// to work out what delete_surrounding_text should remove; the same helper the IMM32
         /// reconversion path uses supplies it.
         /// </summary>
-        private void ReportSurroundingTextToInputMethod()
+        private void ReportSurroundingTextToLinuxInputMethod()
         {
             if (!IsLinuxTextInputActive || _editor == null) return;
 
@@ -223,7 +211,7 @@ namespace System.Windows.Documents
 
             // The caret has moved, so the candidate window has to follow it.
             UpdateNearCaretCompositionWindow();
-            ReportSurroundingTextToInputMethod();
+            ReportSurroundingTextToLinuxInputMethod();
         }
 
         /// <summary>

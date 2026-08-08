@@ -126,6 +126,18 @@ namespace MS.Internal.Interop
         /// </summary>
         public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner)
         {
+            // AppKit refuses to build a window anywhere but the main thread, and it refuses by
+            // raising an Objective-C exception -- which unwinds through managed frames into
+            // std::terminate and takes the process with it, with no managed stack to say why. Check
+            // first so the caller gets an exception it can actually catch (and a test host gets a
+            // failing test rather than a dead run).
+            if (pthread_main_np() == 0)
+            {
+                throw new InvalidOperationException(
+                    "A Cocoa window can only be created on the process's main thread; AppKit aborts the " +
+                    "process otherwise. Marshal the call to the main thread (Dispatcher) and retry.");
+            }
+
             EnsureApplication();
 
             _ownerHandle = owner;
@@ -467,6 +479,37 @@ namespace MS.Internal.Interop
             double topLeftYpt = screenH - content.y - content.height;
             sx = (int)Math.Round(content.x * scale);
             sy = (int)Math.Round(topLeftYpt * scale);
+        }
+
+        /// <summary>
+        /// Converts a rectangle in client device pixels (top-left origin, the units WPF hands out)
+        /// to screen points with a bottom-left origin -- Cocoa's own coordinate space, and what
+        /// -firstRectForCharacterRange: has to answer in so an input method's candidate window lands
+        /// under the text being typed. The inverse of the mouse path's screen-to-client math.
+        /// Returns false when <paramref name="view"/> does not belong to a live window.
+        /// </summary>
+        internal static bool TryConvertClientPixelsToScreenPoints(
+            IntPtr view, int x, int y, int width, int height,
+            out double sx, out double sy, out double swidth, out double sheight)
+        {
+            sx = sy = swidth = sheight = 0;
+
+            CocoaWindow w = FromHandle(view);
+            if (w == null || w._window == IntPtr.Zero) return false;
+
+            double scale = w.GetBackingScale();
+            if (scale <= 0) return false;
+
+            w.GetClientScreenOriginPixels(out int ox, out int oy);
+
+            swidth = width / scale;
+            sheight = height / scale;
+            sx = (ox + x) / scale;
+
+            // y arrives as the TOP edge measured downwards; Cocoa wants the BOTTOM edge measured up
+            // from the primary screen's bottom, so flip the far edge rather than the near one.
+            sy = PrimaryScreenHeightPoints() - ((oy + y) / scale) - sheight;
+            return true;
         }
 
         private static double PrimaryScreenHeightPoints()
@@ -1102,6 +1145,25 @@ namespace MS.Internal.Interop
 
             bool isDown = type == NSKeyDown;
             bool repeat = isDown && SendBool(evt, Sel("isARepeat"));
+
+            // While a text field has focus, the keystroke is the input method's before it is ours:
+            // it is what a Japanese IME turns into a composition, and what -handleEvent: answers YES
+            // to. Anything it consumed has already come back through NSTextInputClient as marked or
+            // committed text (see CocoaTextInput), so passing the same keystroke on as a character
+            // would type every word twice.
+            if (isDown && CocoaTextInput.IsEnabled && CocoaTextInput.HandleKeyEvent(evt))
+            {
+                // Mid-composition the input method owns the whole keyboard, arrow keys and Return
+                // included -- those move through candidates rather than through the document, so WPF
+                // must not see them at all. With no composition in flight only the TEXT belongs to
+                // the input method; the key itself still has to reach WPF for shortcuts and editing
+                // keys, so it is reported with no characters attached.
+                if (CocoaTextInput.IsComposing) return;
+
+                handler(new CocoaKeyMessage(view, isDown, keyCode, null, repeat, flags, Environment.TickCount));
+                return;
+            }
+
             string chars = null;
             if (isDown)
             {
@@ -1260,6 +1322,9 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidPtr4(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b, IntPtr c, IntPtr d);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
+
+        /// <summary>Non-zero on the process's main thread -- the only one AppKit accepts UI on.</summary>
+        [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
 
         // objc_msgSend is variadic in C; declare one typed alias per call shape we use.
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);

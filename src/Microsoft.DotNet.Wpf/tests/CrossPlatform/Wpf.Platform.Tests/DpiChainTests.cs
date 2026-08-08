@@ -81,6 +81,15 @@ namespace Wpf.Platform.Tests
                 }
                 else if (OperatingSystem.IsMacOS())
                 {
+                    // See PlatformThread: AppKit windows belong to the main thread, which a test
+                    // runner does not have to give. CocoaWindow.Create says so with an exception the
+                    // catch below turns into a skip reason, but saying it here names the cause.
+                    if (!PlatformThread.IsMainThread)
+                    {
+                        Unavailable = "AppKit windows require the process main thread, which the test runner does not provide";
+                        return;
+                    }
+
                     var w = new CocoaWindow();
                     w.Create("Wpf.Platform.Tests", 0, 0, WidthDips, HeightDips);
                     Window = w;
