@@ -109,6 +109,10 @@ namespace Microsoft.Wpf.Interop.WebGpu
             WGPUTextureFormat.BGRA8Unorm => "bgra8unorm",
             WGPUTextureFormat.BGRA8UnormSrgb => "bgra8unorm-srgb",
             WGPUTextureFormat.Depth24Plus => "depth24plus",
+            // The glyph atlas's lookup texture. Missing here, the browser head threw out of the
+            // dispatcher pump the first time text was rendered and the app stopped dead -- the
+            // native backends carry the format straight through, so nothing else noticed.
+            WGPUTextureFormat.RG32Uint => "rg32uint",
             _ => throw new NotSupportedException($"Texture format {f} not mapped for the browser backend."),
         };
 

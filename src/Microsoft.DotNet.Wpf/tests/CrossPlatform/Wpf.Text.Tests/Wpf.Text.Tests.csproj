@@ -105,13 +105,17 @@
     moment the work was committed. Uncommitted edits, by contrast, are caught, which is the case
     that actually bites.
 
+    obj/ and bin/ are pruned: they are full of GENERATED .cs (AssemblyInfo and friends) that a build
+    rewrites, so leaving them in meant the check fired on its own output and reported a stale fork
+    immediately after a successful build.
+
     Unix only. `find` on Windows is a different tool entirely, so the check is skipped there rather
     than reimplemented; the same is true when the fork's source is absent (a package-only consumer).
   -->
   <Target Name="CheckForkNotStale" BeforeTargets="Build"
           Condition="'$(_ForkBuilt)' == 'true' AND '$(AllowStaleFork)' != 'true'
                      AND '$(OS)' != 'Windows_NT' AND Exists('$(_ForkSrc)')">
-    <Exec Command="find &quot;$(_ForkSrc)&quot; -name '*.cs' -newer &quot;$(_ForkDllPath)&quot; -print -quit"
+    <Exec Command="find &quot;$(_ForkSrc)&quot; \( -name obj -o -name bin \) -prune -o -name '*.cs' -newer &quot;$(_ForkDllPath)&quot; -print -quit"
           ConsoleToMSBuild="true" StandardOutputImportance="low"
           ContinueOnError="true" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="_NewerSource" />
