@@ -66,6 +66,7 @@ namespace System.Windows.Documents
             ReportCaretRectangleToMacInputMethod(x, y, width, height);
             ReportCaretRectangleToBrowserInputMethod(x, y, width, height);
             ReportCaretRectangleToAndroidInputMethod(x, y, width, height);
+            ReportCaretRectangleToIosInputMethod(x, y, width, height);
         }
 
         /// <summary>Reports the text around the caret to whichever backend is live.</summary>

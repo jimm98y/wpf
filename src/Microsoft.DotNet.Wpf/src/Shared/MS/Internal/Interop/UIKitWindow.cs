@@ -330,9 +330,9 @@ namespace MS.Internal.Interop
             if (cls == IntPtr.Zero) return IntPtr.Zero;
 
             AddTouchMethods(cls);
-            // UIKeyInput: what makes the view able to become first responder, and therefore
-            // what makes the software keyboard appear at all. Must precede registerClassPair.
-            UIKitTextInput.AddKeyInputMethods(cls);
+            // UITextInput: what makes the view able to become first responder (so the keyboard
+            // appears at all) and able to host an inline composition. Must precede registerClassPair.
+            UIKitTextInput.AddTextInputMethods(cls);
             class_addMethod(cls, Sel("wpfScroll:"),
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&ScrollImp, "v@:@");
 
@@ -423,9 +423,9 @@ namespace MS.Internal.Interop
                 "#@:");   // returns Class; (id self, SEL _cmd)
 
             AddTouchMethods(cls);
-            // UIKeyInput: what makes the view able to become first responder, and therefore
-            // what makes the software keyboard appear at all. Must precede registerClassPair.
-            UIKitTextInput.AddKeyInputMethods(cls);
+            // UITextInput: what makes the view able to become first responder (so the keyboard
+            // appears at all) and able to host an inline composition. Must precede registerClassPair.
+            UIKitTextInput.AddTextInputMethods(cls);
 
             // The action the scroll recognizer targets back at the view (see AddScrollRecognizer).
             class_addMethod(cls, Sel("wpfScroll:"),
