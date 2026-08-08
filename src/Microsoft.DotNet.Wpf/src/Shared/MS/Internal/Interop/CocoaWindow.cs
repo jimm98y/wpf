@@ -158,6 +158,23 @@ namespace MS.Internal.Interop
             _window = SendInitWindow(alloc, Sel("initWithContentRect:styleMask:backing:defer:"),
                                      frame, styleMask, NSBackingStoreBuffered, false);
 
+            // Our own NSView subclass rather than the stock content view, because VoiceOver walks the
+            // VIEW hierarchy: an accessibility client asks the view what its children are, and only a
+            // class we own can answer with the WPF automation tree. Everything else about it is a
+            // plain content view -- same frame, same layer-backing, same handle semantics -- and the
+            // window still owns it, so nothing downstream (the CAMetalLayer, mouse routing, the input
+            // context) can tell the difference.
+            IntPtr viewClass = EnsureContentViewClass();
+            if (viewClass != IntPtr.Zero)
+            {
+                NSRect contentRect = SendRect(_window, Sel("contentLayoutRect"));
+                IntPtr view = SendPtrRect(Send(viewClass, Sel("alloc")), Sel("initWithFrame:"), contentRect);
+                if (view != IntPtr.Zero)
+                {
+                    SendVoidPtr(_window, Sel("setContentView:"), view);
+                }
+            }
+
             // Make the content view layer-backed so wgpu can install a CAMetalLayer on it.
             _contentView = Send(_window, Sel("contentView"));
             SendVoidBool(_contentView, Sel("setWantsLayer:"), true);
@@ -510,6 +527,78 @@ namespace MS.Internal.Interop
             // from the primary screen's bottom, so flip the far edge rather than the near one.
             sy = PrimaryScreenHeightPoints() - ((oy + y) / scale) - sheight;
             return true;
+        }
+
+        /// <summary>
+        /// Converts a rectangle already in SCREEN device pixels (top-left origin, the space
+        /// AutomationPeer.GetBoundingRectangle reports in) to Cocoa's screen points with a
+        /// bottom-left origin. What NSAccessibility's -accessibilityFrame is defined in.
+        ///
+        /// Distinct from TryConvertClientPixelsToScreenPoints above, which starts from a point
+        /// relative to a window's client area; this one starts from the screen space that
+        /// ClientToScreen already produced, so only the scale and the vertical flip remain.
+        /// </summary>
+        internal static void ConvertScreenPixelsToCocoaPoints(
+            double x, double y, double width, double height,
+            out double sx, out double sy, out double swidth, out double sheight)
+        {
+            double scale = PrimaryScreenScale();
+            if (scale <= 0) scale = 1;
+
+            swidth = width / scale;
+            sheight = height / scale;
+            sx = x / scale;
+
+            // y arrives as the TOP edge measured downwards; Cocoa wants the BOTTOM edge measured up
+            // from the primary screen's bottom, so the far edge is what gets flipped.
+            sy = PrimaryScreenHeightPoints() - (y / scale) - sheight;
+        }
+
+        /// <summary>
+        /// The inverse of ConvertScreenPixelsToCocoaPoints for a point: Cocoa screen points
+        /// (bottom-left origin) to the top-left device pixels WPF hit-tests in.
+        /// </summary>
+        internal static void ConvertCocoaPointsToScreenPixels(double x, double y, out double px, out double py)
+        {
+            double scale = PrimaryScreenScale();
+            if (scale <= 0) scale = 1;
+
+            px = x * scale;
+            py = (PrimaryScreenHeightPoints() - y) * scale;
+        }
+
+        // The content-view class, synthesised once. Its only job beyond being an NSView is to answer
+        // accessibility questions out of the WPF automation tree; CocoaAccessibility adds those.
+        private static IntPtr s_contentViewClass;
+
+        private static IntPtr EnsureContentViewClass()
+        {
+            if (s_contentViewClass != IntPtr.Zero) return s_contentViewClass;
+
+            // Re-registering an existing class pair aborts the process, so look it up first.
+            IntPtr existing = objc_getClass("WpfContentView");
+            if (existing != IntPtr.Zero) return s_contentViewClass = existing;
+
+            IntPtr nsView = objc_getClass("NSView");
+            if (nsView == IntPtr.Zero) return IntPtr.Zero;
+
+            IntPtr cls = objc_allocateClassPair(nsView, "WpfContentView", UIntPtr.Zero);
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+
+            CocoaAccessibility.AddViewAccessibility(cls);
+
+            objc_registerClassPair(cls);
+            return s_contentViewClass = cls;
+        }
+
+        /// <summary>The primary screen's backing scale, for conversions with no window in hand.</summary>
+        private static double PrimaryScreenScale()
+        {
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            IntPtr primary = (screens != IntPtr.Zero && SendNUInt(screens, Sel("count")) > 0)
+                ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
+                : Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+            return primary == IntPtr.Zero ? 1 : SendDouble(primary, Sel("backingScaleFactor"));
         }
 
         private static double PrimaryScreenHeightPoints()
@@ -1359,6 +1448,9 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, NSRect arg);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern IntPtr SendPtrRect(IntPtr receiver, IntPtr selector, NSRect arg);
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidRectBool(IntPtr receiver, IntPtr selector, NSRect arg, [MarshalAs(UnmanagedType.I1)] bool b);
