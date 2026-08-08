@@ -28,6 +28,12 @@ internal static class ModuleInitializer
 
     public static void Initialize()
     {
+        // Let a platform accessibility backend ask for the automation tree. The backends live in
+        // WindowsBase and cannot reference this assembly, so the request arrives as an event and is
+        // answered here. Subscribing (not activating) costs nothing: no tree is built until an
+        // assistive technology is actually detected.
+        MS.Internal.Interop.AutomationTree.ActivationRequested += MS.Internal.Automation.AutomationBridge.Activate;
+
         // Linux: bring the Wayland connection up HERE, before anything else.
         //
         // This is an ordering requirement, not a convenience. The compositor connection is owned by

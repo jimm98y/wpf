@@ -140,6 +140,7 @@
     <Compile Include="MS\Internal\Automation\AutomationPatternInfo.cs" />
     <Compile Include="MS\Internal\Automation\AutomationPropertyInfo.cs" />
     <Compile Include="MS\Internal\Automation\DockProviderWrapper.cs" />
+    <Compile Include="MS\Internal\Automation\AutomationBridge.cs" />
     <Compile Include="MS\Internal\Automation\ElementProxy.cs" />
     <Compile Include="MS\Internal\Automation\ElementUtil.cs" />
     <Compile Include="MS\Internal\Automation\EventMap.cs" />

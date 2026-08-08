@@ -312,6 +312,11 @@ namespace System.Windows.Automation.Peers
                 return;
             }
 
+            // Off Windows the listener is a native screen reader rather than a UIA client, reached
+            // through the platform bridge. It is notified from here, before the provider work below,
+            // because ProviderFromPeer builds a COM-shaped wrapper that only uiacore ever consumes.
+            MS.Internal.Automation.AutomationBridge.NotifyEvent(this, eventId);
+
             IRawElementProviderSimple provider = ProviderFromPeer(this);
             if (provider != null)
             {
@@ -331,6 +336,14 @@ namespace System.Windows.Automation.Peers
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public void RaisePropertyChangedEvent(AutomationProperty property, object oldValue, object newValue)
         {
+            // ClientsAreListening answers for UIA, which exists only on Windows; off Windows the
+            // listener is a native screen reader attached through the platform bridge, and without
+            // this second term every property change would be dropped before it reached one.
+            if (MS.Internal.Automation.AutomationBridge.IsActive)
+            {
+                MS.Internal.Automation.AutomationBridge.NotifyPropertyChanged(this, property);
+            }
+
             // Only send the event if there are listeners for this property change
             if (AutomationInteropProvider.ClientsAreListening)
             {
@@ -1948,6 +1961,9 @@ namespace System.Windows.Automation.Peers
                     flags = StructureChangeType.ChildrenBulkAdded;
                 else
                     flags = StructureChangeType.ChildrenInvalidated;
+
+                MS.Internal.Automation.AutomationBridge.Notify(
+                    this, MS.Internal.Interop.AutomationChangeKind.ChildrenChanged);
 
                 IRawElementProviderSimple provider = ProviderFromPeerNoDelegation(this);
                 if(provider != null)

@@ -283,6 +283,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDisplay.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AutomationTreeSource.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidTextInput.cs" />
