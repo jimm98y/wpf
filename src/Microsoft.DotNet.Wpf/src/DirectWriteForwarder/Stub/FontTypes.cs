@@ -283,7 +283,11 @@ namespace MS.Internal.Text.TextInterface
         {
             get
             {
-                FamilyRecord fam = FontFactoryState.LookupFamily(familyName);
+                // Strict: this indexer is what FamilyCollection.LookupFamily uses to walk a
+                // composite font's fallback Target list, and a null answer is how it learns to
+                // move on to the next candidate. Answering "yes, here is some Latin face" for a
+                // family that is not installed ends the walk at the wrong font.
+                FamilyRecord fam = FontFactoryState.LookupFamily(familyName, strict: true);
                 return fam == null ? null : new FontFamily(fam);
             }
         }

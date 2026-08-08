@@ -156,6 +156,54 @@ namespace MS.Internal.Interop.Wayland
         internal const uint WP_CURSOR_SHAPE_DEVICE_DESTROY = 0;
         internal const uint WP_CURSOR_SHAPE_DEVICE_SET_SHAPE = 1;
 
+        internal const uint ZWP_TEXT_INPUT_MANAGER_V3_DESTROY = 0;
+        internal const uint ZWP_TEXT_INPUT_MANAGER_V3_GET_TEXT_INPUT = 1;
+
+        internal const uint ZWP_TEXT_INPUT_V3_DESTROY = 0;
+        internal const uint ZWP_TEXT_INPUT_V3_ENABLE = 1;
+        internal const uint ZWP_TEXT_INPUT_V3_DISABLE = 2;
+        internal const uint ZWP_TEXT_INPUT_V3_SET_SURROUNDING_TEXT = 3;
+        internal const uint ZWP_TEXT_INPUT_V3_SET_TEXT_CHANGE_CAUSE = 4;
+        internal const uint ZWP_TEXT_INPUT_V3_SET_CONTENT_TYPE = 5;
+        internal const uint ZWP_TEXT_INPUT_V3_SET_CURSOR_RECTANGLE = 6;
+        internal const uint ZWP_TEXT_INPUT_V3_COMMIT = 7;
+
+        // zwp_text_input_v3.change_cause
+        internal const uint ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_INPUT_METHOD = 0;
+        internal const uint ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_OTHER = 1;
+
+        // zwp_text_input_v3.content_hint (bitfield)
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE = 0;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_COMPLETION = 1;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_SPELLCHECK = 2;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_AUTO_CAPITALIZATION = 4;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_LOWERCASE = 8;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_UPPERCASE = 16;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_TITLECASE = 32;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT = 64;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA = 128;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_LATIN = 256;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_HINT_MULTILINE = 512;
+
+        // zwp_text_input_v3.content_purpose
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL = 0;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_ALPHA = 1;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DIGITS = 2;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NUMBER = 3;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PHONE = 4;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_URL = 5;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_EMAIL = 6;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NAME = 7;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD = 8;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PIN = 9;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DATE = 10;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TIME = 11;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DATETIME = 12;
+        internal const uint ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TERMINAL = 13;
+
+        /// <summary>The largest surrounding text zwp_text_input_v3.set_surrounding_text accepts.</summary>
+        internal const int ZWP_TEXT_INPUT_V3_MAX_SURROUNDING_BYTES = 4000;
+
         // Core-protocol opcodes we use (these interfaces come from libwayland, but the opcodes are
         // still ours to get right). Verified against the installed libwayland's own tables.
         internal const uint WL_REGISTRY_BIND = 0;
@@ -349,6 +397,40 @@ namespace MS.Internal.Interop.Wayland
                     new WlMsgDef("set_shape", "uu", null, null),
                 },
                 events: Array.Empty<WlMsgDef>()),
+
+            // text-input-unstable-v3: how a Wayland client talks to an input method (fcitx5, ibus,
+            // ...). Without it a CJK IME has no channel to this process at all -- the compositor
+            // routes the keystrokes to the input method and the client simply never hears the result.
+            new WlInterfaceDef("zwp_text_input_manager_v3", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                    new WlMsgDef("get_text_input", "no", "zwp_text_input_v3", "wl_seat"),
+                },
+                events: Array.Empty<WlMsgDef>()),
+
+            new WlInterfaceDef("zwp_text_input_v3", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                    new WlMsgDef("enable", ""),
+                    new WlMsgDef("disable", ""),
+                    new WlMsgDef("set_surrounding_text", "sii", null, null, null),
+                    new WlMsgDef("set_text_change_cause", "u", (string?)null),
+                    new WlMsgDef("set_content_type", "uu", null, null),
+                    new WlMsgDef("set_cursor_rectangle", "iiii", null, null, null, null),
+                    new WlMsgDef("commit", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("enter", "o", "wl_surface"),
+                    new WlMsgDef("leave", "o", "wl_surface"),
+                    // The string is nullable and the two cursor offsets are BYTE offsets into it.
+                    new WlMsgDef("preedit_string", "?sii", null, null, null),
+                    new WlMsgDef("commit_string", "?s", (string?)null),
+                    new WlMsgDef("delete_surrounding_text", "uu", null, null),
+                    new WlMsgDef("done", "u", (string?)null),
+                }),
         };
     }
 }

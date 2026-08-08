@@ -19,6 +19,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using MS.Internal.Text.TextInterface;
 
@@ -321,14 +322,29 @@ namespace MS.Internal.TextFormatting
                 int consume = cchText;
                 if (column != int.MaxValue && penX + totalWidth > column)
                 {
-                    // Wrapping needed: break at the last whitespace opportunity within what fits.
-                    int brk = FindBreak(runText, Math.Min(fitted, cchText));
+                    // How many characters actually fit. GetRunCharWidths' stringLengthFitted counts
+                    // the first character that CROSSES the boundary as well (LS's own contract: it
+                    // adds the width, then tests), so using it as a break position overhangs the
+                    // column by one character. Harmless for Latin, where the break lands on the
+                    // preceding space, but for scripts with no spaces -- CJK above all -- the break
+                    // IS that position, and every wrapped line spilled one ideograph past its edge.
+                    int fits = 0;
+                    for (int w = penX; fits < cchText && w + charWidths[fits] <= column; fits++)
+                        w += charWidths[fits];
+
+                    // Trailing whitespace is not drawn, so a space that only just overflows still
+                    // counts as fitting. Without this the break opportunity it carries falls outside
+                    // the window and the word before it moves to the next line for no visible reason.
+                    while (fits < cchText && IsBreakableSpace(runText[fits])) fits++;
+
+                    // Break at the last opportunity within what fits.
+                    int brk = FindBreak(runText, fits);
                     if (brk <= 0)
                     {
                         if (line.Runs.Count == 0 && penX == 0)
                         {
                             // Emergency: guarantee forward progress with at least one character.
-                            brk = Math.Max(1, Math.Min(fitted, cchText));
+                            brk = Math.Max(1, Math.Min(fits, cchText));
                         }
                         else
                         {
@@ -422,14 +438,24 @@ namespace MS.Internal.TextFormatting
             return c == '\u2028' || c == '\u2029' || c == '\n' || c == '\r';
         }
 
-        // Greedy break: index just past the last whitespace within [0..limit], or 0 if none.
+        // Greedy break: the last position within [0..limit] at which the line may be cut, or 0 if
+        // there is none. Two kinds of opportunity are considered, and the LAST of either wins:
+        //
+        //   * just after a breakable space (Latin and friends), and
+        //   * between two characters where at least one is ideographic (Han, kana, Hangul, the
+        //     fullwidth forms). CJK writes without spaces, so this is the only opportunity such a
+        //     paragraph offers -- without it a Japanese TextBlock had no legal break anywhere and
+        //     only wrapped by way of the caller's emergency "at least one character" path, which
+        //     cannot honour kinsoku and cut wherever the column happened to land.
         private static int FindBreak(char[] text, int limit)
         {
             int n = Math.Min(limit, text.Length);
-            for (int i = n - 1; i >= 0; i--)
+            for (int i = n; i > 0; i--)
             {
-                if (IsBreakableSpace(text[i]))
-                    return i + 1;
+                if (IsBreakableSpace(text[i - 1]))
+                    return i;
+                if (CanBreakBetween(text, i))
+                    return i;
             }
             return 0;
         }
@@ -438,6 +464,95 @@ namespace MS.Internal.TextFormatting
         // that is the whole point of the character.
         private static bool IsBreakableSpace(char c)
             => c == ' ' || c == '\t' || c == '\u2003' || c == '\u2002';
+
+        // True if the line may be cut between text[i-1] and text[i] on ideographic grounds, i.e.
+        // one of the two is CJK and neither kinsoku rule forbids the cut. Callers scan backwards, so
+        // a forbidden position simply moves the offending character down to the next line ("oidashi").
+        private static bool CanBreakBetween(char[] text, int i)
+        {
+            if (i <= 0 || i >= text.Length) return false;
+
+            char prev = text[i - 1];
+            char next = text[i];
+
+            // Never split a surrogate pair or separate a combining mark from its base.
+            if (char.IsHighSurrogate(prev)) return false;
+            if (char.IsLowSurrogate(next)) return false;
+            if (CharUnicodeInfo.GetUnicodeCategory(next) is UnicodeCategory.NonSpacingMark
+                or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark) return false;
+
+            // At least one side has to be ideographic; between two Latin letters the only legal
+            // break is at a space, which the caller has already looked for.
+            if (!IsIdeographic(prev) && !IsIdeographic(next)) return false;
+
+            // Kinsoku shori: characters that may not begin a line (closing brackets, the CJK commas
+            // and stops, small kana, the prolonged sound mark, iteration marks) and characters that
+            // may not end one (opening brackets, currency signs that lead their amount).
+            if (IsProhibitedLineStart(next)) return false;
+            if (IsProhibitedLineEnd(prev)) return false;
+
+            return true;
+        }
+
+        // Han, kana, Hangul, bopomofo, the CJK symbol/punctuation block and the fullwidth forms --
+        // the scripts that break between characters rather than between words.
+        private static bool IsIdeographic(char c)
+            => c is >= '\u1100' and <= '\u11ff'      // Hangul Jamo
+                or >= '\u2e80' and <= '\u2fdf'       // CJK radicals / Kangxi radicals
+                or >= '\u3000' and <= '\u303f'       // CJK symbols and punctuation
+                or >= '\u3040' and <= '\u30ff'       // Hiragana, Katakana
+                or >= '\u3100' and <= '\u312f'       // Bopomofo
+                or >= '\u3130' and <= '\u318f'       // Hangul compatibility Jamo
+                or >= '\u31c0' and <= '\u31ef'       // CJK strokes
+                or >= '\u31f0' and <= '\u31ff'       // Katakana phonetic extensions
+                or >= '\u3200' and <= '\u4dbf'       // enclosed CJK letters, CJK extension A
+                or >= '\u4e00' and <= '\u9fff'       // CJK unified ideographs
+                or >= '\ua960' and <= '\ua97f'       // Hangul Jamo extended-A
+                or >= '\uac00' and <= '\ud7ff'       // Hangul syllables, Jamo extended-B
+                or >= '\uf900' and <= '\ufaff'       // CJK compatibility ideographs
+                or >= '\ufe30' and <= '\ufe4f'       // CJK compatibility forms
+                or >= '\uff00' and <= '\uff60'       // fullwidth forms
+                or >= '\uffe0' and <= '\uffe6'       // fullwidth signs
+                || char.IsHighSurrogate(c);          // SIP: CJK extension B and beyond
+
+        // May not start a line (UAX #14 classes CL and NS, plus the fullwidth EX/IS punctuation):
+        // the closing brackets, the ideographic comma and full stop, the small kana, the prolonged
+        // sound mark and the iteration marks -- all of them trail what precedes them.
+        private static bool IsProhibitedLineStart(char c)
+            => c is '\u3001' or '\u3002'                                   // ideographic comma, full stop
+                or '\uff0c' or '\uff0e' or '\uff1a' or '\uff1b'            // fullwidth , . : ;
+                or '\uff01' or '\uff1f'                                    // fullwidth ! ?
+                or '\u30fb' or '\uff65'                                    // katakana middle dot
+                or '\u2019' or '\u201d'                                    // closing curly quotes
+                or '\u3009' or '\u300b' or '\u300d' or '\u300f'            // closing angle/corner brackets
+                or '\u3011' or '\u3015' or '\u3017' or '\u3019' or '\u301b'
+                or '\uff09' or '\uff3d' or '\uff5d' or '\uff60'            // fullwidth ) ] } closing
+                or '\uff63' or '\uff64'                                    // halfwidth corner bracket, comma
+                or '\u30fc' or '\u301c' or '\uff5e'                        // prolonged sound mark, wave dashes
+                or '\u3005' or '\u303b' or '\u309d' or '\u309e'            // iteration marks
+                or '\u30fd' or '\u30fe'
+                or '\u3063' or '\u30c3'                                    // small tsu
+                || IsSmallKana(c);
+
+        // The small kana, which modify the syllable before them and so may not lead a line.
+        private static bool IsSmallKana(char c)
+            => c is '\u3041' or '\u3043' or '\u3045' or '\u3047' or '\u3049'   // small a i u e o
+                or '\u3083' or '\u3085' or '\u3087' or '\u308e'                // small ya yu yo wa
+                or '\u3095' or '\u3096'                                        // small ka ke
+                or '\u30a1' or '\u30a3' or '\u30a5' or '\u30a7' or '\u30a9'    // katakana equivalents
+                or '\u30e3' or '\u30e5' or '\u30e7' or '\u30ee'
+                or '\u30f5' or '\u30f6'
+                or >= '\uff67' and <= '\uff6f';                                // halfwidth small kana
+
+        // May not end a line (UAX #14 class OP): the opening brackets and quotes, and the currency
+        // signs that lead their amount.
+        private static bool IsProhibitedLineEnd(char c)
+            => c is '\u3008' or '\u300a' or '\u300c' or '\u300e'            // opening angle/corner brackets
+                or '\u3010' or '\u3014' or '\u3016' or '\u3018' or '\u301a'
+                or '\uff08' or '\uff3b' or '\uff5b' or '\uff5f'             // fullwidth ( [ { opening
+                or '\uff62'                                                 // halfwidth opening corner bracket
+                or '\u2018' or '\u201c'                                     // opening curly quotes
+                or '\uffe1' or '\uffe5' or '\uff04';                        // fullwidth pound, yen, dollar
 
         // Ends the line at the last break opportunity among the runs already placed on it, dropping
         // (and, where the opportunity falls inside a run, truncating) everything after it so those

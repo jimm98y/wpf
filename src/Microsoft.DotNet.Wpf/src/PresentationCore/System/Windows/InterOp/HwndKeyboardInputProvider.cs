@@ -967,7 +967,13 @@ namespace System.Windows.Interop
             // is a shortcut rather than typing -- the same rule the Cocoa path applies to Command.
             const MS.Internal.Interop.Wayland.WaylandModifiers shortcutModifiers =
                 MS.Internal.Interop.Wayland.WaylandModifiers.Control | MS.Internal.Interop.Wayland.WaylandModifiers.Alt;
-            if (msg.IsDown && !string.IsNullOrEmpty(msg.Characters) && (msg.Modifiers & shortcutModifiers) == 0)
+
+            // While an input method is composing, its keystrokes are its own: some forward the keys
+            // they are consuming to the client as well, and inserting those alongside what the IME
+            // eventually commits types every Japanese word twice.
+            bool composing = MS.Internal.Interop.Wayland.WaylandTextInput.IsComposing;
+
+            if (msg.IsDown && !composing && !string.IsNullOrEmpty(msg.Characters) && (msg.Modifiers & shortcutModifiers) == 0)
             {
                 foreach (char c in msg.Characters)
                 {

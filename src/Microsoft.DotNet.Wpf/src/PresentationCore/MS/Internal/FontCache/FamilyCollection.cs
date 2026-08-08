@@ -424,6 +424,94 @@ namespace MS.Internal.FontCache
             return new PhysicalFontFamily(fontFamilyDWrite);
         }
 
+        /// <summary>
+        /// Finds any installed family whose character map covers <paramref name="codepoint"/>.
+        ///
+        /// This is the last-resort backstop for script fallback, used only after the typeface's own
+        /// families and every target in the applicable .CompositeFont FamilyMap have been tried and
+        /// none covered the character. Those Target lists name Windows families ("Microsoft YaHei
+        /// UI", "Nirmala UI", "Segoe UI Emoji", ...), so on a machine that has a perfectly good font
+        /// for the script under a different name the text would otherwise render as missing-glyph
+        /// boxes. Rather than grow the name lists per platform forever, ask the fonts themselves.
+        ///
+        /// The scan touches every family's first matching face, so results are cached by 256-codepoint
+        /// block: a block is scanned at most once per process, and blocks nothing covers are cached as
+        /// misses so the cost is not repaid on every line of text.
+        /// </summary>
+        internal Text.TextInterface.FontFamily LookupFamilyCovering(
+            int         codepoint,
+            FontStyle   style,
+            FontWeight  weight,
+            FontStretch stretch
+            )
+        {
+            if (codepoint < 0 || codepoint > 0x10FFFF)
+                return null;
+
+            int block = codepoint >> 8;
+            lock (_coverageLock)
+            {
+                if (_coverageCache != null && _coverageCache.TryGetValue(block, out Text.TextInterface.FontFamily cached))
+                {
+                    // A block-level hit still has to be confirmed: coverage is not uniform within a
+                    // block, and a miss (null) is cached for the whole block deliberately -- a block
+                    // no font covered at all is not worth re-scanning per character.
+                    if (cached == null || FamilyCovers(cached, codepoint, style, weight, stretch))
+                        return cached;
+                }
+            }
+
+            Text.TextInterface.FontFamily found = null;
+            uint count = _fontCollection.FamilyCount;
+            for (uint i = 0; i < count; i++)
+            {
+                Text.TextInterface.FontFamily family;
+                try { family = _fontCollection[i]; }
+                catch (FileFormatException) { continue; }
+                catch (IOException) { continue; }
+
+                if (FamilyCovers(family, codepoint, style, weight, stretch))
+                {
+                    found = family;
+                    break;
+                }
+            }
+
+            lock (_coverageLock)
+            {
+                _coverageCache ??= new Dictionary<int, Text.TextInterface.FontFamily>();
+                _coverageCache[block] = found;
+            }
+            return found;
+        }
+
+        private static bool FamilyCovers(
+            Text.TextInterface.FontFamily family,
+            int                           codepoint,
+            FontStyle                     style,
+            FontWeight                    weight,
+            FontStretch                   stretch
+            )
+        {
+            if (family == null)
+                return false;
+
+            try
+            {
+                Text.TextInterface.Font font = family.GetFirstMatchingFont(
+                    (Text.TextInterface.FontWeight)weight.ToOpenTypeWeight(),
+                    (Text.TextInterface.FontStretch)stretch.ToOpenTypeStretch(),
+                    (Text.TextInterface.FontStyle)style.GetStyleForInternalConstruction());
+
+                return font != null && !font.IsSymbolFont && font.HasCharacter(checked((uint)codepoint));
+            }
+            catch (FileFormatException) { return false; }   // malformed font file
+            catch (IOException) { return false; }
+        }
+
+        private Dictionary<int, Text.TextInterface.FontFamily> _coverageCache;
+        private readonly object _coverageLock = new object();
+
         private CompositeFontFamily LookUpUserCompositeFamily(string familyName)
         {
             if (UserCompositeFonts != null)

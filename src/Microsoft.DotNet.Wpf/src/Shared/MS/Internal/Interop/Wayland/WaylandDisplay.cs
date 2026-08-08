@@ -50,6 +50,7 @@ namespace MS.Internal.Interop.Wayland
         public static IntPtr FractionalScaleManager { get; private set; }
         public static IntPtr CursorShapeManager { get; private set; }
         public static IntPtr DataDeviceManager { get; private set; }
+        public static IntPtr TextInputManager { get; private set; }
         public static IntPtr Decor { get; private set; }
 
         public static bool IsActive => Display != IntPtr.Zero;
@@ -243,6 +244,13 @@ namespace MS.Internal.Interop.Wayland
                         SeatVersion = Math.Min(version, 8u);
                         Seat = Bind(registry, name, iface, SeatVersion);
                         WaylandInput.AttachSeat(Seat, SeatVersion);
+                        WaylandTextInput.AttachSeat(Seat);
+                        break;
+                    case "zwp_text_input_manager_v3":
+                        // The input-method channel. Either this or the seat may arrive first, so
+                        // both sides call in and the text input is created once both exist.
+                        TextInputManager = Bind(registry, name, iface, 1);
+                        WaylandTextInput.AttachManager(TextInputManager);
                         break;
                     case "xdg_wm_base":
                         XdgWmBase = Bind(registry, name, iface, Math.Min(version, 6u));

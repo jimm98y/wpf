@@ -44,10 +44,117 @@ namespace MS.Internal.Text.TextInterface.Managed
             }
         }
 
-        // Substitutions for common Windows/WPF default families with no macOS equivalent.
+        // CJK substitution chains, per locale and per serif/sans class.
+        //
+        // The .CompositeFont files that drive WPF's script fallback name only Windows CJK families
+        // (Microsoft YaHei, Yu Gothic, Malgun Gothic, MingLiU, ...), none of which exist off Windows,
+        // so without these every ideograph fell through to a Latin font and rendered as a missing-glyph
+        // box. Each chain is locale-specific on purpose: Han glyph shapes differ between the Simplified
+        // Chinese, Traditional Chinese, Japanese and Korean conventions, and the composite fonts already
+        // pick their target by language -- mapping every Windows CJK family onto one pan-CJK font would
+        // throw that distinction away and show, say, Japanese text in Simplified Chinese forms.
+        //
+        // Order within a chain: the pan-CJK Noto/Source Han collections first (what Linux and Android
+        // ship), then Apple's system families, then the older open Chinese fonts as a floor.
+        private static readonly string[] s_sansSC =
+        {
+            "Noto Sans CJK SC", "Source Han Sans SC", "Source Han Sans CN", "Noto Sans SC",
+            "PingFang SC", "Heiti SC", "Hiragino Sans GB",
+            "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK JP",
+        };
+        private static readonly string[] s_serifSC =
+        {
+            "Noto Serif CJK SC", "Source Han Serif SC", "Source Han Serif CN", "Noto Serif SC",
+            "Songti SC", "STSong", "AR PL UMing CN", "AR PL SungtiL GB",
+            "Noto Sans CJK SC", "Droid Sans Fallback", "Noto Serif CJK JP",
+        };
+        private static readonly string[] s_sansTC =
+        {
+            "Noto Sans CJK TC", "Source Han Sans TC", "Noto Sans TC", "Noto Sans CJK HK",
+            "PingFang TC", "Heiti TC", "Hiragino Sans CNS",
+            "WenQuanYi Zen Hei", "Droid Sans Fallback", "Noto Sans CJK JP",
+        };
+        private static readonly string[] s_serifTC =
+        {
+            "Noto Serif CJK TC", "Source Han Serif TC", "Noto Serif TC", "Noto Serif CJK HK",
+            "Songti TC", "AR PL UMing TW", "Noto Sans CJK TC", "Droid Sans Fallback",
+        };
+        private static readonly string[] s_sansJP =
+        {
+            "Noto Sans CJK JP", "Source Han Sans", "Source Han Sans JP", "Noto Sans JP",
+            "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Hiragino Kaku Gothic Pro",
+            "IPAexGothic", "IPAGothic", "TakaoPGothic", "VL PGothic", "Droid Sans Japanese",
+            "Droid Sans Fallback", "Noto Sans CJK SC",
+        };
+        private static readonly string[] s_serifJP =
+        {
+            "Noto Serif CJK JP", "Source Han Serif", "Source Han Serif JP", "Noto Serif JP",
+            "Hiragino Mincho ProN", "Hiragino Mincho Pro", "IPAexMincho", "IPAMincho",
+            "Noto Sans CJK JP", "Droid Sans Fallback",
+        };
+        private static readonly string[] s_sansKR =
+        {
+            "Noto Sans CJK KR", "Source Han Sans KR", "Noto Sans KR",
+            "Apple SD Gothic Neo", "AppleGothic", "NanumGothic", "Baekmuk Gulim", "UnDotum",
+            "Droid Sans Fallback", "Noto Sans CJK JP",
+        };
+        private static readonly string[] s_serifKR =
+        {
+            "Noto Serif CJK KR", "Source Han Serif KR", "Noto Serif KR",
+            "AppleMyungjo", "NanumMyeongjo", "Baekmuk Batang", "UnBatang",
+            "Noto Sans CJK KR", "Droid Sans Fallback",
+        };
+        private static readonly string[] s_monoCJK =
+        {
+            "Noto Sans Mono CJK JP", "Noto Sans Mono CJK SC", "Source Han Mono",
+            "Noto Sans CJK JP", "Droid Sans Fallback",
+        };
+
+        // Substitutions for common Windows/WPF default families with no macOS/Linux equivalent.
         // Keys are lower-cased; each maps to an ordered list of candidate replacements.
         private static readonly Dictionary<string, string[]> s_substitutes = new(StringComparer.OrdinalIgnoreCase)
         {
+            // --- CJK: the families the composite fonts name for the Han/Kana/Hangul ranges ---
+            // Simplified Chinese
+            ["microsoft yahei"] = s_sansSC,
+            ["microsoft yahei ui"] = s_sansSC,
+            ["simhei"] = s_sansSC,
+            ["dengxian"] = s_sansSC,
+            ["simsun"] = s_serifSC,
+            ["nsimsun"] = s_serifSC,
+            ["simsun-extb"] = s_serifSC,
+            ["fangsong"] = s_serifSC,
+            ["kaiti"] = s_serifSC,
+            // Traditional Chinese
+            ["microsoft jhenghei"] = s_sansTC,
+            ["microsoft jhenghei ui"] = s_sansTC,
+            ["mingliu"] = s_serifTC,
+            ["pmingliu"] = s_serifTC,
+            ["mingliu_hkscs"] = s_serifTC,
+            ["mingliu-extb"] = s_serifTC,
+            ["dfkai-sb"] = s_serifTC,
+            // Japanese
+            ["yu gothic"] = s_sansJP,
+            ["yu gothic ui"] = s_sansJP,
+            ["meiryo"] = s_sansJP,
+            ["meiryo ui"] = s_sansJP,
+            ["ms gothic"] = s_sansJP,
+            ["ms pgothic"] = s_sansJP,
+            ["ms ui gothic"] = s_sansJP,
+            ["yu mincho"] = s_serifJP,
+            ["ms mincho"] = s_serifJP,
+            ["ms pmincho"] = s_serifJP,
+            // Korean
+            ["malgun gothic"] = s_sansKR,
+            ["gulim"] = s_sansKR,
+            ["gulimche"] = s_monoCJK,
+            ["dotum"] = s_sansKR,
+            ["dotumche"] = s_monoCJK,
+            ["batang"] = s_serifKR,
+            ["batangche"] = s_serifKR,
+            ["gungsuh"] = s_serifKR,
+            ["gungsuhche"] = s_serifKR,
+
             // Selawik is Microsoft's open, metric-compatible Segoe UI replacement (github.com/microsoft/Selawik);
             // prefer it so text lays out like Windows, with Helvetica etc. as last-resort fallbacks.
             ["segoe ui"] = new[] { "Selawik", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
@@ -85,7 +192,25 @@ namespace MS.Internal.Text.TextInterface.Managed
             "Roboto", "Droid Sans", "Noto Sans",
         };
 
-        internal static FamilyRecord LookupFamily(string name)
+        // The family WPF falls back to when a name resolves to nothing: FontFamily's
+        // NullFontFamilyCanonicalName is the reference "#ARIAL", i.e. family "Arial". Both
+        // FontFamily.SafeLookupFontFamily and TypefaceMap.MapUnresolvedCharacters assert that
+        // this one resolves, so it -- and only it -- keeps the unconditional last-resort chain.
+        private const string NullFontFamilyName = "Arial";
+
+        internal static FamilyRecord LookupFamily(string name) => LookupFamily(name, strict: false);
+
+        /// <summary>
+        /// Resolves a family name against the installed catalog.
+        ///
+        /// With <paramref name="strict"/> the lookup answers honestly: a name that is neither
+        /// installed nor aliased returns null. That matters because WPF resolves script fallback by
+        /// walking a .CompositeFont's Target list and asking for each family in turn -- if a name
+        /// that is NOT installed still resolves (to whatever Latin face happened to be first), the
+        /// walk stops there and every character outside that face renders as a missing-glyph box.
+        /// Non-strict callers keep the old always-return-something behaviour.
+        /// </summary>
+        internal static FamilyRecord LookupFamily(string name, bool strict)
         {
             SystemFontCatalog cat = Catalog;
             if (!string.IsNullOrEmpty(name) && cat.TryGetFamily(name, out FamilyRecord fam))
@@ -97,6 +222,9 @@ namespace MS.Internal.Text.TextInterface.Managed
                     if (cat.TryGetFamily(s, out FamilyRecord sub))
                         return sub;
             }
+
+            if (strict && !string.Equals(name, NullFontFamilyName, StringComparison.OrdinalIgnoreCase))
+                return null;
 
             foreach (string s in s_lastResort)
                 if (cat.TryGetFamily(s, out FamilyRecord lr))

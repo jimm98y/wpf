@@ -667,6 +667,19 @@ namespace MS.Internal.Shaping
             out int                 nextValid
             )
         {
+            // Before giving up and drawing missing glyphs, ask the installed fonts directly whether
+            // any of them covers the first unresolved character. The family lists in the composite
+            // fonts are named after Windows families, so a machine can easily have a font for the
+            // script under a name no FamilyMap mentions (Noto/Source Han for CJK, Noto Color Emoji,
+            // and so on). This search is cached per Unicode block in FamilyCollection, and only runs
+            // once the ordinary chain has already failed.
+            int cchCovered = MapByCoveringFamily(
+                unicodeString, culture, digitCulture, ref firstValidFamily, ref firstValidLength,
+                scaledTypefaceSpans, firstCharIndex, out nextValid);
+
+            if (cchCovered > 0)
+                return cchCovered;
+
             // If we have a valid font family use it. We don't set nullFont to true in this case.
             // We may end up displaying missing glyphs, but we don't need to force it.
             IFontFamily fontFamily = firstValidFamily;
@@ -697,6 +710,61 @@ namespace MS.Internal.Shaping
                 scaledTypefaceSpans,
                 firstCharIndex,
                 true, // ignore missing
+                out nextValid
+                );
+        }
+
+        /// <summary>
+        /// Maps as much of the string as an arbitrary installed font can cover, having established
+        /// that the typeface's own families and its composite-font fallback chain cannot. Returns 0
+        /// (leaving nextValid untouched by anything meaningful) when no installed font has the first
+        /// character, which is the genuine "no font on this machine can draw this" case.
+        /// </summary>
+        private int MapByCoveringFamily(
+            CharacterBufferRange    unicodeString,
+            CultureInfo             culture,
+            CultureInfo             digitCulture,
+            ref PhysicalFontFamily  firstValidFamily,
+            ref int                 firstValidLength,
+            SpanVector              scaledTypefaceSpans,
+            int                     firstCharIndex,
+            out int                 nextValid
+            )
+        {
+            nextValid = 0;
+
+            if (unicodeString.Length <= 0)
+                return 0;
+
+            int codepoint = Classification.UnicodeScalar(unicodeString, out _);
+
+            // Control characters and the object-replacement markers are never "covered" by a font in
+            // any useful sense; searching every installed family for them would be pure cost.
+            if (codepoint < 0x20 || (codepoint >= 0x7F && codepoint <= 0x9F) || codepoint == 0xFFFC)
+                return 0;
+
+            IFontFamily covering = FontFamily.LookupFontFamilyCovering(
+                codepoint, _canonicalStyle, _canonicalWeight, _canonicalStretch);
+
+            if (covering == null)
+                return 0;
+
+            return MapByFontFaceFamily(
+                unicodeString,
+                culture,
+                digitCulture,
+                covering,
+                _canonicalStyle,
+                _canonicalWeight,
+                _canonicalStretch,
+                ref firstValidFamily,
+                ref firstValidLength,
+                null,   // device font
+                false,  // not the null font
+                1.0,
+                scaledTypefaceSpans,
+                firstCharIndex,
+                false,  // do NOT ignore missing: map only what this font actually covers
                 out nextValid
                 );
         }

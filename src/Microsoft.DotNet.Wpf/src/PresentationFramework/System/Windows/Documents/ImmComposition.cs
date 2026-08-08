@@ -23,7 +23,7 @@ namespace System.Windows.Documents
     // This class handles IMM32 IME's composition string and
     // support level 3 input to TextBox and RichTextBox.
     //
-    internal class ImmComposition
+    internal partial class ImmComposition
     {
         //------------------------------------------------------
         //
@@ -131,6 +131,11 @@ namespace System.Windows.Documents
 
             _editor.TextContainer.Change += new TextContainerChangeEventHandler(OnTextContainerChange);
 
+            // Tell the Wayland input method a field is being edited (no-op elsewhere). This also
+            // reports the caret rectangle and surrounding text, so it precedes nothing that would
+            // need them.
+            EnableLinuxTextInput();
+
             // Update the current composition window position.
             UpdateNearCaretCompositionWindow();
         }
@@ -152,6 +157,7 @@ namespace System.Windows.Documents
             finally
             {
                 _losingFocus = false;
+                DisableLinuxTextInput();
             }
         }
 
@@ -186,12 +192,19 @@ namespace System.Windows.Documents
 
             hwnd = ((IWin32Window)_source).Handle;
 
-            IntPtr himc = UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd));
-            if (himc != IntPtr.Zero)
+            // IMM32 is the Windows input method manager; off Windows the composition is driven by
+            // zwp_text_input_v3 instead (see the Linux input-method region below), which has no
+            // equivalent "finish now" request -- the input method ends its own composition when the
+            // text field is disabled, and everything below this point is platform-neutral.
+            if (OperatingSystem.IsWindows())
             {
-                UnsafeNativeMethods.ImmNotifyIME(new HandleRef(this, himc), NativeMethods.NI_COMPOSITIONSTR, NativeMethods.CPS_COMPLETE, 0);
+                IntPtr himc = UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd));
+                if (himc != IntPtr.Zero)
+                {
+                    UnsafeNativeMethods.ImmNotifyIME(new HandleRef(this, himc), NativeMethods.NI_COMPOSITIONSTR, NativeMethods.CPS_COMPLETE, 0);
 
-                UnsafeNativeMethods.ImmReleaseContext(new HandleRef(this, hwnd), new HandleRef(this, himc));
+                    UnsafeNativeMethods.ImmReleaseContext(new HandleRef(this, hwnd), new HandleRef(this, himc));
+                }
             }
 
             _compositionAdorner?.Uninitialize();
@@ -744,8 +757,14 @@ namespace System.Windows.Documents
                 return;
             }
 
-            IntPtr himc = UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd));
-            if (himc != IntPtr.Zero)
+            // Off Windows there is no IMM context to write into: the same caret geometry travels to
+            // the input method as zwp_text_input_v3.set_cursor_rectangle. Compute it the same way,
+            // then hand it to whichever channel this platform has.
+            IntPtr himc = OperatingSystem.IsWindows()
+                ? UnsafeNativeMethods.ImmGetContext(new HandleRef(this, hwnd))
+                : IntPtr.Zero;
+
+            if (himc != IntPtr.Zero || IsLinuxTextInputActive)
             {
                 rectCaret = view.GetRectangleFromTextPosition(_editor.Selection.End.CreatePointer(LogicalDirection.Backward));
 
@@ -767,6 +786,23 @@ namespace System.Windows.Documents
                 milPointTopLeft = compositionTarget.TransformToDevice.Transform(milPointTopLeft);
                 milPointBottomRight = compositionTarget.TransformToDevice.Transform(milPointBottomRight);
                 milPointCaret = compositionTarget.TransformToDevice.Transform(milPointCaret);
+
+                if (himc == IntPtr.Zero)
+                {
+                    // The caret's own box, not the field's: the input method anchors its candidate
+                    // list to this, and anchoring to the whole field would put the list at the top
+                    // of a multi-line TextBox instead of under the text being typed. Top edge, since
+                    // milPointCaret is the caret's BOTTOM and the rectangle wants its top-left.
+                    transform.TryTransform(new Point(rectCaret.Left, rectCaret.Top), out Point milPointCaretTop);
+                    milPointCaretTop = compositionTarget.TransformToDevice.Transform(milPointCaretTop);
+
+                    ReportCaretRectangleToInputMethod(
+                        ConvertToInt32(milPointCaretTop.X),
+                        ConvertToInt32(milPointCaretTop.Y),
+                        ConvertToInt32(milPointCaret.X - milPointCaretTop.X),
+                        ConvertToInt32(milPointCaret.Y - milPointCaretTop.Y));
+                    return;
+                }
 
                 // Build COMPOSITIONFORM. COMPOSITIONFORM is window coodidate.
                 NativeMethods.COMPOSITIONFORM compform = new NativeMethods.COMPOSITIONFORM

@@ -927,6 +927,7 @@
     <Compile Include="System\Windows\Documents\HighlightVisual.cs" />
     <Compile Include="System\Windows\Documents\Hyperlink.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Linux.cs" />
     <Compile Include="System\Windows\Documents\InkInteropObject.cs" />
     <Compile Include="System\Windows\Documents\Inline.cs" />
     <Compile Include="System\Windows\Documents\InlineCollection.cs" />

@@ -401,6 +401,30 @@ namespace System.Windows.Media
 
 
         /// <summary>
+        /// Finds an installed font family that covers the given codepoint, for use after the
+        /// composite-font fallback chain has been exhausted. Returns null if no installed font
+        /// has the character (in which case the caller's missing-glyph handling stands).
+        /// </summary>
+        internal static IFontFamily LookupFontFamilyCovering(
+            int         codepoint,
+            FontStyle   style,
+            FontWeight  weight,
+            FontStretch stretch
+            )
+        {
+            try
+            {
+                MS.Internal.Text.TextInterface.FontFamily family =
+                    _defaultFamilyCollection.LookupFamilyCovering(codepoint, style, weight, stretch);
+                return family == null ? null : new PhysicalFontFamily(family);
+            }
+            catch (FileFormatException) { return null; }    // malformed font file
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+
+
+        /// <summary>
         /// Look up font family from canonical name
         /// </summary>
         /// <param name="canonicalName">font family canonical name</param>
