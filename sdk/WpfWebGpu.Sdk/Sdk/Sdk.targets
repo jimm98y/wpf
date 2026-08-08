@@ -16,6 +16,8 @@
     <_WpfWebGpuBrowser Condition="'$(WpfPlatform)' == 'browser'">true</_WpfWebGpuBrowser>
     <_WpfWebGpuWin>false</_WpfWebGpuWin>
     <_WpfWebGpuWin Condition="'$(_WpfWebGpuBrowser)' != 'true' and ( '$(WpfPlatform)' == 'windows' or $(RuntimeIdentifier.StartsWith('win')) or $(TargetFramework.Contains('-windows')) or ( '$(WpfPlatform)' == '' and '$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT' ) )">true</_WpfWebGpuWin>
+    <_WpfWebGpuAndroid>false</_WpfWebGpuAndroid>
+    <_WpfWebGpuAndroid Condition="$(TargetFramework.Contains('-android')) or $(RuntimeIdentifier.StartsWith('android'))">true</_WpfWebGpuAndroid>
     <_WpfWebGpuUnix>false</_WpfWebGpuUnix>
     <_WpfWebGpuUnix Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuUnix>
     <!-- Cross-building the windows head from a non-Windows dev machine. -->
@@ -359,6 +361,51 @@
     </PropertyGroup>
     <WriteLinesToFile File="$(MSBuildProjectDirectory)/wwwroot/fonts/index.json"
                       Lines="$(_WpfWebGpuFontJson)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
+    Android: make the app AOT-compilable.
+
+    mono-aot-cross must RESOLVE every reference in each assembly it compiles, and the WPF closure is
+    full of edges that exist only on Windows. Two distinct problems, two answers.
+
+    1. Assemblies that are pure Windows shims here (PresentationUI naming System.Windows.Forms, and
+       friends). Nothing on an Android path reaches them, so they are dropped from the AOT input
+       list; they still ship as IL and run under the JIT if anything ever calls in. This is the same
+       answer the iOS head gives with MtouchInterpreter, which Android has no equivalent of.
+
+    2. System.Formats.Nrbf, which PresentationCore itself names on its DataObject serialisation path.
+       PresentationCore has to be AOT compiled, so this one cannot be skipped: the assembly has to be
+       resolvable. It needs the REAL implementation assembly, not the WindowsDesktop reference (that
+       one carries a different identity and AOT rejects it), and it has to sit beside the assembly
+       being compiled because mono-aot-cross takes no search path. The package itself is already
+       referenced by the unix item group above, which Android also matches.
+  -->
+  <Target Name="WpfWebGpuExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs"
+          Condition="'$(_WpfWebGpuAndroid)' == 'true'">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="WpfWebGpuStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation"
+          Condition="'$(_WpfWebGpuAndroid)' == 'true'">
+    <ItemGroup>
+      <_WpfWebGpuAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfWebGpuAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true"
+          Condition="'@(_WpfWebGpuAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
   </Target>
 
 </Project>

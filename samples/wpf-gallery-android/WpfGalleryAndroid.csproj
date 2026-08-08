@@ -132,6 +132,10 @@
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <!-- The REAL assembly, not the WindowsDesktop reference: mono-aot-cross reads signatures out of
+         it while compiling PresentationCore, and a reference assembly answers with the wrong
+         identity. See WpfStageAotResolvableRefs below. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -144,5 +148,61 @@
     <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
     <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
   </ItemGroup>
+
+  <!--
+    Keep the Windows-only shim assemblies out of AOT.
+
+    The authoritative copy of this is WpfWebGpuExcludeWindowsShimsFromAot in the packaged SDK
+    (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets). This sample references the fork by PATH rather than through
+    that SDK, so like the font deployment above it has to repeat the work itself.
+
+    mono-aot-cross has to RESOLVE every reference in an assembly it compiles, and this closure is
+    full of edges that only exist on Windows: PresentationUI names System.Windows.Forms,
+    System.Private.Windows.Core names System.Formats.Nrbf, and so on. Those reference assemblies are
+    here to satisfy the compiler, not to run, so AOT fails on them ("Could not load file or assembly
+    ... System.Windows.Forms") and takes the whole build with it. Nothing on an Android code path
+    reaches any of them.
+
+    Excluding an assembly from AOT is not excluding it from the app: it ships as IL and Mono runs it
+    under the JIT if anything ever does call into it. This is the same answer the iOS head gives
+    (MtouchInterpreter, in WpfGalleryIos.csproj) for the same assemblies and the same reason; Android
+    has no equivalent property, so the AOT input list is filtered directly.
+  -->
+  <Target Name="WpfExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Put System.Formats.Nrbf where mono-aot-cross can find it.
+
+    PresentationCore's DataObject serialisation path names the type, so AOT has to resolve the
+    assembly to read a signature while compiling PresentationCore - even though nothing on Android
+    calls it. It never arrives on its own: the identity is a WindowsDesktop one that no package
+    reference or trim setting produces here, which is the same wall the wasm head hit (see
+    _AddVendoredAotSearchPath in WpfWebGpuGalleryWasm.csproj).
+
+    mono-aot-cross has no search-path option, resolving instead beside the assembly it is compiling,
+    so the REFERENCE assembly is staged into linked/ for it to find. Signatures are all AOT reads,
+    and this copy is not a publish input, so nothing ships.
+  -->
+  <Target Name="WpfStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation">
+    <ItemGroup>
+      <_WpfAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true" Condition="'@(_WpfAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
 
 </Project>

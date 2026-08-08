@@ -28,6 +28,7 @@ using Android.Content.Res;
 using Android.Runtime;
 using Android.Graphics;
 using Android.Views;
+using Android.Views.InputMethods;
 using Android.Widget;
 
 namespace MS.Internal.Interop;
@@ -126,6 +127,29 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
         _wpfHandle = wpfHandle;
         Holder!.AddCallback(this);
         Focusable = true;
+    }
+
+    // ---- text input -------------------------------------------------------------
+    //
+    // A SurfaceView is not a text editor, so Android never offers it the soft keyboard and nothing
+    // can be typed into a WPF TextBox. These two overrides are the whole contract for opting in:
+    // say yes to being an editor, and hand back an InputConnection for the input method to talk to.
+
+    public override bool OnCheckIsTextEditor() => true;
+
+    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs)
+    {
+        if (outAttrs != null)
+        {
+            // TYPE_CLASS_TEXT. The multiline/password flags are set per focus in ShowSoftKeyboard,
+            // which is the only place that knows which control took focus.
+            outAttrs.InputType = Android.Text.InputTypes.ClassText;
+            outAttrs.ImeOptions = ImeFlags.NoFullscreen | ImeFlags.NoExtractUi;
+        }
+
+        // fullEditor:false -- this connection reports edits outwards rather than maintaining an
+        // Editable of its own; WPF's document is the single source of truth for the text.
+        return new WpfInputConnection(this, _wpfHandle);
     }
 
     public void SurfaceCreated(ISurfaceHolder holder) => Report(holder, 0, 0);
@@ -252,6 +276,65 @@ internal static class WpfInput
 /// (build error XA4204). The one genuinely Java-facing piece, the Choreographer callback, is a
 /// nested class instead.
 /// </summary>
+/// <summary>
+/// The input method's end of a WPF text field.
+///
+/// Android composes in two stages, exactly as IMM32 and Wayland do: setComposingText carries the
+/// reading being converted (drawn inline, underlined) and commitText the finished text. Both are
+/// forwarded straight into WindowsBase, which turns them into the same WPF composition every other
+/// platform produces.
+///
+/// BaseInputConnection is used with fullEditor:false, so it keeps no Editable of its own: the
+/// document lives in WPF, and answering from a private copy here would let the two drift.
+/// </summary>
+internal sealed class WpfInputConnection : BaseInputConnection
+{
+    private readonly IntPtr _handle;
+
+    public WpfInputConnection(View targetView, IntPtr handle)
+        : base(targetView, fullEditor: false)
+    {
+        _handle = handle;
+    }
+
+    public override bool SetComposingText(Java.Lang.ICharSequence? text, int newCursorPosition)
+    {
+        AndroidWindow.NotifyComposingText(text?.ToString() ?? string.Empty, newCursorPosition);
+        return true;
+    }
+
+    public override bool CommitText(Java.Lang.ICharSequence? text, int newCursorPosition)
+    {
+        AndroidWindow.NotifyCommitText(text?.ToString() ?? string.Empty, newCursorPosition);
+        return true;
+    }
+
+    public override bool FinishComposingText()
+    {
+        AndroidWindow.NotifyFinishComposing();
+        return true;
+    }
+
+    public override bool DeleteSurroundingText(int beforeLength, int afterLength)
+    {
+        AndroidWindow.NotifyDeleteSurrounding(beforeLength, afterLength);
+        return true;
+    }
+
+    // Hardware keyboards and the delete key on some IMEs arrive as key events rather than as
+    // InputConnection calls. Backspace is the one that matters for text: without it, deleting during
+    // a composition does nothing.
+    public override bool SendKeyEvent(KeyEvent? e)
+    {
+        if (e is { Action: KeyEventActions.Down, KeyCode: Keycode.Del })
+        {
+            AndroidWindow.NotifyDeleteSurrounding(1, 0);
+            return true;
+        }
+        return base.SendKeyEvent(e);
+    }
+}
+
 internal sealed class AndroidHost : IAndroidHost
 {
     private readonly Activity _activity;
@@ -324,6 +407,43 @@ internal sealed class AndroidHost : IAndroidHost
         lp.Width = width;
         lp.Height = height;
         view.LayoutParameters = lp;
+    }
+
+    public void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+
+        // Focus first: the input method attaches to the focused view, and asking for the keyboard
+        // over an unfocused one silently does nothing.
+        view.FocusableInTouchMode = true;
+        view.RequestFocus();
+
+        if (_activity.GetSystemService(Context.InputMethodService) is InputMethodManager imm)
+        {
+            imm.ShowSoftInput(view, ShowFlags.Implicit);
+        }
+    }
+
+    public void HideSoftKeyboard(IntPtr handle)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+
+        if (_activity.GetSystemService(Context.InputMethodService) is InputMethodManager imm)
+        {
+            imm.HideSoftInputFromWindow(view.WindowToken, HideSoftInputFlags.None);
+        }
+    }
+
+    public void SetImeCursorRect(IntPtr handle, int x, int y, int width, int height)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+
+        if (_activity.GetSystemService(Context.InputMethodService) is InputMethodManager imm)
+        {
+            // updateCursorAnchorInfo is the richer API, but it needs a full editor; the rectangle
+            // alone is what keeps the candidate strip off the caret.
+            imm.UpdateCursor(view, x, y, x + width, y + height);
+        }
     }
 
     public void DestroyView(IntPtr handle)

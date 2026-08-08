@@ -31,6 +31,10 @@ namespace MS.Internal.Interop
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static void GetWindowOrigin(System.IntPtr handle, out int x, out int y) { throw null; }
         public static bool IsWindowOpaque(System.IntPtr handle) { throw null; }
+        public static void NotifyCommitText(string text, int cursorPosition) { }
+        public static void NotifyComposingText(string text, int cursorPosition) { }
+        public static void NotifyDeleteSurrounding(int before, int after) { }
+        public static void NotifyFinishComposing() { }
         public static void NotifyScaleChanged() { }
         public static void NotifyScroll(System.IntPtr handle, double deltaLogical, int xPixels, int yPixels) { }
         public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
@@ -191,6 +195,9 @@ namespace MS.Internal.Interop
     {
         double Density { get; }
         bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless);
+        void HideSoftKeyboard(System.IntPtr handle);
+        void SetImeCursorRect(System.IntPtr handle, int x, int y, int width, int height);
+        void ShowSoftKeyboard(System.IntPtr handle, bool multiline, bool password);
         void DestroyView(System.IntPtr handle);
         void GetScreenPixels(out int width, out int height);
         void RequestWake();

@@ -928,7 +928,9 @@
     <Compile Include="System\Windows\Documents\Hyperlink.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.Linux.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Android.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.Browser.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Ios.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.Mac.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.PlatformInput.cs" />
     <Compile Include="System\Windows\Documents\InkInteropObject.cs" />

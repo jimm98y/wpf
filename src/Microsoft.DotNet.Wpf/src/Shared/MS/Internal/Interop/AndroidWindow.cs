@@ -59,6 +59,22 @@ namespace MS.Internal.Interop
         /// <summary>Remove a view created by <see cref="CreateView"/> from the activity.</summary>
         void DestroyView(IntPtr handle);
 
+        /// <summary>
+        /// Raise the soft keyboard over a view and put it in text-editing mode. The view has to
+        /// answer onCheckIsTextEditor/onCreateInputConnection for this to do anything, which is why
+        /// it belongs to the host: WindowsBase cannot subclass an Android View.
+        /// </summary>
+        void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password);
+
+        /// <summary>Dismiss the soft keyboard.</summary>
+        void HideSoftKeyboard(IntPtr handle);
+
+        /// <summary>
+        /// Report the caret rectangle (device pixels, relative to the view) so the input method can
+        /// keep its candidate strip clear of the text being typed.
+        /// </summary>
+        void SetImeCursorRect(IntPtr handle, int x, int y, int width, int height);
+
         /// <summary>Display density: device pixels per density-independent pixel, i.e. WPF's DPI scale
         /// (DisplayMetrics.Density — 1.0 at mdpi, 3.5 on a modern phone).</summary>
         double Density { get; }
@@ -316,6 +332,22 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>Called by the head when the display density changed.</summary>
+        /// <summary>
+        /// Text-input callbacks from the host's InputConnection. They land on the Android UI thread,
+        /// which is the dispatcher thread, so they reach the editor directly.
+        /// </summary>
+        public static void NotifyComposingText(string text, int cursorPosition)
+            => AndroidTextInput.NotifyComposingText(text, cursorPosition);
+
+        public static void NotifyCommitText(string text, int cursorPosition)
+            => AndroidTextInput.NotifyCommitText(text, cursorPosition);
+
+        public static void NotifyFinishComposing()
+            => AndroidTextInput.NotifyFinishComposing();
+
+        public static void NotifyDeleteSurrounding(int before, int after)
+            => AndroidTextInput.NotifyDeleteSurrounding(before, after);
+
         public static void NotifyScaleChanged()
         {
             foreach (AndroidWindow w in s_zOrder)
