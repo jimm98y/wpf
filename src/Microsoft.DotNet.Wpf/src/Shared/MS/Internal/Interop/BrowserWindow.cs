@@ -227,6 +227,14 @@ namespace MS.Internal.Interop
                         break;
                     }
 
+                    // Input-method composition. Queued by the hidden editable element rather than by
+                    // a window, so there is no handle to route on: the browser has one focused
+                    // element at a time, and ImmComposition routes to whichever editor holds focus.
+                    case "i":
+                        BrowserTextInput.DispatchQueuedEvent(
+                            e.GetProperty("k").GetInt32(), e.GetProperty("s").GetString());
+                        break;
+
                     case "k":
                         KeyInput?.Invoke(new BrowserKeyMessage(
                             (IntPtr)e.GetProperty("h").GetInt32(),
@@ -305,6 +313,15 @@ namespace MS.Internal.Interop
 
             [JSImport("setCursor", Module)]
             internal static partial void SetCursor(string cssCursor);
+
+            [JSImport("enableTextInput", Module)]
+            internal static partial void EnableTextInput();
+
+            [JSImport("disableTextInput", Module)]
+            internal static partial void DisableTextInput();
+
+            [JSImport("setImeCaretRect", Module)]
+            internal static partial void SetImeCaretRect(int x, int y, int width, int height);
 
             [JSImport("drainEvents", Module)]
             internal static partial string DrainEvents();

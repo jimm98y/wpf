@@ -161,7 +161,11 @@
 
   <!-- Fonts live under wwwroot/fonts as plain static assets; main.js fetches them
        and writes them into the wasm virtual filesystem at /fonts before Main runs
-       (where SystemFontCatalog scans on the browser). -->
+       (where SystemFontCatalog scans on the browser). Staged from the SDK bundle by
+       CopyWpfFonts below rather than committed, for the same reason the JS modules are
+       copied rather than duplicated: a hand-maintained copy drifts, and this one had.
+       It was missing Selawik, the first substitute the font stack asks for in place of
+       Segoe UI, so every piece of UI text in the browser fell through to Liberation. -->
 
   <!-- From-source WPF (built by the repo into artifacts/) + the BROWSER flavor of
        the WebGPU interop. Same set the mac head uses, plus both theme satellites. -->
@@ -277,6 +281,23 @@
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-window.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-media.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Stage the bundled fonts and record what was staged, mirroring WpfWebGpuScaffoldWeb in the
+       packaged SDK (this sample predates it and builds through the plain WebAssembly SDK, so it
+       does not inherit that target). index.json is what main.js mounts from: the browser cannot
+       list a directory over HTTP, so without it the font set is a guess that goes stale. -->
+  <Target Name="CopyWpfFonts" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <ItemGroup>
+      <!-- .ttc too: the CJK font is a collection, and a *.ttf glob drops it silently. -->
+      <_GalleryFonts Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\*.ttf;..\..\sdk\WpfWebGpu.Sdk\web\fonts\*.ttc" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_GalleryFonts)" DestinationFolder="wwwroot\fonts" SkipUnchangedFiles="true" />
+    <PropertyGroup>
+      <_GalleryFontJson>[@(_GalleryFonts->'"%(Filename)%(Extension)"', ',')]</_GalleryFontJson>
+    </PropertyGroup>
+    <WriteLinesToFile File="wwwroot\fonts\index.json" Lines="$(_GalleryFontJson)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
 </Project>

@@ -284,6 +284,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandCursor.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandClipboard.cs" />

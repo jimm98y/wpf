@@ -176,6 +176,15 @@
          See eng/check-font-substitutions.py, which fails while it is missing. -->
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/Selawik*.ttf"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/%(Filename)%(Extension)" Visible="false" />
+    <!-- Noto Sans CJK: Japanese, both Chinese and Korean, as five separately-named families in one
+         collection. Unlike DejaVu and Liberation this is NOT a safe assumption on a Linux box --
+         a desktop install without the CJK language packs has no font for these scripts at all, and
+         the text renders as boxes -- so it ships even though it is the largest asset in the bundle.
+         The families are named the way the .CompositeFont FamilyMaps expect ("Noto Sans CJK JP" and
+         friends), so per-language selection keeps Japanese text in Japanese letterforms. -->
+    <None Include="$(WpfWebGpuSdkRoot)web/fonts/NotoSansCJK-Regular.ttc"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false"
+          Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/NotoSansCJK-Regular.ttc')" />
   </ItemGroup>
 
   <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
@@ -326,9 +335,30 @@
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js"
           DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
     <ItemGroup>
-      <_WpfWebGpuFonts Include="$(WpfWebGpuSdkRoot)web/fonts/*.ttf" />
+      <!-- .ttc as well as .ttf: the CJK font is an OpenType COLLECTION (five language families in
+           one file), and a *.ttf glob silently leaves it behind -- which looks exactly like the font
+           not existing, since the failure is missing glyphs rather than a build error. -->
+      <_WpfWebGpuFonts Include="$(WpfWebGpuSdkRoot)web/fonts/*.ttf;$(WpfWebGpuSdkRoot)web/fonts/*.ttc" />
     </ItemGroup>
     <Copy SourceFiles="@(_WpfWebGpuFonts)" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot/fonts" SkipUnchangedFiles="true" />
+
+    <!--
+      A manifest of what was actually staged, because the browser cannot list a directory over HTTP
+      and main.js therefore has to be told what to mount into the wasm filesystem.
+
+      It used to be told by a hand-written array, and every copy of main.js drifted from the bundle
+      in its own direction: the SDK's own template never listed Selawik (the FIRST substitute the
+      font stack asks for in place of Segoe UI, so the browser silently fell through to Liberation
+      for all UI text), one sample listed a single font, and none of them would have listed the CJK
+      collection. Generating the list from the copy that just happened removes the class of bug:
+      a font added to the bundle is mounted by every web head on the next build, with nothing to
+      remember.
+    -->
+    <PropertyGroup>
+      <_WpfWebGpuFontJson>[@(_WpfWebGpuFonts->'"%(Filename)%(Extension)"', ',')]</_WpfWebGpuFontJson>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/wwwroot/fonts/index.json"
+                      Lines="$(_WpfWebGpuFontJson)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
 </Project>

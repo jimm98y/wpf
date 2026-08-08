@@ -8,15 +8,31 @@ import * as wpfBrowserMedia from './browser-media.js'
 
 const status = document.getElementById('wpf-status');
 
-const FONTS = [
+// Which fonts to mount into the wasm filesystem. The build writes fonts/index.json listing exactly
+// what it staged (see WpfWebGpuScaffoldWeb in Sdk.targets), because a browser cannot list a directory
+// over HTTP and this file otherwise has to guess. It used to guess, in a hand-written array, and the
+// guess drifted: Selawik -- the first substitute the font stack asks for in place of Segoe UI -- was
+// missing here for as long as it has been bundled, so all UI text quietly fell through to Liberation.
+//
+// FALLBACK is only for a wwwroot staged by an older SDK, which has no manifest to read. It is
+// deliberately the minimum that keeps an app legible rather than a second copy of the bundle: text,
+// the Fluent icon glyphs, and CJK.
+const FALLBACK_FONTS = [
     'LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf', 'LiberationSans-Italic.ttf', 'LiberationSans-BoldItalic.ttf',
-    'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans-Oblique.ttf', 'DejaVuSans-BoldOblique.ttf',
-    'DejaVuSansMono.ttf', 'DejaVuSansMono-Bold.ttf', 'DejaVuSerif.ttf', 'DejaVuSerif-Bold.ttf',
-    // Symbols maps the Segoe Fluent Icons / MDL2 Assets PUA codepoints the Fluent theme draws its
-    // glyph icons from; Cascadia Code carries the programming ligatures ("-->" as one arrow) that
-    // samples pin by family name. Without them icons render as boxes and ligatures stay unligated.
-    'Symbols.ttf', 'CascadiaCode-Regular.ttf',
+    'Selawik-Regular.ttf', 'Selawik-Bold.ttf', 'Symbols.ttf', 'NotoSansCJK-Regular.ttc',
 ];
+
+async function fontList() {
+    try {
+        const resp = await fetch('./fonts/index.json');
+        if (resp.ok) {
+            const names = await resp.json();
+            if (Array.isArray(names) && names.length) return names;
+        }
+    } catch { /* no manifest: an older wwwroot, handled below */ }
+    console.warn('fonts/index.json missing or empty; falling back to a minimal font set. Rebuild to regenerate it.');
+    return FALLBACK_FONTS;
+}
 
 try {
     // Gallery modes (e.g. ?args=states to auto-open the combo popup) pass through
@@ -60,7 +76,8 @@ try {
     // scans on the browser (SystemFontCatalog: /fonts).
     status.innerText = 'loading fonts…';
     Module.FS.mkdirTree('/fonts');
-    await Promise.all(FONTS.map(async (name) => {
+    const fonts = await fontList();
+    await Promise.all(fonts.map(async (name) => {
         const resp = await fetch(`./fonts/${name}`);
         if (!resp.ok) { console.error(`font fetch failed: ${name}`); return; }
         Module.FS.writeFile(`/fonts/${name}`, new Uint8Array(await resp.arrayBuffer()));

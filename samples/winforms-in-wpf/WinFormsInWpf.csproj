@@ -95,6 +95,11 @@
     <!-- Selawik (the Segoe UI substitute) once it is vendored; a glob matching nothing is inert. -->
     <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/Selawik*.ttf"
           Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Noto Sans CJK, the same collection the packaged SDK deploys. A sample that references the
+         fork by path has to deploy it itself, or Japanese/Chinese/Korean text is missing glyphs on
+         any box without the CJK language packs installed. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/NotoSansCJK-Regular.ttc"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false" />
   </ItemGroup>
 
 </Project>

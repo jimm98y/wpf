@@ -46,6 +46,10 @@
        Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
   <ItemGroup>
     <AndroidAsset Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <!-- Same collection, same reason as the other heads. Android is the one platform that also
+         has Noto CJK in /system/fonts, so this is a second copy there; it is bundled anyway so
+         that every head resolves CJK through the same font instead of an OEM image's. -->
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

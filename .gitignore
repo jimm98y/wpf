@@ -353,3 +353,10 @@ Temporary Items
 /samples/media-wasm/lib
 /samples/wpf-gallery-ios/lib
 /samples/wpf-webgpu-gallery-wasm/out
+
+# Staged at build by CopyWpfFonts (wasm gallery) and WpfWebGpuScaffoldWeb (packaged SDK): the
+# browser heads copy the SDK's font bundle into wwwroot and write a fonts/index.json manifest for
+# main.js to mount from. Generated, not authored - the bundle in sdk/WpfWebGpu.Sdk/web/fonts is the
+# single copy that lives in git. (The faces committed before the target existed stay tracked; git
+# keeps tracking a file that a later rule would have ignored.)
+samples/wpf-webgpu-gallery-wasm/wwwroot/fonts/

@@ -35,6 +35,8 @@
     <_Wgpu>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/bin/Release/net10.0</_Wgpu>
     <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
     <WgpuNativeDir>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
+    <_ForkSrc>$(MSBuildThisFileDirectory)../../../src</_ForkSrc>
+    <_ForkDllPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</_ForkDllPath>
     <_ForkBuilt Condition="Exists('$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll') AND Exists('$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll')">true</_ForkBuilt>
   </PropertyGroup>
 
@@ -95,34 +97,29 @@
     every assertion the newer code was written to satisfy fails. That reads exactly like a product
     regression - it cost a full investigation once - so stop instead, and say which side is stale.
 
-    The comparison is against HEAD's commit date rather than the source files: globbing thousands of
-    .cs files on every build would cost more than the mistake. Uncommitted edits are therefore NOT
-    caught, and no check here can substitute for rebuilding after touching the fork. If git is
-    unavailable the check quietly passes rather than blocking a build it cannot judge.
+    The comparison asks the only question that actually matters (is any source file newer than the
+    binary?) by letting `find` short-circuit on the first hit, so the cost is one process and a
+    partial directory walk rather than a full glob of several thousand .cs files. An earlier version
+    compared against HEAD's commit date instead, and it was wrong in the most ordinary way possible:
+    committing does not touch the working tree, so a perfectly current build started failing the
+    moment the work was committed. Uncommitted edits, by contrast, are caught, which is the case
+    that actually bites.
+
+    Unix only. `find` on Windows is a different tool entirely, so the check is skipped there rather
+    than reimplemented; the same is true when the fork's source is absent (a package-only consumer).
   -->
   <Target Name="CheckForkNotStale" BeforeTargets="Build"
-          Condition="'$(_ForkBuilt)' == 'true' AND '$(AllowStaleFork)' != 'true'">
-    <Exec Command="git log -1 --format=%25ct" WorkingDirectory="$(MSBuildThisFileDirectory)"
+          Condition="'$(_ForkBuilt)' == 'true' AND '$(AllowStaleFork)' != 'true'
+                     AND '$(OS)' != 'Windows_NT' AND Exists('$(_ForkSrc)')">
+    <Exec Command="find &quot;$(_ForkSrc)&quot; -name '*.cs' -newer &quot;$(_ForkDllPath)&quot; -print -quit"
           ConsoleToMSBuild="true" StandardOutputImportance="low"
           ContinueOnError="true" IgnoreExitCode="true">
-      <Output TaskParameter="ConsoleOutput" PropertyName="_HeadCommitUnix" />
-      <Output TaskParameter="ExitCode" PropertyName="_GitExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="_NewerSource" />
+      <Output TaskParameter="ExitCode" PropertyName="_FindExitCode" />
     </Exec>
 
-    <!-- MSBuild has no file-time property function, so the timestamp comes off item metadata.
-         ModifiedTime is local time, hence ToLocalTime on the commit date rather than UtcNow math. -->
-    <ItemGroup Condition="'$(_GitExitCode)' == '0' AND '$(_HeadCommitUnix)' != ''">
-      <_ForkDll Include="$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll" />
-    </ItemGroup>
-
-    <PropertyGroup Condition="'$(_GitExitCode)' == '0' AND '$(_HeadCommitUnix)' != ''">
-      <_ForkModified>@(_ForkDll->'%(ModifiedTime)')</_ForkModified>
-      <_ForkTicks Condition="'$(_ForkModified)' != ''">$([System.DateTime]::Parse('$(_ForkModified)').Ticks)</_ForkTicks>
-      <_HeadCommitTicks>$([System.DateTime]::new(1970,1,1).AddSeconds($(_HeadCommitUnix)).ToLocalTime().Ticks)</_HeadCommitTicks>
-    </PropertyGroup>
-
-    <Error Condition="'$(_ForkTicks)' != '' AND $(_ForkTicks) &lt; $(_HeadCommitTicks)"
-           Text="artifacts/bin is older than the checked-out commit, so these tests would run against a stale text stack and fail for reasons that are not in the source. Run eng/build-sdk.sh, or pass -p:AllowStaleFork=true to test the old binaries deliberately." />
+    <Error Condition="'$(_FindExitCode)' == '0' AND '$(_NewerSource)' != ''"
+           Text="artifacts/bin is older than the fork's source, so these tests would run against a stale text stack and fail for reasons that are not in the source ($(_NewerSource) is newer than PresentationCore.dll). Run eng/build-sdk.sh, or pass -p:AllowStaleFork=true to test the old binaries deliberately." />
   </Target>
 
   <!-- Copy the fork's assemblies next to the test binary; conflict resolution recognises names like

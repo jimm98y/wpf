@@ -133,6 +133,90 @@ export function setCursor(cssCursor) {
     document.body.style.cursor = cssCursor || "default";
 }
 
+// ---- Input method (IME) ----------------------------------------------------
+//
+// Typing Japanese, Chinese or Korean in a browser is not a sequence of keystrokes: the IME takes the
+// keys, shows a candidate list, and hands back the finished text through composition events. Those
+// events only exist for an EDITABLE element, and a WPF window here is a <canvas>, which is not one.
+// So there is a real editable element, kept invisible and empty, that holds focus while a WPF text
+// field does. It exists to be composed into and for the browser to anchor the candidate list to;
+// its content is never read as text, only the composition events it emits are.
+//
+// It cannot be display:none or visibility:hidden - either one stops the IME from engaging at all -
+// so it is transparent, one pixel, and parked at the caret.
+
+let imeElement = null;
+let imeComposing = false;
+
+function ensureImeElement() {
+    if (imeElement) return imeElement;
+
+    const el = document.createElement("div");
+    el.contentEditable = "true";
+    el.setAttribute("aria-hidden", "true");
+    el.style.cssText =
+        "position:fixed;width:1px;height:1px;padding:0;border:0;outline:0;" +
+        "opacity:0;color:transparent;background:transparent;caret-color:transparent;" +
+        "overflow:hidden;z-index:2147483647;white-space:pre;";
+
+    el.addEventListener("compositionstart", () => {
+        imeComposing = true;
+        queue.push({ t: "i", k: 0, s: "" });
+    });
+
+    el.addEventListener("compositionupdate", (e) => {
+        // The in-progress composition. The DOM exposes no clause selection (unlike IMM32 and
+        // zwp_text_input_v3), so the caret is reported at the end of the preedit and the whole run
+        // draws with the same underline.
+        queue.push({ t: "i", k: 1, s: e.data ?? "" });
+    });
+
+    el.addEventListener("compositionend", (e) => {
+        imeComposing = false;
+        queue.push({ t: "i", k: 2, s: e.data ?? "" });
+        // The element is a scratchpad, not a document: anything left behind would become the
+        // starting context of the next composition.
+        el.textContent = "";
+    });
+
+    // Keystrokes that are NOT part of a composition still land here while it holds focus (it is the
+    // focused element). WPF has already handled them as key events, so drop the text.
+    el.addEventListener("input", () => { if (!imeComposing) el.textContent = ""; });
+
+    host().appendChild(el);
+    imeElement = el;
+    return el;
+}
+
+/// A WPF text field took focus: give the element focus so an IME can engage.
+export function enableTextInput() {
+    const el = ensureImeElement();
+    el.style.display = "block";
+    if (document.activeElement !== el) el.focus({ preventScroll: true });
+}
+
+/// Focus left the text field. Blur so the IME detaches and no candidate window lingers.
+export function disableTextInput() {
+    if (!imeElement) return;
+    imeComposing = false;
+    imeElement.textContent = "";
+    if (document.activeElement === imeElement) imeElement.blur();
+    imeElement.style.display = "none";
+}
+
+/// Where the caret is, in top-left DEVICE pixels. The browser anchors the candidate window to the
+/// focused element, so moving the element to the caret is what puts the candidates under the text.
+export function setImeCaretRect(x, y, width, height) {
+    const el = ensureImeElement();
+    const s = dpr();
+    el.style.left = `${x / s}px`;
+    el.style.top = `${y / s}px`;
+    el.style.width = `${Math.max(1, width / s)}px`;
+    el.style.height = `${Math.max(1, height / s)}px`;
+}
+
+export function isComposing() { return imeComposing; }
+
 export function drainEvents() {
     if (queue.length === 0) return "";
     return JSON.stringify(queue.splice(0));
@@ -214,6 +298,16 @@ function pushKey(isDown, e) {
     let handle = 0;
     for (const [h, w] of windows) { if (!w.borderless) { handle = h; break; } }
     if (!handle) return;
+
+    // While an IME is composing, the keystrokes are ITS input, not the app's. Two things have to
+    // happen and both matter: the key must not reach WPF (it would move the caret out from under a
+    // composition the user is still editing, and the committed text arrives separately), and it must
+    // NOT be preventDefault()ed below - swallowing the key stops the IME from ever seeing it, which
+    // is the difference between a candidate window and nothing happening at all.
+    // keyCode 229 is the long-standing signal for "this key went to the IME"; isComposing is the
+    // modern one, and neither is universal on its own.
+    if (e.isComposing || e.keyCode === 229) return;
+
     queue.push({
         t: "k", h: handle, d: isDown, c: e.code, key: e.key, r: e.repeat,
         ctl: e.ctrlKey, sh: e.shiftKey, alt: e.altKey, meta: e.metaKey,

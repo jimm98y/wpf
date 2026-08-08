@@ -24,20 +24,23 @@ namespace System.Windows.Documents
         internal static bool IsPlatformInputMethodAvailable
             => s_immEnabled
                || (OperatingSystem.IsLinux() && MS.Internal.Interop.Wayland.WaylandTextInput.IsAvailable)
-               || (OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaTextInput.IsAvailable);
+               || (OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaTextInput.IsAvailable)
+               || (OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserTextInput.IsAvailable);
 
         // Windows' half of the answer never changes, and asking the system metric on every focus
         // change is what the static this replaced was avoiding.
         private static readonly bool s_immEnabled = MS.Win32.SafeSystemMetrics.IsImmEnabled;
 
         /// <summary>True when this editor is the one the platform's input method is talking to.</summary>
-        private bool IsPlatformTextInputActive => IsLinuxTextInputActive || IsMacTextInputActive;
+        private bool IsPlatformTextInputActive
+            => IsLinuxTextInputActive || IsMacTextInputActive || IsBrowserTextInputActive;
 
         /// <summary>Starts (or moves) the input-method session to this editor.</summary>
         private void EnablePlatformTextInput()
         {
             EnableLinuxTextInput();
             EnableMacTextInput();
+            EnableBrowserTextInput();
         }
 
         /// <summary>Tells the input method no field is being edited.</summary>
@@ -45,6 +48,7 @@ namespace System.Windows.Documents
         {
             DisableLinuxTextInput();
             DisableMacTextInput();
+            DisableBrowserTextInput();
         }
 
         /// <summary>Reports the caret rectangle, in client device pixels, to whichever backend is live.</summary>
@@ -52,6 +56,7 @@ namespace System.Windows.Documents
         {
             ReportCaretRectangleToLinuxInputMethod(x, y, width, height);
             ReportCaretRectangleToMacInputMethod(x, y, width, height);
+            ReportCaretRectangleToBrowserInputMethod(x, y, width, height);
         }
 
         /// <summary>Reports the text around the caret to whichever backend is live.</summary>
