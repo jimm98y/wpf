@@ -1471,8 +1471,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// bounds, the mask-cache key, rasterization -- sees one consistent geometry. Only the
         /// axis-aligned rectangle shapes are snapped: those are what borders, separators,
         /// underlines and control backgrounds are made of, and they are what WPF emits
-        /// guidelines for. Ellipses, paths and glyph runs pass through unchanged, so this is
-        /// never worse than the previous behaviour of ignoring guidelines entirely.
+        /// guidelines for. Ellipses, arbitrary paths and glyph runs pass through unchanged, so
+        /// this is never worse than ignoring guidelines entirely.
         /// </summary>
         private static DrawingPrimitive SnapPrimitive(DrawingPrimitive p, Guides g, Matrix3x2 world)
         {
@@ -1480,12 +1480,76 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 case GeometryFill f when SnapGeometry(f.Geometry, g, world) is { } sg:
                     return new GeometryFill(sg, f.Brush);
-                // Strokes take a PathGeometry specifically, and a snapped rectangle is not one;
-                // stroked borders keep their unsnapped geometry for now.
+                case GeometryDrawing d when SnapDrawing(d, g, world) is { } sd:
+                    return sd;
+                // A stroked arbitrary PATH cannot be reduced to edges to snap, so it passes through.
                 default:
                     return p;
             }
         }
+
+        /// <summary>
+        /// Snaps DrawRectangle(brush, pen, rect) -- what a Border with a uniform border emits, and
+        /// therefore what every themed Button, TextBox and ComboBox is outlined with.
+        ///
+        /// A stroke is CENTRED on its geometry, so snapping the rectangle's edges is not enough: a
+        /// 1px pen on an edge that lands exactly on a pixel boundary still spills half of itself
+        /// into the pixel on either side. What has to land on the grid is the stroke's own OUTER
+        /// boundary, and its width has to be a whole number of device pixels. Both are done here,
+        /// which is why the geometry is re-centred inside the snapped boundary rather than moved.
+        /// </summary>
+        private static DrawingPrimitive? SnapDrawing(GeometryDrawing d, Guides g, Matrix3x2 world)
+        {
+            // No pen: the fill alone, snapped exactly as a GeometryFill is.
+            if (d.Stroke is null || d.StrokeStyle.Thickness <= 0)
+            {
+                return SnapGeometry(d.Geometry, g, world) is { } sg
+                    ? new GeometryDrawing(sg, d.Fill, d.Stroke, d.StrokeStyle)
+                    : null;
+            }
+
+            float sx = MathF.Abs(world.M11), sy = MathF.Abs(world.M22);
+            if (sx < 1e-6f || sy < 1e-6f) return null;
+
+            // The pen carries ONE thickness, so a non-uniform scale has no single answer for it.
+            // Leaving such a stroke alone is no worse than before.
+            if (MathF.Abs(sx - sy) > 1e-3f) return null;
+
+            Rect rect;
+            float radiusX = 0, radiusY = 0;
+            switch (d.Geometry)
+            {
+                case RectangleGeometry r: rect = r.Rect; break;
+                case RoundedRectangleGeometry rr: rect = rr.Rect; radiusX = rr.RadiusX; radiusY = rr.RadiusY; break;
+                default: return null;
+            }
+
+            float thickness = (float)d.StrokeStyle.Thickness;
+            float half = thickness * 0.5f;
+
+            // A whole number of device pixels, and never thinner than one: a hairline that rounded
+            // to zero would disappear entirely, which is a worse artefact than a soft edge.
+            float snappedThickness = MathF.Max(1f, MathF.Round(thickness * sx)) / sx;
+
+            Rect outer = Inflate(rect, half);
+            Rect snappedOuter = SnapRect(outer, g, world);
+            Rect centred = Inflate(snappedOuter, -snappedThickness * 0.5f);
+
+            // Corner radii follow the boundary that moved, so a rounded border keeps its shape
+            // instead of gaining or losing curvature as the rectangle resizes.
+            Geometry snapped = d.Geometry is RoundedRectangleGeometry
+                ? new RoundedRectangleGeometry(centred,
+                    MathF.Max(0f, radiusX + (snappedThickness - thickness) * 0.5f),
+                    MathF.Max(0f, radiusY + (snappedThickness - thickness) * 0.5f))
+                : new RectangleGeometry(centred);
+
+            var style = new StrokeStyle(snappedThickness, d.StrokeStyle.Cap, d.StrokeStyle.Join,
+                                        d.StrokeStyle.MiterLimit, d.StrokeStyle.DashArray, d.StrokeStyle.DashOffset);
+            return new GeometryDrawing(snapped, d.Fill, d.Stroke, style);
+        }
+
+        private static Rect Inflate(Rect r, float by)
+            => new Rect(r.X - by, r.Y - by, MathF.Max(0f, r.Width + by * 2f), MathF.Max(0f, r.Height + by * 2f));
 
         private static Geometry? SnapGeometry(Geometry geo, Guides g, Matrix3x2 world)
         {

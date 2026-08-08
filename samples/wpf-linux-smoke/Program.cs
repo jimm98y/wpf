@@ -32,6 +32,7 @@ internal static class Program
     {
         // The input-method gate is its own window: it needs a text field with focus and nothing
         // else competing for it. --ime-interactive leaves it open so an IME can actually be typed at.
+        if (Array.IndexOf(args, "--dpi") >= 0) return DpiProbe.Run();
         if (Array.IndexOf(args, "--ime") >= 0) return ImeProbe.Run(interactive: false);
         if (Array.IndexOf(args, "--ime-interactive") >= 0) return ImeProbe.Run(interactive: true);
 

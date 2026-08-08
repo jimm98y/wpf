@@ -146,5 +146,93 @@ namespace WgpuInterop.Tests.Geometry
             Assert.True(soft > 0,
                 $"the unsnapped path was crisp at all {total} offsets, so the guideline tests prove nothing");
         }
+
+        // ---- Stroked borders -------------------------------------------------------------------
+        //
+        // Everything above draws the border as a FILLED rect. A Border with a uniform thickness --
+        // which is every themed Button, TextBox and ComboBox -- does not: it emits
+        // DrawRectangle(brush, pen, rect), a STROKE centred on the rectangle's edge. Snapping the
+        // rectangle is not enough for those, because a 1px pen on an edge that sits exactly on a
+        // pixel boundary still puts half of itself on either side; the stroke's outer boundary is
+        // what has to land on the grid. Strokes used to be skipped by the snapper entirely, so
+        // every themed control had soft edges however much its template asked for snapping.
+
+        /// <summary>
+        /// A 1px stroked box, built exactly the way Border does it: the rectangle inset by half the
+        /// thickness, and the guidelines on the element's own edges (what SnapsToDevicePixels emits).
+        /// Scans a column that crosses the top and bottom edges but no fill.
+        /// </summary>
+        private (int Peak, int PartialRows) RenderStrokedBox(float fracY, bool snap, float scale = 1f)
+        {
+            const float boxY = 6f, boxH = 10f, thickness = 1f;
+            int w = (int)(W * scale) + 4, h = (int)(H * scale) + 4;
+
+            var child = new SceneVisual
+            {
+                Offset = new Vector2(0, fracY * scale),
+                Transform = Matrix3x2.CreateScale(scale),
+            };
+            if (snap) child.GuidelinesY = new[] { boxY, boxY + boxH };
+
+            child.Content.Add(new GeometryDrawing(
+                new RectangleGeometry(new Rect(6, boxY + thickness / 2f, 28, boxH - thickness)),
+                fill: null,
+                stroke: new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)),
+                strokeStyle: new StrokeStyle(thickness)));
+
+            var root = new SceneVisual();
+            root.Children.Add(child);
+
+            byte[] px = Render(root, w, h);
+            int peak = 0, partial = 0, col = (int)(20 * scale);
+            for (int y = 0; y < h; y++)
+            {
+                int cov = 255 - px[(y * w + col) * 4];
+                peak = Math.Max(peak, cov);
+                if (cov > 12 && cov < 243) partial++;
+            }
+            return (peak, partial);
+        }
+
+        [Theory]
+        [InlineData(0.0f)] [InlineData(0.1f)] [InlineData(0.25f)] [InlineData(0.3f)]
+        [InlineData(0.5f)] [InlineData(0.6f)] [InlineData(0.75f)] [InlineData(0.9f)]
+        public void Guidelines_SnapAStrokedBorder_AtEveryOffset(float frac)
+        {
+            (int peak, int rows) = RenderStrokedBox(frac, snap: true);
+            Assert.True(Crisp(peak, rows),
+                $"guidelines did not snap the stroked border at +{frac:0.00}: peak={peak}, partial rows={rows}");
+        }
+
+        /// <summary>
+        /// Under a fractional scale a 1px logical stroke is a fractional number of device pixels, so
+        /// snapping has to change the pen's WIDTH as well as its position -- moving it alone leaves
+        /// the far side mid-pixel.
+        /// </summary>
+        [Theory]
+        [InlineData(1.25f)] [InlineData(1.5f)] [InlineData(1.75f)]
+        public void Guidelines_SnapAStrokedBorder_UnderFractionalDpi(float scale)
+        {
+            (int peak, int rows) = RenderStrokedBox(0.4f, snap: true, scale);
+            Assert.True(Crisp(peak, rows),
+                $"guidelines did not snap the stroked border at {scale}x: peak={peak}, partial rows={rows}");
+        }
+
+        /// <summary>The same self-check: without guidelines the stroked path must be soft somewhere,
+        /// or the two tests above would pass with stroke snapping removed again.</summary>
+        [Fact]
+        public void WithoutGuidelines_SomeStrokedOffsetsAreSoft_SoTheComparisonIsNotVacuous()
+        {
+            int soft = 0, total = 0;
+            foreach (float frac in new[] { 0.0f, 0.1f, 0.25f, 0.3f, 0.5f, 0.6f, 0.75f, 0.9f })
+            {
+                (int peak, int rows) = RenderStrokedBox(frac, snap: false);
+                total++;
+                if (!Crisp(peak, rows)) soft++;
+            }
+
+            Assert.True(soft > 0,
+                $"the unsnapped stroked path was crisp at all {total} offsets, so the tests above prove nothing");
+        }
     }
 }
