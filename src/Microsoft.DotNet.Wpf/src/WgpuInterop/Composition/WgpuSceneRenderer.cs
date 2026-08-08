@@ -3413,6 +3413,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Glyph layout happens in local space (so transforms/opacity carry the
         // text like any other content); the shared atlas bind group is supplied
         // at record time.
+        // One colour glyph's layers, painted back to front. A layer with no palette entry takes the
+        // run's foreground, which is how COLR fonts mark the parts that follow the text colour.
+        //
+        // isGlyph: false, matching the protocol path (MilcoreEngine.EmitColorGlyph): the text gamma
+        // correction exists for thin monochrome stems against a background, and applying it per layer
+        // shifts the emoji's palette colours.
+        private void EmitColorGlyphLayers(IReadOnlyList<Text.ColorGlyphLayer> layers, float scale, float gx, float gy,
+            RgbaColor foreground, Matrix3x2 world, double opacity, Scissor clip, int width, int height,
+            WGPUTextureFormat format, DrawData data)
+        {
+            foreach (Text.ColorGlyphLayer layer in layers)
+            {
+                if (_outlineFont == null ||
+                    !_outlineFont.TryGetGlyphOutline(layer.GlyphId, out List<PathFigure> lf) || lf.Count == 0)
+                    continue;
+
+                var figures = new List<PathFigure>(lf.Count);
+                foreach (PathFigure f in lf) figures.Add(ScaleTranslateFigure(f, scale, gx, gy));
+
+                EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, figures),
+                                          new SolidColorBrush(layer.Color ?? foreground), isGlyph: false),
+                         world, opacity, clip, width, height, format, data);
+            }
+        }
+
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
@@ -3431,22 +3456,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // FillPath glyph outlines already; only string runs like WinForms reach here.)
             if (_outlineFont != null)
             {
+                // Monochrome glyphs accumulate into ONE fill: they share the run's colour, and a
+                // single path keeps the coverage cache and the text-gamma pass working per run
+                // rather than per glyph.
                 var figures = new List<PathFigure>();
+                var colorFont = _font as Text.IColorGlyphFont;
                 float pen = run.Origin.X;
-                foreach (Text.ShapedGlyph g in _shapeScratch)
+
+                void FlushMonochrome()
                 {
-                    if (_outlineFont.TryGetGlyphOutline(g.GlyphId, out List<PathFigure> gf))
-                    {
-                        float gx = pen + g.XOffset * scale;
-                        float gy = run.Origin.Y + g.YOffset * scale;
-                        foreach (PathFigure f in gf) figures.Add(ScaleTranslateFigure(f, scale, gx, gy));
-                    }
-                    pen += g.Advance * scale;
-                }
-                if (figures.Count > 0)
+                    if (figures.Count == 0) return;
                     EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, figures),
                                               new SolidColorBrush(run.Color), isGlyph: true),
                              world, opacity, clip, width, height, format, data);
+                    figures = new List<PathFigure>();
+                }
+
+                foreach (Text.ShapedGlyph g in _shapeScratch)
+                {
+                    float gx = pen + g.XOffset * scale;
+                    float gy = run.Origin.Y + g.YOffset * scale;
+
+                    // A COLR/CPAL colour glyph (emoji) is a stack of outlines, each with its own
+                    // palette colour. Filling them all with the run's foreground -- which is what
+                    // merging them into the batch above did -- produces a black silhouette, so the
+                    // layers are emitted separately, back to front, in their own colours.
+                    if (colorFont != null &&
+                        colorFont.TryGetColorLayers(g.GlyphId, out IReadOnlyList<Text.ColorGlyphLayer> layers) &&
+                        layers.Count > 0)
+                    {
+                        // Anything already batched belongs UNDER this glyph.
+                        FlushMonochrome();
+                        EmitColorGlyphLayers(layers, scale, gx, gy, run.Color,
+                                             world, opacity, clip, width, height, format, data);
+                    }
+                    else if (_outlineFont.TryGetGlyphOutline(g.GlyphId, out List<PathFigure> gf))
+                    {
+                        foreach (PathFigure f in gf) figures.Add(ScaleTranslateFigure(f, scale, gx, gy));
+                    }
+
+                    pen += g.Advance * scale;
+                }
+
+                FlushMonochrome();
                 return;
             }
 
