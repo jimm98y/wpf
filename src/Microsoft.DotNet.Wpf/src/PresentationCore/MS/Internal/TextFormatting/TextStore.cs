@@ -72,28 +72,23 @@ namespace MS.Internal.TextFormatting
         /// </summary>
         static TextStore()
         {
-            EscStringInfo esc;
-
-            if (OperatingSystem.IsWindows())
+            // The LineServices escapement strings, supplied as pinned single-char native buffers so
+            // the (char*)Pwch* dereferences and LSRun control runs work. These are the standard
+            // Unicode markers, which is what the native LoGetEscString handed back too.
+            //
+            // This was once the off-Windows branch of an OperatingSystem.IsWindows() check, with
+            // Windows calling into PresentationNative for the same six characters. It is now the
+            // only branch: the managed Line Services engine runs on every platform, so the markers
+            // it is fed must come from one place as well.
+            EscStringInfo esc = new EscStringInfo
             {
-                esc = new EscStringInfo();
-                UnsafeNativeMethods.LoGetEscString(ref esc);
-            }
-            else
-            {
-                // Off-Windows the native LineServices escapement strings are unavailable; supply
-                // the standard Unicode markers as pinned single-char native buffers so the
-                // (char*)Pwch* dereferences and LSRun control runs still work.
-                esc = new EscStringInfo
-                {
-                    szNbsp              = AllocMarker((char)0x00A0),   // no-break space
-                    szHidden            = AllocMarker((char)0xFFFF),   // hidden run marker
-                    szParaSeparator     = AllocMarker((char)0x2029),   // paragraph separator
-                    szLineSeparator     = AllocMarker((char)0x2028),   // line separator
-                    szObjectReplacement = AllocMarker((char)0xFFFC),   // object replacement char
-                    szObjectTerminator  = AllocMarker((char)0xFFFB),   // object terminator
-                };
-            }
+                szNbsp              = AllocMarker((char)0x00A0),   // no-break space
+                szHidden            = AllocMarker((char)0xFFFF),   // hidden run marker
+                szParaSeparator     = AllocMarker((char)0x2029),   // paragraph separator
+                szLineSeparator     = AllocMarker((char)0x2028),   // line separator
+                szObjectReplacement = AllocMarker((char)0xFFFC),   // object replacement char
+                szObjectTerminator  = AllocMarker((char)0xFFFB),   // object terminator
+            };
 
             ControlRuns = new LSRun[3];
 

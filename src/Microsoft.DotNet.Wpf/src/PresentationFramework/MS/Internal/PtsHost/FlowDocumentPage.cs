@@ -39,15 +39,22 @@ namespace MS.Internal.PtsHost
         internal FlowDocumentPage(StructuralCache structuralCache) : base(null)
         {
             _structuralCache = structuralCache;
-            // Off-Windows the native PTS engine (PresentationNative_cor3.dll) is absent, so
-            // structuralCache.Section (which acquires a PtsContext) would throw. Use a fully-managed
-            // block layout instead; _ptsPage stays null and every PTS path is guarded by s_managed.
+            // The native PTS engine lives in PresentationNative_cor3.dll, which this port does not
+            // ship on any platform, so structuralCache.Section (which acquires a PtsContext) would
+            // throw. Use the fully-managed block layout instead; _ptsPage stays null and every PTS
+            // path is guarded by s_managed.
             if (!s_managed)
                 _ptsPage = new PtsPage(structuralCache.Section);
         }
 
-        // True when the native PTS document engine is unavailable (non-Windows). See ManagedFlowLayout.
-        private static readonly bool s_managed = !OperatingSystem.IsWindows();
+        // The managed document layout (ManagedFlowLayout) replaces the native PTS engine everywhere.
+        //
+        // This was once off-Windows only. On Windows it meant FlowDocument/RichTextBox went down the
+        // PTS path and died with DllNotFoundException the moment a document was paginated, because
+        // the port deploys none of WPF's native DLLs -- so the "supported" path was in fact the
+        // broken one. Keeping it a field rather than a constant leaves one obvious place to switch
+        // back if a native PTS build is ever reintroduced.
+        private static readonly bool s_managed = true;
         private ManagedFlowLayout _managedLayout;
         private Vector _managedViewportOffset;
 
@@ -361,6 +368,9 @@ namespace MS.Internal.PtsHost
         }
 
         private DrawingVisual _managedContentVisual;
+        // The hosted-element islands currently parented under _managedContentVisual.
+        private readonly System.Collections.Generic.List<UIElementIsland> _hostedChildren = new();
+
         private void UpdateVisualManaged()
         {
             if (!_visualNeedsUpdate)
@@ -369,14 +379,83 @@ namespace MS.Internal.PtsHost
             this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), new Rect(_partitionSize));
 
             // Reuse a single content visual (RenderOpen clears it) — reconnecting a fresh child each
-            // update trips VisualCollection ("index already in use").
+            // update trips VisualCollection ("index already in use"). RenderOpen replaces the drawing
+            // content but PRESERVES visual children, which is what lets the hosted elements below
+            // survive a re-render.
             _managedContentVisual ??= new DrawingVisual();
             using (DrawingContext dc = _managedContentVisual.RenderOpen())
             {
                 _managedLayout?.Render(dc);
             }
+
+            UpdateHostedElements();
+
             this.PageVisual.Child = _managedContentVisual;   // same reference after the first set -> no-op
             _visualNeedsUpdate = false;
+        }
+
+        /// <summary>
+        /// Parent and position the UIElements the document hosts (BlockUIContainer).
+        ///
+        /// These are elements, not drawings: nothing renders them on our behalf, so their islands have
+        /// to be real visual children of the page. Being in the visual tree is what makes a hosted
+        /// button paint AND take input, rather than merely leaving a gap where it should be.
+        ///
+        /// ManagedFlowLayout has already measured and arranged each element inside its island, so all
+        /// that is left here is where the island sits on the page.
+        ///
+        /// The child list is synchronised rather than rebuilt: dropping and re-adding every island on
+        /// each render would restart the elements' animations and lose their focus.
+        /// </summary>
+        private void UpdateHostedElements()
+        {
+            System.Collections.Generic.IReadOnlyList<ManagedFlowLayout.HostedBox> hosted =
+                _managedLayout?.HostedElements;
+
+            if ((hosted == null || hosted.Count == 0) && _hostedChildren.Count == 0)
+                return;
+
+            var wanted = new System.Collections.Generic.HashSet<UIElementIsland>();
+            if (hosted != null)
+            {
+                foreach (ManagedFlowLayout.HostedBox h in hosted)
+                {
+                    if (h.Island != null) wanted.Add(h.Island);
+                }
+            }
+
+            // Unparent anything the document no longer hosts.
+            for (int i = _hostedChildren.Count - 1; i >= 0; i--)
+            {
+                UIElementIsland island = _hostedChildren[i];
+                if (wanted.Contains(island)) continue;
+                _managedContentVisual.Children.Remove(island);
+                _hostedChildren.RemoveAt(i);
+            }
+
+            if (hosted == null) return;
+
+            foreach (ManagedFlowLayout.HostedBox h in hosted)
+            {
+                UIElementIsland island = h.Island;
+                if (island == null) continue;
+
+                if (!_hostedChildren.Contains(island))
+                {
+                    // A Visual cannot be in two collections at once, and another page of the same
+                    // document may still be holding this island.
+                    if (VisualTreeHelper.GetParent(island) is ContainerVisual previous)
+                    {
+                        previous.Children.Remove(island);
+                    }
+                    _managedContentVisual.Children.Add(island);
+                    _hostedChildren.Add(island);
+                }
+
+                // Set every time: the box moves when the content above it reflows, even when the
+                // element itself did not change.
+                island.Offset = new Vector(h.Bounds.X, h.Bounds.Y);
+            }
         }
 
         //-------------------------------------------------------------------
@@ -993,6 +1072,10 @@ namespace MS.Internal.PtsHost
                         this.PageVisual.Children.Clear();
                         this.PageVisual.ClearDrawingContext();
                     }
+
+                    // DestroyVisualLinks has already removed the hosted-element islands from the
+                    // tree; drop our references so a disposed page does not keep the elements alive.
+                    _hostedChildren.Clear();
 
                     // Dispose PTS page
                     _ptsPage?.Dispose();

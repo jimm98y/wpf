@@ -113,9 +113,12 @@ namespace MS.Internal.Documents
         /// <param name="viewport">Viewport for visible content.</param>
         internal void Arrange(Size arrangeSize, Rect viewport)
         {
-            // The managed (no-PTS, off-Windows) FlowDocumentPage re-formats fully on every change rather
-            // than doing PTS incremental updates, so the single-covering-DTR invariant doesn't apply.
-            Invariant.Assert(!OperatingSystem.IsWindows() ||
+            // The managed (no-PTS) FlowDocumentPage re-formats fully on every change rather than doing
+            // PTS incremental updates, so the single-covering-DTR invariant doesn't apply. Asked of the
+            // page rather than of the platform: the managed layout is what every platform uses now, and
+            // keying this off OperatingSystem.IsWindows() made the assert fire on Windows the moment it
+            // switched over.
+            Invariant.Assert(_documentPage.IsManaged ||
                              _document.StructuralCache.DtrList == null || _document.StructuralCache.DtrList.Length == 0 ||
                              (_document.StructuralCache.DtrList.Length == 1 && _document.StructuralCache.BackgroundFormatInfo.DoesFinalDTRCoverRestOfText));
 

@@ -1,0 +1,113 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FlowDocument layout: what the document engine actually puts on the page.
+
+    A layer above Wpf.Text.Tests, which stops at PresentationCore. These need PresentationFramework,
+    because the subject is FlowDocument/Table/List block layout rather than the formatting of a
+    single line.
+
+    The port replaced the native PTS engine (PresentationNative_cor3.dll) with ManagedFlowLayout on
+    every platform, and there was no test for it anywhere, so a block type it did not model (Table)
+    rendered as nothing and no suite noticed. These tests work through the PUBLIC paginator API and
+    assert on the glyphs that reach the page, so they describe what a reader sees rather than the
+    internals that currently produce it.
+
+    Referenced by path rather than ProjectReference'd, exactly as the sibling suites are: those
+    projects build through the Arcade SDK, which a plain `dotnet test` does not participate in.
+    Run eng/build-sdk first; without the fork the tests are excluded rather than failing the build.
+
+    Plain net10.0, NOT net10.0-windows: the whole point is that this document stack has no Windows
+    in it.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseAppHost>true</UseAppHost>
+    <UseWPF>false</UseWPF>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <NoWarn>$(NoWarn);CS8002;CA1416;NU1510</NoWarn>
+
+    <_Art>$(MSBuildThisFileDirectory)../../../../../artifacts/bin</_Art>
+    <_Wgpu>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/bin/Release/net10.0</_Wgpu>
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
+    <_ForkBuilt Condition="Exists('$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll') AND Exists('$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll')">true</_ForkBuilt>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
+    <Reference Include="WindowsBase">                 <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml">                 <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore">            <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework">       <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder">        <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework">              <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI">              <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Printing">             <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes">           <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider">        <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!-- Named by the PresentationFramework closure; resolved even though these tests never reach them. -->
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.CodeDom" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- The engine's native half. Nothing here renders to a screen, but paginating a document opens a
+       DrawingContext, which brings the MediaContext up. Note what is NOT here: none of WPF's own
+       native DLLs, because the port must not need them on any platform. -->
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
+    <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.dylib" Condition="Exists('$(WgpuNativeDir)libwgpu_native.dylib')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)wgpu_native.dll" Condition="Exists('$(WgpuNativeDir)wgpu_native.dll')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(_ForkBuilt)' != 'true'">
+    <Compile Remove="**/*.cs" />
+    <Compile Include="NotBuilt.cs" />
+  </ItemGroup>
+
+  <Target Name="WarnIfForkNotBuilt" BeforeTargets="Build" Condition="'$(_ForkBuilt)' != 'true'">
+    <Warning Text="The WPF fork is not built, so the document-layout tests are excluded. Run eng/build-sdk.sh to enable them." />
+  </Target>
+
+  <Target Name="CopyForkAssemblies" AfterTargets="Build" Condition="'$(_ForkBuilt)' == 'true'">
+    <ItemGroup>
+      <_ForkAssembly Include="@(Reference->'%(HintPath)')" Condition="'%(Reference.HintPath)' != ''" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ForkAssembly)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="Exists('%(_ForkAssembly.Identity)')" />
+  </Target>
+
+</Project>

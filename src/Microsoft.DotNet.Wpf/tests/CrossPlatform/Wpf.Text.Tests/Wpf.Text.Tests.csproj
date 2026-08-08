@@ -79,6 +79,14 @@
   </ItemGroup>
 
   <!--
+    Note what is deliberately NOT here: none of WPF's own native DLLs (wpfgfx_cor3,
+    PresentationNative_cor3, PenImc_cor3). The port does not depend on them on any platform,
+    Windows included, so a test that had to deploy them would be hiding a dependency the product
+    is not allowed to have. If one of them starts failing to load here, the fix is in the source,
+    not in a copy item.
+  -->
+
+  <!--
     Without the fork there is nothing to bind against, so compile an explanatory stub instead of the
     tests rather than breaking the build for someone who only touched the renderer.
   -->

@@ -198,9 +198,11 @@ namespace MS.Internal
 
         [DllImport(DllImport.PresentationNative, EntryPoint="MILGetClassificationTables")]
         internal static extern void MILGetClassificationTables(out RawClassificationTables ct);
-        // Off-Windows the native classification tables (PresentationNative) are unavailable;
-        // ManagedClassification supplies equivalent per-character attributes instead.
-        private static readonly bool _managed = !OperatingSystem.IsWindows();
+        // ManagedClassification supplies the per-character attributes that the native classification
+        // tables (PresentationNative) used to. Every platform reads them from there now, Windows
+        // included, so character classes -- which script a character belongs to, where a line may
+        // break, how it mirrors -- cannot differ between platforms for the same text.
+        private static readonly bool _managed = true;
 
         static Classification()
         {

@@ -136,15 +136,28 @@ namespace Wpf.Text.Tests
             Assert.Equal(Fits, lines[0].Text.Length);
         }
 
+        // Every character these fixtures count on: an ideograph, the kana the paragraphs are built
+        // from, and the punctuation the kinsoku theories place at the break. All of it has to be
+        // full-width for "six characters fit in 100px" to mean anything.
+        private const string FullWidthSample = "日本語のテキストです、。」）「（";
+
         private static string RequireCjkFont()
         {
             foreach (string candidate in CjkCandidates)
             {
-                FormattedRun run = TextHarness.Format("日", candidate, EmSize);
+                FormattedRun run = TextHarness.Format(FullWidthSample, candidate, EmSize);
 
-                // A named family that is not installed resolves elsewhere, so confirm the glyph came
-                // out and that the advance is the full-width em these fixtures assume.
-                if (run.AllGlyphsPresent && Math.Abs(run.Width - EmSize) < 0.5) return candidate;
+                // Measuring the whole sample rather than one ideograph is the point. A named family
+                // that is not installed resolves elsewhere, and what it lands on is usually a
+                // PROPORTIONAL UI face -- Yu Gothic UI is the one Windows answers with -- whose
+                // kanji are a full em but whose kana and punctuation are visibly narrower. Checking
+                // 日 alone accepted such a font and then seven characters fit in the six-character
+                // column, which reads as a line-breaking bug and is nothing of the sort.
+                if (run.AllGlyphsPresent &&
+                    Math.Abs(run.Width - FullWidthSample.Length * EmSize) < 0.5)
+                {
+                    return candidate;
+                }
             }
 
             Assert.Skip("no full-width CJK font installed");

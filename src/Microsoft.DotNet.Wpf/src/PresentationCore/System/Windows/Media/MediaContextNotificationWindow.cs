@@ -175,15 +175,20 @@ namespace System.Windows.Media
             return IntPtr.Zero;
         }
 
-        [DllImport(DllImport.MilCore)]
-        private static extern int MilContent_AttachToHwnd(
-            IntPtr hwnd
-            );
+        //
+        // These told the DWM "this window contains MIL content", which existed so the Vista
+        // Magnifier could tell that it must not try to magnify D3D content. Both were milcore
+        // (wpfgfx) exports, and there is no milcore here: this engine composes through WebGPU, and
+        // the port does not load WPF's native DLLs on any platform.
+        //
+        // Nothing is lost by returning success. The call was already documented as a no-op whenever
+        // the DWM is not running, the Magnifier it worked around has not been a concern since
+        // Windows 7, and the content this would be vouching for is not D3D content drawn by milcore
+        // any more.
+        //
+        private static int MilContent_AttachToHwnd(IntPtr hwnd) => MS.Internal.HRESULT.S_OK;
 
-        [DllImport(DllImport.MilCore)]
-        private static extern int MilContent_DetachFromHwnd(
-            IntPtr hwnd
-            );
+        private static int MilContent_DetachFromHwnd(IntPtr hwnd) => MS.Internal.HRESULT.S_OK;
 
         /// <summary>
         /// Allow lower integrity applications to send specified window messages

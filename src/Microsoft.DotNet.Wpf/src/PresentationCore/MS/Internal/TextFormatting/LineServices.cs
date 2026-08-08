@@ -1406,11 +1406,18 @@ namespace MS.Internal.TextFormatting
     {
 
         // ----------------------------------------------------------------------------------------
-        // Off-Windows these Line Services entry points are served by the managed engine
-        // (ManagedLineServices) instead of the native PresentationNative DLL. On Windows they
-        // forward to the original P/Invoke (the *Native methods below).
+        // These Line Services entry points are served by the managed engine (ManagedLineServices)
+        // rather than the native PresentationNative DLL.
+        //
+        // This was once off-Windows only, with Windows still forwarding to the original P/Invoke
+        // (the *Native methods below, kept for reference). Windows now runs the managed engine too,
+        // so every platform formats text through one implementation: what a test asserts on Linux
+        // or in CI is the same code a Windows app runs, and the port needs no PresentationNative at
+        // all. Line breaking is where that parity earns its keep -- CJK has no spaces, so the break
+        // opportunities come from the engine rather than from the text, and two engines would mean
+        // two different sets of line breaks for the same paragraph.
         // ----------------------------------------------------------------------------------------
-        private static readonly bool s_managedLS = !OperatingSystem.IsWindows();
+        private static readonly bool s_managedLS = true;
 
         internal static LsErr LoCreateContext(ref LsContextInfo contextInfo, ref LscbkRedefined lscbkRedef, out IntPtr ploc)
         {

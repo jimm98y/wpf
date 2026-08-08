@@ -20,11 +20,17 @@ namespace Microsoft.Internal.Interop
 {
     /// <summary>
     /// DevDiv:1158540
-    /// Adding wrapper around OSVersionHelper native code.  This is linked into PresentationNative so we just PInvoke it from there.
+    ///
+    /// Which Windows version we are on. This used to P/Invoke the same checks out of the
+    /// PresentationNative helper DLL; it is managed now, so the answer is available on every
+    /// platform this port builds for and costs no native dependency on any of them. That matters
+    /// beyond tidiness: the system .CompositeFont files gate their FontFamilyCollection entries on
+    /// a minimum OS, so a version probe that throws takes the whole script-fallback chain with it
+    /// and every non-Latin run renders as missing-glyph boxes.
     ///
     /// To add a new OS:
     ///     Make sure you have followed the instructions in OperatingSystemVersion.cs to get here
-    ///     Add appropriate PInvoke to your new Is{OSName}OrGreater function
+    ///     Add a probe for your new Is{OSName}OrGreater property to the static constructor
     ///     Add case to switch statement in IsOsVersionOrGreater
     ///     Add new if statement to the TOP of GetOsVersion
     /// </summary>
@@ -78,138 +84,118 @@ namespace Microsoft.Internal.Interop
 
         static OSVersionHelper()
         {
-            // These checks P/Invoke the PresentationNative helper DLL, which is Windows-only.
             // Off-Windows every "is this Windows version or greater" answer is false, so leave all
-            // properties at their default (false) and skip the native calls entirely.
+            // properties at their default.
             if (!OperatingSystem.IsWindows())
             {
                 return;
             }
 
-            IsOsWindows10RS5OrGreater = IsWindows10RS5OrGreater();
+            // The build numbers are the ones the native helper used (wpfsdkddkver.h). RS4 (17134)
+            // never had a native counterpart in this tree at all -- the P/Invoke was declared but no
+            // implementation was built -- which is one more reason the managed probe is the better
+            // answer. OperatingSystem.IsWindowsVersionAtLeast reads the real version through
+            // RtlGetVersion, so it is not subject to the app-manifest version lie that GetVersionEx
+            // suffers from, exactly like RtlVerifyVersionInfo before it.
+            IsOsWindows10RS5OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763);
 
-            IsOsWindows10RS4OrGreater = IsWindows10RS4OrGreater();
+            IsOsWindows10RS4OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17134);
 
-            IsOsWindows10RS3OrGreater = IsWindows10RS3OrGreater();
+            IsOsWindows10RS3OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 16299);
 
-            IsOsWindows10RS2OrGreater = IsWindows10RS2OrGreater();
+            IsOsWindows10RS2OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 15063);
 
-            IsOsWindows10RS1OrGreater = IsWindows10RS1OrGreater();
+            IsOsWindows10RS1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393);
 
-            IsOsWindows10TH2OrGreater = IsWindows10TH2OrGreater();
+            IsOsWindows10TH2OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 10586);
 
-            IsOsWindows10TH1OrGreater = IsWindows10TH1OrGreater();
+            IsOsWindows10TH1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 10240);
 
-            IsOsWindows10OrGreater = IsWindows10OrGreater();
+            IsOsWindows10OrGreater = OperatingSystem.IsWindowsVersionAtLeast(10, 0);
 
-            IsOsWindows8Point1OrGreater = IsWindows8Point1OrGreater();
+            IsOsWindows8Point1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 3);
 
-            IsOsWindows8OrGreater = IsWindows8OrGreater();
+            IsOsWindows8OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 2);
 
-            IsOsWindows7SP1OrGreater = IsWindows7SP1OrGreater();
+            // The service-pack component of these older checks is dropped rather than emulated:
+            // .NET does not surface a service-pack level (Environment.OSVersion.ServicePack is
+            // always empty on .NET Core), and it cannot change any answer here. This runtime does
+            // not load below Windows 10, so every one of these is true whenever we are on Windows
+            // at all -- as the version ladder below, which stops at Windows 10, already assumes.
+            IsOsWindows7SP1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 1);
 
-            IsOsWindows7OrGreater = IsWindows7OrGreater();
+            IsOsWindows7OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 1);
 
-            IsOsWindowsVistaSP2OrGreater = IsWindowsVistaSP2OrGreater();
+            IsOsWindowsVistaSP2OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 0);
 
-            IsOsWindowsVistaSP1OrGreater = IsWindowsVistaSP1OrGreater();
+            IsOsWindowsVistaSP1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 0);
 
-            IsOsWindowsVistaOrGreater = IsWindowsVistaOrGreater();
+            IsOsWindowsVistaOrGreater = OperatingSystem.IsWindowsVersionAtLeast(6, 0);
 
-            IsOsWindowsXPSP3OrGreater = IsWindowsXPSP3OrGreater();
+            IsOsWindowsXPSP3OrGreater = OperatingSystem.IsWindowsVersionAtLeast(5, 1);
 
-            IsOsWindowsXPSP2OrGreater = IsWindowsXPSP2OrGreater();
+            IsOsWindowsXPSP2OrGreater = OperatingSystem.IsWindowsVersionAtLeast(5, 1);
 
-            IsOsWindowsXPSP1OrGreater = IsWindowsXPSP1OrGreater();
+            IsOsWindowsXPSP1OrGreater = OperatingSystem.IsWindowsVersionAtLeast(5, 1);
 
-            IsOsWindowsXPOrGreater = IsWindowsXPOrGreater();
+            IsOsWindowsXPOrGreater = OperatingSystem.IsWindowsVersionAtLeast(5, 1);
 
             IsOsWindowsServer = IsWindowsServer();
         }
 
-        #endregion
+        /// <summary>
+        /// True on a Server SKU. There is no managed API for the product type, so this asks ntdll
+        /// directly -- a plain P/Invoke to a system DLL, which is what the native helper did too
+        /// (RtlGetVersion fills in wProductType; anything other than VER_NT_WORKSTATION is Server).
+        /// A failure is reported as "not Server" rather than thrown: no caller in the tree reads
+        /// this, and it must not be the reason a text run fails to format.
+        /// </summary>
+        private static bool IsWindowsServer()
+        {
+            const byte VER_NT_WORKSTATION = 1;
 
-        #region DLL Imports
+            try
+            {
+                RTL_OSVERSIONINFOEXW osvi = default;
+                osvi.dwOSVersionInfoSize = (uint)Marshal.SizeOf<RTL_OSVERSIONINFOEXW>();
 
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10RS5OrGreater();
+                // STATUS_SUCCESS
+                if (RtlGetVersion(ref osvi) != 0)
+                {
+                    return false;
+                }
 
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10RS4OrGreater();
+                return osvi.wProductType != VER_NT_WORKSTATION;
+            }
+            catch (DllNotFoundException)
+            {
+                return false;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                return false;
+            }
+        }
 
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10RS3OrGreater();
+        [DllImport("ntdll.dll", CallingConvention = CallingConvention.Winapi)]
+        private static extern int RtlGetVersion(ref RTL_OSVERSIONINFOEXW versionInfo);
 
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10RS2OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10RS1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10TH2OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10TH1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows10OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows8Point1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows8OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows7SP1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindows7OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsVistaSP2OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsVistaSP1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsVistaOrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsXPSP3OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsXPSP2OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsXPSP1OrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsXPOrGreater();
-
-        [DllImport(DllImport.PresentationNative, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        private static extern bool IsWindowsServer();
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct RTL_OSVERSIONINFOEXW
+        {
+            internal uint dwOSVersionInfoSize;
+            internal uint dwMajorVersion;
+            internal uint dwMinorVersion;
+            internal uint dwBuildNumber;
+            internal uint dwPlatformId;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            internal string szCSDVersion;
+            internal ushort wServicePackMajor;
+            internal ushort wServicePackMinor;
+            internal ushort wSuiteMask;
+            internal byte wProductType;
+            internal byte wReserved;
+        }
 
         #endregion
 

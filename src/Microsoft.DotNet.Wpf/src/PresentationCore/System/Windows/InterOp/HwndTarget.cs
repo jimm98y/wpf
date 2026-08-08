@@ -601,14 +601,33 @@ namespace System.Windows.Interop
             UnsafeNativeMethods.WTSRegisterSessionNotification(hwnd, NativeMethods.NOTIFY_FOR_THIS_SESSION);
         }
 
+        //
+        // Binding the render target to the window.
+        //
+        // When the managed compositor is driving, this is its business and not milcore's: the sink
+        // is told about the target over the composition channel and builds its own swapchain
+        // surface for the HWND (WpfCompositionSink -> NativePlatform.CreateWindowSurface). Calling
+        // milcore as well would have a second engine claim the same window -- and it is the reason
+        // a Windows app needed wpfgfx_cor3 deployed next to it at all, which this port does not do.
+        //
+        // The native call is kept for the one case it still applies to: no managed backend
+        // registered, i.e. the assembly could not be loaded and milcore really is in charge (see
+        // DUCE.ManagedComposition.EnsureAutoRegistered).
+        //
+        internal static int VisualTarget_AttachToHwnd(IntPtr hwnd)
+            => DUCE.ManagedComposition.IsEnabled ? HRESULT.S_OK : VisualTarget_AttachToHwndNative(hwnd);
+
+        internal static int VisualTarget_DetachFromHwnd(IntPtr hwnd)
+            => DUCE.ManagedComposition.IsEnabled ? HRESULT.S_OK : VisualTarget_DetachFromHwndNative(hwnd);
+
         [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_AttachToHwnd")]
-        internal static extern int VisualTarget_AttachToHwnd(
+        private static extern int VisualTarget_AttachToHwndNative(
             IntPtr hwnd
             );
 
 
         [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_DetachFromHwnd")]
-        internal static extern int VisualTarget_DetachFromHwnd(
+        private static extern int VisualTarget_DetachFromHwndNative(
             IntPtr hwnd
             );
 
