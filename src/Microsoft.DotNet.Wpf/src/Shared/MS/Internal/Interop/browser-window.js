@@ -273,8 +273,19 @@ export function a11ySync(json) {
             el.addEventListener("focus", () => pushA11y(n.id, 1));
         }
 
-        if (n.r) el.setAttribute("role", n.r); else el.removeAttribute("role");
-        if (n.n) el.setAttribute("aria-label", n.n); else el.removeAttribute("aria-label");
+        if (n.r) {
+            el.setAttribute("role", n.r);
+            if (n.n) el.setAttribute("aria-label", n.n); else el.removeAttribute("aria-label");
+            if (el.firstChild) el.textContent = "";
+        } else {
+            // No ARIA role means a generic element, and a generic element's aria-label is IGNORED
+            // by every browser -- name-from-author is prohibited for it. Static text has to become
+            // actual text, or a label in a WPF app is simply absent from the accessibility tree.
+            el.removeAttribute("role");
+            el.removeAttribute("aria-label");
+            const text = n.n || "";
+            if (el.textContent !== text) el.textContent = text;
+        }
 
         setAttr(el, "aria-disabled", n.dis ? "true" : null);
         setAttr(el, "aria-checked", n.chk === 2 ? "mixed" : n.chk === 1 ? "true" : (n.r === "checkbox" || n.r === "radio") ? "false" : null);

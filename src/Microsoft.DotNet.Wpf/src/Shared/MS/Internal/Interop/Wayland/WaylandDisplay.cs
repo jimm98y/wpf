@@ -473,15 +473,29 @@ namespace MS.Internal.Interop.Wayland
             Wl.wl_display_flush(Display);
 
             int n;
-            PollFd* fds = stackalloc PollFd[2];
+            PollFd* fds = stackalloc PollFd[3];
             fds[0].fd = Wl.wl_display_get_fd(Display);
             fds[0].events = POLLIN;
             nuint count = 1;
             if (extraFd >= 0)
             {
-                fds[1].fd = extraFd;
-                fds[1].events = POLLIN;
-                count = 2;
+                fds[count].fd = extraFd;
+                fds[count].events = POLLIN;
+                count++;
+            }
+
+            // The accessibility bus is polled here rather than by its own caller because an idle
+            // application still has to answer Orca: if the only fd we waited on were Wayland's, a
+            // window that is not being interacted with would leave every AT-SPI call unanswered
+            // until the next unrelated event, which a screen reader reports as the app hanging.
+            int a11yFd = AtSpiBridge.Fd;
+            nuint a11ySlot = 0;
+            if (a11yFd >= 0)
+            {
+                a11ySlot = count;
+                fds[count].fd = a11yFd;
+                fds[count].events = POLLIN;
+                count++;
             }
 
             do { n = poll(fds, count, timeoutMs); }
@@ -499,6 +513,11 @@ namespace MS.Internal.Interop.Wayland
                 // MUST be cancelled -- libwayland keeps a per-connection reader count and leaving it
                 // raised deadlocks the next prepare_read.
                 Wl.wl_display_cancel_read(Display);
+            }
+
+            if (a11ySlot != 0 && n > 0 && (fds[a11ySlot].revents & POLLIN) != 0)
+            {
+                AtSpiBridge.Pump();
             }
 
             Wl.wl_display_dispatch_pending(Display);

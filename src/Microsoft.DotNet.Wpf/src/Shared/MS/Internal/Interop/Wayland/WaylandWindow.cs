@@ -210,6 +210,11 @@ namespace MS.Internal.Interop.Wayland
             WaylandDisplay.Flush();
 
             PumpUntilVisible();
+
+            // Only a real toplevel is worth exporting: a popup is a menu or a tooltip belonging to a
+            // window that has already registered, and AT-SPI wants one application root, not one per
+            // surface. The bridge itself decides whether an assistive technology is present.
+            if (!borderless) AtSpiBridge.TryAttach(_surface);
         }
 
         private void CreateToplevel()

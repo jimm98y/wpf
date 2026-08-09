@@ -283,6 +283,8 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDisplay.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\AtSpiBridge.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\AtSpiRoles.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AutomationTreeSource.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaAccessibility.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitAccessibility.cs" />

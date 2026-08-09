@@ -102,7 +102,7 @@ namespace MS.Internal.Interop.Wayland
 
         // DBusMessageIter is opaque and stack-allocated by callers; the real struct is well under
         // this, and libdbus only ever writes through the pointer we hand it.
-        private const int IterSize = 128;
+        internal const int IterSize = 128;
 
         private static IntPtr s_connection;
         private static bool s_tried;
@@ -473,5 +473,421 @@ namespace MS.Internal.Interop.Wayland
             }
             return ReadUInt32Recursive(iter, out value);
         }
+        // ====================================================================================
+        // The server half.
+        //
+        // Everything above talks TO a service. AT-SPI needs the opposite: the application IS a
+        // service that an assistive technology calls into, on a SEPARATE bus, exporting an object
+        // per accessible node. That needs three things libdbus has and the client half never used --
+        // a private connection, an object-path handler, and the ability to construct replies and
+        // signals rather than only method calls.
+        // ====================================================================================
+
+        [DllImport(Lib)] private static extern IntPtr dbus_connection_open_private([MarshalAs(UnmanagedType.LPUTF8Str)] string address, DBusError* error);
+        [DllImport(Lib)] private static extern int dbus_bus_register(IntPtr connection, DBusError* error);
+        [DllImport(Lib)] private static extern void dbus_connection_set_exit_on_disconnect(IntPtr connection, int exit);
+        [DllImport(Lib)] private static extern int dbus_bus_request_name(IntPtr connection, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, uint flags, DBusError* error);
+        [DllImport(Lib)] private static extern int dbus_connection_register_fallback(IntPtr connection, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, DBusObjectPathVTable* vtable, IntPtr userData);
+        [DllImport(Lib)] private static extern IntPtr dbus_message_new_method_return(IntPtr methodCall);
+        [DllImport(Lib)] private static extern IntPtr dbus_message_new_error(IntPtr replyTo, [MarshalAs(UnmanagedType.LPUTF8Str)] string errorName, [MarshalAs(UnmanagedType.LPUTF8Str)] string? message);
+        [DllImport(Lib)] private static extern IntPtr dbus_message_new_signal([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [MarshalAs(UnmanagedType.LPUTF8Str)] string iface, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+        [DllImport(Lib)] private static extern IntPtr dbus_message_get_sender(IntPtr message);
+
+        /// <summary>libdbus's DBusObjectPathVTable. Only the two function pointers matter.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct DBusObjectPathVTable
+        {
+            public IntPtr unregister_function;
+            public IntPtr message_function;
+            public IntPtr pad1, pad2, pad3, pad4;
+        }
+
+        /// <summary>DBusHandlerResult.</summary>
+        internal const int HANDLER_RESULT_HANDLED = 0;
+        internal const int HANDLER_RESULT_NOT_YET_HANDLED = 1;
+
+        /// <summary>
+        /// Opens a second, PRIVATE connection to an arbitrary bus address. The accessibility bus is
+        /// not the session bus: its address comes from org.a11y.Bus.GetAddress on the session bus,
+        /// and mixing the two on one connection would put the app's a11y objects on the session bus
+        /// where nothing looks for them.
+        ///
+        /// exit_on_disconnect is turned OFF deliberately: an assistive technology stopping must not
+        /// take the application down with it.
+        /// </summary>
+        internal static IntPtr OpenPrivate(string address)
+        {
+            DBusError err;
+            dbus_error_init(&err);
+            try
+            {
+                IntPtr connection = dbus_connection_open_private(address, &err);
+                if (connection == IntPtr.Zero) return IntPtr.Zero;
+
+                dbus_connection_set_exit_on_disconnect(connection, 0);
+
+                if (dbus_bus_register(connection, &err) == 0)
+                {
+                    return IntPtr.Zero;
+                }
+                return connection;
+            }
+            finally { dbus_error_free(&err); }
+        }
+
+        /// <summary>
+        /// Registers ONE handler for a whole object-path subtree.
+        ///
+        /// A fallback rather than an object per node, which matters at this scale: a tree of a few
+        /// thousand accessible nodes would otherwise mean a few thousand registered object paths,
+        /// each with its own allocation and lookup. Instead every path under the prefix arrives at
+        /// one handler which reads the node id off the end of the path.
+        /// </summary>
+        internal static bool RegisterFallback(IntPtr connection, string pathPrefix, IntPtr messageFunction)
+        {
+            // The vtable is allocated natively and never freed, deliberately. libdbus keeps the
+            // registration for the life of the connection, and whether it copies the struct or keeps
+            // the pointer is not something its documentation commits to -- a managed local (or
+            // anything the GC can move) would be a use-after-free that only ever reproduces on the
+            // one platform this code runs on. One allocation, once, sidesteps the question.
+            if (s_vtable == null)
+            {
+                s_vtable = (DBusObjectPathVTable*)Marshal.AllocHGlobal(sizeof(DBusObjectPathVTable));
+                *s_vtable = default;
+            }
+
+            s_vtable->message_function = messageFunction;
+            return dbus_connection_register_fallback(connection, pathPrefix, s_vtable, IntPtr.Zero) != 0;
+        }
+
+        private static DBusObjectPathVTable* s_vtable;
+
+        private static string? Utf8(IntPtr p) => p == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(p);
+
+        internal static IntPtr NewMethodReturn(IntPtr call) => dbus_message_new_method_return(call);
+
+        internal static IntPtr NewError(IntPtr call, string name, string message) => dbus_message_new_error(call, name, message);
+
+        internal static IntPtr NewSignal(string path, string iface, string name) => dbus_message_new_signal(path, iface, name);
+
+        internal static string? Sender(IntPtr message) => Utf8(dbus_message_get_sender(message));
+
+        /// <summary>Sends a message and drops our reference to it.</summary>
+        internal static void SendAndUnref(IntPtr connection, IntPtr message)
+        {
+            if (message == IntPtr.Zero) return;
+            uint serial;
+            dbus_connection_send(connection, message, &serial);
+            dbus_message_unref(message);
+        }
+
+        // ---- writing the shapes AT-SPI speaks in ----
+
+        /// <summary>
+        /// An AT-SPI object reference: (so) -- our bus name plus the object path of the node. This
+        /// is the currency of the whole protocol; parents, children and event sources are all one of
+        /// these.
+        /// </summary>
+        internal static void AppendObjectRef(byte* iter, string busName, string path)
+        {
+            byte* sub = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_STRUCT, null, sub);
+            AppendString(sub, DBUS_TYPE_STRING, busName);
+            AppendString(sub, DBUS_TYPE_OBJECT_PATH, path);
+            dbus_message_iter_close_container(iter, sub);
+        }
+
+        /// <summary>A variant wrapping a single object reference, for the Properties interface.</summary>
+        internal static void AppendObjectRefVariant(byte* iter, string busName, string path)
+        {
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "(so)", variant);
+            AppendObjectRef(variant, busName, path);
+            dbus_message_iter_close_container(iter, variant);
+        }
+
+        internal static void AppendStringVariant(byte* iter, string value)
+        {
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "s", variant);
+            AppendString(variant, DBUS_TYPE_STRING, value);
+            dbus_message_iter_close_container(iter, variant);
+        }
+
+        internal static void AppendInt32Variant(byte* iter, int value)
+        {
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "i", variant);
+            dbus_message_iter_append_basic(variant, DBUS_TYPE_INT32, &value);
+            dbus_message_iter_close_container(iter, variant);
+        }
+
+        internal static void AppendDoubleVariant(byte* iter, double value)
+        {
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "d", variant);
+            dbus_message_iter_append_basic(variant, DBUS_TYPE_DOUBLE, &value);
+            dbus_message_iter_close_container(iter, variant);
+        }
+
+        /// <summary>
+        /// The AT-SPI state set: an array of exactly two uint32s, a 64-bit bitmask split in half.
+        /// Low word first.
+        /// </summary>
+        internal static void AppendStateSet(byte* iter, ulong states)
+        {
+            byte* array = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "u", array);
+            uint low = (uint)(states & 0xFFFFFFFF);
+            uint high = (uint)(states >> 32);
+            dbus_message_iter_append_basic(array, DBUS_TYPE_UINT32, &low);
+            dbus_message_iter_append_basic(array, DBUS_TYPE_UINT32, &high);
+            dbus_message_iter_close_container(iter, array);
+        }
+
+        internal static void AppendString(byte* iter, int type, string value)
+        {
+            IntPtr utf8 = Marshal.StringToCoTaskMemUTF8(value ?? string.Empty);
+            try { dbus_message_iter_append_basic(iter, type, &utf8); }
+            finally { Marshal.FreeCoTaskMem(utf8); }
+        }
+
+        internal static void AppendInt32(byte* iter, int value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_INT32, &value);
+
+        internal static void AppendUInt32(byte* iter, uint value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &value);
+
+        internal static void AppendDouble(byte* iter, double value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_DOUBLE, &value);
+
+        internal const int DBUS_TYPE_DOUBLE = (int)'d';
+
+        internal static void IterInitAppend(IntPtr message, byte* iter) => dbus_message_iter_init_append(message, iter);
+
+        internal static bool IterInit(IntPtr message, byte* iter) => dbus_message_iter_init(message, iter) != 0;
+
+        internal static int IterArgType(byte* iter) => dbus_message_iter_get_arg_type(iter);
+
+        internal static bool IterNext(byte* iter) => dbus_message_iter_next(iter) != 0;
+
+        internal static int ReadInt32(byte* iter)
+        {
+            int value = 0;
+            dbus_message_iter_get_basic(iter, &value);
+            return value;
+        }
+
+        internal static string ReadString(byte* iter)
+        {
+            IntPtr ptr = IntPtr.Zero;
+            dbus_message_iter_get_basic(iter, &ptr);
+            return Utf8(ptr) ?? string.Empty;
+        }
+
+        internal static void Flush(IntPtr connection) => dbus_connection_flush(connection);
+
+        internal static int Dispatch(IntPtr connection, int timeoutMs) => dbus_connection_read_write_dispatch(connection, timeoutMs);
+
+        internal static int FdOf(IntPtr connection)
+        {
+            int fd = -1;
+            dbus_connection_get_unix_fd(connection, &fd);
+            return fd;
+        }
+
+        internal static void OpenArray(byte* iter, string signature, byte* sub)
+            => dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, signature, sub);
+
+        internal static void OpenStruct(byte* iter, byte* sub)
+            => dbus_message_iter_open_container(iter, DBUS_TYPE_STRUCT, null, sub);
+
+        internal static void CloseContainer(byte* iter, byte* sub)
+            => dbus_message_iter_close_container(iter, sub);
+
+        internal static void OpenDictEntry(byte* array, byte* entry)
+            => dbus_message_iter_open_container(array, DBUS_TYPE_DICT_ENTRY, null, entry);
+
+        /// <summary>
+        /// Reads a double out of a variant, tolerating the integer a client may send instead --
+        /// a caller setting a slider to 5 has no reason to know the property is typed double.
+        /// </summary>
+        internal static bool TryReadDoubleVariant(byte* iter, out double value)
+        {
+            value = 0;
+            if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_VARIANT) return false;
+
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_recurse(iter, variant);
+
+            switch (dbus_message_iter_get_arg_type(variant))
+            {
+                case DBUS_TYPE_DOUBLE:
+                    double d = 0;
+                    dbus_message_iter_get_basic(variant, &d);
+                    value = d;
+                    return true;
+                case DBUS_TYPE_INT32:
+                    int i = 0;
+                    dbus_message_iter_get_basic(variant, &i);
+                    value = i;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Reads an int32 argument, or <paramref name="fallback"/> if this is not one.</summary>
+        internal static int ReadInt32Or(byte* iter, int fallback)
+            => dbus_message_iter_get_arg_type(iter) == DBUS_TYPE_INT32 ? ReadInt32(iter) : fallback;
+
+        internal static void OpenAndCloseEmptyArray(byte* iter, string signature)
+        {
+            byte* sub = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, signature, sub);
+            dbus_message_iter_close_container(iter, sub);
+        }
+
+        internal static void AppendBool(byte* iter, bool value)
+        {
+            int v = value ? 1 : 0;   // D-Bus booleans are 32-bit on the wire
+            dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &v);
+        }
+
+        internal static string? PathOf(IntPtr message) => Utf8(dbus_message_get_path(message));
+        internal static string? InterfaceOf(IntPtr message) => Utf8(dbus_message_get_interface(message));
+        internal static string? MemberOf(IntPtr message) => Utf8(dbus_message_get_member(message));
+        internal static string? UniqueNameOf(IntPtr connection) => Utf8(dbus_bus_get_unique_name(connection));
+
+        /// <summary>
+        /// One AT-SPI event signal. The body signature is (siiva{sv}): the detail string, two ints
+        /// whose meaning depends on the event, a variant, and an attribute dictionary. Almost every
+        /// event leaves the last two empty, but they are not optional -- a client reading a shorter
+        /// body treats the signal as malformed and drops it.
+        /// </summary>
+        internal static void EmitAtSpiEvent(IntPtr connection, string busName, string path,
+                                            string iface, string member, string detail,
+                                            int detail1, int detail2)
+        {
+            IntPtr signal = dbus_message_new_signal(path, iface, member);
+            if (signal == IntPtr.Zero) return;
+
+            byte* iter = stackalloc byte[IterSize];
+            dbus_message_iter_init_append(signal, iter);
+
+            AppendString(iter, DBUS_TYPE_STRING, detail);
+            AppendInt32(iter, detail1);
+            AppendInt32(iter, detail2);
+
+            byte* variant = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "i", variant);
+            AppendInt32(variant, 0);
+            dbus_message_iter_close_container(iter, variant);
+
+            // The trailing a{sv} carries the event source, which is what lets a client resolve which
+            // application the event came from without a round trip.
+            byte* dict = stackalloc byte[IterSize];
+            dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", dict);
+            dbus_message_iter_close_container(iter, dict);
+
+            SendAndUnref(connection, signal);
+            _ = busName;
+        }
+
+        /// <summary>
+        /// Reads one boolean property over org.freedesktop.DBus.Properties, on the session bus.
+        /// Returns null when the property (or its owner) does not exist, which is different from
+        /// reading false: "no such service" and "switched off" want different answers.
+        /// </summary>
+        internal static bool? CallReadBoolProperty(string destination, string path, string iface, string property)
+        {
+            if (!IsAvailable) return null;
+
+            IntPtr msg = dbus_message_new_method_call(destination, path, "org.freedesktop.DBus.Properties", "Get");
+            if (msg == IntPtr.Zero) return null;
+
+            DBusError err;
+            dbus_error_init(&err);
+            try
+            {
+                byte* args = stackalloc byte[IterSize];
+                dbus_message_iter_init_append(msg, args);
+                AppendString(args, DBUS_TYPE_STRING, iface);
+                AppendString(args, DBUS_TYPE_STRING, property);
+
+                IntPtr reply = dbus_connection_send_with_reply_and_block(Connection, msg, 5000, &err);
+                if (reply == IntPtr.Zero) return null;
+
+                try
+                {
+                    byte* iter = stackalloc byte[IterSize];
+                    if (dbus_message_iter_init(reply, iter) == 0) return null;
+                    if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_VARIANT) return null;
+
+                    byte* variant = stackalloc byte[IterSize];
+                    dbus_message_iter_recurse(iter, variant);
+                    if (dbus_message_iter_get_arg_type(variant) != DBUS_TYPE_BOOLEAN) return null;
+
+                    int value = 0;
+                    dbus_message_iter_get_basic(variant, &value);
+                    return value != 0;
+                }
+                finally { dbus_message_unref(reply); }
+            }
+            finally
+            {
+                dbus_message_unref(msg);
+                dbus_error_free(&err);
+            }
+        }
+
+        /// <summary>Calls a method that returns one string, on the session bus.</summary>
+        internal static string? CallReadString(string destination, string path, string iface, string method)
+        {
+            if (!IsAvailable) return null;
+
+            IntPtr msg = dbus_message_new_method_call(destination, path, iface, method);
+            if (msg == IntPtr.Zero) return null;
+
+            DBusError err;
+            dbus_error_init(&err);
+            try
+            {
+                IntPtr reply = dbus_connection_send_with_reply_and_block(Connection, msg, 5000, &err);
+                if (reply == IntPtr.Zero) return null;
+
+                try
+                {
+                    byte* iter = stackalloc byte[IterSize];
+                    if (dbus_message_iter_init(reply, iter) == 0) return null;
+                    if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_STRING) return null;
+                    return ReadString(iter);
+                }
+                finally { dbus_message_unref(reply); }
+            }
+            finally
+            {
+                dbus_message_unref(msg);
+                dbus_error_free(&err);
+            }
+        }
+
+        /// <summary>
+        /// Registers this application with the AT-SPI registry. Until this succeeds the tree is
+        /// exported but nothing knows to look at it.
+        /// </summary>
+        internal static void CallEmbed(IntPtr bus, string busName, string rootPath)
+        {
+            IntPtr msg = dbus_message_new_method_call("org.a11y.atspi.Registry",
+                                                      "/org/a11y/atspi/accessible/root",
+                                                      "org.a11y.atspi.Socket", "Embed");
+            if (msg == IntPtr.Zero) return;
+
+            byte* iter = stackalloc byte[IterSize];
+            dbus_message_iter_init_append(msg, iter);
+            AppendObjectRef(iter, busName, rootPath);
+
+            uint serial;
+            dbus_connection_send(bus, msg, &serial);
+            dbus_message_unref(msg);
+        }
+
     }
 }
