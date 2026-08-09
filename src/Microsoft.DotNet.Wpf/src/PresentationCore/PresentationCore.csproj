@@ -254,6 +254,7 @@
     <Compile Include="MS\Internal\IO\Packaging\PseudoWebRequest.cs" />
     <Compile Include="MS\Internal\IO\Packaging\ResponseStream.cs" />
     <Compile Include="MS\Internal\Media\PathFlattener.cs" />
+    <Compile Include="MS\Internal\Media\PathStroker.cs" />
     <Compile Include="MS\Internal\Media\ParserStreamGeometryContext.cs" />
     <Compile Include="MS\Internal\Media\TextOptionsInternal.cs" />
     <Compile Include="MS\Internal\Media\VisualTreeUtils.cs" />

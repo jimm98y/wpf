@@ -137,9 +137,12 @@ namespace MS.Internal.Media
 
                 RemoveDuplicates(points);
 
-                // A single point is not a figure -- except under a round cap, and the stroker deals
-                // with that case itself because only it knows the pen.
-                if (points.Count >= 2 || figure.IsClosed)
+                // Degenerate figures are kept, not dropped. A figure that collapses to a single
+                // point encloses no area and so contributes nothing to a fill -- but under a round
+                // or square cap it is a DOT, which is how a dotted line's dots and a single click of
+                // a pen are drawn. Only the stroker knows the pen, so only it can decide; consumers
+                // that want area (ToPathGeometry, hit testing) skip these themselves.
+                if (points.Count >= 1)
                 {
                     result.Add(new PolylineFigure(points, figure.IsClosed));
                 }

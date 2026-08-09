@@ -920,6 +920,13 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
+            // Same story as flattening: MilUtility_PathGeometryWiden is a wpfgfx entry point that
+            // does not exist off Windows, and this method reached for it unguarded.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Media.PathStroker.Widen(this, pen, AbsoluteTolerance(this, tolerance, type));
+            }
+
             PathGeometryData pathData = GetPathGeometryData();
 
             if (pathData.IsEmpty())
