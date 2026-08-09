@@ -28,118 +28,46 @@ namespace MS.Internal
 
     #region MILMedia
 
+    /// <summary>
+    /// The old native milcore media player (the <c>MILMedia*</c> exports of wpfgfx_cor3.dll), now a shell.
+    /// <para>
+    /// Nothing creates a native media object any more: every platform, Windows included, plays through an
+    /// <see cref="System.Windows.Media.IMediaBackend"/> (Media Foundation, AVFoundation, GStreamer, HTML5
+    /// video) and ships decoded frames to the managed compositor over the SendVideoFrame seam -- see
+    /// MediaPlayerState.CreateMedia. The native pipeline could not be kept even on Windows, because its
+    /// frames were composited inside milcore and the managed WebGPU compositor never received them.
+    /// </para>
+    /// <para>
+    /// The methods survive only because MediaPlayerState still routes through them when it has no backend
+    /// (a platform with no media support, e.g. Android/iOS today). Every one is a no-op returning S_OK and
+    /// leaving out-params at their caller-provided defaults, so a MediaElement there constructs and lays
+    /// out with no audio or video rather than throwing. There is deliberately no P/Invoke left in this
+    /// class: PresentationCore must not load wpfgfx_cor3.dll on any platform.
+    /// </para>
+    /// </summary>
     internal static class MILMedia
     {
-        // The native milcore media pipeline (wpfgfx_cor3.dll) is Windows-only. Off-Windows every method is a
-        // no-op returning S_OK, leaving out-params at their caller-provided defaults, so a MediaElement (whose
-        // MediaPlayerState uses an INVALID media handle off-Windows -- see MediaPlayerState.CreateMedia)
-        // CONSTRUCTS and lays out instead of throwing DllNotFoundException. The app runs but decodes/renders no
-        // video (a macOS media backend would be needed). On Windows each call forwards to the native entry point.
-
-        internal static int Open(SafeMediaHandle THIS_PTR, string src)
-            => OperatingSystem.IsWindows() ? OpenNative(THIS_PTR, src) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaOpen")]
-        private static extern int OpenNative(SafeMediaHandle THIS_PTR, [In, MarshalAs(UnmanagedType.BStr)] string src);
-
-        internal static int Stop(SafeMediaHandle THIS_PTR)
-            => OperatingSystem.IsWindows() ? StopNative(THIS_PTR) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaStop")]
-        private static extern int StopNative(SafeMediaHandle THIS_PTR);
-
-        internal static int Close(SafeMediaHandle THIS_PTR)
-            => OperatingSystem.IsWindows() ? CloseNative(THIS_PTR) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaClose")]
-        private static extern int CloseNative(SafeMediaHandle THIS_PTR);
-
-        internal static int GetPosition(SafeMediaHandle THIS_PTR, ref long pllTime)
-            => OperatingSystem.IsWindows() ? GetPositionNative(THIS_PTR, ref pllTime) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetPosition")]
-        private static extern int GetPositionNative(SafeMediaHandle THIS_PTR, ref long pllTime);
-
-        internal static int SetPosition(SafeMediaHandle THIS_PTR, long llTime)
-            => OperatingSystem.IsWindows() ? SetPositionNative(THIS_PTR, llTime) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetPosition")]
-        private static extern int SetPositionNative(SafeMediaHandle THIS_PTR, long llTime);
-
-        internal static int SetVolume(SafeMediaHandle THIS_PTR, double dblVolume)
-            => OperatingSystem.IsWindows() ? SetVolumeNative(THIS_PTR, dblVolume) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetVolume")]
-        private static extern int SetVolumeNative(SafeMediaHandle THIS_PTR, double dblVolume);
-
-        internal static int SetBalance(SafeMediaHandle THIS_PTR, double dblBalance)
-            => OperatingSystem.IsWindows() ? SetBalanceNative(THIS_PTR, dblBalance) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetBalance")]
-        private static extern int SetBalanceNative(SafeMediaHandle THIS_PTR, double dblBalance);
-
-        internal static int SetIsScrubbingEnabled(SafeMediaHandle THIS_PTR, bool isScrubbingEnabled)
-            => OperatingSystem.IsWindows() ? SetIsScrubbingEnabledNative(THIS_PTR, isScrubbingEnabled) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetIsScrubbingEnabled")]
-        private static extern int SetIsScrubbingEnabledNative(SafeMediaHandle THIS_PTR, bool isScrubbingEnabled);
-
-        internal static int IsBuffering(SafeMediaHandle THIS_PTR, ref bool pIsBuffering)
-            => OperatingSystem.IsWindows() ? IsBufferingNative(THIS_PTR, ref pIsBuffering) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaIsBuffering")]
-        private static extern int IsBufferingNative(SafeMediaHandle THIS_PTR, ref bool pIsBuffering);
-
-        internal static int CanPause(SafeMediaHandle THIS_PTR, ref bool pCanPause)
-            => OperatingSystem.IsWindows() ? CanPauseNative(THIS_PTR, ref pCanPause) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaCanPause")]
-        private static extern int CanPauseNative(SafeMediaHandle THIS_PTR, ref bool pCanPause);
-
-        internal static int GetDownloadProgress(SafeMediaHandle THIS_PTR, ref double pProgress)
-            => OperatingSystem.IsWindows() ? GetDownloadProgressNative(THIS_PTR, ref pProgress) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetDownloadProgress")]
-        private static extern int GetDownloadProgressNative(SafeMediaHandle THIS_PTR, ref double pProgress);
-
-        internal static int GetBufferingProgress(SafeMediaHandle THIS_PTR, ref double pProgress)
-            => OperatingSystem.IsWindows() ? GetBufferingProgressNative(THIS_PTR, ref pProgress) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetBufferingProgress")]
-        private static extern int GetBufferingProgressNative(SafeMediaHandle THIS_PTR, ref double pProgress);
-
-        internal static int SetRate(SafeMediaHandle THIS_PTR, double dblRate)
-            => OperatingSystem.IsWindows() ? SetRateNative(THIS_PTR, dblRate) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetRate")]
-        private static extern int SetRateNative(SafeMediaHandle THIS_PTR, double dblRate);
-
-        internal static int HasVideo(SafeMediaHandle THIS_PTR, ref bool pfHasVideo)
-            => OperatingSystem.IsWindows() ? HasVideoNative(THIS_PTR, ref pfHasVideo) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaHasVideo")]
-        private static extern int HasVideoNative(SafeMediaHandle THIS_PTR, ref bool pfHasVideo);
-
-        internal static int HasAudio(SafeMediaHandle THIS_PTR, ref bool pfHasAudio)
-            => OperatingSystem.IsWindows() ? HasAudioNative(THIS_PTR, ref pfHasAudio) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaHasAudio")]
-        private static extern int HasAudioNative(SafeMediaHandle THIS_PTR, ref bool pfHasAudio);
-
-        internal static int GetNaturalHeight(SafeMediaHandle THIS_PTR, ref UInt32 puiHeight)
-            => OperatingSystem.IsWindows() ? GetNaturalHeightNative(THIS_PTR, ref puiHeight) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetNaturalHeight")]
-        private static extern int GetNaturalHeightNative(SafeMediaHandle THIS_PTR, ref UInt32 puiHeight);
-
-        internal static int GetNaturalWidth(SafeMediaHandle THIS_PTR, ref UInt32 puiWidth)
-            => OperatingSystem.IsWindows() ? GetNaturalWidthNative(THIS_PTR, ref puiWidth) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetNaturalWidth")]
-        private static extern int GetNaturalWidthNative(SafeMediaHandle THIS_PTR, ref UInt32 puiWidth);
-
-        internal static int GetMediaLength(SafeMediaHandle THIS_PTR, ref long pllLength)
-            => OperatingSystem.IsWindows() ? GetMediaLengthNative(THIS_PTR, ref pllLength) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetMediaLength")]
-        private static extern int GetMediaLengthNative(SafeMediaHandle THIS_PTR, ref long pllLength);
-
-        internal static int NeedUIFrameUpdate(SafeMediaHandle THIS_PTR)
-            => OperatingSystem.IsWindows() ? NeedUIFrameUpdateNative(THIS_PTR) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaNeedUIFrameUpdate")]
-        private static extern int NeedUIFrameUpdateNative(SafeMediaHandle THIS_PTR);
-
-        internal static int Shutdown(IntPtr THIS_PTR)
-            => OperatingSystem.IsWindows() ? ShutdownNative(THIS_PTR) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaShutdown")]
-        private static extern int ShutdownNative(IntPtr THIS_PTR);
-
-        internal static int ProcessExitHandler(SafeMediaHandle THIS_PTR)
-            => OperatingSystem.IsWindows() ? ProcessExitHandlerNative(THIS_PTR) : 0;
-        [DllImport(DllImport.MilCore, EntryPoint = "MILMediaProcessExitHandler")]
-        private static extern int ProcessExitHandlerNative(SafeMediaHandle THIS_PTR);
+        internal static int Open(SafeMediaHandle THIS_PTR, string src) => 0;
+        internal static int Stop(SafeMediaHandle THIS_PTR) => 0;
+        internal static int Close(SafeMediaHandle THIS_PTR) => 0;
+        internal static int GetPosition(SafeMediaHandle THIS_PTR, ref long pllTime) => 0;
+        internal static int SetPosition(SafeMediaHandle THIS_PTR, long llTime) => 0;
+        internal static int SetVolume(SafeMediaHandle THIS_PTR, double dblVolume) => 0;
+        internal static int SetBalance(SafeMediaHandle THIS_PTR, double dblBalance) => 0;
+        internal static int SetIsScrubbingEnabled(SafeMediaHandle THIS_PTR, bool isScrubbingEnabled) => 0;
+        internal static int IsBuffering(SafeMediaHandle THIS_PTR, ref bool pIsBuffering) => 0;
+        internal static int CanPause(SafeMediaHandle THIS_PTR, ref bool pCanPause) => 0;
+        internal static int GetDownloadProgress(SafeMediaHandle THIS_PTR, ref double pProgress) => 0;
+        internal static int GetBufferingProgress(SafeMediaHandle THIS_PTR, ref double pProgress) => 0;
+        internal static int SetRate(SafeMediaHandle THIS_PTR, double dblRate) => 0;
+        internal static int HasVideo(SafeMediaHandle THIS_PTR, ref bool pfHasVideo) => 0;
+        internal static int HasAudio(SafeMediaHandle THIS_PTR, ref bool pfHasAudio) => 0;
+        internal static int GetNaturalHeight(SafeMediaHandle THIS_PTR, ref UInt32 puiHeight) => 0;
+        internal static int GetNaturalWidth(SafeMediaHandle THIS_PTR, ref UInt32 puiWidth) => 0;
+        internal static int GetMediaLength(SafeMediaHandle THIS_PTR, ref long pllLength) => 0;
+        internal static int NeedUIFrameUpdate(SafeMediaHandle THIS_PTR) => 0;
+        internal static int Shutdown(IntPtr THIS_PTR) => 0;
+        internal static int ProcessExitHandler(SafeMediaHandle THIS_PTR) => 0;
     }
     #endregion
 

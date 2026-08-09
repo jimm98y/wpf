@@ -570,10 +570,7 @@ namespace System.Windows.Media.Imaging
                     // The lazy IWICBitmapSource wrapper is COM interop, which does not exist
                     // off-Windows -- managed-backed sources (_managedPixels) have no native
                     // identity there and consumers key off a null handle instead.
-                    if (!OperatingSystem.IsWindows())
-                    {
-                        return _wicSource;
-                    }
+                    return _wicSource;
 
                     ManagedBitmapSource managedBitmapSource = new ManagedBitmapSource(this);
                     _wicSource = new BitmapSourceSafeMILHandle(Marshal.GetComInterfaceForObject(
@@ -614,7 +611,7 @@ namespace System.Windows.Media.Imaging
             // Managed-backed bitmap (off-Windows): _format/_pixelWidth/_pixelHeight are already set by the
             // producer (decoder or a managed transform). There is no native WIC source to query, so the
             // GetPixelFormat/GetSize/GetResolution calls below would throw -- skip them.
-            if (!OperatingSystem.IsWindows() && _managedPixels != null)
+            if (_managedPixels != null)
             {
                 if (_dpiX <= 0) _dpiX = 96.0;
                 if (_dpiY <= 0) _dpiY = 96.0;

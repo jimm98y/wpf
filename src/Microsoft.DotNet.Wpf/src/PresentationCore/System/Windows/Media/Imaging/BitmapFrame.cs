@@ -45,7 +45,6 @@ namespace System.Windows.Media.Imaging
         {
             // No native WIC on this platform: decode with the managed decoder (PNG/BMP) and
             // wrap the managed-backed source as a frame.
-            if (!OperatingSystem.IsWindows())
             {
                 Uri resolved = (baseUri != null && uri != null) ? new Uri(baseUri, uri) : uri;
                 return Create(ManagedImageDecoder.Decode(resolved, stream));

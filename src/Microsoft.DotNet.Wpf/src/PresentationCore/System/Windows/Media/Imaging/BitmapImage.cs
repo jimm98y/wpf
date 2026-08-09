@@ -284,18 +284,45 @@ namespace System.Windows.Media.Imaging
             if (_baseUri != null)
                 uri = new Uri(_baseUri, UriSource);
 
-            // No native WIC on this platform: decode with the managed decoder (PNG/BMP) and
-            // adopt the pixels as this image's managed backing. The decode-time transforms
-            // (SourceRect/DecodePixel*/Rotation) are native-WIC features.
-            if (!OperatingSystem.IsWindows())
+            // Decode with the port's managed codecs and adopt the pixels as this image's backing.
+            //
+            // SourceRect/DecodePixelWidth/DecodePixelHeight/Rotation are decode-time transforms that WIC
+            // applies while decoding. The managed codecs decode the whole image, so the same result is
+            // composed afterwards from the managed derived-bitmap primitives -- which already have
+            // managed implementations -- in the order WIC applies them: crop, scale, rotate. Doing it
+            // after the fact costs a full-size decode; it does not change the result.
             {
-                if (!SourceRect.IsEmpty || DecodePixelWidth != 0 || DecodePixelHeight != 0 || Rotation != Rotation.Rotate0)
+                BitmapSource decoded = ManagedImageDecoder.Decode(uri, StreamSource);
+
+                if (!SourceRect.IsEmpty)
                 {
-                    throw new PlatformNotSupportedException(
-                        "BitmapImage.SourceRect/DecodePixelWidth/DecodePixelHeight/Rotation require native WIC, which is not available on this platform.");
+                    decoded = new CroppedBitmap(decoded, SourceRect);
                 }
 
-                BitmapSource decoded = ManagedImageDecoder.Decode(uri, StreamSource);
+                if (DecodePixelWidth != 0 || DecodePixelHeight != 0)
+                {
+                    // Supplying only one dimension scales the other to match, preserving aspect ratio.
+                    double scaleX = DecodePixelWidth != 0 ? DecodePixelWidth / (double)decoded.PixelWidth : 0.0;
+                    double scaleY = DecodePixelHeight != 0 ? DecodePixelHeight / (double)decoded.PixelHeight : 0.0;
+                    if (scaleX == 0.0) scaleX = scaleY;
+                    if (scaleY == 0.0) scaleY = scaleX;
+
+                    decoded = new TransformedBitmap(decoded, new ScaleTransform(scaleX, scaleY));
+                }
+
+                if (Rotation != Rotation.Rotate0)
+                {
+                    double angle = Rotation switch
+                    {
+                        Rotation.Rotate90 => 90.0,
+                        Rotation.Rotate180 => 180.0,
+                        Rotation.Rotate270 => 270.0,
+                        _ => 0.0,
+                    };
+
+                    decoded = new TransformedBitmap(decoded, new RotateTransform(angle));
+                }
+
                 _managedPixels = decoded._managedPixels;
                 _managedStride = decoded._managedStride;
                 _format = decoded.Format;

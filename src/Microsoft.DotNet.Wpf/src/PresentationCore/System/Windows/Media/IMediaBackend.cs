@@ -2,18 +2,21 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// IMediaBackend -- the cross-platform seam for MediaElement/MediaPlayer playback OFF Windows.
+// IMediaBackend -- the cross-platform seam for MediaElement/MediaPlayer playback, on EVERY platform.
 //
-// On Windows, MediaPlayerState drives a native milcore IMILMedia object (wpfgfx_cor3.dll) that decodes,
-// plays audio, and composites video frames natively. That whole pipeline is Windows-only. Off Windows the
-// MILMedia.* P/Invokes are no-op'd (see Common/Graphics/wgx_exports.cs) and MediaPlayerState instead owns an
-// IMediaBackend: a platform decode+audio+transport engine whose leaf operations mirror the MILMedia calls
+// WPF used to drive a native milcore IMILMedia object (wpfgfx_cor3.dll) that decoded, played audio and
+// composited video natively. That pipeline was Windows-only, and it did not survive the move to the
+// managed WebGPU compositor even there: its frames were composited inside milcore, so the managed
+// compositor never received any and video rendered blank. Every platform now owns an IMediaBackend
+// instead -- a platform decode+audio+transport engine whose leaf operations mirror the old MILMedia calls
 // 1:1, so wiring in MediaPlayerState is mechanical. Decoded video frames are pulled by MediaPlayer each
-// composition pass and sent to the managed WebGPU compositor via the byte-oriented SendVideoFrame seam.
+// composition pass and sent to the compositor via the byte-oriented SendVideoFrame seam. The MILMedia.*
+// entry points are now inert stubs (see Common/Graphics/wgx_exports.cs) and PresentationCore no longer
+// loads wpfgfx_cor3.dll for media on any platform.
 //
-// Implementations: MacMediaBackend (AVFoundation). A browser/WASM backend (HTML5 <video> via JS interop)
-// can slot in later behind the same interface. The factory returns null where no backend exists yet
-// (Linux, browser today) -- MediaElement then stays blank without crashing, as before.
+// Implementations: WindowsMediaBackend (Media Foundation + waveOut), MacMediaBackend (AVFoundation),
+// LinuxMediaBackend (GStreamer), BrowserMediaBackend (HTML5 <video> via JS interop). The factory returns
+// null where no backend exists yet (Android, iOS) -- MediaElement then stays blank without crashing.
 //
 
 namespace System.Windows.Media
@@ -72,6 +75,11 @@ namespace System.Windows.Media
     {
         internal static IMediaBackend Create(MediaPlayer player)
         {
+            if (OperatingSystem.IsWindows())
+            {
+                return new WindowsMediaBackend(player);
+            }
+
             if (OperatingSystem.IsMacOS())
             {
                 return new MacMediaBackend(player);

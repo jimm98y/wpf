@@ -196,13 +196,34 @@ namespace System.Windows.Input
                     return false;
                 }
 
-                return !CoreAppContextSwitches.DisableStylusAndTouchSupport;
+                if (CoreAppContextSwitches.DisableStylusAndTouchSupport)
+                {
+                    return false;
+                }
+
+                // Only the WM_POINTER stack is available in this port (see IsPointerStackEnabled), and
+                // it needs RS2. On anything older there is no stylus/touch stack left to offer, so say
+                // so here rather than letting the WISP stack be selected and then fail. Mouse input is
+                // unaffected -- that is HwndMouseInputProvider, not this.
+                return OSVersionHelper.IsOsWindows10RS2OrGreater;
             }
         }
 
         /// <summary>
-        /// Determines if the WM_POINTER based stack is enabled.
-        /// Pointer is only supported on >= RS2, otherwise gracefully degrade to WISP stack.
+        /// Determines if the WM_POINTER based stack is enabled -- which, in this port, it always is
+        /// whenever stylus/touch support is on at all.
+        /// <para>
+        /// WPF historically defaulted to the WISP stack and treated WM_POINTER as opt-in. WISP cannot
+        /// be used here: it reaches the tablet stack through PenImc_cor3.dll, a COM server, and this
+        /// port ships none of WPF's native DLLs -- the first window to enumerate tablet devices would
+        /// throw DllNotFoundException. WM_POINTER is plain Win32 message handling with no native
+        /// helper behind it, and it is the stack Windows itself has preferred since RS2.
+        /// </para>
+        /// <para>
+        /// CoreAppContextSwitches.EnablePointerSupport and the EnablePointerSupport registry value are
+        /// consequently redundant rather than required. They are still honoured in the sense that
+        /// setting them changes nothing; DisableStylusAndTouchSupport still turns the whole stack off.
+        /// </para>
         /// </summary>
         internal static bool IsPointerStackEnabled
         {
@@ -210,9 +231,7 @@ namespace System.Windows.Input
             {
                 if (!_isPointerStackEnabled.HasValue)
                 {
-                    _isPointerStackEnabled = IsStylusAndTouchSupportEnabled
-                        && (CoreAppContextSwitches.EnablePointerSupport || IsPointerEnabledInRegistry)
-                        && OSVersionHelper.IsOsWindows10RS2OrGreater;
+                    _isPointerStackEnabled = IsStylusAndTouchSupportEnabled;
                 }
 
                 return _isPointerStackEnabled.Value;

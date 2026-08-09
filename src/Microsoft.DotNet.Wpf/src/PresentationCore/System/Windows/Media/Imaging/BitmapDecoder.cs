@@ -65,7 +65,7 @@ namespace System.Windows.Media.Imaging
             }
 
             // See the stream constructor below: the typed decoders come through here too.
-            if (!OperatingSystem.IsWindows() && TryInitializeManaged(bitmapUri, null, createOptions, cacheOption))
+            if (TryInitializeManaged(bitmapUri, null, createOptions, cacheOption))
             {
                 GC.SuppressFinalize(this);
                 return;
@@ -126,7 +126,7 @@ namespace System.Windows.Media.Imaging
             // The typed decoders (PngBitmapDecoder, JpegBitmapDecoder, ...) chain here rather than
             // through CreateFromUriOrStream, so they need the managed route of their own. A constructor
             // cannot hand back a different object, so the frames are decoded straight into this one.
-            if (!OperatingSystem.IsWindows() && TryInitializeManaged(null, bitmapStream, createOptions, cacheOption))
+            if (TryInitializeManaged(null, bitmapStream, createOptions, cacheOption))
             {
                 GC.SuppressFinalize(this);
                 return;
@@ -241,22 +241,19 @@ namespace System.Windows.Media.Imaging
             bool insertInDecoderCache
             )
         {
-            // Off Windows there is no WIC to create: everything below reaches wpfgfx_cor3.dll, which
-            // does not exist there. BitmapImage and BitmapFrame.Create already decode through
-            // ManagedImageDecoder; this is the same route for the decoder family. A null means the
-            // managed codecs did not recognise the image, and the native path below is left to report
-            // that in its own way.
-            if (!OperatingSystem.IsWindows())
+            // Decode with the port's own codecs first, on every platform. The native route below reaches
+            // wpfgfx_cor3.dll (the MIL factory and the IStream thunk), which this port ships nowhere --
+            // Windows included -- so on Windows it used to throw DllNotFoundException the moment a XAML
+            // file referenced a PNG. A null means the managed codecs did not recognise the image, and
+            // the native path below is left to report that in its own way.
+            ManagedBitmapDecoder managed = ManagedBitmapDecoder.TryCreate(
+                uri is not null && baseUri is not null
+                    ? System.Windows.Navigation.BaseUriHelper.GetResolvedUri(baseUri, uri)
+                    : uri,
+                stream);
+            if (managed is not null)
             {
-                ManagedBitmapDecoder managed = ManagedBitmapDecoder.TryCreate(
-                    uri is not null && baseUri is not null
-                        ? System.Windows.Navigation.BaseUriHelper.GetResolvedUri(baseUri, uri)
-                        : uri,
-                    stream);
-                if (managed is not null)
-                {
-                    return managed;
-                }
+                return managed;
             }
 
             Guid clsId = Guid.Empty;

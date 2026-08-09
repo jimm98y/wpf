@@ -196,7 +196,7 @@ namespace System.Windows.Media.Imaging
             // Off-Windows there is no native WIC imaging factory to cache into; adopt the source's managed
             // (Bgra32) pixel backing directly (it's already fully decoded), which is exactly the cache the
             // downstream managed transforms need.
-            if (!OperatingSystem.IsWindows() && _source?._managedPixels != null)
+            if (_source?._managedPixels != null)
             {
                 _managedPixels = _source._managedPixels;
                 _managedStride = _source._managedStride;
@@ -373,11 +373,10 @@ namespace System.Windows.Media.Imaging
             // instead of a native WICBitmap; CopyPixels reads from it and the managed composition
             // path forwards those bytes to the WebGPU backend. Palettized formats are not supported
             // on this path (they require WIC palette expansion).
-            if (!OperatingSystem.IsWindows())
             {
                 if (pixelFormat.Palettized)
                 {
-                    throw new PlatformNotSupportedException("Palettized bitmap formats are not supported without WIC on this platform.");
+                    throw new PlatformNotSupportedException("Palettized bitmap formats are not supported without WIC.");
                 }
 
                 _managedPixels = new byte[bufferSize];

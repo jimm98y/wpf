@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -176,7 +176,6 @@ namespace System.Windows.Media
             uint copyWidthInBits
             )
         {
-            if (!OperatingSystem.IsWindows())
             {
                 // Managed row-copy for whole-byte pixels (every format this port produces).
                 // Sub-byte offsets/widths (1bpp/4bpp) would need the native bit-blitter.
@@ -198,48 +197,14 @@ namespace System.Windows.Media
                     new ReadOnlySpan<byte>(pInputBuffer + y * inputBufferStride, (int)rowBytes)
                         .CopyTo(new Span<byte>(pOutputBuffer + y * outputBufferStride, (int)rowBytes));
                 }
-                return;
             }
-
-            MILCopyPixelBufferNative(
-                pOutputBuffer, outputBufferSize, outputBufferStride, outputBufferOffsetInBits,
-                pInputBuffer, inputBufferSize, inputBufferStride, inputBufferOffsetInBits,
-                height, copyWidthInBits);
         }
 
         internal static Rect ProjectBounds(
             ref Matrix3D viewProjMatrix,
             ref Rect3D originalBox)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return ProjectBoundsManaged(ref viewProjMatrix, ref originalBox);
-            }
-
-            D3DMATRIX viewProjFloatMatrix = CompositionResourceManager.Matrix3DToD3DMATRIX(viewProjMatrix);
-            MILRect3D originalBoxFloat = new MILRect3D(ref originalBox);
-            MilRectF outRect = new MilRectF();
-
-            HRESULT.Check(
-                MIL3DCalcProjected2DBounds(
-                    ref viewProjFloatMatrix, 
-                    ref originalBoxFloat, 
-                    out outRect));
-
-            if (outRect.Left == outRect.Right || 
-                outRect.Top == outRect.Bottom)
-            {
-                return Rect.Empty;
-            }
-            else
-            {
-                return new Rect(
-                    outRect.Left,
-                    outRect.Top,
-                    outRect.Right - outRect.Left,
-                    outRect.Bottom - outRect.Top
-                    );
-            }
+            return ProjectBoundsManaged(ref viewProjMatrix, ref originalBox);
         }
 
         // Managed replacement for the native MIL3DCalcProjected2DBounds (wpfgfx). Projects the eight

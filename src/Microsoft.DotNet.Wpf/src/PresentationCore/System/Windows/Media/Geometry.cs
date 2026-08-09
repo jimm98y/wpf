@@ -295,45 +295,27 @@ namespace System.Windows.Media
                 return 0;
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
+            // milcore's MilUtility_GeometryGetArea is in wpfgfx_cor3.dll, which this port ships on no
+            // platform. Flatten to polygons and sum the signed shoelace areas: |sum| is the enclosed
+            // area for a non-self-intersecting outline, and signed accumulation is what makes a hole
+            // (wound the opposite way) subtract from the shape that contains it.
+            double area = 0.0;
+            foreach (MS.Internal.Media.PolylineFigure figure in
+                     MS.Internal.Media.PathFlattener.Flatten(this, AbsoluteTolerance(this, tolerance, type)))
             {
-                return 0;
-            }
+                System.Collections.Generic.IList<Point> pts = figure.Points;
+                if (pts.Count < 3) continue;
 
-            double area;
-
-            unsafe
-            {
-                // Call the core method on the path data
-                fixed (byte* pbPathData = pathData.SerializedData)
+                double twice = 0.0;
+                for (int i = 0, j = pts.Count - 1; i < pts.Count; j = i++)
                 {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    int hr = MilCoreApi.MilUtility_GeometryGetArea(
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        &pathData.Matrix,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        &area);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we report that the geometry has 0 area.
-                        area = 0.0;
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-                    }
+                    twice += (pts[j].X * pts[i].Y) - (pts[i].X * pts[j].Y);
                 }
+
+                area += twice / 2.0;
             }
 
-            return area;
+            return Math.Abs(area);
         }
 
         /// <summary>
@@ -408,64 +390,11 @@ namespace System.Windows.Media
                 return false;
             }
 
-            // Off-Windows there is no milcore MilUtility_PathGeometryHitTest; run the containment test
-            // in managed code over the geometry's flattened figures (used for PathGeometry/
-            // StreamGeometry/etc. control art like check marks and scrollbar arrows).
-            if (!OperatingSystem.IsWindows())
-            {
-                return ManagedGeometryContains(pen, hitPoint, tolerance);
-            }
-
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return false;
-            }
-
-            bool contains = false;
-
-            unsafe
-            {   
-                MIL_PEN_DATA penData;
-                double[] dashArray = null;
-
-                // If we have a pen, populate the CMD struct
-                pen?.GetBasicPenData(&penData, out dashArray);
-
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    fixed (double * dashArrayFixed = dashArray)
-                    {
-                        int hr = MilCoreApi.MilUtility_PathGeometryHitTest(
-                                &pathData.Matrix,
-                                (pen == null) ? null : &penData,
-                                dashArrayFixed,
-                                pathData.FillRule,
-                                pbPathData,
-                                pathData.Size,
-                                tolerance,
-                                type == ToleranceType.Relative,
-                                &hitPoint,
-                                out contains);
-
-                        if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                        {
-                            // When we encounter NaNs in the renderer, we absorb the error and draw
-                            // nothing. To be consistent, we report that the geometry is never hittable.
-                            contains = false;
-                        }
-                        else
-                        {
-                            HRESULT.Check(hr);
-                        }
-                    }
-                }
-            }
-
-            return contains;
+            // Containment runs in managed code over the geometry's flattened figures, on every platform.
+            // milcore's MilUtility_PathGeometryHitTest is in wpfgfx_cor3.dll, which this port does not
+            // ship anywhere: on Windows this used to throw DllNotFoundException the first time the mouse
+            // moved over a control, on the UI thread, which presented as the whole app hanging.
+            return ManagedGeometryContains(pen, hitPoint, tolerance);
         }
 
         /// <summary>
@@ -474,51 +403,10 @@ namespace System.Windows.Media
         internal unsafe bool ContainsInternal(Pen pen, Point hitPoint, double tolerance, ToleranceType type,
                                                 Point *pPoints, uint pointCount, byte *pTypes, uint typeCount)
         {
-            // Off-Windows there is no milcore MilUtility_PolygonHitTest; do the containment test in
-            // managed code by flattening the figure and running a point-in-polygon (fill) or
-            // distance-to-outline (stroke) test. This is what makes mouse hit-testing work on macOS.
-            if (!OperatingSystem.IsWindows())
-            {
-                return ManagedPolygonContains(Transform, pen, hitPoint, tolerance, pPoints, pointCount, pTypes, typeCount);
-            }
-
-            bool contains = false;
-
-            MilMatrix3x2D matrix = CompositionResourceManager.TransformToMilMatrix3x2D(Transform);
-
-            MIL_PEN_DATA penData;
-            double[] dashArray = null;
-
-            pen?.GetBasicPenData(&penData, out dashArray);
-
-            fixed (double *dashArrayFixed = dashArray)
-            {
-                int hr = MilCoreApi.MilUtility_PolygonHitTest(
-                        &matrix,
-                        (pen == null) ? null : &penData,
-                        dashArrayFixed,
-                        pPoints,
-                        pTypes,
-                        pointCount,
-                        typeCount,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        &hitPoint,
-                        out contains);
-
-                if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                {
-                    // When we encounter NaNs in the renderer, we absorb the error and draw
-                    // nothing. To be consistent, we report that the geometry is never hittable.
-                    contains = false;
-                }
-                else
-                {
-                    HRESULT.Check(hr);
-                }
-            }
-
-            return contains;
+            // Containment in managed code on every platform: flatten the figure, then run a
+            // point-in-polygon test (fill) or a distance-to-outline test (stroke). milcore's
+            // MilUtility_PolygonHitTest lives in wpfgfx_cor3.dll, which this port ships nowhere.
+            return ManagedPolygonContains(Transform, pen, hitPoint, tolerance, pPoints, pointCount, pTypes, typeCount);
         }
 
         /// <summary>
@@ -832,60 +720,10 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            // Off Windows there is no MilUtility_PathGeometryFlatten to call, and this method was
-            // reaching for it unguarded -- a DllNotFoundException for wpfgfx. The managed flattener
-            // is not a lesser answer here: flattening is exactly specified by an error bound, and it
-            // handles arcs, which the previous managed approximation in this file did not.
-            if (!OperatingSystem.IsWindows())
-            {
-                return MS.Internal.Media.PathFlattener.FlattenToGeometry(this, AbsoluteTolerance(this, tolerance, type));
-            }
-
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                fixed (byte *pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-
-                    PathGeometry.FigureList list = new PathGeometry.FigureList();
-                    
-                    int hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryFlatten(
-                        &pathData.Matrix,
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                        out fillRule);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-                }
-
-                return resultGeometry;
-            }
+            // MilUtility_PathGeometryFlatten is a wpfgfx_cor3.dll entry point, and this port ships that
+            // DLL on no platform, so the managed flattener is the only implementation. It is not a
+            // lesser answer: flattening is exactly specified by an error bound, and it handles arcs.
+            return MS.Internal.Media.PathFlattener.FlattenToGeometry(this, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>
@@ -920,82 +758,9 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            // Same story as flattening: MilUtility_PathGeometryWiden is a wpfgfx entry point that
-            // does not exist off Windows, and this method reached for it unguarded.
-            if (!OperatingSystem.IsWindows())
-            {
-                return MS.Internal.Media.PathStroker.Widen(this, pen, AbsoluteTolerance(this, tolerance, type));
-            }
-
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                MIL_PEN_DATA penData;
-
-                pen.GetBasicPenData(&penData, out double[] dashArray);
-
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-                    PathGeometry.FigureList list = new();
-
-                    int hr; //If we don't have dashArray, we call without it (its optional)
-                    if (dashArray is null)
-                    {
-                        hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryWiden(&penData,
-                                                                                         null,
-                                                                                         &pathData.Matrix,
-                                                                                         pathData.FillRule,
-                                                                                         pbPathData,
-                                                                                         pathData.Size,
-                                                                                         tolerance,
-                                                                                         type == ToleranceType.Relative,
-                                                                                         new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                                                                                         out fillRule);
-                    }
-                    else // Pin the dashArray and use it, if we have one.
-                    {
-                        fixed (double* ptrDashArray = dashArray)
-                        {
-                            hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryWiden(&penData,
-                                                                                             ptrDashArray,
-                                                                                             &pathData.Matrix,
-                                                                                             pathData.FillRule,
-                                                                                             pbPathData,
-                                                                                             pathData.Size,
-                                                                                             tolerance,
-                                                                                             type == ToleranceType.Relative,
-                                                                                             new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                                                                                             out fillRule);
-                        }
-                    }
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-
-                    return resultGeometry;
-                }
-            }
+            // MilUtility_PathGeometryWiden is a wpfgfx_cor3.dll entry point, which this port ships on
+            // no platform. The managed stroker is the only implementation.
+            return MS.Internal.Media.PathStroker.Widen(this, pen, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>
@@ -1074,58 +839,10 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            // The last of the three unguarded wpfgfx entry points. Outlining is a boolean of a shape
-            // with itself -- resolve the self-intersections and keep the edges that actually bound
-            // the filled region -- so it is the clipper run against one operand.
-            if (!OperatingSystem.IsWindows())
-            {
-                return MS.Internal.Media.PathBoolean.Outline(this, AbsoluteTolerance(this, tolerance, type));
-            }
-
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Invariant.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-                    PathGeometry.FigureList list = new PathGeometry.FigureList();
-
-                    int hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryOutline(
-                        &pathData.Matrix,
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                        out fillRule);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-                }
-            }
-
-            return resultGeometry;
+            // Outlining is a boolean of a shape with itself -- resolve the self-intersections and keep
+            // the edges that actually bound the filled region -- so it is the managed clipper run
+            // against one operand. milcore's MilUtility_PathGeometryOutline is not available anywhere.
+            return MS.Internal.Media.PathBoolean.Outline(this, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>

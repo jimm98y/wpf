@@ -115,20 +115,12 @@ namespace System.Windows.Media.Imaging
                     throw new System.ArgumentException(SR.Format(SR.Image_PaletteFixedType, paletteType));
             }
 
+            // CreateInternalPalette returns an INVALID handle now that palettes are never created
+            // through the native WIC factory (see below), so there is nothing to initialize here and
+            // nothing to read colours back from. Fixed palettes are a native-WIC concept; the managed
+            // rendering and decoding paths -- FormatConvertedBitmap's grayscale conversion, for one --
+            // work off Bgra32 pixels and never consult these colours.
             _palette = CreateInternalPalette();
-
-            // Off-Windows there's no native palette to initialize or read back; the managed rendering
-            // path (e.g. FormatConvertedBitmap's managed grayscale) doesn't consume the palette colours.
-            if (OperatingSystem.IsWindows())
-            {
-                HRESULT.Check(UnsafeNativeMethods.WICPalette.InitializePredefined(
-                            _palette,
-                            paletteType,
-                            addtransparentColor));
-
-                // Fill in the Colors property.
-                UpdateManaged();
-            }
         }
 
         internal BitmapPalette(SafeMILHandle unmanagedPalette)
@@ -250,11 +242,10 @@ namespace System.Windows.Media.Imaging
         {
             SafeMILHandle palette = null;
 
-            // Off-Windows there is no native WIC imaging factory. The managed rendering/decoding path
-            // never consumes the native palette handle, so return an empty (invalid) handle instead of
-            // creating one via the native factory (which throws). UpdateUnmanaged() is likewise skipped.
-            if (!OperatingSystem.IsWindows())
-                return new SafeMILHandle();
+            // No native WIC imaging factory is created on any platform. The managed rendering/decoding
+            // path never consumes the native palette handle, so return an empty (invalid) handle
+            // instead of creating one through the factory. UpdateUnmanaged() is likewise skipped.
+            return new SafeMILHandle();
 
             using (FactoryMaker myFactory = new FactoryMaker())
             {

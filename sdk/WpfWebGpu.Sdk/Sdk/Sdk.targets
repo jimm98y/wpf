@@ -70,8 +70,8 @@
       <HintPath>$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
       <Private>true</Private>
     </Reference>
-    <!-- WPF native (wpfgfx/PresentationNative/PenImc/vcruntime) + WebGPU native (wgpu_native
-         and the ANGLE GL runtime) for win-arm64, copied next to the app. -->
+    <!-- WebGPU native only (wgpu_native and the ANGLE GL runtime) for win-arm64, copied next to the
+         app. WPF's own native DLLs are deliberately not here -- see WpfWebGpu.Sdk.csproj. -->
     <None Include="$(WpfWebGpuSdkRoot)native/win-arm64/*.dll"
           CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
     <!-- Support packages WPF needs off the WindowsDesktop framework reference. On Windows these

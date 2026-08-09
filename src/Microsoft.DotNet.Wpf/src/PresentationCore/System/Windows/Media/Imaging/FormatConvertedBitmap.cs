@@ -93,7 +93,7 @@ namespace System.Windows.Media.Imaging
             // managed (Bgra32) pixel backing. Grayscale destination formats (Gray8/16/32Float, BlackWhite)
             // are computed via luminance; any other destination is passed through as Bgra32 (best effort,
             // enough to keep the image visible). Result is published as this bitmap's Bgra32 backing.
-            if (!OperatingSystem.IsWindows() && Source?._managedPixels != null)
+            if (Source?._managedPixels != null)
             {
                 int sw = Source.PixelWidth, sh = Source.PixelHeight, sstride = Source._managedStride;
                 byte[] src = Source._managedPixels;

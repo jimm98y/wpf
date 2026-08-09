@@ -107,9 +107,16 @@
     <_WpfWin Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;DirectWriteForwarder;ReachFramework;System.Printing;PresentationUI;System.Windows.Presentation;System.Windows.Controls.Ribbon;System.Windows.Input.Manipulations;System.Windows.Primitives;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;Accessibility;PresentationFramework.Fluent;PresentationFramework.Aero2;PresentationFramework.Aero;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
     <None Include="@(_WpfWin->'$(WpfWinRuntimeDir)%(Identity).dll')" Pack="true" PackagePath="lib/wpf-windows/" />
 
-    <!-- WPF native runtime (win-arm64). -->
-    <_WpfWinNative Include="wpfgfx_cor3;PresentationNative_cor3;PenImc_cor3;vcruntime140_cor3" />
-    <None Include="@(_WpfWinNative->'$(WpfWinRuntimeDir)%(Identity).dll')" Pack="true" PackagePath="native/win-arm64/" />
+    <!-- No WPF native runtime. wpfgfx_cor3, PresentationNative_cor3 and PenImc_cor3 used to be packed
+         here; nothing loads them any more and shipping them only invited something to start again:
+           * wpfgfx    - composition is the managed WebGPU engine, geometry/bounds and text are managed,
+                         and media now goes through WindowsMediaBackend (Media Foundation) instead of
+                         the milcore media player, whose frames the managed compositor could not see.
+           * PresNative- Line Services, PTS and OS-version checks are managed; the speller prefers WinRT
+                         and the hyphenator degrades to no-hyphenation if it is absent.
+           * PenImc    - stylus/touch runs on the WM_POINTER stack, which needs no native helper
+                         (StylusLogic.IsPointerStackEnabled).
+         vcruntime140_cor3 went with them: it was only there to satisfy the three above. -->
 
     <!-- WebGPU native runtime (wgpu-native + ANGLE GL), win-arm64. -->
     <None Include="$(WgpuWinNativeDir)wgpu_native.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)wgpu_native.dll')" />

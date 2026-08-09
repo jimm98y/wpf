@@ -502,39 +502,67 @@ namespace MS.Win32.PresentationCore
                 );
 }
 
-        internal static class MILUnknown
+        /// <summary>
+        /// IUnknown, called straight through the object's own vtable.
+        /// <para>
+        /// These used to bind to wpfgfx_cor3.dll's MILAddRef/MILRelease/MILQueryInterface, which were
+        /// never more than thin forwarders to the vtable -- but they meant that merely RELEASING a COM
+        /// pointer needed WPF's native DLL. That is a dependency nothing can avoid: a SafeMILHandle
+        /// finalizer runs whether or not the code that created the handle was on a native path, so with
+        /// the DLL gone the app died on the GC's finalizer thread, far from anything that caused it.
+        /// </para>
+        /// <para>
+        /// Calling the vtable directly is what the forwarders did anyway, works for any COM object from
+        /// any provider (WIC included), and needs no library at all. This is plain function-pointer
+        /// dispatch over the IUnknown ABI -- no [ComImport], no runtime COM marshalling.
+        /// </para>
+        /// </summary>
+        internal static unsafe class MILUnknown
         {
-            [DllImport(DllImport.MilCore, EntryPoint = "MILAddRef")]
-            internal static extern UInt32 AddRef(SafeMILHandle pIUnkown);
+            // IUnknown vtable: 0 QueryInterface, 1 AddRef, 2 Release.
+            private static uint AddRefPtr(IntPtr pIUnknown) =>
+                pIUnknown == IntPtr.Zero
+                    ? 0
+                    : ((delegate* unmanaged[Stdcall]<IntPtr, uint>)(*(void***)pIUnknown)[1])(pIUnknown);
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILAddRef")]
-            internal static extern UInt32 AddRef(SafeReversePInvokeWrapper pIUnknown);
+            internal static UInt32 AddRef(SafeMILHandle pIUnkown) => AddRefPtr(pIUnkown.DangerousGetHandle());
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILRelease")]
+            internal static UInt32 AddRef(SafeReversePInvokeWrapper pIUnknown) => AddRefPtr(pIUnknown.DangerousGetHandle());
 
-            internal static extern int Release(IntPtr pIUnkown);
+            internal static int Release(IntPtr pIUnkown) =>
+                pIUnkown == IntPtr.Zero
+                    ? 0
+                    : (int)((delegate* unmanaged[Stdcall]<IntPtr, uint>)(*(void***)pIUnkown)[2])(pIUnkown);
 
             internal static void ReleaseInterface(ref IntPtr ptr)
             {
                 if (ptr != IntPtr.Zero)
                 {
                     // Return value ignored on purpose.
-                    UnsafeNativeMethods.MILUnknown.Release(ptr);
+                    Release(ptr);
                     ptr = IntPtr.Zero;
                 }
             }
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILQueryInterface")]
-            internal static extern int /* HRESULT */ QueryInterface(
+            internal static int /* HRESULT */ QueryInterface(
                 IntPtr pIUnknown,
                 ref Guid guid,
-                out IntPtr ppvObject);
+                out IntPtr ppvObject)
+            {
+                ppvObject = IntPtr.Zero;
+                if (pIUnknown == IntPtr.Zero) return unchecked((int)0x80004003);   // E_POINTER
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILQueryInterface")]
-            internal static extern int /* HRESULT */ QueryInterface(
+                fixed (Guid* g = &guid)
+                fixed (IntPtr* pp = &ppvObject)
+                {
+                    return ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)(*(void***)pIUnknown)[0])(pIUnknown, g, pp);
+                }
+            }
+
+            internal static int /* HRESULT */ QueryInterface(
                 SafeMILHandle pIUnknown,
                 ref Guid guid,
-                out IntPtr ppvObject);
+                out IntPtr ppvObject) => QueryInterface(pIUnknown.DangerousGetHandle(), ref guid, out ppvObject);
         }
 
         internal static class WICStream
