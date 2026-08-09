@@ -18,7 +18,4 @@
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\ref\System.Xaml-ref.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\ref\WindowsBase-ref.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
-  </ItemGroup>
 </Project>

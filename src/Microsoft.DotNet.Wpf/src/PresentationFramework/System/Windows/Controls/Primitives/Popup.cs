@@ -16,7 +16,6 @@ using System.Windows.Media;
 using System.Windows.Markup;
 using System.Windows.Threading;
 using System.Text;
-using Accessibility;
 using MS.Internal;
 using MS.Internal.Controls;
 using MS.Internal.KnownBoxes;
@@ -3478,14 +3477,17 @@ namespace System.Windows.Controls.Primitives
                         IntPtr lResult = AutomationInteropProvider.ReturnRawElementProvider(Handle, IntPtr.Zero, new IntPtr(NativeMethods.OBJID_CLIENT), RootProviderForHwnd);
                         if (lResult != IntPtr.Zero)
                         {
-                            IAccessible acc = null;
-                            int hr = NativeMethods.S_FALSE;
+                            // Asking for the accessible object is the entire point: it is what makes
+                            // UIAutomationCore connect this popup's HWND to the main window. The
+                            // object itself is of no use to us, so it is taken as a raw interface
+                            // pointer and released immediately -- which also keeps the Accessibility
+                            // interop assembly out of PresentationFramework altogether.
+                            IntPtr acc = IntPtr.Zero;
                             Guid iid = new Guid(MS.Internal.AppModel.IID.Accessible);
-                            hr = UnsafeNativeMethods.ObjectFromLresult(lResult, ref iid, IntPtr.Zero, ref acc);
-                            if (hr == NativeMethods.S_OK && acc != null)
+                            int hr = UnsafeNativeMethods.ObjectFromLresult(lResult, ref iid, IntPtr.Zero, ref acc);
+                            if (hr == NativeMethods.S_OK && acc != IntPtr.Zero)
                             {
-                                // Release IAccessible(acc) object, just trusting the GC
-                                ;
+                                Marshal.Release(acc);
                             }
                         }
                     }

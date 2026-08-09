@@ -87,7 +87,4 @@
     </ProjectReference>
   </ItemGroup>
 
-  <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
-  </ItemGroup>
 </Project>

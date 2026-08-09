@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-ios</TargetFramework>
     <OutputType>Exe</OutputType>
@@ -93,11 +93,13 @@
   </ItemGroup>
 
   <!--
-    The three Windows-only assemblies WindowsBase references but which no iOS code path can reach
-    (SplashScreen's WndProc, UnsafeNativeMethods.ObjectFromLresult). They exist only in the Windows
-    Desktop shared framework, so the REFERENCE assemblies are bundled purely to satisfy
-    mono-aot-cross's "resolve everything" rule - the runtime never loads them. Same trick the wasm
-    head uses for Accessibility.
+    Windows-only assemblies WindowsBase references but which no iOS code path can reach
+    (SplashScreen's WndProc, UnsafeNativeMethods.ObjectFromLresult), bundled purely to satisfy
+    mono-aot-cross's "resolve everything" rule - the runtime never loads them.
+
+    Accessibility and System.Windows.Primitives now come from the FORK's own build; only
+    System.Private.Windows.Core is still a WindowsDesktop reference assembly, and it is a
+    compile/AOT-resolution artifact rather than anything shipped.
   -->
   <PropertyGroup>
     <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
@@ -112,8 +114,8 @@
     <MtouchInterpreter>System.Windows.Primitives,System.Private.Windows.Core,Accessibility,PresentationUI,ReachFramework,System.Printing,UIAutomationTypes,UIAutomationProvider,System.Drawing.Common</MtouchInterpreter>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
-    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="Accessibility">              <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll</HintPath></Reference>
     <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
   </ItemGroup>
 

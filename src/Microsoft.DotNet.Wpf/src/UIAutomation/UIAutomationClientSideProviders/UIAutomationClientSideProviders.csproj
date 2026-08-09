@@ -112,7 +112,9 @@
     <ProjectReference Include="..\..\System.Windows.Primitives\System.Windows.Primitives.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
+    <!-- The MSAA interop assembly, built from source in this repo rather than taken from the
+         WindowsDesktop framework or the Microsoft.Private.Winforms transport package. -->
+    <ProjectReference Include="$(WpfSourceDir)Accessibility\Accessibility.csproj" />
     <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
   </ItemGroup>
 </Project>

@@ -36,7 +36,6 @@
     <WpfBin>$(WpfRepoRoot)artifacts/bin/</WpfBin>
     <WgpuInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/</WgpuInteropDir>
     <WinFormsInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WinFormsInterop/</WinFormsInteropDir>
-    <WindowsDesktopRefVersion>10.0.8</WindowsDesktopRefVersion>
 
     <!-- windows head payload sources (overridable). Defaults to the local from-source testhost
          (a staged win-arm64 fork runtime) and the WebGPU native runtime deployed beside the sample. -->
@@ -86,14 +85,13 @@
          nothing (XpsDocumentWriter.Write was an empty method body in the ref). -->
     <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')" />
     <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
-    <None Include="$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll')" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
 
     <!-- WinForms (Mono System.Windows.Forms) for UseWindowsForms apps (unix desktop). -->
     <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll')" />
     <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll')" />
-    <None Include="$(WinFormsInteropDir)lib/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)lib/Accessibility.dll')" />
+    <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 
     <!-- Native wgpu for the unix desktop heads. Each is packed only if staged on this machine
          (eng/fetch-wgpu.ps1 -Rid <rid>), so a package built on a Mac carries the macOS backend and
@@ -109,8 +107,17 @@
     <!-- Managed WPF (win-arm64 fork build). Curated to the WPF surface only — System.*/Microsoft.*
          that belong to NETCore.App or arrive as PackageReferences are intentionally excluded so
          they don't shadow the runtime with a stale copy. -->
-    <_WpfWin Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;DirectWriteForwarder;ReachFramework;System.Printing;PresentationUI;System.Windows.Presentation;System.Windows.Controls.Ribbon;System.Windows.Input.Manipulations;System.Windows.Primitives;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;Accessibility;PresentationFramework.Fluent;PresentationFramework.Aero2;PresentationFramework.Aero;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
+    <_WpfWin Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;DirectWriteForwarder;ReachFramework;System.Printing;PresentationUI;System.Windows.Presentation;System.Windows.Controls.Ribbon;System.Windows.Input.Manipulations;System.Windows.Primitives;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;PresentationFramework.Fluent;PresentationFramework.Aero2;PresentationFramework.Aero;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
     <None Include="@(_WpfWin->'$(WpfWinRuntimeDir)%(Identity).dll')" Pack="true" PackagePath="lib/wpf-windows/" />
+
+    <!-- The MSAA interop assembly, from the fork build rather than from $(WpfWinRuntimeDir).
+         Everything else in the windows head comes out of the staged runtime directory, but that
+         directory is laid out like Microsoft.WindowsDesktop.App and this is the one assembly in it
+         the fork did not used to build. It does now (src/Microsoft.DotNet.Wpf/src/Accessibility),
+         so the head has no WindowsDesktop framework assembly left in it. Only UIAutomationClient
+         and UIAutomationClientSideProviders need it. -->
+    <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-windows/"
+          Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 
     <!-- No WPF native runtime. wpfgfx_cor3, PresentationNative_cor3 and PenImc_cor3 used to be packed
          here; nothing loads them any more and shipping them only invited something to start again:
@@ -133,6 +140,8 @@
   <Target Name="WpfWebGpuValidateInputs" BeforeTargets="GenerateNuspec">
     <Error Condition="'$(_HasForkNet10)' != 'true' and '$(_HasWinRuntime)' != 'true'"
            Text="Nothing to pack: neither the net10.0 fork build ($(WpfBin)PresentationFramework/Release/net10.0/) nor a staged win-arm64 runtime ($(WpfWinRuntimeDir)) is present. Build the fork or set WpfWinRuntimeDir." />
+    <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')"
+           Text="The windows head needs the fork-built Accessibility.dll ($(WpfBin)Accessibility/Release/net10.0/). Build the fork; do NOT substitute the WindowsDesktop framework copy." />
     <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
            Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
     <Warning Condition="'$(_HasForkNet10)' != 'true'"

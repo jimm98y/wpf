@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     The Android twin of tests/IosSpike: a minimal head that boots real WPF on the WebGPU compositor.
@@ -87,6 +87,11 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
 
+  <!--
+    Accessibility and System.Windows.Primitives come from the FORK's own build; only
+    System.Private.Windows.Core is still a WindowsDesktop reference assembly here, and it is bundled
+    purely so the AOT compiler can resolve everything WindowsBase names - nothing loads it.
+  -->
   <PropertyGroup>
     <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
   </PropertyGroup>
@@ -94,8 +99,8 @@
     <!-- Windows-only assemblies WindowsBase/PresentationCore reference from code paths Android never
          executes (SplashScreen's WndProc, UnsafeNativeMethods.ObjectFromLresult). The REFERENCE
          assemblies are enough: the runtime never loads them. -->
-    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
-    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="Accessibility">              <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll</HintPath></Reference>
     <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
   </ItemGroup>
 
