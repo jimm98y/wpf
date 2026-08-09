@@ -53,6 +53,7 @@ Everything Wayland lives in `src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Int
 | `WaylandClipboard.cs` | `wl_data_device` selections |
 | `WaylandDragDrop.cs` | `wl_data_device` drags, both directions |
 | `DBusLite.cs`, `PortalDialogs.cs`, `LinuxDesktopSettings.cs` | xdg-desktop-portal over D-Bus |
+| `AtSpiBridge.cs`, `AtSpiRoles.cs` | the accessibility tree, served over AT-SPI2 — see "Accessibility" |
 
 The renderer side is `WgpuInterop/Composition/Platform/LinuxInterop.cs` (the wgpu surface) and
 `LinuxPlatform.cs` (the public seam WPF installs itself into, reflectively, so neither assembly
@@ -121,6 +122,95 @@ WPF_MEDIA_LOG=1 …                                   # open/EOS/volume/type-off
 
 `--auto N` drives play → seek → 2x → 1x → pause → volume → close → reopen off a timer and exits with a
 non-zero code if the media never opened, which is what makes this checkable without a human watching.
+
+## Accessibility (AT-SPI2)
+
+WPF's `AutomationPeer` tree is exported over AT-SPI2 by
+`Shared/MS/Internal/Interop/Wayland/AtSpiBridge.cs`, behind the same `IAutomationTreeSource` seam the
+macOS, iOS, Android and browser heads use. `AtSpiBridge.cs` and `AtSpiRoles.cs` explain the shape;
+what follows is what the end-to-end run against a real AT-SPI client established.
+
+```bash
+eng/run-linux.sh --a11y            # export the tree, and trace it (WPF_A11Y_LOG=1)
+```
+
+`--a11y` sets `AT_SPI_BUS_ADDRESS`, which is what makes the bridge skip its `org.a11y.Status.IsEnabled`
+gate — GNOME leaves that false until a screen reader actually starts, so without it nothing attaches
+and there is nothing to look at. Walking the result needs a client; `python3-gi` with
+`gi.require_version("Atspi", "2.0")` is the one Orca itself is built on, and reaching for it rather
+than a hand-rolled D-Bus client is what surfaced three of the four defects below.
+
+Verified working against libatspi: the whole tree walks (roles, names, `AccessibleId`, states,
+screen rectangles), `Action.DoAction` presses a button and the app reacts, `Component.GrabFocus`
+moves keyboard focus and the FOCUSED bit follows it, and `Component.GetAccessibleAtPoint` resolves a
+screen point to the deepest node under it.
+
+**Notifications out** are the other half, and the harder one: a screen reader that cannot follow the
+UI is no more use than one that cannot read it. What a client now receives, all confirmed with a
+registered `Atspi.EventListener`:
+
+| WPF | AT-SPI |
+|---|---|
+| focus moved | `object:state-changed:focused` **0** on the node losing it, then **1** on the node gaining it |
+| a name/value/description changed | `object:property-change:accessible-{name,value,description}`, carrying the new value as `any_data` |
+| expand / collapse, check / uncheck, enable / disable, scroll off screen | `object:state-changed:{expanded,checked,enabled+sensitive,showing}`, with the value **read back** so the off transition is reported as off |
+| one child appeared or disappeared | `object:children-changed:{add,remove}`, index in `detail1` and the child itself as `any_data` |
+| select / deselect | `object:state-changed:selected` |
+
+`AtSpiRoles.SignalFor` is the whole table, kept apart from the emitter so it can be unit-tested:
+Orca subscribes to the concatenation (`object:state-changed:expanded`), so a typo in either half is
+not an error, is not logged, and simply delivers the event to nobody.
+
+Three defects had to be fixed to get there, and each was invisible until a client was listening:
+
+- **Every property change was announced as a NAME change.** `NotifyPropertyChanged` collapsed the
+  `AutomationProperty` into one generic kind, so opening a combo box reached Orca as "the name of
+  this changed". The change kinds are now specific (`ExpandedChanged`, `CheckedChanged`, …), which
+  is also why the state value is read back rather than assumed: a collapse and an expand arrive as
+  the same notification.
+- **`children-changed` was sent as a property change** (`object:property-change:children-changed`),
+  which is not an event any client understands. It is now the `ChildrenChanged` member, with the
+  child in `any_data` — a client told a child was added but not WHICH child has to re-read the whole
+  subtree, which for a virtualised list is what the event was meant to avoid.
+- **WPF's own property-change detection never reached the bridge.** Most changes are found by
+  DIFFING in `AutomationPeer.UpdateSubtree` — a `TextBlock` whose text changed raises nothing itself
+  — and that path reported only to `RaisePropertyChangedInternal`, i.e. to UIA, gated on a provider
+  that is a COM wrapper nothing off Windows consumes. Off Windows those changes were simply
+  invisible. Likewise `UpdateChildrenInternal` told the bridge only about BULK changes, so a list
+  gaining one row notified nobody. Both now report, and the whole set is fixed for every non-Windows
+  head, not just Linux.
+
+**Four things were wrong the first time this was run for real,** none of which a unit test or the
+compiler could have caught:
+
+- **`WindowAutomationPeer.GetNameCore` P/Invoked `GetWindowText`.** It catches `Win32Exception`; off
+  Windows the call is a `DllNotFoundException`, which is not caught — and it runs from
+  `AutomationPeer.UpdateSubtree` during layout, so the app **died** the moment an assistive
+  technology asked for the tree. `GenericRootAutomationPeer` had the same pair of calls. Both now
+  take the managed route off Windows (the `Window`'s own `Title`, and the base peer's rectangle).
+- **The bus was dispatched one message per wake-up.** `dbus_connection_read_write_dispatch` dispatches
+  exactly ONE message per call. For a connection that only makes calls that is invisible; for one that
+  SERVES an object path it is fatal — every request was answered one wake-up late, and since the reply
+  was what the caller was waiting for, nothing woke the loop again and every client timed out with
+  `NoReply`. `DBusLite.DrainDispatch` now runs to `DISPATCH_COMPLETE`, and the run loop calls it every
+  pass rather than only when the fd polls readable (libdbus can pull a request off the socket as a side
+  effect of a flush, leaving a message pending with the fd quiet).
+- **The `AtspiRole` and `AtspiStateType` numbers were wrong.** Both are ABI, and a wrong number is not
+  a compile error, not a protocol error, and not visible in a trace — the client simply believes a
+  different control is there. `TEXT` was 60, which is `TERMINAL`; `FRAME` was 22, which is `FORM`; and
+  `VISIBLE` was bit 22, which is `SELECTABLE`, so Orca was told every control was selectable and that
+  none of them was on screen. **`eng/check-atspi-constants.py` now checks the table against the
+  at-spi2 typelib installed on the box** — a third party, which is the point: the unit test asserted
+  the same numbers the table declared, so it agreed with the bug.
+
+Known gaps, in the order they would matter to a user:
+
+| | |
+|---|---|
+| `org.a11y.atspi.Cache` | Not implemented. libatspi logs one `Error in GetItems` warning per app and falls back to per-node round trips. Correct, but a tree walk costs a call per node per property instead of one bulk fetch. Deliberately not attempted yet: `GetItems` returns a nine-field struct per node whose signature has changed across at-spi2 versions, and a cache that answers but drifts out of step is worse than no cache at all — it would hand Orca a tree that no longer matches the screen. |
+| no `application` wrapper | The root object IS the window: it answers `org.a11y.atspi.Application` and reports role `frame`. GTK's convention is an `application` node with the frames as children. |
+| a second AT-SPI application appears | libdecor's GTK plugin initialises GTK inside the process, and GTK registers its own accessible tree, so one WPF process shows up twice on the bus — once as `WPF`, once as `gtk` with the binary's name. Not ours to fix from here. |
+| screen coordinates | The head's synthesised virtual space, for the reason the file header and "Coordinates" above give. Reading order, focus and navigation are right; flat review against physical screen coordinates is not. GTK4 on Wayland has the same limitation. |
 
 ## Clipboard, DataObject, and why drag-and-drop is not done
 
@@ -695,6 +785,7 @@ hardware is unaffected and keeps the GPU rasterizer. `WPF_WEBGPU_CPU_RASTER=0` r
 | `WPF_WEBGPU_WGPU_LOG=debug` | wgpu's own backend/adapter selection |
 | `MESA_SHADER_CAPTURE_PATH=<dir>` | the GLSL Mesa actually receives (how the virgl bug was isolated) |
 | `WPF_LINUX_POLL_PUMP=1` | drive the dispatcher with a periodic slice instead of the compositor fd |
+| `WPF_A11Y_LOG=1` | the AT-SPI attach handshake and every message answered. An accessibility service fails by going SILENT, so "never attached", "attached but never dispatched" and "answered wrongly" look identical from outside without this |
 
 ## Verification
 

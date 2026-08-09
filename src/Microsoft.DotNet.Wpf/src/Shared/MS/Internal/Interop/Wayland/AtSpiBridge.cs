@@ -56,6 +56,21 @@ namespace MS.Internal.Interop.Wayland
         private static IAutomationTreeSource Tree => AutomationTree.Current;
 
         /// <summary>
+        /// WPF_A11Y_LOG=1: trace the attach handshake and every message answered.
+        ///
+        /// Worth a switch of its own rather than a debugger session, because the failure mode of an
+        /// AT-SPI service is silence -- a client times out and reports nothing, so from the outside
+        /// "never attached", "attached but never dispatched" and "answered with the wrong shape" all
+        /// look identical.
+        /// </summary>
+        private static readonly bool s_log = Environment.GetEnvironmentVariable("WPF_A11Y_LOG") == "1";
+
+        private static void Trace(string message)
+        {
+            if (s_log) Console.Error.WriteLine($"[a11y] {message}");
+        }
+
+        /// <summary>
         /// Connects to the accessibility bus and exports the tree, if a bus exists. No bus means no
         /// assistive technology is running, which is the common case and costs one method call to
         /// discover.
@@ -66,14 +81,14 @@ namespace MS.Internal.Interop.Wayland
             if (s_tried) return false;
             s_tried = true;
 
-            if (!DBusLite.IsAvailable) return false;
-            if (!IsAccessibilityEnabled()) return false;
+            if (!DBusLite.IsAvailable) { Trace("no session bus"); return false; }
+            if (!IsAccessibilityEnabled()) { Trace("accessibility is off"); return false; }
 
             string address = GetAccessibilityBusAddress();
-            if (string.IsNullOrEmpty(address)) return false;
+            if (string.IsNullOrEmpty(address)) { Trace("no a11y bus address"); return false; }
 
             IntPtr bus = DBusLite.OpenPrivate(address);
-            if (bus == IntPtr.Zero) return false;
+            if (bus == IntPtr.Zero) { Trace($"could not open {address}"); return false; }
 
             s_bus = bus;
             s_window = window;
@@ -83,9 +98,12 @@ namespace MS.Internal.Interop.Wayland
             if (!DBusLite.RegisterFallback(bus, AccessiblePrefix,
                                            Marshal.GetFunctionPointerForDelegate(s_messageHandler)))
             {
+                Trace("register_fallback failed");
                 s_bus = IntPtr.Zero;
                 return false;
             }
+
+            Trace($"attached as {s_busName} on {address} fd={Fd} window=0x{window.ToInt64():x}");
 
             AutomationTree.RequestActivation();
             AutomationTree.Changed += OnTreeChanged;
@@ -152,7 +170,7 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         internal static void Pump()
         {
-            if (s_bus != IntPtr.Zero) DBusLite.Dispatch(s_bus, 0);
+            if (s_bus != IntPtr.Zero) DBusLite.DrainDispatch(s_bus);
         }
 
         /// <summary>The bus file descriptor, so the run loop can poll it alongside Wayland's.</summary>
@@ -182,8 +200,13 @@ namespace MS.Internal.Interop.Wayland
                     _ => IntPtr.Zero,
                 };
 
-                if (reply == IntPtr.Zero) return DBusLite.HANDLER_RESULT_NOT_YET_HANDLED;
+                if (reply == IntPtr.Zero)
+                {
+                    Trace($"unhandled {iface}.{member} on {path}");
+                    return DBusLite.HANDLER_RESULT_NOT_YET_HANDLED;
+                }
 
+                Trace($"{iface}.{member} node={node}");
                 DBusLite.SendAndUnref(connection, reply);
                 DBusLite.Flush(connection);
                 return DBusLite.HANDLER_RESULT_HANDLED;
@@ -710,30 +733,91 @@ namespace MS.Internal.Interop.Wayland
 
         // ---- events out ------------------------------------------------------------
 
+        /// <summary>
+        /// The node that last reported gaining focus, so the one LOSING it can be told so. AT-SPI
+        /// state changes are edges, not a snapshot: without the trailing 0 a client is left believing
+        /// two objects are focused at once, and only one of them is.
+        /// </summary>
+        private static int s_focused = IAutomationTreeSource.InvalidNode;
+
         private static void OnTreeChanged(AutomationChange change)
         {
             if (s_bus == IntPtr.Zero) return;
 
             try
             {
+                IAutomationTreeSource tree = Tree;
                 string path = PathForNode(change.NodeId);
+                string detail = AtSpiRoles.SignalFor(change.Kind).Detail;
 
                 switch (change.Kind)
                 {
                     case AutomationChangeKind.FocusChanged:
-                        EmitStateChanged(path, "focused", 1);
+                        if (s_focused != change.NodeId && s_focused >= 0)
+                        {
+                            EmitStateChanged(PathForNode(s_focused), detail, 0);
+                        }
+                        EmitStateChanged(path, detail, 1);
+                        s_focused = change.NodeId;
                         break;
+
+                    // Each of these is a state that can go BOTH ways, so the current value is read
+                    // back rather than assumed to be "on" -- a collapse and an expand are the same
+                    // notification, and announcing both as "expanded" is worse than silence.
                     case AutomationChangeKind.SelectionChanged:
-                        EmitStateChanged(path, "selected", 1);
+                        EmitStateChanged(path, detail, Has(tree, change.NodeId, AccessibleState.Selected));
                         break;
+                    case AutomationChangeKind.ExpandedChanged:
+                        EmitStateChanged(path, detail, Has(tree, change.NodeId, AccessibleState.Expanded));
+                        break;
+                    case AutomationChangeKind.CheckedChanged:
+                        EmitStateChanged(path, detail, Has(tree, change.NodeId, AccessibleState.Checked));
+                        break;
+                    case AutomationChangeKind.EnabledChanged:
+                    {
+                        int on = Has(tree, change.NodeId, AccessibleState.Enabled);
+                        EmitStateChanged(path, detail, on);
+                        EmitStateChanged(path, "sensitive", on);   // AT-SPI splits these; WPF does not
+                        break;
+                    }
+                    case AutomationChangeKind.OffscreenChanged:
+                        // SHOWING, not VISIBLE: a row scrolled out of a list still exists and is
+                        // still worth navigating to, which is the distinction StatesFor encodes.
+                        EmitStateChanged(path, detail,
+                                         Has(tree, change.NodeId, AccessibleState.Offscreen) == 1 ? 0 : 1);
+                        break;
+
                     case AutomationChangeKind.ValueChanged:
-                        EmitPropertyChange(path, "accessible-value");
+                        DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "PropertyChange",
+                                                detail, 0, 0,
+                                                tree != null && tree.TryGetRange(change.NodeId, out double v, out _, out _) ? v : 0);
                         break;
-                    case AutomationChangeKind.PropertyChanged:
-                        EmitPropertyChange(path, "accessible-name");
+                    case AutomationChangeKind.NameChanged:
+                        DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "PropertyChange",
+                                                detail, 0, 0, tree?.GetName(change.NodeId) ?? string.Empty);
                         break;
+                    case AutomationChangeKind.DescriptionChanged:
+                        DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "PropertyChange",
+                                                detail, 0, 0, tree?.GetHelpText(change.NodeId) ?? string.Empty);
+                        break;
+
+                    case AutomationChangeKind.ChildAdded:
+                    case AutomationChangeKind.ChildRemoved:
+                        EmitChildrenChanged(path, detail, change.Index, PathForNode(change.ChildId));
+                        break;
+
                     case AutomationChangeKind.ChildrenChanged:
-                        EmitPropertyChange(path, "children-changed");
+                        // WPF's BULK notification: more children changed at once than it was willing
+                        // to enumerate, so neither the direction nor the index is known. AT-SPI has
+                        // no "invalidated" detail, so this is reported as an add at index -1 naming
+                        // the parent itself -- which is what a client needs to re-read the subtree,
+                        // and the only shape the protocol offers for saying so.
+                        EmitChildrenChanged(path, detail, -1, path);
+                        break;
+
+                    case AutomationChangeKind.PropertyChanged:
+                        DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "PropertyChange",
+                                                detail, 0, 0, tree?.GetName(change.NodeId) ?? string.Empty);
                         break;
                 }
 
@@ -745,12 +829,22 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
-        private static void EmitStateChanged(string path, string state, int enabled)
-            => DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, "org.a11y.atspi.Event.Object",
-                                       "StateChanged", state, enabled, 0);
+        private const string IfaceEventObject = "org.a11y.atspi.Event.Object";
 
-        private static void EmitPropertyChange(string path, string what)
-            => DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, "org.a11y.atspi.Event.Object",
-                                       "PropertyChange", what, 0, 0);
+        private static int Has(IAutomationTreeSource tree, int node, AccessibleState state)
+            => tree != null && (tree.GetState(node) & state) != 0 ? 1 : 0;
+
+        private static void EmitStateChanged(string path, string state, int value)
+        {
+            Trace($"event StateChanged {state}={value} on {path}");
+            DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "StateChanged", state, value, 0);
+        }
+
+        private static void EmitChildrenChanged(string path, string what, int index, string childPath)
+        {
+            Trace($"event ChildrenChanged {what} index={index} child={childPath} on {path}");
+            DBusLite.EmitAtSpiEventForObject(s_bus, s_busName, path, IfaceEventObject, "ChildrenChanged",
+                                             what, index, 0, childPath);
+        }
     }
 }

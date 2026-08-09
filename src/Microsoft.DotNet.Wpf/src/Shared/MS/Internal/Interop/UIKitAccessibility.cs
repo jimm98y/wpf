@@ -449,14 +449,18 @@ namespace MS.Internal.Interop
         {
             try
             {
-                if (change.Kind == AutomationChangeKind.ChildrenChanged)
+                bool structural = change.Kind == AutomationChangeKind.ChildrenChanged
+                               || change.Kind == AutomationChangeKind.ChildAdded
+                               || change.Kind == AutomationChangeKind.ChildRemoved;
+
+                if (structural)
                 {
                     // The flat list is now wrong; rebuild it before telling VoiceOver to re-read.
                     s_flattenedStale = true;
                 }
 
                 // UIAccessibilityLayoutChangedNotification = 1001, ScreenChanged = 1000.
-                uint notification = change.Kind == AutomationChangeKind.ChildrenChanged ? 1000u : 1001u;
+                uint notification = structural ? 1000u : 1001u;
 
                 IntPtr element = change.Kind == AutomationChangeKind.FocusChanged && s_flattenedFor != IntPtr.Zero
                     ? ElementFor(change.NodeId, s_flattenedFor)

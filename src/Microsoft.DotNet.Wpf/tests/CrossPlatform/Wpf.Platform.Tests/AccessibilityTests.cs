@@ -58,7 +58,10 @@ namespace Wpf.Platform.Tests
         [Fact]
         public void AtSpi_StatesAreABitSetNotAnEnum()
         {
-            const int Enabled = 8, Focusable = 12, Focused = 13, Showing = 21, Visible = 22, Checked = 4;
+            // AtspiStateType, from at-spi2-core's atspi-constants.h. These numbers were wrong here
+            // once, and the test passed anyway because it asserted against the same wrong table it
+            // was checking -- eng/check-atspi-constants.py exists to catch that class of agreement.
+            const int Enabled = 8, Focusable = 11, Focused = 12, Showing = 25, Visible = 30, Checked = 4;
 
             ulong states = AtSpiRoles.StatesFor(
                 AccessibleState.Enabled | AccessibleState.Focusable | AccessibleState.Focused);
@@ -80,7 +83,7 @@ namespace Wpf.Platform.Tests
         [Fact]
         public void AtSpi_CheckedImpliesCheckable()
         {
-            const int Checked = 4, Checkable = 34, Indeterminate = 15;
+            const int Checked = 4, Checkable = 41, Indeterminate = 32;
 
             ulong on = AtSpiRoles.StatesFor(AccessibleState.Checked);
             Assert.True((on & (1UL << Checked)) != 0);
@@ -92,6 +95,43 @@ namespace Wpf.Platform.Tests
             Assert.True((mixed & (1UL << Indeterminate)) != 0);
             Assert.True((mixed & (1UL << Checkable)) != 0);
             Assert.True((mixed & (1UL << Checked)) == 0);
+        }
+
+        [Fact]
+        public void AtSpi_EveryChangeKindBecomesASignal()
+        {
+            // A change kind with no signal is a notification a screen reader never hears. Adding one
+            // upstream and forgetting the Linux arm is exactly how children-changed went unreported
+            // for the whole first version of this backend.
+            foreach (AutomationChangeKind kind in Enum.GetValues<AutomationChangeKind>())
+            {
+                (string member, string detail) = AtSpiRoles.SignalFor(kind);
+                Assert.False(string.IsNullOrEmpty(member), $"{kind} has no AT-SPI member");
+                Assert.False(string.IsNullOrEmpty(detail), $"{kind} has no AT-SPI detail");
+            }
+        }
+
+        [Fact]
+        public void AtSpi_SignalNamesAreTheSpellingOrcaMatchesOn()
+        {
+            // Orca subscribes to the concatenation -- "object:state-changed:expanded". A typo in
+            // either half does not fail, error or log: the event is delivered to nobody at all.
+            Assert.Equal(("StateChanged", "focused"), AtSpiRoles.SignalFor(AutomationChangeKind.FocusChanged));
+            Assert.Equal(("StateChanged", "expanded"), AtSpiRoles.SignalFor(AutomationChangeKind.ExpandedChanged));
+            Assert.Equal(("StateChanged", "checked"), AtSpiRoles.SignalFor(AutomationChangeKind.CheckedChanged));
+            Assert.Equal(("StateChanged", "selected"), AtSpiRoles.SignalFor(AutomationChangeKind.SelectionChanged));
+
+            // SHOWING, not VISIBLE: scrolling a row out of view does not stop it existing.
+            Assert.Equal(("StateChanged", "showing"), AtSpiRoles.SignalFor(AutomationChangeKind.OffscreenChanged));
+
+            Assert.Equal(("PropertyChange", "accessible-name"), AtSpiRoles.SignalFor(AutomationChangeKind.NameChanged));
+            Assert.Equal(("PropertyChange", "accessible-value"), AtSpiRoles.SignalFor(AutomationChangeKind.ValueChanged));
+            Assert.Equal(("PropertyChange", "accessible-description"), AtSpiRoles.SignalFor(AutomationChangeKind.DescriptionChanged));
+
+            // ChildrenChanged is its own MEMBER, not a property change. Reporting it as one is what
+            // the first version did, and no client understood it.
+            Assert.Equal(("ChildrenChanged", "add"), AtSpiRoles.SignalFor(AutomationChangeKind.ChildAdded));
+            Assert.Equal(("ChildrenChanged", "remove"), AtSpiRoles.SignalFor(AutomationChangeKind.ChildRemoved));
         }
 
         [Fact]

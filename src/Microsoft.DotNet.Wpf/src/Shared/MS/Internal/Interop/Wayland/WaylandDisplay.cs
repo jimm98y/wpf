@@ -489,10 +489,8 @@ namespace MS.Internal.Interop.Wayland
             // window that is not being interacted with would leave every AT-SPI call unanswered
             // until the next unrelated event, which a screen reader reports as the app hanging.
             int a11yFd = AtSpiBridge.Fd;
-            nuint a11ySlot = 0;
             if (a11yFd >= 0)
             {
-                a11ySlot = count;
                 fds[count].fd = a11yFd;
                 fds[count].events = POLLIN;
                 count++;
@@ -515,10 +513,11 @@ namespace MS.Internal.Interop.Wayland
                 Wl.wl_display_cancel_read(Display);
             }
 
-            if (a11ySlot != 0 && n > 0 && (fds[a11ySlot].revents & POLLIN) != 0)
-            {
-                AtSpiBridge.Pump();
-            }
+            // Unconditionally, not only when the a11y fd reported POLLIN: libdbus can have already
+            // pulled a request off the socket as a side effect of an earlier write, in which case the
+            // fd is quiet while a message sits undispatched. Draining costs one non-blocking read
+            // when there is nothing to do, the same as the session bus below.
+            AtSpiBridge.Pump();
 
             Wl.wl_display_dispatch_pending(Display);
             if (Decor != IntPtr.Zero) WlDecor.libdecor_dispatch(Decor, 0);

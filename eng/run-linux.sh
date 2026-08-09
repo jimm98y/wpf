@@ -18,6 +18,10 @@
 #   --gpu-raster     force the GPU path rasterizer, even on backends known to mis-render it
 #   --backend B      pin the wgpu backend: vulkan | gl | all (WPF_WEBGPU_BACKEND)
 #   --poll-pump      drive the dispatcher with the periodic slice instead of the wayland fd
+#   --a11y           export the accessibility tree over AT-SPI2 and trace it (WPF_A11Y_LOG). The
+#                    bridge normally waits for org.a11y.Status.IsEnabled, which GNOME leaves false
+#                    until a screen reader starts; this points it straight at the a11y bus instead,
+#                    so the tree can be walked with an AT-SPI client without turning Orca on.
 #   --wayland-log    trace connection/globals setup
 #   --wayland-debug  WAYLAND_DEBUG=1: decode every protocol request and event
 #   --wgpu-log       wgpu-native's own debug log
@@ -55,6 +59,19 @@ while [ $# -gt 0 ]; do
     --gpu-raster)   export WPF_WEBGPU_CPU_RASTER=0; shift ;;
     --backend)      export WPF_WEBGPU_BACKEND="$2"; shift 2 ;;
     --poll-pump)    export WPF_LINUX_POLL_PUMP=1; shift ;;
+    --a11y)
+      export WPF_A11Y_LOG=1
+      # Ask the session bus where the accessibility bus is, exactly as the bridge would. Setting
+      # AT_SPI_BUS_ADDRESS is also what makes the bridge skip the IsEnabled gate.
+      if [ -z "${AT_SPI_BUS_ADDRESS:-}" ] && command -v gdbus >/dev/null 2>&1; then
+        A11Y_ADDR="$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+                     --method org.a11y.Bus.GetAddress 2>/dev/null | sed "s/^('//; s/',)$//")"
+        [ -n "$A11Y_ADDR" ] && export AT_SPI_BUS_ADDRESS="$A11Y_ADDR"
+      fi
+      if [ -z "${AT_SPI_BUS_ADDRESS:-}" ]; then
+        echo "warning: no accessibility bus (org.a11y.Bus.GetAddress failed); --a11y will do nothing" >&2
+      fi
+      shift ;;
     --wayland-log)  export WPF_WAYLAND_LOG=1; shift ;;
     --wayland-debug) export WAYLAND_DEBUG=1; shift ;;
     --wgpu-log)     export WPF_WEBGPU_WGPU_LOG=debug; shift ;;

@@ -202,26 +202,72 @@ namespace MS.Internal.Interop
         public int NodeId { get; }
         public IntPtr WindowHandle { get; }
 
+        /// <summary>
+        /// The child that was added or removed, for <see cref="AutomationChangeKind.ChildAdded"/> and
+        /// <see cref="AutomationChangeKind.ChildRemoved"/>; <see cref="IAutomationTreeSource.InvalidNode"/>
+        /// otherwise. NodeId is the PARENT for those two kinds, because that is the node whose child
+        /// list changed and the one every platform's notification is addressed to.
+        /// </summary>
+        public int ChildId { get; }
+
+        /// <summary>The child's index in the parent, or -1 when it is not known (a removal).</summary>
+        public int Index { get; }
+
         public AutomationChange(AutomationChangeKind kind, int nodeId, IntPtr windowHandle)
+            : this(kind, nodeId, windowHandle, IAutomationTreeSource.InvalidNode, -1)
+        {
+        }
+
+        public AutomationChange(AutomationChangeKind kind, int nodeId, IntPtr windowHandle,
+                                int childId, int index)
         {
             Kind = kind;
             NodeId = nodeId;
             WindowHandle = windowHandle;
+            ChildId = childId;
+            Index = index;
         }
     }
 
+    /// <summary>
+    /// What changed, at the granularity the native APIs distinguish.
+    ///
+    /// The specific kinds exist because every assistive technology says something DIFFERENT for each
+    /// of them -- "expanded", "checked", "dimmed" -- and a backend handed a generic "something about
+    /// this node changed" has no way to recover which. Collapsing them was measurably wrong on Linux:
+    /// opening a combo box was announced to Orca as a NAME change.
+    ///
+    /// Backends switch on this with a default arm, so new kinds degrade to the generic notification
+    /// rather than breaking a head that has not been taught about them.
+    /// </summary>
     internal enum AutomationChangeKind
     {
         /// <summary>Keyboard focus moved to NodeId.</summary>
         FocusChanged,
-        /// <summary>NodeId's children were added or removed.</summary>
+        /// <summary>NodeId's children changed in bulk; the child list must be re-read.</summary>
         ChildrenChanged,
-        /// <summary>A property of NodeId (name, value, state) changed.</summary>
+        /// <summary>A property of NodeId changed, and it is not one of the specific kinds below.</summary>
         PropertyChanged,
         /// <summary>NodeId's value changed specifically -- worth its own kind because most platforms
         /// have a dedicated, less chatty notification for it than for any property.</summary>
         ValueChanged,
         /// <summary>NodeId became or stopped being selected.</summary>
         SelectionChanged,
+        /// <summary>NodeId's accessible name changed.</summary>
+        NameChanged,
+        /// <summary>NodeId's help text / description changed.</summary>
+        DescriptionChanged,
+        /// <summary>NodeId expanded or collapsed (a combo box, tree node, expander).</summary>
+        ExpandedChanged,
+        /// <summary>NodeId's checkbox/toggle state changed.</summary>
+        CheckedChanged,
+        /// <summary>NodeId became enabled or disabled.</summary>
+        EnabledChanged,
+        /// <summary>NodeId scrolled on or off screen. It still exists either way.</summary>
+        OffscreenChanged,
+        /// <summary>ChildId was added to NodeId at Index.</summary>
+        ChildAdded,
+        /// <summary>ChildId was removed from NodeId.</summary>
+        ChildRemoved,
     }
 }

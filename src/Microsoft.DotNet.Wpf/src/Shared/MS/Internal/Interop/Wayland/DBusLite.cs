@@ -69,6 +69,8 @@ namespace MS.Internal.Interop.Wayland
         [DllImport(Lib)] private static extern void dbus_connection_flush(IntPtr connection);
         [DllImport(Lib)] private static extern int dbus_connection_read_write_dispatch(IntPtr connection, int timeoutMs);
         [DllImport(Lib)] private static extern int dbus_connection_read_write(IntPtr connection, int timeoutMs);
+        [DllImport(Lib)] private static extern int dbus_connection_dispatch(IntPtr connection);
+        [DllImport(Lib)] private static extern int dbus_connection_get_dispatch_status(IntPtr connection);
         [DllImport(Lib)] private static extern IntPtr dbus_connection_pop_message(IntPtr connection);
         [DllImport(Lib)] private static extern int dbus_connection_get_unix_fd(IntPtr connection, int* fd);
         [DllImport(Lib)] private static extern int dbus_connection_send(IntPtr connection, IntPtr message, uint* serial);
@@ -686,6 +688,33 @@ namespace MS.Internal.Interop.Wayland
 
         internal static int Dispatch(IntPtr connection, int timeoutMs) => dbus_connection_read_write_dispatch(connection, timeoutMs);
 
+        private const int DBUS_DISPATCH_DATA_REMAINS = 0;
+
+        /// <summary>
+        /// Read whatever has arrived and run the registered object handlers for ALL of it.
+        ///
+        /// The obvious call, dbus_connection_read_write_dispatch, dispatches exactly ONE message per
+        /// invocation -- libdbus documents this and it is easy to miss, because for a client that
+        /// only makes calls the difference never shows. For a connection that SERVES an object path
+        /// it is fatal: a caller's request is answered one wake-up late, and since answering it is
+        /// itself what the caller was waiting for, nothing ever wakes the loop again and every
+        /// request times out. Drain to DISPATCH_COMPLETE instead.
+        ///
+        /// The read is separated from the dispatch for the same reason. Data already sitting in
+        /// libdbus's incoming queue -- put there as a side effect of an earlier flush, say -- leaves
+        /// the socket quiet, so a loop that only dispatches when poll() reports POLLIN never sees it.
+        /// </summary>
+        internal static void DrainDispatch(IntPtr connection)
+        {
+            if (connection == IntPtr.Zero) return;
+
+            dbus_connection_read_write(connection, 0);
+            while (dbus_connection_get_dispatch_status(connection) == DBUS_DISPATCH_DATA_REMAINS)
+            {
+                dbus_connection_dispatch(connection);
+            }
+        }
+
         internal static int FdOf(IntPtr connection)
         {
             int fd = -1;
@@ -765,6 +794,45 @@ namespace MS.Internal.Interop.Wayland
         internal static void EmitAtSpiEvent(IntPtr connection, string busName, string path,
                                             string iface, string member, string detail,
                                             int detail1, int detail2)
+            => EmitEvent(connection, busName, path, iface, member, detail, detail1, detail2,
+                         AnyKind.Int, null, 0, null);
+
+        /// <summary>An event whose <c>any_data</c> is a string -- a new name or description.</summary>
+        internal static void EmitAtSpiEvent(IntPtr connection, string busName, string path,
+                                            string iface, string member, string detail,
+                                            int detail1, int detail2, string any)
+            => EmitEvent(connection, busName, path, iface, member, detail, detail1, detail2,
+                         AnyKind.String, any ?? string.Empty, 0, null);
+
+        /// <summary>An event whose <c>any_data</c> is a number -- a slider's new value.</summary>
+        internal static void EmitAtSpiEvent(IntPtr connection, string busName, string path,
+                                            string iface, string member, string detail,
+                                            int detail1, int detail2, double any)
+            => EmitEvent(connection, busName, path, iface, member, detail, detail1, detail2,
+                         AnyKind.Double, null, any, null);
+
+        /// <summary>
+        /// An event whose <c>any_data</c> is another accessible -- the child in a ChildrenChanged.
+        /// A client that is told a child was added and not WHICH child has to re-read the whole
+        /// subtree to find out, which for a virtualised list is the thing the event was meant to
+        /// avoid.
+        /// </summary>
+        internal static void EmitAtSpiEventForObject(IntPtr connection, string busName, string path,
+                                                     string iface, string member, string detail,
+                                                     int detail1, int detail2, string objectPath)
+            => EmitEvent(connection, busName, path, iface, member, detail, detail1, detail2,
+                         AnyKind.ObjectRef, null, 0, objectPath);
+
+        private enum AnyKind { Int, String, Double, ObjectRef }
+
+        /// <summary>
+        /// The AT-SPI event body: <c>(s i i v a{sv})</c> -- detail, two integers, the "any" payload
+        /// whose type depends on the event, and a property bag.
+        /// </summary>
+        private static void EmitEvent(IntPtr connection, string busName, string path,
+                                      string iface, string member, string detail,
+                                      int detail1, int detail2,
+                                      AnyKind kind, string text, double number, string objectPath)
         {
             IntPtr signal = dbus_message_new_signal(path, iface, member);
             if (signal == IntPtr.Zero) return;
@@ -777,18 +845,41 @@ namespace MS.Internal.Interop.Wayland
             AppendInt32(iter, detail2);
 
             byte* variant = stackalloc byte[IterSize];
-            dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "i", variant);
-            AppendInt32(variant, 0);
+            switch (kind)
+            {
+                case AnyKind.String:
+                    dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "s", variant);
+                    AppendString(variant, DBUS_TYPE_STRING, text);
+                    break;
+                case AnyKind.Double:
+                    dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "d", variant);
+                    AppendDouble(variant, number);
+                    break;
+                case AnyKind.ObjectRef:
+                {
+                    dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "(so)", variant);
+                    byte* reference = stackalloc byte[IterSize];
+                    dbus_message_iter_open_container(variant, DBUS_TYPE_STRUCT, null, reference);
+                    AppendString(reference, DBUS_TYPE_STRING, busName);
+                    AppendString(reference, DBUS_TYPE_OBJECT_PATH, objectPath);
+                    dbus_message_iter_close_container(variant, reference);
+                    break;
+                }
+                default:
+                    dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "i", variant);
+                    AppendInt32(variant, 0);
+                    break;
+            }
             dbus_message_iter_close_container(iter, variant);
 
-            // The trailing a{sv} carries the event source, which is what lets a client resolve which
-            // application the event came from without a round trip.
+            // The trailing a{sv} is the event's property bag. Left empty: clients resolve the source
+            // from the signal's own sender and object path, which is information D-Bus already
+            // carries, and every field that could go here is one more thing to keep in step.
             byte* dict = stackalloc byte[IterSize];
             dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", dict);
             dbus_message_iter_close_container(iter, dict);
 
             SendAndUnref(connection, signal);
-            _ = busName;
         }
 
         /// <summary>

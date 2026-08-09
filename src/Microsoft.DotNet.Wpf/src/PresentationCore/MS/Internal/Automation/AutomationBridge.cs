@@ -505,10 +505,75 @@ namespace MS.Internal.Automation
         {
             if (!IsActive) return;
 
-            bool isValue = property == ValuePatternIdentifiers.ValueProperty
-                        || property == RangeValuePatternIdentifiers.ValueProperty;
+            Notify(peer, KindOf(property));
+        }
 
-            Notify(peer, isValue ? AutomationChangeKind.ValueChanged : AutomationChangeKind.PropertyChanged);
+        /// <summary>
+        /// Which change kind a UIA property maps to.
+        ///
+        /// Every one of these is a DIFFERENT announcement to the user -- "expanded", "checked",
+        /// "dimmed", a new name -- so folding them into one generic "property changed" throws away
+        /// the only thing the backend needed. Anything not listed is genuinely generic: the backends
+        /// re-read the node rather than announce a specific transition.
+        /// </summary>
+        private static AutomationChangeKind KindOf(AutomationProperty property)
+        {
+            if (property == ValuePatternIdentifiers.ValueProperty
+             || property == RangeValuePatternIdentifiers.ValueProperty)
+            {
+                return AutomationChangeKind.ValueChanged;
+            }
+            if (property == AutomationElementIdentifiers.NameProperty)
+            {
+                return AutomationChangeKind.NameChanged;
+            }
+            if (property == AutomationElementIdentifiers.HelpTextProperty)
+            {
+                return AutomationChangeKind.DescriptionChanged;
+            }
+            if (property == ExpandCollapsePatternIdentifiers.ExpandCollapseStateProperty)
+            {
+                return AutomationChangeKind.ExpandedChanged;
+            }
+            if (property == TogglePatternIdentifiers.ToggleStateProperty)
+            {
+                return AutomationChangeKind.CheckedChanged;
+            }
+            if (property == AutomationElementIdentifiers.IsEnabledProperty)
+            {
+                return AutomationChangeKind.EnabledChanged;
+            }
+            if (property == AutomationElementIdentifiers.IsOffscreenProperty)
+            {
+                return AutomationChangeKind.OffscreenChanged;
+            }
+            if (property == SelectionItemPatternIdentifiers.IsSelectedProperty)
+            {
+                return AutomationChangeKind.SelectionChanged;
+            }
+
+            return AutomationChangeKind.PropertyChanged;
+        }
+
+        /// <summary>
+        /// One child appeared or disappeared. Reported separately from
+        /// <see cref="AutomationChangeKind.ChildrenChanged"/>, which is WPF's BULK notification: a
+        /// list gaining one row is the common case and the platform notifications for it carry the
+        /// child and its index, which "something under here changed" cannot express.
+        ///
+        /// <paramref name="parent"/> is the addressed node in both directions, including removal --
+        /// by then the child's peer is already detached, so it is the only node an assistive
+        /// technology can still navigate from.
+        /// </summary>
+        internal static void NotifyChildChanged(AutomationPeer parent, AutomationPeer child,
+                                                bool added, int index)
+        {
+            if (!IsActive || parent == null || child == null) return;
+
+            IntPtr window = Safe(() => parent.Hwnd, IntPtr.Zero);
+            AutomationTree.RaiseChanged(new AutomationChange(
+                added ? AutomationChangeKind.ChildAdded : AutomationChangeKind.ChildRemoved,
+                IdOf(parent), window, IdOf(child), index));
         }
 
         // ---- helpers ---------------------------------------------------------------

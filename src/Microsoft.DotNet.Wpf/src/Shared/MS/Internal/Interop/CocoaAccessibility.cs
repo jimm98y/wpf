@@ -419,6 +419,12 @@ namespace MS.Internal.Interop
                     AutomationChangeKind.ValueChanged => "AXValueChanged",
                     AutomationChangeKind.SelectionChanged => "AXSelectedChildrenChanged",
                     AutomationChangeKind.ChildrenChanged => "AXLayoutChanged",
+                    AutomationChangeKind.ChildAdded => "AXLayoutChanged",
+                    AutomationChangeKind.ChildRemoved => "AXLayoutChanged",
+                    // NSAccessibility has no notification of its own for expanded/checked; both are
+                    // read back through AXValue, so that is what VoiceOver has to be told changed.
+                    AutomationChangeKind.ExpandedChanged => "AXValueChanged",
+                    AutomationChangeKind.CheckedChanged => "AXValueChanged",
                     _ => "AXTitleChanged",
                 };
 
