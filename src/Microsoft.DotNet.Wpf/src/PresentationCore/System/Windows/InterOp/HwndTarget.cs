@@ -2112,7 +2112,15 @@ namespace System.Windows.Interop
 
             if (positionChanged || (enableRenderTarget != _isRenderTargetEnabled))
             {
-                UpdateWindowSettings(enableRenderTarget);
+                // A move that does not resize the window needs its new screen rect recorded, but no
+                // repaint: the scene is identical and the swap chain belongs to the HWND, so the OS
+                // relocates the pixels. (Layered popups included -- they are presented through
+                // UpdateLayeredWindow from a render sized by width/height alone.) Skipping the
+                // render post matters now that the dispatcher really does run inside the modal move
+                // loop: otherwise every mouse-move message would queue a full redraw of an unchanged
+                // scene, and the drag would pay for it frame by frame.
+                bool movedOnly = isMove && !isSize && enableRenderTarget && (enableRenderTarget == _isRenderTargetEnabled);
+                UpdateWindowSettings(enableRenderTarget, null, postRender: !movedOnly);
             }
         }
 
@@ -2267,7 +2275,7 @@ namespace System.Windows.Interop
             UpdateWindowSettings(enableRenderTarget, null);
         }
 
-        private void UpdateWindowSettings(bool enableRenderTarget, DUCE.ChannelSet? channelSet)
+        private void UpdateWindowSettings(bool enableRenderTarget, DUCE.ChannelSet? channelSet, bool postRender = true)
         {
             MediaContext mctx = MediaContext.From(Dispatcher);
 
@@ -2412,10 +2420,13 @@ namespace System.Windows.Interop
             if (_isRenderTargetEnabled)
             {
                 //
-                // Re-render the visual tree.
+                // Re-render the visual tree, unless the caller knows nothing about it changed.
                 //
 
-                mctx.PostRender();
+                if (postRender)
+                {
+                    mctx.PostRender();
+                }
             }
             else
             {

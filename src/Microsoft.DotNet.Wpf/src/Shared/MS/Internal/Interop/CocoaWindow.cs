@@ -995,6 +995,15 @@ namespace MS.Internal.Interop
             DetectResizes();
         }
 
+        /// <summary>
+        /// The reconciliation half of <see cref="PumpEvents"/>, without touching the event queue.
+        /// While AppKit owns the thread in a tracking loop (a titlebar drag or a live resize) the
+        /// dispatcher is driven by its CFRunLoop source instead of by PumpEvents, so the size poll
+        /// above never runs -- and a live resize would stretch the old drawable until the mouse came
+        /// up. The run-loop source calls this so the resize is seen while the gesture is happening.
+        /// </summary>
+        internal static void ReconcileWindows() => DetectResizes();
+
         /// <summary>Raised (on the UI/pump thread) when the content size changes, in points.</summary>
         public event Action<int, int> Resized;
 

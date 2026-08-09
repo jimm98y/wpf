@@ -13,14 +13,20 @@ namespace System.Windows.Threading
     /// WPF's Dispatcher owns a fully managed priority queue; historically the only OS coupling was
     /// how the pump was <em>woken</em> (a Win32 message-only HWND plus RegisterWindowMessage /
     /// PostMessage), how it <em>blocked</em> (GetMessage) and how it <em>timed</em> (SetTimer).
-    /// That Win32 plumbing has been replaced by this single managed implementation, used identically
-    /// on every platform, so the dispatcher behaves the same on Windows, macOS and Linux.
+    /// That Win32 plumbing has been replaced by this single managed implementation, so the
+    /// dispatcher behaves the same on Windows, macOS and Linux.
     ///
     /// The queue itself is unchanged: a caller signals that work is available (or that the next
     /// <see cref="DispatcherTimer"/> due time has changed) via <see cref="Signal"/>, and the
     /// dispatcher thread blocks in <see cref="Wait"/> until signaled or until its timer deadline
-    /// elapses. If a platform ever needs to co-operate with a native run loop (e.g. CFRunLoop on
-    /// macOS or the GLib main loop on Linux) that integration belongs here and nowhere else.
+    /// elapses. If a platform needs to co-operate with a native run loop that integration belongs
+    /// here and nowhere else -- and two platforms do, for one reason: an OS modal loop (a window
+    /// drag or resize, a tracking menu) takes the thread and never comes back to <see cref="Wait"/>,
+    /// so a managed wake it cannot see means the queue stops being serviced mid-gesture. Windows is
+    /// signalled through a message-only window and a Win32 timer, macOS through a CFRunLoopSource
+    /// and CFRunLoopTimer in the common run-loop modes; both call <see cref="Pump"/>. Linux needs
+    /// none of it, because a Wayland interactive move is performed by the compositor and never
+    /// blocks the client thread.
     /// </remarks>
     internal sealed class DispatcherRunLoop
     {
@@ -37,6 +43,19 @@ namespace System.Windows.Threading
             if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
             {
                 EnsureWakeFd();
+            }
+
+            // Windows: the message-only window has to be created on the thread that will pump it,
+            // and this constructor runs on the dispatcher's own thread. See EnsureMessageWindow.
+            if (OperatingSystem.IsWindows())
+            {
+                EnsureMessageWindow();
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                // Same purpose, different mechanism: CFRunLoopGetCurrent binds to the calling
+                // thread, which is the dispatcher's. See EnsureRunLoopSource.
+                EnsureRunLoopSource();
             }
         }
 
@@ -57,6 +76,24 @@ namespace System.Windows.Threading
             if (!_disposed)
             {
                 _wake.Set();
+                // Windows: ALSO signal through a posted window message. See EnsureMessageWindow --
+                // an OS modal loop (dragging or resizing a window, tracking a menu) never returns to
+                // the loop in Wait, so the managed event alone leaves the dispatcher queue unserviced
+                // for as long as the user holds the mouse down. A posted message is delivered by
+                // whichever loop is pumping, including that one.
+                if (_msgWindow != IntPtr.Zero)
+                {
+                    PostMessageW(_msgWindow, s_wakeMessage, IntPtr.Zero, IntPtr.Zero);
+                }
+                // macOS: the same idea through CoreFoundation. Signalling a run-loop source that is
+                // registered in the COMMON modes is what reaches AppKit's event-tracking loop; both
+                // of these calls are documented thread-safe, which matters because Signal comes from
+                // arbitrary threads.
+                if (_cfSource != IntPtr.Zero)
+                {
+                    CFRunLoopSourceSignal(_cfSource);
+                    CFRunLoopWakeUp(_cfRunLoop);
+                }
                 // The managed AutoResetEvent is not a pollable file descriptor on Linux, and the
                 // Wayland pump has to block in poll() on the compositor's fd. So the signal is
                 // MIRRORED into an eventfd that can share that poll set. write(2) is thread-safe and
@@ -201,8 +238,18 @@ namespace System.Windows.Threading
                 }
             }
 
-            // Drain everything currently queued so no input is left stranded until the next wake.
-            while (!_disposed && PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, PM_REMOVE))
+            // Drain what is currently queued so no input is left stranded until the next wake.
+            //
+            // Bounded, because dispatching is no longer side-effect free: the wake message runs
+            // Pump, Pump services one dispatcher operation, and an operation that leaves more work
+            // behind posts another wake message -- which this very loop would then pick up. Left
+            // unbounded, a steadily refilled queue (an animation posting a render op every frame,
+            // say) would keep us in here indefinitely and the caller would never get to re-test
+            // frame.Continue, so exiting a nested frame or shutting down could hang. Returning after
+            // a bounded batch costs nothing: the caller loops straight back into Wait, and
+            // MWMO_INPUTAVAILABLE reports the still-queued messages immediately.
+            int budget = 64;
+            while (!_disposed && budget-- > 0 && PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, PM_REMOVE))
             {
                 if (msg.message == WM_QUIT)
                 {
@@ -214,6 +261,319 @@ namespace System.Windows.Threading
                 DispatchMessageW(ref msg);
             }
         }
+
+        // ---- Windows: co-operating with the OS's own modal message loops ---------------------
+        //
+        // Everything above assumes the dispatcher thread comes back to Wait. While the user drags
+        // or resizes a window, or a menu or scrollbar is tracking, that assumption is false: user32
+        // runs its OWN message loop inside DefWindowProc and does not return until the mouse is
+        // released. The thread is parked deep inside DispatchMessageW, so Dispatcher's
+        // "wait, promote timers, ProcessQueue" loop is not running and NOTHING driven by the
+        // dispatcher happens -- no rendering, no animations, no DispatcherTimer ticks -- for the
+        // whole gesture.
+        //
+        // A managed AutoResetEvent is invisible to that loop. Two things are not: a message POSTED
+        // to a window of this thread, and a WM_TIMER. So the dispatcher keeps a message-only window
+        // whose WndProc services the queue, Signal posts to it, and the dispatcher's timer due-time
+        // is mirrored onto a real Win32 timer. This is the Win32 plumbing the class comment says was
+        // replaced -- it is kept to the minimum that the OS modal loops require, and only on Windows.
+
+        /// <summary>
+        /// Service the dispatcher queue. Set by <see cref="Dispatcher"/>; invoked from the
+        /// message-only window's WndProc, i.e. from whatever loop is currently pumping.
+        /// </summary>
+        internal Action Pump;
+
+        private IntPtr _msgWindow;
+        private static uint s_wakeMessage;
+        private static readonly object s_classLock = new object();
+        private static bool s_classRegistered;
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<IntPtr, DispatcherRunLoop> s_byWindow = new();
+
+        private void EnsureMessageWindow()
+        {
+            lock (s_classLock)
+            {
+                if (s_wakeMessage == 0)
+                {
+                    s_wakeMessage = RegisterWindowMessageW("WpfDispatcherRunLoopWake");
+                }
+
+                if (!s_classRegistered)
+                {
+                    // One class for the process; the WndProc finds the right instance by HWND, so a
+                    // per-thread class (whose name would have to be recycled with thread ids) is not
+                    // needed. A class that somehow already exists is fine -- CreateWindowEx below is
+                    // what actually has to succeed.
+                    WNDCLASS wc = default;
+                    s_staticWndProc = StaticWndProc;
+                    wc.lpfnWndProc = Marshal.GetFunctionPointerForDelegate(s_staticWndProc);
+                    wc.lpszClassName = ClassName;
+                    RegisterClassW(ref wc);
+                    s_classRegistered = true;
+                }
+            }
+
+            // HWND_MESSAGE: a message-only window -- never shown, never enumerated, and it still
+            // receives posted messages and WM_TIMER.
+            _msgWindow = CreateWindowExW(0, ClassName, null, 0, 0, 0, 0, 0, HWND_MESSAGE, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (_msgWindow != IntPtr.Zero)
+            {
+                s_byWindow[_msgWindow] = this;
+            }
+        }
+
+        private static WndProcDelegate s_staticWndProc;   // rooted for the lifetime of the class
+
+        private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            if ((msg == s_wakeMessage || msg == WM_TIMER) && s_byWindow.TryGetValue(hwnd, out DispatcherRunLoop loop) && !loop._disposed)
+            {
+                loop.Pump?.Invoke();
+                return IntPtr.Zero;
+            }
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
+        }
+
+        /// <summary>
+        /// Mirror the dispatcher's next timer due time onto a Win32 timer, so DispatcherTimers keep
+        /// ticking inside an OS modal loop. <paramref name="delayMilliseconds"/> is clamped to the
+        /// OS minimum; a due time already in the past simply fires on the next tick.
+        /// </summary>
+        internal void SetOsTimer(int delayMilliseconds)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (_msgWindow != IntPtr.Zero)
+            {
+                SetTimer(_msgWindow, TimerId, (uint)Math.Clamp(delayMilliseconds, USER_TIMER_MINIMUM, 0x7FFFFFFF), IntPtr.Zero);
+            }
+            else if (_cfTimer != IntPtr.Zero)
+            {
+                // Re-arming one long-lived timer rather than creating one per deadline: a
+                // CFRunLoopTimer stays registered (and stays in the common modes) across fires.
+                CFRunLoopTimerSetNextFireDate(_cfTimer, CFAbsoluteTimeGetCurrent() + Math.Max(0, delayMilliseconds) / 1000.0);
+            }
+        }
+
+        internal void KillOsTimer()
+        {
+            if (_msgWindow != IntPtr.Zero)
+            {
+                KillTimer(_msgWindow, TimerId);
+            }
+            else if (_cfTimer != IntPtr.Zero)
+            {
+                // No CFRunLoopTimer "disable": push the next fire out of reach instead, which keeps
+                // the timer valid and registered so SetOsTimer can simply re-arm it.
+                CFRunLoopTimerSetNextFireDate(_cfTimer, CFAbsoluteTimeGetCurrent() + FarFutureSeconds);
+            }
+        }
+
+        // ---- macOS: co-operating with AppKit's event-tracking run loop -----------------------
+        //
+        // The macOS pump does not run the run loop itself: Dispatcher.WaitForWork blocks in the
+        // managed event and then calls CocoaWindow.PumpEvents, which drains NSApp with
+        // nextEventMatchingMask/sendEvent:. The catch is that AppKit handles a titlebar drag and a
+        // live resize INSIDE -[NSWindow sendEvent:], where it runs the run loop itself in
+        // NSEventTrackingRunLoopMode until the mouse comes up. For that whole gesture the pump never
+        // returns, so -- exactly as with the Win32 modal loop -- ProcessQueue never runs and
+        // rendering, animations and DispatcherTimers stop.
+        //
+        // The wake has to be something that tracking loop services, which a managed AutoResetEvent is
+        // not. A CFRunLoopSource plus a CFRunLoopTimer registered in the COMMON modes are: common
+        // modes is precisely the set that includes the tracking mode. (iOS already relies on the same
+        // property with its CADisplayLink.) Outside a tracking loop these are inert -- nothing runs
+        // the run loop, and the managed event keeps driving the pump as before -- so this only ever
+        // adds behaviour during the gestures that were broken.
+
+        private IntPtr _cfRunLoop;
+        private IntPtr _cfSource;
+        private IntPtr _cfTimer;
+        private GCHandle _cfSelf;
+        private static CFRunLoopPerformCallBack s_performCallback;
+        private static CFRunLoopTimerCallBack s_timerCallback;
+
+        private const double FarFutureSeconds = 1.0e9;
+
+        private void EnsureRunLoopSource()
+        {
+            _cfRunLoop = CFRunLoopGetCurrent();
+            if (_cfRunLoop == IntPtr.Zero)
+            {
+                return;
+            }
+
+            // kCFRunLoopCommonModes is a CFStringRef constant whose CONTENTS are that same name, and
+            // CFRunLoop matches modes by string equality -- so a string built here is interchangeable
+            // with the exported symbol, and no dlsym dance is needed. CocoaWindow does the same for
+            // kCFRunLoopDefaultMode.
+            IntPtr commonModes = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopCommonModes", kCFStringEncodingUTF8);
+            if (commonModes == IntPtr.Zero)
+            {
+                return;
+            }
+
+            _cfSelf = GCHandle.Alloc(this, GCHandleType.Weak);
+            IntPtr info = GCHandle.ToIntPtr(_cfSelf);
+
+            s_performCallback ??= PerformCallback;
+            CFRunLoopSourceContext sourceContext = default;
+            sourceContext.info = info;
+            sourceContext.perform = Marshal.GetFunctionPointerForDelegate(s_performCallback);
+            _cfSource = CFRunLoopSourceCreate(IntPtr.Zero, 0, ref sourceContext);
+            if (_cfSource != IntPtr.Zero)
+            {
+                CFRunLoopAddSource(_cfRunLoop, _cfSource, commonModes);
+            }
+
+            s_timerCallback ??= TimerCallback;
+            CFRunLoopTimerContext timerContext = default;
+            timerContext.info = info;
+            // Created already parked in the far future and re-armed by SetOsTimer. A repeating
+            // interval (rather than one-shot) keeps the timer valid after it fires.
+            _cfTimer = CFRunLoopTimerCreate(IntPtr.Zero,
+                                            CFAbsoluteTimeGetCurrent() + FarFutureSeconds,
+                                            FarFutureSeconds,
+                                            0, 0,
+                                            Marshal.GetFunctionPointerForDelegate(s_timerCallback),
+                                            ref timerContext);
+            if (_cfTimer != IntPtr.Zero)
+            {
+                CFRunLoopAddTimer(_cfRunLoop, _cfTimer, commonModes);
+            }
+
+            CFRelease(commonModes);
+        }
+
+        private static void PerformCallback(IntPtr info) => PumpFromRunLoop(info);
+        private static void TimerCallback(IntPtr timer, IntPtr info) => PumpFromRunLoop(info);
+
+        private static void PumpFromRunLoop(IntPtr info)
+        {
+            if (info == IntPtr.Zero)
+            {
+                return;
+            }
+
+            DispatcherRunLoop loop = GCHandle.FromIntPtr(info).Target as DispatcherRunLoop;
+            if (loop is null || loop._disposed)
+            {
+                return;
+            }
+
+            // A live resize is only noticed by CocoaWindow's post-drain size poll, which the tracking
+            // loop is currently starving; run it here so the window re-lays-out during the gesture
+            // instead of Core Animation stretching the old drawable until mouse-up.
+            try { MS.Internal.Interop.CocoaWindow.ReconcileWindows(); } catch { /* never break the pump */ }
+
+            loop.Pump?.Invoke();
+        }
+
+        private const uint kCFStringEncodingUTF8 = 0x08000100;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CFRunLoopSourceContext
+        {
+            public nint version;
+            public IntPtr info;
+            public IntPtr retain;
+            public IntPtr release;
+            public IntPtr copyDescription;
+            public IntPtr equal;
+            public IntPtr hash;
+            public IntPtr schedule;
+            public IntPtr cancel;
+            public IntPtr perform;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CFRunLoopTimerContext
+        {
+            public nint version;
+            public IntPtr info;
+            public IntPtr retain;
+            public IntPtr release;
+            public IntPtr copyDescription;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void CFRunLoopPerformCallBack(IntPtr info);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void CFRunLoopTimerCallBack(IntPtr timer, IntPtr info);
+
+        private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFRunLoopGetCurrent();
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFRunLoopSourceCreate(IntPtr allocator, nint order, ref CFRunLoopSourceContext context);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopAddSource(IntPtr runLoop, IntPtr source, IntPtr mode);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopSourceSignal(IntPtr source);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopSourceInvalidate(IntPtr source);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopWakeUp(IntPtr runLoop);
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFRunLoopTimerCreate(IntPtr allocator, double fireDate, double interval, uint flags, nint order, IntPtr callout, ref CFRunLoopTimerContext context);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopAddTimer(IntPtr runLoop, IntPtr timer, IntPtr mode);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopTimerSetNextFireDate(IntPtr timer, double fireDate);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopTimerInvalidate(IntPtr timer);
+        [DllImport(CoreFoundation)]
+        private static extern double CFAbsoluteTimeGetCurrent();
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFStringCreateWithCString(IntPtr allocator, [MarshalAs(UnmanagedType.LPUTF8Str)] string cStr, uint encoding);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRelease(IntPtr cf);
+
+        private const string ClassName = "WpfDispatcherRunLoop";
+        private const uint WM_TIMER = 0x0113;
+        private const int USER_TIMER_MINIMUM = 10;
+        private static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
+        private static readonly nuint TimerId = 1;
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WNDCLASS
+        {
+            public uint style;
+            public IntPtr lpfnWndProc;
+            public int cbClsExtra;
+            public int cbWndExtra;
+            public IntPtr hInstance;
+            public IntPtr hIcon;
+            public IntPtr hCursor;
+            public IntPtr hbrBackground;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszMenuName;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern ushort RegisterClassW(ref WNDCLASS lpWndClass);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateWindowExW(uint exStyle, string className, string windowName, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr DefWindowProcW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool PostMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint RegisterWindowMessageW(string lpString);
+        [DllImport("user32.dll")]
+        private static extern nuint SetTimer(IntPtr hwnd, nuint id, uint elapseMs, IntPtr func);
+        [DllImport("user32.dll")]
+        private static extern bool KillTimer(IntPtr hwnd, nuint id);
+        [DllImport("user32.dll")]
+        private static extern bool DestroyWindow(IntPtr hwnd);
 
         private const uint INFINITE = 0xFFFFFFFF;
         private const uint QS_ALLINPUT = 0x04FF;
@@ -255,6 +615,37 @@ namespace System.Windows.Threading
         {
             _disposed = true;
             _wake.Set();
+
+            // The message-only window belongs to this thread, and Shutdown runs on it. Drop it from
+            // the lookup first so a message still in flight cannot find a half-torn-down loop.
+            IntPtr window = _msgWindow;
+            if (window != IntPtr.Zero)
+            {
+                _msgWindow = IntPtr.Zero;
+                s_byWindow.TryRemove(window, out _);
+                KillTimer(window, TimerId);
+                DestroyWindow(window);
+            }
+
+            // Same on macOS: invalidate first (which removes them from every mode they were added
+            // to), then release, then drop the handle the callbacks resolve through.
+            IntPtr source = _cfSource, timer = _cfTimer;
+            _cfSource = IntPtr.Zero;
+            _cfTimer = IntPtr.Zero;
+            if (timer != IntPtr.Zero)
+            {
+                CFRunLoopTimerInvalidate(timer);
+                CFRelease(timer);
+            }
+            if (source != IntPtr.Zero)
+            {
+                CFRunLoopSourceInvalidate(source);
+                CFRelease(source);
+            }
+            if (_cfSelf.IsAllocated)
+            {
+                _cfSelf.Free();
+            }
         }
     }
 }

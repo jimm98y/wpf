@@ -1734,7 +1734,13 @@ namespace System.Windows.Threading
             // The cross-platform run loop that replaces the Win32 message-only window: the
             // dispatcher thread blocks in it and RequestProcessing/timers wake it. See
             // DispatcherRunLoop for why this is a single managed implementation on every platform.
-            _runLoop = new DispatcherRunLoop();
+            _runLoop = new DispatcherRunLoop
+            {
+                // How the queue gets serviced when the thread is inside an OS modal loop (a window
+                // drag or resize, a tracking menu, AppKit's event-tracking loop) instead of inside
+                // PushFrameImpl's loop below.
+                Pump = PumpFromNativeLoop,
+            };
 
             // Verify that the accessibility switches are set prior to any major UI code running.
             AccessibilitySwitches.VerifySwitches(this);
@@ -2868,6 +2874,14 @@ namespace System.Windows.Threading
                 // for it to recompute the deadline - no OS timer object is needed.
                 _isWin32TimerSet = true;
                 _runLoop?.Signal();
+
+                // Mirror the deadline onto a real OS timer as well (a Win32 timer on Windows, a
+                // CFRunLoopTimer in the common run-loop modes on macOS). That deadline is otherwise
+                // only honoured by the sleep in WaitForWork, which an OS modal/tracking loop never
+                // reaches -- so without this a DispatcherTimer stops ticking for as long as the user
+                // drags or resizes the window, taking every animation (and MediaContext's promotion
+                // of its render operation out of Inactive priority) with it. No-op elsewhere.
+                _runLoop?.SetOsTimer(dueTimeInTicks - Environment.TickCount);
             }
         }
 
@@ -2876,7 +2890,34 @@ namespace System.Windows.Threading
             if(!IsRunLoopNull())
             {
                 _isWin32TimerSet = false;
+                _runLoop?.KillOsTimer();
             }
+        }
+
+        /// <summary>
+        /// Service the queue from inside a message loop that is not ours -- user32's modal
+        /// drag/resize/menu loop, which owns the thread until the gesture ends. Deliberately the
+        /// same two steps the loop in <see cref="PushFrameImpl"/> takes per wake, so work runs in
+        /// the same order whoever is pumping. One operation per call: <see cref="ProcessQueue"/>
+        /// re-signals while work remains, and each signal posts another message that the modal loop
+        /// will deliver, so the queue keeps draining without this ever looping unboundedly.
+        /// </summary>
+        private void PumpFromNativeLoop()
+        {
+            // DisableProcessing is an explicit "no reentrancy here" from application code. The main
+            // loop treats pumping in that state as a bug it can throw on; there is no frame to fail
+            // from a WndProc, so just leave the work queued until processing is enabled again.
+            if(_disableProcessingCount > 0 || _hasShutdownFinished)
+            {
+                return;
+            }
+
+            if(_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+            {
+                PromoteTimers(Environment.TickCount);
+            }
+
+            ProcessQueue();
         }
 
         // Exception filter returns true if exception should be caught.
