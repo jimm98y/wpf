@@ -30,6 +30,21 @@
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <NoWarn>$(NoWarn);CS8002;CA1416;NU1510</NoWarn>
 
+    <!--
+      Injecting a contact needs an OS that will accept one, so on a machine that will not (any
+      session without an interactive desktop, and any head with no touch source yet) EVERY test
+      here skips. The test platform treats a run in which nothing executed as a FAILED run, because
+      its minimum-expected-tests option defaults to one; a correctly and deliberately skipped suite
+      therefore came out as "Failed!" and took eng/run-tests.sh's exit code with it.
+
+      Exit code 8 is that policy and nothing else, so ignoring 8 says exactly "an empty run is an
+      acceptable outcome for this suite" and no more. It does not weaken the runs that do execute:
+      a test that skips still reports as skipped, and a FAILING test exits 2, which is untouched.
+      (Setting minimum-expected-tests to zero is the obvious alternative and does not work; the
+      option rejects zero and the run then fails with exit 5, invalid arguments.)
+    -->
+    <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --ignore-exit-code 8</TestingPlatformCommandLineArguments>
+
     <_Art>$(MSBuildThisFileDirectory)../../../../../artifacts/bin</_Art>
     <_Wgpu>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/bin/Release/net10.0</_Wgpu>
     <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
