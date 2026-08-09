@@ -13,8 +13,8 @@
     assert on the glyphs that reach the page, so they describe what a reader sees rather than the
     internals that currently produce it.
 
-    The accessibility side of the same stack -- the automation tree a screen reader reads, including
-    a FlowDocument's text -- lives in Wpf.Accessibility.Tests.
+    The accessibility side of the same stack (the automation tree a screen reader reads, including
+    a FlowDocument's text) lives in Wpf.Accessibility.Tests.
 
     Referenced by path rather than ProjectReference'd, exactly as the sibling suites are: those
     projects build through the Arcade SDK, which a plain `dotnet test` does not participate in.

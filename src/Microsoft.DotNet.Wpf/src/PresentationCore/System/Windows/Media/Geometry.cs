@@ -588,6 +588,28 @@ namespace System.Windows.Media
             return false;
         }
 
+        /// <summary>
+        /// Resolves a caller's tolerance to absolute units. A relative tolerance is a fraction of the
+        /// geometry's size, which is what lets one number mean "close enough" for both a 10-unit glyph
+        /// and a 1000-unit page; the diagonal of the bounding box is the scale milcore measures it
+        /// against. Falls back to the absolute reading when there are no bounds to be relative to.
+        /// </summary>
+        private static double AbsoluteTolerance(Geometry geometry, double tolerance, ToleranceType type)
+        {
+            if (!(tolerance > 0.0) || double.IsNaN(tolerance))
+            {
+                tolerance = MS.Internal.Media.PathFlattener.DefaultTolerance;
+            }
+
+            if (type != ToleranceType.Relative) return tolerance;
+
+            Rect bounds = geometry.Bounds;
+            if (bounds.IsEmpty) return tolerance;
+
+            double diagonal = Math.Sqrt(bounds.Width * bounds.Width + bounds.Height * bounds.Height);
+            return diagonal > 0.0 ? tolerance * diagonal : tolerance;
+        }
+
         private static Point FlattenBezier(Point p0, Point p1, Point p2, Point p3, double t)
         {
             double u = 1 - t;
@@ -629,21 +651,16 @@ namespace System.Windows.Media
                 return !b.IsEmpty && b.Contains(hitPoint);
             }
 
-            Matrix m = (pg.Transform != null) ? pg.Transform.Value : Matrix.Identity;
-
+            // Shares the one flattener rather than subdividing here. That is not only deduplication:
+            // this method used to approximate an ArcSegment by a straight line to its endpoint, so a
+            // rounded rectangle hit-tested as a rectangle and a pie slice as a triangle.
             var figures = new System.Collections.Generic.List<(System.Collections.Generic.List<Point> Pts, bool Closed)>();
-            foreach (PathFigure fig in pg.Figures)
+            foreach (MS.Internal.Media.PolylineFigure flattened in
+                     MS.Internal.Media.PathFlattener.Flatten(this, tolerance))
             {
-                var pts = new System.Collections.Generic.List<Point>();
-                Point cur = m.Transform(fig.StartPoint);
-                pts.Add(cur);
-                foreach (PathSegment seg in fig.Segments)
+                if (flattened.Points.Count >= 2)
                 {
-                    FlattenSegment(seg, m, ref cur, pts);
-                }
-                if (pts.Count >= 2)
-                {
-                    figures.Add((pts, fig.IsClosed));
+                    figures.Add((flattened.Points, flattened.Closed));
                 }
             }
 
@@ -691,67 +708,6 @@ namespace System.Windows.Media
 
         // Appends the flattened points of a single path segment (excluding its start point, already in
         // the list) and advances 'cur' to the segment's end point. All points are in transformed space.
-        private static void FlattenSegment(PathSegment seg, Matrix m, ref Point cur, System.Collections.Generic.List<Point> pts)
-        {
-            switch (seg)
-            {
-                case LineSegment ls:
-                    cur = m.Transform(ls.Point); pts.Add(cur);
-                    break;
-                case PolyLineSegment pls:
-                    foreach (Point p in pls.Points) { cur = m.Transform(p); pts.Add(cur); }
-                    break;
-                case BezierSegment bs:
-                {
-                    Point c1 = m.Transform(bs.Point1), c2 = m.Transform(bs.Point2), e = m.Transform(bs.Point3);
-                    for (int i = 1; i <= 24; i++) pts.Add(FlattenBezier(cur, c1, c2, e, i / 24.0));
-                    cur = e;
-                    break;
-                }
-                case PolyBezierSegment pbs:
-                {
-                    var pc = pbs.Points;
-                    for (int k = 0; k + 2 < pc.Count; k += 3)
-                    {
-                        Point c1 = m.Transform(pc[k]), c2 = m.Transform(pc[k + 1]), e = m.Transform(pc[k + 2]);
-                        for (int i = 1; i <= 24; i++) pts.Add(FlattenBezier(cur, c1, c2, e, i / 24.0));
-                        cur = e;
-                    }
-                    break;
-                }
-                case QuadraticBezierSegment qs:
-                {
-                    Point c = m.Transform(qs.Point1), e = m.Transform(qs.Point2);
-                    for (int i = 1; i <= 16; i++) pts.Add(FlattenQuadratic(cur, c, e, i / 16.0));
-                    cur = e;
-                    break;
-                }
-                case PolyQuadraticBezierSegment pqs:
-                {
-                    var pc = pqs.Points;
-                    for (int k = 0; k + 1 < pc.Count; k += 2)
-                    {
-                        Point c = m.Transform(pc[k]), e = m.Transform(pc[k + 1]);
-                        for (int i = 1; i <= 16; i++) pts.Add(FlattenQuadratic(cur, c, e, i / 16.0));
-                        cur = e;
-                    }
-                    break;
-                }
-                case ArcSegment arc:
-                    // Arcs are rare in control art; approximate by a line to the end point.
-                    cur = m.Transform(arc.Point); pts.Add(cur);
-                    break;
-            }
-        }
-
-        private static Point FlattenQuadratic(Point p0, Point p1, Point p2, double t)
-        {
-            double u = 1 - t;
-            double w0 = u * u, w1 = 2 * u * t, w2 = t * t;
-            return new Point(w0 * p0.X + w1 * p1.X + w2 * p2.X,
-                             w0 * p0.Y + w1 * p1.Y + w2 * p2.Y);
-        }
-
         private static double DistanceToSegment(Point p, Point a, Point b)
         {
             double dx = b.X - a.X, dy = b.Y - a.Y;
@@ -874,6 +830,15 @@ namespace System.Windows.Media
             if (IsObviouslyEmpty())
             {
                 return new PathGeometry();
+            }
+
+            // Off Windows there is no MilUtility_PathGeometryFlatten to call, and this method was
+            // reaching for it unguarded -- a DllNotFoundException for wpfgfx. The managed flattener
+            // is not a lesser answer here: flattening is exactly specified by an error bound, and it
+            // handles arcs, which the previous managed approximation in this file did not.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Media.PathFlattener.FlattenToGeometry(this, AbsoluteTolerance(this, tolerance, type));
             }
 
             PathGeometryData pathData = GetPathGeometryData();

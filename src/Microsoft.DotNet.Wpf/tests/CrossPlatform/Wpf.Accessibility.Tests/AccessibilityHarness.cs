@@ -132,7 +132,17 @@ namespace Wpf.Accessibility.Tests
                 try { result = body(); }
                 catch (Exception e) { failure = e; }
             });
-            thread.SetApartmentState(ApartmentState.STA);
+            // STA is a COM concept, and COM exists only on Windows: SetApartmentState throws
+            // PlatformNotSupportedException("COM Interop is not supported on this platform")
+            // everywhere else, which failed every test in this suite before it ran a line of the
+            // code under test. WPF itself does not need an STA off Windows -- the Dispatcher's
+            // thread affinity is its own, not the apartment's -- so the thread is simply left
+            // in the default apartment there.
+            if (OperatingSystem.IsWindows())
+            {
+                thread.SetApartmentState(ApartmentState.STA);
+            }
+
             thread.IsBackground = true;
             thread.Start();
             thread.Join();
