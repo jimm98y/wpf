@@ -43,6 +43,9 @@ namespace MS.Internal.PtsHost
     {
         private const double DefaultPixelsPerDip = 1.0;
 
+        // Whether this document asked for optimal paragraph breaking; set once per Format.
+        private bool _optimalParagraph;
+
         // Cached layout of one top-level block: FormattedText items (positioned relative to the block's
         // top, y=0) plus the block's total height. Reused across formats until the block is dirtied.
         private sealed class BlockBox
@@ -147,6 +150,13 @@ namespace MS.Internal.PtsHost
         /// </summary>
         public void Format(FlowDocument document, Size pageSize, Thickness pageMargin, HashSet<Block> dirty, double columnHeight = 0)
         {
+            // FlowDocument.IsOptimalParagraphEnabled picks the line-breaking strategy for the whole
+            // document. On Windows it selected PTS's optimal-paragraph mode; PTS is gone, so it
+            // selects BreakParagraphOptimally here instead. Read once per format rather than per
+            // paragraph -- it is a document-level property and a DP lookup per line is not free.
+            _optimalParagraph = document != null &&
+                (bool)document.GetValue(FlowDocument.IsOptimalParagraphEnabledProperty);
+
             double pageWidth = double.IsFinite(pageSize.Width) ? pageSize.Width : 0;
             double ml = Fin(pageMargin.Left), mr = Fin(pageMargin.Right), mt = Fin(pageMargin.Top), mb = Fin(pageMargin.Bottom);
             double contentWidth = pageWidth > 0 ? Math.Max(0, pageWidth - ml - mr) : 0;   // 0 => don't wrap
@@ -670,12 +680,42 @@ namespace MS.Internal.PtsHost
             double curWidth = indent;   // first line carries the text indent
             bool firstLine = true;
 
+            // Optimal breaking needs the whole run of words before it can choose any break, so the
+            // words between two hard breaks are collected first and broken as a unit. Greedy keeps
+            // emitting as it goes, exactly as before -- it cannot benefit from the lookahead and
+            // this is the default path.
+            var pending = _optimalParagraph ? new List<WordItem>() : null;
+
             void Flush(bool ragged)
             {
                 EmitParagraphLine(cur, avail, mLeft, firstLine ? indent : 0, align, ragged, lineHeight, paragraph, firstLine, outLines);
                 cur.Clear();
                 curWidth = 0;
                 firstLine = false;
+            }
+
+            // Breaks the collected words into lines by minimum raggedness and emits them.
+            void FlushPending()
+            {
+                if (pending.Count == 0)
+                {
+                    Flush(true);   // an empty segment is still a blank line
+                    return;
+                }
+
+                IReadOnlyList<int> starts = BreakParagraphOptimally(pending, avail, firstLine ? indent : 0);
+                for (int line = 0; line < starts.Count; line++)
+                {
+                    int from = starts[line];
+                    int to = line + 1 < starts.Count ? starts[line + 1] : pending.Count;
+
+                    cur.Clear();
+                    for (int i = from; i < to; i++) cur.Add(pending[i]);
+
+                    // Only the segment's LAST line is ragged; the rest justify if the paragraph does.
+                    Flush(line == starts.Count - 1);
+                }
+                pending.Clear();
             }
 
             foreach (Tok t in toks)
@@ -694,9 +734,20 @@ namespace MS.Internal.PtsHost
                 }
                 else
                 {
-                    if (t.Word == null) { Flush(true); continue; }   // hard break
+                    if (t.Word == null)
+                    {
+                        // Hard break.
+                        if (pending != null) FlushPending(); else Flush(true);
+                        continue;
+                    }
                     FormattedText ft = MakeWord(t.Word, t.Fmt);
                     item = new WordItem(ft, Fin(ft.WidthIncludingTrailingWhitespace), Fin(ft.Baseline), SpaceWidth(t.Fmt));
+                }
+
+                if (pending != null)
+                {
+                    pending.Add(item);
+                    continue;
                 }
 
                 double add = cur.Count == 0 ? item.W : item.SpaceW + item.W;
@@ -712,7 +763,15 @@ namespace MS.Internal.PtsHost
                     curWidth += add;
                 }
             }
-            if (cur.Count > 0) Flush(true);
+
+            if (pending != null)
+            {
+                if (pending.Count > 0) FlushPending();
+            }
+            else if (cur.Count > 0)
+            {
+                Flush(true);
+            }
 
             // Fold the paragraph's top/bottom margins into its first/last text line.
             if (outLines.Count > firstLineIdx)
@@ -741,6 +800,101 @@ namespace MS.Internal.PtsHost
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        ///  Chooses line breaks for a run of words by minimising total raggedness, and returns the
+        ///  index each line starts at.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   This is what <c>FlowDocument.IsOptimalParagraphEnabled</c> selects. Greedy breaking
+        ///   fills each line as far as it can and never reconsiders, so one long word late in a
+        ///   paragraph leaves a conspicuously short line that a slightly earlier break would have
+        ///   avoided. Optimal breaking looks at the paragraph as a whole and spreads the slack.
+        ///  </para>
+        ///  <para>
+        ///   The cost of a line is the CUBE of its leftover space, following Knuth-Plass: squaring
+        ///   also spreads the slack but treats one very short line as no worse than two mildly short
+        ///   ones, which is exactly the case the feature exists to fix. The last line is free -- it
+        ///   is meant to be short -- which is what stops the algorithm from padding the paragraph
+        ///   out into evenly bad lines.
+        ///  </para>
+        ///  <para>
+        ///   O(n^2) over the words of one paragraph, with the inner loop cut off as soon as the line
+        ///   overflows. A word too long for the column on its own gets a line to itself rather than
+        ///   making the paragraph unbreakable.
+        ///  </para>
+        /// </remarks>
+        private static IReadOnlyList<int> BreakParagraphOptimally(
+            List<WordItem> words, double avail, double firstLineIndent)
+        {
+            int n = words.Count;
+            if (n == 0) return Array.Empty<int>();
+
+            // Prefix sums so any line's natural width is a subtraction: widths[i] is the total of
+            // words 0..i-1 plus the spaces between them.
+            var prefix = new double[n + 1];
+            for (int i = 0; i < n; i++)
+            {
+                prefix[i + 1] = prefix[i] + words[i].W + (i + 1 < n ? words[i].SpaceW : 0);
+            }
+
+            double LineWidth(int from, int to)
+            {
+                // Width of words [from, to), excluding the trailing space of the last one.
+                double w = prefix[to] - prefix[from];
+                if (to - 1 < n && to > from) w -= words[to - 1].SpaceW;
+                if (from == 0) w += firstLineIndent;
+                return w;
+            }
+
+            const double Infinity = double.MaxValue / 4;
+            var cost = new double[n + 1];
+            var breakAt = new int[n + 1];
+            for (int i = 1; i <= n; i++) { cost[i] = Infinity; breakAt[i] = -1; }
+            cost[0] = 0;
+
+            for (int from = 0; from < n; from++)
+            {
+                if (cost[from] >= Infinity) continue;
+
+                for (int to = from + 1; to <= n; to++)
+                {
+                    double width = LineWidth(from, to);
+                    double slack = avail - width;
+
+                    // Overflowing: no break past here can help, except that a single word wider than
+                    // the column has nowhere else to go and must be allowed to stand alone.
+                    if (slack < -0.5 && to > from + 1) break;
+
+                    double lineCost = (to == n) ? 0 : slack * slack * slack;
+                    if (slack < 0) lineCost = Infinity / 2;   // an over-long lone word: last resort
+
+                    double total = cost[from] + lineCost;
+                    if (total < cost[to])
+                    {
+                        cost[to] = total;
+                        breakAt[to] = from;
+                    }
+
+                    if (slack < -0.5) break;
+                }
+            }
+
+            // Walk the chain back from the end; if the DP never reached it (it cannot normally
+            // fail, but a degenerate width should not throw), fall back to one word per line.
+            var starts = new List<int>();
+            int at = n;
+            while (at > 0)
+            {
+                int prev = breakAt[at];
+                if (prev < 0) { starts.Clear(); for (int i = 0; i < n; i++) starts.Add(i); return starts; }
+                starts.Add(prev);
+                at = prev;
+            }
+            starts.Reverse();
+            return starts;
         }
 
         private void EmitParagraphLine(List<WordItem> words,

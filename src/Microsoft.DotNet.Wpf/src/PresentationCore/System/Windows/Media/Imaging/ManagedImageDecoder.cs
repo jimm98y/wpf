@@ -3,10 +3,11 @@
 
 //
 // Managed image decoding for platforms without native WIC. Decodes PNG (all
-// standard bit depths and color types, tRNS transparency, Adam7 interlace) and
-// uncompressed BMP into straight BGRA32, and materializes the result as a
-// managed-backed BitmapSource. JPEG and other containers are not supported on
-// this path.
+// standard bit depths and color types, tRNS transparency, Adam7 interlace),
+// JPEG (baseline and progressive, via ManagedJpegDecoder), ICO and uncompressed
+// BMP into straight BGRA32, and materializes the result as a managed-backed
+// BitmapSource. GIF and TIFF are NOT decodable here even though managed
+// ENCODERS exist for both -- see Decode's final else.
 //
 
 using System.IO;

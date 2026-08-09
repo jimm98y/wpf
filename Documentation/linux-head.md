@@ -212,7 +212,7 @@ Known gaps, in the order they would matter to a user:
 | a second AT-SPI application appears | libdecor's GTK plugin initialises GTK inside the process, and GTK registers its own accessible tree, so one WPF process shows up twice on the bus — once as `WPF`, once as `gtk` with the binary's name. Not ours to fix from here. |
 | screen coordinates | The head's synthesised virtual space, for the reason the file header and "Coordinates" above give. Reading order, focus and navigation are right; flat review against physical screen coordinates is not. GTK4 on Wayland has the same limitation. |
 
-## Clipboard, DataObject, and why drag-and-drop is not done
+## Clipboard, DataObject, and how drag-and-drop works around OLE
 
 `System.Windows.DataObject` **cannot be constructed off Windows**. Its constructor builds an OLE
 composition that registers in the COM Global Interface Table, which P/Invokes `OLE32.dll`:
@@ -303,8 +303,12 @@ What still does not work off Windows, and fails clearly rather than mysteriously
 |---|---|
 | `WmpBitmapEncoder` (Windows Media Photo / JPEG XR) | `PlatformNotSupportedException`. The other five encoders work. |
 | `SystemSounds` | `PlatformNotSupportedException`, thrown by the `System.Windows.Extensions` package itself. |
-| `System.Printing` (`LocalPrintServer`, `XpsDocumentWriter`) | **`NullReferenceException`.** It is C++/CLI, so only its contract-only reference assembly ships here and every member faults. A managed reimplementation over CUPS is its own project. `PrintDialog.PrintQueue` is the one entry point that was fixed: it returns null ("no default printer"), a state it already had to report. |
 | `System.Windows.DataObject` | `DllNotFoundException` for OLE32 — see above. |
+| GIF and TIFF **decoding** | `NotSupportedException`. Both *encoders* work (see the table above), so a file this process wrote is one it cannot read back. PNG, JPEG, ICO and uncompressed BMP decode. |
+
+`System.Printing` used to be on that list. It is not any more: `LocalPrintServer`, `PrintQueue` and
+`XpsDocumentWriter` are a managed reimplementation over CUPS now, with `Wpf.Printing.Tests` covering
+it. See the printing commits and `PlatformPrint.cs`.
 
 ## Windows version gates
 
@@ -317,6 +321,10 @@ so each gate answers false and each call site takes the downlevel path it alread
 own guard is `IsOSVistaOrNewer && IsThemeActive()`, and `uxtheme.dll` does not exist here.
 
 ## Text rendering: gamma, and two fixes that were tried and rejected
+
+This section is about how glyphs are RASTERIZED. Which glyphs, and where — the OpenType shaping that
+turns characters into joined Arabic forms and attaches combining marks to their bases — is
+[text-shaping.md](text-shaping.md), and it applies to every head, not just this one.
 
 Text on Linux does not look as good as on macOS. Two plausible fixes were tried against the real WPF
 Gallery and **both were reverted** — recorded here so they are not re-attempted.

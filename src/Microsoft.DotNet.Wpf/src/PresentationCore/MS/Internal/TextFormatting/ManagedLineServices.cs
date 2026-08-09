@@ -10,9 +10,20 @@
 // It does NOT reimplement WPF's 31 LS callbacks (LineServicesCallbacks.cs already provides them);
 // it reimplements the ENGINE that drives them. LoCreateLine fetches runs and glyphs through those
 // callbacks, does greedy line breaking, and builds an opaque managed line; LoDisplayLine walks the
-// line and calls the draw callbacks; the query entry points answer caret/hit-test. Complex scripts,
-// bidi reordering, optimal-break and justification are intentionally simplified (single-direction,
-// greedy) -- enough for the common Latin editing/wrapping case.
+// line and calls the draw callbacks; the query entry points answer caret/hit-test.
+//
+// Implemented here: bidirectional reordering (ReorderRunsVisually -- runs are accumulated in
+// logical order and given their visual x afterwards, so a line mixing directions lays out correctly
+// while the run list stays cp-ordered for the caret) and justification (JustifyLine). See
+// Documentation/text-shaping.md for how the first fits with shaping.
+//
+// Line breaking within a line is greedy, and there is no optimal-break entry point here at all:
+// LoCreateBreaks / LoCreateParaBreakingSession are the LS interface for that, and nothing can reach
+// them in this port. The public API is compiled out (TextBreakpoint and TextFormatter.
+// CreateParagraphCache are internal unless OPTIMALBREAK_API is defined), and the only internal
+// caller is the native PTS host, which FlowDocumentPage bypasses on every platform. Optimal
+// paragraph breaking for FlowDocument lives where the layout actually happens now --
+// ManagedFlowLayout.BreakParagraphOptimally, selected by FlowDocument.IsOptimalParagraphEnabled.
 //
 // Handles (ploc / ploline / break records) are GCHandles to managed objects, surfaced as IntPtr.
 //
@@ -41,11 +52,26 @@ namespace MS.Internal.TextFormatting
         public GlyphOffset[] Offsets;       // glyph offsets
         public int GlyphCount;
         public IntPtr PlsrunPtr;            // LS run pointer, needed to re-shape a truncated run
-        public int PenX;                    // ideal x where this run starts (line-relative)
+
+        /// <summary>
+        ///  Ideal x of this run's LEFT edge, line-relative and in VISUAL order -- assigned by the
+        ///  bidi reordering pass, not by the order the runs were fetched in.
+        /// </summary>
+        public int PenX;
+
         public int Width;                   // ideal advance width of the run
         public int Ascent;
         public int Descent;
         public bool IsText;                 // false for control/object runs (skipped when drawing)
+
+        /// <summary>
+        ///  The run's resolved bidi embedding level. Odd is right-to-left. Accumulated from the
+        ///  Reverse / CloseAnchor control runs the text store emits around every level change, which
+        ///  is how LineServices is told about direction -- there is no level on the run itself.
+        /// </summary>
+        public int BidiLevel;
+
+        public bool IsRightToLeft => (BidiLevel & 1) != 0;
     }
 
     internal sealed class ManagedLsLine
@@ -176,12 +202,17 @@ namespace MS.Internal.TextFormatting
             var line = new ManagedLsLine { CpFirst = cpFirst };
 
             // Paragraph flow direction. FetchPap reports it as the text flow (WS = right-to-left).
-            // We position runs left-to-right (penX) in logical order regardless; the RTL flag tells
-            // DisplayLine / the query entry points to mirror the run x-origin so an RTL paragraph's
-            // text lands on the correct (right) side instead of overrunning to the left.
+            // Runs are accumulated in LOGICAL order and given their visual x afterwards, by the
+            // bidi reordering pass; the RTL flag additionally mirrors the whole line, because an
+            // RTL paragraph's line origin is its right edge.
             LsPap pap = new LsPap();
             cb.FetchPap(ploc, cpFirst, ref pap);
             line.RightToLeft = pap.lstflow == LsTFlow.lstflowWS;
+
+            // The paragraph's own embedding level, and the level every run starts at. The text
+            // store counts its Reverse / CloseAnchor markers from here, not from zero.
+            int baseLevel = line.RightToLeft ? 1 : 0;
+            int bidiLevel = baseLevel;
 
             int column = (durColumn <= 0) ? int.MaxValue : durColumn;
             int penX = 0;
@@ -225,6 +256,21 @@ namespace MS.Internal.TextFormatting
 
                 Plsrun plsrun = (Plsrun)(uint)plsrunPtr.ToInt64();
 
+                // Bidi level changes arrive as control runs, one per level step: the text store
+                // brackets every embedding with Reverse (level up) and CloseAnchor (level down).
+                // That is the only place direction is expressed -- FetchRun says nothing about it --
+                // so tracking these brackets is what makes reordering possible at all. Note the
+                // marker itself belongs to the level OUTSIDE the bracket it opens or closes.
+                Plsrun runKind = TextStore.ToIndex(plsrun);
+                if (runKind == Plsrun.Reverse)
+                {
+                    bidiLevel++;
+                }
+                else if (runKind == Plsrun.CloseAnchor)
+                {
+                    bidiLevel = Math.Max(baseLevel, bidiLevel - 1);
+                }
+
                 bool isText = chp.idObj == (ushort)TextStore.ObjectId.Text_chp;
 
                 // Line/paragraph breaks are delivered as Text_chp runs whose characters are the
@@ -245,7 +291,7 @@ namespace MS.Internal.TextFormatting
                         Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
                         CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
                         Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
-                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false,
+                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false, BidiLevel = bidiLevel,
                     });
                     cp += cchText;
                     forced = true;
@@ -277,7 +323,7 @@ namespace MS.Internal.TextFormatting
                         Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
                         CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
                         Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
-                        GlyphCount = 0, PenX = penX, Width = objWidth,
+                        GlyphCount = 0, PenX = penX, Width = objWidth, BidiLevel = bidiLevel,
                         Ascent = objAscent, Descent = objHeight - objAscent, IsText = false,
                     });
                     lineAscent = Math.Max(lineAscent, objAscent);
@@ -302,7 +348,7 @@ namespace MS.Internal.TextFormatting
                         Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
                         CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
                         Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
-                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false,
+                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false, BidiLevel = bidiLevel,
                     });
                     cp += cchText;
                     continue;
@@ -384,6 +430,7 @@ namespace MS.Internal.TextFormatting
                     Glyphs = glyphs, ClusterMap = clusters, CharProps = charProps, GlyphProps = glyphProps,
                     Advances = advances, Offsets = offsets, GlyphCount = glyphCount,
                     PenX = penX, Width = usedWidth, Ascent = txm.dvAscent, Descent = txm.dvDescent, IsText = true,
+                    BidiLevel = bidiLevel,
                 });
 
                 penX += usedWidth;
@@ -402,12 +449,31 @@ namespace MS.Internal.TextFormatting
                 }
             }
 
+            // Trailing whitespace hangs past the end of the line: it is not drawn, does not count
+            // towards the line's width, and must not be stretched by justification.
+            int trailingWidth = TrailingWhitespaceWidth(line);
+
+            // Justify BEFORE reordering, because reordering derives every run's position from the
+            // run widths this adjusts. Only a line that WRAPPED is justified: `forced` means the
+            // line ended at a hard break or ran out of text, which makes it the last line of its
+            // paragraph, and stretching that one is what turns a two-word final line into two words
+            // at opposite edges of the column.
+            if (pap.fJustify != 0 && column != int.MaxValue && !forced)
+            {
+                JustifyLine(line, column, penX - trailingWidth);
+            }
+
+            // Runs were accumulated in logical order with a running pen; now put them where they
+            // actually go. Everything downstream (drawing, caret, hit-testing) reads run.PenX, so
+            // this is the single place the visual order is decided.
+            int lineWidth = ReorderRunsVisually(line, baseLevel);
+
             line.Callbacks = cb;
             line.CpLim = cp;
             line.Ascent = lineAscent;
             line.Descent = lineDescent;
-            line.Width = penX;
-            line.WidthNoTrailing = penX;
+            line.Width = lineWidth;
+            line.WidthNoTrailing = lineWidth - trailingWidth;
             line.ForcedBreak = forced;
 
             plslineInfo.dvpAscent = plslineInfo.dvrAscent = lineAscent;
@@ -420,13 +486,197 @@ namespace MS.Internal.TextFormatting
             plslineInfo.fForcedBreak = forced ? 1 : 0;
 
             lineWidths.upStartMainText = 0;
-            lineWidths.upStartTrailing = penX;
-            lineWidths.upLimLine = penX;
-            lineWidths.upMinStartTrailing = penX;
-            lineWidths.upMinLimLine = penX;
+            lineWidths.upStartTrailing = lineWidth - trailingWidth;
+            lineWidths.upLimLine = lineWidth;
+            lineWidths.upMinStartTrailing = lineWidth - trailingWidth;
+            lineWidths.upMinLimLine = lineWidth;
 
             pploline = GCHandle.ToIntPtr(GCHandle.Alloc(line));
             return LsErr.None;
+        }
+
+        /// <summary>
+        ///  Assigns every run its visual x, reordering by bidi level along the way.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   This is the Unicode bidirectional algorithm's rule L2, over runs rather than characters:
+        ///   from the highest level present down to the lowest odd level, reverse every contiguous
+        ///   sequence of runs at that level or above. Reversing at successive levels composes into
+        ///   the nesting the embeddings describe, which is why one loop handles arbitrary depth.
+        ///  </para>
+        ///  <para>
+        ///   The run LIST stays in logical order and only <see cref="ManagedLsRun.PenX"/> changes.
+        ///   Everything that looks a run up does so by cp -- the caret, selection bounds,
+        ///   hit-testing -- and a logically ordered list keeps all of that a simple scan; the visual
+        ///   order is a property of where each run is drawn, not of the collection.
+        ///  </para>
+        ///  <para>
+        ///   An RTL paragraph needs no special case: its base level is 1, so every run is at level 1
+        ///   or above and the outermost pass reverses the whole line, which is exactly what "the line
+        ///   reads right to left" means.
+        ///  </para>
+        /// </remarks>
+        /// <returns>The total width of the line: where the pen ends up.</returns>
+        private static int ReorderRunsVisually(ManagedLsLine line, int baseLevel)
+        {
+            int count = line.Runs.Count;
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            int highest = baseLevel;
+            int lowestOdd = int.MaxValue;
+            foreach (ManagedLsRun run in line.Runs)
+            {
+                if (run.BidiLevel > highest) highest = run.BidiLevel;
+                if ((run.BidiLevel & 1) != 0 && run.BidiLevel < lowestOdd) lowestOdd = run.BidiLevel;
+            }
+
+            // order[i] is the index of the run that occupies visual slot i.
+            var order = new int[count];
+            for (int i = 0; i < count; i++) order[i] = i;
+
+            if (lowestOdd != int.MaxValue)
+            {
+                for (int level = highest; level >= lowestOdd; level--)
+                {
+                    int spanStart = -1;
+                    for (int i = 0; i <= count; i++)
+                    {
+                        bool atOrAbove = i < count && line.Runs[order[i]].BidiLevel >= level;
+
+                        if (atOrAbove && spanStart < 0)
+                        {
+                            spanStart = i;
+                        }
+                        else if (!atOrAbove && spanStart >= 0)
+                        {
+                            Array.Reverse(order, spanStart, i - spanStart);
+                            spanStart = -1;
+                        }
+                    }
+                }
+            }
+
+            int penX = 0;
+            for (int i = 0; i < count; i++)
+            {
+                ManagedLsRun run = line.Runs[order[i]];
+                run.PenX = penX;
+                penX += run.Width;
+            }
+            return penX;
+        }
+
+        /// <summary>
+        ///  Stretches a line to fill its column by widening the spaces between words.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   Justification is expressed in the glyph ADVANCES rather than in the run positions,
+        ///   because everything downstream measures from them: the run widths feed the reordering
+        ///   pass, which feeds drawing and the caret. Widening a space glyph therefore moves every
+        ///   following word and keeps hit-testing consistent for free.
+        ///  </para>
+        ///  <para>
+        ///   Only inter-word spaces expand. Widening letters instead ("letter-spacing") is a
+        ///   different typographic effect and a worse-looking one; LS reserves inter-character
+        ///   expansion for scripts with no spaces to expand, which this does not attempt.
+        ///  </para>
+        ///  <para>
+        ///   The slack is spread in whole ideal units with the remainder going to the leftmost gaps,
+        ///   so the line lands on exactly the column width rather than a rounding error short of it.
+        ///  </para>
+        /// </remarks>
+        private static void JustifyLine(ManagedLsLine line, int column, int textWidth)
+        {
+            int slack = column - textWidth;
+            if (slack <= 0)
+            {
+                return;
+            }
+
+            // The expansion points, as (run, glyph) pairs. Trailing whitespace is excluded: it hangs
+            // past the end of the line and stretching it would push the last word left of the edge.
+            var points = new List<(ManagedLsRun Run, int Glyph)>();
+            int lastNonSpaceRun = -1;
+            for (int r = 0; r < line.Runs.Count; r++)
+            {
+                if (line.Runs[r].IsText && !IsAllWhitespace(line.Runs[r])) lastNonSpaceRun = r;
+            }
+            if (lastNonSpaceRun < 0)
+            {
+                return;
+            }
+
+            for (int r = 0; r <= lastNonSpaceRun; r++)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText || run.Text == null) continue;
+
+                for (int i = 0; i < run.CchText && i < run.Text.Length; i++)
+                {
+                    if (!IsBreakableSpace(run.Text[i])) continue;
+
+                    // The last character of the last non-space run cannot be an expansion point that
+                    // matters, but the general rule is simply: every space before the final word.
+                    int glyph = i < run.ClusterMap.Length ? run.ClusterMap[i] : -1;
+                    if (glyph >= 0 && glyph < run.Advances.Length)
+                    {
+                        points.Add((run, glyph));
+                    }
+                }
+            }
+
+            if (points.Count == 0)
+            {
+                return;
+            }
+
+            int share = slack / points.Count;
+            int remainder = slack - share * points.Count;
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                int add = share + (i < remainder ? 1 : 0);
+                if (add == 0) continue;
+
+                (ManagedLsRun run, int glyph) = points[i];
+                run.Advances[glyph] += add;
+                run.Width += add;
+            }
+        }
+
+        /// <summary>The width of the whitespace the line ends with, which hangs past its edge.</summary>
+        private static int TrailingWhitespaceWidth(ManagedLsLine line)
+        {
+            int width = 0;
+            for (int r = line.Runs.Count - 1; r >= 0; r--)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText)
+                {
+                    continue;   // a break or control run carries no width either way
+                }
+                if (!IsAllWhitespace(run))
+                {
+                    break;
+                }
+                width += run.Width;
+            }
+            return width;
+        }
+
+        private static bool IsAllWhitespace(ManagedLsRun run)
+        {
+            if (run.Text == null || run.CchText == 0) return false;
+            for (int i = 0; i < run.CchText && i < run.Text.Length; i++)
+            {
+                if (!IsBreakableSpace(run.Text[i])) return false;
+            }
+            return true;
         }
 
         // True if the run is a line/paragraph break: its leading character is a separator marker
@@ -624,26 +874,52 @@ namespace MS.Internal.TextFormatting
         {
             int cch = text.Length;
             int capacity = cch * 3 + 16;
-            var glyphBuf = new ushort[capacity];
-            var glyphPropBuf = new uint[capacity];
             var clusterBuf = new ushort[cch];
             var charPropBuf = new ushort[cch];
             var canAlone = new int[cch];
-            int gc = capacity;
-            int fBuffersUsed = 0;
+
+            ushort[] glyphBuf;
+            uint[] glyphPropBuf;
+            int gc;
 
             IntPtr plsrunLocal = plsrunPtr;
             int cchLocal = cch;
 
-            fixed (char* pText = text)
-            fixed (ushort* pGlyphs = glyphBuf)
-            fixed (uint* pGlyphProps = glyphPropBuf)
-            fixed (ushort* pCluster = clusterBuf)
-            fixed (ushort* pCharProps = charPropBuf)
-            fixed (int* pCanAlone = canAlone)
+            // GetGlyphs is allowed to need more glyphs than the buffer holds -- shaping can turn one
+            // glyph into several -- and says so by leaving fBuffersUsed clear and reporting the count
+            // it needs. Honouring that is not optional: the buffers hold nothing meaningful in that
+            // case, and reading them anyway yields a run of zeros. The loop runs twice in the worst
+            // case (the second capacity is the exact count the shaper asked for), and the guard is
+            // there so a backend that never sets the flag cannot spin.
+            for (int attempt = 0; ; attempt++)
             {
-                cb.GetGlyphsRedefined(ploc, &plsrunLocal, &cchLocal, 1, pText, cch, LsTFlow.lstflowES,
-                    pGlyphs, pGlyphProps, capacity, ref fBuffersUsed, pCluster, pCharProps, pCanAlone, ref gc);
+                glyphBuf = new ushort[capacity];
+                glyphPropBuf = new uint[capacity];
+                gc = capacity;
+                int fBuffersUsed = 0;
+
+                fixed (char* pText = text)
+                fixed (ushort* pGlyphs = glyphBuf)
+                fixed (uint* pGlyphProps = glyphPropBuf)
+                fixed (ushort* pCluster = clusterBuf)
+                fixed (ushort* pCharProps = charPropBuf)
+                fixed (int* pCanAlone = canAlone)
+                {
+                    cb.GetGlyphsRedefined(ploc, &plsrunLocal, &cchLocal, 1, pText, cch, LsTFlow.lstflowES,
+                        pGlyphs, pGlyphProps, capacity, ref fBuffersUsed, pCluster, pCharProps, pCanAlone, ref gc);
+                }
+
+                if (fBuffersUsed != 0 || gc <= capacity || attempt >= 1)
+                {
+                    break;
+                }
+
+                capacity = gc;
+            }
+
+            if (gc > capacity)
+            {
+                gc = capacity;   // the backend never filled a buffer this large; take what fits
             }
 
             glyphCount = gc;
@@ -690,15 +966,17 @@ namespace MS.Internal.TextFormatting
             {
                 if (!run.IsText || run.GlyphCount == 0) continue;
 
-                // Run x-origin. For LTR it is the run's left edge (pt.x + penX). For an RTL paragraph
-                // ComputeShapedGlyphRun negates the origin (native LS supplies a NEGATIVE run x from
-                // the line origin). This engine is single-direction greedy (it does not reorder runs),
-                // so to keep an LTR span readable AND flush against the paragraph's right edge we shift
-                // the whole line left by its width (penX - Width) and let upstream negate it: run 0
-                // lands at the right edge and later runs sit to its right in reading order. Without
-                // this an LTR run in an RTL paragraph starts at the right edge and runs off leftward
-                // across whatever sits there (e.g. the RadioButton's circle).
-                int runX = line.RightToLeft ? (pt.x + run.PenX - line.Width) : (pt.x + run.PenX);
+                // Run x-origin, which is the run's LEADING edge and therefore depends on the run's own
+                // direction: a right-to-left run is anchored at its RIGHT edge and its glyphs march
+                // leftward from there (see GlyphRun.BuildGeometry). Handing an RTL run its left edge
+                // draws it one run-width too far left, on top of whatever precedes it.
+                int leftEdge = pt.x + run.PenX;
+                int originEdge = run.IsRightToLeft ? leftEdge + run.Width : leftEdge;
+
+                // In an RTL paragraph the line origin is the line's RIGHT edge, and LS expresses run
+                // positions as negative offsets from it -- ComputeShapedGlyphRun negates what it gets.
+                // So send the mirrored distance and let it undo the sign.
+                int runX = line.RightToLeft ? originEdge - line.Width : originEdge;
                 LSPOINT ptRun = new LSPOINT(runX, baseline);
                 var lsHeights = new LsHeights { dvAscent = run.Ascent, dvDescent = run.Descent, dvMultiLineHeight = run.Ascent + run.Descent };
                 var clip = clipRect;
@@ -719,8 +997,11 @@ namespace MS.Internal.TextFormatting
                 }
 
                 // Native LS draws underline/strikethrough/overline/baseline during LoDisplayLine; replay
-                // that here so paragraph-/run-level TextDecorations render off-Windows too.
-                cb.DrawManagedTextDecorations(run.Plsrun, runX, baseline, run.Width, LsTFlow.lstflowES, displayMode, ref clip);
+                // that here so paragraph-/run-level TextDecorations render off-Windows too. A
+                // decoration is a rectangle, so it wants the run's LEFT edge whichever way the run
+                // reads -- not the direction-dependent leading edge the glyphs are anchored at.
+                int decorationX = line.RightToLeft ? leftEdge - line.Width : leftEdge;
+                cb.DrawManagedTextDecorations(run.Plsrun, decorationX, baseline, run.Width, LsTFlow.lstflowES, displayMode, ref clip);
             }
             return LsErr.None;
         }
@@ -777,14 +1058,32 @@ namespace MS.Internal.TextFormatting
                 if (lscpQuery >= run.CpFirst && lscpQuery < run.CpFirst + run.CchText)
                 {
                     int offset = lscpQuery - run.CpFirst;
-                    int x = run.PenX;
-                    for (int i = 0; i < offset && i < run.Advances.Length; i++) x += run.Advances[i];
-                    int w = offset < run.Advances.Length ? run.Advances[offset] : 0;
+                    CellBounds(run, offset, out int x, out int w);
                     FillQueryResult(line, run, lscpQuery, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
                     return LsErr.None;
                 }
             }
             return LsErr.None;
+        }
+
+        /// <summary>
+        ///  Where the character at <paramref name="offset"/> within a run sits, and how wide it is.
+        /// </summary>
+        /// <remarks>
+        ///  Characters run the way their run does. In a right-to-left run the first logical character
+        ///  is at the run's RIGHT edge and later ones march leftward, so measuring from PenX forward
+        ///  puts the caret at the mirror image of where the glyph actually is -- click at the start of
+        ///  a Hebrew word and the caret lands at its end.
+        /// </remarks>
+        private static void CellBounds(ManagedLsRun run, int offset, out int x, out int width)
+        {
+            int before = 0;
+            for (int i = 0; i < offset && i < run.Advances.Length; i++) before += run.Advances[i];
+            width = offset < run.Advances.Length ? run.Advances[offset] : 0;
+
+            x = run.IsRightToLeft
+                ? run.PenX + run.Width - before - width
+                : run.PenX + before;
         }
 
         internal static unsafe LsErr QueryLinePointPcp(IntPtr ploline, ref LSPOINT ptQuery, int depthQueryMax,
@@ -800,34 +1099,47 @@ namespace MS.Internal.TextFormatting
             // the text must resolve to the last real character: returning the break cp put
             // the caret beyond the document and TextBoxView.GetTextPositionFromDistance
             // throws ("Requested distance is outside the content...").
-            ManagedLsRun lastText = null;
+            // Runs are no longer in x order once bidi reordering has run, so this asks each run
+            // whether the point is inside IT rather than walking the line from left to right.
+            // The rightmost run is likewise the one with the largest PenX, not the last in the list.
+            ManagedLsRun rightmost = null;
             foreach (ManagedLsRun run in line.Runs)
             {
                 if (!run.IsText) continue;
-                lastText = run;
-                int x = run.PenX;
+                if (rightmost == null || run.PenX > rightmost.PenX) rightmost = run;
+
+                if (qx < run.PenX || qx >= run.PenX + run.Width) continue;
+
                 for (int i = 0; i < run.CchText; i++)
                 {
-                    int w = i < run.Advances.Length ? run.Advances[i] : 0;
-                    if (qx < x + w)
+                    CellBounds(run, i, out int x, out int w);
+                    if (qx >= x && qx < x + w)
                     {
                         FillQueryResult(line, run, run.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
                         return LsErr.None;
                     }
-                    x += w;
                 }
             }
 
-            // Past the end of the text: the trailing edge of the last character. A line with
-            // no text runs (blank line) returns an empty cell; the caller's fallback places
-            // the caret at the line start, which is correct there.
-            if (lastText != null && lastText.CchText > 0)
+            // Outside every run: the nearest edge of the text. A line with no text runs (blank line)
+            // returns an empty cell; the caller's fallback places the caret at the line start, which
+            // is correct there.
+            if (rightmost != null && rightmost.CchText > 0)
             {
-                int i = lastText.CchText - 1;
-                int x = lastText.PenX;
-                for (int j = 0; j < i && j < lastText.Advances.Length; j++) x += lastText.Advances[j];
-                int w = i < lastText.Advances.Length ? lastText.Advances[i] : 0;
-                FillQueryResult(line, lastText, lastText.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
+                ManagedLsRun edgeRun = rightmost;
+                if (qx < 0)
+                {
+                    foreach (ManagedLsRun run in line.Runs)
+                    {
+                        if (run.IsText && run.PenX < edgeRun.PenX) edgeRun = run;
+                    }
+                }
+
+                // The logical character at that visual edge: the last one for a left-to-right run,
+                // the first one for a right-to-left run.
+                int i = edgeRun.IsRightToLeft ? 0 : edgeRun.CchText - 1;
+                CellBounds(edgeRun, i, out int x, out int w);
+                FillQueryResult(line, edgeRun, edgeRun.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
             }
             return LsErr.None;
         }

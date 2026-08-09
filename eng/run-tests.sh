@@ -56,6 +56,11 @@ done
 rc=0
 for p in "${PROJECTS[@]}"; do
   echo ">> $(basename "$p" .csproj)"
-  "$DOTNET" test "$p" -c Release --nologo "${FILTER[@]}" "${PLATFORM_ARGS[@]}" || rc=$?
+  # The ${a[@]+"${a[@]}"} dance is not noise: macOS ships bash 3.2, where an EMPTY array counts
+  # as unset, so a plain "${FILTER[@]}" under `set -u` aborts the script before the first test
+  # runs. That is what "PLATFORM_ARGS[@]: unbound variable" was -- the whole suite was
+  # unrunnable on macOS with the stock shell whenever no extra arguments were passed.
+  "$DOTNET" test "$p" -c Release --nologo \
+    ${FILTER[@]+"${FILTER[@]}"} ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} || rc=$?
 done
 exit $rc

@@ -877,9 +877,22 @@ namespace MS.Internal.FontCache
         /// <summary>
         /// Returns glyph coordinate
         /// </summary>
+        /// <remarks>
+        /// The coordinate of a numbered contour point in the glyph outline, for a GPOS format 2
+        /// anchor. int.MinValue is the "no contour point" answer AnchorTable.AnchorCoordinates
+        /// already understands: it then uses the anchor's own design coordinates, which every
+        /// format 2 anchor also carries. The contour point is a hinting refinement on top of them,
+        /// so dropping it costs sub-pixel accuracy at small sizes and nothing else -- and it is what
+        /// other shapers do with format 2 as well.
+        ///
+        /// Throwing here, which is what this did, was not a smaller decision than it looks. GPOS
+        /// cursive attachment in a Nastaliq font uses format 2 anchors, so the throw travelled all
+        /// the way out through PositionGlyphs and aborted the whole GetGlyphPositions callback --
+        /// no kerning, no marks, nothing positioned, for the entire run.
+        /// </remarks>
         public LayoutOffset GetGlyphPointCoord(ushort Glyph, ushort PointIndex)
         {
-            throw new NotSupportedException();
+            return new LayoutOffset(int.MinValue, int.MinValue);
         }
 
         /// <summary>

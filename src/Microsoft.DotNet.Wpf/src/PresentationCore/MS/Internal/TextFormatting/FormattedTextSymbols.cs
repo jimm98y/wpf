@@ -142,6 +142,26 @@ namespace MS.Internal.TextFormatting
                                 out glyphOffsets
                                 );
                         }
+
+                        // Off Windows those placements are nominal -- cmap glyphs and hmtx advances,
+                        // no OpenType features -- so apply the font's GSUB and GPOS here, as the two
+                        // LineServices callbacks do over their own glyph buffers. This is the third
+                        // and last place nominal glyphs can reach the screen: without it a line
+                        // COLLAPSING SYMBOL in a complex script is the one unshaped fragment on an
+                        // otherwise correctly shaped line. See Documentation/text-shaping.md.
+                        ushort designEmHeight = current.GlyphTypeFace.DesignEmHeight;
+                        if (designEmHeight != 0)
+                        {
+                            ManagedOpenTypeShaper.ShapeArrays(
+                                current.GlyphTypeFace,
+                                charArray,
+                                rightToLeft,
+                                current.Properties.FontRenderingEmSize * scalingFactor / designEmHeight,
+                                ref clusterMap,
+                                ref glyphIndices,
+                                ref glyphAdvances,
+                                ref glyphOffsets);
+                        }
                         _glyphs[i] = new Glyphs(
                            current,
                            charArray,

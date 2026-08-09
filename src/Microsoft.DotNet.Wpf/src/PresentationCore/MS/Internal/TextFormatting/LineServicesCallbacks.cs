@@ -1719,20 +1719,27 @@ namespace MS.Internal.TextFormatting
 
                     if (glyphCount <= cgiGlyphBuffers)
                     {
-                        fIsGlyphBuffersUsed = 1;
-
-                        // The off-Windows text backend produces only nominal cmap glyphs
-                        // (no OpenType features). Apply GSUB substitution (ligatures /
-                        // contextual alternates) here, using WPF's managed layout engine,
-                        // so ligature fonts (e.g. Cascadia Code's "-->") shape correctly.
-                        // Ligation only removes glyphs, so the filled buffer never overflows.
-                        glyphCount = ManagedGsubShaper.Substitute(
+                        // The off-Windows text backend produces only nominal cmap glyphs (no
+                        // OpenType features), so the font's GSUB is applied here with WPF's own
+                        // managed layout engine: ligatures and contextual alternates for Latin, and
+                        // the joining forms Arabic and Syriac are unreadable without.
+                        //
+                        // Substitution can GROW the run (a ccmp decomposition, or any other
+                        // one-to-many lookup), so the result is not assumed to fit. When it does not,
+                        // the shaper leaves the buffers untouched and reports the count it needs, and
+                        // this reports the same thing to LS the same way an oversized nominal run
+                        // does -- buffers not used, required count out. LS reallocates and calls back.
+                        glyphCount = ManagedOpenTypeShaper.Substitute(
                             glyphTypeface,
+                            pwchText,
                             cchText,
                             puGlyphsBuffer,
                             glyphCount,
+                            cgiGlyphBuffers,
                             puClusterMap,
                             pfCanGlyphAlone);
+
+                        fIsGlyphBuffersUsed = glyphCount <= cgiGlyphBuffers ? 1 : 0;
                     }
                     else
                     {
@@ -1819,8 +1826,33 @@ namespace MS.Internal.TextFormatting
                 {
                     piiGlyphOffsets[i].du = glyphOffset[i].du;
                     piiGlyphOffsets[i].dv = glyphOffset[i].dv;
-                }                
-                 
+                }
+
+                // The managed backend's placements are nominal: hmtx advances and zero offsets. Apply
+                // the font's GPOS on top, which is what positions combining marks (Arabic harakat,
+                // Hebrew niqqud, Indic and Thai vowel signs) against their base glyph instead of
+                // leaving each one stacked at its own origin, and what supplies the kerning that
+                // modern fonts keep in GPOS rather than in a 'kern' table.
+                //
+                // designToIdeal matches the scale the backend used for the advances above:
+                // EmSize/DesignEmHeight * ToIdeal.
+                ushort designEmHeight = glyphTypeface.DesignEmHeight;
+                if (designEmHeight != 0)
+                {
+                    ManagedOpenTypeShaper.Position(
+                        glyphTypeface,
+                        pwchText,
+                        cchText,
+                        puGlyphs,
+                        glyphCount,
+                        puClusterMap,
+                        isRightToLeft,
+                        lsrunFirst.Shapeable.EmSize * TextFormatterImp.ToIdeal / designEmHeight,
+                        piGlyphAdvances,
+                        piiGlyphOffsets);
+                }
+
+
             }
             catch (Exception e)
             {

@@ -424,6 +424,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public float[] Advances = Array.Empty<float>();
             public float[]? Offsets;    // 2 per glyph (x,y), or null
 
+            // Odd = right-to-left. The run's glyphs are in LOGICAL order either way; an odd level
+            // says the baseline origin is the run's right edge and the pen moves leftward.
+            public ushort BidiLevel;
+
             // Managed font descriptor (cross-platform, COM-free). Present when the
             // run carried the 'WFNT' trailer; null for legacy/test streams that
             // only supply FontPtr.
@@ -657,8 +661,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     // MILCMD_GLYPHRUN_CREATE (Pack=1, explicit offsets; gaps between fields):
                     // Handle@4, pIDWriteFont@8, GlyphRunFlags@16, Origin@20, MuSize@28,
-                    // ManagedBounds@32, GlyphCount@64, then ushort[count] indices + float[count]
-                    // advances + optional float[2*count] offsets (76-byte struct).
+                    // ManagedBounds@32, GlyphCount@64, BidiLevel@68, then ushort[count] indices +
+                    // float[count] advances + optional float[2*count] offsets (76-byte struct).
                     uint handle = r.U32();
                     r.Position = 8; ulong fontPtr = r.U64();
                     r.Position = 16; ushort glyphFlags = r.U16();
@@ -666,6 +670,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 28; float emSize = r.F32();
                     r.Position = 32; var bounds = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 64; int count = r.U16();
+                    r.Position = 68; ushort bidiLevel = r.U16();
 
                     r.Position = 76;
                     var indices = new ushort[count];
@@ -698,7 +703,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _glyphRuns[handle] = new MilGlyphRun
                     {
                         FontPtr = fontPtr, Origin = origin, EmSize = emSize, Bounds = bounds,
-                        Indices = indices, Advances = advances, Offsets = offsets,
+                        Indices = indices, Advances = advances, Offsets = offsets, BidiLevel = bidiLevel,
                         FontPath = fontPath, FaceIndex = faceIndex, Simulations = simulations,
                     };
                     break;
@@ -2283,10 +2288,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             var colorFont = font as Text.IColorGlyphFont;
             float scale = run.EmSize / font.PixelsPerEm;
+
+            // A right-to-left run anchors its baseline origin at its RIGHT edge and marches leftward
+            // from there, with each glyph placed one of its OWN advances further left -- which is
+            // what GlyphRun.BuildGeometry does, and the shape WPF's measured bounds already assume.
+            // Walking such a run left-to-right (the only thing this did) put every Arabic and Hebrew
+            // line in the wrong place and in mirrored order.
+            //
+            // The nominal advance rather than the run's is deliberate: run advances can be justified
+            // or GPOS-adjusted, and using them here would drift away from the geometry WPF measured.
+            bool rightToLeft = (run.BidiLevel & 1) != 0;
+            var metricsFont = font as Text.IShapingFont;
+            float accumulated = 0f;
+
             float penX = run.Origin.X;
             for (int i = 0; i < run.Indices.Length; i++)
             {
-                float gx = penX + (run.Offsets != null ? run.Offsets[2 * i] : 0f);
+                float offsetX = run.Offsets != null ? run.Offsets[2 * i] : 0f;
+
+                if (rightToLeft)
+                {
+                    float nominal = metricsFont != null
+                        ? metricsFont.Advance(run.Indices[i]) * scale
+                        : (i < run.Advances.Length ? run.Advances[i] : 0f);
+                    penX = run.Origin.X - accumulated - nominal;
+                    offsetX = -offsetX;
+                }
+
+                float gx = penX + offsetX;
                 float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
 
                 // What a glyph id becomes -- a monochrome outline, or the stack of coloured layers a
@@ -2323,7 +2352,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     output.Add(new GeometryFill(glyph, brush, isGlyph: true, baselineAnchor: baseline));
                 }
 
-                penX += i < run.Advances.Length ? run.Advances[i] : 0f;
+                float advance = i < run.Advances.Length ? run.Advances[i] : 0f;
+                if (rightToLeft)
+                {
+                    accumulated += advance;   // penX is recomputed from the origin each glyph
+                }
+                else
+                {
+                    penX += advance;
+                }
             }
         }
 
