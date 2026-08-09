@@ -504,8 +504,33 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrInt(IntPtr r, IntPtr s, int a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr r, IntPtr s, double a);
 
-        [DllImport("/System/Library/Frameworks/AppKit.framework/AppKit")]
-        private static extern void NSAccessibilityPostNotification(IntPtr element, IntPtr notification);
+        // Resolved through dlsym rather than [DllImport("...AppKit")]. A DllImport naming a
+        // framework by path is resolved EAGERLY by the iOS AOT linker, which then fails the whole
+        // iOS build with "ld: framework 'AppKit' not found" -- this file is compiled into
+        // WindowsBase for every head, macOS-only attribute notwithstanding. dlopen is how the rest
+        // of this folder reaches frameworks for exactly that reason.
+        private static IntPtr s_postNotification = (IntPtr)(-1);
+
+        private static void NSAccessibilityPostNotification(IntPtr element, IntPtr notification)
+        {
+            if (s_postNotification == (IntPtr)(-1))
+            {
+                const int RTLD_NOW = 2;
+                IntPtr appKit = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW);
+                s_postNotification = appKit == IntPtr.Zero
+                    ? IntPtr.Zero
+                    : dlsym(appKit, "NSAccessibilityPostNotification");
+            }
+
+            if (s_postNotification == IntPtr.Zero) return;
+
+            Marshal.GetDelegateForFunctionPointer<PostNotificationDelegate>(s_postNotification)(element, notification);
+        }
+
+        private delegate void PostNotificationDelegate(IntPtr element, IntPtr notification);
+
+        [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
+        [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CGPoint { public double x; public double y; }

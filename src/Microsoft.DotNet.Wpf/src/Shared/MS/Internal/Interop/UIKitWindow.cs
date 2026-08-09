@@ -333,6 +333,9 @@ namespace MS.Internal.Interop
             // UITextInput: what makes the view able to become first responder (so the keyboard
             // appears at all) and able to host an inline composition. Must precede registerClassPair.
             UIKitTextInput.AddTextInputMethods(cls);
+            // UIAccessibility: makes the view a container VoiceOver can walk. Also before
+            // registerClassPair, for the same reason.
+            UIKitAccessibility.AddViewAccessibility(cls);
             class_addMethod(cls, Sel("wpfScroll:"),
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&ScrollImp, "v@:@");
 
@@ -426,6 +429,9 @@ namespace MS.Internal.Interop
             // UITextInput: what makes the view able to become first responder (so the keyboard
             // appears at all) and able to host an inline composition. Must precede registerClassPair.
             UIKitTextInput.AddTextInputMethods(cls);
+            // UIAccessibility: makes the view a container VoiceOver can walk. Also before
+            // registerClassPair, for the same reason.
+            UIKitAccessibility.AddViewAccessibility(cls);
 
             // The action the scroll recognizer targets back at the view (see AddScrollRecognizer).
             class_addMethod(cls, Sel("wpfScroll:"),
