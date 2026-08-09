@@ -594,7 +594,7 @@ namespace System.Windows.Media
         /// and a 1000-unit page; the diagonal of the bounding box is the scale milcore measures it
         /// against. Falls back to the absolute reading when there are no bounds to be relative to.
         /// </summary>
-        private static double AbsoluteTolerance(Geometry geometry, double tolerance, ToleranceType type)
+        internal static double AbsoluteTolerance(Geometry geometry, double tolerance, ToleranceType type)
         {
             if (!(tolerance > 0.0) || double.IsNaN(tolerance))
             {
@@ -1072,6 +1072,14 @@ namespace System.Windows.Media
             if (IsObviouslyEmpty())
             {
                 return new PathGeometry();
+            }
+
+            // The last of the three unguarded wpfgfx entry points. Outlining is a boolean of a shape
+            // with itself -- resolve the self-intersections and keep the edges that actually bound
+            // the filled region -- so it is the clipper run against one operand.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Media.PathBoolean.Outline(this, AbsoluteTolerance(this, tolerance, type));
             }
 
             PathGeometryData pathData = GetPathGeometryData();

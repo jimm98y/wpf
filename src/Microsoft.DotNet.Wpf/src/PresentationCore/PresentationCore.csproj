@@ -253,6 +253,7 @@
     <Compile Include="MS\Internal\IO\Packaging\PreloadedPackages.cs" />
     <Compile Include="MS\Internal\IO\Packaging\PseudoWebRequest.cs" />
     <Compile Include="MS\Internal\IO\Packaging\ResponseStream.cs" />
+    <Compile Include="MS\Internal\Media\PathBoolean.cs" />
     <Compile Include="MS\Internal\Media\PathFlattener.cs" />
     <Compile Include="MS\Internal\Media\PathStroker.cs" />
     <Compile Include="MS\Internal\Media\ParserStreamGeometryContext.cs" />

@@ -599,13 +599,14 @@ namespace System.Windows.Media
             double tolerance,
             ToleranceType type)
         {
-            // Off-Windows there is no milcore MilUtility_PathGeometryCombine (a full geometry boolean).
-            // Approximate with axis-aligned bounds arithmetic -- which is EXACT for the dominant case
-            // (rectangle-vs-rectangle Intersect, e.g. FrameworkElement layout clips used by popups) and
-            // a safe bounding-box approximation otherwise.
+            // Off Windows there is no MilUtility_PathGeometryCombine, so the boolean is computed here.
+            // What this replaced approximated each operand by the bounding rectangles of its figures,
+            // which was exact for rectangle Intersect (layout clips, the case it was written for) and
+            // silently wrong for every other shape.
             if (!OperatingSystem.IsWindows())
             {
-                return ManagedCombine(geometry1, geometry2, mode, transform);
+                return MS.Internal.Media.PathBoolean.Combine(
+                    geometry1, geometry2, mode, transform, AbsoluteTolerance(geometry1, tolerance, type));
             }
 
             PathGeometry resultGeometry = null;
@@ -662,154 +663,6 @@ namespace System.Windows.Media
 
             return resultGeometry;
         }
-
-        // Managed stand-in for MilUtility_PathGeometryCombine (off-Windows). Works on the SET of
-        // axis-aligned rectangles that make up each operand (one per figure) rather than a single
-        // merged bounding box, so multi-rectangle inputs keep their shape. This is exact for the
-        // callers that hit this path: text-selection highlights (a union of one rectangle per line —
-        // a single bounding box would cover unselected gaps and short-line tails) and FrameworkElement
-        // layout clips / viewport clips (rectangle Intersect). Arbitrary curved geometry is
-        // approximated by each figure's bounding rectangle. Never returns null.
-        private static PathGeometry ManagedCombine(Geometry geometry1, Geometry geometry2, GeometryCombineMode mode, Transform transform)
-        {
-            List<Rect> rects1 = DecomposeToRects(geometry1);
-            List<Rect> rects2 = DecomposeToRects(geometry2);
-
-            List<Rect> resultRects = new List<Rect>();
-            switch (mode)
-            {
-                case GeometryCombineMode.Union:
-                    resultRects.AddRange(rects1);
-                    resultRects.AddRange(rects2);
-                    break;
-
-                case GeometryCombineMode.Intersect:
-                    foreach (Rect a in rects1)
-                    {
-                        foreach (Rect b in rects2)
-                        {
-                            Rect r = Rect.Intersect(a, b);
-                            if (!r.IsEmpty)
-                            {
-                                resultRects.Add(r);
-                            }
-                        }
-                    }
-                    break;
-
-                default:
-                    // Exclude / Xor aren't produced by the off-Windows callers (selection + clips use
-                    // Union/Intersect); keep the first operand's rectangles as a safe approximation.
-                    resultRects.AddRange(rects1);
-                    break;
-            }
-
-            var pg = new PathGeometry();
-            foreach (Rect r in resultRects)
-            {
-                if (r.IsEmpty)
-                {
-                    continue;
-                }
-
-                var figure = new PathFigure { StartPoint = r.TopLeft, IsClosed = true };
-                figure.Segments.Add(new LineSegment(r.TopRight, true));
-                figure.Segments.Add(new LineSegment(r.BottomRight, true));
-                figure.Segments.Add(new LineSegment(r.BottomLeft, true));
-                pg.Figures.Add(figure);
-            }
-            if (transform != null && !transform.Value.IsIdentity)
-            {
-                pg.Transform = transform;
-            }
-            return pg;
-        }
-
-        // Breaks a geometry into the set of axis-aligned rectangles that bound each of its figures,
-        // in the geometry's FINAL coordinate space. GetAsPathGeometry() is fully managed (no milcore)
-        // but it emits figures in the geometry's LOCAL space and carries the geometry's transform on
-        // the returned PathGeometry.Transform (PathStreamGeometryContext does NOT bake it into the
-        // points). So we must apply that transform to each figure's bounds -- otherwise a translated
-        // clip rect (e.g. a layout slot clip whose RectangleGeometry has an offset MatrixTransform)
-        // lands in the wrong place and its Intersect with an un-transformed partner collapses to empty,
-        // which culls the clipped subtree (this blanked ComboBox/Menu popup content). The old code used
-        // geometry.Bounds, which already includes the transform.
-        private static List<Rect> DecomposeToRects(Geometry geometry)
-        {
-            var rects = new List<Rect>();
-            if (geometry == null)
-            {
-                return rects;
-            }
-
-            PathGeometry pg = geometry.GetAsPathGeometry();
-            if (pg?.Figures == null || pg.Figures.Count == 0)
-            {
-                Rect b = geometry.Bounds;   // Bounds already includes the geometry's transform.
-                if (!b.IsEmpty)
-                {
-                    rects.Add(b);
-                }
-                return rects;
-            }
-
-            Matrix xf = pg.Transform?.Value ?? Matrix.Identity;
-            foreach (PathFigure figure in pg.Figures)
-            {
-                Rect r = GetFigureBounds(figure);
-                if (r.IsEmpty)
-                {
-                    continue;
-                }
-
-                if (!xf.IsIdentity)
-                {
-                    r = Rect.Transform(r, xf);
-                }
-                rects.Add(r);
-            }
-            return rects;
-        }
-
-        // Bounding rectangle of a single figure from its defining points. Exact for polyline figures
-        // (rectangles/selection rects/clips); curve control points give a valid superset for the rest.
-        private static Rect GetFigureBounds(PathFigure figure)
-        {
-            if (figure == null)
-            {
-                return Rect.Empty;
-            }
-
-            Rect r = new Rect(figure.StartPoint, figure.StartPoint);
-            foreach (PathSegment seg in figure.Segments)
-            {
-                switch (seg)
-                {
-                    case LineSegment ls:
-                        r.Union(ls.Point);
-                        break;
-                    case PolyLineSegment pls:
-                        foreach (Point p in pls.Points) { r.Union(p); }
-                        break;
-                    case BezierSegment bs:
-                        r.Union(bs.Point1); r.Union(bs.Point2); r.Union(bs.Point3);
-                        break;
-                    case QuadraticBezierSegment qs:
-                        r.Union(qs.Point1); r.Union(qs.Point2);
-                        break;
-                    case PolyBezierSegment pbs:
-                        foreach (Point p in pbs.Points) { r.Union(p); }
-                        break;
-                    case PolyQuadraticBezierSegment pqs:
-                        foreach (Point p in pqs.Points) { r.Union(p); }
-                        break;
-                    case ArcSegment arc:
-                        r.Union(arc.Point);
-                        break;
-                }
-            }
-            return r;
-        }
         #endregion Combine
 
         /// <summary>
@@ -846,8 +699,8 @@ namespace System.Windows.Media
                         _bounds = GetPathBoundsAsRB(
                             GetPathGeometryData(),
                             null,   // pen
-                            Matrix.Identity, 
-                            StandardFlatteningTolerance, 
+                            Matrix.Identity,
+                            StandardFlatteningTolerance,
                             ToleranceType.Absolute,
                             false);  // Do not skip non-fillable figures
 
