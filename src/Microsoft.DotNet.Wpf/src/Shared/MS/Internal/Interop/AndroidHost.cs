@@ -29,6 +29,7 @@ using Android.Runtime;
 using Android.Graphics;
 using Android.Views;
 using Android.Views.InputMethods;
+using Android.OS;
 using Android.Widget;
 
 namespace MS.Internal.Interop;
@@ -134,6 +135,19 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
     // A SurfaceView is not a text editor, so Android never offers it the soft keyboard and nothing
     // can be typed into a WPF TextBox. These two overrides are the whole contract for opting in:
     // say yes to being an editor, and hand back an InputConnection for the input method to talk to.
+
+    // Android only asks for this when an accessibility service is actually bound, so it doubles as
+    // the "a screen reader exists" signal -- the role WM_GETOBJECT plays on Windows.
+    public override Android.Views.Accessibility.AccessibilityNodeProvider? AccessibilityNodeProvider
+    {
+        get
+        {
+            AndroidAccessibility.Attach();
+            return _a11yProvider ??= new WpfAccessibilityNodeProvider(this, _wpfHandle);
+        }
+    }
+
+    private WpfAccessibilityNodeProvider? _a11yProvider;
 
     public override bool OnCheckIsTextEditor() => true;
 
@@ -335,7 +349,142 @@ internal sealed class WpfInputConnection : BaseInputConnection
     }
 }
 
-internal sealed class AndroidHost : IAndroidHost
+/// <summary>
+/// TalkBack's view of a WPF window.
+///
+/// A SurfaceView draws everything itself, so to an accessibility service it is one opaque
+/// rectangle. Android.Views.Accessibility.AccessibilityNodeProvider is Android's answer to exactly that: the view publishes a
+/// tree of VIRTUAL nodes addressed by integer id, which is a direct fit for the automation tree.
+///
+/// Node data arrives from WindowsBase as one JSON string per node rather than a dozen property
+/// calls, because each of those would be a separate JNI transition and TalkBack walks whole
+/// subtrees at a time.
+/// </summary>
+internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility.AccessibilityNodeProvider
+{
+    private readonly View _view;
+    private readonly IntPtr _handle;
+
+    public WpfAccessibilityNodeProvider(View view, IntPtr handle)
+    {
+        _view = view;
+        _handle = handle;
+    }
+
+    public override Android.Views.Accessibility.AccessibilityNodeInfo? CreateAccessibilityNodeInfo(int virtualViewId)
+    {
+        // HOST_VIEW_ID is the view itself: it reports the WPF root as its only child, and is not
+        // an accessible element in its own right.
+        if (virtualViewId == AndroidAccessibility.HostViewId)
+        {
+            Android.Views.Accessibility.AccessibilityNodeInfo host = Android.Views.Accessibility.AccessibilityNodeInfo.Obtain(_view)!;
+            _view.OnInitializeAccessibilityNodeInfo(host);
+
+            int r = AndroidAccessibility.GetRootId(_handle);
+            if (r != AndroidAccessibility.InvalidNode) host.AddChild(_view, r);
+            return host;
+        }
+
+        string json = AndroidAccessibility.GetNodeJson(virtualViewId);
+        if (string.IsNullOrEmpty(json)) return null;   // the node is gone; Android expects null
+
+        Android.Views.Accessibility.AccessibilityNodeInfo info = Android.Views.Accessibility.AccessibilityNodeInfo.Obtain(_view, virtualViewId)!;
+        var n = new NodeJson(json);
+
+        info.PackageName = _view.Context?.PackageName;
+        info.ClassName = n.Str("cls");
+        info.ContentDescription = n.Str("name");
+        info.Enabled = n.Int("en") != 0;
+        info.Focusable = n.Int("fo") != 0;
+        info.Checkable = n.Int("ck") != 0;
+        info.Checked = n.Int("chk") != 0;
+        info.Selected = n.Int("sel") != 0;
+        info.VisibleToUser = true;
+
+        string text = n.Str("text");
+        if (text.Length != 0) info.Text = text;
+
+        var bounds = new Android.Graphics.Rect(n.Int("x"), n.Int("y"),
+                                               n.Int("x") + n.Int("w"), n.Int("y") + n.Int("h"));
+        info.SetBoundsInScreen(bounds);
+
+        int actions = n.Int("act");
+        if ((actions & 1) != 0) { info.Clickable = true; info.AddAction(Android.Views.Accessibility.Action.Click); }
+        if ((actions & 2) != 0) info.AddAction(Android.Views.Accessibility.Action.Expand);
+        if ((actions & 4) != 0) info.AddAction(Android.Views.Accessibility.Action.Collapse);
+        info.AddAction(Android.Views.Accessibility.Action.AccessibilityFocus);
+
+        int parent = AndroidAccessibility.GetParentId(virtualViewId);
+        if (parent == AndroidAccessibility.InvalidNode) info.SetParent(_view);
+        else info.SetParent(_view, parent);
+
+        foreach (int child in AndroidAccessibility.GetChildIds(virtualViewId))
+        {
+            info.AddChild(_view, child);
+        }
+
+        return info;
+    }
+
+    public override bool PerformAction(int virtualViewId, [GeneratedEnum] Android.Views.Accessibility.Action action, Bundle? arguments)
+    {
+        int kind = action switch
+        {
+            Android.Views.Accessibility.Action.Click => 0,
+            Android.Views.Accessibility.Action.AccessibilityFocus => 1,
+            Android.Views.Accessibility.Action.Focus => 1,
+            Android.Views.Accessibility.Action.Expand => 2,
+            Android.Views.Accessibility.Action.Collapse => 3,
+            _ => -1,
+        };
+
+        return kind >= 0 && AndroidAccessibility.PerformAction(virtualViewId, kind, null);
+    }
+
+    /// <summary>
+    /// A minimal reader for the flat, machine-generated JSON WindowsBase sends. Deliberately not
+    /// System.Text.Json: this runs on the Android head where the linker is aggressive, the shape is
+    /// fixed and known, and the dependency would have to survive trimming for no benefit.
+    /// </summary>
+    private readonly struct NodeJson
+    {
+        private readonly string _json;
+        public NodeJson(string json) { _json = json; }
+
+        public string Str(string key)
+        {
+            int i = _json.IndexOf("\"" + key + "\":\"", StringComparison.Ordinal);
+            if (i < 0) return string.Empty;
+            i += key.Length + 4;
+
+            var sb = new System.Text.StringBuilder();
+            for (; i < _json.Length && _json[i] != '"'; i++)
+            {
+                if (_json[i] == '\\' && i + 1 < _json.Length)
+                {
+                    i++;
+                    sb.Append(_json[i] switch { 'n' => '\n', 'r' => '\r', 't' => '\t', var c => c });
+                }
+                else sb.Append(_json[i]);
+            }
+            return sb.ToString();
+        }
+
+        public int Int(string key)
+        {
+            int i = _json.IndexOf("\"" + key + "\":", StringComparison.Ordinal);
+            if (i < 0) return 0;
+            i += key.Length + 3;
+
+            int end = i;
+            while (end < _json.Length && (char.IsDigit(_json[end]) || _json[end] == '-' || _json[end] == '.')) end++;
+            return double.TryParse(_json.AsSpan(i, end - i), System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out double d) ? (int)d : 0;
+        }
+    }
+}
+
+internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost
 {
     private readonly Activity _activity;
     private readonly FrameLayout _root;
@@ -407,6 +556,12 @@ internal sealed class AndroidHost : IAndroidHost
         lp.Width = width;
         lp.Height = height;
         view.LayoutParameters = lp;
+    }
+
+    public void InvalidateAccessibilityNode(IntPtr handle, int nodeId)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+        view.SendAccessibilityEvent(Android.Views.Accessibility.EventTypes.WindowContentChanged);
     }
 
     public void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password)

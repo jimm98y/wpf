@@ -51,7 +51,11 @@ public class MainActivity : Activity
         var root = new FrameLayout(this);
         SetContentView(root);
 
-        AndroidWindow.Host = new AndroidHost(this, root);
+        var host = new AndroidHost(this, root);
+        AndroidWindow.Host = host;
+        // The same object serves accessibility; a separate interface so heads that do not want it
+        // are not forced to implement it.
+        AndroidAccessibility.Host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's
         // real content size rather than a zero one.

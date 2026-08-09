@@ -191,6 +191,24 @@ namespace MS.Internal.Interop
             public int Y { get { throw null; } }
         }
     }
+    public static partial class AndroidAccessibility
+    {
+        public const int HostViewId = -1;
+        public const int InvalidNode = -1;
+        public static MS.Internal.Interop.IAndroidAccessibilityHost Host { get { throw null; } set { } }
+        public static void Attach() { }
+        public static int[] GetChildIds(int nodeId) { throw null; }
+        public static int GetFocusedId(System.IntPtr handle) { throw null; }
+        public static string GetNodeJson(int nodeId) { throw null; }
+        public static int GetParentId(int nodeId) { throw null; }
+        public static int GetRootId(System.IntPtr handle) { throw null; }
+        public static int HitTest(System.IntPtr handle, int screenX, int screenY) { throw null; }
+        public static bool PerformAction(int nodeId, int kind, string argument) { throw null; }
+    }
+    public partial interface IAndroidAccessibilityHost
+    {
+        void InvalidateAccessibilityNode(System.IntPtr handle, int nodeId);
+    }
     public partial interface IAndroidHost
     {
         double Density { get; }
