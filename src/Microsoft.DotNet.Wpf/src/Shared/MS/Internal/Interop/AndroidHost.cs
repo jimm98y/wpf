@@ -256,12 +256,61 @@ internal static class WpfInput
         };
         if (kind < 0) return false;
 
-        // A press must be preceded by a move so WPF's mouse position is current before the
-        // button-down lands; AndroidWindow does not synthesize it, because a real mouse (below)
-        // does not need it.
-        if (kind == 1) AndroidWindow.NotifyTouch(handle, 0, (int)e.GetX(), (int)e.GetY());
-        AndroidWindow.NotifyTouch(handle, kind, (int)e.GetX(), (int)e.GetY());
+        // ---- the mouse, from the primary pointer ----
+        //
+        // Unchanged, and still needed: a TouchDevice raises Touch events and drives Manipulation but
+        // does not promote itself to the mouse, so without this a tap would stop clicking buttons.
+        // Only the FIRST pointer does it -- a second finger must not drag the cursor.
+        bool primaryChanged = e.ActionMasked != MotionEventActions.PointerDown
+                           && e.ActionMasked != MotionEventActions.PointerUp;
+        if (primaryChanged)
+        {
+            // A press must be preceded by a move so WPF's mouse position is current before the
+            // button-down lands; AndroidWindow does not synthesize it, because a real mouse (below)
+            // does not need it.
+            if (kind == 1) AndroidWindow.NotifyTouch(handle, 0, (int)e.GetX(), (int)e.GetY());
+            AndroidWindow.NotifyTouch(handle, kind, (int)e.GetX(), (int)e.GetY());
+        }
+
+        // ---- the contacts, all of them ----
+        //
+        // A MotionEvent carries every pointer currently down, so which one this event is ABOUT
+        // matters: a down or up names its pointer through ActionIndex and says nothing about the
+        // others, while a move carries a fresh position for all of them at once. Treating the whole
+        // batch as one contact is what limited this head to a single finger.
+        if (e.ActionMasked == MotionEventActions.Cancel)
+        {
+            for (int i = 0; i < e.PointerCount; i++)
+            {
+                AndroidWindow.NotifyTouchContact(handle, 3, e.GetPointerId(i), 0, 0, -1);
+            }
+        }
+        else if (kind == 0)
+        {
+            for (int i = 0; i < e.PointerCount; i++)
+            {
+                ReportContact(handle, 0, e, i);
+            }
+        }
+        else
+        {
+            ReportContact(handle, kind, e, e.ActionIndex);
+        }
+
         return true;
+    }
+
+    /// <summary>Reports the pointer at <paramref name="index"/> within the event.</summary>
+    private static void ReportContact(IntPtr handle, int kind, MotionEvent e, int index)
+    {
+        // Pressure is real on a stylus and mostly a constant 1.0 from a finger digitizer. Reported
+        // as unknown for a finger rather than as a fabricated 1.0, so StylusPoint.PressureFactor
+        // does not claim a measurement nobody made.
+        bool isStylus = e.GetToolType(index) == MotionEventToolType.Stylus;
+        double pressure = isStylus ? e.GetPressure(index) : -1;
+
+        AndroidWindow.NotifyTouchContact(handle, kind, e.GetPointerId(index),
+                                         (int)e.GetX(index), (int)e.GetY(index), pressure);
     }
 
     public static bool OnGenericMotion(IntPtr handle, MotionEvent? e)

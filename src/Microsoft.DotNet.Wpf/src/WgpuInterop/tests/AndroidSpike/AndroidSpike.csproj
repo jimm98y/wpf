@@ -81,6 +81,12 @@
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <!-- The REAL assembly, not the WindowsDesktop reference: mono-aot-cross reads signatures out of
+         it while compiling PresentationCore, and a reference assembly answers with the wrong
+         identity. Without it the AOT compiler does not fail cleanly, it SEGFAULTS (exit 139) part
+         way through PresentationCore, which is why this closure has to match the gallery's rather
+         than merely be "enough to compile". See WpfStageAotResolvableRefs below. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
     <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
@@ -102,6 +108,60 @@
     <Reference Include="Accessibility">              <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath></Reference>
     <Reference Include="System.Windows.Primitives">  <HintPath>$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll</HintPath></Reference>
     <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
   </ItemGroup>
+
+  <!--
+    Keep the Windows-only shim assemblies out of AOT.
+
+    The authoritative copy of this is WpfWebGpuExcludeWindowsShimsFromAot in the packaged SDK
+    (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets), and WpfGalleryAndroid.csproj carries the same repeat for the
+    same reason: this project references the fork by PATH rather than through that SDK, so it has to
+    do the work itself.
+
+    mono-aot-cross has to RESOLVE every reference in an assembly it compiles, and this closure is
+    full of edges that only exist on Windows: PresentationUI names System.Windows.Forms,
+    System.Private.Windows.Core names System.Formats.Nrbf, and so on. Those reference assemblies are
+    here to satisfy the compiler, not to run, so AOT fails on them ("Could not load file or assembly
+    ... System.Windows.Forms") and takes the whole build with it. Nothing on an Android code path
+    reaches any of them.
+
+    Excluding an assembly from AOT is not excluding it from the app: it ships as IL and Mono runs it
+    under the JIT if anything ever does call into it.
+  -->
+  <Target Name="WpfExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Put System.Formats.Nrbf where mono-aot-cross can find it. PresentationCore's DataObject
+    serialisation path names the type, so AOT has to resolve the assembly to read a signature while
+    compiling PresentationCore even though nothing on Android calls it. mono-aot-cross has no
+    search-path option and resolves beside the assembly it is compiling, so the reference assembly is
+    staged into linked/ for it to find. See the same target in WpfGalleryAndroid.csproj.
+  -->
+  <Target Name="WpfStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation">
+    <ItemGroup>
+      <_WpfAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true" Condition="'@(_WpfAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
 
 </Project>

@@ -497,6 +497,58 @@ namespace MS.Internal.Interop
         /// <see cref="TouchMessage"/>: 0 = move (ACTION_MOVE), 1 = press (ACTION_DOWN),
         /// 2 = release (ACTION_UP / ACTION_CANCEL).
         /// </summary>
+        /// <summary>
+        ///  Reports one CONTACT -- one finger or pen tip of a possibly multi-touch gesture -- to
+        ///  WPF's touch stack.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   Separate from <see cref="NotifyTouch"/>, and additional to it rather than replacing it.
+        ///   A TouchDevice raises the Touch events and drives Manipulation but does NOT promote
+        ///   itself to the mouse, so a head that reported contacts alone would gain pinch and lose
+        ///   Button.Click. The host therefore keeps driving the mouse from the primary pointer and
+        ///   reports every pointer here as well.
+        ///  </para>
+        ///  <para>
+        ///   Coordinates arrive view-relative, as Android reports them, and the seam wants SCREEN
+        ///   device pixels -- so the client origin is added here, which is exactly what
+        ///   PlatformTouchDevice subtracts on the way back out.
+        ///  </para>
+        /// </remarks>
+        /// <param name="kind">0 = move, 1 = down, 2 = up, 3 = cancel.</param>
+        /// <param name="pressure">0..1 from the digitizer, or negative where it reports none.</param>
+        public static void NotifyTouchContact(IntPtr handle, int kind, int contactId,
+                                              int xPixels, int yPixels, double pressure)
+        {
+            // Never let a managed exception unwind into the Java frame that delivered this.
+            try
+            {
+                IPlatformTouchSink sink = PlatformTouch.Sink;
+                if (sink is null) return;
+
+                int screenX = xPixels, screenY = yPixels;
+                if (s_byHandle.TryGetValue(handle, out AndroidWindow window))
+                {
+                    window.GetClientScreenOriginPixels(out int originX, out int originY);
+                    screenX += originX;
+                    screenY += originY;
+                }
+
+                uint timestamp = (uint)Environment.TickCount;
+                switch (kind)
+                {
+                    case 1: sink.TouchDown(handle, contactId, screenX, screenY, pressure, timestamp); break;
+                    case 0: sink.TouchMove(handle, contactId, screenX, screenY, pressure, timestamp); break;
+                    case 2: sink.TouchUp(handle, contactId, screenX, screenY, timestamp); break;
+                    case 3: sink.TouchCancel(handle, contactId); break;
+                }
+            }
+            catch
+            {
+                // Same contract as NotifyTouch: a managed failure must not reach the Java frame.
+            }
+        }
+
         public static void NotifyTouch(IntPtr handle, int kind, int xPixels, int yPixels)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
