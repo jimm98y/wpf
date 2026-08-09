@@ -45,6 +45,23 @@ namespace Wpf.Input.Tests
         private static Dispatcher? s_dispatcher;
         private static readonly object s_gate = new object();
 
+        /// <summary>
+        /// Adopts a dispatcher owned by another thread instead of creating one.
+        /// </summary>
+        /// <remarks>
+        /// Called by the entry point on macOS, where AppKit aborts the process if a window is
+        /// created anywhere but the PROCESS MAIN THREAD -- and the test runner does not run tests
+        /// there. Program.Main keeps the main thread pumping and hands its dispatcher here, so every
+        /// UiThread.Invoke lands on the one thread Cocoa will accept a window from.
+        /// </remarks>
+        public static void UseDispatcher(Dispatcher dispatcher)
+        {
+            lock (s_gate)
+            {
+                s_dispatcher = dispatcher;
+            }
+        }
+
         private static Dispatcher Dispatcher
         {
             get
@@ -142,7 +159,16 @@ namespace Wpf.Input.Tests
                     ShowInTaskbar = false,
                 };
                 window.Show();
-                window.Activate();
+
+                // Activate is SetForegroundWindow, which is user32 and therefore Windows only. It
+                // matters for the suites that inject into the OS pointer queue -- those contacts
+                // hit-test against whatever window is frontmost -- and not at all for the ones that
+                // call the platform touch seam directly, which is the only kind that can run
+                // anywhere else.
+                if (OperatingSystem.IsWindows())
+                {
+                    window.Activate();
+                }
 
                 var probe = new InputWindow(window, surface);
                 probe.Pump(TimeSpan.FromMilliseconds(200));

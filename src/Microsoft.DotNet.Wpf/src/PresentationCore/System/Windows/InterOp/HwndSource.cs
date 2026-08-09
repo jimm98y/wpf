@@ -353,6 +353,16 @@ namespace System.Windows.Interop
                 // it, and matches where the Windows registration happens.
                 LinuxDropTarget.Install();
             }
+
+            // Touch, for every head whose backend has a digitizer to report from. Installed on the
+            // same occasion and for the same reason as the drop target above: it is a seam the
+            // backend calls into rather than a per-window registration, an app that never opens a
+            // window never pays for it, and until it exists PlatformTouch.IsAvailable is false and a
+            // backend keeps synthesizing mouse input instead. Windows keeps its own WM_POINTER path.
+            if (!OperatingSystem.IsWindows())
+            {
+                PlatformTouchSink.Install();
+            }
         }
 
         /// <summary>

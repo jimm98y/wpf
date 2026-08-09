@@ -568,6 +568,7 @@
     <Compile Include="System\Windows\Input\Touch.cs" />
     <Compile Include="System\Windows\Input\TouchAction.cs" />
     <Compile Include="System\Windows\Input\TouchDevice.cs" />
+    <Compile Include="System\Windows\Input\PlatformTouchDevice.cs" />
     <Compile Include="System\Windows\Input\TouchesCapturedWithinProperty.cs" />
     <Compile Include="System\Windows\Input\TouchesOverProperty.cs" />
     <Compile Include="System\Windows\Input\TouchEventArgs.cs" />
