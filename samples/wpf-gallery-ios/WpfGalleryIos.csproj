@@ -107,7 +107,7 @@
     <Reference Include="DirectWriteForwarder">       <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
     <Reference Include="ReachFramework">             <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
     <Reference Include="PresentationUI">             <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
-    <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath></Reference>
     <Reference Include="UIAutomationTypes">          <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
     <Reference Include="UIAutomationProvider">       <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
     <!-- Theme dictionaries: the gallery sets ThemeMode.System, which loads the Fluent theme. -->

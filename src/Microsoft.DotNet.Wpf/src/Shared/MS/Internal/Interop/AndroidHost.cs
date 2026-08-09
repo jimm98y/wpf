@@ -484,7 +484,98 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
     }
 }
 
-internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost
+
+/// <summary>
+/// Hands an already-rendered PDF to Android's print framework.
+///
+/// PrintDocumentAdapter is a Java abstract class, so it has to live here in the head payload rather
+/// than in WindowsBase, exactly as WpfAccessibilityNodeProvider does and for the same reason: unlike
+/// iOS, a Java subclass cannot be conjured through the runtime, because it is bytecode.
+///
+/// The framework's model is a callback one: it asks for a layout, then asks for the pages to be
+/// written to a file descriptor, and may ask again whenever the user changes paper or range in the
+/// print UI. This adapter renders NOTHING on demand -- it holds bytes that were rendered before the
+/// UI opened. That is not laziness: rendering walks a WPF visual tree, which has thread affinity,
+/// and onWrite arrives on a binder thread.
+///
+/// The consequence, and it is a real limitation: changing the paper size in the print UI re-lays out
+/// nothing, because the document was paginated for the size the app chose. Android scales the pages
+/// to fit instead.
+/// </summary>
+internal sealed class WpfPrintDocumentAdapter : Android.Print.PrintDocumentAdapter
+{
+    private readonly string _jobName;
+    private readonly byte[] _document;
+    private readonly Android.Print.PrintAttributes.MediaSize _mediaSize;
+
+    internal WpfPrintDocumentAdapter(string jobName, byte[] document, Android.Print.PrintAttributes.MediaSize mediaSize)
+    {
+        _jobName = jobName;
+        _document = document;
+        _mediaSize = mediaSize;
+    }
+
+    public override void OnLayout(Android.Print.PrintAttributes? oldAttributes,
+                                  Android.Print.PrintAttributes? newAttributes,
+                                  Android.OS.CancellationSignal? cancellationSignal,
+                                  LayoutResultCallback? callback,
+                                  Android.OS.Bundle? extras)
+    {
+        if (cancellationSignal?.IsCanceled == true)
+        {
+            callback?.OnLayoutCancelled();
+            return;
+        }
+
+        var info = new Android.Print.PrintDocumentInfo.Builder(_jobName)
+            .SetContentType(Android.Print.PrintContentType.Document)!
+            .SetPageCount(Android.Print.PrintDocumentInfo.PageCountUnknown)!
+            .Build();
+
+        // "true" says the content changed since the last layout. Saying false when it did not lets
+        // Android skip re-writing the pages, but the document here never changes, so the honest and
+        // cheap answer is that the first layout is a change and later ones are not.
+        callback?.OnLayoutFinished(info, oldAttributes == null);
+    }
+
+    public override void OnWrite(Android.Print.PageRange[]? pages,
+                                 Android.OS.ParcelFileDescriptor? destination,
+                                 Android.OS.CancellationSignal? cancellationSignal,
+                                 WriteResultCallback? callback)
+    {
+        if (destination == null)
+        {
+            callback?.OnWriteFailed("no destination");
+            return;
+        }
+
+        try
+        {
+            using (var output = new Android.OS.ParcelFileDescriptor.AutoCloseOutputStream(destination))
+            {
+                output.Write(_document, 0, _document.Length);
+                output.Flush();
+            }
+
+            if (cancellationSignal?.IsCanceled == true)
+            {
+                callback?.OnWriteCancelled();
+                return;
+            }
+
+            // The whole document, whatever range was asked for. Android renders the PDF itself and
+            // extracts the requested pages from it, so writing everything is correct and is what the
+            // platform's own PdfDocument-based samples do.
+            callback?.OnWriteFinished(new[] { Android.Print.PageRange.AllPages! });
+        }
+        catch (Java.IO.IOException e)
+        {
+            callback?.OnWriteFailed(e.Message);
+        }
+    }
+}
+
+internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost
 {
     private readonly Activity _activity;
     private readonly FrameLayout _root;
@@ -495,6 +586,35 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost
     private Action? _tick;
     private bool _paused;
     private bool _posted;
+
+    /// <summary>
+    /// Puts Android's system print UI up with a rendered document. Must run on the UI thread, which
+    /// is where a print request from WPF already is.
+    /// </summary>
+    public bool Print(string jobName, byte[] document, double pageWidth, double pageHeight)
+    {
+        if (document == null || document.Length == 0) return false;
+
+        var manager = (Android.Print.PrintManager?)_activity.GetSystemService(Context.PrintService);
+        if (manager == null) return false;
+
+        // Android states media sizes in THOUSANDTHS OF AN INCH; WPF measures in 96ths. A page that
+        // comes out at 96/1000 of its size is what happens when this conversion is missed.
+        int milsWide = (int)Math.Round(pageWidth / 96.0 * 1000.0);
+        int milsHigh = (int)Math.Round(pageHeight / 96.0 * 1000.0);
+
+        var media = new Android.Print.PrintAttributes.MediaSize("wpf-page", "Document", milsWide, milsHigh);
+
+        var attributes = new Android.Print.PrintAttributes.Builder()
+            .SetMediaSize(media)!
+            .SetResolution(new Android.Print.PrintAttributes.Resolution("wpf", "WPF", 300, 300))!
+            .SetMinMargins(Android.Print.PrintAttributes.Margins.NoMargins!)!
+            .Build();
+
+        var adapter = new WpfPrintDocumentAdapter(jobName, document, media);
+        manager.Print(jobName, adapter, attributes);
+        return true;
+    }
 
     public AndroidHost(Activity activity, FrameLayout root)
     {

@@ -432,3 +432,59 @@ function pushKey(isDown, e) {
     if (isDown && !e.metaKey && e.key !== "F5" && e.key !== "F12")
         e.preventDefault();
 }
+
+// ---- printing ---------------------------------------------------------------------------------
+
+/// Prints a rendered PDF through the browser's own print preview.
+///
+/// The document goes into a HIDDEN IFRAME and that frame is printed, rather than calling
+/// window.print() on the page. The difference is the whole point: this app's page is one canvas, so
+/// printing the page would produce a screenshot of the window at screen resolution, clipped to the
+/// viewport, with none of the pagination the application just did. Printing the frame prints the
+/// PDF, which is what the pages actually are.
+///
+/// Returns whether the preview was OPENED. Whether the user then printed, saved to PDF or cancelled
+/// is not observable: window.print() returns nothing and reports nothing.
+export function printDocument(jobName, bytes) {
+    try {
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+
+        // A previous job's frame is removed first. Leaving them accumulates an iframe and a blob URL
+        // per print, and a blob URL pins its data in memory until it is revoked.
+        const existing = document.getElementById("wpf-print-frame");
+        if (existing) {
+            if (existing.dataset.url) URL.revokeObjectURL(existing.dataset.url);
+            existing.remove();
+        }
+
+        const frame = document.createElement("iframe");
+        frame.id = "wpf-print-frame";
+        frame.dataset.url = url;
+        frame.title = jobName || "";
+
+        // Not display:none. A frame that is not laid out is not rendered, and a frame that is not
+        // rendered has nothing to print -- Safari and Firefox both produce a blank job. Off-screen
+        // and zero-opacity keeps it laid out and invisible.
+        frame.style.cssText =
+            "position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;border:0;";
+
+        frame.onload = () => {
+            try {
+                // focus() first: without it Chrome prints the PARENT document, because print() acts
+                // on the focused frame rather than on the one it was called through.
+                frame.contentWindow.focus();
+                frame.contentWindow.print();
+            } catch (e) {
+                console.warn("WPF print failed:", e);
+            }
+        };
+
+        frame.src = url;
+        document.body.appendChild(frame);
+        return true;
+    } catch (e) {
+        console.warn("WPF print could not start:", e);
+        return false;
+    }
+}

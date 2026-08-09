@@ -56,6 +56,7 @@ public class MainActivity : Activity
         // The same object serves accessibility; a separate interface so heads that do not want it
         // are not forced to implement it.
         AndroidAccessibility.Host = host;
+        AndroidPrint.Host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's
         // real content size rather than a zero one.

@@ -54,6 +54,12 @@
          cycle-breaking projects, DirectWriteForwarderStub and WgpuInterop. -->
     <_Proj Include="$(_Src)PresentationFramework/PresentationFramework.csproj" />
 
+    <!-- The real managed System.Printing. Built AFTER PresentationFramework because it references
+         ReachFramework, which that build produces; the reverse direction goes through System.Printing's
+         reference assembly, which is what keeps this from being a cycle. Its output replaces the
+         sixteen-line cycle-breaker that used to ship as System.Printing.dll. -->
+    <_Proj Include="$(_Src)System.Printing/managed/System.Printing.Managed.csproj" />
+
     <!-- Loaded by name at runtime rather than referenced, so they are NOT transitive.
          Leaving them out is how you end up running yesterday's theme. -->
     <_Proj Include="$(_Src)Themes/PresentationFramework.Fluent/PresentationFramework.Fluent.csproj" />
@@ -130,8 +136,8 @@
     an assembly whose inputs did not change, so editing ReachFramework and rebuilding everything left
     PresentationCore.dll older than the edit and every suite refusing to run.
 
-    A stamp says what the check actually wants to know -- when did a build last complete -- rather
-    than inferring it from one artifact that may legitimately not have been touched.
+    A stamp says what the check actually wants to know (when did a build last complete) rather than
+    inferring it from one artifact that may legitimately not have been touched.
   -->
   <Target Name="Stamp">
     <Touch Files="$(RepoRoot)artifacts/bin/.fork-build-stamp" AlwaysCreate="true" />

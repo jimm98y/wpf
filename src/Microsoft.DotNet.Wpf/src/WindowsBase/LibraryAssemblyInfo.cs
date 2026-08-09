@@ -10,3 +10,9 @@ using System.Runtime.CompilerServices;
 // (PlatformClipboard) are internal to this assembly. Same PublicKey as WindowsBase.Tests above: the
 // repo signs with the ECMA open key, and a strong-named assembly only accepts strong-named friends.
 [assembly: InternalsVisibleTo("Wpf.Platform.Tests, PublicKey=00000000000000000400000000000000")]
+
+// The cross-platform printing tests (tests/CrossPlatform/Wpf.Printing.Tests). They install a stand-in
+// print backend through PlatformPrint, which is the only way to exercise the printing stack on a
+// machine that has no printers -- and the only way to assert on what a backend is HANDED, which is
+// where the interesting mistakes are.
+[assembly: InternalsVisibleTo("Wpf.Printing.Tests, PublicKey=00000000000000000400000000000000")]

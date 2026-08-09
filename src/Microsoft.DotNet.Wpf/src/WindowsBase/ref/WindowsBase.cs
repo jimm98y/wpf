@@ -205,9 +205,17 @@ namespace MS.Internal.Interop
         public static int HitTest(System.IntPtr handle, int screenX, int screenY) { throw null; }
         public static bool PerformAction(int nodeId, int kind, string argument) { throw null; }
     }
+    public static partial class AndroidPrint
+    {
+        public static MS.Internal.Interop.IAndroidPrintHost Host { get { throw null; } set { } }
+    }
     public partial interface IAndroidAccessibilityHost
     {
         void InvalidateAccessibilityNode(System.IntPtr handle, int nodeId);
+    }
+    public partial interface IAndroidPrintHost
+    {
+        bool Print(string jobName, byte[] document, double pageWidth, double pageHeight);
     }
     public partial interface IAndroidHost
     {

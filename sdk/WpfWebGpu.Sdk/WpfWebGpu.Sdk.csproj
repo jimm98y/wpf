@@ -73,14 +73,19 @@
     <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
     <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
 
-    <!-- Desktop flavor extras: api-cycle System.Printing + the cross-platform SystemEvents/Registry shims. -->
-    <None Include="$(WpfBin)System.Printing-PresentationFramework-api-cycle/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <!-- Desktop flavor extras: the real managed System.Printing + the cross-platform SystemEvents/Registry shims. -->
+    <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
 
-    <!-- Browser flavor: JS-interop WebGPU + the fuller System.Printing-ref + Accessibility ref. -->
+    <!-- Browser flavor: JS-interop WebGPU + Accessibility ref. System.Printing is the same real
+         assembly the desktop flavor gets; the contract-only reference assembly used to ship here
+         because mono-wasm resolves XpsDocumentWriter EAGERLY while setting up DocumentViewerBase and
+         the desktop cycle-breaker did not have the type at all. The real one has it, so both flavors
+         can now use the same assembly and printing works in the browser rather than silently doing
+         nothing (XpsDocumentWriter.Write was an empty method body in the ref). -->
     <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')" />
-    <None Include="$(WpfBin)System.Printing-ref/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(WpfBin)System.Printing-ref/Release/net10.0/System.Printing.dll')" />
+    <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/$(WindowsDesktopRefVersion)/ref/net10.0/Accessibility.dll')" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
