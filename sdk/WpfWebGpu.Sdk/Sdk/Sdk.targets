@@ -71,7 +71,7 @@
       <Private>true</Private>
     </Reference>
     <!-- WebGPU native only (wgpu_native and the ANGLE GL runtime) for win-arm64, copied next to the
-         app. WPF's own native DLLs are deliberately not here -- see WpfWebGpu.Sdk.csproj. -->
+         app. WPF's own native DLLs are deliberately not here — see WpfWebGpu.Sdk.csproj. -->
     <None Include="$(WpfWebGpuSdkRoot)native/win-arm64/*.dll"
           CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" Visible="false" />
     <!-- Support packages WPF needs off the WindowsDesktop framework reference. On Windows these
@@ -179,9 +179,9 @@
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/Selawik*.ttf"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/%(Filename)%(Extension)" Visible="false" />
     <!-- Noto Sans CJK: Japanese, both Chinese and Korean, as five separately-named families in one
-         collection. Unlike DejaVu and Liberation this is NOT a safe assumption on a Linux box --
+         collection. Unlike DejaVu and Liberation this is NOT a safe assumption on a Linux box —
          a desktop install without the CJK language packs has no font for these scripts at all, and
-         the text renders as boxes -- so it ships even though it is the largest asset in the bundle.
+         the text renders as boxes — so it ships even though it is the largest asset in the bundle.
          The families are named the way the .CompositeFont FamilyMaps expect ("Noto Sans CJK JP" and
          friends), so per-language selection keeps Japanese text in Japanese letterforms. -->
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/NotoSansCJK-Regular.ttc"
@@ -190,8 +190,8 @@
 
     <!-- A COLR/CPAL emoji face, for the same reason as the CJK collection above: the platforms do
          not supply one this renderer can draw. Colour glyphs are drawn from COLR layer outlines, and
-         the system emoji fonts are mostly a different format entirely -- Noto Color Emoji on Linux
-         and Android is CBDT/CBLC (colour bitmaps) and Apple Color Emoji is sbix -- neither of which
+         the system emoji fonts are mostly a different format entirely — Noto Color Emoji on Linux
+         and Android is CBDT/CBLC (colour bitmaps) and Apple Color Emoji is sbix — neither of which
          even loads as an outline font, so emoji rendered as nothing at all off Windows. Shipping one
          COLR face makes them render everywhere. See TwemojiMozilla-LICENSE.txt (CC-BY 4.0 artwork). -->
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/TwemojiMozilla.ttf"
@@ -348,7 +348,7 @@
           DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
     <ItemGroup>
       <!-- .ttc as well as .ttf: the CJK font is an OpenType COLLECTION (five language families in
-           one file), and a *.ttf glob silently leaves it behind -- which looks exactly like the font
+           one file), and a *.ttf glob silently leaves it behind — which looks exactly like the font
            not existing, since the failure is missing glyphs rather than a build error. -->
       <_WpfWebGpuFonts Include="$(WpfWebGpuSdkRoot)web/fonts/*.ttf;$(WpfWebGpuSdkRoot)web/fonts/*.ttc" />
     </ItemGroup>
