@@ -304,16 +304,13 @@ namespace System.Windows.Xps.Printing
         /// Draws a glyph run as TEXT, through GDI's own text engine.
         ///
         /// The obvious alternative is to fill the outlines -- GlyphRun.BuildGeometry, one Fill, four
-        /// lines. It does not work here and cannot: GlyphTypeface.ComputeGlyphOutline is a
-        /// wpfgfx_cor3 entry point over a DirectWrite font face, and this port ships wpfgfx on no
-        /// platform, so asking for an outline throws DllNotFoundException. That is a hole in
-        /// PresentationCore rather than in printing -- GlyphRun.BuildGeometry and
-        /// FormattedText.BuildGeometry are public API and have the same problem -- and it is not
-        /// the print path's to close.
+        /// lines -- and that now works. It is still not what this does, because text drawn as text
+        /// stays text: the driver embeds the font and the printed page has selectable, searchable,
+        /// copyable words on it rather than several thousand filled paths. It is also what the
+        /// product's own GDI exporter did.
         ///
-        /// Going through GDI is the better answer anyway, and it is what the product's own GDI
-        /// exporter did. Text stays text: the driver embeds the font and the resulting page has
-        /// selectable, searchable, copyable words on it rather than several thousand filled paths.
+        /// Outlines are the fallback, and a good one, for the case below where GDI will not give us
+        /// the right face.
         ///
         /// The danger of drawing by glyph INDEX is that indices only mean anything against the
         /// exact font the run was shaped with. If GDI substitutes -- and it substitutes silently --
@@ -340,7 +337,16 @@ namespace System.Windows.Xps.Printing
             if (emSize < 0.5) return;                       // smaller than a device pixel
 
             GdiFont font = Font(glyphRun.GlyphTypeface, emSize);
-            if (font == null) return;
+
+            if (font == null || !font.Matches)
+            {
+                // GDI would give us a different face, and glyph INDICES against the wrong face are
+                // not wrong letters, they are garbage. Fill the outlines instead: the shapes are
+                // exactly the ones WPF measured and laid out, so the page matches the screen. The
+                // cost is only that this run's text is paths rather than characters.
+                Outline(glyphRun, color);
+                return;
+            }
 
             var world = new GdiNative.XFORM
             {
@@ -359,8 +365,7 @@ namespace System.Windows.Xps.Printing
 
             try
             {
-                if (font.Matches) DrawByIndex(glyphRun, scale);
-                else DrawByCharacter(glyphRun, scale);
+                DrawByIndex(glyphRun, scale);
             }
             finally
             {
@@ -449,25 +454,17 @@ namespace System.Windows.Xps.Printing
         }
 
         /// <summary>
-        /// The run's characters, when the font GDI gave us is not the one the run was shaped with.
+        /// The run as filled outlines, for when GDI will not select the face it was shaped with.
         ///
-        /// Indices would be meaningless against a substituted face, but characters are not: the
-        /// words come out right, in a font of the right family, at the right place on the page.
-        /// Kerning and ligatures are whatever the substitute does. It is a worse page than the
-        /// screen and a far better one than a blank space where a paragraph should be.
+        /// The shapes are read from the font file itself, so they are the ones WPF laid out --
+        /// right glyphs, right positions, right kerning -- and none of it depends on GDI agreeing
+        /// about which font this is. The page loses selectable text for this run and nothing else.
         /// </summary>
-        private void DrawByCharacter(GlyphRun glyphRun, double scale)
+        private void Outline(GlyphRun glyphRun, Color color)
         {
-            IList<char> characters = glyphRun.Characters;
-            if (characters == null || characters.Count == 0) return;
+            Geometry outlines = glyphRun.BuildGeometry();
 
-            var text = new char[characters.Count];
-            characters.CopyTo(text, 0);
-
-            Point origin = glyphRun.BaselineOrigin;
-
-            GdiNative.ExtTextOutString(_dc, Round(origin.X * scale), Round(origin.Y * scale),
-                                       0, IntPtr.Zero, new string(text), text.Length, null);
+            if (outlines != null && !outlines.IsEmpty()) Fill(outlines, color);
         }
 
         public void DrawImage(BitmapSource source, byte[] buffer, Rect rect)

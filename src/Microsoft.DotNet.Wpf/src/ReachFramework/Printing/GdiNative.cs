@@ -334,10 +334,6 @@ namespace System.Windows.Xps.Printing
         internal static extern bool ExtTextOut(IntPtr dc, int x, int y, uint options, IntPtr rect,
                                                ushort[] text, int count, int[] dx);
 
-        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "ExtTextOutW")]
-        internal static extern bool ExtTextOutString(IntPtr dc, int x, int y, uint options, IntPtr rect,
-                                                     string text, int count, int[] dx);
-
         [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true,
                    EntryPoint = "AddFontResourceExW")]
         internal static extern int AddFontResourceEx(string file, uint flags, IntPtr reserved);

@@ -163,21 +163,12 @@ namespace MS.Win32.PresentationCore
                 uint cbCmd
                 );
 
-            [DllImport(DllImport.MilCore)]
-            internal static extern unsafe int MilGlyphRun_GetGlyphOutline(
-                IntPtr pFontFace,
-                ushort glyphIndex, 
-                bool sideways, 
-                double renderingEmSize,
-                out byte* pPathGeometryData,
-                out UInt32 pSize,
-                out FillRule pFillRule
-                );
-
-            [DllImport(DllImport.MilCore)]
-            internal static extern unsafe int MilGlyphRun_ReleasePathGeometryData(
-                byte* pPathGeometryData
-                );
+            // MilGlyphRun_GetGlyphOutline and MilGlyphRun_ReleasePathGeometryData used to sit here.
+            // They were the only way to get a glyph's contours and they took a DirectWrite font
+            // face, so on a port that ships neither wpfgfx nor DirectWrite they could do nothing
+            // but throw -- which is what GlyphRun.BuildGeometry and FormattedText.BuildGeometry did
+            // on every platform. GlyphTypeface.ComputeGlyphOutline now reads 'glyf' and 'CFF '
+            // directly, in managed code, so there is nothing left to declare.
 
             [DllImport(DllImport.MilCore, EntryPoint = "MilCreateReversePInvokeWrapper")]
             internal static extern unsafe /*HRESULT*/ int MilCreateReversePInvokeWrapper(

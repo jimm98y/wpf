@@ -93,6 +93,9 @@ namespace MS.Internal.Text.TextInterface
             _sims = sims;
         }
 
+        /// <summary>The record this face was built from, so a Font can be made for the same file.</summary>
+        internal FaceRecord Record => _face;
+
         private OpenTypeFontData Data => _data ??= _face.GetData();
 
         public void Dispose() { }
@@ -156,6 +159,20 @@ namespace MS.Internal.Text.TextInterface
             for (uint i = 0; i < glyphCount; i++)
                 glyphIndices[i] = d.GlyphIndex(codePoints[i]);
         }
+
+        /// <summary>The em square in font units, which is what an outline's coordinates are in.</summary>
+        public ushort DesignUnitsPerEm => Data.UnitsPerEm;
+
+        /// <summary>
+        /// Writes a glyph's outline to the sink, in font units with y up.
+        ///
+        /// The managed replacement for MilGlyphRun_GetGlyphOutline, which was a wpfgfx entry point
+        /// over a DirectWrite font face and therefore threw on every platform this port supports.
+        /// False means the glyph has no outline at all -- a space, or any glyph of a bitmap-only
+        /// colour font -- which is a normal answer and not a failure.
+        /// </summary>
+        public bool TryGetGlyphOutline(ushort glyphIndex, Managed.IGlyphOutlineSink sink)
+            => Managed.GlyphOutlines.TryGetOutline(Data, glyphIndex, sink);
 
         public bool TryGetFontTable(OpenTypeTableTag openTypeTableTag, out byte[] tableData)
         {
@@ -306,7 +323,22 @@ namespace MS.Internal.Text.TextInterface
             return false;
         }
 
-        public Font GetFontFromFontFace(FontFace fontFace) => null;
+        /// <summary>
+        /// The Font for a face, including one that came from a file rather than from this
+        /// collection.
+        ///
+        /// Returning null here -- which is what it did -- broke GlyphTypeface(Uri) for every font,
+        /// not only ones outside the collection: Initialize assigns this to _font and then builds a
+        /// FontFaceLayoutInfo from it, so the constructor threw NullReferenceException. That is the
+        /// public API an application uses to load a font it ships with itself, which in WPF is an
+        /// ordinary thing to do -- a pack:// URI to a .ttf in the assembly.
+        ///
+        /// A face carries its own record, so this needs no lookup and works for a file the
+        /// collection has never seen.
+        /// </summary>
+        public Font GetFontFromFontFace(FontFace fontFace) => fontFace?.Record is FaceRecord record
+            ? new Font(record)
+            : null;
     }
 
     public sealed unsafe class FontFile : IDisposable

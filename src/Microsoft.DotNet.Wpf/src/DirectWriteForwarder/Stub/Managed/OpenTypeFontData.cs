@@ -98,6 +98,7 @@ namespace MS.Internal.Text.TextInterface.Managed
             ParseHmtx();
             ParseCmap();
             ParseName();
+            ParseOutlineTables();
         }
 
         // ---- big-endian helpers (absolute file offsets) ----
@@ -125,6 +126,79 @@ namespace MS.Internal.Text.TextInterface.Managed
         {
             if (_tables.TryGetValue(tag, out var t)) { offset = t.off; length = t.len; return true; }
             offset = 0; length = 0; return false;
+        }
+
+        // ---- glyph outlines ----
+        //
+        // The tables that describe glyph SHAPES, as opposed to the metrics and mappings everything
+        // above parses. Read lazily and kept as positions: 'glyf' of a CJK font is megabytes, and
+        // most of a font's glyphs are never drawn.
+
+        /// <summary>The whole font file. Outline readers index into it rather than copying tables out.</summary>
+        public byte[] Raw => _data;
+
+        /// <summary>Whether this font has quadratic outlines. False for CFF and for bitmap-only faces.</summary>
+        public bool HasGlyfOutlines => _glyfOffset >= 0 && _locaOffset >= 0;
+
+        private int _glyfOffset = -1;
+        private int _locaOffset = -1;
+        private int _locaLength;
+
+        private CffOutlines.CffTable _cff;
+        private bool _cffParsed;
+
+        /// <summary>The parsed 'CFF ' table, or null when this font has none.</summary>
+        public CffOutlines.CffTable Cff
+        {
+            get
+            {
+                if (_cffParsed) return _cff;
+
+                _cffParsed = true;
+
+                if (_tables.TryGetValue("CFF ", out var t)) _cff = CffOutlines.CffTable.Parse(_data, t.off, t.len);
+
+                return _cff;
+            }
+        }
+
+        /// <summary>
+        /// Where a glyph's description sits in 'glyf'.
+        ///
+        /// 'loca' has one more entry than there are glyphs, so a glyph runs from its own entry to
+        /// the next. Equal entries mean an empty glyph -- a space -- which is why the range comes
+        /// back valid but zero-length rather than as a failure.
+        /// </summary>
+        public bool TryGetGlyfRange(int glyphIndex, out int start, out int end)
+        {
+            start = end = 0;
+
+            if (!HasGlyfOutlines || glyphIndex < 0 || glyphIndex >= NumGlyphs) return false;
+
+            bool longFormat = IndexToLocFormat != 0;
+            int entry = longFormat ? 4 : 2;
+
+            if ((glyphIndex + 2) * entry > _locaLength) return false;
+
+            int at = _locaOffset + glyphIndex * entry;
+
+            uint from = longFormat ? U32(at) : (uint)(U16(at) * 2);
+            uint to = longFormat ? U32(at + 4) : (uint)(U16(at + 2) * 2);
+
+            start = _glyfOffset + (int)from;
+            end = _glyfOffset + (int)to;
+
+            return start >= 0 && end >= start && end <= _data.Length;
+        }
+
+        private void ParseOutlineTables()
+        {
+            if (_tables.TryGetValue("glyf", out var glyf) && _tables.TryGetValue("loca", out var loca))
+            {
+                _glyfOffset = glyf.off;
+                _locaOffset = loca.off;
+                _locaLength = loca.len;
+            }
         }
 
         public byte[] GetTableBytes(string tag)
