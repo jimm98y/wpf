@@ -217,6 +217,109 @@ export function setImeCaretRect(x, y, width, height) {
 
 export function isComposing() { return imeComposing; }
 
+
+// ---- Accessibility mirror ---------------------------------------------------
+//
+// A WPF window is a <canvas>, and a canvas has no accessible content -- to a screen reader the whole
+// app is one blank graphic. So the managed side pushes the automation tree over here and this builds
+// a parallel DOM of transparent elements, one per accessible node, positioned exactly over the
+// pixels the compositor drew. Screen readers, tab order, browser zoom and axe all then work on real
+// elements without knowing the pixels came from WebGPU.
+//
+// The mirror is inert: pointer-events are off so it never intercepts a click meant for the canvas,
+// and the elements carry no text, only ARIA attributes. Keyboard activation IS routed back, because
+// that is the only way a keyboard-only user can operate the app at all.
+
+let a11yHost = null;
+const a11yNodes = new Map();   // id -> element
+
+function a11yEnsureHost() {
+    if (a11yHost) return a11yHost;
+    a11yHost = document.createElement("div");
+    a11yHost.id = "wpf-a11y";
+    // Covers the host but never eats input; individual nodes re-enable pointer events only if they
+    // are focusable, so a screen reader's "activate" still lands.
+    a11yHost.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;";
+    host().appendChild(a11yHost);
+    return a11yHost;
+}
+
+/// Whether the page wants a mirror at all. There is no way to detect a screen reader on the web, so
+/// the mirror is built for everyone unless the page opts out.
+export function a11yIsEnabled() {
+    const meta = document.querySelector('meta[name="wpf-a11y"]');
+    return !(meta && meta.getAttribute("content") === "off");
+}
+
+export function a11ySync(json) {
+    const nodes = JSON.parse(json);
+    const host = a11yEnsureHost();
+    const seen = new Set();
+    const dpr = window.devicePixelRatio || 1;
+
+    for (const n of nodes) {
+        seen.add(n.id);
+        let el = a11yNodes.get(n.id);
+        if (!el) {
+            el = document.createElement("div");
+            el.dataset.wpfNode = String(n.id);
+            a11yNodes.set(n.id, el);
+            host.appendChild(el);
+
+            el.addEventListener("click", () => pushA11y(n.id, 0));
+            el.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") { pushA11y(n.id, 0); e.preventDefault(); }
+            });
+            el.addEventListener("focus", () => pushA11y(n.id, 1));
+        }
+
+        if (n.r) el.setAttribute("role", n.r); else el.removeAttribute("role");
+        if (n.n) el.setAttribute("aria-label", n.n); else el.removeAttribute("aria-label");
+
+        setAttr(el, "aria-disabled", n.dis ? "true" : null);
+        setAttr(el, "aria-checked", n.chk === 2 ? "mixed" : n.chk === 1 ? "true" : (n.r === "checkbox" || n.r === "radio") ? "false" : null);
+        setAttr(el, "aria-expanded", n.exp === 1 ? "true" : n.exp === 0 ? "false" : null);
+        setAttr(el, "aria-selected", n.sel ? "true" : null);
+        setAttr(el, "aria-valuenow", n.v !== undefined ? String(n.v) : null);
+        setAttr(el, "aria-valuemin", n.vmin !== undefined ? String(n.vmin) : null);
+        setAttr(el, "aria-valuemax", n.vmax !== undefined ? String(n.vmax) : null);
+        setAttr(el, "aria-valuetext", n.vt ?? null);
+
+        // Focusable and clickable only where WPF says there is something to do; everything else
+        // stays out of the tab order so keyboard navigation matches what the app actually offers.
+        if (n.foc || n.act) { el.setAttribute("tabindex", "0"); el.style.pointerEvents = "auto"; }
+        else { el.removeAttribute("tabindex"); el.style.pointerEvents = "none"; }
+
+        // Bounds arrive in device pixels; CSS wants points.
+        el.style.cssText += "";
+        el.style.position = "fixed";
+        el.style.left = `${n.x / dpr}px`;
+        el.style.top = `${n.y / dpr}px`;
+        el.style.width = `${n.w / dpr}px`;
+        el.style.height = `${n.h / dpr}px`;
+        el.style.opacity = "0";
+        el.style.overflow = "hidden";
+    }
+
+    for (const [id, el] of a11yNodes) {
+        if (!seen.has(id)) { el.remove(); a11yNodes.delete(id); }
+    }
+}
+
+export function a11ySetFocus(nodeId) {
+    const el = a11yNodes.get(nodeId);
+    if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+}
+
+function setAttr(el, name, value) {
+    if (value === null || value === undefined) el.removeAttribute(name);
+    else el.setAttribute(name, value);
+}
+
+function pushA11y(nodeId, kind) {
+    queue.push({ t: "a", id: nodeId, k: kind });
+}
+
 export function drainEvents() {
     if (queue.length === 0) return "";
     return JSON.stringify(queue.splice(0));

@@ -62,6 +62,11 @@ namespace MS.Internal.Interop
             IsBorderless = borderless;
             Js.CreateWindow((int)Handle, title ?? "", x, y, width, height, borderless);
             s_byHandle[Handle] = this;
+
+            // Start mirroring the accessibility tree for the first real window. Unlike every other
+            // head this cannot wait to be asked: the web has no way to detect a screen reader, by
+            // design. BrowserAccessibility declines if the page opted out.
+            if (!borderless) BrowserAccessibility.Attach(Handle);
         }
 
         public void Destroy()
@@ -183,6 +188,8 @@ namespace MS.Internal.Interop
             if (s_byHandle.Count == 0)
                 return;
 
+            BrowserAccessibility.Pump();
+
             string json = Js.DrainEvents();
             if (string.IsNullOrEmpty(json))
                 return;
@@ -230,6 +237,12 @@ namespace MS.Internal.Interop
                     // Input-method composition. Queued by the hidden editable element rather than by
                     // a window, so there is no handle to route on: the browser has one focused
                     // element at a time, and ImmComposition routes to whichever editor holds focus.
+                    // A mirror element was activated or focused by the user or their screen reader.
+                    case "a":
+                        BrowserAccessibility.DispatchAction(
+                            e.GetProperty("id").GetInt32(), e.GetProperty("k").GetInt32());
+                        break;
+
                     case "i":
                         BrowserTextInput.DispatchQueuedEvent(
                             e.GetProperty("k").GetInt32(), e.GetProperty("s").GetString());
@@ -313,6 +326,15 @@ namespace MS.Internal.Interop
 
             [JSImport("setCursor", Module)]
             internal static partial void SetCursor(string cssCursor);
+
+            [JSImport("a11yIsEnabled", Module)]
+            internal static partial bool A11yIsEnabled();
+
+            [JSImport("a11ySync", Module)]
+            internal static partial void A11ySync(string json);
+
+            [JSImport("a11ySetFocus", Module)]
+            internal static partial void A11ySetFocus(int nodeId);
 
             [JSImport("enableTextInput", Module)]
             internal static partial void EnableTextInput();

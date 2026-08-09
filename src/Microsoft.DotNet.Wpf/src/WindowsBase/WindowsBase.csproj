@@ -286,6 +286,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AutomationTreeSource.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaAccessibility.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitAccessibility.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserAccessibility.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserTextInput.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidTextInput.cs" />
