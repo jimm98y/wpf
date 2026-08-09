@@ -35,10 +35,18 @@ using System.Printing;
 namespace System.Windows.Xps.Pdf
 {
     /// <summary>
-    /// Writes WPF content to a PDF stream. One instance writes one document; dispose it (or call
-    /// <see cref="Close"/>) to finish the file, which is when the cross-reference table is written.
+    /// Writes WPF content to a PDF stream.
+    ///
+    /// The public face of the printing pipeline for callers who want a file rather than paper. It is
+    /// the same pipeline printing uses, pointed at a stream, so anything that prints correctly
+    /// exports correctly -- and it needs no printer, which is what makes it the only part of this
+    /// stack that can be exercised everywhere.
+    ///
+    /// One instance writes one document. Dispose it, or call <see cref="Close"/>, to finish the
+    /// file: the cross-reference table is written at the end, and a document that is never closed is
+    /// not a readable PDF.
     /// </summary>
-    internal sealed class PdfDocumentWriter : IDisposable
+    public sealed class PdfDocumentWriter : IDisposable
     {
         private readonly PdfDevice _device;
         private readonly ILegacyDevice _sink;
@@ -49,13 +57,13 @@ namespace System.Windows.Xps.Pdf
         /// The page size in WPF units (96ths of an inch) used for a Visual that does not carry one.
         /// Defaults to US Letter.
         /// </summary>
-        internal Size PageSize
+        public Size PageSize
         {
             get => _device.PageSize;
             set => _device.PageSize = value;
         }
 
-        internal PdfDocumentWriter(Stream destination, bool leaveOpen = false)
+        public PdfDocumentWriter(Stream destination, bool leaveOpen = false)
         {
             ArgumentNullException.ThrowIfNull(destination);
 
@@ -72,7 +80,7 @@ namespace System.Windows.Xps.Pdf
         internal PdfDevice Device => _device;
 
         /// <summary>Writes one Visual as one page.</summary>
-        internal void Write(Visual visual)
+        public void Write(Visual visual)
         {
             ArgumentNullException.ThrowIfNull(visual);
 
@@ -87,7 +95,7 @@ namespace System.Windows.Xps.Pdf
         /// "not yet known" and compute pagination in the background, which for a FlowDocument it does;
         /// printing has to wait it out rather than stop at the pages that happen to be ready.
         /// </summary>
-        internal void Write(DocumentPaginator paginator)
+        public void Write(DocumentPaginator paginator)
         {
             ArgumentNullException.ThrowIfNull(paginator);
 
@@ -117,7 +125,7 @@ namespace System.Windows.Xps.Pdf
         }
 
         /// <summary>Finishes the document. Further writes are ignored.</summary>
-        internal void Close()
+        public void Close()
         {
             if (_closed) return;
             _closed = true;

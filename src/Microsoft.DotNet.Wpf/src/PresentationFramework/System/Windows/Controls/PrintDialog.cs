@@ -286,6 +286,10 @@ namespace System.Windows.Controls
         Nullable<bool>
         ShowDialog()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return ShowDialogPortable();
+            }
 
             Win32PrintDialog dlg = new Win32PrintDialog
             {
@@ -383,6 +387,81 @@ namespace System.Windows.Controls
         #endregion Public methods
 
         #region Private methods
+
+        /// <summary>
+        /// The print dialog off Windows.
+        ///
+        /// Four of the five non-Windows heads show no dialog HERE at all, and that is the platform's
+        /// design rather than a gap: macOS, iOS, Android and the browser all present their print UI
+        /// at submission, with the document already in it and a live preview. Returning true means
+        /// "go ahead and render"; the user's real choice happens when the document is handed over,
+        /// and a cancellation there simply produces no paper.
+        ///
+        /// Three of those heads could not show one anyway. Dispatcher.PushFrameImpl throws on iOS,
+        /// Android and the browser, because there is no nested run loop to push.
+        ///
+        /// Linux is the exception: this port spools to CUPS directly rather than through the XDG
+        /// portal, and CUPS has no user interface, so the dialog is drawn in WPF.
+        /// </summary>
+        private
+        Nullable<bool>
+        ShowDialogPortable()
+        {
+            MS.Internal.Interop.PrinterInfo[] printers = MS.Internal.Interop.PlatformPrint.EnumeratePrinters();
+
+            if (printers.Length == 0)
+            {
+                // Nothing to print to. Reporting "cancelled" is the honest answer and is what every
+                // caller already handles; a dialog offering an empty list would not be.
+                return false;
+            }
+
+            bool linux = OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
+
+            if (!linux)
+            {
+                if (_printQueue == null) _printQueue = AcquireDefaultPrintQueue();
+                return true;
+            }
+
+            MS.Internal.Interop.PrinterInfo chosen = null;
+            foreach (MS.Internal.Interop.PrinterInfo printer in printers)
+            {
+                if (printer.IsDefault) { chosen = printer; break; }
+            }
+
+            int copies = 1;
+            int firstPage = _pageRange.PageFrom;
+            int lastPage = _pageRange.PageTo;
+
+            int minPage = Math.Max(1, Math.Min((int)_minPage, (int)_maxPage));
+            int maxPage = Math.Max(minPage, (int)_maxPage);
+
+            if (!ManagedPrintDialog.Show(printers, ref chosen, ref copies, ref firstPage, ref lastPage,
+                                         minPage, maxPage, _userPageRangeEnabled))
+            {
+                return false;
+            }
+
+            // Match the chosen printer back to a PrintQueue, so everything downstream sees the same
+            // object model it would on Windows.
+            foreach (PrintQueue queue in new LocalPrintServer().GetPrintQueues())
+            {
+                if (string.Equals(queue.Name, chosen?.Name, StringComparison.Ordinal))
+                {
+                    _printQueue = queue;
+                    break;
+                }
+            }
+
+            if (firstPage > 0 && lastPage > 0)
+            {
+                _pageRange = new PageRange(firstPage, lastPage);
+                _pageRangeSelection = PageRangeSelection.UserPages;
+            }
+
+            return true;
+        }
 
         private
         PrintQueue
