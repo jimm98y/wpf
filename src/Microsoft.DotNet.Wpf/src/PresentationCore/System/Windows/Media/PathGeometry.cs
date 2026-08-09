@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using MS.Internal;
@@ -927,11 +927,16 @@ namespace System.Windows.Media
             // return Rect.Empty. Callers should do their own check.
             Debug.Assert(!pathData.IsEmpty());
 
-            if (!OperatingSystem.IsWindows())
             {
-                // Off-Windows the native milcore bounds helper is unavailable; walk the serialized
-                // path managed and union its points, then apply the geometry+world transforms and
-                // pen inflation.
+                // Bounds are computed managed on EVERY platform: the native helper lives in
+                // wpfgfx_cor3.dll, which this port does not ship, and this is not an obscure path --
+                // Shape.MeasureOverride asks for it, so anything with a Path in its template reaches
+                // it. A scrollbar does, which is how a plain FlowDocumentScrollViewer used to fail
+                // with DllNotFoundException on Windows.
+                //
+                // PathBoundsAccumulator solves each curve rather than approximating it, so the answer
+                // is the same tight box the native helper produced; see the notes in that file for
+                // why looseness would have shown up as layout drift around curved shapes.
                 PathBoundsAccumulator acc = new PathBoundsAccumulator();
                 ParsePathGeometryData(pathData, acc);
                 Rect r = acc.Bounds;
@@ -953,56 +958,6 @@ namespace System.Windows.Media
                 }
 
                 return new MilRectD(tr.Left, tr.Top, tr.Right, tr.Bottom);
-            }
-
-            unsafe
-            {
-                MIL_PEN_DATA penData;
-                double[] dashArray = null;
-
-                // If we have a pen, populate the CMD struct
-                pen?.GetBasicPenData(&penData, out dashArray);
-
-                MilMatrix3x2D worldMatrix3X2 = CompositionResourceManager.MatrixToMilMatrix3x2D(ref worldMatrix);
-
-                fixed (byte *pbPathData = pathData.SerializedData)
-                {
-                    MilRectD bounds;
-
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    fixed (double *pDashArray = dashArray)
-                    {
-                        int hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryBounds(
-                            (pen == null) ? null : &penData,
-                            pDashArray,
-                            &worldMatrix3X2,
-                            pathData.FillRule,
-                            pbPathData,
-                            pathData.Size,
-                            &pathData.Matrix,
-                            tolerance,
-                            type == ToleranceType.Relative,
-                            skipHollows,
-                            &bounds
-                            );
-
-                        if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                        {
-                            // When we encounter NaNs in the renderer, we absorb the error and draw
-                            // nothing. To be consistent, we report that the geometry has empty bounds
-                            // (NaN will get transformed into Rect.Empty higher up).
-
-                            bounds = MilRectD.NaN;
-                        }
-                        else
-                        {
-                            HRESULT.Check(hr);
-                        }
-                    }
-
-                    return bounds;
-                }
             }
         }
 

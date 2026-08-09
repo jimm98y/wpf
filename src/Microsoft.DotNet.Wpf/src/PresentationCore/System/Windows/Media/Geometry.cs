@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -181,35 +181,50 @@ namespace System.Windows.Media
             ToleranceType type,
             bool fSkipHollows)
         {
-            MIL_PEN_DATA penData;
-            double[] dashArray = null;
-
-            // If the pen contributes to the bounds, populate the CMD struct
             bool fPenContributesToBounds = Pen.ContributesToBounds(pen);
 
-            if (!OperatingSystem.IsWindows())
             {
-                // Off-Windows the native milcore polygon-bounds helper is unavailable; union the
-                // flattened points managed (control points give a valid superset), apply the
-                // geometry+world transforms, then inflate by the pen.
-                double left = double.PositiveInfinity, top = double.PositiveInfinity;
-                double right = double.NegativeInfinity, bottom = double.NegativeInfinity;
-                for (uint pi = 0; pi < pointCount; pi++)
+                // Bounds are computed managed on EVERY platform; the native helper lives in
+                // wpfgfx_cor3.dll, which this port does not ship. This is the fast path the simple
+                // geometries take -- Line, Rectangle, Ellipse -- expressed as a point/type array
+                // rather than a serialized path. PathGeometry's equivalent is GetPathBoundsAsRB.
+                //
+                // The segments are WALKED rather than the raw points unioned. An ellipse is four
+                // Beziers, and its control points lie well outside the curve, so unioning them
+                // (which is what this did while it was an off-Windows-only fallback) reports a
+                // rounded rectangle's worth of extra space. Bounds drive layout, so that is a
+                // measurable shape being bigger than the shape drawn.
+                var acc = new PathBoundsAccumulator();
+
+                if (pointCount > 0)
                 {
-                    Point pt = pPoints[pi];
-                    if (double.IsNaN(pt.X) || double.IsNaN(pt.Y)) continue;
-                    if (pt.X < left) left = pt.X;
-                    if (pt.X > right) right = pt.X;
-                    if (pt.Y < top) top = pt.Y;
-                    if (pt.Y > bottom) bottom = pt.Y;
+                    acc.BeginFigure(pPoints[0], true, false);
+
+                    uint pi = 1;
+                    for (uint si = 0; si < segmentCount && pi < pointCount; si++)
+                    {
+                        bool isBezier = pTypes != null &&
+                                        (pTypes[si] & (byte)MILCoreSegFlags.SegTypeMask) == (byte)MILCoreSegFlags.SegTypeBezier;
+
+                        if (isBezier)
+                        {
+                            if (pi + 2 >= pointCount) break;
+                            acc.BezierTo(pPoints[pi], pPoints[pi + 1], pPoints[pi + 2], true, false);
+                            pi += 3;
+                        }
+                        else
+                        {
+                            acc.LineTo(pPoints[pi], true, false);
+                            pi++;
+                        }
+                    }
                 }
 
-                if (right < left || bottom < top)
+                Rect rawBounds = acc.Bounds;
+                if (rawBounds.IsEmpty)
                 {
                     return Rect.Empty;
                 }
-
-                Rect rawBounds = new Rect(left, top, right - left, bottom - top);
 
                 Matrix combined = (pGeometryMatrix != null) ? *pGeometryMatrix : Matrix.Identity;
                 if (pWorldMatrix != null) combined.Append(*pWorldMatrix);
@@ -224,53 +239,6 @@ namespace System.Windows.Media
                 return managedBounds;
             }
 
-            if (fPenContributesToBounds)
-            {
-                pen.GetBasicPenData(&penData, out dashArray);
-            }
-
-            MilMatrix3x2D geometryMatrix;
-            if (pGeometryMatrix != null)
-            {
-                geometryMatrix = CompositionResourceManager.MatrixToMilMatrix3x2D(ref (*pGeometryMatrix));
-            }
-
-            Debug.Assert(pWorldMatrix != null);
-            MilMatrix3x2D worldMatrix =
-                CompositionResourceManager.MatrixToMilMatrix3x2D(ref (*pWorldMatrix));
-
-            Rect bounds;
-
-            fixed (double *pDashArray = dashArray)
-            {
-                int hr = MilCoreApi.MilUtility_PolygonBounds(
-                    &worldMatrix,
-                    (fPenContributesToBounds) ? &penData : null,
-                    (dashArray == null) ? null : pDashArray,
-                    pPoints,
-                    pTypes,
-                    pointCount,
-                    segmentCount,
-                    (pGeometryMatrix == null) ? null : &geometryMatrix,
-                    tolerance,
-                    type == ToleranceType.Relative,
-                    fSkipHollows,
-                    &bounds
-                );
-
-                if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                {
-                    // When we encounter NaNs in the renderer, we absorb the error and draw
-                    // nothing. To be consistent, we report that the geometry has empty bounds.
-                    bounds = Rect.Empty;
-                }
-                else
-                {
-                    HRESULT.Check(hr);
-                }
-            }
-
-            return bounds;
         }
 
         internal virtual void TransformPropertyChangedHook(DependencyPropertyChangedEventArgs e)

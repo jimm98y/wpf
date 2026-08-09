@@ -65,15 +65,19 @@ namespace System.Windows.Media.Composition
         /// </summary>
         internal static CompositionEngineLock Acquire()
         {
-            if (DUCE.ManagedComposition.IsEnabled)
-            {
-                System.Threading.Monitor.Enter(s_managedLock);
-                return new CompositionEngineLock { _managed = true };
-            }
-
-            UnsafeNativeMethods.MilCoreApi.EnterCompositionEngineLock();
-
-            return new CompositionEngineLock();
+            // Always the managed monitor. The native lock lives in wpfgfx_cor3.dll, which this port
+            // does not ship, and there is no native composition engine here for it to serialise
+            // against -- the whole point of the port is that the compositor is managed.
+            //
+            // This used to be conditional on DUCE.ManagedComposition.IsEnabled, which looks safe and
+            // is not: that flag only becomes true once the WebGPU backend has been registered, and
+            // registration happens when the MediaContext starts. Anything that takes this lock
+            // BEFORE a window exists -- Geometry.Bounds on a geometry with a Transform or a Pen, for
+            // one, which is ordinary code -- therefore took the native branch and threw
+            // DllNotFoundException. It presented as an order-dependent failure, because whether it
+            // threw depended on whether something else had brought a MediaContext up first.
+            System.Threading.Monitor.Enter(s_managedLock);
+            return new CompositionEngineLock { _managed = true };
         }
 
         /// <summary>
@@ -84,10 +88,7 @@ namespace System.Windows.Media.Composition
             if (_managed)
             {
                 System.Threading.Monitor.Exit(s_managedLock);
-                return;
             }
-
-            UnsafeNativeMethods.MilCoreApi.ExitCompositionEngineLock();
         }
     }
 
