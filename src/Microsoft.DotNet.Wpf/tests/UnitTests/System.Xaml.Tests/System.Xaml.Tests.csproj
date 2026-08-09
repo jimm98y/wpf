@@ -17,7 +17,13 @@
 
   <ItemGroup>
     <PackageReference Include="Moq" Version="$(MoqPackageVersion)" />
-    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" />
+    <!--
+      Aliased, not plain. System.Windows.Extensions ships its own System.Xaml.Permissions.XamlAccessLevel,
+      so with both it and the fork's System.Xaml in the global namespace every mention of that type is
+      ambiguous (CS0433). These are System.Xaml's tests, so the fork's copy is the one they mean; the
+      package stays referenced, just out of the global namespace.
+    -->
+    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" Aliases="SystemWindowsExtensions" />
   </ItemGroup>
 
 </Project>

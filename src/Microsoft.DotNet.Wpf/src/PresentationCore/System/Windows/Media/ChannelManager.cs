@@ -110,14 +110,10 @@ namespace System.Windows.Media
             {
                 DUCE.Channel syncChannel;
 
-                // Under managed composition, channels route to the sink and no native transport
-                // exists; DUCE.Channel ignores the connection pointer in that mode.
-                if (_pSyncConnection == IntPtr.Zero && !DUCE.ManagedComposition.IsEnabled)
-                {
-                    HRESULT.Check(UnsafeNativeMethods.WgxConnection_Create(
-                        true, // true means synchronous transport
-                        out _pSyncConnection));
-                }
+                // Channels route to the managed sink and no native transport exists; DUCE.Channel
+                // ignores the connection pointer, so it stays null. Creating a native synchronous
+                // connection here when the managed backend had not registered was another
+                // milcore-is-in-charge fallback into a DLL this port does not ship.
 
                 if (_freeSyncChannels == null)
                 {

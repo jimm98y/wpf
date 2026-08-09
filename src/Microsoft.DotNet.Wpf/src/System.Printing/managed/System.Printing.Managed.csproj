@@ -36,9 +36,29 @@
 
   <ItemGroup>
     <Compile Include="ILegacyDevice.cs" />
+    <Compile Include="IndexedProperties.cs" />
+    <Compile Include="LibraryAssemblyInfo.cs" />
     <Compile Include="PrintQueue.cs" />
     <Compile Include="XpsDocumentWriter.cs" />
     <Compile Include="$(WpfSharedDir)RefAssemblyAttrs.cs" />
+  </ItemGroup>
+
+  <!--
+    Build ORDER only. ReferenceOutputAssembly="false" means these contribute no references, so the
+    HintPath ones below remain the actual references, exactly as designed.
+
+    Without this the references below are resolved purely by path, so nothing guarantees those
+    assemblies exist yet. It happened to work while the C++ projects were in the solution, because
+    their dependency graph ordered this project late; with them gone it built first and every
+    reference failed to resolve (MSB3245), which surfaces as a hundred "the type Rect/Brush/Geometry
+    does not exist" errors that look like missing usings and are nothing of the sort.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)PresentationFramework\PresentationFramework.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)ReachFramework\ReachFramework.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>

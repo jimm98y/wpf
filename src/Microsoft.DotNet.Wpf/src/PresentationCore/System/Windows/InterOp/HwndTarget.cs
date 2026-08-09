@@ -610,26 +610,16 @@ namespace System.Windows.Interop
         // milcore as well would have a second engine claim the same window -- and it is the reason
         // a Windows app needed wpfgfx_cor3 deployed next to it at all, which this port does not do.
         //
-        // The native call is kept for the one case it still applies to: no managed backend
-        // registered, i.e. the assembly could not be loaded and milcore really is in charge (see
-        // DUCE.ManagedComposition.EnsureAutoRegistered).
+        // This used to fall back to milcore when no managed backend had registered, on the reasoning
+        // that milcore was then in charge. It never is: the port ships wpfgfx_cor3.dll on no platform,
+        // so the fallback could only ever throw DllNotFoundException -- which is what happened to any
+        // code creating an HwndSource without having first brought the WebGPU backend up, the unit
+        // tests being the obvious example. Not attaching is the correct outcome there: there is no
+        // native render target to attach to, and the managed sink attaches its own when it registers.
         //
-        internal static int VisualTarget_AttachToHwnd(IntPtr hwnd)
-            => DUCE.ManagedComposition.IsEnabled ? HRESULT.S_OK : VisualTarget_AttachToHwndNative(hwnd);
+        internal static int VisualTarget_AttachToHwnd(IntPtr hwnd) => HRESULT.S_OK;
 
-        internal static int VisualTarget_DetachFromHwnd(IntPtr hwnd)
-            => DUCE.ManagedComposition.IsEnabled ? HRESULT.S_OK : VisualTarget_DetachFromHwndNative(hwnd);
-
-        [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_AttachToHwnd")]
-        private static extern int VisualTarget_AttachToHwndNative(
-            IntPtr hwnd
-            );
-
-
-        [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_DetachFromHwnd")]
-        private static extern int VisualTarget_DetachFromHwndNative(
-            IntPtr hwnd
-            );
+        internal static int VisualTarget_DetachFromHwnd(IntPtr hwnd) => HRESULT.S_OK;
 
         internal void InvalidateRenderMode()
         {

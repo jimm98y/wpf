@@ -68,8 +68,13 @@ namespace System.Windows.Media.Imaging
             }
             else
             {
-                throw new PlatformNotSupportedException(
-                    "Only PNG, JPEG, ICO and uncompressed BMP can be decoded without native WIC on this platform.");
+                // NotSupportedException, not PlatformNotSupportedException: this is what WPF has always
+                // thrown for image data it cannot decode, and callers (and BitmapImage's own tests)
+                // match on the exact type. It is also the more accurate of the two now that these
+                // codecs run everywhere -- an unrecognised format is unsupported on every platform,
+                // not unsupported on this one.
+                throw new NotSupportedException(
+                    "Only PNG, JPEG, ICO and uncompressed BMP can be decoded: the data matched none of them.");
             }
 
             var source = BitmapSource.Create(width, height, dpiX, dpiY, PixelFormats.Bgra32, null, bgra, width * 4);

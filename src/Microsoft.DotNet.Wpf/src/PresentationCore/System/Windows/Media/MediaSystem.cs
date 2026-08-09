@@ -42,18 +42,17 @@ namespace System.Windows.Media
             // *** Failure here does NOT indicate a bug in MediaContext.Startup! ***
             //
 
-            // When the managed (WebGPU) composition backend is driving composition, the native
-            // milcore engine is not used - DUCE.Channel forwards every command to the managed sink
-            // instead of creating a native channel. In that case skip milcore's version handshake,
-            // partition-manager init and WpfGfx configuration entirely. This is what lets WPF run
-            // without milcore at all (e.g. on macOS, where milcore does not exist).
+            // Composition is the managed (WebGPU) backend: DUCE.Channel forwards every command to the
+            // managed sink instead of creating a native channel, so milcore's version handshake,
+            // partition-manager init and WpfGfx configuration have nothing to talk to.
+            //
+            // These used to run whenever the managed backend had not registered, on the reasoning that
+            // milcore was then in charge. It never is -- the port ships wpfgfx_cor3.dll on no platform,
+            // so that path could only throw DllNotFoundException, and it did for anything that brought
+            // a MediaContext up without first loading the WebGPU backend (the unit tests, for one).
+            // If the backend really is missing there is no compositor either way; failing to render is
+            // recoverable, and throwing out of MediaContext's constructor is not.
             DUCE.ManagedComposition.EnsureAutoRegistered();
-            bool managedComposition = DUCE.ManagedComposition.IsEnabled;
-
-            if (!managedComposition)
-            {
-                HRESULT.Check(UnsafeNativeMethods.MilVersionCheck(MS.Internal.Composition.Version.MilSdkVersion));
-            }
 
             using (CompositionEngineLock.Acquire())
             {
@@ -62,16 +61,6 @@ namespace System.Windows.Media
                 //Is this the first startup?
                 if (0 == s_refCount)
                 {
-                    if (!managedComposition)
-                    {
-                        HRESULT.Check(SafeNativeMethods.MilCompositionEngine_InitializePartitionManager(
-                                      0 // THREAD_PRIORITY_NORMAL
-                                      ));
-
-                        s_forceSoftareForGraphicsStreamMagnifier =
-                            UnsafeNativeMethods.WgxConnection_ShouldForceSoftwareForGraphicsStreamClient();
-                    }
-
                     ConnectTransport();
 
                     // Read a flag from the registry to determine whether we should run
@@ -81,14 +70,8 @@ namespace System.Windows.Media
                 s_refCount++;
             }
 
-            if (!managedComposition)
-            {
-                // Pass security mitigation switch to native WpfGfx code.
-                UnsafeNativeMethods.WpfGfx_SetDisableBoundsCheckProtection(CoreAppContextSwitches.DisableWpfGfxBoundsCheckProtection);
-
-                // Setting renderOption for Hardware acceleration in RDP as per appcontext switch.
-                UnsafeNativeMethods.RenderOptions_EnableHardwareAccelerationInRdp(CoreAppContextSwitches.EnableHardwareAccelerationInRdp);
-            }
+            // The two switches that used to be pushed into native WpfGfx here (bounds-check protection
+            // and hardware acceleration in RDP) configure an engine that is not present.
 
             // Consider making MediaSystem.ConnectTransport return the state of transport connectedness so
             // that we can initialize the media system to a disconnected state.
@@ -149,17 +132,12 @@ namespace System.Windows.Media
                     // We can shut-down.
                     // Debug.WriteLine("MediSystem::NotifyDisconnect Stop Transport\n");
 
-                    // When the managed (WebGPU) composition backend is driving composition, milcore's
-                    // transport / partition-manager were never initialized (see Startup), so there is
-                    // nothing native to disconnect or deinitialize here.
-                    if (!DUCE.ManagedComposition.IsEnabled)
+                    // milcore's transport and partition manager were never initialized (see Startup),
+                    // so there is nothing native to disconnect or deinitialize. DisconnectTransport
+                    // still runs: it releases the managed service channel, which does exist.
+                    if (IsTransportConnected)
                     {
-                        if (IsTransportConnected)
-                        {
-                            DisconnectTransport();
-                        }
-
-                        HRESULT.Check(SafeNativeMethods.MilCompositionEngine_DeinitializePartitionManager());
+                        DisconnectTransport();
                     }
                 }
             }
@@ -216,17 +194,12 @@ namespace System.Windows.Media
             }
 
             //
-            // Create a default transport to be used by this media system.
-            // If creation fails, fall back to a local transport.
+            // There is no native milcore connection to create: the service channel below routes to
+            // the managed sink, so the connection stays null. This used to call WgxConnection_Create
+            // whenever the managed backend had not registered -- the last of the "milcore must be in
+            // charge then" fallbacks, and like the others it could only throw DllNotFoundException,
+            // because the port ships wpfgfx_cor3.dll on no platform.
             //
-            // With the managed composition backend there is no native milcore connection; the
-            // service channel below routes to the managed sink, so the connection stays null.
-            if (!DUCE.ManagedComposition.IsEnabled)
-            {
-                HRESULT.Check(UnsafeNativeMethods.WgxConnection_Create(
-                    false, // false means asynchronous transport
-                    out s_pConnection));
-            }
 
             // Create service channel used by global glyph cache. This channel is
             // the first channel created for the app, and by creating it with
@@ -257,7 +230,11 @@ namespace System.Windows.Media
             // Close global glyph cache channel.
             s_serviceChannel.Close();
 
-            HRESULT.Check(UnsafeNativeMethods.WgxConnection_Disconnect(s_pConnection));
+            // No native connection to disconnect: s_pConnection is always null now (see
+            // ConnectTransport). Calling milcore here threw DllNotFoundException, and because the
+            // throw escaped before the flag below was cleared, IsTransportConnected stayed true --
+            // so the NEXT window to come up failed its connect with "out of order connect or
+            // disconnect message", an error that points nowhere near the actual cause.
 
             // Release references to global glyph cache and service channel.
             s_serviceChannel = null;

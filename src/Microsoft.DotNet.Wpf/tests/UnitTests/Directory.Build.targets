@@ -1,56 +1,30 @@
 <Project>
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))" />
 
-  <PropertyGroup>
-    <_PackagingNativePath>$(ArtifactsPackagingDir)$(GitHubTransportPackageName)\runtimes\$(WpfRuntimeIdentifier)\native\</_PackagingNativePath>
-  </PropertyGroup>
-
   <!--
-    We need to copy the native dependencies from the packaging folder to make sure that we use the ones built or redistributed in the current build.
-  -->
-  <Target Name="IncludeNativeDependencies"
-          BeforeTargets="AssignTargetPaths"
-          Returns="@(None)">
-    <ItemGroup>
-      <!--
-        These exist to ensure that dependencies (esp. native ones) are binplaced with tests correctly.
-        We use the explicit file names instead of globbing to make the build fail if the dlls were not found.
-      -->
-      <_WpfNativeDependency Include="$(_PackagingNativePath)D3DCompiler_47_cor3.dll" Condition="'$(WpfRuntimeIdentifier)' != 'win-arm64'" />
-      <_WpfNativeDependency Include="$(_PackagingNativePath)PresentationNative_cor3.dll" />
-      <_WpfNativeDependency Include="$(_PackagingNativePath)vcruntime140d.dll" Condition="'$(Configuration)' == 'Debug'" />
-      <_WpfNativeDependency Include="$(_PackagingNativePath)vcruntime140_cor3.dll" Condition="'$(Configuration)' != 'Debug'" />
-      <_WpfNativeDependency Include="$(_PackagingNativePath)PenImc_cor3.dll" />
-      <_WpfNativeDependency Include="$(_PackagingNativePath)wpfgfx_cor3.dll" />
-    </ItemGroup>
+    The WebGPU compositor backend, deployed beside every test assembly.
 
-    <ItemGroup>
-      <None Include="@(_WpfNativeDependency)"
-            CopyToOutputDirectory="PreserveNewest"
-            Visible="False" />
-    </ItemGroup>
-  </Target>
-
-  <!--
-    Include native dependencies as project reference to make sure that they are built before the test projects and before the task IncludeNativeDependencies is executed.
+    DUCE.ManagedComposition uses it whenever it can be loaded (the AppContext switch defaults to on),
+    and without it registering a sink there is no compositor: anything that brings a MediaContext up,
+    which `new Window()` does, used to fall through to milcore and die with DllNotFoundException for
+    wpfgfx_cor3.dll. Referencing it here makes the tests run the same composition path a real app
+    runs, rather than a configuration that exists nowhere else.
   -->
   <ItemGroup>
-    <ProjectReference Include="$(WpfRedistDir)D3DCompiler\D3DCompiler.vcxproj"
-                      ReferenceOutputAssembly="False"
-                      Visible="False" />
-    <ProjectReference Include="$(WpfRedistDir)PresentationNative\PresentationNative.vcxproj"
-                      ReferenceOutputAssembly="False"
-                      Visible="False" />
-    <ProjectReference Include="$(WpfRedistDir)VCRuntime\VCRuntime.vcxproj"
-                      ReferenceOutputAssembly="False"
-                      Visible="False" />
-    <ProjectReference Include="$(WpfSourceDir)PenImc\dll\PenImc.vcxproj"
-                      ReferenceOutputAssembly="False"
-                      Visible="True" />
-    <ProjectReference Include="$(WpfSourceDir)WpfGfx\core\dll\wpfgfx.vcxproj"
-                      ReferenceOutputAssembly="False"
-                      Visible="False" />
+    <ProjectReference Include="$(WpfSourceDir)WgpuInterop\WgpuInterop.csproj" Private="true" />
   </ItemGroup>
+
+  <!--
+    There are deliberately no native dependencies here.
+
+    This used to build five C++ projects (D3DCompiler, PresentationNative, VCRuntime, PenImc,
+    wpfgfx) and binplace their DLLs beside every test assembly. The port has managed replacements
+    for all of them and ships none of them on any platform, so a test that needed one would be
+    testing something the product does not do: composition is the managed WebGPU engine, text and
+    geometry are managed, media goes through IMediaBackend, and stylus/touch uses WM_POINTER. The
+    references also made every test project depend on a C++ toolchain, which is what stopped them
+    building for AnyCPU at all.
+  -->
 
   <!--
    Referencing packages that reference the desktop package causes grief with building internally. Currently this

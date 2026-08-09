@@ -226,6 +226,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (root is null) return null;
 
                 EnsureGpu();
+                if (_headless)
+                {
+                    // RenderTargetBitmap with no GPU: null, which the caller already treats as
+                    // "this platform cannot read back".
+                    return null;
+                }
+
                 byte[] px = _renderer!.RenderToRgba(root, t.Width, t.Height, t.ClearColor, srgbOutput: true);
                 for (int i = 0; i < px.Length; i += 4)
                     (px[i], px[i + 2]) = (px[i + 2], px[i]);   // RGBA -> BGRA
@@ -245,6 +252,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void RenderTargets()
         {
             EnsureGpu();         // ensure the renderer (and VisualRasterizer) exist before Realize
+            if (_headless)
+            {
+                // Deliberately not even Realize(): realizing builds render data and rasterizes brush
+                // sources through the renderer that does not exist here. Nothing consumes any of it
+                // when there is nothing to present.
+                return;
+            }
+
             _renderer!.BeginFrame();
             WgpuSceneRenderer.PerfReset();
             long ra0 = GC.GetAllocatedBytesForCurrentThread();
@@ -661,9 +676,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return new Text.BuiltinBitmapFont();
         }
 
+        /// <summary>
+        /// Set when the GPU could not be brought up: no wgpu_native beside the app, no adapter, a
+        /// headless CI agent. The sink stays registered and keeps decoding the command stream, but
+        /// presents nothing.
+        /// <para>
+        /// The alternative is worse in both directions. Letting the exception out turns "this machine
+        /// has no GPU" into a crash inside MediaContext's constructor, so anything that merely creates
+        /// a Window dies -- which is what unit tests do. And falling back to milcore, which is what the
+        /// code did before the managed compositor existed, cannot work at all here: the port ships
+        /// wpfgfx_cor3.dll on no platform, so that path only ever raises DllNotFoundException.
+        /// </para>
+        /// </summary>
+        private bool _headless;
+
         private void EnsureGpu()
         {
+            if (_headless)
+            {
+                return;     // decided once; do not retry the whole GPU bring-up every frame
+            }
+
             if (_ctx is null)
+            {
+                try
+                {
+                    CreateGpu();
+                }
+                catch (Exception ex)
+                {
+                    // Loud, because a genuine GPU bug must not hide behind a blank window: this is
+                    // the one place that turns a rendering failure into silence.
+                    _headless = true;
+                    _ctx = null;
+                    _renderer = null;
+                    Log($"GPU unavailable ({ex.GetType().Name}: {ex.Message}). Compositing headless: " +
+                        "the command stream is still decoded, nothing is presented.");
+                }
+            }
+        }
+
+        private void CreateGpu()
+        {
             {
                 if (s_logPath != null) WgpuContext.LogSink = Log;
                 _ctx = WgpuContext.Create();

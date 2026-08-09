@@ -17,13 +17,21 @@
          -p:Configuration=Debug          (default Release)
          -p:SkipBrowser=true             skip the WebAssembly/browser flavor (needs the
                                          wasm-tools workload)
+         -p:SkipIos=true                 skip the iOS renderer (needs the ios workload)
          -p:SkipWinForms=true            skip the WinForms-interop flavor
          -p:SkipPack=true                build only, do not pack or touch the NuGet cache
 
-     NOTE (Windows head): the lib/wpf-windows + native/win-arm64 payload is NOT produced
-     here. It comes from a staged win-arm64 fork runtime (WpfWinRuntimeDir in
-     sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj). The pack step picks it up automatically when
-     present and warns when it is not — see _HasWinRuntime in that csproj.
+     Heads covered: macOS, Linux, Windows, Android, iOS and the browser.
+
+     Windows, Android and iOS need no separate WPF build. Every head runs the SAME AnyCPU
+     net10.0 assemblies under artifacts/bin — that is what removing WPF's native DLLs bought.
+     What differs per head is only the renderer: WgpuInterop (desktop, and Android uses it
+     too), WgpuInterop.Ios, WgpuInterop.Browser. All three are built below.
+
+     NOTE (Windows head): WpfWinRuntimeDir in sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj still
+     lets the lib/wpf-windows payload come from a staged runtime instead. That predates the
+     port being fully managed and is now only an override — the assemblies this builds are
+     the same ones, so prefer them; a staged directory is easy to leave behind stale.
 
      Deliberately NOT an Sdk-style project: with no Sdk attribute MSBuild does not import
      Microsoft.Common.props, so the repo's Arcade Directory.Build.props stays out of this
@@ -67,6 +75,21 @@
     <_Proj Include="$(_Src)Themes/PresentationFramework.Classic/PresentationFramework.Classic.csproj" />
     <_Proj Include="$(_Src)PresentationUI/PresentationUI.csproj" />
 
+    <!-- The rest of the Windows head's payload (see _WpfWin in sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj).
+         These are built here now that the Windows head is built FROM SOURCE rather than copied out of
+         a staged runtime: with no native DLLs left in the port, Windows runs the very same AnyCPU
+         net10.0 assemblies as every other head, so there is nothing left for a separate win-arm64
+         build to contribute. None of these is transitive from PresentationFramework. -->
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Aero/PresentationFramework.Aero.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.AeroLite/PresentationFramework.AeroLite.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Luna/PresentationFramework.Luna.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Royale/PresentationFramework.Royale.csproj" />
+    <_Proj Include="$(_Src)UIAutomation/UIAutomationClient/UIAutomationClient.csproj" />
+    <_Proj Include="$(_Src)UIAutomation/UIAutomationClientSideProviders/UIAutomationClientSideProviders.csproj" />
+    <_Proj Include="$(_Src)System.Windows.Controls.Ribbon/System.Windows.Controls.Ribbon.csproj" />
+    <_Proj Include="$(_Src)System.Windows.Presentation/System.Windows.Presentation.csproj" />
+    <_Proj Include="$(_Src)WindowsFormsIntegration/WindowsFormsIntegration.csproj" />
+
     <!-- Cross-platform stand-ins for the Windows-only assemblies. -->
     <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
     <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
@@ -74,6 +97,13 @@
     <!-- The desktop renderer. Built transitively above, but named explicitly so a failure
          here is attributed to the renderer rather than to PresentationFramework. -->
     <_Proj Include="$(_Src)WgpuInterop/WgpuInterop.csproj" />
+
+    <!-- The iOS renderer: same assembly name as the desktop one, built against the iOS bindings
+         (Metal/CAMetalLayer + UIKit) instead of the desktop platform layer. Needs the ios workload.
+         ANDROID needs nothing of its own here: its renderer IS the desktop WgpuInterop above, and it
+         consumes the same artifacts/bin/*/Release/net10.0 WPF assemblies as every other head -- see
+         samples/wpf-gallery-android, which project-references WgpuInterop.csproj directly. -->
+    <_Proj Include="$(_Src)WgpuInterop/Ios/WgpuInterop.Ios.csproj" Condition="'$(SkipIos)' != 'true'" />
 
     <!-- Optional flavors. -->
     <_Proj Include="$(_Src)WgpuInterop/Browser/WgpuInterop.Browser.csproj" Condition="'$(SkipBrowser)' != 'true'" />
