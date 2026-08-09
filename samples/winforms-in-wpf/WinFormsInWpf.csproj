@@ -48,7 +48,7 @@
     <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Wpf)\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Classic"><HintPath>$(_Wpf)\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI"><HintPath>$(_Wpf)\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="System.Printing"><HintPath>$(_Wpf)\System.Printing-ref\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Printing"><HintPath>$(_Wpf)\System.Printing.Managed\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Src)\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
     <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the embedded WinForms content). -->
     <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>

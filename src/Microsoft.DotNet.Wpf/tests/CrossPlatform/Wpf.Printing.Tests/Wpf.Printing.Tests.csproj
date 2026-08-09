@@ -63,7 +63,10 @@
     <Reference Include="DirectWriteForwarder">        <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="ReachFramework">              <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI">              <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="System.Printing">             <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <!-- The REAL System.Printing, not the contract-only reference assembly the sibling suites bind
+         to. These tests are the ones that exercise it, so binding to the stub would mean asserting
+         against `throw null`. -->
+    <Reference Include="System.Printing">             <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="UIAutomationTypes">           <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="UIAutomationProvider">        <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>

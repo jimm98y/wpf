@@ -301,6 +301,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\LinuxDesktopSettings.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\PortalDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />

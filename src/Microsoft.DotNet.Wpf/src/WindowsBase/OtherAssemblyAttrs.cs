@@ -24,6 +24,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo(BuildInfo.PresentationFrameworkClassic)]
 [assembly: InternalsVisibleTo(BuildInfo.PresentationFrameworkFluent)]
 [assembly: InternalsVisibleTo(BuildInfo.ReachFramework)]
+[assembly: InternalsVisibleTo(BuildInfo.SystemPrinting)]
 [assembly: InternalsVisibleTo(BuildInfo.SystemWindowsPresentation)]
 [assembly: InternalsVisibleTo(BuildInfo.PresentationFrameworkSystemCore)]
 [assembly: InternalsVisibleTo(BuildInfo.PresentationFrameworkSystemData)]
