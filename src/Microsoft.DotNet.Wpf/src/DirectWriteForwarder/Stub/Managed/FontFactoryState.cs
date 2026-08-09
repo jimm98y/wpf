@@ -165,6 +165,17 @@ namespace MS.Internal.Text.TextInterface.Managed
             ["segoe fluent icons"] = new[] { "Symbols" },
             ["segoe mdl2 assets"] = new[] { "Symbols" },
             ["segoe ui symbol"] = new[] { "Symbols", "Apple Symbols", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            // Emoji. "Segoe UI Emoji" is the FIRST target the composite fonts name for the emoji
+            // ranges, so this entry is what those ranges actually resolve to off Windows.
+            //
+            // The vendored Twemoji face is listed ahead of the system emoji fonts on purpose, which is
+            // the opposite of the usual "prefer what the platform has" rule. The renderer draws colour
+            // glyphs from COLR/CPAL layer outlines, and the system faces are a different format:
+            // Noto Color Emoji is CBDT/CBLC and Apple Color Emoji is sbix, colour BITMAPS that do not
+            // load as an outline font at all. Resolving to one of those put a font on the run that
+            // could not be drawn, and the emoji rendered as nothing. They stay in the list after the
+            // COLR face so a machine without the vendored file still resolves to something real.
+            ["segoe ui emoji"] = new[] { "Twemoji Mozilla", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Symbols" },
             ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
             ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
             ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },

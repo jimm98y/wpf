@@ -187,6 +187,16 @@
     <None Include="$(WpfWebGpuSdkRoot)web/fonts/NotoSansCJK-Regular.ttc"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false"
           Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/NotoSansCJK-Regular.ttc')" />
+
+    <!-- A COLR/CPAL emoji face, for the same reason as the CJK collection above: the platforms do
+         not supply one this renderer can draw. Colour glyphs are drawn from COLR layer outlines, and
+         the system emoji fonts are mostly a different format entirely -- Noto Color Emoji on Linux
+         and Android is CBDT/CBLC (colour bitmaps) and Apple Color Emoji is sbix -- neither of which
+         even loads as an outline font, so emoji rendered as nothing at all off Windows. Shipping one
+         COLR face makes them render everywhere. See TwemojiMozilla-LICENSE.txt (CC-BY 4.0 artwork). -->
+    <None Include="$(WpfWebGpuSdkRoot)web/fonts/TwemojiMozilla.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/TwemojiMozilla.ttf" Visible="false"
+          Condition="Exists('$(WpfWebGpuSdkRoot)web/fonts/TwemojiMozilla.ttf')" />
   </ItemGroup>
 
   <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever

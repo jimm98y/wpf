@@ -133,6 +133,10 @@
          any box without the CJK language packs installed. -->
     <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/NotoSansCJK-Regular.ttc"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false" />
+    <!-- The COLR emoji face the SDK ships: the system emoji fonts are colour BITMAPS
+         (CBDT/CBLC, sbix) that this renderer cannot draw, so without this emoji are blank. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/TwemojiMozilla.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/TwemojiMozilla.ttf" Visible="false" />
   </ItemGroup>
 
 </Project>

@@ -41,7 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures);
     }
 
-    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont
+    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont
     {
         // Glyphs are rasterized with the em square at this many pixels; the
         // renderer scales the atlas quad to the requested EmSize.
@@ -57,6 +57,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly int _numHMetrics;
         private readonly CmapTable _cmap;
         private readonly ColorTable? _color;    // COLR/CPAL color glyphs (emoji), null if absent
+        private readonly BitmapGlyphTable? _bitmaps;   // CBDT/CBLC colour bitmap glyphs, null if absent
         private readonly Dictionary<(int, int), float> _kerning = new(); // base pixels
 
         // Synthetic style (DirectWrite font simulations): when WPF requests a weight/
@@ -88,9 +89,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int maxp = Require(tables, "maxp");
             int hhea = Require(tables, "hhea");
             int hmtx = Require(tables, "hmtx");
-            int loca = Require(tables, "loca");
-            _glyfOffset = Require(tables, "glyf");
             int cmap = Require(tables, "cmap");
+
+            // Outlines are OPTIONAL, because a colour BITMAP font has none.
+            //
+            // Noto Color Emoji (Linux, Android) and its kin store every glyph as a PNG in CBDT and
+            // ship no 'glyf' or 'loca' at all. Requiring them threw during construction, the font
+            // resolver caught it and returned null, and emoji rendered as nothing. A font with
+            // neither outlines nor bitmaps is still an error -- it can draw nothing whatsoever.
+            bool hasOutlines = tables.TryGetValue("loca", out int loca) & tables.TryGetValue("glyf", out int glyf);
+            _glyfOffset = hasOutlines ? glyf : -1;
+
+            int glyphCount = U16(maxp + 4);
+            if (tables.TryGetValue("CBLC", out int cblc) && tables.TryGetValue("CBDT", out int cbdt))
+            {
+                var bitmaps = new BitmapGlyphTable(_data, cblc, cbdt);
+                if (bitmaps.HasStrikes) _bitmaps = bitmaps;
+            }
+            else if (tables.TryGetValue("sbix", out int sbix))
+            {
+                // Apple Color Emoji. Unlike CBDT this usually sits ALONGSIDE outlines (the glyphs
+                // have blank or placeholder contours), so reaching here does not mean the font is
+                // bitmap-only -- it means its colour artwork lives in sbix.
+                var bitmaps = new BitmapGlyphTable(_data, sbix, glyphCount, sbix: true);
+                if (bitmaps.HasStrikes) _bitmaps = bitmaps;
+            }
+
+            if (!hasOutlines && _bitmaps is null)
+                throw new InvalidOperationException("TrueType font has neither outlines ('glyf'/'loca') nor colour bitmaps ('CBDT'/'CBLC').");
 
             int unitsPerEm = U16(head + 18);
             int indexToLocFormat = (short)U16(head + 50);
@@ -102,8 +128,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < _numHMetrics; i++)
                 _advanceWidths[i] = (ushort)U16(hmtx + i * 4);
 
-            _loca = new uint[_numGlyphs + 1];
-            for (int i = 0; i <= _numGlyphs; i++)
+            _loca = new uint[hasOutlines ? _numGlyphs + 1 : 0];
+            for (int i = 0; i < _loca.Length; i++)
                 _loca[i] = indexToLocFormat == 0 ? (uint)U16(loca + i * 2) * 2 : U32(loca + i * 4);
 
             _cmap = new CmapTable(_data, cmap);
@@ -123,6 +149,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (_color != null) return _color.TryGetColorLayers(glyphId, out layers);
             layers = System.Array.Empty<ColorGlyphLayer>();
+            return false;
+        }
+
+        // ---- IBitmapGlyphFont ----
+
+        public bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph)
+        {
+            if (_bitmaps != null) return _bitmaps.TryGetGlyphBitmap(glyphId, out glyph);
+            glyph = default;
             return false;
         }
 
@@ -190,7 +225,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public bool IsCompositeGlyph(char c)
         {
             int gid = _cmap.Map(c);
-            if (gid == 0) return false;
+            if (gid == 0 || _loca.Length == 0) return false;
             uint start = _loca[gid], end = _loca[gid + 1];
             if (end <= start) return false;
             return (short)U16(_glyfOffset + (int)start) < 0;
@@ -209,7 +244,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // Reads a glyph's contours in font units, resolving composite components.
         private List<Contour> ReadGlyphContours(int gid, int depth)
         {
-            if (depth > 5 || gid < 0 || gid >= _numGlyphs) return new List<Contour>();
+            // _loca is empty on a colour BITMAP font (CBDT/CBLC), which has no outlines at all.
+            if (depth > 5 || gid < 0 || gid >= _numGlyphs || _loca.Length == 0) return new List<Contour>();
             uint start = _loca[gid];
             uint end = _loca[gid + 1];
             if (end <= start) return new List<Contour>(); // no outline (e.g. space)

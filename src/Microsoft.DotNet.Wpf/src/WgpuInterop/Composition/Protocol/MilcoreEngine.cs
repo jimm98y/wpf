@@ -2289,69 +2289,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 float gx = penX + (run.Offsets != null ? run.Offsets[2 * i] : 0f);
                 float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
 
-                // Color glyph (COLR/CPAL emoji): paint each layer outline in its palette
-                // colour (or the foreground brush), back-to-front, in place of the
-                // single monochrome outline.
-                if (colorFont != null && colorFont.TryGetColorLayers(run.Indices[i], out var layers))
-                    EmitColorGlyph(output, font, layers, scale, gx, gy, brush, state);
-                else if (font.TryGetGlyphOutline(run.Indices[i], out List<PathFigure> figures) && figures.Count > 0)
+                // What a glyph id becomes -- a monochrome outline, or the stack of coloured layers a
+                // COLR/CPAL emoji decomposes into -- is GlyphRunPainter's business, shared with the
+                // scene renderer's string-run path so the two cannot drift apart again.
+                _glyphFills.Clear();
+                Text.GlyphRunPainter.Paint(font, colorFont, run.Indices[i], scale, gx, gy, _glyphFills);
+
+                foreach (Text.GlyphFill gf in _glyphFills)
                 {
-                    Geometry glyph = new PathGeometry(FillRule.NonZero, ScaleFigures(figures, scale, gx, gy));
+                    Geometry glyph = new PathGeometry(FillRule.NonZero, gf.Figures);
                     glyph = TransformGeometry(glyph, state.Transform);
                     if (state.Clip is not null)
                         glyph = new CombinedGeometry(GeometryCombineMode.Intersect, glyph, state.Clip);
+
+                    if (gf.IsColorLayer)
+                    {
+                        // Colour artwork: a bitmap glyph's own image brush, a COLR layer's palette
+                        // colour, or the run's foreground where the layer follows the text colour.
+                        // No baseline anchor and no text gamma: these are filled shapes, not stems.
+                        Brush layerBrush = gf.Brush is not null
+                            ? ApplyOpacity(gf.Brush, state.Opacity)!
+                            : gf.Color is RgbaColor c
+                                ? ApplyOpacity(new SolidColorBrush(c), state.Opacity)!
+                                : brush;
+                        output.Add(new GeometryFill(glyph, layerBrush, isGlyph: false));
+                        continue;
+                    }
+
                     // Baseline anchor (glyph baseline point in the geometry's space) so the
                     // coverage cache snaps the whole run to one baseline instead of snapping
                     // each glyph by its own ink box (which sinks some letters ~1px).
                     Vector2 baseline = Vector2.Transform(new Vector2(gx, gy), state.Transform);
                     output.Add(new GeometryFill(glyph, brush, isGlyph: true, baselineAnchor: baseline));
                 }
+
                 penX += i < run.Advances.Length ? run.Advances[i] : 0f;
             }
         }
 
-        // Emit a color glyph's layers (back-to-front): each layer is an outline glyph
-        // filled with its palette colour, or the run's foreground brush when the layer
-        // has no palette index. Layer fills blend linearly (no text gamma).
-        private void EmitColorGlyph(List<DrawingPrimitive> output, Text.IGlyphOutlineFont font,
-            IReadOnlyList<Text.ColorGlyphLayer> layers, float scale, float gx, float gy, Brush foreground, RenderState state)
-        {
-            foreach (Text.ColorGlyphLayer layer in layers)
-            {
-                if (!font.TryGetGlyphOutline(layer.GlyphId, out List<PathFigure> figures) || figures.Count == 0)
-                    continue;
-                Geometry glyph = new PathGeometry(FillRule.NonZero, ScaleFigures(figures, scale, gx, gy));
-                glyph = TransformGeometry(glyph, state.Transform);
-                if (state.Clip is not null)
-                    glyph = new CombinedGeometry(GeometryCombineMode.Intersect, glyph, state.Clip);
-
-                Brush layerBrush = layer.Color is RgbaColor c
-                    ? ApplyOpacity(new SolidColorBrush(c), state.Opacity)!
-                    : foreground;
-                output.Add(new GeometryFill(glyph, layerBrush, isGlyph: false));
-            }
-        }
-
-        // Scale glyph-outline figures (in font px, baseline y=0) by s and translate to (tx, ty).
-        private static List<PathFigure> ScaleFigures(List<PathFigure> figures, float s, float tx, float ty)
-        {
-            Vector2 M(Vector2 p) => new(p.X * s + tx, p.Y * s + ty);
-            var outF = new List<PathFigure>(figures.Count);
-            foreach (PathFigure f in figures)
-            {
-                var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
-                foreach (PathSegment seg in f.Segments)
-                    nf.Segments.Add(seg switch
-                    {
-                        LineSegment l => new LineSegment(M(l.Point)),
-                        QuadraticBezierSegment q => new QuadraticBezierSegment(M(q.Control), M(q.Point)),
-                        CubicBezierSegment c => new CubicBezierSegment(M(c.Control1), M(c.Control2), M(c.Point)),
-                        _ => seg,
-                    });
-                outF.Add(nf);
-            }
-            return outF;
-        }
+        // Reused across the glyphs of a run; GlyphRunPainter appends into it.
+        private readonly List<Text.GlyphFill> _glyphFills = new();
 
         /// <summary>Emit a fill and/or stroke for a geometry, applying the push state.</summary>
         private void EmitDrawing(List<DrawingPrimitive> output, Geometry geometry, uint hBrush, uint hPen, RenderState state)

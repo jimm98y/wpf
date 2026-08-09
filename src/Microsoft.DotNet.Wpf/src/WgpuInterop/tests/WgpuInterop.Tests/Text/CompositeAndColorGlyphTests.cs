@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
+using Microsoft.Wpf.Interop.WebGpu.Composition.Protocol;
 using Microsoft.Wpf.Interop.WebGpu.Composition.Text;
 using WgpuInterop.Tests.Harness;
 using Xunit;
@@ -105,9 +106,17 @@ namespace WgpuInterop.Tests.Text
     {
         public ColorGlyphTests(GpuFixture gpu) : base(gpu) { }
 
+        // Probed in order, and the ORDER IS BY COLOUR, deliberately.
+        //
+        // The end-to-end tests tell "real colour layers" from "monochrome fallback" by measuring
+        // saturation, so the glyph they measure has to be a saturated one. A soccer ball is white
+        // with black pentagons in every emoji set there is: picking it first (which is what happened
+        // when the probe order was arbitrary) produced a saturation of 31 and a failure that read
+        // exactly like the colour path being broken, when the glyph simply has no colour in it.
         private static readonly int[] Candidates =
         {
-            0x26BD /* soccer */, 0x2764 /* heart */, 0x2600 /* sun */, 0x2728 /* sparkles */, 0x26A1 /* zap */,
+            0x2764 /* red heart */, 0x26A1 /* yellow zap */, 0x2600 /* sun */, 0x2728 /* sparkles */,
+            0x26BD /* soccer: nearly monochrome, last resort */,
         };
 
         private static (TrueTypeFont Font, int Gid, IReadOnlyList<ColorGlyphLayer> Layers) FindColorGlyph()
@@ -222,6 +231,82 @@ namespace WgpuInterop.Tests.Text
             }
             catch { }
             return false;
+        }
+
+        /// <summary>
+        /// The same colour glyph, drawn through the OTHER text path.
+        ///
+        /// Two callers produce glyph fills: MilcoreEngine, decoding WPF's DrawGlyphRun (already-shaped
+        /// glyph indices), and the scene renderer, shaping a GlyphRunDraw string itself. Colour glyph
+        /// support once existed in the first only, so an emoji drawn through the second came out a
+        /// black silhouette and no test noticed. They share GlyphRunPainter now; this covers the half
+        /// that ColrGlyph_RendersSaturatedColour does not, so the pair fails if they diverge again.
+        /// </summary>
+        [Fact]
+        public void ColrGlyph_RendersSaturatedColour_ThroughTheProtocolPath()
+        {
+            (TrueTypeFont font, int gid, _) = FindColorGlyph();
+
+            const int W = 64, H = 64;
+            const float emSize = 48f;
+            const uint hRoot = 2, hBlack = 3, hRun = 20, hContent = 6;
+
+            var engine = new MilcoreEngine { FontResolver = _ => font };
+            engine.CreateOrAddRef(hRoot, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(hBlack, 0, 0, 0, 1));
+
+            var indices = new ushort[] { (ushort)gid };
+            var advances = new float[] { font.Advance(gid) * (emSize / font.PixelsPerEm) };
+
+            engine.CreateOrAddRef(hRun, MilResourceTypeId.Null);
+            engine.BeginCommand(MilCmd.GlyphRun(hRun, 0, 8f, 52f, emSize, indices, advances));
+            engine.EndCommand();
+
+            byte[] img = RenderContent(engine,
+                MilCmd.DrawGlyphRunRecord(hBlack, hRun),
+                W, H, hVisual: hRoot, hContent: hContent);
+
+            int maxSat = 0, ink = 0;
+            for (int i = 0; i < img.Length; i += 4)
+            {
+                int r = img[i], g = img[i + 1], b = img[i + 2];
+                int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                if (max < 250) ink++;
+                maxSat = Math.Max(maxSat, max - min);
+            }
+
+            Assert.True(ink > 20, $"the colour glyph rendered almost nothing ({ink} ink pixels)");
+            Assert.True(maxSat > 40,
+                $"max saturation was {maxSat}; the protocol path painted a monochrome fallback, not colour layers");
+        }
+
+        /// <summary>
+        /// The SDK ships a COLR emoji face, and it has to be a COLR one.
+        ///
+        /// This is the asset the whole emoji story rests on off Windows: the platforms' own emoji
+        /// fonts are colour bitmaps (CBDT/CBLC on Linux and Android, sbix on macOS) that do not load
+        /// as outline fonts at all, so nothing rendered. Swapping the vendored file for a bitmap
+        /// emoji font would silently take emoji away again on every platform at once, and the render
+        /// tests above would skip rather than fail, so the file itself is checked here.
+        /// </summary>
+        [Fact]
+        public void TheVendoredEmojiFontHasColourLayers()
+        {
+            string? path = TestFonts.RepoFont("TwemojiMozilla.ttf");
+            Assert.SkipWhen(path is null, "vendored TwemojiMozilla.ttf not found (not a repo checkout)");
+
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            var color = (IColorGlyphFont)font;
+
+            int gid = font.GlyphIndex((char)0x2764);   // red heart
+            Assert.True(gid != 0, "the vendored emoji font does not even cover U+2764");
+
+            Assert.True(color.TryGetColorLayers(gid, out IReadOnlyList<ColorGlyphLayer> layers) && layers.Count > 0,
+                "the vendored emoji font has no COLR layers: a bitmap emoji font cannot be drawn by this renderer");
+
+            bool anyColoured = false;
+            foreach (ColorGlyphLayer l in layers) if (l.Color is not null) anyColoured = true;
+            Assert.True(anyColoured, "no layer carries a CPAL palette colour");
         }
 
         /// <summary>The first probe code point that maps to this glyph id.</summary>

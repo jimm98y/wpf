@@ -117,6 +117,18 @@ namespace WgpuInterop.Tests.Harness
             string? env = Environment.GetEnvironmentVariable("WGPU_TEST_EMOJI");
             if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
+            // The VENDORED COLR face first, and for the usual reason (see this file's header): it is
+            // the same file on every machine, so the colour-glyph tests compare the same thing
+            // everywhere instead of testing whatever emoji font the OS happens to have.
+            //
+            // It also makes them RUN everywhere. The system emoji fonts are mostly not COLR at all --
+            // Noto Color Emoji is CBDT/CBLC and Apple Color Emoji is sbix, neither of which loads as
+            // an outline font -- so off Windows these tests used to skip themselves with an accurate
+            // but unhelpful "it is a bitmap emoji font" message, and the colour path went untested on
+            // the very platforms that ship the font this SDK now has to compensate for.
+            string? vendored = RepoFont("TwemojiMozilla.ttf");
+            if (vendored is not null) return vendored;
+
             foreach (string c in new[]
             {
                 @"C:\Windows\Fonts\seguiemj.ttf",
@@ -126,6 +138,32 @@ namespace WgpuInterop.Tests.Harness
                 if (File.Exists(c)) return c;
 
             foreach (string f in Scan("*Emoji*.ttf")) return f;
+            return null;
+        }
+
+        /// <summary>
+        /// A colour BITMAP emoji font (CBDT/CBLC), or null.
+        ///
+        /// Deliberately NOT the vendored COLR face: this is the other format, the one Linux and
+        /// Android actually ship, and the point of the tests that use it is that a font with no
+        /// outlines at all can be loaded and drawn. It is not vendored either -- ~10 MB to test a
+        /// parser with is not worth carrying -- so these tests skip where the machine has none,
+        /// which on Windows is always.
+        /// </summary>
+        public static string? FindBitmapEmojiFont()
+        {
+            string? env = Environment.GetEnvironmentVariable("WGPU_TEST_EMOJI_BITMAP");
+            if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+
+            foreach (string c in new[]
+            {
+                "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+                "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+                "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+                "/system/fonts/NotoColorEmoji.ttf",
+            })
+                if (File.Exists(c)) return c;
+
             return null;
         }
 
