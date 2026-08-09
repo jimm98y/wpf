@@ -2078,12 +2078,37 @@ namespace System.Windows.Interop
             bool enableRenderTarget = SafeNativeMethods.IsWindowVisible(_hWnd.MakeHandleRef(this));
             if(enableRenderTarget)
             {
-                if(_windowPosChanging && (positionChanged))
+                if(_windowPosChanging && (positionChanged) && !DUCE.ManagedComposition.IsEnabled)
                 {
                     enableRenderTarget = false;
                 }
             }
 
+            //
+            // The disable/enable handshake above (and the out-of-band SyncFlush pair it costs
+            // in UpdateWindowSettings) exists only to stop a SEPARATE render thread from
+            // painting into the HWND, or resizing it via UpdateLayeredWindow, while the UI
+            // thread is moving it. The managed compositor has no render thread: Channel.Commit
+            // and Channel.SyncFlush render and present synchronously on this very thread,
+            // inside this WndProc, so nothing can race us and there is nothing to synchronize
+            // with. Running the handshake anyway turned each WM_WINDOWPOSCHANGING/CHANGED pair
+            // into FOUR full scene renders, every one of them ending in a vsync-blocked
+            // wgpuSurfacePresent (~10ms apiece here) and every one of them redundant -- during a
+            // title-bar drag nothing in the scene changes at all (measured: parse = 0 visuals).
+            // That was ~45ms of blocking per mouse-move message, and since the modal move loop
+            // in DefWindowProc cannot deliver the next move until this WndProc returns, the
+            // window itself lagged the cursor: ~8-20 position updates/second instead of 60+.
+            //
+            // A pure move needs no repaint whatsoever -- the swap chain belongs to the HWND and
+            // the OS/DWM relocates its contents -- so on WM_WINDOWPOSCHANGING there is simply
+            // nothing to do; the final rect arrives with WM_WINDOWPOSCHANGED, which records it
+            // in-band and posts a render. Resizes are unaffected: their repaint comes from
+            // WM_SIZE -> DoPaint/OnResize -> MediaContext.CompleteRender, not from here.
+            //
+            if (DUCE.ManagedComposition.IsEnabled && _windowPosChanging && enableRenderTarget == _isRenderTargetEnabled)
+            {
+                return;
+            }
 
             if (positionChanged || (enableRenderTarget != _isRenderTargetEnabled))
             {
