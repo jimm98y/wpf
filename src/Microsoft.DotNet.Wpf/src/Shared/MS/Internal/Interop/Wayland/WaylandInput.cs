@@ -104,8 +104,9 @@ namespace MS.Internal.Interop.Wayland
         public static event Action<WaylandMouseMessage>? MouseInput;
         public static event Action<WaylandKeyMessage>? KeyInput;
 
-        private static IntPtr s_seat, s_pointer, s_keyboard;
+        private static IntPtr s_seat, s_pointer, s_keyboard, s_touch;
         private static IntPtr* s_pointerListener;
+        private static IntPtr* s_touchListener;
         private static IntPtr* s_keyboardListener;
         private static IntPtr* s_seatListener;
 
@@ -213,6 +214,20 @@ namespace MS.Internal.Interop.Wayland
                     WaylandCursor.AttachPointer(s_pointer);
                 }
 
+                if ((capabilities & WL_SEAT_CAPABILITY_TOUCH) != 0 && s_touch == IntPtr.Zero)
+                {
+                    s_touch = Wl.Construct(seat, WL_SEAT_GET_TOUCH, "wl_touch", Wl.wl_proxy_get_version(seat), WlArgument.NewId());
+                    s_touchListener = Wl.Vtable(
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, uint, IntPtr, int, int, int, void>)&OnTouchDown,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, uint, int, void>)&OnTouchUp,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, int, int, int, void>)&OnTouchMotion,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnTouchFrame,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnTouchCancel,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, int, int, int, void>)&OnTouchShape,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, int, int, void>)&OnTouchOrientation);
+                    Wl.wl_proxy_add_listener(s_touch, s_touchListener, IntPtr.Zero);
+                }
+
                 if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0 && s_keyboard == IntPtr.Zero)
                 {
                     s_keyboard = Wl.Construct(seat, WL_SEAT_GET_KEYBOARD, "wl_keyboard", Wl.wl_proxy_get_version(seat), WlArgument.NewId());
@@ -231,6 +246,117 @@ namespace MS.Internal.Interop.Wayland
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnSeatName(IntPtr data, IntPtr seat, IntPtr name) { }
+
+        // ---- Touch ---------------------------------------------------------------------------
+        //
+        // wl_touch reports CONTACTS, which the pointer protocol cannot express: each carries its own
+        // id and lives from a down to an up, several at once. They go straight to the PlatformTouch
+        // seam rather than through WaylandMouseMessage, because collapsing them into the mouse is
+        // exactly what loses the second finger.
+        //
+        // The surface pointer IS the window handle here (WaylandWindow.FromHandle takes it), so no
+        // mapping is needed -- only the surface-local logical position turned into the screen device
+        // pixels the seam wants.
+        //
+        // A contact's id is unique among those currently down and the compositor reuses it freely
+        // afterwards, which is the seam's contract already.
+
+        private static IntPtr s_touchSurface;
+
+        /// <summary>Surface-local logical coordinates to screen device pixels.</summary>
+        private static void ToScreen(IntPtr surface, int fx, int fy, out int screenX, out int screenY)
+        {
+            double scale = WaylandWindow.ScaleForSurface(surface);
+            double localX = Fixed(fx) * scale;
+            double localY = Fixed(fy) * scale;
+
+            int originX = 0, originY = 0;
+            WaylandWindow? window = WaylandWindow.FromHandle(surface);
+            window?.GetClientScreenOriginPixels(out originX, out originY);
+
+            screenX = (int)Math.Round(localX) + originX;
+            screenY = (int)Math.Round(localY) + originY;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchDown(IntPtr data, IntPtr touch, uint serial, uint time, IntPtr surface, int id, int fx, int fy)
+        {
+            try
+            {
+                LastInputSerial = serial;
+                s_touchSurface = surface;
+
+                IPlatformTouchSink? sink = PlatformTouch.Sink;
+                if (sink is null) return;
+
+                ToScreen(surface, fx, fy, out int screenX, out int screenY);
+                sink.TouchDown(surface, id, screenX, screenY, -1, time);
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchMotion(IntPtr data, IntPtr touch, uint time, int id, int fx, int fy)
+        {
+            try
+            {
+                // Motion names no surface: it belongs to whichever the contact went down on.
+                if (s_touchSurface == IntPtr.Zero) return;
+
+                IPlatformTouchSink? sink = PlatformTouch.Sink;
+                if (sink is null) return;
+
+                ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
+                sink.TouchMove(s_touchSurface, id, screenX, screenY, -1, time);
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchUp(IntPtr data, IntPtr touch, uint serial, uint time, int id)
+        {
+            try
+            {
+                LastInputSerial = serial;
+                if (s_touchSurface == IntPtr.Zero) return;
+
+                // An up names only the contact, so the seam is told there is no position and lifts
+                // it where it was last seen.
+                PlatformTouch.Sink?.TouchUp(s_touchSurface, id, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchFrame(IntPtr data, IntPtr touch)
+        {
+            // Nothing to do: contacts are delivered as they arrive rather than batched per frame.
+            // WPF raises Touch.FrameReported from TouchDevice itself, so batching here would only
+            // delay delivery.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchCancel(IntPtr data, IntPtr touch)
+        {
+            try
+            {
+                // The compositor took the whole sequence -- it started a gesture of its own, or the
+                // surface lost the touch. Every live contact is abandoned, not completed.
+                PlatformTouch.CancelAll(s_touchSurface);
+                s_touchSurface = IntPtr.Zero;
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchShape(IntPtr data, IntPtr touch, int id, int major, int minor)
+        {
+            // The contact ellipse. WPF's TouchPoint carries a rect, but nothing off Windows fills it
+            // in yet; see PlatformTouchDevice.GetTouchPoint.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchOrientation(IntPtr data, IntPtr touch, int id, int orientation) { }
 
         // ---- Pointer -------------------------------------------------------------------------
 

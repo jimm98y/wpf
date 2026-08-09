@@ -170,7 +170,11 @@ namespace System.Windows.Input
         {
             if (!_contacts.TryGetValue(contactId, out PlatformTouchDevice device)) return false;
 
-            if (TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
+            // An up that carries no position lifts the contact where it was last seen. Repositioning
+            // it to a placeholder would land the up somewhere the finger never was -- and a tap whose
+            // down and up hit different elements is not a click.
+            if (screenX != PlatformTouch.NoPosition && screenY != PlatformTouch.NoPosition &&
+                TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
             {
                 device.SetSource(source);
                 device.SetPosition(position, device.Pressure);
@@ -185,6 +189,18 @@ namespace System.Windows.Input
         {
             if (!_contacts.TryGetValue(contactId, out PlatformTouchDevice device)) return;
             Retire(contactId, device, cancel: true);
+        }
+
+        public void TouchCancelAll(IntPtr windowHandle)
+        {
+            if (_contacts.Count == 0) return;
+
+            // Copied first: Retire mutates the dictionary.
+            var live = new List<KeyValuePair<int, PlatformTouchDevice>>(_contacts);
+            foreach (KeyValuePair<int, PlatformTouchDevice> contact in live)
+            {
+                Retire(contact.Key, contact.Value, cancel: true);
+            }
         }
 
         /// <summary>

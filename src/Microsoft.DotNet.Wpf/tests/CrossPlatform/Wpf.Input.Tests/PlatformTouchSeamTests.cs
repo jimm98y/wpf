@@ -124,6 +124,35 @@ namespace Wpf.Input.Tests
         }
 
         /// <summary>
+        ///  An up that carries no position lifts the contact where it was last seen.
+        /// </summary>
+        /// <remarks>
+        ///  wl_touch.up names only the contact id, so Linux has nothing to pass. Sending a
+        ///  placeholder instead would move the contact to the screen corner on the way up, and a tap
+        ///  whose down and up land on different elements is not a click -- so this is the difference
+        ///  between "buttons work on Linux" and "buttons never fire".
+        /// </remarks>
+        [Fact]
+        public void AnUpWithNoPositionKeepsTheContactWhereItWas()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                object downOver = null, upOver = null;
+                scope.Target.TouchDown += (s, e) => downOver = e.OriginalSource;
+                scope.Target.TouchUp += (s, e) => upOver = e.OriginalSource;
+
+                scope.Down(1, scope.CentreOfTarget);
+                scope.UpWithoutPosition(1);
+
+                Assert.Same(scope.Target, downOver);
+                Assert.Same(scope.Target, upOver);
+            });
+        }
+
+        /// <summary>
         ///  Manipulation, which is the reason the seam matters beyond touch itself: TouchDevice is an
         ///  IManipulator and promotes its own contacts, so a head that reports contacts accurately
         ///  gets translation, scale and inertia with no further platform work.
@@ -242,6 +271,16 @@ namespace Wpf.Input.Tests
                 _up.Invoke(Sink, new object[]
                 {
                     _source.Handle, id, (int)screen.X, (int)screen.Y, (uint)Environment.TickCount,
+                });
+                Pump();
+            }
+
+            /// <summary>An up the way a platform that reports no position on release sends it.</summary>
+            public void UpWithoutPosition(int id)
+            {
+                _up.Invoke(Sink, new object[]
+                {
+                    _source.Handle, id, int.MinValue, int.MinValue, (uint)Environment.TickCount,
                 });
                 Pump();
             }
