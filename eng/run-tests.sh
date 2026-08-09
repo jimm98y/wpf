@@ -39,6 +39,7 @@ PROJECTS=(
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Accessibility.Tests/Wpf.Accessibility.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Document.Tests/Wpf.Document.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Geometry.Tests/Wpf.Geometry.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Input.Tests/Wpf.Input.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Printing.Tests/Wpf.Printing.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Text.Tests/Wpf.Text.Tests.csproj"
 )

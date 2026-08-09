@@ -20,9 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)ReachFramework\ref\ReachFramework-ref.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Printing\ref\System.Printing-ref.csproj" />
   </ItemGroup>

@@ -49,6 +49,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "UIAutomationProvider", "src
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "UIAutomationTypes", "src\Microsoft.DotNet.Wpf\src\UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj", "{152C4B33-3B53-4180-B8BC-7BB0BC91A2ED}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Accessibility", "src\Microsoft.DotNet.Wpf\src\Accessibility\Accessibility.csproj", "{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "System.Windows.Input.Manipulations", "src\Microsoft.DotNet.Wpf\src\System.Windows.Input.Manipulations\System.Windows.Input.Manipulations.csproj", "{B6F41F07-2117-49E0-A2B7-4BC6F586057B}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReachFramework", "src\Microsoft.DotNet.Wpf\src\ReachFramework\ReachFramework.csproj", "{17AA6CC2-CAE3-429C-B065-B76B8E14C632}"
@@ -680,6 +682,26 @@ Global
 		{B6F41F07-2117-49E0-A2B7-4BC6F586057B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{B6F41F07-2117-49E0-A2B7-4BC6F586057B}.Release|AnyCPU.Build.0 = Release|Any CPU
 		{B6F41F07-2117-49E0-A2B7-4BC6F586057B}.Release|x86.Build.0 = Release|x86
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|arm64.ActiveCfg = Debug|arm64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|arm64.Build.0 = Debug|arm64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|x64.ActiveCfg = Debug|x64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|x64.Build.0 = Debug|x64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|x86.ActiveCfg = Debug|x86
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|AnyCPU.ActiveCfg = Debug|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|AnyCPU.Build.0 = Debug|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Debug|x86.Build.0 = Debug|x86
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|arm64.ActiveCfg = Release|arm64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|arm64.Build.0 = Release|arm64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|x64.ActiveCfg = Release|x64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|x64.Build.0 = Release|x64
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|x86.ActiveCfg = Release|x86
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|AnyCPU.ActiveCfg = Release|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|AnyCPU.Build.0 = Release|Any CPU
+		{3F2A6C41-9E5D-4B78-8C1A-7D0E5B49A213}.Release|x86.Build.0 = Release|x86
 		{17AA6CC2-CAE3-429C-B065-B76B8E14C632}.Debug|arm64.ActiveCfg = Debug|arm64
 		{17AA6CC2-CAE3-429C-B065-B76B8E14C632}.Debug|arm64.Build.0 = Debug|arm64
 		{17AA6CC2-CAE3-429C-B065-B76B8E14C632}.Debug|x64.ActiveCfg = Debug|x64

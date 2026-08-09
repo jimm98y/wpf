@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     Builds Mono's managed System.Windows.Forms (fully-managed control painting) on net10 with our
@@ -54,10 +54,11 @@
 
   <ItemGroup>
     <!-- UITypeEditor is provided by our shim (shims/DrawingDesignShim.cs). Accessibility
-         (IAccessible et al.) is VENDORED under lib/ (a metadata-only interop assembly; it also
-         satisfies the interface types at runtime off-Windows) so the repo stays fully portable. -->
+         (IAccessible) comes from the fork's own build. It used to be a WindowsDesktop copy vendored
+         as a binary under lib/; the repo builds the assembly from source now
+         (src/Microsoft.DotNet.Wpf/src/Accessibility), so no head carries a framework assembly. -->
     <Reference Include="Accessibility">
-      <HintPath>lib/Accessibility.dll</HintPath>
+      <HintPath>$(MSBuildThisFileDirectory)../../../../artifacts/bin/Accessibility/Release/net10.0/Accessibility.dll</HintPath>
     </Reference>
     <!-- Our own vendored Mono System.Drawing (the GPU-raster backend target), replacing the
          System.Drawing.Common 6.0.0 NuGet package. -->

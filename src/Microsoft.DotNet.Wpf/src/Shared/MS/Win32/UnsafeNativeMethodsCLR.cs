@@ -1,7 +1,6 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Accessibility;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -288,8 +287,17 @@ namespace MS.Win32
         public static extern IntPtr DispatchMessage([In] ref System.Windows.Interop.MSG msg);
 #endif
 
+        // The out parameter is a raw interface pointer rather than Accessibility.IAccessible.
+        //
+        // Stock WPF typed it as IAccessible, and that single signature was the only thing dragging
+        // the Accessibility interop assembly into WindowsBase, PresentationCore and
+        // PresentationFramework -- an assembly this port does not build and must not take from the
+        // Windows Desktop framework. Nothing on this path ever calls a method on the object: the one
+        // caller (Popup's MSAA-to-UIA bridge) wants the side effect of asking for it and drops it
+        // again. An IntPtr expresses that exactly, and the caller releases it explicitly instead of
+        // leaving an RCW to the finalizer.
         [DllImport("oleacc.dll")]
-        internal static extern int ObjectFromLresult(IntPtr lResult, ref Guid iid, IntPtr wParam, [In, Out] ref IAccessible ppvObject);
+        internal static extern int ObjectFromLresult(IntPtr lResult, ref Guid iid, IntPtr wParam, [In, Out] ref IntPtr ppvObject);
 
         [DllImport("user32.dll")]
         internal static extern bool IsWinEventHookInstalled(int winevent);

@@ -1,28 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Accessibility: the UI Automation tree a WPF app exposes, which is what a screen reader reads.
+    Touch and pen: the input path from the operating system's digitizer to WPF's Touch/Stylus events.
 
-    Its own project rather than a corner of the document suite, because it is its own concern and
-    the only one here that has a Windows-specific half.
-
-    It exists because the failure mode is SILENT. An app whose automation tree collapsed still
-    renders perfectly and still passes every pixel, layout and text assertion in this repo; the only
-    symptom is that a blind user cannot use it. Nothing covered it on a port that has rewritten the
-    text stack, the document engine and the HWND plumbing underneath it.
-
-    Two levels, deliberately:
-      * AutomationPeer, WPF's own model, which works on every platform and also backs the Cocoa,
-        UIKit and Android bridges, so peer regressions are caught wherever CI runs;
-      * the Windows WM_GETOBJECT handshake, the actual seam between WPF and the OS, which cannot be
-        exercised anywhere else and skips off Windows.
+    Its own project rather than a corner of the accessibility suite because it needs something none
+    of the others do: a REAL, on-screen, foreground window that the OS will route synthesized
+    contacts to. Everything else here runs off-screen and headless.
 
     Referenced by path rather than ProjectReference'd, exactly as the sibling suites are: those
     projects build through the Arcade SDK, which a plain `dotnet test` does not participate in.
     Run eng/build-sdk first; without the fork the tests are excluded rather than failing the build.
 
-    Plain net10.0, NOT net10.0-windows: the peer half is not Windows-specific and must keep running
-    off Windows.
+    Plain net10.0, NOT net10.0-windows: the device-independent half (TouchDevice promotion,
+    manipulation) must keep running off Windows as the other heads gain their own touch sources.
   -->
 
   <PropertyGroup>
@@ -57,14 +47,16 @@
     <Reference Include="System.Xaml">                 <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationCore">            <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework">       <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <!-- The manipulation processor. Not referenced by the other suites because nothing else here
+         touches a gesture: PresentationCore only loads it when a finger actually reaches a
+         manipulation-enabled element, so a missing copy shows up as a FileNotFoundException raised
+         from inside touch delivery rather than as a build error. -->
+    <Reference Include="System.Windows.Input.Manipulations"><HintPath>$(_Art)/System.Windows.Input.Manipulations/Release/net10.0/System.Windows.Input.Manipulations.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="DirectWriteForwarder">        <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="ReachFramework">              <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI">              <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Printing">             <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="UIAutomationTypes">           <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
-    <!-- The fork's own MSAA interop assembly, exercised directly by MsaaInteropTests: its interface
-         declaration is a vtable layout, so it is worth checking against a real accessible object. -->
-    <Reference Include="Accessibility">               <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="UIAutomationProvider">        <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
@@ -88,9 +80,7 @@
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- The engine's native half. Nothing here renders to a screen, but paginating a document opens a
-       DrawingContext, which brings the MediaContext up. Note what is NOT here: none of WPF's own
-       native DLLs, because the port must not need them on any platform. -->
+  <!-- The engine's native half: a shown window brings the compositor up for real here. -->
   <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
     <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
@@ -106,7 +96,7 @@
   </ItemGroup>
 
   <Target Name="WarnIfForkNotBuilt" BeforeTargets="Build" Condition="'$(_ForkBuilt)' != 'true'">
-    <Warning Text="The WPF fork is not built, so the accessibility tests are excluded. Run eng/build-sdk.sh to enable them." />
+    <Warning Text="The WPF fork is not built, so the input tests are excluded. Run eng/build-sdk.sh to enable them." />
   </Target>
 
   <Target Name="CopyForkAssemblies" AfterTargets="Build" Condition="'$(_ForkBuilt)' == 'true'">

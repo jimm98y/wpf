@@ -421,7 +421,6 @@
   </Target>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
     <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
   </ItemGroup>
 

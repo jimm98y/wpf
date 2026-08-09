@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem Run the cross-platform test suite (Windows). The Unix twin is eng/run-tests.sh.
 rem
 rem Only adds DOTNET_ROOT over a plain `dotnet test`: xunit.v3 requires a native apphost, and the
@@ -21,6 +21,7 @@ call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Platform.Test
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Accessibility.Tests\Wpf.Accessibility.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Document.Tests\Wpf.Document.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Geometry.Tests\Wpf.Geometry.Tests.csproj" %*
+call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Input.Tests\Wpf.Input.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Printing.Tests\Wpf.Printing.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Text.Tests\Wpf.Text.Tests.csproj" %*
 
