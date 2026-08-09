@@ -40,8 +40,15 @@ namespace System.Printing
             _printer = printer;
         }
 
-        /// <summary>The name the platform knows this printer by, which is what a job is submitted to.</summary>
-        public string Name => _printer.Name ?? string.Empty;
+        /// <summary>
+        /// The name the platform knows this printer by, which is what a job is submitted to.
+        ///
+        /// An OVERRIDE, not a new property. The reference assembly declares Name once, as a virtual
+        /// on PrintSystemObject, so everything compiled against it -- PrintDialog included -- calls
+        /// PrintSystemObject::get_Name. Declaring it here instead of overriding leaves that slot
+        /// empty, and the call fails at runtime with MissingMethodException rather than at build.
+        /// </summary>
+        public override string Name => _printer.Name ?? string.Empty;
 
         /// <summary>The name to show a user. Falls back to the queue name.</summary>
         public string FullName => string.IsNullOrEmpty(_printer.DisplayName) ? Name : _printer.DisplayName;
@@ -160,8 +167,6 @@ namespace System.Printing
 
         public PrintServer(string path) { Name = path; }
 
-        public string Name { get; private set; } = string.Empty;
-
         public PrintQueueCollection GetPrintQueues() => new PrintQueueCollection(Discover());
 
         public PrintQueueCollection GetPrintQueues(EnumeratedPrintQueueTypes[] enumerationFlag)
@@ -240,6 +245,13 @@ namespace System.Printing
     public abstract partial class PrintSystemObject : IDisposable
     {
         protected PrintSystemObject() { }
+
+        /// <summary>
+        /// Declared HERE because that is where the reference assembly declares it. Callers compiled
+        /// against the contract bind to this slot, so a derived class that hides it rather than
+        /// overriding it produces a MissingMethodException the compiler cannot warn about.
+        /// </summary>
+        public virtual string Name { get; internal set; } = string.Empty;
 
         public virtual void Dispose() { }
     }

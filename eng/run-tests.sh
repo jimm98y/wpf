@@ -26,12 +26,21 @@ fi
 # The apphost's runtime probe. Point it at whichever SDK we just resolved.
 export DOTNET_ROOT="$(cd "$(dirname "$DOTNET")" && pwd)"
 
-# Both suites. WgpuInterop.Tests covers the renderer (one project reference, builds anywhere);
-# Wpf.Platform.Tests covers the per-OS windowing heads and needs the built fork, excluding itself
-# with a warning when that is absent.
+# Every suite. WgpuInterop.Tests covers the renderer (one project reference, builds anywhere); the
+# rest need the built fork and exclude themselves with a warning when it is absent, so running this
+# without eng/build-sdk.sh first is quiet rather than broken.
+#
+# Keep this list complete. It listed two of six for a while, and the printing suite was one of the
+# four missing -- which is how a Linux print path that segfaulted on the first call to CUPS stayed
+# green: the suite that would have caught it was never run.
 PROJECTS=(
   "$REPO/src/Microsoft.DotNet.Wpf/src/WgpuInterop/tests/WgpuInterop.Tests/WgpuInterop.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Platform.Tests/Wpf.Platform.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Accessibility.Tests/Wpf.Accessibility.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Document.Tests/Wpf.Document.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Geometry.Tests/Wpf.Geometry.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Printing.Tests/Wpf.Printing.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Text.Tests/Wpf.Text.Tests.csproj"
 )
 
 FILTER=()

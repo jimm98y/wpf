@@ -25,6 +25,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -34,13 +35,23 @@ namespace MS.Internal.Interop.Wayland
     [SupportedOSPlatform("linux")]
     internal sealed class CupsPrint : IPrintBackend
     {
+        // The imports below name "libcups", which is not what the library is called on disk. The
+        // resolver maps it to the SONAME; without it every call here is a DllNotFoundException.
+        static CupsPrint() => CupsResolver.Init();
+
         public PrinterInfo[] EnumeratePrinters()
         {
             IntPtr dests = IntPtr.Zero;
 
+            // Declared out here because freeing needs it: cupsFreeDests frees exactly as many
+            // destinations as it is told to, walking the array itself. Handing it anything larger
+            // than what cupsGetDests returned is a walk off the end of the allocation, and it
+            // segfaults the process rather than failing a call.
+            int count = 0;
+
             try
             {
-                int count = cupsGetDests(ref dests);
+                count = cupsGetDests(ref dests);
                 if (count <= 0 || dests == IntPtr.Zero) return Array.Empty<PrinterInfo>();
 
                 var printers = new List<PrinterInfo>(count);
@@ -48,7 +59,8 @@ namespace MS.Internal.Interop.Wayland
 
                 for (int i = 0; i < count; i++)
                 {
-                    var dest = Marshal.PtrToStructure<CupsDest>(dests + i * size);
+                    IntPtr destPtr = dests + i * size;
+                    var dest = Marshal.PtrToStructure<CupsDest>(destPtr);
 
                     string name = Utf8(dest.name);
                     if (string.IsNullOrEmpty(name)) continue;
@@ -58,13 +70,17 @@ namespace MS.Internal.Interop.Wayland
                     string instance = Utf8(dest.instance);
                     string full = string.IsNullOrEmpty(instance) ? name : name + "/" + instance;
 
-                    printers.Add(new PrinterInfo
+                    var printer = new PrinterInfo
                     {
                         Name = full,
                         DisplayName = DisplayName(dest, full),
                         Location = Option(dest, "printer-location"),
                         IsDefault = dest.is_default != 0,
-                    });
+                    };
+
+                    ResolvePageSize(destPtr, printer);
+
+                    printers.Add(printer);
                 }
 
                 return printers.ToArray();
@@ -80,13 +96,65 @@ namespace MS.Internal.Interop.Wayland
             }
             finally
             {
-                if (dests != IntPtr.Zero)
+                if (dests != IntPtr.Zero && count > 0)
                 {
-                    try { cupsFreeDests(int.MaxValue, dests); }
+                    try { cupsFreeDests(count, dests); }
                     catch (DllNotFoundException) { }
+                    catch (EntryPointNotFoundException) { }
                 }
             }
         }
+
+        /// <summary>
+        /// The paper this queue defaults to, in WPF units.
+        ///
+        /// Worth the extra call: the page size decides what a document is paginated onto, so being
+        /// wrong here reflows every page. It is NOT among the options cupsGetDests returns -- that
+        /// list carries the job defaults (copies, priority, hold) and the printer's description, but
+        /// not its media -- so it takes a second query against the destination.
+        ///
+        /// Left at zero when anything fails, which PrintQueue reads as "unknown" and answers with US
+        /// Letter. That fallback is why this went unnoticed: a queue defaulting to A4 was printed as
+        /// Letter, and on a Letter machine the guess happens to be right.
+        ///
+        /// The cost is a local round trip to cupsd, which answers from its cached printer
+        /// attributes -- single-digit milliseconds. Enumeration runs from PrintDialog's constructor
+        /// path, so anything expensive here would be felt on opening a window with a print button.
+        /// </summary>
+        private static void ResolvePageSize(IntPtr destPtr, PrinterInfo printer)
+        {
+            IntPtr info = IntPtr.Zero;
+
+            try
+            {
+                info = cupsCopyDestInfo(IntPtr.Zero, destPtr);
+                if (info == IntPtr.Zero) return;
+
+                if (cupsGetDestMediaDefault(IntPtr.Zero, destPtr, info, 0, out CupsMediaSize media) == 0) return;
+                if (media.width <= 0 || media.length <= 0) return;
+
+                printer.PageWidth = media.width * WpfUnitsPerHundredthMillimetre;
+                printer.PageHeight = media.length * WpfUnitsPerHundredthMillimetre;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // A libcups too old to describe media. The Letter fallback stands.
+            }
+            finally
+            {
+                if (info != IntPtr.Zero)
+                {
+                    try { cupsFreeDestInfo(info); }
+                    catch (EntryPointNotFoundException) { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// CUPS measures media in hundredths of a millimetre; WPF measures in 96ths of an inch.
+        /// There are 2540 hundredths of a millimetre to the inch.
+        /// </summary>
+        private const double WpfUnitsPerHundredthMillimetre = 96.0 / 2540.0;
 
         /// <summary>
         /// The name a chooser should show: CUPS' own description when the queue has one, which is
@@ -132,6 +200,9 @@ namespace MS.Internal.Interop.Wayland
             // returning a job id, so deleting immediately after is safe -- but only after.
             string path = Path.Combine(Path.GetTempPath(), "wpf-cups-" + Guid.NewGuid().ToString("N") + ".pdf");
 
+            IntPtr options = IntPtr.Zero;
+            int numOptions = 0;
+
             try
             {
                 using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -139,7 +210,18 @@ namespace MS.Internal.Interop.Wayland
                     document.CopyTo(file);
                 }
 
-                int job = cupsPrintFile(printer, path, jobName ?? "WPF document", 0, IntPtr.Zero);
+                // Copies are the spooler's job, not the renderer's: the document is written once and
+                // CUPS repeats it. Only sent when it is not the default, so a queue whose own
+                // configuration says otherwise is left alone.
+                int copies = settings.Copies;
+                if (copies > 1)
+                {
+                    numOptions = cupsAddOption("copies",
+                                               copies.ToString(CultureInfo.InvariantCulture),
+                                               numOptions, ref options);
+                }
+
+                int job = cupsPrintFile(printer, path, jobName ?? "WPF document", numOptions, options);
 
                 // A job id of zero means the spooler refused it.
                 return job != 0;
@@ -149,6 +231,13 @@ namespace MS.Internal.Interop.Wayland
             catch (IOException) { return false; }
             finally
             {
+                if (options != IntPtr.Zero)
+                {
+                    try { cupsFreeOptions(numOptions, options); }
+                    catch (DllNotFoundException) { }
+                    catch (EntryPointNotFoundException) { }
+                }
+
                 try { File.Delete(path); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
@@ -177,6 +266,23 @@ namespace MS.Internal.Interop.Wayland
             internal IntPtr value;
         }
 
+        // cups_size_t. The margins are carried because the struct layout requires them, not because
+        // anything here reads them: WPF has no concept of a hardware margin, and the PDF the printer
+        // is handed describes a full page.
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        private struct CupsMediaSize
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            internal string media;
+
+            internal int width;
+            internal int length;
+            internal int bottom;
+            internal int left;
+            internal int right;
+            internal int top;
+        }
+
         [DllImport("libcups")]
         private static extern int cupsGetDests(ref IntPtr dests);
 
@@ -186,5 +292,25 @@ namespace MS.Internal.Interop.Wayland
         [DllImport("libcups", CharSet = CharSet.Ansi)]
         private static extern int cupsPrintFile(string printer, string filename, string title,
                                                 int numOptions, IntPtr options);
+
+        // Allocates and grows the option array itself, which is why the array is never built here.
+        [DllImport("libcups", CharSet = CharSet.Ansi)]
+        private static extern int cupsAddOption(string name, string value, int numOptions,
+                                                ref IntPtr options);
+
+        [DllImport("libcups")]
+        private static extern void cupsFreeOptions(int numOptions, IntPtr options);
+
+        // The media queries. A null http_t is CUPS_HTTP_DEFAULT, which means "the local scheduler",
+        // and a zero flag is CUPS_MEDIA_FLAGS_DEFAULT.
+        [DllImport("libcups")]
+        private static extern IntPtr cupsCopyDestInfo(IntPtr http, IntPtr dest);
+
+        [DllImport("libcups")]
+        private static extern void cupsFreeDestInfo(IntPtr dinfo);
+
+        [DllImport("libcups", CharSet = CharSet.Ansi)]
+        private static extern int cupsGetDestMediaDefault(IntPtr http, IntPtr dest, IntPtr dinfo,
+                                                          uint flags, out CupsMediaSize size);
     }
 }

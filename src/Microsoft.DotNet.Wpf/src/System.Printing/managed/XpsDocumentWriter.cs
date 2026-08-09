@@ -223,6 +223,10 @@ namespace System.Windows.Xps
                     PrinterName = _printQueue.Name,
                     PageWidth = pageSize.Width,
                     PageHeight = pageSize.Height,
+
+                    // Copies belong to the print system, not to rendering: the document is written
+                    // once and the spooler repeats it. A ticket that does not say means one.
+                    Copies = Math.Max(1, printTicket?.CopyCount ?? 1),
                 };
 
                 using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))

@@ -460,6 +460,15 @@ namespace System.Windows.Controls
                 _pageRangeSelection = PageRangeSelection.UserPages;
             }
 
+            // The copy count travels on the print ticket, which is where Windows puts it and where
+            // the write path reads it from. Without this the dialog would collect a number and drop
+            // it, and three copies would print one.
+            PrintTicket ticket = this.PrintTicket;
+            if (ticket != null)
+            {
+                ticket.CopyCount = copies;
+            }
+
             return true;
         }
 
