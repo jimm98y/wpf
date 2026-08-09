@@ -36,7 +36,12 @@
     <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
     <WgpuNativeDir>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
     <_ForkSrc>$(MSBuildThisFileDirectory)../../../src</_ForkSrc>
-    <_ForkDllPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</_ForkDllPath>
+    <!-- The staleness sentinel: a stamp the build writes when it finishes, not one assembly.
+         MSBuild does not rewrite an assembly whose inputs did not change, so comparing against
+         PresentationCore.dll reported a stale fork after a perfectly good build that only touched
+         ReachFramework. Falls back to the old sentinel for a tree built before the stamp existed. -->
+    <_ForkDllPath>$(_Art)/.fork-build-stamp</_ForkDllPath>
+    <_ForkDllPath Condition="!Exists('$(_Art)/.fork-build-stamp')">$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</_ForkDllPath>
     <_ForkBuilt Condition="Exists('$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll') AND Exists('$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll')">true</_ForkBuilt>
   </PropertyGroup>
 

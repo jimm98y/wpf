@@ -218,6 +218,10 @@ namespace MS.Internal.FontCache
             return ByteArrayToUnmanagedStream(bits);
         }
 
+        /// <summary>Opens a font file for reading, shared, so several faces can use one file.</summary>
+        private static Stream OpenFileStream(string path)
+            => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
         /// <summary>
         /// Tries to open a file and throws exceptions in case of failures. This
         /// method is used to achieve the same exception throwing behavior after
@@ -227,6 +231,12 @@ namespace MS.Internal.FontCache
         {
             if (IsFile)
             {
+                if (!OperatingSystem.IsWindows())
+                {
+                    using (OpenFileStream(_fontUri.LocalPath)) { }
+                    return;
+                }
+
                 FileMapping fileMapping = new FileMapping();
 
                 fileMapping.OpenFile(_fontUri.LocalPath);
@@ -238,6 +248,20 @@ namespace MS.Internal.FontCache
         {
             if (IsFile)
             {
+                // FileMapping is a kernel32 memory-mapping wrapper (CreateFile, CreateFileMapping,
+                // MapViewOfFile) with no guard and no equivalent off Windows, so this threw
+                // DllNotFoundException for kernel32 on every other platform. It stayed hidden
+                // because nothing off Windows read a font's BYTES until PDF embedding did: layout
+                // and rendering go through the typeface's metrics and glyph data, not the file.
+                //
+                // A read-only FileStream is the same thing without the mapping. Fonts are read once
+                // and cached, so the mapping bought little even on Windows; shared read matters more,
+                // since several typefaces routinely come from one file (a .ttc especially).
+                if (!OperatingSystem.IsWindows())
+                {
+                    return OpenFileStream(_fontUri.LocalPath);
+                }
+
                 FileMapping fileMapping = new FileMapping();
 
                 fileMapping.OpenFile(_fontUri.LocalPath);

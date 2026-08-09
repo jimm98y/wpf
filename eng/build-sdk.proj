@@ -79,7 +79,7 @@
     <_PackProj Include="$(RepoRoot)sdk/WpfWebGpuWasm.Sdk/WpfWebGpuWasm.Sdk.csproj" />
   </ItemGroup>
 
-  <Target Name="Build" DependsOnTargets="Preflight;BuildProjects;Pack;EvictCache" />
+  <Target Name="Build" DependsOnTargets="Preflight;BuildProjects;Pack;Stamp;EvictCache" />
 
   <!-- wgpu-native is a prebuilt binary drop, gitignored (see WgpuInterop/.gitignore), so a
        fresh clone does not have it and nothing else in the build will complain: the SDK
@@ -121,6 +121,22 @@
 
   <!-- The package version does not change between builds, so NuGet would happily serve the
        previously extracted copy and the repack would have no effect whatsoever. -->
+  <!--
+    Records when the fork was last built, for the cross-platform test suites' staleness check.
+
+    They used to compare their source tree against PresentationCore.dll, on the reasoning that if any
+    .cs is newer than the built binary, the binaries are stale. That was right when PresentationCore
+    was the only assembly under test and wrong once ReachFramework joined it: MSBuild does not rewrite
+    an assembly whose inputs did not change, so editing ReachFramework and rebuilding everything left
+    PresentationCore.dll older than the edit and every suite refusing to run.
+
+    A stamp says what the check actually wants to know -- when did a build last complete -- rather
+    than inferring it from one artifact that may legitimately not have been touched.
+  -->
+  <Target Name="Stamp">
+    <Touch Files="$(RepoRoot)artifacts/bin/.fork-build-stamp" AlwaysCreate="true" />
+  </Target>
+
   <Target Name="EvictCache" Condition="'$(SkipPack)' != 'true'">
     <PropertyGroup>
       <_NuGetHome Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetHome>

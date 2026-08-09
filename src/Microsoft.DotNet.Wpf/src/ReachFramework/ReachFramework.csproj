@@ -232,6 +232,12 @@
     <Compile Include="Packaging\XpsInterleavingPolicy.cs" />
     <Compile Include="Packaging\XpsManager.cs" />
     <Compile Include="Packaging\XpsPartBase.cs" />
+    <Compile Include="Pdf\PdfWriter.cs" />
+    <Compile Include="Pdf\SfntReader.cs" />
+    <Compile Include="Pdf\PdfFontCache.cs" />
+    <Compile Include="Pdf\PdfImageCache.cs" />
+    <Compile Include="Pdf\PdfDevice.cs" />
+    <Compile Include="Pdf\PdfDocumentWriter.cs" />
     <Compile Include="Packaging\XpsDocument.cs" />
     <Compile Include="Packaging\XpsResource.cs" />
     <Compile Include="Packaging\XpsResourcePolicy.cs" />

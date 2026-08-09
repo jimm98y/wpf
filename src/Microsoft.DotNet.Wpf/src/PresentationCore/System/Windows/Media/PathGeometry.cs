@@ -826,6 +826,16 @@ namespace System.Windows.Media
         {
             IntersectionDetail detail = IntersectionDetail.NotCalculated;
 
+            // The fourth and last of the unguarded wpfgfx geometry entry points, and the one that
+            // hid longest because nothing off Windows reached it until the printing pipeline did:
+            // the alpha flattener asks it whether one clip fully covers another before deciding
+            // whether the clip can be dropped.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Media.PathBoolean.Detail(
+                    geometry1, geometry2, Geometry.AbsoluteTolerance(geometry1, tolerance, type));
+            }
+
             unsafe
             {
                 PathGeometryData data1 = geometry1.GetPathGeometryData();

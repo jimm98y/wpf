@@ -69,6 +69,56 @@ namespace MS.Internal.Media
             return Resolve(a, new List<List<Point>>(), evenOdd, false, GeometryCombineMode.Union);
         }
 
+        /// <summary>
+        /// How two shapes sit relative to one another, answered with the same clipper.
+        ///
+        /// Expressed through areas rather than through a separate containment algorithm: a shape is
+        /// inside another exactly when subtracting the other leaves nothing. That reuse is the point
+        /// -- one implementation to be right about degeneracies, not two.
+        /// </summary>
+        internal static IntersectionDetail Detail(Geometry geometry1, Geometry geometry2, double tolerance)
+        {
+            bool empty1 = IsEmpty(geometry1), empty2 = IsEmpty(geometry2);
+
+            // An empty shape intersects nothing. Reported as Empty rather than as containment, which
+            // matches what the native implementation answers and what callers act on.
+            if (empty1 || empty2) return IntersectionDetail.Empty;
+
+            if (IsEmpty(Combine(geometry1, geometry2, GeometryCombineMode.Intersect, null, tolerance)))
+            {
+                return IntersectionDetail.Empty;
+            }
+
+            bool secondInsideFirst = IsEmpty(Combine(geometry2, geometry1, GeometryCombineMode.Exclude, null, tolerance));
+            bool firstInsideSecond = IsEmpty(Combine(geometry1, geometry2, GeometryCombineMode.Exclude, null, tolerance));
+
+            if (secondInsideFirst) return IntersectionDetail.FullyContains;
+            if (firstInsideSecond) return IntersectionDetail.FullyInside;
+
+            return IntersectionDetail.Intersects;
+        }
+
+        /// <summary>
+        /// Whether a geometry covers no area. Not the same as having no figures: a boolean can leave
+        /// behind slivers of a few billionths of a unit where two edges nearly coincided, and calling
+        /// those "not empty" makes containment tests answer Intersects for shapes that plainly nest.
+        /// </summary>
+        private static bool IsEmpty(Geometry geometry)
+        {
+            if (geometry == null) return true;
+
+            Rect bounds;
+            try { bounds = geometry.Bounds; }
+            catch (InvalidOperationException) { return true; }
+
+            if (bounds.IsEmpty) return true;
+
+            double extent = Math.Max(Math.Abs(bounds.Right), Math.Abs(bounds.Bottom));
+            double negligible = Math.Max(extent, 1.0) * 1e-6;
+
+            return bounds.Width < negligible && bounds.Height < negligible;
+        }
+
         // ---- input -----------------------------------------------------------------
 
         /// <summary>
