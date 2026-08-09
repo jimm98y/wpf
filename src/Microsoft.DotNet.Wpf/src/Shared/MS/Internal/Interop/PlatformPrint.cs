@@ -124,7 +124,7 @@ namespace MS.Internal.Interop
             if (OperatingSystem.IsBrowser()) return null;
             if (OperatingSystem.IsIOS()) return null;
             if (OperatingSystem.IsAndroid()) return null;
-            if (OperatingSystem.IsMacOS()) return null;
+            if (OperatingSystem.IsMacOS()) return new CocoaPrint();
             if (OperatingSystem.IsLinux()) return null;
 
             return null;
