@@ -44,6 +44,22 @@ namespace MS.Internal.Interop
         internal double PageWidth { get; set; }
 
         internal double PageHeight { get; set; }
+
+        /// <summary>
+        /// The part of the page this printer can actually mark, in WPF units, measured from the
+        /// top left of the PAPER -- which is where WPF puts the origin, and is not where the
+        /// printer does.
+        ///
+        /// Zero extent means "not known", and a caller should then treat the whole page as
+        /// imageable rather than assume a margin it has no evidence for.
+        /// </summary>
+        internal double ImageableOriginX { get; set; }
+
+        internal double ImageableOriginY { get; set; }
+
+        internal double ImageableWidth { get; set; }
+
+        internal double ImageableHeight { get; set; }
     }
 
     /// <summary>What the user chose, and what the job should therefore do.</summary>
@@ -64,6 +80,18 @@ namespace MS.Internal.Interop
         internal double PageWidth { get; set; }
 
         internal double PageHeight { get; set; }
+
+        /// <summary>
+        /// A file to write the job into instead of putting it on the printer's port. Null for an
+        /// ordinary print.
+        ///
+        /// This is "print to file", which every print system has and which the Windows print dialog
+        /// offers as a checkbox. It is not a test hook: some printers have no other usable mode --
+        /// Microsoft Print to PDF sits on the PORTPROMPT port and asks the user for a path with a
+        /// modal Save dialog, which an application that is not driving one has no way to answer.
+        /// Naming the file up front is how you print to it without a person present.
+        /// </summary>
+        internal string OutputFile { get; set; }
     }
 
     /// <summary>One platform's print system.</summary>
@@ -87,6 +115,20 @@ namespace MS.Internal.Interop
         /// is the caller's to dispose.
         /// </summary>
         bool Submit(string jobName, Stream document, PrintJobSettings settings);
+
+        /// <summary>
+        /// Whether <see cref="Submit"/> is the way a job reaches this print system.
+        ///
+        /// True everywhere except Windows. Five of the six print systems want a finished document
+        /// and will render it themselves; Windows' spooler is a drawing surface, and a job is made
+        /// by drawing pages into a device context that the spooler owns. There is no document to
+        /// hand it, and a PDF written for one of the others is bytes it has no decoder for.
+        ///
+        /// A caller that sees false must drive the device instead -- which is what
+        /// XpsDocumentWriter does, through the GDI device in ReachFramework. Submit still works
+        /// there, but it means something narrower: raw, printer-ready data straight to the port.
+        /// </summary>
+        bool TakesRenderedDocument => true;
     }
 
     internal static class PlatformPrint
@@ -115,7 +157,11 @@ namespace MS.Internal.Interop
             set
             {
                 s_backend = value;
-                s_resolved = true;
+
+                // Null puts the platform's own back, rather than pinning null. A test that installs
+                // a stand-in and then clears it wants the machine's print system again, not a
+                // process where nothing can print for the rest of its life.
+                s_resolved = value != null;
             }
         }
 
@@ -126,10 +172,8 @@ namespace MS.Internal.Interop
             if (OperatingSystem.IsAndroid()) return new AndroidPrintBackend();
             if (OperatingSystem.IsMacOS()) return new CocoaPrint();
             if (OperatingSystem.IsLinux()) return new Wayland.CupsPrint();
+            if (OperatingSystem.IsWindows()) return new WindowsPrint();
 
-            // Windows. The existing PrintDlgEx path still owns the dialog there, and the spooler
-            // wants to be driven page by page rather than handed a PDF, so it has no backend of this
-            // shape yet.
             return null;
         }
 
@@ -141,6 +185,16 @@ namespace MS.Internal.Interop
 
         internal static bool Submit(string jobName, Stream document, PrintJobSettings settings)
             => Current?.Submit(jobName, document, settings) ?? false;
+
+        /// <summary>
+        /// Whether a job reaches this platform's print system as a finished document. False means
+        /// the caller must draw the pages itself; see <see cref="IPrintBackend.TakesRenderedDocument"/>.
+        ///
+        /// With no backend at all the answer is true, because the caller's next step is then to
+        /// render a document and be told by Submit that nothing accepted it -- which is the failure
+        /// this reports, rather than sending it down a device path that also does not exist.
+        /// </summary>
+        internal static bool TakesRenderedDocument => Current?.TakesRenderedDocument ?? true;
 
         /// <summary>Whether anything on this machine can print at all.</summary>
         internal static bool IsAvailable => Current != null;

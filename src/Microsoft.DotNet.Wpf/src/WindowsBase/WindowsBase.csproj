@@ -307,6 +307,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WindowsPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsResolver.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDragDrop.cs" />

@@ -202,6 +202,16 @@ namespace System.Windows.Xps
                     "no default printer looks like.");
             }
 
+            // Windows takes the other route. Its spooler does not accept a document, it hands out a
+            // device context and expects the pages to be drawn into it, so there is no file to
+            // render and nothing to submit -- the job IS the drawing. Everything above this point
+            // in the pipeline is the same; only the bottom of it differs.
+            if (!PlatformPrint.TakesRenderedDocument)
+            {
+                Draw(visual, paginator, pageSize, printTicket);
+                return;
+            }
+
             string path = Path.Combine(Path.GetTempPath(),
                                        "wpf-print-" + Guid.NewGuid().ToString("N") + ".pdf");
 
@@ -252,6 +262,52 @@ namespace System.Windows.Xps
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
+        }
+
+        /// <summary>
+        /// The Windows route: draw the pages straight into the printer's device context.
+        ///
+        /// No temporary file, and no second pass. The five other print systems want a finished
+        /// document because that is what their submission APIs take; Windows' spooler is the
+        /// drawing surface, so rendering to a file first and then replaying it would only lose
+        /// fidelity and time.
+        /// </summary>
+        private void Draw(Visual visual, DocumentPaginator paginator, Size pageSize, PrintTicket printTicket)
+        {
+            using var writer = new Printing.GdiDocumentWriter(_printQueue.Name)
+            {
+                PageSize = pageSize,
+                Copies = Math.Max(1, printTicket?.CopyCount ?? 1),
+                OutputFile = _printQueue.OutputFile,
+
+                JobName = JobDescription
+                          ?? _printQueue.CurrentJobSettings?.Description
+                          ?? "WPF document",
+            };
+
+            try
+            {
+                if (paginator != null) writer.Write(paginator);
+                else if (visual != null) writer.Write(visual);
+
+                if (_cancelled)
+                {
+                    // Abort rather than close: a cancelled job that reached the spooler still
+                    // prints, and "cancelled" that produces paper is not cancelled.
+                    writer.Abort();
+                    RaiseCancelled();
+                    return;
+                }
+
+                writer.Close();
+            }
+            catch
+            {
+                writer.Abort();
+                throw;
+            }
+
+            RaiseCompleted(null);
         }
 
         private static void Render(Stream destination, Size pageSize, Visual visual, DocumentPaginator paginator)

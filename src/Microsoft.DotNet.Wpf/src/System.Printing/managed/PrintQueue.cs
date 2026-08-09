@@ -59,6 +59,16 @@ namespace System.Printing
         public string Comment => _printer.Location ?? string.Empty;
 
         /// <summary>
+        /// Set by the Windows print dialog on the queue it hands back.
+        ///
+        /// It meant something once -- partial trust restricted what a queue would let an
+        /// application do -- and .NET has had no partial trust for a decade. It stays because
+        /// PrintDlgExMarshaler assigns it, and a property the reference assembly declares and the
+        /// implementation does not is a MissingMethodException the moment the dialog closes.
+        /// </summary>
+        public bool InPartialTrust { get; set; }
+
+        /// <summary>
         /// The paper size this printer reports, in WPF units. Used for the page a document is
         /// paginated onto, so getting it wrong reflows every page.
         /// </summary>
@@ -68,21 +78,65 @@ namespace System.Printing
                 : new Windows.Size(816, 1056);
 
         /// <summary>
+        /// Where this queue's jobs go instead of the printer's port, if anywhere.
+        ///
+        /// "Print to file", which the Windows print dialog offers as a checkbox and which some
+        /// printers have no alternative to: Microsoft Print to PDF sits on the PORTPROMPT port and
+        /// asks for a path with a modal Save dialog, so an application printing without a person in
+        /// front of it has to name the file up front or hang waiting for one.
+        ///
+        /// Internal because it is not part of the printing contract WPF applications compile
+        /// against. It is set by whatever chose the destination -- the print dialog, or a caller
+        /// that already knows where the bytes should land.
+        /// </summary>
+        internal string OutputFile { get; set; }
+
+        /// <summary>
         /// What this printer can do, as a PrintCapabilities.
         ///
-        /// PrintCapabilities is really implemented, in ReachFramework, and is a data object; what is
-        /// missing off Windows is the PROVIDER that fills one in from a driver (prntvpt and winspool,
-        /// both of which throw DllNotFoundException here). So this answers from the platform's own
-        /// description of the printer instead, which covers the one thing callers use it for: the
-        /// imageable area.
+        /// PrintCapabilities and the provider that fills one in are both real and both in
+        /// ReachFramework; what varies is whether the provider can reach a driver. On Windows it
+        /// can, through winspool, and the answer is the driver's own list of papers, resolutions
+        /// and imageable areas. Elsewhere PTProviderBase.Create has no driver to bind to and this
+        /// is null -- which is what every caller already treats as "ask the platform instead".
         /// </summary>
         public PrintCapabilities GetPrintCapabilities(PrintTicket printTicket)
         {
-            _ = printTicket;
-            return null;
+            if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(Name)) return null;
+
+            try
+            {
+                using MS.Internal.Printing.Configuration.PTProviderBase provider =
+                    MS.Internal.Printing.Configuration.PTProviderBase.Create(
+                        Name, MaxPrintSchemaVersion, MaxPrintSchemaVersion);
+
+                using MemoryStream ticket = printTicket?.GetXmlStream();
+                using MemoryStream capabilities = provider.GetPrintCapabilities(ticket);
+
+                if (capabilities == null) return null;
+
+                capabilities.Position = 0;
+                return new PrintCapabilities(capabilities);
+            }
+            catch (PrintSystemException)
+            {
+                // An offline printer, a queue whose driver is not installed locally, or a driver
+                // that will not answer. None of those is a reason to fail the caller: they asked
+                // what the printer can do and the honest answer is that nobody knows.
+                return null;
+            }
+            catch (System.Xml.XmlException)
+            {
+                // A driver that answered with something that is not print schema. Rare, and seen
+                // from third-party drivers; the same answer applies.
+                return null;
+            }
         }
 
         public PrintCapabilities GetPrintCapabilities() => GetPrintCapabilities(null);
+
+        /// <summary>The newest print schema version this stack understands.</summary>
+        public static int MaxPrintSchemaVersion => 1;
 
         /// <summary>The ticket a job uses when the caller has not supplied one.</summary>
         public PrintTicket DefaultPrintTicket => _defaultTicket ??= new PrintTicket();
@@ -119,6 +173,119 @@ namespace System.Printing
             var writer = new XpsDocumentWriter(printQueue);
             writer.JobDescription = jobDescription;
             return writer;
+        }
+
+        // ---- the overloads that ask the user first ---------------------------------
+        //
+        // These show a print dialog and hand back a writer for whatever was chosen, reporting the
+        // page geometry through ref parameters. They are not a convenience: they are what every
+        // document viewer in the framework calls to implement its Print button --
+        // DocumentViewerBase, FlowDocumentScrollViewer, FlowDocumentReader's single-page viewer and
+        // the XPS viewer's own. Without them printing from a viewer fails with a
+        // MissingMethodException, which no amount of correct plumbing underneath would fix.
+
+        /// <summary>
+        /// Shows a print dialog and returns a writer for the chosen printer, reporting the page
+        /// size it settled on. Null when the user cancelled.
+        /// </summary>
+        public static XpsDocumentWriter CreateXpsDocumentWriter(ref double width, ref double height)
+        {
+            var dialog = new Windows.Controls.PrintDialog();
+
+            if (dialog.ShowDialog() != true) return null;
+
+            width = dialog.PrintableAreaWidth;
+            height = dialog.PrintableAreaHeight;
+
+            return Configure(dialog, null);
+        }
+
+        public static XpsDocumentWriter CreateXpsDocumentWriter(
+            ref PrintDocumentImageableArea documentImageableArea)
+            => CreateXpsDocumentWriter(null, ref documentImageableArea);
+
+        public static XpsDocumentWriter CreateXpsDocumentWriter(
+            string jobDescription,
+            ref PrintDocumentImageableArea documentImageableArea)
+        {
+            var dialog = new Windows.Controls.PrintDialog();
+
+            if (dialog.ShowDialog() != true) return null;
+
+            documentImageableArea = ImageableArea(dialog);
+
+            return Configure(dialog, jobDescription);
+        }
+
+        public static XpsDocumentWriter CreateXpsDocumentWriter(
+            ref PrintDocumentImageableArea documentImageableArea,
+            ref Windows.Controls.PageRangeSelection pageRangeSelection,
+            ref Windows.Controls.PageRange pageRange)
+            => CreateXpsDocumentWriter(null, ref documentImageableArea, ref pageRangeSelection, ref pageRange);
+
+        public static XpsDocumentWriter CreateXpsDocumentWriter(
+            string jobDescription,
+            ref PrintDocumentImageableArea documentImageableArea,
+            ref Windows.Controls.PageRangeSelection pageRangeSelection,
+            ref Windows.Controls.PageRange pageRange)
+        {
+            var dialog = new Windows.Controls.PrintDialog
+            {
+                UserPageRangeEnabled = true,
+            };
+
+            if (dialog.ShowDialog() != true) return null;
+
+            documentImageableArea = ImageableArea(dialog);
+            pageRangeSelection = dialog.PageRangeSelection;
+            pageRange = dialog.PageRange;
+
+            return Configure(dialog, jobDescription);
+        }
+
+        /// <summary>
+        /// The page the chosen printer will actually mark, as the dialog understands it.
+        ///
+        /// Origin at zero and the whole page imageable is the honest answer when nothing better is
+        /// known: the alternative is inventing a hardware margin, and a caller that lays out to a
+        /// margin the printer does not have loses content at the edge for no reason.
+        /// </summary>
+        private static PrintDocumentImageableArea ImageableArea(Windows.Controls.PrintDialog dialog)
+        {
+            double width = dialog.PrintableAreaWidth;
+            double height = dialog.PrintableAreaHeight;
+
+            var area = new PrintDocumentImageableArea
+            {
+                MediaSizeWidth = width,
+                MediaSizeHeight = height,
+                ExtentWidth = width,
+                ExtentHeight = height,
+            };
+
+            PrinterInfo printer = dialog.PrintQueue?.Printer;
+
+            if (printer != null && printer.ImageableWidth > 0 && printer.ImageableHeight > 0)
+            {
+                area.OriginWidth = printer.ImageableOriginX;
+                area.OriginHeight = printer.ImageableOriginY;
+                area.ExtentWidth = printer.ImageableWidth;
+                area.ExtentHeight = printer.ImageableHeight;
+            }
+
+            return area;
+        }
+
+        private static XpsDocumentWriter Configure(Windows.Controls.PrintDialog dialog, string jobDescription)
+        {
+            PrintQueue queue = dialog.PrintQueue;
+
+            if (queue != null && dialog.PrintTicket != null)
+            {
+                queue.UserPrintTicket = dialog.PrintTicket;
+            }
+
+            return CreateXpsDocumentWriter(jobDescription, queue);
         }
 
         // ---- internals the rest of the stack reaches ------------------------------
@@ -170,6 +337,28 @@ namespace System.Printing
         public PrintQueueCollection GetPrintQueues() => new PrintQueueCollection(Discover());
 
         public PrintQueueCollection GetPrintQueues(EnumeratedPrintQueueTypes[] enumerationFlag)
+            => GetPrintQueues();
+
+        // The filtered overloads. The filter names which properties to fetch eagerly, which is an
+        // optimisation for a queue model that loads them one spooler round-trip at a time; this one
+        // has already got everything the platform gave it, so there is nothing to defer and nothing
+        // to filter. They exist because PrintDlgExMarshaler calls the two-argument form, and a
+        // reference assembly that declares a method the implementation does not have is a
+        // MissingMethodException the compiler cannot warn about -- which is exactly how the Windows
+        // print dialog was failing.
+
+        public PrintQueueCollection GetPrintQueues(PrintQueueIndexedProperty[] propertiesFilter)
+            => GetPrintQueues();
+
+        public PrintQueueCollection GetPrintQueues(PrintQueueIndexedProperty[] propertiesFilter,
+                                                   EnumeratedPrintQueueTypes[] enumerationFlag)
+            => GetPrintQueues();
+
+        public PrintQueueCollection GetPrintQueues(string[] propertiesFilter)
+            => GetPrintQueues();
+
+        public PrintQueueCollection GetPrintQueues(string[] propertiesFilter,
+                                                   EnumeratedPrintQueueTypes[] enumerationFlag)
             => GetPrintQueues();
 
         internal static List<PrintQueue> Discover()
@@ -266,6 +455,38 @@ namespace System.Printing
     internal class PrintSystemDispatcherObject : Windows.Threading.DispatcherObject
     {
         public void VerifyThreadLocality() { }
+    }
+
+    /// <summary>
+    /// Which of a queue's properties a caller wants fetched.
+    ///
+    /// Present for the same reason as the filtered GetPrintQueues overloads that take it: the
+    /// reference assembly declares it, so the implementation must too or the two are not the same
+    /// type at run time. Nothing here acts on the filter -- the platform hands over every property
+    /// it has in one call, so there is nothing left to defer.
+    /// </summary>
+    public enum PrintQueueIndexedProperty
+    {
+        Name = 0,
+        ShareName = 1,
+        Comment = 2,
+        Location = 3,
+        Description = 4,
+        Priority = 5,
+        DefaultPriority = 6,
+        StartTimeOfDay = 7,
+        UntilTimeOfDay = 8,
+        AveragePagesPerMinute = 9,
+        NumberOfJobs = 10,
+        QueueAttributes = 11,
+        QueueDriver = 12,
+        QueuePort = 13,
+        QueuePrintProcessor = 14,
+        HostingPrintServer = 15,
+        QueueStatus = 16,
+        SeparatorFile = 17,
+        UserPrintTicket = 18,
+        DefaultPrintTicket = 19,
     }
 
     public enum EnumeratedPrintQueueTypes

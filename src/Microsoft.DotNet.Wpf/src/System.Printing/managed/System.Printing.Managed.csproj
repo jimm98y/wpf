@@ -39,6 +39,7 @@
     <Compile Include="IndexedProperties.cs" />
     <Compile Include="LibraryAssemblyInfo.cs" />
     <Compile Include="PrintQueue.cs" />
+    <Compile Include="SafeMemoryHandle.cs" />
     <Compile Include="XpsDocumentWriter.cs" />
     <Compile Include="$(WpfSharedDir)RefAssemblyAttrs.cs" />
   </ItemGroup>
