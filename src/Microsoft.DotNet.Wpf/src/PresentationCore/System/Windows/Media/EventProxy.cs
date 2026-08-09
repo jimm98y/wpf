@@ -127,34 +127,15 @@ namespace System.Windows.Media
         {
             ArgumentNullException.ThrowIfNull(invokable);
 
-            // Off-Windows the native milcore event proxy (wpfgfx_cor3.dll) is unavailable. Return an INVALID
-            // handle; the media stack no-ops (MILMedia guards + MediaPlayerState.CreateMedia), so the proxy is
-            // never dereferenced and no media events are raised. Lets a MediaElement construct off-Windows.
-            if (!OperatingSystem.IsWindows())
-            {
-                return new SafeMediaHandle();
-            }
-
-            SafeMILHandle eventProxy = null;
-
-            EventProxyWrapper epw = new EventProxyWrapper(invokable);
-            EventProxyDescriptor epd = new EventProxyDescriptor
-            {
-                pfnDispose = EventProxyStaticPtrs.pfnDispose,
-                pfnRaiseEvent = EventProxyStaticPtrs.pfnRaiseEvent,
-
-                m_handle = System.Runtime.InteropServices.GCHandle.Alloc(epw, System.Runtime.InteropServices.GCHandleType.Normal)
-            };
-
-            HRESULT.Check(MILCreateEventProxy(ref epd, out eventProxy));
-
-            return eventProxy;
+            // The only consumer of this proxy was the native milcore media player, which no longer exists
+            // on any platform -- MediaPlayerState drives an IMediaBackend and raises its events directly
+            // on the media dispatcher (see MediaPlayerState.CreateMedia). Return an INVALID handle: it is
+            // never dereferenced, and creating a real one would mean loading wpfgfx_cor3.dll, which
+            // PresentationCore must not do anywhere.
+            return new SafeMediaHandle();
         }
 
         #endregion
-
-        [DllImport(DllImport.MilCore)]
-        private static extern int /* HRESULT */ MILCreateEventProxy(ref EventProxyDescriptor pEPD, out SafeMILHandle ppEventProxy);
     }
     #endregion
 }

@@ -318,11 +318,8 @@ namespace System.Windows.Media.Imaging
 
             // No native WIC on this platform: encoders that have a managed implementation
             // (currently PNG) encode in managed code; the rest are unsupported.
-            if (!OperatingSystem.IsWindows())
-            {
-                SaveManaged(stream);
-                return;
-            }
+            SaveManaged(stream);
+            return;
 
             EnsureUnmanagedEncoder();
 

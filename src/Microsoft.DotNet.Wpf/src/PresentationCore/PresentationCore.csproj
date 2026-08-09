@@ -13,7 +13,7 @@
     <EnablePInvokeAnalyzer>false</EnablePInvokeAnalyzer>
     <GenerateResourcesSRNamespace>MS.Internal.PresentationCore</GenerateResourcesSRNamespace>
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
 
     <!-- Project reference workaround https://github.com/dotnet/sdk/issues/44042 -->
     <PackageVersion>$(AssemblyVersion)</PackageVersion>
@@ -806,6 +806,7 @@
     <Compile Include="System\Windows\Media\MediaPlayer.cs" />
     <Compile Include="System\Windows\Media\MediaPlayerState.cs" />
     <Compile Include="System\Windows\Media\IMediaBackend.cs" />
+    <Compile Include="System\Windows\Media\Platform\WindowsMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\MacMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\BrowserMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\LinuxMediaBackend.cs" />

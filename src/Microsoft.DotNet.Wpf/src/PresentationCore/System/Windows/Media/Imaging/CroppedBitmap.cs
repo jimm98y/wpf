@@ -90,7 +90,7 @@ namespace System.Windows.Media.Imaging
             }
 
             // Off-Windows there is no native WIC clipper: crop the source's managed (Bgra32) backing.
-            if (!OperatingSystem.IsWindows() && source?._managedPixels != null)
+            if (source?._managedPixels != null)
             {
                 int cw = rect.Width, chh = rect.Height, sstride = source._managedStride;
                 byte[] src = source._managedPixels;

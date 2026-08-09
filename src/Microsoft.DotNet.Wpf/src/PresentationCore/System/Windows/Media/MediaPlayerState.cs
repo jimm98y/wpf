@@ -818,60 +818,30 @@ namespace System.Windows.Media
         /// </summary>
         private void CreateMedia(MediaPlayer mediaPlayer)
         {
-            SafeMILHandle unmanagedProxy = null;
-            MediaEventsHelper.CreateMediaEventsHelper(mediaPlayer, out _mediaEventsHelper, out unmanagedProxy);
+            MediaEventsHelper.CreateMediaEventsHelper(mediaPlayer, out _mediaEventsHelper, out _);
 
-            // Off-Windows the native milcore media player (wpfgfx_cor3.dll) is unavailable. Skip creating it
-            // and use an INVALID media handle -- all MILMedia operations are guarded to no-op (see
-            // Common/Graphics/wgx_exports.cs), so the MediaElement constructs, lays out and shows its UI
-            // instead of throwing DllNotFoundException. No video is decoded/rendered (needs a macOS media
-            // backend). A zero handle is IsInvalid, so SafeMediaHandle.ReleaseHandle never runs native code.
-            if (!OperatingSystem.IsWindows())
-            {
-                _nativeMedia = new SafeMediaHandle();
-                _helper = new Helper(_nativeMedia);
-                AppDomain.CurrentDomain.ProcessExit += _helper.ProcessExitHandler;
-
-                // Off-Windows a platform IMediaBackend (AVFoundation on macOS) replaces the native media
-                // object. All MILMedia.* leaf calls below route to it, and its events are marshalled onto the
-                // media dispatcher via MediaEventsHelper. It may be null (Linux / browser today) -> blank.
-                _backend = MediaBackendFactory.Create(mediaPlayer);
-                if (_backend != null)
-                {
-                    _backend.Opened += () => _mediaEventsHelper.RaiseMediaOpened();
-                    _backend.Ended += () => _mediaEventsHelper.RaiseMediaEnded();
-                    _backend.Failed += (ex) => _mediaEventsHelper.RaiseMediaFailed(ex);
-                    _backend.BufferingStarted += () => _mediaEventsHelper.RaiseBufferingStarted();
-                    _backend.BufferingEnded += () => _mediaEventsHelper.RaiseBufferingEnded();
-                    _backend.FrameAvailable += () => _mediaEventsHelper.RaiseNewFrame();
-                }
-                return;
-            }
-
-            try
-            {
-                using (FactoryMaker myFactory = new FactoryMaker())
-                {
-                    HRESULT.Check(UnsafeNativeMethods.MILFactory2.CreateMediaPlayer(
-                            myFactory.FactoryPtr,
-                            unmanagedProxy,
-                            true,
-                            out _nativeMedia
-                            ));
-                }
-            }
-            catch
-            {
-                if (_nativeMedia != null && !_nativeMedia.IsInvalid)
-                {
-                    _nativeMedia.Close();
-                }
-
-                throw;
-            }
-
+            // There is no native media object on any platform any more. The milcore player
+            // (wpfgfx_cor3.dll) decoded into milcore's own compositor, which the managed WebGPU
+            // compositor replaced, so even on Windows it played sound into a video that never appeared.
+            // A platform IMediaBackend does the whole job instead and its frames reach the compositor
+            // through SendVideoFrame. The media handle stays INVALID; a zero handle is IsInvalid, so
+            // SafeMediaHandle.ReleaseHandle never runs native code, and the MILMedia.* leaf calls that
+            // remain for backend-less platforms are inert stubs.
+            _nativeMedia = new SafeMediaHandle();
             _helper = new Helper(_nativeMedia);
             AppDomain.CurrentDomain.ProcessExit += _helper.ProcessExitHandler;
+
+            // May be null where no backend exists yet (Android, iOS) -> the element stays blank.
+            _backend = MediaBackendFactory.Create(mediaPlayer);
+            if (_backend != null)
+            {
+                _backend.Opened += () => _mediaEventsHelper.RaiseMediaOpened();
+                _backend.Ended += () => _mediaEventsHelper.RaiseMediaEnded();
+                _backend.Failed += (ex) => _mediaEventsHelper.RaiseMediaFailed(ex);
+                _backend.BufferingStarted += () => _mediaEventsHelper.RaiseBufferingStarted();
+                _backend.BufferingEnded += () => _mediaEventsHelper.RaiseBufferingEnded();
+                _backend.FrameAvailable += () => _mediaEventsHelper.RaiseNewFrame();
+            }
         }
 
         /// <summary>
@@ -879,36 +849,6 @@ namespace System.Windows.Media
         /// </summary>
         private void OpenMedia(Uri source)
         {
-            // Off-Windows, resolve the source and hand it to the platform IMediaBackend (AVFoundation on
-            // macOS). Skip the URL security-zone demand (native urlmon COM, unmarshalable off-Windows); the
-            // backend opens a plain file path or http(s) URL. With no backend (Linux/browser) this is a no-op.
-            if (!OperatingSystem.IsWindows())
-            {
-                if (source != null && source.IsAbsoluteUri && source.Scheme == PackUriHelper.UriSchemePack)
-                {
-                    try
-                    {
-                        source = BaseUriHelper.ConvertPackUriToAbsoluteExternallyVisibleUri(source);
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        source = null;
-                        _mediaEventsHelper.RaiseMediaFailed(new System.NotSupportedException(SR.Format(SR.Media_PackURIsAreNotSupported, null)));
-                    }
-                }
-
-                if (source != null && _backend != null)
-                {
-                    Uri appBase = SecurityHelper.GetBaseDirectory(AppDomain.CurrentDomain);
-                    Uri uriToOpen = ResolveUri(source, appBase);
-                    string url = uriToOpen.IsFile ? uriToOpen.LocalPath : uriToOpen.AbsoluteUri;
-                    _backend.Open(url);
-                }
-                return;
-            }
-
-            string toOpen = null;
-
             if (source != null && source.IsAbsoluteUri && source.Scheme == PackUriHelper.UriSchemePack)
             {
                 try
@@ -923,22 +863,31 @@ namespace System.Windows.Media
             }
 
             // Setting a null source effectively disconects the MediaElement.
+            string toOpen = null;
             if (source != null)
             {
                 // get the base directory of the application; never expose this
                 Uri appBase = SecurityHelper.GetBaseDirectory(AppDomain.CurrentDomain);
                 // this extracts the URI to open
                 Uri uriToOpen = ResolveUri(source, appBase);
-                toOpen  = DemandPermissions(uriToOpen);
-            }
-            else
-            {
-                toOpen = null;
+
+                // The security-zone demand maps the URL through urlmon, which exists only on Windows.
+                // Elsewhere the backend is handed a plain file path or http(s) URL directly.
+                toOpen = OperatingSystem.IsWindows()
+                    ? DemandPermissions(uriToOpen)
+                    : (uriToOpen.IsFile ? uriToOpen.LocalPath : uriToOpen.AbsoluteUri);
             }
 
             // We pass in exact same URI for which we demanded permissions so that we can be sure
             // there is no discrepancy between the two.
-            HRESULT.Check(MILMedia.Open(_nativeMedia, toOpen));
+            if (_backend != null)
+            {
+                if (toOpen != null) { _backend.Open(toOpen); }
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.Open(_nativeMedia, toOpen));
+            }
         }
 
         private Uri ResolveUri(Uri uri, Uri appBase)
@@ -1075,19 +1024,15 @@ namespace System.Windows.Media
             // We create _nativeMedia in the constructor, so it should always
             // be initialized.
             //
-            Debug.Assert(_nativeMedia != null && !_nativeMedia.IsInvalid);
+            Debug.Assert(_nativeMedia != null);
 
             //
-            // We only allow calls to any media object on the UI thread.
+            // We only allow calls to any media object on the UI thread. That is all this check does
+            // now: the media handle is intentionally INVALID on every platform (playback is owned by
+            // the IMediaBackend, and MILMedia operations are inert stubs), so an invalid handle is no
+            // longer the version/DLL error it used to signal.
             //
             _dispatcher.VerifyAccess();
-
-            // Off-Windows the media handle is intentionally INVALID (no native media backend; MILMedia
-            // operations no-op), so don't treat that as a version/DLL error -- just enforce UI-thread access.
-            if (OperatingSystem.IsWindows() && (_nativeMedia == null || _nativeMedia.IsInvalid))
-            {
-                throw new System.NotSupportedException(SR.Image_BadVersion);
-            }
         }
 
         /// <summary>
@@ -1115,50 +1060,29 @@ namespace System.Windows.Media
             bool                    notifyUceDirectly
             )
         {
-            // Off-Windows there is no native media object. Instead, pull the current decoded frame from the
-            // platform backend and ship its BGRA pixels to the managed compositor via the SendVideoFrame seam,
+            // There is no native media object to hand to the compositor. Pull the current decoded frame
+            // from the platform backend instead and ship its BGRA pixels over the SendVideoFrame seam,
             // keyed by this MediaPlayer resource handle -- the MilDrawVideo record (still emitted by
             // MediaElement) samples it. A fresh array each pass makes the frame texture re-upload.
-            if (!OperatingSystem.IsWindows())
+            if (_backend == null)
             {
-                if (_backend != null &&
-                    _backend.TryLockFrame(out IntPtr baseAddr, out int fw, out int fh, out int rowBytes) &&
-                    baseAddr != IntPtr.Zero && fw > 0 && fh > 0)
-                {
-                    try
-                    {
-                        byte[] bgra = new byte[(long)rowBytes * fh];
-                        System.Runtime.InteropServices.Marshal.Copy(baseAddr, bgra, 0, bgra.Length);
-                        channel.SendVideoFrame(handle, fw, fh, rowBytes, bgra);
-                    }
-                    finally
-                    {
-                        _backend.UnlockFrame();
-                    }
-                }
                 return;
             }
 
-            // This is an interrop call, but, it does not set a last error being a COM call.
-
-            //
-            // AddRef to ensure the media player stays alive during transport, even if the
-            // MediaPlayer goes away.  The slave video resource takes ownership of this AddRef.
-            // Note there is still a gray danger zone here -- if the channel command is lost
-            // this reference won't be cleaned up.
-            //
-            // MediaPlayer: AddRef on nativeMedia may be lost if the channel send command fails
-            //
-            // There is no point in addrefing the native media if we are going remote since
-            // we will send null.
-            //
-            UnsafeNativeMethods.MILUnknown.AddRef(_nativeMedia);
-
-            channel.SendCommandMedia(
-                handle,
-                _nativeMedia,
-                notifyUceDirectly
-                );
+            if (_backend.TryLockFrame(out IntPtr baseAddr, out int fw, out int fh, out int rowBytes) &&
+                baseAddr != IntPtr.Zero && fw > 0 && fh > 0)
+            {
+                try
+                {
+                    byte[] bgra = new byte[(long)rowBytes * fh];
+                    System.Runtime.InteropServices.Marshal.Copy(baseAddr, bgra, 0, bgra.Length);
+                    channel.SendVideoFrame(handle, fw, fh, rowBytes, bgra);
+                }
+                finally
+                {
+                    _backend.UnlockFrame();
+                }
+            }
         }
 
         #endregion

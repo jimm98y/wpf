@@ -105,11 +105,10 @@ namespace System.Windows.Media.Imaging
             // pinned managed buffer instead: BackBuffer points at it, WritePixels copies into it
             // (managed MILCopyPixelBuffer), and it marshals to the compositor as a plain bitmap
             // source (_actLikeSimpleBitmap).
-            if (!OperatingSystem.IsWindows())
             {
                 if (pixelFormat.Palettized)
                 {
-                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC on this platform.");
+                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC.");
                 }
 
                 _format = pixelFormat;
@@ -799,11 +798,10 @@ namespace System.Windows.Media.Imaging
 
             // Off-Windows: copy the source into a fresh managed back buffer (the source itself
             // is managed-backed on this platform, so CriticalCopyPixels reads it directly).
-            if (!OperatingSystem.IsWindows())
             {
                 if (source.Format.Palettized)
                 {
-                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC on this platform.");
+                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC.");
                 }
 
                 _format = source.Format;

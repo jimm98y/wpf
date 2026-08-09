@@ -229,8 +229,7 @@ namespace System.Windows.Media.Imaging
 
             // Off-Windows there is no native WIC to scale/rotate/flip. Do it on the source's managed
             // (Bgra32) pixel backing instead, and publish the result as this bitmap's managed backing.
-            if (!OperatingSystem.IsWindows() &&
-                ManagedTransform(_source, scaleX, scaleY, options, out byte[] mpx, out int mw, out int mh))
+            if (ManagedTransform(_source, scaleX, scaleY, options, out byte[] mpx, out int mw, out int mh))
             {
                 _managedPixels = mpx;
                 _managedStride = mw * 4;
