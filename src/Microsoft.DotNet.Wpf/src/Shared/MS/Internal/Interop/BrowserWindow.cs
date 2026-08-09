@@ -350,6 +350,10 @@ namespace MS.Internal.Interop
 
             [JSImport("nextFrame", Module)]
             internal static partial System.Threading.Tasks.Task<int> NextFrame();
+
+            [JSImport("printDocument", Module)]
+            internal static partial bool PrintDocument(string jobName,
+                                                       [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] document);
         }
     }
 }

@@ -121,12 +121,15 @@ namespace MS.Internal.Interop
 
         private static IPrintBackend Create()
         {
-            if (OperatingSystem.IsBrowser()) return null;
-            if (OperatingSystem.IsIOS()) return null;
-            if (OperatingSystem.IsAndroid()) return null;
+            if (OperatingSystem.IsBrowser()) return new BrowserPrint();
+            if (OperatingSystem.IsIOS()) return new UIKitPrint();
+            if (OperatingSystem.IsAndroid()) return new AndroidPrintBackend();
             if (OperatingSystem.IsMacOS()) return new CocoaPrint();
-            if (OperatingSystem.IsLinux()) return null;
+            if (OperatingSystem.IsLinux()) return new Wayland.CupsPrint();
 
+            // Windows. The existing PrintDlgEx path still owns the dialog there, and the spooler
+            // wants to be driven page by page rather than handed a PDF, so it has no backend of this
+            // shape yet.
             return null;
         }
 
