@@ -101,7 +101,7 @@
     <!-- The iOS renderer: same assembly name as the desktop one, built against the iOS bindings
          (Metal/CAMetalLayer + UIKit) instead of the desktop platform layer. Needs the ios workload.
          ANDROID needs nothing of its own here: its renderer IS the desktop WgpuInterop above, and it
-         consumes the same artifacts/bin/*/Release/net10.0 WPF assemblies as every other head -- see
+         consumes the same artifacts/bin/*/Release/net10.0 WPF assemblies as every other head. See
          samples/wpf-gallery-android, which project-references WgpuInterop.csproj directly. -->
     <_Proj Include="$(_Src)WgpuInterop/Ios/WgpuInterop.Ios.csproj" Condition="'$(SkipIos)' != 'true'" />
 
