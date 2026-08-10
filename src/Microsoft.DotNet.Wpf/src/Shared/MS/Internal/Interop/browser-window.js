@@ -380,6 +380,32 @@ function pushMouse(kind, e, wheel = 0) {
     });
 }
 
+// A touch/pen CONTACT, as distinct from the mouse the browser also synthesizes for the first
+// finger. Pointer events carry an id and a pointerType, so several can be alive at once -- which is
+// the whole thing the mouse cannot express.
+//
+// The synthesized mouse is deliberately left alone: a TouchDevice raises the Touch events and drives
+// Manipulation but does not promote itself to the mouse, so suppressing the browser's compatibility
+// mouse events would gain pinch and lose Button.Click.
+function pushContact(kind, e) {
+    let handle = topmostWindowAt(e.clientX, e.clientY);
+    if (!handle) {
+        for (const [h, w] of windows) { if (!w.borderless) { handle = h; break; } }
+        if (!handle) return;
+    }
+    const r = windows.get(handle).canvas.getBoundingClientRect();
+    queue.push({
+        t: "tc", k: kind, h: handle, id: e.pointerId | 0,
+        x: Math.round((e.clientX - r.left) * dpr()),
+        y: Math.round((e.clientY - r.top) * dpr()),
+        // A pen reports real pressure; a finger reports a constant 0.5 or 1 that measures nothing,
+        // and the mouse reports 0.5 while a button is down. Only the pen's is passed on, so
+        // StylusPoint.PressureFactor does not carry a number nobody measured.
+        p: e.pointerType === "pen" ? e.pressure : -1,
+        ts: Math.round(e.timeStamp),
+    });
+}
+
 function installListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;
@@ -394,6 +420,14 @@ function installListeners() {
         e.preventDefault();
     }, { passive: false });
     window.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    // Touch and pen only: a mouse already has its own path above, and routing it through both would
+    // deliver every click twice.
+    const isContact = (e) => e.pointerType === "touch" || e.pointerType === "pen";
+    window.addEventListener("pointerdown", (e) => { if (isContact(e)) pushContact(1, e); });
+    window.addEventListener("pointermove", (e) => { if (isContact(e)) pushContact(0, e); });
+    window.addEventListener("pointerup", (e) => { if (isContact(e)) pushContact(2, e); });
+    window.addEventListener("pointercancel", (e) => { if (isContact(e)) pushContact(3, e); });
 
     window.addEventListener("keydown", (e) => pushKey(true, e));
     window.addEventListener("keyup", (e) => pushKey(false, e));
