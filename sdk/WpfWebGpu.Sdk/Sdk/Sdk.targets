@@ -256,13 +256,18 @@
     <TrimmerRootAssembly Include="PresentationCore" />
     <TrimmerRootAssembly Include="PresentationFramework" />
     <TrimmerRootAssembly Include="System.Xaml" />
-    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
-    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
     <!-- Themes are resolved reflectively (Assembly.Load of "PresentationFramework.{ThemeName}" and
          pack://...;component/Themes/Fluent.xaml), so the trimmer cannot see they are used. Fluent is
          what ThemeMode.System/Light/Dark resolve to, so a trimmed Fluent app dies with a
-         FileNotFoundException on its first merged dictionary. -->
+         FileNotFoundException on its first merged dictionary. Every theme that SHIPS is rooted, for
+         the same reason: rooting is what makes shipping it mean anything. -->
     <TrimmerRootAssembly Include="PresentationFramework.Fluent" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="PresentationFramework.AeroLite" />
+    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <TrimmerRootAssembly Include="PresentationFramework.Luna" />
+    <TrimmerRootAssembly Include="PresentationFramework.Royale" />
     <TrimmerRootAssembly Include="PresentationUI" />
     <TrimmerRootAssembly Include="ReachFramework" />
     <TrimmerRootAssembly Include="System.Printing" />

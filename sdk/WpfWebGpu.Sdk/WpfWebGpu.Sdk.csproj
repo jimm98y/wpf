@@ -68,7 +68,13 @@
   <!-- ============================ unix / browser payload ============================ -->
   <ItemGroup Condition="'$(_HasForkNet10)' == 'true'">
     <!-- Shared WPF assemblies (net10.0 cross-platform fork build). -->
-    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Classic;PresentationFramework.Aero2;PresentationFramework.Fluent;PresentationUI" />
+    <!-- Every theme, on every head. A theme is resolved by NAME at runtime
+         (Assembly.Load of "PresentationFramework.{ThemeName}"), so one that is not in the payload
+         is not a theme that falls back gracefully. It is a FileNotFoundException the moment
+         anything asks for it, and what asks may be a control's default style rather than the app.
+         The assemblies are pure compiled XAML with no platform dependency, so there is nothing
+         Windows-only about Aero, AeroLite, Luna or Royale except their names. -->
+    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale;PresentationUI" />
     <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
     <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
 

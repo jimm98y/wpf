@@ -75,7 +75,10 @@
     <_Proj Include="$(_Src)Themes/PresentationFramework.Classic/PresentationFramework.Classic.csproj" />
     <_Proj Include="$(_Src)PresentationUI/PresentationUI.csproj" />
 
-    <!-- The rest of the Windows head's payload (see _WpfWin in sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj).
+    <!-- The four remaining themes, plus the rest of the Windows head's payload (see _WpfWin in
+         sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj). The themes ship on EVERY head, not just Windows:
+         a theme is loaded by name at runtime, so one that is absent is a FileNotFoundException
+         rather than a graceful fallback.
          These are built here now that the Windows head is built FROM SOURCE rather than copied out of
          a staged runtime: with no native DLLs left in the port, Windows runs the very same AnyCPU
          net10.0 assemblies as every other head, so there is nothing left for a separate win-arm64
