@@ -1,0 +1,146 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The iOS media head: a MediaElement plus transport controls, exercising IOSMediaBackend
+    (AVFoundation/AVPlayer -> 32BGRA CVPixelBuffer) and the compositor's MilDrawVideo path. It is the
+    iOS spelling of samples/media-linux, and shares that sample's on-screen half through
+    ../media-shared/MediaTestUi.cs.
+
+      DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+      dotnet build samples/media-ios/MediaIos.csproj -c Release -r iossimulator-arm64 \
+        -p:MediaTestVideo=/path/to/clip.mp4
+
+    Scaffolding follows WgpuInterop/tests/IosSpike (statically linked wgpu-native, bundled fonts,
+    interpreter list for the Windows-only assemblies mono-aot-cross must still resolve). Run
+    eng/build-sdk.sh first: this project references the fork's artifacts by path and does NOT build
+    them, because Arcade does not participate in an iOS build.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <!-- 14.0, not the template's 13.0: the vendored libwgpu_native.a is built with minos 14.0. -->
+    <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WpfMediaIos</AssemblyName>
+    <RootNamespace>WpfMediaIos</RootNamespace>
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+
+    <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <TrimMode Condition="'$(Configuration)' == 'Release'">full</TrimMode>
+  </PropertyGroup>
+
+  <!-- The page itself, shared with the Android head verbatim. -->
+  <ItemGroup>
+    <Compile Include="../media-shared/MediaTestUi.cs" Link="MediaTestUi.cs" />
+  </ItemGroup>
+
+  <!--
+    The clip to play, bundled at media/test.mp4 (MediaHost also accepts an absolute path in
+    WPF_MEDIA_FILE, which is how a simctl launch supplies one). No default clip is committed: this
+    repo ships no sample media, so point MediaTestVideo at your own H.264/AAC file.
+  -->
+  <ItemGroup Condition="'$(MediaTestVideo)' != '' And Exists('$(MediaTestVideo)')">
+    <BundleResource Include="$(MediaTestVideo)" Link="media/test.mp4" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoTestVideo" BeforeTargets="Build"
+          Condition="'$(MediaTestVideo)' == '' Or !Exists('$(MediaTestVideo)')">
+    <Warning Text="No test clip bundled. Pass -p:MediaTestVideo=&lt;file.mp4&gt;, or launch with SIMCTL_CHILD_WPF_MEDIA_FILE=&lt;path&gt;." />
+  </Target>
+
+  <!--
+    Release/trimmed only: the managed WebGPU compositor is discovered dynamically (nothing references
+    it statically), so full trimming removes it and PresentationCore falls back to the native milcore
+    path, which fails at run time. Root the assemblies the WPF stack resolves by name.
+  -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="Microsoft.Win32.SystemEvents" />
+    <TrimmerRootAssembly Include="Microsoft.Win32.Registry" />
+  </ItemGroup>
+
+  <!-- The iOS FLAVOUR of the binding (Wgpu.Library = "__Internal"): iOS cannot load a third-party
+       dylib, so wgpu-native is linked statically and the imports must name the main image. -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/Ios/WgpuInterop.Ios.csproj" />
+  </ItemGroup>
+
+  <!-- The from-source WPF fork, as built artifacts. -->
+  <ItemGroup>
+    <Reference Include="WindowsBase">           <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">           <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">      <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework"> <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">  <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">        <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">        <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">       <HintPath>$(_Art)/System.Printing-ref/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">     <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">  <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- The fork's cross-platform Microsoft.Win32.SystemEvents / Registry shims; the framework copies
+       are throw-only stubs off Windows and theme loading reaches them. ExcludeAssets=all neutralises
+       the transitive packages so ours are the only copies. -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!-- iOS has no readable system font directory, so fonts travel in the bundle; SystemFontCatalog's
+       iOS branch probes AppContext.BaseDirectory/fonts. -->
+  <ItemGroup>
+    <BundleResource Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- mono-aot-cross must RESOLVE every assembly the WPF closure names, even unreachable ones. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+    <!-- Keep the Windows-only assemblies on the INTERPRETER: the ref assemblies have no method
+         bodies at all, so AOT of them fails outright, and the rest is Windows-only code no iOS path
+         reaches. A leading "-all" would flip the meaning, so the bare list means "interpret exactly
+         these, AOT everything else". -->
+    <MtouchInterpreter>System.Windows.Primitives,System.Private.Windows.Core,Accessibility,PresentationUI,ReachFramework,System.Printing,UIAutomationTypes,UIAutomationProvider,System.Drawing.Common</MtouchInterpreter>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Accessibility">              <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- wgpu-native, statically linked into the app executable. -->
+  <ItemGroup>
+    <NativeReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/ios-arm64-simulator/lib/libwgpu_native.a">
+      <Kind>Static</Kind>
+      <ForceLoad>True</ForceLoad>
+      <Frameworks>Metal QuartzCore Foundation CoreGraphics IOSurface</Frameworks>
+    </NativeReference>
+  </ItemGroup>
+
+  <Target Name="ErrorIfForkNotBuilt" BeforeTargets="Build" Condition="!Exists('$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll')">
+    <Error Text="The WPF fork has not been built. Run eng/build-sdk.sh first." />
+  </Target>
+
+</Project>

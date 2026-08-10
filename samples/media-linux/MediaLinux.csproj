@@ -101,12 +101,22 @@
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- The native WebGPU backend, next to the app so the loader finds it. -->
+  <!--
+    The native WebGPU backend, next to the app so the loader finds it.
+
+    Both extensions, because this sample is not actually Linux-only: it is plain net10.0 WPF, and it
+    is the media harness the macOS backend gets driven through as well. Copying only the .so left a
+    macOS run with no wgpu-native at all, which the engine reports as "GPU unavailable ...
+    Compositing headless" in the sink log and which looks, on screen, exactly like a media bug:
+    audio plays and the window stays empty, because NOTHING is presented, video least of all.
+  -->
   <ItemGroup>
     <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.dylib" Condition="Exists('$(WgpuNativeDir)libwgpu_native.dylib')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
-  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build" Condition="!Exists('$(WgpuNativeDir)libwgpu_native.so')">
+  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build"
+          Condition="!Exists('$(WgpuNativeDir)libwgpu_native.so') And !Exists('$(WgpuNativeDir)libwgpu_native.dylib')">
     <Warning Text="wgpu-native not found in '$(WgpuNativeDir)'. Run: pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -Rid $(WgpuRid)" />
   </Target>
 

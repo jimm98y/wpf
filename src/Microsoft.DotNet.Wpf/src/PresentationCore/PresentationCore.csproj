@@ -812,6 +812,8 @@
     <Compile Include="System\Windows\Media\IMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\WindowsMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\MacMediaBackend.cs" />
+    <Compile Include="System\Windows\Media\Platform\IOSMediaBackend.cs" />
+    <Compile Include="System\Windows\Media\Platform\AndroidMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\BrowserMediaBackend.cs" />
     <Compile Include="System\Windows\Media\Platform\LinuxMediaBackend.cs" />
     <Compile Include="System\Windows\Media\MediaSystem.cs" />

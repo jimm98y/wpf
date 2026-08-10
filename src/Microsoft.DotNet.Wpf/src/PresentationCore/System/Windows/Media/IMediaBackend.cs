@@ -15,8 +15,10 @@
 // loads wpfgfx_cor3.dll for media on any platform.
 //
 // Implementations: WindowsMediaBackend (Media Foundation + waveOut), MacMediaBackend (AVFoundation),
-// LinuxMediaBackend (GStreamer), BrowserMediaBackend (HTML5 <video> via JS interop). The factory returns
-// null where no backend exists yet (Android, iOS) -- MediaElement then stays blank without crashing.
+// IOSMediaBackend (AVFoundation + AVAudioSession), LinuxMediaBackend (GStreamer), AndroidMediaBackend
+// (NDK AMediaExtractor/AMediaCodec/AImageReader + AAudio), BrowserMediaBackend (HTML5 <video> via JS
+// interop). The factory returns null where no backend exists for the platform -- MediaElement then
+// stays blank without crashing, exactly as the pre-backend stub behaved.
 //
 
 namespace System.Windows.Media
@@ -85,19 +87,31 @@ namespace System.Windows.Media
                 return new MacMediaBackend(player);
             }
 
+            // Before the Linux test: iOS is not "Linux", but it is checked here beside its macOS sibling
+            // because the two share AVFoundation and differ only in the ways IOSMediaBackend documents.
+            if (OperatingSystem.IsIOS())
+            {
+                return new IOSMediaBackend(player);
+            }
+
             if (OperatingSystem.IsBrowser())
             {
                 return new BrowserMediaBackend(player);
             }
 
-            // Desktop Linux only. Android is also "Linux" to OperatingSystem but has no GStreamer; it would
-            // need a MediaCodec/ExoPlayer backend instead.
-            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            // Android is also "Linux" to OperatingSystem, so it has to be answered first: it has no
+            // GStreamer, and its backend is the NDK media stack instead.
+            if (OperatingSystem.IsAndroid())
+            {
+                return new AndroidMediaBackend(player);
+            }
+
+            if (OperatingSystem.IsLinux())
             {
                 return new LinuxMediaBackend(player);
             }
 
-            // No backend on this platform yet: MediaElement stays blank without crashing, exactly as the
+            // No backend on this platform: MediaElement stays blank without crashing, exactly as the
             // pre-backend stub behaved.
             return null;
         }
