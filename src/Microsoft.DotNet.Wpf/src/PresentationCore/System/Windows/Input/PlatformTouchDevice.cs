@@ -132,6 +132,36 @@ namespace System.Windows.Input
             PlatformTouch.Sink = s_instance;
         }
 
+        /// <summary>
+        ///  Pressure of the contact currently driving the emulated mouse, 0..1, or negative when the
+        ///  device reports none (a finger) or nothing is down.
+        /// </summary>
+        /// <remarks>
+        ///  Read by the ink path. InkCanvas takes its points from a StylusDevice when one has capture
+        ///  and otherwise from the MOUSE, which carries no pressure -- and off Windows there is no
+        ///  StylusDevice at all, so a pen's pressure reached the seam and stopped there. This is how
+        ///  it gets the last few inches, without a Wisp emulation standing in the way.
+        ///
+        ///  The FIRST contact is the one reported, because that is the one promoted to the mouse; a
+        ///  second finger does not draw.
+        /// </remarks>
+        internal static double CurrentContactPressure { get; private set; } = -1;
+
+        private int _primaryContact = -1;
+
+        private void TrackPressure(int contactId, double pressure, bool down)
+        {
+            if (down && _primaryContact < 0) _primaryContact = contactId;
+            if (contactId == _primaryContact) CurrentContactPressure = pressure;
+        }
+
+        private void ForgetPressure(int contactId)
+        {
+            if (contactId != _primaryContact) return;
+            _primaryContact = -1;
+            CurrentContactPressure = -1;
+        }
+
         public bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs)
         {
             if (!TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
@@ -152,6 +182,7 @@ namespace System.Windows.Input
 
             device.SetSource(source);
             device.SetPosition(position, pressure);
+            TrackPressure(contactId, pressure, down: true);
             device.Activate();
             return device.ReportDown();
         }
@@ -163,6 +194,7 @@ namespace System.Windows.Input
 
             device.SetSource(source);
             device.SetPosition(position, pressure);
+            TrackPressure(contactId, pressure, down: false);
             return device.ReportMove();
         }
 
@@ -211,6 +243,7 @@ namespace System.Windows.Input
         private void Retire(int contactId, PlatformTouchDevice device, bool cancel)
         {
             _contacts.Remove(contactId);
+            ForgetPressure(contactId);
             try
             {
                 device.Deactivate();

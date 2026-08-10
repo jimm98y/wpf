@@ -784,7 +784,22 @@ namespace MS.Internal.Ink
                             return;
                         }
                         
-                        stylusPoints = new StylusPointCollection(new Point[] { _capturedMouse.GetPosition(_inkCanvas) });
+                        // A StylusPointCollection built from bare Points takes the DEFAULT pressure
+                        // for every sample. On Windows that is harmless, because a pen has its own
+                        // StylusDevice and never reaches this branch; off Windows there is no
+                        // StylusDevice at all, so every head fell back to the mouse here and a
+                        // pressure-sensitive Pencil or S-Pen drew a uniform line.
+                        //
+                        // The contact's real pressure is known -- the platform touch seam has it --
+                        // so it is applied when the device actually measured one. A finger reports
+                        // none, and then this behaves exactly as it did.
+                        Point position = _capturedMouse.GetPosition(_inkCanvas);
+                        double pressure = PlatformTouchSink.CurrentContactPressure;
+
+                        stylusPoints = pressure >= 0 && pressure <= 1
+                            ? new StylusPointCollection(
+                                  new StylusPoint[] { new StylusPoint(position.X, position.Y, (float)pressure) })
+                            : new StylusPointCollection(new Point[] { position });
                     }
 
                     bool fSucceeded = false;
