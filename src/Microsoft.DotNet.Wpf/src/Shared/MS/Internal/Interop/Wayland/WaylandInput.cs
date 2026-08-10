@@ -265,8 +265,24 @@ namespace MS.Internal.Interop.Wayland
         //
         // A contact's id is unique among those currently down and the compositor reuses it freely
         // afterwards, which is the seam's contract already.
+        //
+        // The FIRST contact also drives the mouse. A TouchDevice raises the Touch events and promotes
+        // itself to Manipulation, but never to the mouse -- and nothing else will do it here, because
+        // no Wayland compositor emulates a pointer from a touchscreen the way X11 did. Reporting
+        // contacts alone would therefore have given this head pinch and taken away Button.Click.
+        //
+        // Promotion follows the touch event's own verdict, as it does on Windows: a contact whose
+        // TouchDown was HANDLED does not go on to click anything, and the whole contact stays
+        // unpromoted from then on so its up cannot arrive without its down.
 
         private static IntPtr s_touchSurface;
+
+        private static int s_primaryTouchId = -1;
+        private static bool s_primaryTouchPromoted;
+
+        /// <summary>Where the primary contact was last seen, in wl_fixed. An up names only the
+        /// contact, and a release has to be reported somewhere.</summary>
+        private static int s_primaryTouchFx, s_primaryTouchFy;
 
         /// <summary>
         /// Surface-local logical coordinates, in wl_fixed, to the screen device pixels the
@@ -296,13 +312,48 @@ namespace MS.Internal.Interop.Wayland
                 LastInputSerial = serial;
                 s_touchSurface = surface;
 
+                bool handled = false;
                 IPlatformTouchSink? sink = PlatformTouch.Sink;
-                if (sink is null) return;
+                if (sink is not null)
+                {
+                    ToScreen(surface, fx, fy, out int screenX, out int screenY);
+                    handled = sink.TouchDown(surface, id, screenX, screenY, PenState.None, time);
+                }
 
-                ToScreen(surface, fx, fy, out int screenX, out int screenY);
-                sink.TouchDown(surface, id, screenX, screenY, PenState.None, time);
+                if (s_primaryTouchId >= 0 || handled) return;
+
+                s_primaryTouchId = id;
+                s_primaryTouchPromoted = true;
+                s_primaryTouchFx = fx;
+                s_primaryTouchFy = fy;
+                NotePointerPosition(surface, Fixed(fx), Fixed(fy));
+
+                // A move first: the button has to land where the finger is, and WPF has no idea the
+                // cursor moved there otherwise -- the press would be delivered to whatever the mouse
+                // was last over.
+                RaiseTouchAsMouse(surface, WaylandMouseKind.Move, 0, fx, fy, time);
+                NoteButtonSerial(serial, pressed: true);
+                RaiseTouchAsMouse(surface, WaylandMouseKind.ButtonDown, BTN_LEFT, fx, fy, time);
             }
             catch { }
+        }
+
+        private static void RaiseTouchAsMouse(IntPtr surface, WaylandMouseKind kind, int button, int fx, int fy, uint time)
+        {
+            Raise(new WaylandMouseMessage(surface, kind, button,
+                                          Px(Fixed(fx), surface), Py(Fixed(fy), surface), 0, 0, (int)time));
+        }
+
+        /// <summary>Ends the mouse press the primary contact was driving, if it was driving one.</summary>
+        private static void ReleasePromotedTouch(IntPtr surface, uint time)
+        {
+            bool promoted = s_primaryTouchPromoted;
+            s_primaryTouchId = -1;
+            s_primaryTouchPromoted = false;
+            if (!promoted || surface == IntPtr.Zero) return;
+
+            NoteButtonSerial(0, pressed: false);
+            RaiseTouchAsMouse(surface, WaylandMouseKind.ButtonUp, BTN_LEFT, s_primaryTouchFx, s_primaryTouchFy, time);
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -314,10 +365,20 @@ namespace MS.Internal.Interop.Wayland
                 if (s_touchSurface == IntPtr.Zero) return;
 
                 IPlatformTouchSink? sink = PlatformTouch.Sink;
-                if (sink is null) return;
+                if (sink is not null)
+                {
+                    ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
+                    sink.TouchMove(s_touchSurface, id, screenX, screenY, PenState.None, time);
+                }
 
-                ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
-                sink.TouchMove(s_touchSurface, id, screenX, screenY, PenState.None, time);
+                if (id != s_primaryTouchId) return;
+
+                s_primaryTouchFx = fx;
+                s_primaryTouchFy = fy;
+                NotePointerPosition(s_touchSurface, Fixed(fx), Fixed(fy));
+
+                if (s_primaryTouchPromoted)
+                    RaiseTouchAsMouse(s_touchSurface, WaylandMouseKind.Move, 0, fx, fy, time);
             }
             catch { }
         }
@@ -333,6 +394,8 @@ namespace MS.Internal.Interop.Wayland
                 // An up names only the contact, so the seam is told there is no position and lifts
                 // it where it was last seen.
                 PlatformTouch.Sink?.TouchUp(s_touchSurface, id, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
+
+                if (id == s_primaryTouchId) ReleasePromotedTouch(s_touchSurface, time);
             }
             catch { }
         }
@@ -353,6 +416,11 @@ namespace MS.Internal.Interop.Wayland
                 // The compositor took the whole sequence -- it started a gesture of its own, or the
                 // surface lost the touch. Every live contact is abandoned, not completed.
                 PlatformTouch.CancelAll(s_touchSurface);
+
+                // The emulated mouse has no way to express "abandoned", and a button left down would
+                // be worse than one released in a place nothing was clicked -- WPF would hold capture
+                // for a press that is never coming back.
+                ReleasePromotedTouch(s_touchSurface, s_frameTime);
                 s_touchSurface = IntPtr.Zero;
             }
             catch { }

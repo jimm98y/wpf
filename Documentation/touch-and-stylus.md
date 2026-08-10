@@ -34,6 +34,12 @@ accurately — no head needs manipulation code. It does NOT promote itself to th
 head that reported contacts and stopped synthesizing mouse input would gain pinch and lose
 `Button.Click`. Every touch head therefore does both: contacts for all pointers, mouse for the first.
 
+Nothing below WPF will do it for you. X11 emulated a pointer from a touchscreen; Wayland does not,
+and neither does Android or the browser once you are reading the raw pointers. Linux follows WPF's
+own rule for *when* to promote, which the other heads do not: a contact whose `TouchDown` was
+**handled** drives no mouse at all, and stays unpromoted for its whole life so an up cannot arrive
+without its down. That is what the seam's `bool` return is for.
+
 **Cancel is not up.** A cancel means the platform took the contact away — the compositor started a
 gesture, the touch was rejected as a palm. It must not complete a tap or finish a manipulation.
 `wl_touch.cancel` names no contact at all (the whole sequence is gone), which is why the seam has
@@ -152,10 +158,6 @@ Honest, because most of this cannot be exercised here:
 
 ## Known gaps
 
-* Linux touch does not promote to the mouse. `wl_touch` contacts reach the seam, but no compositor
-  emulates a pointer from a touchscreen, so a finger raises the Touch events and drives Manipulation
-  and does not click anything. The pen does not have this problem — `WaylandTablet` drives the mouse
-  itself, for the reason above.
 * No twist, and no inverted (eraser) end, on any head. Linux is the closest: `zwp_tablet_tool_v2`
   announces the eraser as a separate tool of type `eraser`, which `WaylandTablet` records and has
   nowhere to put, because `PenState` has no inverted flag.
