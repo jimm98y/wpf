@@ -210,7 +210,7 @@ namespace System.Windows
         ///  <see cref="IDataObject"/> straight to the drop target. Another application sees a type it
         ///  does not understand and refuses the drop, which is the correct outcome.
         /// </remarks>
-        internal const string InProcessMime = "application/x-wpf-dragdrop";
+        internal const string InProcessMime = PlatformDragDrop.InProcessMime;
 
         /// <summary>The data of the drag this process started, while it is in flight.</summary>
         internal static IDataObject? CurrentData { get; private set; }

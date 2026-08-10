@@ -170,6 +170,12 @@ namespace MS.Internal.Interop
                     SendVoidPtr(array, Sel("addObject:"), NSStr(uti));
                 }
 
+                // And the in-process marker, which is not in the table because it has no UTI to map
+                // to -- it travels verbatim. Without it AppKit would never deliver a drag carrying
+                // ONLY that type, which is precisely what dragging a plain CLR object between two of
+                // the application's own controls produces: the commonest drag there is.
+                SendVoidPtr(array, Sel("addObject:"), NSStr(PlatformDragDrop.InProcessMime));
+
                 SendVoidPtr(view, Sel("registerForDraggedTypes:"), array);
             }
             catch (Exception e)
@@ -314,7 +320,6 @@ namespace MS.Internal.Interop
         private static bool s_dragEnded;
         private static ulong s_dragOperation;
         private static Action<int>? s_giveFeedback;
-        private static int s_lastFedBack = -1;
 
         private static SourceMaskDelegate? s_sourceMask;
         private static SourceEndedDelegate? s_sourceEnded;
@@ -374,21 +379,26 @@ namespace MS.Internal.Interop
 
         private static void SourceMovedImp(IntPtr self, IntPtr sel, IntPtr session, NSPoint point)
         {
-            // The only per-frame source callback AppKit offers, so it is where GiveFeedback is
-            // raised. Only on a CHANGE of effect: this fires for every pixel of movement.
-            try
-            {
-                int effect = ToEffects(s_dragOperation);
-                if (s_giveFeedback is not null && effect != s_lastFedBack)
-                {
-                    s_lastFedBack = effect;
-                    s_giveFeedback(effect);
-                }
-            }
-            catch (Exception e)
-            {
-                Log("give feedback", e);
-            }
+            // Deliberately empty. AppKit never tells the SOURCE what the destination under the
+            // pointer would do -- that answer exists only inside the destination, and reaches the
+            // source once, at the end. So there is nothing to report per move that would not be a
+            // guess; GiveFeedback is raised from RaiseInitialFeedback instead, with what the drag
+            // permits. The method still has to exist, because it is where a fix would go if a later
+            // macOS ever exposes the proposal.
+        }
+
+        /// <summary>
+        ///  Raises GiveFeedback once, as the drag begins, with the effects the drag allows.
+        /// </summary>
+        /// <remarks>
+        ///  Not what Windows does -- there OLE re-asks on every mouse move with the destination's
+        ///  current answer -- but it is everything this platform can support, and it means a handler
+        ///  that sets UseDefaultCursors or does its own bookkeeping still runs.
+        /// </remarks>
+        private static void RaiseInitialFeedback(int allowedEffects)
+        {
+            try { s_giveFeedback?.Invoke(allowedEffects); }
+            catch (Exception e) { Log("give feedback", e); }
         }
 
         /// <summary>
@@ -458,7 +468,6 @@ namespace MS.Internal.Interop
                 s_dragEnded = false;
                 s_dragOperation = NSDragOperationNone;
                 s_giveFeedback = giveFeedback;
-                s_lastFedBack = -1;
 
                 IntPtr session = SendPtrPtrPtrPtr(
                     view, Sel("beginDraggingSessionWithItems:event:source:"), items, theEvent, source);
@@ -467,6 +476,7 @@ namespace MS.Internal.Interop
                 // Past the point of no return: whatever happens now is a real drag's outcome.
                 started = true;
 
+                RaiseInitialFeedback(allowedEffects);
                 PumpUntilDragEnded();
                 return ToEffects(s_dragOperation);
             }

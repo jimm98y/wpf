@@ -52,5 +52,17 @@ namespace MS.Internal.Interop
     {
         /// <summary>Installed by PresentationCore; null until a WPF window exists.</summary>
         internal static IPlatformDropTarget? Target { get; set; }
+
+        /// <summary>
+        ///  The type advertised on every drag WPF starts, marking it as this process's own.
+        /// </summary>
+        /// <remarks>
+        ///  The commonest WPF drag carries a plain CLR object, which no MIME type can express, so the
+        ///  wire type is a marker with no useful bytes and the drop target answers it with the
+        ///  original data object. It lives here rather than beside the drop logic because a backend
+        ///  has to know it too: macOS will not deliver a drag whose types the view never registered,
+        ///  so a marker AppKit had not been told about would make every in-process drag vanish.
+        /// </remarks>
+        internal const string InProcessMime = "application/x-wpf-dragdrop";
     }
 }

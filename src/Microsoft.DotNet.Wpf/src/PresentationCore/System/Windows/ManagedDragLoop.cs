@@ -76,33 +76,86 @@ namespace System.Windows
             Func<string, byte[]?> read = _ => Array.Empty<byte>();
 
             var state = new DragState(target, types, read, (int)allowedEffects, eventSource);
-            var frame = new DispatcherFrame();
 
+            // A blocking frame is only available where the dispatcher owns its loop. On the browser,
+            // iOS and Android it does not -- the platform owns the run loop and the dispatcher is a
+            // guest in it, so Dispatcher.PushFrame THROWS for any nested frame there (see the
+            // NotSupportedExceptions in PushFrameImpl). Those are exactly the heads with no drag
+            // transport, so the loop has to work both ways.
+            return CanBlock ? RunBlocking(state) : RunDetached(state);
+        }
+
+        /// <summary>
+        ///  True where a nested dispatcher frame is allowed, and therefore where DoDragDrop can be
+        ///  the synchronous call its callers expect.
+        /// </summary>
+        private static bool CanBlock => !IsRequired;
+
+        /// <summary>
+        ///  The drag as DoDragDrop is meant to be: it does not return until the drop has happened,
+        ///  and it returns the effect that was performed.
+        /// </summary>
+        private static DragDropEffects RunBlocking(DragState state)
+        {
+            var frame = new DispatcherFrame();
+            DispatcherTimer timer = StartTicking(state, () => frame.Continue = false);
+
+            try { Dispatcher.PushFrame(frame); }
+            finally { timer.Stop(); }
+
+            return (DragDropEffects)state.Performed;
+        }
+
+        /// <summary>
+        ///  The drag where blocking is impossible: it is driven by the timer alone and this returns
+        ///  at once.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   The drag itself is fully real -- the target still gets DragEnter/DragOver/Drop, the drop
+        ///   handler still runs, the data still arrives. What cannot be honoured is the RETURN value,
+        ///   because the answer does not exist yet when the caller needs it. So a Copy drag behaves
+        ///   exactly as it does everywhere else, while a source that deletes what it dragged on a
+        ///   Move result will not: it is told None and keeps the original. Duplicating instead of
+        ///   moving is the safe direction to be wrong in, and it is the same compromise these heads
+        ///   already make for every other modal operation.
+        ///  </para>
+        /// </remarks>
+        private static DragDropEffects RunDetached(DragState state)
+        {
+            DispatcherTimer? timer = null;
+            timer = StartTicking(state, () => timer?.Stop());
+            return DragDropEffects.None;
+        }
+
+        /// <summary>Drives <paramref name="state"/> every frame until it reports the drag is over.</summary>
+        private static DispatcherTimer StartTicking(DragState state, Action finished)
+        {
             var timer = new DispatcherTimer(DispatcherPriority.Send, Dispatcher.CurrentDispatcher)
             {
                 Interval = TimeSpan.FromMilliseconds(16),
             };
+
             timer.Tick += (_, _) =>
             {
-                // A handler that throws must not leave the application stuck in a nested frame with
-                // a drag half-entered, so the loop ends the operation instead of propagating.
+                // A handler that throws must not leave a drag half-entered, or -- worse -- an
+                // application parked in a nested frame with no way out. Both are unwound BEFORE the
+                // exception continues on its way to the dispatcher, which is where an exception from
+                // application code belongs.
                 try
                 {
-                    if (state.Tick()) frame.Continue = false;
+                    if (state.Tick()) finished();
                 }
                 catch
                 {
-                    state.Cancel();
-                    frame.Continue = false;
+                    finished();
+                    try { state.Cancel(); } catch { }
                     throw;
                 }
             };
 
             timer.Start();
-            try { Dispatcher.PushFrame(frame); }
-            finally { timer.Stop(); }
-
-            return (DragDropEffects)state.Performed;
+            return timer;
         }
 
         /// <summary>
