@@ -362,6 +362,11 @@ namespace System.Windows.Interop
             if (!OperatingSystem.IsWindows())
             {
                 PlatformTouchSink.Install();
+
+                // Gestures, for a head with no touchscreen to report contacts from. macOS is the
+                // one that needs it; installing everywhere costs nothing, since a backend that
+                // never reports a gesture never reaches the sink.
+                PlatformGestureSink.Install();
             }
         }
 

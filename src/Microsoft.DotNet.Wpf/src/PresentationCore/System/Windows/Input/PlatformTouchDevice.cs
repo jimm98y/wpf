@@ -227,7 +227,7 @@ namespace System.Windows.Input
         ///  root-visual coordinates -- device pixels to DIPs included, so a contact lands where the
         ///  user touched on a scaled display.
         /// </summary>
-        private static bool TryResolve(IntPtr windowHandle, int screenX, int screenY,
+        internal static bool TryResolve(IntPtr windowHandle, int screenX, int screenY,
                                        out PresentationSource source, out Point position)
         {
             source = null;

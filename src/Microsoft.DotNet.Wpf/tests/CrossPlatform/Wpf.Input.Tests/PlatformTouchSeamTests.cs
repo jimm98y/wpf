@@ -210,6 +210,61 @@ namespace Wpf.Input.Tests
             });
         }
 
+        /// <summary>
+        ///  A platform-recognised gesture drives manipulation on the element under it.
+        /// </summary>
+        /// <remarks>
+        ///  This is the macOS path. A Mac has no touchscreen and its trackpad reports positions on
+        ///  the TRACKPAD, so there is no honest contact to report and no TouchDevice to build; what
+        ///  AppKit gives is the pinch it already recognised. The seam turns that into a PAIR of
+        ///  IManipulators, because one point cannot express scale -- scale is a change in the
+        ///  distance between two of them.
+        /// </remarks>
+        [Fact]
+        public void APlatformGestureProducesManipulationScale()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope(manipulation: true);
+                Assert.SkipWhen(scope.GestureSink is null, "the platform gesture seam is not installed on this head");
+
+                double scale = 1;
+                scope.Target.ManipulationDelta += (s, e) => scale *= e.DeltaManipulation.Scale.X;
+
+                Point centre = scope.CentreOfTarget;
+                scope.GestureBegin(centre);
+                for (int i = 1; i <= 8; i++) scope.GestureUpdate(centre, 1 + i * 0.1, 0);
+                scope.GestureEnd();
+
+                Assert.True(scale > 1.2, $"a pinch out to 1.8x produced a scale of {scale:F2}");
+            });
+        }
+
+        /// <summary>
+        ///  A gesture over an element that did not ask for manipulation is left alone, so a pinch
+        ///  over an ordinary ScrollViewer keeps scrolling instead of silently becoming something
+        ///  nobody opted into.
+        /// </summary>
+        [Fact]
+        public void AGestureOverANonManipulatingElementDoesNothing()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope(manipulation: false);
+                Assert.SkipWhen(scope.GestureSink is null, "the platform gesture seam is not installed on this head");
+
+                bool any = false;
+                scope.Target.ManipulationDelta += (s, e) => any = true;
+
+                Point centre = scope.CentreOfTarget;
+                scope.GestureBegin(centre);
+                scope.GestureUpdate(centre, 1.5, 0);
+                scope.GestureEnd();
+
+                Assert.False(any, "a gesture manipulated an element that never enabled manipulation");
+            });
+        }
+
         #region Harness
 
         /// <summary>
@@ -228,6 +283,7 @@ namespace Wpf.Input.Tests
             private readonly InputWindow _probe;
             private readonly HwndSource _source;
             private readonly MethodInfo _down, _move, _up, _cancel;
+            private readonly MethodInfo _gestureBegin, _gestureUpdate, _gestureEnd;
 
             public Border Target => _probe.Surface;
             public object Sink { get; }
@@ -253,6 +309,17 @@ namespace Wpf.Input.Tests
                     _up = sinkType.GetMethod("TouchUp");
                     _cancel = sinkType.GetMethod("TouchCancel");
                 }
+
+                Type platformGesture = windowsBase.GetType("MS.Internal.Interop.PlatformGesture");
+                GestureSink = platformGesture?.GetProperty("Sink", BindingFlags.NonPublic | BindingFlags.Static)
+                                             ?.GetValue(null);
+                if (GestureSink is not null)
+                {
+                    Type gestureType = windowsBase.GetType("MS.Internal.Interop.IPlatformGestureSink");
+                    _gestureBegin = gestureType.GetMethod("GestureBegin");
+                    _gestureUpdate = gestureType.GetMethod("GestureUpdate");
+                    _gestureEnd = gestureType.GetMethod("GestureEnd");
+                }
             }
 
             /// <summary>
@@ -262,6 +329,29 @@ namespace Wpf.Input.Tests
             /// </summary>
             public Point CentreOfTarget
                 => Target.PointToScreen(new Point(Target.ActualWidth / 2, Target.ActualHeight / 2));
+
+            public object GestureSink { get; }
+
+            public void GestureBegin(Point screen)
+            {
+                _gestureBegin.Invoke(GestureSink, new object[] { _source.Handle, (int)screen.X, (int)screen.Y });
+                Pump();
+            }
+
+            public void GestureUpdate(Point screen, double magnification, double rotationDegrees)
+            {
+                _gestureUpdate.Invoke(GestureSink, new object[]
+                {
+                    _source.Handle, (int)screen.X, (int)screen.Y, magnification, rotationDegrees,
+                });
+                Pump();
+            }
+
+            public void GestureEnd()
+            {
+                _gestureEnd.Invoke(GestureSink, new object[] { _source.Handle, false });
+                Pump();
+            }
 
             public void Down(int id, Point screen) => Invoke(_down, id, screen, -1.0);
             public void Move(int id, Point screen) => Invoke(_move, id, screen, -1.0);

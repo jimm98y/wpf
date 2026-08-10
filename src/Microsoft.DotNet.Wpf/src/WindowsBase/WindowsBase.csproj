@@ -311,6 +311,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsResolver.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformTouch.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformGesture.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapper.cs" />
