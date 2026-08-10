@@ -1,5 +1,7 @@
 # Text shaping off Windows
 
+*Input has a companion document: [touch-and-stylus.md](touch-and-stylus.md).*
+
 Shaping is the step between "these are the characters" and "these are the glyphs, here": it applies
 the font's OpenType tables, so a run of Arabic comes out as cursive joined forms rather than as a row
 of isolated letters, and a combining mark lands over its base rather than at its own cell origin.
