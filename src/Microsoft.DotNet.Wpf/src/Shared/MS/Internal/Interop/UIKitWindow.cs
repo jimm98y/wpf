@@ -592,18 +592,30 @@ namespace MS.Internal.Interop
                 // pencil measures force; a finger's is a constant that means nothing, so it is
                 // reported as unknown rather than handed on as though it were a reading.
                 bool isPencil = SendNInt(touch, Sel("type")) == 2;
-                double pressure = -1;
+                PenState pen = PenState.None;
                 if (isPencil)
                 {
                     double max = SendDouble(touch, Sel("maximumPossibleForce"));
-                    pressure = max > 0 ? SendDouble(touch, Sel("force")) / max : -1;
+                    double pressure = max > 0 ? SendDouble(touch, Sel("force")) / max : -1;
+
+                    // UIKit gives the tip's ALTITUDE from the screen (0 = flat, pi/2 = upright) and
+                    // its AZIMUTH around the screen; the seam takes the two per-axis tilts the
+                    // browser and Windows both use, so the spherical pair is resolved into them.
+                    double altitude = SendDouble(touch, Sel("altitudeAngle"));
+                    double azimuth = SendDoublePtr(touch, Sel("azimuthAngleInView:"), view);
+                    double fromVertical = (Math.PI / 2) - altitude;
+                    double degrees = fromVertical * 180.0 / Math.PI;
+
+                    pen = new PenState(pressure,
+                                       degrees * Math.Cos(azimuth),
+                                       degrees * Math.Sin(azimuth));
                 }
 
                 uint timestamp = (uint)Environment.TickCount;
                 switch (kind)
                 {
-                    case 1: sink.TouchDown(view, id, x, y, pressure, timestamp); break;
-                    case 0: sink.TouchMove(view, id, x, y, pressure, timestamp); break;
+                    case 1: sink.TouchDown(view, id, x, y, pen, timestamp); break;
+                    case 0: sink.TouchMove(view, id, x, y, pen, timestamp); break;
                     case 2: sink.TouchUp(view, id, x, y, timestamp); break;
                     case 3: sink.TouchCancel(view, id); break;
                 }
@@ -913,6 +925,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrDouble(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, double delay);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDoublePtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGPoint SendPointPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);

@@ -385,9 +385,22 @@ namespace Wpf.Input.Tests
             {
                 method.Invoke(Sink, new object[]
                 {
-                    _source.Handle, id, (int)screen.X, (int)screen.Y, pressure, (uint)Environment.TickCount,
+                    _source.Handle, id, (int)screen.X, (int)screen.Y, Pen(pressure), (uint)Environment.TickCount,
                 });
                 Pump();
+            }
+
+            /// <summary>
+            /// A PenState, which the seam takes instead of a bare pressure so that tilt (and, later,
+            /// twist) do not each widen the signature again. Built reflectively for the same reason
+            /// the sink is reached reflectively: it is internal to WindowsBase.
+            /// </summary>
+            private object Pen(double pressure)
+            {
+                Type penType = typeof(DependencyObject).Assembly.GetType("MS.Internal.Interop.PenState");
+                return Activator.CreateInstance(
+                    penType, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+                    null, new object[] { pressure, double.NaN, double.NaN }, null);
             }
 
             /// <summary>

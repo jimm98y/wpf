@@ -282,7 +282,7 @@ internal static class WpfInput
         {
             for (int i = 0; i < e.PointerCount; i++)
             {
-                AndroidWindow.NotifyTouchContact(handle, 3, e.GetPointerId(i), 0, 0, -1);
+                AndroidWindow.NotifyTouchContact(handle, 3, e.GetPointerId(i), 0, 0, -1, double.NaN, double.NaN);
             }
         }
         else if (kind == 0)
@@ -309,8 +309,20 @@ internal static class WpfInput
         bool isStylus = e.GetToolType(index) == MotionEventToolType.Stylus;
         double pressure = isStylus ? e.GetPressure(index) : -1;
 
+        // AXIS_TILT is the angle from vertical and AXIS_ORIENTATION which way the tip leans, so the
+        // pair resolves into the two per-axis tilts the seam takes. A finger reports neither.
+        double tiltX = double.NaN, tiltY = double.NaN;
+        if (isStylus)
+        {
+            double tilt = e.GetAxisValue(Axis.Tilt, index);          // radians from vertical
+            double orientation = e.GetAxisValue(Axis.Orientation, index);
+            double degrees = tilt * 180.0 / System.Math.PI;
+            tiltX = degrees * System.Math.Sin(orientation);
+            tiltY = -degrees * System.Math.Cos(orientation);
+        }
+
         AndroidWindow.NotifyTouchContact(handle, kind, e.GetPointerId(index),
-                                         (int)e.GetX(index), (int)e.GetY(index), pressure);
+                                         (int)e.GetX(index), (int)e.GetY(index), pressure, tiltX, tiltY);
     }
 
     public static bool OnGenericMotion(IntPtr handle, MotionEvent? e)

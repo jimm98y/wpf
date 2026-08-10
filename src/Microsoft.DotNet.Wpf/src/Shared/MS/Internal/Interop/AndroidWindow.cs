@@ -518,7 +518,8 @@ namespace MS.Internal.Interop
         /// <param name="kind">0 = move, 1 = down, 2 = up, 3 = cancel.</param>
         /// <param name="pressure">0..1 from the digitizer, or negative where it reports none.</param>
         public static void NotifyTouchContact(IntPtr handle, int kind, int contactId,
-                                              int xPixels, int yPixels, double pressure)
+                                              int xPixels, int yPixels, double pressure,
+                                              double tiltX, double tiltY)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
@@ -535,10 +536,11 @@ namespace MS.Internal.Interop
                 }
 
                 uint timestamp = (uint)Environment.TickCount;
+                var pen = new PenState(pressure, tiltX, tiltY);
                 switch (kind)
                 {
-                    case 1: sink.TouchDown(handle, contactId, screenX, screenY, pressure, timestamp); break;
-                    case 0: sink.TouchMove(handle, contactId, screenX, screenY, pressure, timestamp); break;
+                    case 1: sink.TouchDown(handle, contactId, screenX, screenY, pen, timestamp); break;
+                    case 0: sink.TouchMove(handle, contactId, screenX, screenY, pen, timestamp); break;
                     case 2: sink.TouchUp(handle, contactId, screenX, screenY, timestamp); break;
                     case 3: sink.TouchCancel(handle, contactId); break;
                 }

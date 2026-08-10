@@ -402,6 +402,10 @@ function pushContact(kind, e) {
         // and the mouse reports 0.5 while a button is down. Only the pen's is passed on, so
         // StylusPoint.PressureFactor does not carry a number nobody measured.
         p: e.pointerType === "pen" ? e.pressure : -1,
+        // tiltX/tiltY are degrees from vertical and are what the seam takes directly. Zero from a
+        // finger means "flat", not "measured as flat", so only a pen's are sent.
+        tx: e.pointerType === "pen" ? (e.tiltX ?? 0) : undefined,
+        ty: e.pointerType === "pen" ? (e.tiltY ?? 0) : undefined,
         ts: Math.round(e.timeStamp),
     });
 }

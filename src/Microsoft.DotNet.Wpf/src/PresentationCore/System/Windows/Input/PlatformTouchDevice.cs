@@ -133,8 +133,8 @@ namespace System.Windows.Input
         }
 
         /// <summary>
-        ///  Pressure of the contact currently driving the emulated mouse, 0..1, or negative when the
-        ///  device reports none (a finger) or nothing is down.
+        ///  What the digitizer measured about the contact currently driving the emulated mouse, or
+        ///  <see cref="PenState.None"/> when nothing is down or it measures nothing (a finger).
         /// </summary>
         /// <remarks>
         ///  Read by the ink path. InkCanvas takes its points from a StylusDevice when one has capture
@@ -145,24 +145,24 @@ namespace System.Windows.Input
         ///  The FIRST contact is the one reported, because that is the one promoted to the mouse; a
         ///  second finger does not draw.
         /// </remarks>
-        internal static double CurrentContactPressure { get; private set; } = -1;
+        internal static PenState CurrentPen { get; private set; } = PenState.None;
 
         private int _primaryContact = -1;
 
-        private void TrackPressure(int contactId, double pressure, bool down)
+        private void TrackPen(int contactId, in PenState pen, bool down)
         {
             if (down && _primaryContact < 0) _primaryContact = contactId;
-            if (contactId == _primaryContact) CurrentContactPressure = pressure;
+            if (contactId == _primaryContact) CurrentPen = pen;
         }
 
         private void ForgetPressure(int contactId)
         {
             if (contactId != _primaryContact) return;
             _primaryContact = -1;
-            CurrentContactPressure = -1;
+            CurrentPen = PenState.None;
         }
 
-        public bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs)
+        public bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs)
         {
             if (!TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
             {
@@ -181,20 +181,20 @@ namespace System.Windows.Input
             _contacts[contactId] = device;
 
             device.SetSource(source);
-            device.SetPosition(position, pressure);
-            TrackPressure(contactId, pressure, down: true);
+            device.SetPosition(position, pen.Pressure);
+            TrackPen(contactId, pen, down: true);
             device.Activate();
             return device.ReportDown();
         }
 
-        public bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs)
+        public bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs)
         {
             if (!_contacts.TryGetValue(contactId, out PlatformTouchDevice device)) return false;
             if (!TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position)) return false;
 
             device.SetSource(source);
-            device.SetPosition(position, pressure);
-            TrackPressure(contactId, pressure, down: false);
+            device.SetPosition(position, pen.Pressure);
+            TrackPen(contactId, pen, down: false);
             return device.ReportMove();
         }
 

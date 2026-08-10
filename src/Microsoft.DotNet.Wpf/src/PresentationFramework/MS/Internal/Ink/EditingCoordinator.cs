@@ -794,12 +794,39 @@ namespace MS.Internal.Ink
                         // so it is applied when the device actually measured one. A finger reports
                         // none, and then this behaves exactly as it did.
                         Point position = _capturedMouse.GetPosition(_inkCanvas);
-                        double pressure = PlatformTouchSink.CurrentContactPressure;
+                        MS.Internal.Interop.PenState pen = PlatformTouchSink.CurrentPen;
 
-                        stylusPoints = pressure >= 0 && pressure <= 1
-                            ? new StylusPointCollection(
-                                  new StylusPoint[] { new StylusPoint(position.X, position.Y, (float)pressure) })
-                            : new StylusPointCollection(new Point[] { position });
+                        if (pen.HasTilt)
+                        {
+                            // A StylusPoint can only carry properties its DESCRIPTION names, so tilt
+                            // needs one that declares the two axes beside the required X/Y/pressure.
+                            var description = new StylusPointDescription(new[]
+                            {
+                                new StylusPointPropertyInfo(StylusPointProperties.X),
+                                new StylusPointPropertyInfo(StylusPointProperties.Y),
+                                new StylusPointPropertyInfo(StylusPointProperties.NormalPressure),
+                                new StylusPointPropertyInfo(StylusPointProperties.XTiltOrientation),
+                                new StylusPointPropertyInfo(StylusPointProperties.YTiltOrientation),
+                            });
+
+                            var point = new StylusPoint(position.X, position.Y,
+                                                        pen.HasPressure ? (float)pen.Pressure : 0.5f,
+                                                        description,
+                                                        new[] { (int)Math.Round(pen.TiltX), (int)Math.Round(pen.TiltY) });
+
+                            // The (description, int) overload takes a CAPACITY, not the points.
+                            stylusPoints = new StylusPointCollection(description, 1);
+                            stylusPoints.Add(point);
+                        }
+                        else if (pen.HasPressure)
+                        {
+                            stylusPoints = new StylusPointCollection(
+                                new StylusPoint[] { new StylusPoint(position.X, position.Y, (float)pen.Pressure) });
+                        }
+                        else
+                        {
+                            stylusPoints = new StylusPointCollection(new Point[] { position });
+                        }
                     }
 
                     bool fSucceeded = false;

@@ -36,16 +36,52 @@ namespace MS.Internal.Interop
     ///   must not fabricate contacts here; it registers an IManipulator of its own instead.
     ///  </para>
     /// </remarks>
+    /// <summary>
+    ///  What a digitizer measured about a contact beyond where it is.
+    /// </summary>
+    /// <remarks>
+    ///  A struct rather than a widening parameter list because a pen reports several things and will
+    ///  report more: pressure and tilt today, twist and the inverted (eraser) end next. Every field
+    ///  carries its own "not reported" value, because a finger measures none of them and a stylus on
+    ///  a cheap digitizer measures only some -- and a default substituted for a measurement is how
+    ///  StylusPoint ends up asserting a tilt nobody sensed.
+    /// </remarks>
+    internal readonly struct PenState
+    {
+        /// <summary>0..1, or negative where the device reports no pressure.</summary>
+        internal readonly double Pressure;
+
+        /// <summary>
+        ///  Tilt from vertical in degrees along each axis, -90..90, or NaN where unreported. X is the
+        ///  lean to the user's right, Y the lean towards them -- the browser's tiltX/tiltY, and what
+        ///  StylusPointProperties.XTiltOrientation and YTiltOrientation take.
+        /// </summary>
+        internal readonly double TiltX;
+        internal readonly double TiltY;
+
+        internal PenState(double pressure, double tiltX, double tiltY)
+        {
+            Pressure = pressure;
+            TiltX = tiltX;
+            TiltY = tiltY;
+        }
+
+        /// <summary>A finger: position and nothing else.</summary>
+        internal static PenState None => new PenState(-1, double.NaN, double.NaN);
+
+        internal static PenState FromPressure(double pressure) => new PenState(pressure, double.NaN, double.NaN);
+
+        internal bool HasPressure => Pressure >= 0 && Pressure <= 1;
+        internal bool HasTilt => !double.IsNaN(TiltX) && !double.IsNaN(TiltY);
+    }
+
     internal interface IPlatformTouchSink
     {
         /// <summary>A contact touched down. Returns true if WPF handled it.</summary>
-        /// <param name="pressure">
-        ///  0..1, or a negative value where the device does not report pressure. A finger normally
-        ///  does not; a pen does.
-        /// </param>
-        bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs);
+        /// <param name="pen">What the digitizer measured about the tip; see <see cref="PenState"/>.</param>
+        bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs);
 
-        bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs);
+        bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs);
 
         /// <summary>
         ///  A contact lifted.

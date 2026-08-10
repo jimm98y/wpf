@@ -290,7 +290,7 @@ namespace MS.Internal.Interop.Wayland
                 if (sink is null) return;
 
                 ToScreen(surface, fx, fy, out int screenX, out int screenY);
-                sink.TouchDown(surface, id, screenX, screenY, -1, time);
+                sink.TouchDown(surface, id, screenX, screenY, PenState.None, time);
             }
             catch { }
         }
@@ -307,7 +307,7 @@ namespace MS.Internal.Interop.Wayland
                 if (sink is null) return;
 
                 ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
-                sink.TouchMove(s_touchSurface, id, screenX, screenY, -1, time);
+                sink.TouchMove(s_touchSurface, id, screenX, screenY, PenState.None, time);
             }
             catch { }
         }
