@@ -23,8 +23,8 @@
 // Versions here are the maximum this code understands; the version actually bound is min(this,
 // what the compositor advertises) -- see WaylandWindow's registry handler.
 //
-// Sources: xdg-shell.xml, viewporter.xml, fractional-scale-v1.xml, cursor-shape-v1.xml
-// (wayland-protocols, MIT).
+// Sources: xdg-shell.xml, viewporter.xml, fractional-scale-v1.xml, cursor-shape-v1.xml,
+// tablet-v2.xml (wayland-protocols, MIT).
 //
 
 using System;
@@ -204,6 +204,33 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>The largest surrounding text zwp_text_input_v3.set_surrounding_text accepts.</summary>
         internal const int ZWP_TEXT_INPUT_V3_MAX_SURROUNDING_BYTES = 4000;
 
+        // tablet-v2. Note the manager's opcodes: get_tablet_seat is 0 and destroy is 1, the reverse
+        // of every other protocol here. Transcribed, not assumed.
+        internal const uint ZWP_TABLET_MANAGER_V2_GET_TABLET_SEAT = 0;
+        internal const uint ZWP_TABLET_MANAGER_V2_DESTROY = 1;
+
+        internal const uint ZWP_TABLET_SEAT_V2_DESTROY = 0;
+
+        internal const uint ZWP_TABLET_TOOL_V2_SET_CURSOR = 0;
+        internal const uint ZWP_TABLET_TOOL_V2_DESTROY = 1;
+
+        internal const uint ZWP_TABLET_V2_DESTROY = 0;
+        internal const uint ZWP_TABLET_PAD_V2_DESTROY = 1;
+
+        // zwp_tablet_tool_v2.type. These are the evdev BTN_TOOL_* codes, which is why they start at
+        // 0x140 rather than 0.
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_PEN = 0x140;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_ERASER = 0x141;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_BRUSH = 0x142;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_PENCIL = 0x143;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_AIRBRUSH = 0x144;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_FINGER = 0x145;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_MOUSE = 0x146;
+        internal const uint ZWP_TABLET_TOOL_V2_TYPE_LENS = 0x147;
+
+        /// <summary>Pressure and distance are normalised to this, not to 1.</summary>
+        internal const double ZWP_TABLET_TOOL_V2_AXIS_MAX = 65535.0;
+
         // Core-protocol opcodes we use (these interfaces come from libwayland, but the opcodes are
         // still ours to get right). Verified against the installed libwayland's own tables.
         internal const uint WL_REGISTRY_BIND = 0;
@@ -382,10 +409,8 @@ namespace MS.Internal.Interop.Wayland
                 {
                     new WlMsgDef("destroy", ""),
                     new WlMsgDef("get_pointer", "no", "wp_cursor_shape_device_v1", "wl_pointer"),
-                    // Never called: the tablet protocol is not bound. Naming the real interface
-                    // keeps this table checkable against the XML; because zwp_tablet_tool_v2 has no
-                    // table of its own, Wl.Interface resolves it to NULL -- which is precisely what
-                    // wayland-scanner emits for a type it was not given.
+                    // Never called -- WaylandCursor sets the cursor through wl_pointer -- but the
+                    // interface it names now has a table of its own, so this resolves for real.
                     new WlMsgDef("get_tablet_tool_v2", "no", "wp_cursor_shape_device_v1", "zwp_tablet_tool_v2"),
                 },
                 events: Array.Empty<WlMsgDef>()),
@@ -430,6 +455,158 @@ namespace MS.Internal.Interop.Wayland
                     new WlMsgDef("commit_string", "?s", (string?)null),
                     new WlMsgDef("delete_surrounding_text", "uu", null, null),
                     new WlMsgDef("done", "u", (string?)null),
+                }),
+
+            // ---- tablet-v2 -----------------------------------------------------------------
+            //
+            // A stylus. Without this the compositor emulates a pointer from the pen for clients
+            // that did not bind the protocol -- position only, so pressure and tilt never arrive.
+            // Binding it turns that emulation OFF for this client, which is why WaylandTablet has
+            // to drive the mouse itself as well as the touch seam.
+            //
+            // All EIGHT interfaces are declared, not just the three that carry pen data. The pad
+            // (the buttons and rings on the tablet body) is announced by an event whose argument is
+            // a new_id, and libwayland creates the proxy for it during demarshalling whether or not
+            // anything is listening -- with a NULL wl_interface it cannot, and a client that owns a
+            // Wacom with a pad would die on the first pad_added. The same reasoning cascades to
+            // pad_group, and from there to ring, strip and dial.
+
+            new WlInterfaceDef("zwp_tablet_manager_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("get_tablet_seat", "no", "zwp_tablet_seat_v2", "wl_seat"),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: Array.Empty<WlMsgDef>()),
+
+            new WlInterfaceDef("zwp_tablet_seat_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("tablet_added", "n", "zwp_tablet_v2"),
+                    new WlMsgDef("tool_added", "n", "zwp_tablet_tool_v2"),
+                    new WlMsgDef("pad_added", "n", "zwp_tablet_pad_v2"),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_tool_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("set_cursor", "u?oii", null, "wl_surface", null, null),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("type", "u", (string?)null),
+                    new WlMsgDef("hardware_serial", "uu", null, null),
+                    new WlMsgDef("hardware_id_wacom", "uu", null, null),
+                    new WlMsgDef("capability", "u", (string?)null),
+                    new WlMsgDef("done", ""),
+                    new WlMsgDef("removed", ""),
+                    new WlMsgDef("proximity_in", "uoo", null, "zwp_tablet_v2", "wl_surface"),
+                    new WlMsgDef("proximity_out", ""),
+                    new WlMsgDef("down", "u", (string?)null),
+                    new WlMsgDef("up", ""),
+                    new WlMsgDef("motion", "ff", null, null),
+                    new WlMsgDef("pressure", "u", (string?)null),
+                    new WlMsgDef("distance", "u", (string?)null),
+                    new WlMsgDef("tilt", "ff", null, null),
+                    new WlMsgDef("rotation", "f", (string?)null),
+                    new WlMsgDef("slider", "i", (string?)null),
+                    new WlMsgDef("wheel", "fi", null, null),
+                    new WlMsgDef("button", "uuu", null, null, null),
+                    new WlMsgDef("frame", "u", (string?)null),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("name", "s", (string?)null),
+                    new WlMsgDef("id", "uu", null, null),
+                    new WlMsgDef("path", "s", (string?)null),
+                    new WlMsgDef("done", ""),
+                    new WlMsgDef("removed", ""),
+                    new WlMsgDef("bustype", "2u", (string?)null),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_pad_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("set_feedback", "usu", null, null, null),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("group", "n", "zwp_tablet_pad_group_v2"),
+                    new WlMsgDef("path", "s", (string?)null),
+                    new WlMsgDef("buttons", "u", (string?)null),
+                    new WlMsgDef("done", ""),
+                    new WlMsgDef("button", "uuu", null, null, null),
+                    new WlMsgDef("enter", "uoo", null, "zwp_tablet_v2", "wl_surface"),
+                    new WlMsgDef("leave", "uo", null, "wl_surface"),
+                    new WlMsgDef("removed", ""),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_pad_group_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("buttons", "a", (string?)null),
+                    new WlMsgDef("ring", "n", "zwp_tablet_pad_ring_v2"),
+                    new WlMsgDef("strip", "n", "zwp_tablet_pad_strip_v2"),
+                    new WlMsgDef("modes", "u", (string?)null),
+                    new WlMsgDef("done", ""),
+                    new WlMsgDef("mode_switch", "uuu", null, null, null),
+                    new WlMsgDef("dial", "2n", "zwp_tablet_pad_dial_v2"),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_pad_ring_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("set_feedback", "su", null, null),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("source", "u", (string?)null),
+                    new WlMsgDef("angle", "f", (string?)null),
+                    new WlMsgDef("stop", ""),
+                    new WlMsgDef("frame", "u", (string?)null),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_pad_strip_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("set_feedback", "su", null, null),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("source", "u", (string?)null),
+                    new WlMsgDef("position", "u", (string?)null),
+                    new WlMsgDef("stop", ""),
+                    new WlMsgDef("frame", "u", (string?)null),
+                }),
+
+            new WlInterfaceDef("zwp_tablet_pad_dial_v2", 2,
+                requests: new[]
+                {
+                    new WlMsgDef("set_feedback", "su", null, null),
+                    new WlMsgDef("destroy", ""),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("delta", "i", (string?)null),
+                    new WlMsgDef("frame", "u", (string?)null),
                 }),
         };
     }

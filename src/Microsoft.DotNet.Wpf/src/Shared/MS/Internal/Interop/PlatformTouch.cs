@@ -36,17 +36,77 @@ namespace MS.Internal.Interop
     ///   must not fabricate contacts here; it registers an IManipulator of its own instead.
     ///  </para>
     /// </remarks>
+    /// <summary>
+    ///  What a digitizer measured about a contact beyond where it is.
+    /// </summary>
+    /// <remarks>
+    ///  A struct rather than a widening parameter list because a pen reports several things and will
+    ///  report more: pressure and tilt today, twist and the inverted (eraser) end next. Every field
+    ///  carries its own "not reported" value, because a finger measures none of them and a stylus on
+    ///  a cheap digitizer measures only some -- and a default substituted for a measurement is how
+    ///  StylusPoint ends up asserting a tilt nobody sensed.
+    /// </remarks>
+    internal readonly struct PenState
+    {
+        /// <summary>0..1, or negative where the device reports no pressure.</summary>
+        internal readonly double Pressure;
+
+        /// <summary>
+        ///  Tilt from vertical in degrees along each axis, -90..90, or NaN where unreported. X is the
+        ///  lean to the user's right, Y the lean towards them -- the browser's tiltX/tiltY, and what
+        ///  StylusPointProperties.XTiltOrientation and YTiltOrientation take.
+        /// </summary>
+        internal readonly double TiltX;
+        internal readonly double TiltY;
+
+        /// <summary>
+        ///  The tool is the INVERTED end of the pen -- the eraser.
+        /// </summary>
+        /// <remarks>
+        ///  A plain bool where the other fields carry a "not reported" value, and deliberately so:
+        ///  a head that cannot tell reports false, and every consumer treats "upright" and "no idea"
+        ///  identically. A third state would be one nobody could act on differently.
+        /// </remarks>
+        internal readonly bool IsInverted;
+
+        internal PenState(double pressure, double tiltX, double tiltY)
+            : this(pressure, tiltX, tiltY, isInverted: false)
+        {
+        }
+
+        internal PenState(double pressure, double tiltX, double tiltY, bool isInverted)
+        {
+            Pressure = pressure;
+            TiltX = tiltX;
+            TiltY = tiltY;
+            IsInverted = isInverted;
+        }
+
+        /// <summary>A finger: position and nothing else.</summary>
+        internal static PenState None => new PenState(-1, double.NaN, double.NaN);
+
+        internal static PenState FromPressure(double pressure) => new PenState(pressure, double.NaN, double.NaN);
+
+        internal bool HasPressure => Pressure >= 0 && Pressure <= 1;
+        internal bool HasTilt => !double.IsNaN(TiltX) && !double.IsNaN(TiltY);
+    }
+
     internal interface IPlatformTouchSink
     {
         /// <summary>A contact touched down. Returns true if WPF handled it.</summary>
-        /// <param name="pressure">
-        ///  0..1, or a negative value where the device does not report pressure. A finger normally
-        ///  does not; a pen does.
-        /// </param>
-        bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs);
+        /// <param name="pen">What the digitizer measured about the tip; see <see cref="PenState"/>.</param>
+        bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs);
 
-        bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs);
+        bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs);
 
+        /// <summary>
+        ///  A contact lifted.
+        /// </summary>
+        /// <remarks>
+        ///  Pass <see cref="PlatformTouch.NoPosition"/> for both coordinates where the platform's up
+        ///  carries none -- wl_touch.up is one such, naming only the contact id. The contact then
+        ///  lifts where it was last seen, rather than at whatever placeholder was passed instead.
+        /// </remarks>
         bool TouchUp(IntPtr windowHandle, int contactId, int screenX, int screenY, uint timestampMs);
 
         /// <summary>
@@ -55,10 +115,26 @@ namespace MS.Internal.Interop
         ///  follow, and any manipulation in progress is abandoned rather than completed.
         /// </summary>
         void TouchCancel(IntPtr windowHandle, int contactId);
+
+        /// <summary>
+        ///  Cancels every contact currently alive in a window.
+        /// </summary>
+        /// <remarks>
+        ///  Wayland's wl_touch.cancel names no contact: the compositor is taking the WHOLE sequence,
+        ///  typically because it recognised a gesture of its own. The backend has no list of live
+        ///  ids to cancel one by one, and the sink does, so the sweep belongs here.
+        /// </remarks>
+        void TouchCancelAll(IntPtr windowHandle);
     }
 
     internal static class PlatformTouch
     {
+        /// <summary>
+        ///  "The platform did not say." Distinct from any real coordinate, including a negative one:
+        ///  a window straddling the screen origin genuinely reports negatives.
+        /// </summary>
+        internal const int NoPosition = int.MinValue;
+
         /// <summary>Installed by PresentationCore; null until a WPF window exists.</summary>
         internal static IPlatformTouchSink? Sink { get; set; }
 
@@ -68,5 +144,8 @@ namespace MS.Internal.Interop
         ///  still fall back to synthesizing mouse input for a head that has no sink yet.
         /// </summary>
         internal static bool IsAvailable => Sink is not null;
+
+        /// <summary>Cancels every live contact in a window, if anything is listening.</summary>
+        internal static void CancelAll(IntPtr windowHandle) => Sink?.TouchCancelAll(windowHandle);
     }
 }

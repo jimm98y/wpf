@@ -500,8 +500,10 @@ namespace MS.Internal.Interop
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&TouchesMovedImp, "v@:@@");
             class_addMethod(cls, Sel("touchesEnded:withEvent:"),
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&TouchesEndedImp, "v@:@@");
+            // Cancelled is NOT ended. The mouse emulation treats both as a release, but a contact
+            // must be abandoned rather than completed: no tap, and no manipulation finished.
             class_addMethod(cls, Sel("touchesCancelled:withEvent:"),
-                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&TouchesEndedImp, "v@:@@");
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&TouchesCancelledImp, "v@:@@");
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -519,6 +521,10 @@ namespace MS.Internal.Interop
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void TouchesEndedImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
             => DispatchTouch(self, touches, 2);
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void TouchesCancelledImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
+            => DispatchTouch(self, touches, 3);
 
         // ---- Drag-to-scroll ----
         //
@@ -552,6 +558,84 @@ namespace MS.Internal.Interop
         // of unspent drag so a fast flick catches up over the next events instead of drifting forever.
         private const double MaxCarryPixels = 2 * LogicalPixelsPerNotch;
 
+        // ---- Contacts ---------------------------------------------------------------------------
+        //
+        // A UITouch has no numeric identifier: UIKit identifies a contact by the IDENTITY of the
+        // UITouch object, which it keeps alive and reuses for the whole life of that finger. The
+        // seam wants a small integer, so the object pointer is mapped to one for as long as the
+        // contact lasts and the entry is dropped when it lifts -- which is also what makes a pointer
+        // UIKit later recycles harmless.
+        private static readonly Dictionary<IntPtr, int> s_contactIds = new();
+        private static int s_nextContactId;
+
+        private static void ReportContacts(IntPtr view, IntPtr touches, int kind, double scale)
+        {
+            IPlatformTouchSink sink = PlatformTouch.Sink;
+            if (sink is null) return;
+
+            IntPtr all = Send(touches, Sel("allObjects"));
+            if (all == IntPtr.Zero) return;
+
+            nint count = SendNInt(all, Sel("count"));
+            for (nint i = 0; i < count; i++)
+            {
+                IntPtr touch = SendPtrNInt(all, Sel("objectAtIndex:"), i);
+                if (touch == IntPtr.Zero) continue;
+
+                if (!TryContactId(touch, kind, out int id)) continue;
+
+                CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
+                int x = (int)Math.Round(p.x * scale);
+                int y = (int)Math.Round(p.y * scale);
+
+                // UITouchType: 0 direct (a finger), 1 indirect, 2 pencil, 3 indirect pointer. Only a
+                // pencil measures force; a finger's is a constant that means nothing, so it is
+                // reported as unknown rather than handed on as though it were a reading.
+                bool isPencil = SendNInt(touch, Sel("type")) == 2;
+                PenState pen = PenState.None;
+                if (isPencil)
+                {
+                    double max = SendDouble(touch, Sel("maximumPossibleForce"));
+                    double pressure = max > 0 ? SendDouble(touch, Sel("force")) / max : -1;
+
+                    // UIKit gives the tip's ALTITUDE from the screen (0 = flat, pi/2 = upright) and
+                    // its AZIMUTH around the screen; the seam takes the two per-axis tilts the
+                    // browser and Windows both use, so the spherical pair is resolved into them.
+                    double altitude = SendDouble(touch, Sel("altitudeAngle"));
+                    double azimuth = SendDoublePtr(touch, Sel("azimuthAngleInView:"), view);
+                    double fromVertical = (Math.PI / 2) - altitude;
+                    double degrees = fromVertical * 180.0 / Math.PI;
+
+                    pen = new PenState(pressure,
+                                       degrees * Math.Cos(azimuth),
+                                       degrees * Math.Sin(azimuth));
+                }
+
+                uint timestamp = (uint)Environment.TickCount;
+                switch (kind)
+                {
+                    case 1: sink.TouchDown(view, id, x, y, pen, timestamp); break;
+                    case 0: sink.TouchMove(view, id, x, y, pen, timestamp); break;
+                    case 2: sink.TouchUp(view, id, x, y, timestamp); break;
+                    case 3: sink.TouchCancel(view, id); break;
+                }
+            }
+        }
+
+        /// <summary>The contact id for a UITouch, allocating on a down and releasing on an up.</summary>
+        private static bool TryContactId(IntPtr touch, int kind, out int id)
+        {
+            if (kind == 1)
+            {
+                id = s_contactIds[touch] = ++s_nextContactId;
+                return true;
+            }
+
+            if (!s_contactIds.TryGetValue(touch, out id)) return false;   // never saw it go down
+            if (kind == 2 || kind == 3) s_contactIds.Remove(touch);
+            return true;
+        }
+
         private static void DispatchTouch(IntPtr view, IntPtr touches, int kind)
         {
             // Never let a managed exception unwind into UIKit.
@@ -565,7 +649,14 @@ namespace MS.Internal.Interop
 
                 CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
                 double scale = ScreenScale();
-                Emit(view, kind, p.x * scale, p.y * scale, scale);
+
+                // The mouse has no notion of a cancelled press, so a cancel still releases it.
+                Emit(view, kind == 3 ? 2 : kind, p.x * scale, p.y * scale, scale);
+
+                // Every touch, not just the one the mouse follows. The mouse emulation above stays:
+                // a TouchDevice raises the Touch events and drives Manipulation but does not promote
+                // itself to the mouse, so contacts alone would gain pinch and lose Button.Click.
+                ReportContacts(view, touches, kind, scale);
             }
             catch (Exception e)
             {
@@ -833,6 +924,9 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrBool(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, [MarshalAs(UnmanagedType.I1)] bool wait);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrDouble(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, double delay);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDoublePtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGPoint SendPointPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, CGRect arg);

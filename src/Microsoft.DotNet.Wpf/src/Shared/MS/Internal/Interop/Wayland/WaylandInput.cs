@@ -98,14 +98,20 @@ namespace MS.Internal.Interop.Wayland
         internal const int BTN_SIDE = 0x113;
         internal const int BTN_EXTRA = 0x114;
 
+        // A stylus's barrel buttons arrive as these, on the tablet tool rather than the pointer.
+        internal const int BTN_STYLUS = 0x14b;
+        internal const int BTN_STYLUS2 = 0x14c;
+        internal const int BTN_STYLUS3 = 0x149;
+
         private const uint WL_POINTER_AXIS_VERTICAL_SCROLL = 0;
         private const uint WL_POINTER_AXIS_HORIZONTAL_SCROLL = 1;
 
         public static event Action<WaylandMouseMessage>? MouseInput;
         public static event Action<WaylandKeyMessage>? KeyInput;
 
-        private static IntPtr s_seat, s_pointer, s_keyboard;
+        private static IntPtr s_seat, s_pointer, s_keyboard, s_touch;
         private static IntPtr* s_pointerListener;
+        private static IntPtr* s_touchListener;
         private static IntPtr* s_keyboardListener;
         private static IntPtr* s_seatListener;
 
@@ -213,6 +219,20 @@ namespace MS.Internal.Interop.Wayland
                     WaylandCursor.AttachPointer(s_pointer);
                 }
 
+                if ((capabilities & WL_SEAT_CAPABILITY_TOUCH) != 0 && s_touch == IntPtr.Zero)
+                {
+                    s_touch = Wl.Construct(seat, WL_SEAT_GET_TOUCH, "wl_touch", Wl.wl_proxy_get_version(seat), WlArgument.NewId());
+                    s_touchListener = Wl.Vtable(
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, uint, IntPtr, int, int, int, void>)&OnTouchDown,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, uint, int, void>)&OnTouchUp,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, uint, int, int, int, void>)&OnTouchMotion,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnTouchFrame,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&OnTouchCancel,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, int, int, int, void>)&OnTouchShape,
+                        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, int, int, void>)&OnTouchOrientation);
+                    Wl.wl_proxy_add_listener(s_touch, s_touchListener, IntPtr.Zero);
+                }
+
                 if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0 && s_keyboard == IntPtr.Zero)
                 {
                     s_keyboard = Wl.Construct(seat, WL_SEAT_GET_KEYBOARD, "wl_keyboard", Wl.wl_proxy_get_version(seat), WlArgument.NewId());
@@ -232,9 +252,194 @@ namespace MS.Internal.Interop.Wayland
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnSeatName(IntPtr data, IntPtr seat, IntPtr name) { }
 
+        // ---- Touch ---------------------------------------------------------------------------
+        //
+        // wl_touch reports CONTACTS, which the pointer protocol cannot express: each carries its own
+        // id and lives from a down to an up, several at once. They go straight to the PlatformTouch
+        // seam rather than through WaylandMouseMessage, because collapsing them into the mouse is
+        // exactly what loses the second finger.
+        //
+        // The surface pointer IS the window handle here (WaylandWindow.FromHandle takes it), so no
+        // mapping is needed -- only the surface-local logical position turned into the screen device
+        // pixels the seam wants.
+        //
+        // A contact's id is unique among those currently down and the compositor reuses it freely
+        // afterwards, which is the seam's contract already.
+        //
+        // The FIRST contact also drives the mouse. A TouchDevice raises the Touch events and promotes
+        // itself to Manipulation, but never to the mouse -- and nothing else will do it here, because
+        // no Wayland compositor emulates a pointer from a touchscreen the way X11 did. Reporting
+        // contacts alone would therefore have given this head pinch and taken away Button.Click.
+        //
+        // Promotion follows the touch event's own verdict, as it does on Windows: a contact whose
+        // TouchDown was HANDLED does not go on to click anything, and the whole contact stays
+        // unpromoted from then on so its up cannot arrive without its down.
+
+        private static IntPtr s_touchSurface;
+
+        private static int s_primaryTouchId = -1;
+        private static bool s_primaryTouchPromoted;
+
+        /// <summary>Where the primary contact was last seen, in wl_fixed. An up names only the
+        /// contact, and a release has to be reported somewhere.</summary>
+        private static int s_primaryTouchFx, s_primaryTouchFy;
+
+        /// <summary>
+        /// Surface-local logical coordinates, in wl_fixed, to the screen device pixels the
+        /// PlatformTouch seam takes. Shared with the tablet, whose axes use the same units.
+        /// </summary>
+        internal static void ToScreen(IntPtr surface, int fx, int fy, out int screenX, out int screenY)
+        {
+            double scale = WaylandDisplay.ScaleForSurface(surface);
+            double localX = Fixed(fx) * scale;
+            double localY = Fixed(fy) * scale;
+
+            // Through the display's seam rather than WaylandWindow directly: this layer is also
+            // driven by a host with no WPF windows at all (WaylandSpike), where the query is null
+            // and a surface-local position is already a screen one.
+            int originX = 0, originY = 0;
+            WaylandDisplay.SurfaceScreenOriginQuery?.Invoke(surface, out originX, out originY);
+
+            screenX = (int)Math.Round(localX) + originX;
+            screenY = (int)Math.Round(localY) + originY;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchDown(IntPtr data, IntPtr touch, uint serial, uint time, IntPtr surface, int id, int fx, int fy)
+        {
+            try
+            {
+                LastInputSerial = serial;
+                s_touchSurface = surface;
+
+                bool handled = false;
+                IPlatformTouchSink? sink = PlatformTouch.Sink;
+                if (sink is not null)
+                {
+                    ToScreen(surface, fx, fy, out int screenX, out int screenY);
+                    handled = sink.TouchDown(surface, id, screenX, screenY, PenState.None, time);
+                }
+
+                if (s_primaryTouchId >= 0 || handled) return;
+
+                s_primaryTouchId = id;
+                s_primaryTouchPromoted = true;
+                s_primaryTouchFx = fx;
+                s_primaryTouchFy = fy;
+                NotePointerPosition(surface, Fixed(fx), Fixed(fy));
+
+                // A move first: the button has to land where the finger is, and WPF has no idea the
+                // cursor moved there otherwise -- the press would be delivered to whatever the mouse
+                // was last over.
+                RaiseTouchAsMouse(surface, WaylandMouseKind.Move, 0, fx, fy, time);
+                NoteButtonSerial(serial, pressed: true);
+                RaiseTouchAsMouse(surface, WaylandMouseKind.ButtonDown, BTN_LEFT, fx, fy, time);
+            }
+            catch { }
+        }
+
+        private static void RaiseTouchAsMouse(IntPtr surface, WaylandMouseKind kind, int button, int fx, int fy, uint time)
+        {
+            Raise(new WaylandMouseMessage(surface, kind, button,
+                                          Px(Fixed(fx), surface), Py(Fixed(fy), surface), 0, 0, (int)time));
+        }
+
+        /// <summary>Ends the mouse press the primary contact was driving, if it was driving one.</summary>
+        private static void ReleasePromotedTouch(IntPtr surface, uint time)
+        {
+            bool promoted = s_primaryTouchPromoted;
+            s_primaryTouchId = -1;
+            s_primaryTouchPromoted = false;
+            if (!promoted || surface == IntPtr.Zero) return;
+
+            NoteButtonSerial(0, pressed: false);
+            RaiseTouchAsMouse(surface, WaylandMouseKind.ButtonUp, BTN_LEFT, s_primaryTouchFx, s_primaryTouchFy, time);
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchMotion(IntPtr data, IntPtr touch, uint time, int id, int fx, int fy)
+        {
+            try
+            {
+                // Motion names no surface: it belongs to whichever the contact went down on.
+                if (s_touchSurface == IntPtr.Zero) return;
+
+                IPlatformTouchSink? sink = PlatformTouch.Sink;
+                if (sink is not null)
+                {
+                    ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
+                    sink.TouchMove(s_touchSurface, id, screenX, screenY, PenState.None, time);
+                }
+
+                if (id != s_primaryTouchId) return;
+
+                s_primaryTouchFx = fx;
+                s_primaryTouchFy = fy;
+                NotePointerPosition(s_touchSurface, Fixed(fx), Fixed(fy));
+
+                if (s_primaryTouchPromoted)
+                    RaiseTouchAsMouse(s_touchSurface, WaylandMouseKind.Move, 0, fx, fy, time);
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchUp(IntPtr data, IntPtr touch, uint serial, uint time, int id)
+        {
+            try
+            {
+                LastInputSerial = serial;
+                if (s_touchSurface == IntPtr.Zero) return;
+
+                // An up names only the contact, so the seam is told there is no position and lifts
+                // it where it was last seen.
+                PlatformTouch.Sink?.TouchUp(s_touchSurface, id, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
+
+                if (id == s_primaryTouchId) ReleasePromotedTouch(s_touchSurface, time);
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchFrame(IntPtr data, IntPtr touch)
+        {
+            // Nothing to do: contacts are delivered as they arrive rather than batched per frame.
+            // WPF raises Touch.FrameReported from TouchDevice itself, so batching here would only
+            // delay delivery.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchCancel(IntPtr data, IntPtr touch)
+        {
+            try
+            {
+                // The compositor took the whole sequence -- it started a gesture of its own, or the
+                // surface lost the touch. Every live contact is abandoned, not completed.
+                PlatformTouch.CancelAll(s_touchSurface);
+
+                // The emulated mouse has no way to express "abandoned", and a button left down would
+                // be worse than one released in a place nothing was clicked -- WPF would hold capture
+                // for a press that is never coming back.
+                ReleasePromotedTouch(s_touchSurface, s_frameTime);
+                s_touchSurface = IntPtr.Zero;
+            }
+            catch { }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchShape(IntPtr data, IntPtr touch, int id, int major, int minor)
+        {
+            // The contact ellipse. WPF's TouchPoint carries a rect, but nothing off Windows fills it
+            // in yet; see PlatformTouchDevice.GetTouchPoint.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void OnTouchOrientation(IntPtr data, IntPtr touch, int id, int orientation) { }
+
         // ---- Pointer -------------------------------------------------------------------------
 
-        private static double Fixed(int value) => value / 256.0;
+        /// <summary>wl_fixed_t is signed 24.8, so the value is the raw integer over 256.</summary>
+        internal static double Fixed(int value) => value / 256.0;
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnPointerEnter(IntPtr data, IntPtr pointer, uint serial, IntPtr surface, int sx, int sy)
@@ -292,22 +497,7 @@ namespace MS.Internal.Interop.Wayland
         {
             try
             {
-                LastInputSerial = serial;
-
-                // A drag needs the serial of a BUTTON PRESS specifically -- the compositor validates
-                // that the client holds an implicit grab, and rejects (silently, on mutter) a serial
-                // that came from anything else. Tracked separately from LastInputSerial, which any
-                // event moves along, and cleared on release so a drag cannot start after the button
-                // is already up.
-                if (state != 0)
-                {
-                    LastPointerButtonSerial = serial;
-                    s_buttonsDown++;
-                }
-                else if (s_buttonsDown > 0 && --s_buttonsDown == 0)
-                {
-                    LastPointerButtonSerial = 0;
-                }
+                NoteButtonSerial(serial, state != 0);
 
                 s_frameTime = time;
                 IntPtr surface = FocusSurface;
@@ -430,10 +620,70 @@ namespace MS.Internal.Interop.Wayland
         }
 
         /// <summary>Surface-local logical coordinate to client DEVICE pixels for that window.</summary>
-        private static int Px(double x, IntPtr surface) => (int)Math.Round(x * WaylandDisplay.ScaleForSurface(surface));
-        private static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
+        internal static int Px(double x, IntPtr surface) => (int)Math.Round(x * WaylandDisplay.ScaleForSurface(surface));
+        internal static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
 
         private static void Raise(in WaylandMouseMessage m) => MouseInput?.Invoke(m);
+
+        // ---- Shared with the other input sources on this seat --------------------------------
+        //
+        // The tablet is a second pointing device on the same seat (WaylandTablet). It has to reach
+        // the same three pieces of per-seat state the pointer owns -- the mouse channel, the last
+        // known cursor position, and the serials -- because from WPF's point of view there is one
+        // mouse and the pen is driving it.
+
+        /// <summary>Raises a mouse message on behalf of another device on this seat.</summary>
+        internal static void RaiseSynthesizedMouse(in WaylandMouseMessage m) => Raise(m);
+
+        /// <summary>
+        /// Records where the cursor now is. Wayland never reports a global cursor position, so this
+        /// plus the window's origin is the only answer GetCursorPos has -- and a context menu opened
+        /// with the pen would otherwise appear at wherever the mouse was last left.
+        /// </summary>
+        internal static void NotePointerPosition(IntPtr surface, double localX, double localY)
+        {
+            FocusSurface = surface;
+            PointerSurfaceX = localX;
+            PointerSurfaceY = localY;
+        }
+
+        /// <summary>Clears the focus surface if it is still the one named.</summary>
+        internal static void NotePointerLeft(IntPtr surface)
+        {
+            if (FocusSurface == surface) FocusSurface = IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// Records the serial of a press or release that gives this client an implicit grab.
+        /// </summary>
+        /// <remarks>
+        /// A drag needs the serial of a BUTTON PRESS specifically -- the compositor validates that
+        /// the client holds an implicit grab, and rejects (silently, on mutter) a serial that came
+        /// from anything else. Tracked separately from LastInputSerial, which any event moves along,
+        /// and cleared on release so a drag cannot start after the button is already up. Pass 0 for
+        /// <paramref name="serial"/> where the event carried none: zwp_tablet_tool_v2.up has no
+        /// arguments at all, but the release still has to balance the press.
+        /// </remarks>
+        internal static void NoteButtonSerial(uint serial, bool pressed)
+        {
+            if (serial != 0) LastInputSerial = serial;
+
+            if (pressed)
+            {
+                if (serial != 0) LastPointerButtonSerial = serial;
+                s_buttonsDown++;
+            }
+            else if (s_buttonsDown > 0 && --s_buttonsDown == 0)
+            {
+                LastPointerButtonSerial = 0;
+            }
+        }
+
+        /// <summary>Records a serial from an event that is not a button press.</summary>
+        internal static void NoteInputSerial(uint serial)
+        {
+            if (serial != 0) LastInputSerial = serial;
+        }
 
         // ---- Keyboard ------------------------------------------------------------------------
 

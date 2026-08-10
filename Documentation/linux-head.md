@@ -48,7 +48,8 @@ Everything Wayland lives in `src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Int
 | `WlXkb.cs` | libxkbcommon (keymaps, compose) |
 | `WaylandDisplay.cs` | the one connection, the globals, the read/dispatch pump |
 | `WaylandWindow.cs` | `IPlatformWindow`; toplevels, popups, the coordinate model |
-| `WaylandInput.cs` | `wl_seat` pointer + keyboard, key repeat |
+| `WaylandInput.cs` | `wl_seat` pointer + keyboard + `wl_touch`, key repeat |
+| `WaylandTablet.cs` | `tablet-v2`: the stylus, its pressure and tilt — see [touch-and-stylus.md](touch-and-stylus.md) |
 | `WaylandCursor.cs` | `cursor-shape-v1`, with an XCursor-theme fallback for GNOME 46 and older |
 | `WaylandClipboard.cs` | `wl_data_device` selections |
 | `WaylandDragDrop.cs` | `wl_data_device` drags, both directions |
@@ -928,6 +929,14 @@ and drag still need a human: the in-process probe deliberately no longer exercis
 `WaylandSpike` is the one to reach for first when something is wrong at the platform level: it
 brings a decorated window up and presents wgpu frames through `WaylandDisplay` alone, with no WPF in
 the picture, so a protocol-table or handshake fault is debuggable in isolation.
+
+**It does not currently build**, and fixing it is not a matter of adding files to its item group.
+`WaylandDisplay` has since grown hard references to `WaylandTextInput` and `AtSpiBridge`, and those
+reach for a `Dispatcher` and the automation tree — i.e. for WindowsBase, which is exactly what the
+spike exists to do without. Restoring it means making those subsystems optional at the display
+(a delegate installed from above, as `SurfaceScaleQuery` and `SurfaceScreenOriginQuery` already are)
+rather than named directly. `WaylandInput` was moved onto that pattern and no longer names
+`WaylandWindow`; the other two have not been.
 
 `check-path-casing.py` exists because Windows and macOS are case-insensitive: a csproj can name
 `System\windows\...` for a file that is really under `System/Windows/` and nobody notices until a

@@ -590,6 +590,7 @@ namespace MS.Internal.Interop
             if (cls == IntPtr.Zero) return IntPtr.Zero;
 
             CocoaAccessibility.AddViewAccessibility(cls);
+            AddGestureMethods(cls);
 
             // NSDraggingDestination is implemented BY THE VIEW on macOS, not by a delegate, so the
             // drop methods join the accessibility ones on this class.
@@ -597,6 +598,114 @@ namespace MS.Internal.Interop
 
             objc_registerClassPair(cls);
             return s_contentViewClass = cls;
+        }
+
+        // ---- Trackpad gestures ---------------------------------------------------------------
+        //
+        // A Mac has no touchscreen, so this head reports GESTURES rather than contacts: AppKit has
+        // already recognised the pinch or the twist, and PlatformGesture turns that into an
+        // IManipulator pair. See PlatformGesture.cs for why fabricating touch contacts from trackpad
+        // coordinates would be a lie -- they are positions on the TRACKPAD, not on the window.
+        //
+        // AppKit reports each event as a DELTA (magnification is "how much more since last time"),
+        // and the seam takes a cumulative factor, so the running total is kept here. A gesture with
+        // no beginGesture:/endGesture: pair around it -- which is what an older trackpad driver
+        // sends -- still works: the first magnify starts one and it ends when the totals settle.
+
+        private static double s_gestureMagnification = 1;
+        private static double s_gestureRotation;
+        private static bool s_gestureActive;
+
+        private static void AddGestureMethods(IntPtr cls)
+        {
+            // Keep the delegates alive for the process: class_addMethod stores the raw pointer.
+            s_magnifyImpl = OnMagnify;
+            s_rotateImpl = OnRotate;
+            s_endGestureImpl = OnEndGesture;
+
+            class_addMethod(cls, Sel("magnifyWithEvent:"),
+                            Marshal.GetFunctionPointerForDelegate(s_magnifyImpl), "v@:@");
+            class_addMethod(cls, Sel("rotateWithEvent:"),
+                            Marshal.GetFunctionPointerForDelegate(s_rotateImpl), "v@:@");
+            class_addMethod(cls, Sel("endGestureWithEvent:"),
+                            Marshal.GetFunctionPointerForDelegate(s_endGestureImpl), "v@:@");
+        }
+
+        private delegate void GestureMethod(IntPtr self, IntPtr sel, IntPtr nsEvent);
+        private static GestureMethod s_magnifyImpl, s_rotateImpl, s_endGestureImpl;
+
+        private static void OnMagnify(IntPtr self, IntPtr sel, IntPtr nsEvent)
+        {
+            try
+            {
+                // NSEvent.magnification is the delta as a fraction: 0.1 means "10% larger than a
+                // moment ago", so it compounds rather than adding.
+                s_gestureMagnification *= 1 + SendDouble(nsEvent, Sel("magnification"));
+                DispatchGesture(self, nsEvent);
+            }
+            catch { }
+        }
+
+        private static void OnRotate(IntPtr self, IntPtr sel, IntPtr nsEvent)
+        {
+            try
+            {
+                // NSEvent.rotation is in degrees, counter-clockwise; WPF turns clockwise.
+                s_gestureRotation -= SendFloat(nsEvent, Sel("rotation"));
+                DispatchGesture(self, nsEvent);
+            }
+            catch { }
+        }
+
+        private static void OnEndGesture(IntPtr self, IntPtr sel, IntPtr nsEvent)
+        {
+            try
+            {
+                if (!s_gestureActive) return;
+                PlatformGesture.Sink?.GestureEnd(self, false);
+                s_gestureActive = false;
+                s_gestureMagnification = 1;
+                s_gestureRotation = 0;
+            }
+            catch { }
+        }
+
+        private static void DispatchGesture(IntPtr view, IntPtr nsEvent)
+        {
+            IPlatformGestureSink sink = PlatformGesture.Sink;
+            if (sink is null) return;
+
+            IntPtr handle = view;
+            if (handle == IntPtr.Zero) return;
+
+            GestureScreenPoint(nsEvent, out int screenX, out int screenY);
+
+            if (!s_gestureActive)
+            {
+                s_gestureActive = true;
+                sink.GestureBegin(handle, screenX, screenY);
+            }
+
+            sink.GestureUpdate(handle, screenX, screenY, s_gestureMagnification, s_gestureRotation);
+        }
+
+        /// <summary>The event's location in the same screen device pixels the seams use.</summary>
+        private static void GestureScreenPoint(IntPtr nsEvent, out int screenX, out int screenY)
+        {
+            IntPtr window = Send(nsEvent, Sel("window"));
+            NSPoint inWindow = SendPoint(nsEvent, Sel("locationInWindow"));
+
+            // Window-local (bottom-left origin) to global, then flipped to the top-left origin WPF
+            // and these seams use, then scaled to device pixels.
+            NSRect frame = window != IntPtr.Zero ? SendRect(window, Sel("frame")) : default;
+            double globalX = frame.x + inWindow.x;
+            double globalY = frame.y + inWindow.y;
+
+            double scale = window != IntPtr.Zero ? SendDouble(window, Sel("backingScaleFactor")) : PrimaryScreenScale();
+            double flippedY = PrimaryScreenHeightPoints() - globalY;
+
+            screenX = (int)Math.Round(globalX * scale);
+            screenY = (int)Math.Round(flippedY * scale);
         }
 
         /// <summary>The primary screen's backing scale, for conversions with no window in hand.</summary>
@@ -1440,6 +1549,9 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr receiver, IntPtr selector, double arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
+        // NSEvent.rotation is a float, not a CGFloat: a float return arrives in a different register
+        // than a double, so reading it as one gives nonsense.
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern float SendFloat(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRect(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr receiver, IntPtr selector, NSRect arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr receiver, IntPtr selector, nuint arg);

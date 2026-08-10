@@ -40,7 +40,7 @@ namespace MS.Internal.Interop
         public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
         public static void NotifySurfaceDestroyed(System.IntPtr handle) { }
         public static void NotifyTouch(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
-        public static void NotifyTouchContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure) { }
+        public static void NotifyTouchContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure, double tiltX, double tiltY, bool isEraser = false) { }
         public static void RequestWake() { }
         public static void ScheduleWake(double seconds) { }
         public void SetContentSize(int width, int height) { }

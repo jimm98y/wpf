@@ -337,6 +337,46 @@ namespace MS.Internal.Interop
                         break;
                     }
 
+                    // A touch or pen CONTACT. Unlike "m", these are not coalesced: each carries its
+                    // own contact id, so collapsing consecutive events would merge two fingers.
+                    case "tc":
+                    {
+                        IPlatformTouchSink sink = PlatformTouch.Sink;
+                        if (sink is null) break;
+
+                        int kind = e.GetProperty("k").GetInt32();
+                        var handle = (IntPtr)e.GetProperty("h").GetInt32();
+                        int id = e.GetProperty("id").GetInt32();
+                        int x = e.GetProperty("x").GetInt32();
+                        int y = e.GetProperty("y").GetInt32();
+                        var pen = new PenState(
+                            e.GetProperty("p").GetDouble(),
+                            e.TryGetProperty("tx", out JsonElement tx) ? tx.GetDouble() : double.NaN,
+                            e.TryGetProperty("ty", out JsonElement ty) ? ty.GetDouble() : double.NaN,
+                            e.TryGetProperty("inv", out JsonElement inv) && inv.GetBoolean());
+                        var ts = (uint)e.GetProperty("ts").GetInt32();
+
+                        // Canvas-relative device pixels plus the window's client origin: the seam
+                        // takes screen device pixels, and PlatformTouchDevice subtracts the same
+                        // origin on the way back out.
+                        IPlatformWindow window = PlatformWindow.FromHandle(handle);
+                        if (window is not null)
+                        {
+                            window.GetClientScreenOriginPixels(out int originX, out int originY);
+                            x += originX;
+                            y += originY;
+                        }
+
+                        switch (kind)
+                        {
+                            case 1: sink.TouchDown(handle, id, x, y, pen, ts); break;
+                            case 0: sink.TouchMove(handle, id, x, y, pen, ts); break;
+                            case 2: sink.TouchUp(handle, id, x, y, ts); break;
+                            case 3: sink.TouchCancel(handle, id); break;
+                        }
+                        break;
+                    }
+
                     // Input-method composition. Queued by the hidden editable element rather than by
                     // a window, so there is no handle to route on: the browser has one focused
                     // element at a time, and ImmComposition routes to whichever editor holds focus.

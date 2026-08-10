@@ -132,7 +132,37 @@ namespace System.Windows.Input
             PlatformTouch.Sink = s_instance;
         }
 
-        public bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs)
+        /// <summary>
+        ///  What the digitizer measured about the contact currently driving the emulated mouse, or
+        ///  <see cref="PenState.None"/> when nothing is down or it measures nothing (a finger).
+        /// </summary>
+        /// <remarks>
+        ///  Read by the ink path. InkCanvas takes its points from a StylusDevice when one has capture
+        ///  and otherwise from the MOUSE, which carries no pressure -- and off Windows there is no
+        ///  StylusDevice at all, so a pen's pressure reached the seam and stopped there. This is how
+        ///  it gets the last few inches, without a Wisp emulation standing in the way.
+        ///
+        ///  The FIRST contact is the one reported, because that is the one promoted to the mouse; a
+        ///  second finger does not draw.
+        /// </remarks>
+        internal static PenState CurrentPen { get; private set; } = PenState.None;
+
+        private int _primaryContact = -1;
+
+        private void TrackPen(int contactId, in PenState pen, bool down)
+        {
+            if (down && _primaryContact < 0) _primaryContact = contactId;
+            if (contactId == _primaryContact) CurrentPen = pen;
+        }
+
+        private void ForgetPressure(int contactId)
+        {
+            if (contactId != _primaryContact) return;
+            _primaryContact = -1;
+            CurrentPen = PenState.None;
+        }
+
+        public bool TouchDown(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs)
         {
             if (!TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
             {
@@ -151,18 +181,20 @@ namespace System.Windows.Input
             _contacts[contactId] = device;
 
             device.SetSource(source);
-            device.SetPosition(position, pressure);
+            device.SetPosition(position, pen.Pressure);
+            TrackPen(contactId, pen, down: true);
             device.Activate();
             return device.ReportDown();
         }
 
-        public bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, double pressure, uint timestampMs)
+        public bool TouchMove(IntPtr windowHandle, int contactId, int screenX, int screenY, in PenState pen, uint timestampMs)
         {
             if (!_contacts.TryGetValue(contactId, out PlatformTouchDevice device)) return false;
             if (!TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position)) return false;
 
             device.SetSource(source);
-            device.SetPosition(position, pressure);
+            device.SetPosition(position, pen.Pressure);
+            TrackPen(contactId, pen, down: false);
             return device.ReportMove();
         }
 
@@ -170,7 +202,11 @@ namespace System.Windows.Input
         {
             if (!_contacts.TryGetValue(contactId, out PlatformTouchDevice device)) return false;
 
-            if (TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
+            // An up that carries no position lifts the contact where it was last seen. Repositioning
+            // it to a placeholder would land the up somewhere the finger never was -- and a tap whose
+            // down and up hit different elements is not a click.
+            if (screenX != PlatformTouch.NoPosition && screenY != PlatformTouch.NoPosition &&
+                TryResolve(windowHandle, screenX, screenY, out PresentationSource source, out Point position))
             {
                 device.SetSource(source);
                 device.SetPosition(position, device.Pressure);
@@ -187,6 +223,18 @@ namespace System.Windows.Input
             Retire(contactId, device, cancel: true);
         }
 
+        public void TouchCancelAll(IntPtr windowHandle)
+        {
+            if (_contacts.Count == 0) return;
+
+            // Copied first: Retire mutates the dictionary.
+            var live = new List<KeyValuePair<int, PlatformTouchDevice>>(_contacts);
+            foreach (KeyValuePair<int, PlatformTouchDevice> contact in live)
+            {
+                Retire(contact.Key, contact.Value, cancel: true);
+            }
+        }
+
         /// <summary>
         ///  Takes a contact out of service. A cancel deactivates WITHOUT reporting an up, which is
         ///  the difference that matters downstream: an up completes a tap and finishes a
@@ -195,6 +243,7 @@ namespace System.Windows.Input
         private void Retire(int contactId, PlatformTouchDevice device, bool cancel)
         {
             _contacts.Remove(contactId);
+            ForgetPressure(contactId);
             try
             {
                 device.Deactivate();
@@ -211,7 +260,7 @@ namespace System.Windows.Input
         ///  root-visual coordinates -- device pixels to DIPs included, so a contact lands where the
         ///  user touched on a scaled display.
         /// </summary>
-        private static bool TryResolve(IntPtr windowHandle, int screenX, int screenY,
+        internal static bool TryResolve(IntPtr windowHandle, int screenX, int screenY,
                                        out PresentationSource source, out Point position)
         {
             source = null;

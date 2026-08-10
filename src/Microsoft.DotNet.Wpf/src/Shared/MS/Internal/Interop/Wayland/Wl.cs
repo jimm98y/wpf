@@ -190,9 +190,11 @@ namespace MS.Internal.Interop.Wayland
             lock (s_lock)
             {
                 EnsureTablesBuiltLocked();
-                // A name with no table -- a protocol we deliberately do not bind, such as
-                // zwp_tablet_tool_v2 in wp_cursor_shape_manager_v1.get_tablet_tool_v2 -- resolves to
-                // NULL, which is exactly what wayland-scanner emits for a type it was not given.
+                // A name with no table -- a protocol we deliberately do not bind, reachable only
+                // through a request we never send -- resolves to NULL, which is exactly what
+                // wayland-scanner emits for a type it was not given. Note that this is safe only
+                // for REQUESTS: an EVENT whose argument is a new_id has libwayland construct the
+                // proxy during demarshalling, and a null interface there is fatal.
                 return s_builtInterfaces.TryGetValue(name, out IntPtr built) ? built : IntPtr.Zero;
             }
         }
@@ -305,6 +307,40 @@ namespace MS.Internal.Interop.Wayland
             var v = (IntPtr*)NativeMemory.AllocZeroed((nuint)(IntPtr.Size * handlers.Length));
             for (int i = 0; i < handlers.Length; i++) v[i] = handlers[i];
             return v;
+        }
+
+        /// <summary>
+        /// The same, checked against the interface the listener will be attached to.
+        /// </summary>
+        /// <remarks>
+        /// libwayland indexes this array by EVENT OPCODE and is never told how long it is: one
+        /// handler short of the interface's event count and an event past the end reads whatever
+        /// follows the allocation and calls it. That is the same class of mistake BuildMessages
+        /// catches for types[], and it deserves the same loud failure at startup.
+        ///
+        /// Only interfaces from <see cref="WlProtocols"/> are checked. A CORE interface's event count
+        /// comes from whatever libwayland is installed, and a newer one may well declare an event
+        /// this code predates -- refusing to start over that would be a worse bug than the one being
+        /// guarded against, since the compositor cannot send an event above the version we bound.
+        /// </remarks>
+        internal static IntPtr* Vtable(string interfaceName, params IntPtr[] handlers)
+        {
+            lock (s_lock)
+            {
+                EnsureTablesBuiltLocked();
+                if (s_builtInterfaces.TryGetValue(interfaceName, out IntPtr authored) && authored != IntPtr.Zero)
+                {
+                    int declared = ((WlInterface*)authored)->event_count;
+                    if (declared != handlers.Length)
+                    {
+                        throw new InvalidOperationException(
+                            $"Wayland listener for {interfaceName}: {handlers.Length} handler(s) for " +
+                            $"{declared} declared event(s). The vtable is indexed by event opcode.");
+                    }
+                }
+            }
+
+            return Vtable(handlers);
         }
 
         // ---- Request helpers ---------------------------------------------------------------

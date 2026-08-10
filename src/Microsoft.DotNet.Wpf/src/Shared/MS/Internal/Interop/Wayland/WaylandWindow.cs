@@ -134,6 +134,11 @@ namespace MS.Internal.Interop.Wayland
             // shadow have to composite over whatever is behind them.
             WaylandDisplay.WindowOpaqueQuery ??= static s => !(FromHandle(s)?.IsBorderless ?? false);
             WaylandDisplay.WindowOriginQuery ??= GetOriginWithinOwner;
+            WaylandDisplay.SurfaceScreenOriginQuery ??= static (IntPtr s, out int x, out int y) =>
+            {
+                x = y = 0;
+                FromHandle(s)?.GetClientScreenOriginPixels(out x, out y);
+            };
             WaylandDisplay.WindowVisibleQuery ??= static h => FromHandle(h)?.IsVisible ?? true;
             WaylandDisplay.EnsureInitialized();
         }

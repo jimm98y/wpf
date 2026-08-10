@@ -124,6 +124,35 @@ namespace Wpf.Input.Tests
         }
 
         /// <summary>
+        ///  An up that carries no position lifts the contact where it was last seen.
+        /// </summary>
+        /// <remarks>
+        ///  wl_touch.up names only the contact id, so Linux has nothing to pass. Sending a
+        ///  placeholder instead would move the contact to the screen corner on the way up, and a tap
+        ///  whose down and up land on different elements is not a click -- so this is the difference
+        ///  between "buttons work on Linux" and "buttons never fire".
+        /// </remarks>
+        [Fact]
+        public void AnUpWithNoPositionKeepsTheContactWhereItWas()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                object downOver = null, upOver = null;
+                scope.Target.TouchDown += (s, e) => downOver = e.OriginalSource;
+                scope.Target.TouchUp += (s, e) => upOver = e.OriginalSource;
+
+                scope.Down(1, scope.CentreOfTarget);
+                scope.UpWithoutPosition(1);
+
+                Assert.Same(scope.Target, downOver);
+                Assert.Same(scope.Target, upOver);
+            });
+        }
+
+        /// <summary>
         ///  Manipulation, which is the reason the seam matters beyond touch itself: TouchDevice is an
         ///  IManipulator and promotes its own contacts, so a head that reports contacts accurately
         ///  gets translation, scale and inertia with no further platform work.
@@ -181,6 +210,114 @@ namespace Wpf.Input.Tests
             });
         }
 
+        /// <summary>
+        ///  A platform-recognised gesture drives manipulation on the element under it.
+        /// </summary>
+        /// <remarks>
+        ///  This is the macOS path. A Mac has no touchscreen and its trackpad reports positions on
+        ///  the TRACKPAD, so there is no honest contact to report and no TouchDevice to build; what
+        ///  AppKit gives is the pinch it already recognised. The seam turns that into a PAIR of
+        ///  IManipulators, because one point cannot express scale -- scale is a change in the
+        ///  distance between two of them.
+        /// </remarks>
+        [Fact]
+        public void APlatformGestureProducesManipulationScale()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope(manipulation: true);
+                Assert.SkipWhen(scope.GestureSink is null, "the platform gesture seam is not installed on this head");
+
+                double scale = 1;
+                scope.Target.ManipulationDelta += (s, e) => scale *= e.DeltaManipulation.Scale.X;
+
+                Point centre = scope.CentreOfTarget;
+                scope.GestureBegin(centre);
+                for (int i = 1; i <= 8; i++) scope.GestureUpdate(centre, 1 + i * 0.1, 0);
+                scope.GestureEnd();
+
+                Assert.True(scale > 1.2, $"a pinch out to 1.8x produced a scale of {scale:F2}");
+            });
+        }
+
+        /// <summary>
+        ///  A gesture over an element that did not ask for manipulation is left alone, so a pinch
+        ///  over an ordinary ScrollViewer keeps scrolling instead of silently becoming something
+        ///  nobody opted into.
+        /// </summary>
+        [Fact]
+        public void AGestureOverANonManipulatingElementDoesNothing()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope(manipulation: false);
+                Assert.SkipWhen(scope.GestureSink is null, "the platform gesture seam is not installed on this head");
+
+                bool any = false;
+                scope.Target.ManipulationDelta += (s, e) => any = true;
+
+                Point centre = scope.CentreOfTarget;
+                scope.GestureBegin(centre);
+                scope.GestureUpdate(centre, 1.5, 0);
+                scope.GestureEnd();
+
+                Assert.False(any, "a gesture manipulated an element that never enabled manipulation");
+            });
+        }
+
+        /// <summary>
+        ///  What the digitizer measured reaches the property the ink path reads.
+        /// </summary>
+        /// <remarks>
+        ///  InkCanvas takes its points from a StylusDevice when one has capture and from the MOUSE
+        ///  otherwise, and off Windows there is never a StylusDevice -- so PlatformTouchSink.CurrentPen
+        ///  is the only channel a pen has to it, for pressure and for which end is down alike. A
+        ///  contact that reached the seam but left CurrentPen empty would draw a uniform line with a
+        ///  pen and draw at all with an eraser, both silently.
+        /// </remarks>
+        [Fact]
+        public void ThePenReachesTheInkPath()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                scope.DownWithPen(1, scope.CentreOfTarget, pressure: 0.75, inverted: true);
+
+                object pen = TouchScope.CurrentPen;
+                Assert.NotNull(pen);
+                Assert.Equal(0.75, TouchScope.PenFieldValue(pen, "Pressure"), 3);
+                Assert.True(TouchScope.PenFieldFlag(pen, "IsInverted"),
+                            "the eraser end reached the seam and was not carried to the ink path");
+
+                scope.Up(1, scope.CentreOfTarget);
+
+                // Lifting forgets it. Otherwise the next stroke -- a finger, or the tip -- would
+                // inherit the eraser and rub out what the user meant to draw.
+                Assert.False(TouchScope.PenFieldFlag(TouchScope.CurrentPen, "IsInverted"));
+            });
+        }
+
+        /// <summary>A finger asserts nothing about a pen it does not have.</summary>
+        [Fact]
+        public void AFingerReportsNoPenState()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                scope.Down(1, scope.CentreOfTarget);
+
+                object pen = TouchScope.CurrentPen;
+                Assert.True(TouchScope.PenFieldValue(pen, "Pressure") < 0, "a finger reported a pressure");
+                Assert.False(TouchScope.PenFieldFlag(pen, "IsInverted"));
+
+                scope.Up(1, scope.CentreOfTarget);
+            });
+        }
+
         #region Harness
 
         /// <summary>
@@ -199,6 +336,7 @@ namespace Wpf.Input.Tests
             private readonly InputWindow _probe;
             private readonly HwndSource _source;
             private readonly MethodInfo _down, _move, _up, _cancel;
+            private readonly MethodInfo _gestureBegin, _gestureUpdate, _gestureEnd;
 
             public Border Target => _probe.Surface;
             public object Sink { get; }
@@ -224,6 +362,17 @@ namespace Wpf.Input.Tests
                     _up = sinkType.GetMethod("TouchUp");
                     _cancel = sinkType.GetMethod("TouchCancel");
                 }
+
+                Type platformGesture = windowsBase.GetType("MS.Internal.Interop.PlatformGesture");
+                GestureSink = platformGesture?.GetProperty("Sink", BindingFlags.NonPublic | BindingFlags.Static)
+                                             ?.GetValue(null);
+                if (GestureSink is not null)
+                {
+                    Type gestureType = windowsBase.GetType("MS.Internal.Interop.IPlatformGestureSink");
+                    _gestureBegin = gestureType.GetMethod("GestureBegin");
+                    _gestureUpdate = gestureType.GetMethod("GestureUpdate");
+                    _gestureEnd = gestureType.GetMethod("GestureEnd");
+                }
             }
 
             /// <summary>
@@ -234,8 +383,35 @@ namespace Wpf.Input.Tests
             public Point CentreOfTarget
                 => Target.PointToScreen(new Point(Target.ActualWidth / 2, Target.ActualHeight / 2));
 
-            public void Down(int id, Point screen) => Invoke(_down, id, screen, -1.0);
-            public void Move(int id, Point screen) => Invoke(_move, id, screen, -1.0);
+            public object GestureSink { get; }
+
+            public void GestureBegin(Point screen)
+            {
+                _gestureBegin.Invoke(GestureSink, new object[] { _source.Handle, (int)screen.X, (int)screen.Y });
+                Pump();
+            }
+
+            public void GestureUpdate(Point screen, double magnification, double rotationDegrees)
+            {
+                _gestureUpdate.Invoke(GestureSink, new object[]
+                {
+                    _source.Handle, (int)screen.X, (int)screen.Y, magnification, rotationDegrees,
+                });
+                Pump();
+            }
+
+            public void GestureEnd()
+            {
+                _gestureEnd.Invoke(GestureSink, new object[] { _source.Handle, false });
+                Pump();
+            }
+
+            public void Down(int id, Point screen) => Invoke(_down, id, screen, -1.0, false);
+            public void Move(int id, Point screen) => Invoke(_move, id, screen, -1.0, false);
+
+            /// <summary>A pen tip, or its inverted (eraser) end, with a measured pressure.</summary>
+            public void DownWithPen(int id, Point screen, double pressure, bool inverted)
+                => Invoke(_down, id, screen, pressure, inverted);
 
             public void Up(int id, Point screen)
             {
@@ -246,19 +422,58 @@ namespace Wpf.Input.Tests
                 Pump();
             }
 
+            /// <summary>An up the way a platform that reports no position on release sends it.</summary>
+            public void UpWithoutPosition(int id)
+            {
+                _up.Invoke(Sink, new object[]
+                {
+                    _source.Handle, id, int.MinValue, int.MinValue, (uint)Environment.TickCount,
+                });
+                Pump();
+            }
+
             public void Cancel(int id)
             {
                 _cancel.Invoke(Sink, new object[] { _source.Handle, id });
                 Pump();
             }
 
-            private void Invoke(MethodInfo method, int id, Point screen, double pressure)
+            private void Invoke(MethodInfo method, int id, Point screen, double pressure, bool inverted)
             {
                 method.Invoke(Sink, new object[]
                 {
-                    _source.Handle, id, (int)screen.X, (int)screen.Y, pressure, (uint)Environment.TickCount,
+                    _source.Handle, id, (int)screen.X, (int)screen.Y, Pen(pressure, inverted), (uint)Environment.TickCount,
                 });
                 Pump();
+            }
+
+            /// <summary>
+            /// What the seam recorded about the contact driving the emulated mouse -- the property
+            /// the ink path reads, since off Windows there is no StylusDevice to ask.
+            /// </summary>
+            public static object CurrentPen
+                => typeof(UIElement).Assembly
+                    .GetType("System.Windows.Input.PlatformTouchSink")
+                    ?.GetProperty("CurrentPen", BindingFlags.NonPublic | BindingFlags.Static)
+                    ?.GetValue(null);
+
+            public static bool PenFieldFlag(object pen, string field)
+                => (bool)pen.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pen);
+
+            public static double PenFieldValue(object pen, string field)
+                => (double)pen.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pen);
+
+            /// <summary>
+            /// A PenState, which the seam takes instead of a bare pressure so that tilt (and, later,
+            /// twist) do not each widen the signature again. Built reflectively for the same reason
+            /// the sink is reached reflectively: it is internal to WindowsBase.
+            /// </summary>
+            private object Pen(double pressure, bool inverted)
+            {
+                Type penType = typeof(DependencyObject).Assembly.GetType("MS.Internal.Interop.PenState");
+                return Activator.CreateInstance(
+                    penType, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+                    null, new object[] { pressure, double.NaN, double.NaN, inverted }, null);
             }
 
             /// <summary>

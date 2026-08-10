@@ -51,6 +51,7 @@ namespace MS.Internal.Interop.Wayland
         public static IntPtr CursorShapeManager { get; private set; }
         public static IntPtr DataDeviceManager { get; private set; }
         public static IntPtr TextInputManager { get; private set; }
+        public static IntPtr TabletManager { get; private set; }
         public static IntPtr Decor { get; private set; }
 
         public static bool IsActive => Display != IntPtr.Zero;
@@ -73,6 +74,14 @@ namespace MS.Internal.Interop.Wayland
         /// composited into the owner's surface, which on Linux they are (NativePlatform).</summary>
         public delegate void WindowOriginCallback(IntPtr handle, out int x, out int y);
         public static WindowOriginCallback? WindowOriginQuery;
+
+        /// <summary>
+        /// A surface's CLIENT-AREA origin in screen device pixels -- what turns the surface-local
+        /// coordinates every input event carries into the screen coordinates the touch seam takes.
+        /// Installed by WaylandWindow, and left null for a host that drives this layer without WPF,
+        /// which is what keeps the input layer from having to know the window type.
+        /// </summary>
+        public static WindowOriginCallback? SurfaceScreenOriginQuery;
 
         /// <summary>Reports whether a window is on screen; forwarded to the engine so it can skip
         /// presenting to a surface the compositor has suspended.</summary>
@@ -147,6 +156,7 @@ namespace MS.Internal.Interop.Wayland
                 LogSink?.Invoke($"connected: compositor={Compositor != IntPtr.Zero} xdg_wm_base={XdgWmBase != IntPtr.Zero} " +
                                 $"seat=v{SeatVersion} viewporter={Viewporter != IntPtr.Zero} " +
                                 $"fractional={FractionalScaleManager != IntPtr.Zero} cursorShape={CursorShapeManager != IntPtr.Zero} " +
+                                $"tablet={TabletManager != IntPtr.Zero} " +
                                 $"outputs={Outputs.Count} libdecor={Decor != IntPtr.Zero}");
 
                 // Hand the renderer this connection. Reflective so neither assembly references the
@@ -245,6 +255,13 @@ namespace MS.Internal.Interop.Wayland
                         Seat = Bind(registry, name, iface, SeatVersion);
                         WaylandInput.AttachSeat(Seat, SeatVersion);
                         WaylandTextInput.AttachSeat(Seat);
+                        WaylandTablet.AttachSeat(Seat);
+                        break;
+                    case "zwp_tablet_manager_v2":
+                        // The stylus. Like the input method above, this and the seat may arrive in
+                        // either order, so both sides call in and the tablet seat is created once.
+                        TabletManager = Bind(registry, name, iface, Math.Min(version, 2u));
+                        WaylandTablet.AttachManager(TabletManager);
                         break;
                     case "zwp_text_input_manager_v3":
                         // The input-method channel. Either this or the seat may arrive first, so
