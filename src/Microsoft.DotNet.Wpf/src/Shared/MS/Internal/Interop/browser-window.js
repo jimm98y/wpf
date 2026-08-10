@@ -380,9 +380,128 @@ function pushMouse(kind, e, wheel = 0) {
     });
 }
 
+// ---- drag and drop (drop target only) ------------------------------------
+//
+// The browser can RECEIVE a drag -- text or a URL dragged in from another tab, another
+// application, or the desktop -- but it cannot start one on WPF's behalf: an HTML5 drag
+// begins from a dragstart event on a draggable element, and DoDragDrop is called from
+// managed code in the middle of a mouse gesture, which is not that. Drags that stay
+// inside the application therefore run in ManagedDragLoop instead, and this half is
+// purely about drags arriving from outside.
+//
+// TWO BROWSER RULES SHAPE EVERYTHING BELOW:
+//
+//   1. A drop only happens where dragover called preventDefault(), and that decision is
+//      SYNCHRONOUS. WPF's answer is not: the hit-test runs when the dispatcher next
+//      drains this queue. So the last effect WPF reported is cached and used to answer
+//      the next dragover -- accurate within one frame, which is imperceptible while a
+//      pointer is moving, and self-correcting because dragover fires continuously.
+//   2. getData() only returns anything during the drop event itself. The strings are
+//      therefore read out here, at drop, and travel with the queued event; before that,
+//      only the TYPE list is knowable, which is exactly what WPF needs to answer
+//      DragEnter/DragOver anyway.
+//
+// Dropped FILES are deliberately not mapped. WPF's FileDrop format promises filesystem
+// paths and a browser never exposes them, so an app asking for FileDrop gets nothing
+// rather than something that looks like a path and is not one.
+
+let dragEffect = 0;          // last effect WPF reported: 0 none, 1 copy, 2 move, 4 link
+let dragInside = 0;          // handle the drag is currently over, 0 when outside
+
+export function setDragEffect(effect) { dragEffect = effect | 0; }
+
+function dropEffectName(effect) {
+    if (effect & 2) return "move";
+    if (effect & 1) return "copy";
+    if (effect & 4) return "link";
+    return "none";
+}
+
+// What the SOURCE permits, as WPF effects. effectAllowed is a fixed vocabulary.
+function allowedEffects(transfer) {
+    switch (transfer?.effectAllowed) {
+        case "copy": return 1;
+        case "move": return 2;
+        case "link": return 4;
+        case "copyMove": return 3;
+        case "copyLink": return 5;
+        case "linkMove": return 6;
+        case "none": return 0;
+        default: return 7;   // "all", "uninitialized", or absent
+    }
+}
+
+function pushDrag(kind, e, data) {
+    let handle = topmostWindowAt(e.clientX, e.clientY);
+    if (!handle) return 0;
+
+    const r = windows.get(handle).canvas.getBoundingClientRect();
+    queue.push({
+        t: "d", k: kind, h: handle,
+        x: Math.round((e.clientX - r.left) * dpr()),
+        y: Math.round((e.clientY - r.top) * dpr()),
+        a: allowedEffects(e.dataTransfer),
+        // Types the drag offers. Browsers already speak MIME here, which is the
+        // vocabulary the WPF side maps from, so these travel unchanged.
+        m: e.dataTransfer ? Array.from(e.dataTransfer.types) : [],
+        v: data ?? null,
+    });
+    return handle;
+}
+
+function installDragListeners() {
+    window.addEventListener("dragenter", (e) => {
+        e.preventDefault();
+        const handle = pushDrag(0, e);
+        if (handle) dragInside = handle;
+    });
+
+    window.addEventListener("dragover", (e) => {
+        const handle = pushDrag(1, e);
+        if (!handle) return;
+
+        // Rule 1: this is what makes the drop possible at all, and what the browser
+        // draws its cursor from.
+        if (dragEffect !== 0) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = dropEffectName(dragEffect);
+        }
+    });
+
+    window.addEventListener("dragleave", (e) => {
+        // dragleave also fires when moving between elements INSIDE the canvas, where the
+        // drag has not really left. Only a leave that lands outside every window counts.
+        if (topmostWindowAt(e.clientX, e.clientY)) return;
+        if (!dragInside) return;
+
+        queue.push({ t: "d", k: 2, h: dragInside, x: 0, y: 0, a: 0, m: [], v: null });
+        dragInside = 0;
+        dragEffect = 0;
+    });
+
+    window.addEventListener("drop", (e) => {
+        e.preventDefault();
+
+        // Rule 2: read everything now, while the data is still readable.
+        const data = {};
+        if (e.dataTransfer) {
+            for (const type of e.dataTransfer.types) {
+                if (type === "Files") continue;      // no paths exist to hand over
+                data[type] = e.dataTransfer.getData(type);
+            }
+        }
+
+        pushDrag(3, e, data);
+        dragInside = 0;
+        dragEffect = 0;
+    });
+}
+
 function installListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;
+
+    installDragListeners();
 
     window.addEventListener("mousemove", (e) => pushMouse(0, e));
     window.addEventListener("mousedown", (e) => pushMouse(1, e));

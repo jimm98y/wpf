@@ -172,6 +172,10 @@ namespace MS.Internal.Interop
                 if (view != IntPtr.Zero)
                 {
                     SendVoidPtr(_window, Sel("setContentView:"), view);
+
+                    // A view receives dragging messages only after it has registered the types it
+                    // takes -- implementing the methods is not enough.
+                    CocoaDragDrop.RegisterDraggedTypes(view);
                 }
             }
 
@@ -586,6 +590,10 @@ namespace MS.Internal.Interop
             if (cls == IntPtr.Zero) return IntPtr.Zero;
 
             CocoaAccessibility.AddViewAccessibility(cls);
+
+            // NSDraggingDestination is implemented BY THE VIEW on macOS, not by a delegate, so the
+            // drop methods join the accessibility ones on this class.
+            CocoaDragDrop.AddViewDragging(cls);
 
             objc_registerClassPair(cls);
             return s_contentViewClass = cls;

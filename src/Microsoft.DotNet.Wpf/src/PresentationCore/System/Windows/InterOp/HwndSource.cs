@@ -345,13 +345,14 @@ namespace System.Windows.Interop
                 DragDrop.RegisterDropTarget(_hwndWrapper.Handle);
                 _registeredDropTargetCount++;
             }
-            else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            else if (!OperatingSystem.IsWindows())
             {
-                // Linux drives the very same OleDropTarget from Wayland instead of from OLE, so there
-                // is nothing to register per window -- only the seam the backend calls into. Installing
-                // it here rather than at startup means an app that never opens a window never pays for
-                // it, and matches where the Windows registration happens.
-                LinuxDropTarget.Install();
+                // Every other head drives the very same OleDropTarget -- from its own backend where
+                // it has a drag transport, and from ManagedDragLoop where it has none -- so there is
+                // nothing to register per window, only the seam those call into. Installing it here
+                // rather than at startup means an app that never opens a window never pays for it,
+                // and matches where the Windows registration happens.
+                PlatformDropTarget.Install();
             }
 
             // Touch, for every head whose backend has a digitizer to report from. Installed on the

@@ -242,9 +242,25 @@ namespace MS.Internal.Interop.Wayland
         /// effect that was performed. Blocks on a nested dispatcher frame, which is how DoDragDrop
         /// behaves on Windows too -- and works here only because Linux keeps the blocking PushFrame.
         /// </summary>
+        /// <param name="queryContinue">
+        ///  Asked once per frame while the drag runs; false cancels it. This is where Esc-to-cancel
+        ///  lives, since Wayland gives the source no IDropSource for the compositor to consult.
+        /// </param>
+        /// <param name="giveFeedback">Told the current effect whenever it changes.</param>
+        /// <param name="started">
+        ///  False when the drag never began -- no compositor, no held button, a refused request. The
+        ///  caller can then fall back to a drag that stays inside the application, which is a great
+        ///  deal better than doing nothing. It is distinct from a drag that ran and was refused by
+        ///  the target, which reports true with an effect of none.
+        /// </param>
         internal static int StartDrag(IntPtr originSurface, string[] mimeTypes,
-                                      Func<string, byte[]?> writer, int allowedEffects)
+                                      Func<string, byte[]?> writer, int allowedEffects,
+                                      out bool started,
+                                      Func<bool>? queryContinue = null,
+                                      Action<int>? giveFeedback = null)
         {
+            started = false;
+
             if (!WaylandClipboard.IsAvailable || originSurface == IntPtr.Zero) return EffectNone;
             if (mimeTypes is null || mimeTypes.Length == 0) return EffectNone;
 
@@ -253,8 +269,9 @@ namespace MS.Internal.Interop.Wayland
 
             // Must be the serial of a button that is STILL HELD: start_drag needs an implicit grab, and
             // mutter drops a request carrying any other serial without saying so -- which would leave
-            // the nested frame below waiting for a drag that was never going to begin. A programmatic
-            // DoDragDrop with no button down lands here and returns None instead of hanging.
+            // the nested frame below waiting for a drag that was never going to begin. A drag by
+            // touch, and a programmatic DoDragDrop with no button down, both land here; reporting
+            // "not started" is what lets the caller run the drag inside the application instead.
             uint serial = WaylandInput.LastPointerButtonSerial;
             if (serial == 0) { Log("no held pointer button; not starting a drag"); return EffectNone; }
 
@@ -286,7 +303,10 @@ namespace MS.Internal.Interop.Wayland
                        WlArgument.UInt(serial));
             WaylandDisplay.Flush();
 
-            PumpUntilDragFinished();
+            // Past the point of no return: whatever happens now is a real drag's outcome.
+            started = true;
+
+            PumpUntilDragFinished(queryContinue, giveFeedback);
 
             int performed = FromWaylandAction(s_dragAction);
             Log($"drag finished action={s_dragAction} effect={performed}");
@@ -294,9 +314,10 @@ namespace MS.Internal.Interop.Wayland
             return performed;
         }
 
-        private static void PumpUntilDragFinished()
+        private static void PumpUntilDragFinished(Func<bool>? queryContinue, Action<int>? giveFeedback)
         {
             var frame = new DispatcherFrame();
+            int lastFedBack = -1;
 
             // Two bounds, because this frame blocks the whole app and a drag that never ends would read
             // as a hang. The hard cap catches a compositor that answers nothing at all; the second is
@@ -314,6 +335,37 @@ namespace MS.Internal.Interop.Wayland
                 if (WaylandInput.LastPointerButtonSerial == 0)
                 {
                     afterRelease ??= DateTime.UtcNow.AddSeconds(5);
+                }
+
+                // Source-side events. Both run WPF code, so a handler that throws must cost the drag
+                // and nothing more -- this tick is on the dispatcher, but the frame below is not
+                // something an escaping exception can be allowed to leave standing.
+                if (!s_dragFinished)
+                {
+                    int effect = FromWaylandAction(s_dragAction);
+                    if (giveFeedback is not null && effect != lastFedBack)
+                    {
+                        lastFedBack = effect;
+                        try { giveFeedback(effect); }
+                        catch (Exception e) { Log("feedback threw: " + e.Message); }
+                    }
+
+                    bool cancel = false;
+                    if (queryContinue is not null)
+                    {
+                        try { cancel = !queryContinue(); }
+                        catch (Exception e) { Log("query-continue threw: " + e.Message); cancel = true; }
+                    }
+
+                    if (cancel)
+                    {
+                        // Destroying the source is how a drag is called off: the compositor sends
+                        // cancelled to the target and stops the drag. There is no "cancel" request.
+                        Log("cancelled by source");
+                        s_dragAction = 0;
+                        EndDrag();
+                        WaylandDisplay.Flush();
+                    }
                 }
 
                 if (s_dragFinished

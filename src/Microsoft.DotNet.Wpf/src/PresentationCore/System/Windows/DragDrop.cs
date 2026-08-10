@@ -395,12 +395,12 @@ namespace System.Windows
 
             DragDropEffects ret;
 
-            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            if (!OperatingSystem.IsWindows())
             {
-                // Linux runs the drag over wl_data_device rather than OLE, and must not go near
-                // DataObject: constructing one registers in the COM Global Interface Table and
-                // P/Invokes OLE32.dll, which does not exist here.
-                ret = LinuxDragSource.DoDragDrop(dragSource, data, allowedEffects);
+                // Every other head runs the drag over its own transport rather than OLE -- or, where
+                // it has none, in managed code -- and must not go near DataObject: constructing one
+                // registers in the COM Global Interface Table and P/Invokes OLE32.dll.
+                ret = PlatformDragSource.DoDragDrop(dragSource, data, allowedEffects);
             }
             else
             {

@@ -106,6 +106,109 @@ namespace MS.Internal.Interop
         // The browser head has no window caption; the outer window size equals the content size.
         public void GetWindowPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
 
+        /// <summary>
+        ///  A queued drag event, handed to the WPF drop target.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   The browser only lets a drop happen where dragover answered synchronously, and WPF's
+        ///   answer arrives here -- a frame later. So each answer is pushed back to JS to be used for
+        ///   the NEXT dragover; see the drag section of browser-window.js for why that is both
+        ///   necessary and good enough.
+        ///  </para>
+        ///  <para>
+        ///   Data is only readable during the drop event, so it arrives already read, as a map of
+        ///   MIME type to string. Before the drop the type list alone is known, which is all
+        ///   DragEnter/DragOver need.
+        ///  </para>
+        /// </remarks>
+        private static void DispatchDrag(JsonElement e)
+        {
+            IPlatformDropTarget target = PlatformDragDrop.Target;
+            if (target == null) return;
+
+            IntPtr handle = (IntPtr)e.GetProperty("h").GetInt32();
+            int kind = e.GetProperty("k").GetInt32();
+
+            if (kind == 2)
+            {
+                target.DragLeave(handle);
+                Js.SetDragEffect(0);
+                return;
+            }
+
+            // The seam takes SCREEN device pixels; the event carries canvas-relative ones.
+            int x = e.GetProperty("x").GetInt32();
+            int y = e.GetProperty("y").GetInt32();
+            BrowserWindow window = FromHandle(handle);
+            if (window != null)
+            {
+                window.GetClientScreenOriginPixels(out int ox, out int oy);
+                x += ox;
+                y += oy;
+            }
+
+            int allowed = e.GetProperty("a").GetInt32();
+            int effect;
+
+            switch (kind)
+            {
+                case 0:
+                    effect = target.DragEnter(handle, x, y, MimeTypes(e), ReaderFor(e), allowed);
+                    break;
+
+                case 1:
+                    effect = target.DragOver(handle, x, y, allowed);
+                    break;
+
+                case 3:
+                    // The types and data arrive together on the drop. Re-entering with them is what
+                    // gives the drop handler a data object it can actually read: everything before
+                    // this point could only answer which FORMATS were on offer.
+                    target.DragEnter(handle, x, y, MimeTypes(e), ReaderFor(e), allowed);
+                    effect = target.Drop(handle, x, y, allowed);
+                    Js.SetDragEffect(0);
+                    return;
+
+                default:
+                    return;
+            }
+
+            Js.SetDragEffect(effect);
+        }
+
+        private static string[] MimeTypes(JsonElement e)
+        {
+            JsonElement types = e.GetProperty("m");
+            var mimes = new string[types.GetArrayLength()];
+            int i = 0;
+            foreach (JsonElement type in types.EnumerateArray())
+            {
+                mimes[i++] = type.GetString();
+            }
+            return mimes;
+        }
+
+        private static Func<string, byte[]> ReaderFor(JsonElement e)
+        {
+            JsonElement values = e.GetProperty("v");
+            if (values.ValueKind != JsonValueKind.Object)
+            {
+                // Before the drop there is nothing readable, by the browser's rules. Formats are
+                // still known, so the drop target can still decide whether it wants this drag.
+                return _ => null;
+            }
+
+            var data = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (JsonProperty value in values.EnumerateObject())
+            {
+                string text = value.Value.GetString();
+                if (text != null) data[value.Name] = System.Text.Encoding.UTF8.GetBytes(text);
+            }
+
+            return mime => data.TryGetValue(mime, out byte[] bytes) ? bytes : null;
+        }
+
         public void GetClientScreenOriginPixels(out int sx, out int sy)
         {
             sx = Js.GetScreenOriginX((int)Handle);
@@ -248,6 +351,10 @@ namespace MS.Internal.Interop
                             e.GetProperty("k").GetInt32(), e.GetProperty("s").GetString());
                         break;
 
+                    case "d":
+                        DispatchDrag(e);
+                        break;
+
                     case "k":
                         KeyInput?.Invoke(new BrowserKeyMessage(
                             (IntPtr)e.GetProperty("h").GetInt32(),
@@ -347,6 +454,9 @@ namespace MS.Internal.Interop
 
             [JSImport("drainEvents", Module)]
             internal static partial string DrainEvents();
+
+            [JSImport("setDragEffect", Module)]
+            internal static partial void SetDragEffect(int effect);
 
             [JSImport("nextFrame", Module)]
             internal static partial System.Threading.Tasks.Task<int> NextFrame();
