@@ -106,7 +106,14 @@ namespace MS.Internal.Interop.Wayland
 
             public ToolState(int contactId) => ContactId = contactId;
 
-            public PenState Pen => new PenState(Pressure, TiltX, TiltY);
+            /// <summary>
+            /// The eraser is not a mode of the pen: it is a SEPARATE tool object, announced with
+            /// its own type, so this is fixed for the lifetime of the object rather than something
+            /// that changes as the user flips the pen over.
+            /// </summary>
+            public bool IsInverted => Type == ZWP_TABLET_TOOL_V2_TYPE_ERASER;
+
+            public PenState Pen => new PenState(Pressure, TiltX, TiltY, IsInverted);
 
             public void ResetFrame()
             {
@@ -233,9 +240,8 @@ namespace MS.Internal.Interop.Wayland
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnToolType(IntPtr data, IntPtr tool, uint toolType)
         {
-            // Recorded but not yet acted on. It is what an inverted (eraser) end would be recognised
-            // by: the eraser is its own tool, of type ZWP_TABLET_TOOL_V2_TYPE_ERASER, and PenState
-            // has nowhere to put "inverted" yet.
+            // Which physical implement this object is. The one that matters to WPF is the eraser,
+            // which is a tool of its own rather than a state of the pen -- see ToolState.IsInverted.
             if (s_tools.TryGetValue(tool, out ToolState? state)) state.Type = toolType;
         }
 

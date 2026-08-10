@@ -59,11 +59,27 @@ namespace MS.Internal.Interop
         internal readonly double TiltX;
         internal readonly double TiltY;
 
+        /// <summary>
+        ///  The tool is the INVERTED end of the pen -- the eraser.
+        /// </summary>
+        /// <remarks>
+        ///  A plain bool where the other fields carry a "not reported" value, and deliberately so:
+        ///  a head that cannot tell reports false, and every consumer treats "upright" and "no idea"
+        ///  identically. A third state would be one nobody could act on differently.
+        /// </remarks>
+        internal readonly bool IsInverted;
+
         internal PenState(double pressure, double tiltX, double tiltY)
+            : this(pressure, tiltX, tiltY, isInverted: false)
+        {
+        }
+
+        internal PenState(double pressure, double tiltX, double tiltY, bool isInverted)
         {
             Pressure = pressure;
             TiltX = tiltX;
             TiltY = tiltY;
+            IsInverted = isInverted;
         }
 
         /// <summary>A finger: position and nothing else.</summary>

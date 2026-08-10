@@ -249,7 +249,8 @@ namespace MS.Internal.Interop
                         var pen = new PenState(
                             e.GetProperty("p").GetDouble(),
                             e.TryGetProperty("tx", out JsonElement tx) ? tx.GetDouble() : double.NaN,
-                            e.TryGetProperty("ty", out JsonElement ty) ? ty.GetDouble() : double.NaN);
+                            e.TryGetProperty("ty", out JsonElement ty) ? ty.GetDouble() : double.NaN,
+                            e.TryGetProperty("inv", out JsonElement inv) && inv.GetBoolean());
                         var ts = (uint)e.GetProperty("ts").GetInt32();
 
                         // Canvas-relative device pixels plus the window's client origin: the seam

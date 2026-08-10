@@ -406,6 +406,10 @@ function pushContact(kind, e) {
         // finger means "flat", not "measured as flat", so only a pen's are sent.
         tx: e.pointerType === "pen" ? (e.tiltX ?? 0) : undefined,
         ty: e.pointerType === "pen" ? (e.tiltY ?? 0) : undefined,
+        // The inverted (eraser) end. Pointer Events has no flag for it: it arrives as a fifth
+        // BUTTON, bit 5 of buttons, in place of the tip's bit 0. Sent only when set, so the
+        // ordinary pen and finger payloads are unchanged.
+        inv: e.pointerType === "pen" && (e.buttons & 32) !== 0 ? true : undefined,
         ts: Math.round(e.timeStamp),
     });
 }

@@ -53,8 +53,9 @@ genuine negatives.
 
 ## Pen
 
-`PenState` carries what the digitizer measured beyond position: pressure and per-axis tilt today,
-twist and the inverted end next. It is a struct so those additions do not widen the signature again.
+`PenState` carries what the digitizer measured beyond position: pressure, per-axis tilt and which end
+of the pen is down, with twist still to come. It is a struct so those additions do not widen the
+signature again — which they have not, twice now.
 
 Every field has its own "not reported" value, and that matters: a finger measures none of them and a
 cheap digitizer only some. A finger's pressure is a constant that means nothing, and a browser
@@ -75,6 +76,20 @@ Carrying tilt needs more than a value: a `StylusPoint` can only hold properties 
 beside X, Y and pressure. Note that the `StylusPointCollection(description, int)` overload takes a
 CAPACITY, not the points.
 
+**The eraser.** `InkCanvas` already has the whole feature — `EditingModeInverted`, defaulting to
+`EraseByStroke` — and it was unreachable here, because `EditingCoordinator` learns the pen is
+inverted from `StylusDevice.Inverted` and there is no `StylusDevice`. It now asks the seam in the
+same place it asks for pressure, so turning the pen over erases.
+
+Three things about that are worth knowing. It is decided at the **down**, because
+`UpdateInvertedState` refuses to change mode mid-stroke — which is why every backend must report the
+contact *before* the mouse, and why Android's order was wrong and is now fixed. The eraser is a
+separate *tool* on Linux (`zwp_tablet_tool_v2` of type `eraser`) and a separate *tool type* on
+Android, but on the web it is a fifth mouse **button** — bit 5 of `PointerEvent.buttons` — which is
+the one place the flag has to be recomputed per event rather than fixed for the device. And
+`PenState.IsInverted` is a plain `bool` where every other field carries a "not reported" value: a
+head that cannot tell reports false, and no consumer would treat "upright" and "no idea" differently.
+
 **Why not a managed `StylusDevice`.** `StylusDevice` is sealed over a `StylusDeviceBase` with some
 thirty abstract members, plus a `TabletDevice` subsystem and `StylusPlugInCollection` — the whole Wisp
 pipeline. A partial implementation would not fail; it would mislead `InkCanvas` in ways that surface
@@ -82,14 +97,14 @@ as subtly wrong strokes. The one branch above delivers the same user-visible fea
 
 ## Per head
 
-| head | touch | pen | manipulation |
-|---|---|---|---|
-| Windows | WM_POINTER (unchanged) | WM_POINTER | native |
-| Android | `MotionEvent`, all pointers | S-Pen: pressure + tilt | via seam |
-| iPadOS | `UITouch`, all touches | Pencil: pressure + tilt | via seam |
-| Linux | `wl_touch` | `tablet-v2`: pressure + tilt | via seam |
-| WebAssembly | pointer events | pen: pressure + tilt | via seam |
-| macOS | **n/a** | n/a | AppKit gestures |
+| head | touch | pen | eraser | manipulation |
+|---|---|---|---|---|
+| Windows | WM_POINTER (unchanged) | WM_POINTER | WM_POINTER | native |
+| Android | `MotionEvent`, all pointers | S-Pen: pressure + tilt | `TOOL_TYPE_ERASER` | via seam |
+| iPadOS | `UITouch`, all touches | Pencil: pressure + tilt | — (no such end) | via seam |
+| Linux | `wl_touch` | `tablet-v2`: pressure + tilt | tool of type `eraser` | via seam |
+| WebAssembly | pointer events | pen: pressure + tilt | `buttons` bit 5 | via seam |
+| macOS | **n/a** | n/a | n/a | AppKit gestures |
 
 **Windows keeps its own stack, by design.** This port forces the WM_POINTER path because Wisp reaches
 the tablet through `PenImc_cor3.dll` and no native DLL ships here; see the comment on
@@ -126,12 +141,13 @@ push contacts into the operating system's own pointer queue, aimed at a real on-
 is the right test for the Windows path and impossible anywhere else, so they skip off Windows — which
 is why the project ignores exit code 8, the test platform's "zero tests ran" policy.
 
-`PlatformTouchSeamTests` takes the other half: it calls the seam exactly as a backend does and asserts
+`PlatformTouchSeamTests` takes the other half of that: it calls the seam exactly as a backend does and asserts
 what WPF raised. That covers everything above the backends — contact tracking, hit-testing, the Touch
 events, promotion to Manipulation — on any machine, and it is what makes the other heads developable
-at all. Nine tests: the event sequence, hit-testing, two contacts tracked independently, cancel
-raising no up, an up with no position, manipulation translation and scale, and the macOS gesture path
-both firing and correctly not firing.
+at all. Eleven tests: the event sequence, hit-testing, two contacts tracked independently, cancel
+raising no up, an up with no position, manipulation translation and scale, the macOS gesture path
+both firing and correctly not firing, and the pen — pressure and the inverted end reaching
+`CurrentPen`, forgotten again on lift, and a finger asserting neither.
 
 One macOS constraint shaped the whole project: AppKit aborts the process unless a window is created on
 the PROCESS MAIN THREAD, and a test runner does not run tests there. `Program.cs` replaces xunit's
@@ -156,11 +172,19 @@ Honest, because most of this cannot be exercised here:
 * **Windows** was not touched and wants its injection suites run to confirm tilt reaches
   `StylusPoint`.
 
+The eraser is exercised as far as the seam — `CurrentPen` carries it — and no further. That
+`EditingCoordinator` then switches `InkCanvas` into `EditingModeInverted` is one call at a read
+call site, unexercised, because driving it would need a synthetic WPF mouse-down against a real
+`InkCanvas` with capture.
+
 ## Known gaps
 
-* No twist, and no inverted (eraser) end, on any head. Linux is the closest: `zwp_tablet_tool_v2`
-  announces the eraser as a separate tool of type `eraser`, which `WaylandTablet` records and has
-  nowhere to put, because `PenState` has no inverted flag.
+* No twist. Linux reports it (`zwp_tablet_tool_v2.rotation`) and the browser reports it
+  (`PointerEvent.twist`), but Android's `AXIS_ORIENTATION` is the azimuth the tilt is already
+  derived from rather than barrel rotation, so two heads out of four could carry a value nothing
+  currently reads.
+* macOS still has no pen of any kind, and iPadOS has no eraser: an Apple Pencil has no inverted end
+  to report.
 * The tablet pad — the buttons, rings and strips on the tablet body — is not handled anywhere.
 * `TouchPoint` reports a zero-size contact rect everywhere. `wl_touch.shape` is received and dropped;
   no other head reports an ellipse at all.

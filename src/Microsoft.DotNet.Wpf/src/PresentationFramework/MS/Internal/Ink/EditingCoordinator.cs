@@ -692,11 +692,25 @@ namespace MS.Internal.Ink
                     return;
                 }
 
-                // 
+                //
                 // If the mouse down event is from a Stylus, make sure we have a correct inverted state.
                 if ( mouseButtonEventArgs.StylusDevice != null )
                 {
                     UpdateInvertedState(mouseButtonEventArgs.StylusDevice, mouseButtonEventArgs.StylusDevice.Inverted);
+                }
+                else if ( !IsInMidStroke )
+                {
+                    // Off Windows there is no StylusDevice, so the branch above never runs and
+                    // EditingModeInverted could never engage -- turning the pen over did nothing.
+                    // The platform touch seam knows which end is down, for the same reason it knows
+                    // the pressure, so the inverted state comes from there instead.
+                    //
+                    // At the DOWN specifically, and only outside a stroke. UpdateInvertedState
+                    // declines to change anything mid-stroke anyway, but it decides that by asking
+                    // IsInputDeviceCaptured, which casts the device it is given and so cannot be
+                    // passed the null this branch has. It is also why every backend reports the
+                    // contact before the mouse: the seam has to know the end before the press lands.
+                    UpdateInvertedState(null, PlatformTouchSink.CurrentPen.IsInverted);
                 }
             }
             else

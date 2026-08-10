@@ -517,9 +517,11 @@ namespace MS.Internal.Interop
         /// </remarks>
         /// <param name="kind">0 = move, 1 = down, 2 = up, 3 = cancel.</param>
         /// <param name="pressure">0..1 from the digitizer, or negative where it reports none.</param>
+        /// <param name="isEraser">The inverted end of a stylus, which Android reports as its own
+        /// tool type rather than as a state of the pen.</param>
         public static void NotifyTouchContact(IntPtr handle, int kind, int contactId,
                                               int xPixels, int yPixels, double pressure,
-                                              double tiltX, double tiltY)
+                                              double tiltX, double tiltY, bool isEraser = false)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
@@ -536,7 +538,7 @@ namespace MS.Internal.Interop
                 }
 
                 uint timestamp = (uint)Environment.TickCount;
-                var pen = new PenState(pressure, tiltX, tiltY);
+                var pen = new PenState(pressure, tiltX, tiltY, isEraser);
                 switch (kind)
                 {
                     case 1: sink.TouchDown(handle, contactId, screenX, screenY, pen, timestamp); break;

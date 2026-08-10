@@ -265,6 +265,59 @@ namespace Wpf.Input.Tests
             });
         }
 
+        /// <summary>
+        ///  What the digitizer measured reaches the property the ink path reads.
+        /// </summary>
+        /// <remarks>
+        ///  InkCanvas takes its points from a StylusDevice when one has capture and from the MOUSE
+        ///  otherwise, and off Windows there is never a StylusDevice -- so PlatformTouchSink.CurrentPen
+        ///  is the only channel a pen has to it, for pressure and for which end is down alike. A
+        ///  contact that reached the seam but left CurrentPen empty would draw a uniform line with a
+        ///  pen and draw at all with an eraser, both silently.
+        /// </remarks>
+        [Fact]
+        public void ThePenReachesTheInkPath()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                scope.DownWithPen(1, scope.CentreOfTarget, pressure: 0.75, inverted: true);
+
+                object pen = TouchScope.CurrentPen;
+                Assert.NotNull(pen);
+                Assert.Equal(0.75, TouchScope.PenFieldValue(pen, "Pressure"), 3);
+                Assert.True(TouchScope.PenFieldFlag(pen, "IsInverted"),
+                            "the eraser end reached the seam and was not carried to the ink path");
+
+                scope.Up(1, scope.CentreOfTarget);
+
+                // Lifting forgets it. Otherwise the next stroke -- a finger, or the tip -- would
+                // inherit the eraser and rub out what the user meant to draw.
+                Assert.False(TouchScope.PenFieldFlag(TouchScope.CurrentPen, "IsInverted"));
+            });
+        }
+
+        /// <summary>A finger asserts nothing about a pen it does not have.</summary>
+        [Fact]
+        public void AFingerReportsNoPenState()
+        {
+            UiThread.Invoke(() =>
+            {
+                using var scope = new TouchScope();
+                Assert.SkipWhen(scope.Sink is null, "the platform touch seam is not installed on this head");
+
+                scope.Down(1, scope.CentreOfTarget);
+
+                object pen = TouchScope.CurrentPen;
+                Assert.True(TouchScope.PenFieldValue(pen, "Pressure") < 0, "a finger reported a pressure");
+                Assert.False(TouchScope.PenFieldFlag(pen, "IsInverted"));
+
+                scope.Up(1, scope.CentreOfTarget);
+            });
+        }
+
         #region Harness
 
         /// <summary>
@@ -353,8 +406,12 @@ namespace Wpf.Input.Tests
                 Pump();
             }
 
-            public void Down(int id, Point screen) => Invoke(_down, id, screen, -1.0);
-            public void Move(int id, Point screen) => Invoke(_move, id, screen, -1.0);
+            public void Down(int id, Point screen) => Invoke(_down, id, screen, -1.0, false);
+            public void Move(int id, Point screen) => Invoke(_move, id, screen, -1.0, false);
+
+            /// <summary>A pen tip, or its inverted (eraser) end, with a measured pressure.</summary>
+            public void DownWithPen(int id, Point screen, double pressure, bool inverted)
+                => Invoke(_down, id, screen, pressure, inverted);
 
             public void Up(int id, Point screen)
             {
@@ -381,26 +438,42 @@ namespace Wpf.Input.Tests
                 Pump();
             }
 
-            private void Invoke(MethodInfo method, int id, Point screen, double pressure)
+            private void Invoke(MethodInfo method, int id, Point screen, double pressure, bool inverted)
             {
                 method.Invoke(Sink, new object[]
                 {
-                    _source.Handle, id, (int)screen.X, (int)screen.Y, Pen(pressure), (uint)Environment.TickCount,
+                    _source.Handle, id, (int)screen.X, (int)screen.Y, Pen(pressure, inverted), (uint)Environment.TickCount,
                 });
                 Pump();
             }
+
+            /// <summary>
+            /// What the seam recorded about the contact driving the emulated mouse -- the property
+            /// the ink path reads, since off Windows there is no StylusDevice to ask.
+            /// </summary>
+            public static object CurrentPen
+                => typeof(UIElement).Assembly
+                    .GetType("System.Windows.Input.PlatformTouchSink")
+                    ?.GetProperty("CurrentPen", BindingFlags.NonPublic | BindingFlags.Static)
+                    ?.GetValue(null);
+
+            public static bool PenFieldFlag(object pen, string field)
+                => (bool)pen.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pen);
+
+            public static double PenFieldValue(object pen, string field)
+                => (double)pen.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pen);
 
             /// <summary>
             /// A PenState, which the seam takes instead of a bare pressure so that tilt (and, later,
             /// twist) do not each widen the signature again. Built reflectively for the same reason
             /// the sink is reached reflectively: it is internal to WindowsBase.
             /// </summary>
-            private object Pen(double pressure)
+            private object Pen(double pressure, bool inverted)
             {
                 Type penType = typeof(DependencyObject).Assembly.GetType("MS.Internal.Interop.PenState");
                 return Activator.CreateInstance(
                     penType, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-                    null, new object[] { pressure, double.NaN, double.NaN }, null);
+                    null, new object[] { pressure, double.NaN, double.NaN, inverted }, null);
             }
 
             /// <summary>
