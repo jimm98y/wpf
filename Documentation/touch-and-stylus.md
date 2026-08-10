@@ -81,7 +81,7 @@ as subtly wrong strokes. The one branch above delivers the same user-visible fea
 | Windows | WM_POINTER (unchanged) | WM_POINTER | native |
 | Android | `MotionEvent`, all pointers | S-Pen: pressure + tilt | via seam |
 | iPadOS | `UITouch`, all touches | Pencil: pressure + tilt | via seam |
-| Linux | `wl_touch` | **none yet** — no `zwp_tablet_tool_v2` | via seam |
+| Linux | `wl_touch` | `tablet-v2`: pressure + tilt | via seam |
 | WebAssembly | pointer events | pen: pressure + tilt | via seam |
 | macOS | **n/a** | n/a | AppKit gestures |
 
@@ -89,6 +89,19 @@ as subtly wrong strokes. The one branch above delivers the same user-visible fea
 the tablet through `PenImc_cor3.dll` and no native DLL ships here; see the comment on
 `StylusLogic.IsPointerStackEnabled`. Windows has a real `StylusDevice` and needs nothing from this
 seam.
+
+**Linux binds a whole protocol for the pen,** and doing so is not free. `tablet-v2` is three objects
+deep — manager, tablet seat, tool — and a "tool" is a physical implement rather than a device, so the
+tip and the eraser end of one pen are two of them. The trap is that binding it turns the compositor's
+pointer emulation OFF for this client: a pen already worked here as a plain mouse precisely because
+the client had *not* bound the protocol, and mutter, KWin and wlroots all decide that per surface. So
+`WaylandTablet` drives the mouse itself as well as the seam. Adding pressure would otherwise have
+taken the pen from working-without-pressure to not working at all.
+
+Two smaller things it has to get right: the axes arrive as separate events batched by a `frame`, so a
+position reported the moment `motion` arrives would be paired with the *previous* sample's pressure —
+visible in ink as a stroke whose width lags the pen. And `down`/`up` carry no position (nor, for the
+up, a serial), which is the same rule `wl_touch.up` follows.
 
 **macOS reports gestures, not contacts,** and the distinction is not stylistic. A Mac has no
 touchscreen, and its trackpad reports positions on the TRACKPAD — normalised, unrelated to any window
@@ -126,6 +139,9 @@ generated entry point, runs the tests on a worker and pumps a `Dispatcher` on th
 Honest, because most of this cannot be exercised here:
 
 * the **seam** is executed — nine tests, macOS;
+* Linux's **protocol tables** are executed — `WaylandProtocolTableTests`, on any machine, because
+  the authored `wl_interface` tables are built without libwayland present. That covers the
+  transcription (opcode order, argument types, listener length), not the behaviour;
 * **Android** compiles against the real bindings and both heads AOT clean, but has not run on a
   device;
 * **Linux** and **iPadOS** are compile-verified only;
@@ -136,8 +152,14 @@ Honest, because most of this cannot be exercised here:
 
 ## Known gaps
 
-* Linux has no pen: `zwp_tablet_tool_v2` is unbound and Wayland reports `PenState.None`.
-* No twist, and no inverted (eraser) end, on any head.
+* Linux touch does not promote to the mouse. `wl_touch` contacts reach the seam, but no compositor
+  emulates a pointer from a touchscreen, so a finger raises the Touch events and drives Manipulation
+  and does not click anything. The pen does not have this problem — `WaylandTablet` drives the mouse
+  itself, for the reason above.
+* No twist, and no inverted (eraser) end, on any head. Linux is the closest: `zwp_tablet_tool_v2`
+  announces the eraser as a separate tool of type `eraser`, which `WaylandTablet` records and has
+  nowhere to put, because `PenState` has no inverted flag.
+* The tablet pad — the buttons, rings and strips on the tablet body — is not handled anywhere.
 * `TouchPoint` reports a zero-size contact rect everywhere. `wl_touch.shape` is received and dropped;
   no other head reports an ellipse at all.
 * No intermediate touch points: `GetIntermediateTouchPoints` returns empty, so a backend that

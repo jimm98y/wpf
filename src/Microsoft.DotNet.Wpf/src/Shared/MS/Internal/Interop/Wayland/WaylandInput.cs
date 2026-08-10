@@ -98,6 +98,11 @@ namespace MS.Internal.Interop.Wayland
         internal const int BTN_SIDE = 0x113;
         internal const int BTN_EXTRA = 0x114;
 
+        // A stylus's barrel buttons arrive as these, on the tablet tool rather than the pointer.
+        internal const int BTN_STYLUS = 0x14b;
+        internal const int BTN_STYLUS2 = 0x14c;
+        internal const int BTN_STYLUS3 = 0x149;
+
         private const uint WL_POINTER_AXIS_VERTICAL_SCROLL = 0;
         private const uint WL_POINTER_AXIS_HORIZONTAL_SCROLL = 1;
 
@@ -263,16 +268,21 @@ namespace MS.Internal.Interop.Wayland
 
         private static IntPtr s_touchSurface;
 
-        /// <summary>Surface-local logical coordinates to screen device pixels.</summary>
-        private static void ToScreen(IntPtr surface, int fx, int fy, out int screenX, out int screenY)
+        /// <summary>
+        /// Surface-local logical coordinates, in wl_fixed, to the screen device pixels the
+        /// PlatformTouch seam takes. Shared with the tablet, whose axes use the same units.
+        /// </summary>
+        internal static void ToScreen(IntPtr surface, int fx, int fy, out int screenX, out int screenY)
         {
-            double scale = WaylandWindow.ScaleForSurface(surface);
+            double scale = WaylandDisplay.ScaleForSurface(surface);
             double localX = Fixed(fx) * scale;
             double localY = Fixed(fy) * scale;
 
+            // Through the display's seam rather than WaylandWindow directly: this layer is also
+            // driven by a host with no WPF windows at all (WaylandSpike), where the query is null
+            // and a surface-local position is already a screen one.
             int originX = 0, originY = 0;
-            WaylandWindow? window = WaylandWindow.FromHandle(surface);
-            window?.GetClientScreenOriginPixels(out originX, out originY);
+            WaylandDisplay.SurfaceScreenOriginQuery?.Invoke(surface, out originX, out originY);
 
             screenX = (int)Math.Round(localX) + originX;
             screenY = (int)Math.Round(localY) + originY;
@@ -360,7 +370,8 @@ namespace MS.Internal.Interop.Wayland
 
         // ---- Pointer -------------------------------------------------------------------------
 
-        private static double Fixed(int value) => value / 256.0;
+        /// <summary>wl_fixed_t is signed 24.8, so the value is the raw integer over 256.</summary>
+        internal static double Fixed(int value) => value / 256.0;
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnPointerEnter(IntPtr data, IntPtr pointer, uint serial, IntPtr surface, int sx, int sy)
@@ -418,22 +429,7 @@ namespace MS.Internal.Interop.Wayland
         {
             try
             {
-                LastInputSerial = serial;
-
-                // A drag needs the serial of a BUTTON PRESS specifically -- the compositor validates
-                // that the client holds an implicit grab, and rejects (silently, on mutter) a serial
-                // that came from anything else. Tracked separately from LastInputSerial, which any
-                // event moves along, and cleared on release so a drag cannot start after the button
-                // is already up.
-                if (state != 0)
-                {
-                    LastPointerButtonSerial = serial;
-                    s_buttonsDown++;
-                }
-                else if (s_buttonsDown > 0 && --s_buttonsDown == 0)
-                {
-                    LastPointerButtonSerial = 0;
-                }
+                NoteButtonSerial(serial, state != 0);
 
                 s_frameTime = time;
                 IntPtr surface = FocusSurface;
@@ -556,10 +552,70 @@ namespace MS.Internal.Interop.Wayland
         }
 
         /// <summary>Surface-local logical coordinate to client DEVICE pixels for that window.</summary>
-        private static int Px(double x, IntPtr surface) => (int)Math.Round(x * WaylandDisplay.ScaleForSurface(surface));
-        private static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
+        internal static int Px(double x, IntPtr surface) => (int)Math.Round(x * WaylandDisplay.ScaleForSurface(surface));
+        internal static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
 
         private static void Raise(in WaylandMouseMessage m) => MouseInput?.Invoke(m);
+
+        // ---- Shared with the other input sources on this seat --------------------------------
+        //
+        // The tablet is a second pointing device on the same seat (WaylandTablet). It has to reach
+        // the same three pieces of per-seat state the pointer owns -- the mouse channel, the last
+        // known cursor position, and the serials -- because from WPF's point of view there is one
+        // mouse and the pen is driving it.
+
+        /// <summary>Raises a mouse message on behalf of another device on this seat.</summary>
+        internal static void RaiseSynthesizedMouse(in WaylandMouseMessage m) => Raise(m);
+
+        /// <summary>
+        /// Records where the cursor now is. Wayland never reports a global cursor position, so this
+        /// plus the window's origin is the only answer GetCursorPos has -- and a context menu opened
+        /// with the pen would otherwise appear at wherever the mouse was last left.
+        /// </summary>
+        internal static void NotePointerPosition(IntPtr surface, double localX, double localY)
+        {
+            FocusSurface = surface;
+            PointerSurfaceX = localX;
+            PointerSurfaceY = localY;
+        }
+
+        /// <summary>Clears the focus surface if it is still the one named.</summary>
+        internal static void NotePointerLeft(IntPtr surface)
+        {
+            if (FocusSurface == surface) FocusSurface = IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// Records the serial of a press or release that gives this client an implicit grab.
+        /// </summary>
+        /// <remarks>
+        /// A drag needs the serial of a BUTTON PRESS specifically -- the compositor validates that
+        /// the client holds an implicit grab, and rejects (silently, on mutter) a serial that came
+        /// from anything else. Tracked separately from LastInputSerial, which any event moves along,
+        /// and cleared on release so a drag cannot start after the button is already up. Pass 0 for
+        /// <paramref name="serial"/> where the event carried none: zwp_tablet_tool_v2.up has no
+        /// arguments at all, but the release still has to balance the press.
+        /// </remarks>
+        internal static void NoteButtonSerial(uint serial, bool pressed)
+        {
+            if (serial != 0) LastInputSerial = serial;
+
+            if (pressed)
+            {
+                if (serial != 0) LastPointerButtonSerial = serial;
+                s_buttonsDown++;
+            }
+            else if (s_buttonsDown > 0 && --s_buttonsDown == 0)
+            {
+                LastPointerButtonSerial = 0;
+            }
+        }
+
+        /// <summary>Records a serial from an event that is not a button press.</summary>
+        internal static void NoteInputSerial(uint serial)
+        {
+            if (serial != 0) LastInputSerial = serial;
+        }
 
         // ---- Keyboard ------------------------------------------------------------------------
 
