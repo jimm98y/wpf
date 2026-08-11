@@ -304,8 +304,32 @@ What still does not work off Windows, and fails clearly rather than mysteriously
 |---|---|
 | `WmpBitmapEncoder` (Windows Media Photo / JPEG XR) | `PlatformNotSupportedException`. The other five encoders work. |
 | `SystemSounds` | `PlatformNotSupportedException`, thrown by the `System.Windows.Extensions` package itself. |
-| `System.Windows.DataObject` | `DllNotFoundException` for OLE32 — see above. |
-| GIF and TIFF **decoding** | `NotSupportedException`. Both *encoders* work (see the table above), so a file this process wrote is one it cannot read back. PNG, JPEG, ICO and uncompressed BMP decode. |
+
+`System.Windows.DataObject` used to be on that list, throwing `DllNotFoundException` for OLE32. It is
+not any more — see the drag-and-drop commits and `MacDataObject`, which never touches OLE.
+
+GIF and TIFF **decoding** used to be on it too, and were the sharper entry: both *encoders* worked,
+so a file this process wrote was one it could not read back. `ManagedGifDecoder` and
+`ManagedTiffDecoder` close that. Every format this stack can encode it can now also decode:
+
+| decoder | what it reads |
+|---|---|
+| PNG | all standard bit depths and colour types, `tRNS`, Adam7 interlace |
+| JPEG | baseline and progressive |
+| GIF | GIF87a/89a, every frame composed onto the logical screen, interlace, transparency, disposal methods |
+| TIFF | baseline; II and MM; none/LZW/PackBits/Deflate; 1, 4, 8 and 16 bits; grey, RGB, palette; the horizontal predictor; every page |
+| ICO, BMP | as before (uncompressed BMP) |
+
+TIFF **encoding** now writes every page as well, rather than silently keeping `Frames[0]`.
+
+Not supported, and rejected with a clear message rather than a wrong picture: tiled TIFF, and
+`PlanarConfiguration = 2`. Both are legal and both are rare; guessing would produce a plausible but
+scrambled bitmap.
+
+The check that keeps this honest is `tests/CrossPlatform/Wpf.Imaging.Tests`, which round-trips every
+encoder through its decoder AND decodes fixtures written by PIL/libtiff — because two halves written
+together will agree with each other on a shared misreading of a format, and the fixtures are the only
+thing that can catch that.
 
 `System.Printing` used to be on that list. It is not any more: `LocalPrintServer`, `PrintQueue` and
 `XpsDocumentWriter` are a managed reimplementation over CUPS now, with `Wpf.Printing.Tests` covering

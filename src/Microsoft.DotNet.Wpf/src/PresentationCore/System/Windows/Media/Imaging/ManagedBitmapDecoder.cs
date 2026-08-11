@@ -26,10 +26,9 @@ namespace System.Windows.Media.Imaging
     {
         private readonly ReadOnlyCollection<BitmapFrame> _managedFrames;
 
-        private ManagedBitmapDecoder(BitmapFrame frame)
+        private ManagedBitmapDecoder(List<BitmapFrame> frames)
             : base(isBuiltIn: true)
         {
-            var frames = new List<BitmapFrame>(1) { frame };
             _frames = frames;
             _managedFrames = new ReadOnlyCollection<BitmapFrame>(frames);
         }
@@ -38,13 +37,24 @@ namespace System.Windows.Media.Imaging
         /// Decode with the managed codecs, or return null if they cannot handle this image -- the
         /// caller then falls through to the native path, which is still the right answer on Windows.
         /// </summary>
+        /// <remarks>
+        /// Every frame is kept, not just the first: an animated GIF and a multi-page TIFF both put
+        /// their content in later frames, and Frames is the only way an app can reach it.
+        /// </remarks>
         internal static ManagedBitmapDecoder? TryCreate(Uri? uri, Stream? stream)
         {
             try
             {
-                BitmapSource? decoded = ManagedImageDecoder.Decode(uri, stream);
-                if (decoded is null) return null;
-                return new ManagedBitmapDecoder(BitmapFrame.Create(decoded));
+                List<BitmapSource> decoded = ManagedImageDecoder.DecodeAll(uri, stream);
+                if (decoded is null || decoded.Count == 0) return null;
+
+                var frames = new List<BitmapFrame>(decoded.Count);
+                foreach (BitmapSource source in decoded)
+                {
+                    frames.Add(BitmapFrame.Create(source));
+                }
+
+                return new ManagedBitmapDecoder(frames);
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
@@ -54,8 +64,8 @@ namespace System.Windows.Media.Imaging
 
         public override ReadOnlyCollection<BitmapFrame> Frames => _managedFrames;
 
-        // The managed decoders produce a single decoded image and no sidecar data. These would
-        // otherwise run the base implementations, which dereference a native decoder handle.
+        // The managed decoders produce frames and no sidecar data. These would otherwise run the
+        // base implementations, which dereference a native decoder handle.
         public override BitmapSource? Preview => null;
         public override BitmapSource? Thumbnail => null;
         public override BitmapMetadata? Metadata => null;

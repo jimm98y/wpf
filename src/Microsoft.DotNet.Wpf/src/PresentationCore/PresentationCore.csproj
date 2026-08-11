@@ -1210,6 +1210,8 @@
     <Compile Include="System\Windows\Media\Imaging\ManagedTiffEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedGifEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedJpegDecoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedGifDecoder.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedTiffDecoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\ManagedPngEncoder.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapInitialize.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapMetadata.cs" />

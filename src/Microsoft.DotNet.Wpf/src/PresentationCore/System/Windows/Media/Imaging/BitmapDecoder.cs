@@ -1516,20 +1516,27 @@ namespace System.Windows.Media.Imaging
         /// </summary>
         private bool TryInitializeManaged(Uri uri, Stream stream, BitmapCreateOptions createOptions, BitmapCacheOption cacheOption)
         {
-            BitmapSource decoded;
+            List<BitmapSource> decoded;
             try
             {
-                decoded = ManagedImageDecoder.Decode(uri, stream);
+                // DecodeAll, not Decode: GifBitmapDecoder and TiffBitmapDecoder are constructed
+                // precisely when an app wants the frames of an animation or the pages of a
+                // document, and keeping only the first would answer that with a still image.
+                decoded = ManagedImageDecoder.DecodeAll(uri, stream);
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 return false;
             }
 
-            if (decoded is null) return false;
+            if (decoded is null || decoded.Count == 0) return false;
 
             _isBuiltInDecoder = true;
-            _frames = new List<BitmapFrame> { BitmapFrame.Create(decoded) };
+            _frames = new List<BitmapFrame>(decoded.Count);
+            foreach (BitmapSource source in decoded)
+            {
+                _frames.Add(BitmapFrame.Create(source));
+            }
             _readOnlyFrames = new ReadOnlyCollection<BitmapFrame>(_frames);
             _uri = uri;
             _stream = stream;

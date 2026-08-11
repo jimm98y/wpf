@@ -14,6 +14,7 @@
 // the order below preserves.
 //
 
+using System.Collections.Generic;
 using System.IO;
 
 namespace System.Windows.Media.Imaging
@@ -29,28 +30,76 @@ namespace System.Windows.Media.Imaging
         private const int HeaderSize = 8;
         private const int IfdSize = 2 + EntryCount * 12 + 4;
 
-        internal static void Save(BitmapSource source, Stream stream)
+        internal static void Save(BitmapSource source, Stream stream) => Save(new[] { source }, stream);
+
+        /// <summary>
+        ///  Writes every page as its own IFD, chained through each directory's next-IFD pointer.
+        /// </summary>
+        /// <remarks>
+        ///  Multi-page is the reason to choose TIFF over PNG, and TiffBitmapEncoder.Frames is a
+        ///  collection, so writing only the first frame silently threw the caller's document away.
+        ///  Each page's layout is computed up front (the format needs forward offsets to pixels the
+        ///  writer has not reached yet), which is why the sizes are summed before anything is
+        ///  emitted rather than as the stream is written.
+        /// </remarks>
+        internal static void Save(IReadOnlyList<BitmapSource> sources, Stream stream)
         {
-            byte[] bgra = source.CopyPixelsForManagedComposition(out int width, out int height, out int stride);
-            if (bgra == null || width <= 0 || height <= 0)
+            if (sources == null || sources.Count == 0)
             {
                 throw new InvalidOperationException("The bitmap has no pixels to encode.");
             }
 
+            var pages = new List<(byte[] Bgra, int Width, int Height, int Stride, double DpiX, double DpiY)>(sources.Count);
+            foreach (BitmapSource source in sources)
+            {
+                byte[] pixels = source.CopyPixelsForManagedComposition(out int w, out int h, out int s);
+                if (pixels == null || w <= 0 || h <= 0)
+                {
+                    throw new InvalidOperationException("The bitmap has no pixels to encode.");
+                }
+                pages.Add((pixels, w, h, s, source.DpiX, source.DpiY));
+            }
+
+            // Header, then one self-contained block per page: IFD, the values too large to sit
+            // inline, then the pixels.
+            const int InlineOverflowSize = 8 + 8 + 8;           // BitsPerSample + XResolution + YResolution
+            int pageStart = HeaderSize;
+
+            var starts = new int[pages.Count];
+            for (int i = 0; i < pages.Count; i++)
+            {
+                starts[i] = pageStart;
+                pageStart += IfdSize + InlineOverflowSize + pages[i].Width * pages[i].Height * 4;
+            }
+
+            var header = new byte[HeaderSize];
+            int h0 = 0;
+            header[h0++] = (byte)'I';                           // little-endian
+            header[h0++] = (byte)'I';
+            WriteU16(header, ref h0, 42);                       // the TIFF magic number
+            WriteU32(header, ref h0, (uint)starts[0]);          // offset of the first IFD
+            stream.Write(header, 0, header.Length);
+
+            for (int i = 0; i < pages.Count; i++)
+            {
+                (byte[] bgra, int width, int height, int stride, double dpiX, double dpiY) = pages[i];
+                int nextIfd = i + 1 < pages.Count ? starts[i + 1] : 0;
+                WritePage(stream, bgra, width, height, stride, dpiX, dpiY, starts[i], nextIfd);
+            }
+        }
+
+        private static void WritePage(Stream stream, byte[] bgra, int width, int height, int stride,
+                                      double dpiX, double dpiY, int pageStart, int nextIfd)
+        {
             // Values that do not fit in an entry's four bytes live after the IFD, in this order.
-            int bitsPerSampleOffset = HeaderSize + IfdSize;     // 4 SHORTs = 8 bytes
+            int bitsPerSampleOffset = pageStart + IfdSize;      // 4 SHORTs = 8 bytes
             int xResolutionOffset = bitsPerSampleOffset + 8;    // RATIONAL = 8 bytes
             int yResolutionOffset = xResolutionOffset + 8;
             int pixelOffset = yResolutionOffset + 8;
             int pixelBytes = width * height * 4;
 
-            var buffer = new byte[pixelOffset];
+            var buffer = new byte[pixelOffset - pageStart];
             int o = 0;
-
-            buffer[o++] = (byte)'I';                            // little-endian
-            buffer[o++] = (byte)'I';
-            WriteU16(buffer, ref o, 42);                        // the TIFF magic number
-            WriteU32(buffer, ref o, HeaderSize);               // offset of the first IFD
 
             WriteU16(buffer, ref o, EntryCount);
             WriteEntry(buffer, ref o, 256, TypeLong, 1, (uint)width);           // ImageWidth
@@ -68,14 +117,14 @@ namespace System.Windows.Media.Imaging
             // ExtraSamples = 2, unassociated alpha. Without this a reader is entitled to treat the
             // fourth sample as premultiplied and darken everything transparent.
             WriteEntry(buffer, ref o, 338, TypeShort, 1, 2);
-            WriteU32(buffer, ref o, 0);                                         // no further IFD
+            WriteU32(buffer, ref o, (uint)nextIfd);                             // 0 on the last page
 
             WriteU16(buffer, ref o, 8);                                         // BitsPerSample: 8,8,8,8
             WriteU16(buffer, ref o, 8);
             WriteU16(buffer, ref o, 8);
             WriteU16(buffer, ref o, 8);
-            WriteRational(buffer, ref o, source.DpiX);
-            WriteRational(buffer, ref o, source.DpiY);
+            WriteRational(buffer, ref o, dpiX);
+            WriteRational(buffer, ref o, dpiY);
 
             stream.Write(buffer, 0, buffer.Length);
 

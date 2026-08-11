@@ -4,12 +4,16 @@
 //
 // Managed image decoding for platforms without native WIC. Decodes PNG (all
 // standard bit depths and color types, tRNS transparency, Adam7 interlace),
-// JPEG (baseline and progressive, via ManagedJpegDecoder), ICO and uncompressed
-// BMP into straight BGRA32, and materializes the result as a managed-backed
-// BitmapSource. GIF and TIFF are NOT decodable here even though managed
-// ENCODERS exist for both -- see Decode's final else.
+// JPEG (baseline and progressive, via ManagedJpegDecoder), GIF (every frame,
+// composed -- ManagedGifDecoder), TIFF (baseline, LZW/PackBits/Deflate --
+// ManagedTiffDecoder), ICO and uncompressed BMP into straight BGRA32, and
+// materializes the result as a managed-backed BitmapSource.
+//
+// Every format this repo can ENCODE it can now also decode, which had not been
+// true of GIF and TIFF: the stack wrote files it could not read back.
 //
 
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 
@@ -22,29 +26,42 @@ namespace System.Windows.Media.Imaging
         /// The URI is used when <paramref name="stream"/> is null: file URIs open directly;
         /// anything else (pack://, http) goes through WPF's request helper.
         /// </summary>
-        internal static BitmapSource Decode(Uri uri, Stream stream)
+        internal static BitmapSource Decode(Uri uri, Stream stream) => DecodeAll(uri, stream)[0];
+
+        /// <summary>
+        /// Decodes every frame an image carries: the frames of an animated GIF or the pages of a
+        /// multi-page TIFF, and a single-element list for every other format. Each frame is frozen.
+        /// </summary>
+        /// <remarks>
+        /// GIF frames arrive already composed onto the logical screen, so any one of them can be
+        /// shown on its own; see ManagedGifDecoder for why that matters.
+        /// </remarks>
+        internal static List<BitmapSource> DecodeAll(Uri uri, Stream stream)
         {
-            byte[] data;
-            if (stream != null)
+            byte[] data = ReadAllBytes(uri, stream);
+
+            if (ManagedGifDecoder.IsGif(data))
             {
-                using var ms = new MemoryStream();
-                stream.CopyTo(ms);
-                data = ms.ToArray();
+                List<ManagedGifFrame> gifFrames = ManagedGifDecoder.Decode(data, out int gifWidth, out int gifHeight);
+                var decoded = new List<BitmapSource>(gifFrames.Count);
+                foreach (ManagedGifFrame frame in gifFrames)
+                {
+                    decoded.Add(Materialize(frame.Bgra, gifWidth, gifHeight, 96, 96));
+                }
+                return decoded;
             }
-            else
+
+            if (ManagedTiffDecoder.IsTiff(data))
             {
-                ArgumentNullException.ThrowIfNull(uri);
-                if (uri.IsFile)
+                List<ManagedTiffPage> pages = ManagedTiffDecoder.Decode(data);
+                var decoded = new List<BitmapSource>(pages.Count);
+                foreach (ManagedTiffPage page in pages)
                 {
-                    data = File.ReadAllBytes(uri.LocalPath);
+                    decoded.Add(Materialize(page.Bgra, page.Width, page.Height,
+                                            page.DpiX > 0 ? page.DpiX : 96,
+                                            page.DpiY > 0 ? page.DpiY : 96));
                 }
-                else
-                {
-                    using Stream response = MS.Internal.WpfWebRequestHelper.CreateRequestAndGetResponseStream(uri);
-                    using var ms = new MemoryStream();
-                    response.CopyTo(ms);
-                    data = ms.ToArray();
-                }
+                return decoded;
             }
 
             byte[] bgra;
@@ -75,12 +92,40 @@ namespace System.Windows.Media.Imaging
                 // codecs run everywhere -- an unrecognised format is unsupported on every platform,
                 // not unsupported on this one.
                 throw new NotSupportedException(
-                    "Only PNG, JPEG, ICO and uncompressed BMP can be decoded: the data matched none of them.");
+                    "Only PNG, JPEG, GIF, TIFF, ICO and uncompressed BMP can be decoded: "
+                    + "the data matched none of them.");
             }
 
+            return new List<BitmapSource>(1) { Materialize(bgra, width, height, dpiX, dpiY) };
+        }
+
+        private static BitmapSource Materialize(byte[] bgra, int width, int height, double dpiX, double dpiY)
+        {
             var source = BitmapSource.Create(width, height, dpiX, dpiY, PixelFormats.Bgra32, null, bgra, width * 4);
             source.Freeze();
             return source;
+        }
+
+        private static byte[] ReadAllBytes(Uri uri, Stream stream)
+        {
+            if (stream != null)
+            {
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                return ms.ToArray();
+            }
+
+            ArgumentNullException.ThrowIfNull(uri);
+
+            if (uri.IsFile)
+            {
+                return File.ReadAllBytes(uri.LocalPath);
+            }
+
+            using Stream response = MS.Internal.WpfWebRequestHelper.CreateRequestAndGetResponseStream(uri);
+            using var buffer = new MemoryStream();
+            response.CopyTo(buffer);
+            return buffer.ToArray();
         }
 
         // ---- PNG -----------------------------------------------------------------------
