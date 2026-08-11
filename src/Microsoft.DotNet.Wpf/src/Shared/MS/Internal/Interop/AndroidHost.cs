@@ -748,6 +748,14 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         view.LayoutParameters = lp;
     }
 
+    public void SetViewVisible(IntPtr handle, bool visible)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+        // Gone, not Invisible: an Invisible view still occupies its slot for layout and hit-testing,
+        // and a hidden WPF window must not intercept touches meant for what is behind it.
+        view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
+    }
+
     public void InvalidateAccessibilityNode(IntPtr handle, int nodeId)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;

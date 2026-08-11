@@ -835,6 +835,37 @@ namespace MS.Internal.Interop.Wayland
             sy = _virtualY + (int)Math.Round(ncH * scale);
         }
 
+        /// <summary>Show/hide the surface (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>
+        /// <remarks>
+        /// Wayland has no "hide": a surface is mapped exactly while it has a buffer attached, so
+        /// attaching a NULL buffer and committing unmaps it, and the compositor stops showing it and
+        /// stops sending it input. The role objects (xdg_surface / libdecor frame) and the handle all
+        /// survive, so the window can be shown again — which is the whole point, versus Destroy.
+        ///
+        /// Showing again only commits: the surface re-maps when the renderer attaches its next buffer,
+        /// and the damage below is what asks for that frame. Attaching a buffer here is not possible
+        /// (the renderer owns them) and not needed.
+        /// </remarks>
+        public void SetVisible(bool visible)
+        {
+            if (_destroyed || _surface == IntPtr.Zero) return;
+
+            if (!visible)
+            {
+                Wl.Request(_surface, WL_SURFACE_ATTACH,
+                    WlArgument.Ptr(IntPtr.Zero), WlArgument.Int(0), WlArgument.Int(0));
+                Wl.Request(_surface, WL_SURFACE_COMMIT);
+            }
+            else
+            {
+                Wl.Request(_surface, WL_SURFACE_DAMAGE,
+                    WlArgument.Int(0), WlArgument.Int(0), WlArgument.Int(int.MaxValue), WlArgument.Int(int.MaxValue));
+                Wl.Request(_surface, WL_SURFACE_COMMIT);
+            }
+
+            WaylandDisplay.Flush();
+        }
+
         public void Destroy()
         {
             if (_destroyed) return;

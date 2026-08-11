@@ -126,6 +126,24 @@ namespace MS.Internal.Interop
         /// </summary>
         public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner)
         {
+            Create(title, x, y, width, height, borderless, owner, chromeless: false);
+        }
+
+        /// <summary>
+        /// As above, plus <paramref name="chromeless"/>: a REAL window (it takes key focus, resizes and
+        /// moves like any other) that simply has no title bar, because the app draws its own — WPF's
+        /// WindowStyle=None. A floating tool window is the everyday case.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately not the same as <paramref name="borderless"/>, even though both mean "no title
+        /// bar". A truly borderless NSWindow answers NO to canBecomeKeyWindow: right for menus and drag
+        /// adorners, which must never take focus, and fatal for a window the user is meant to type into
+        /// — it would look frozen. So a chromeless window stays TITLED and hides its title bar instead:
+        /// full-size content view, transparent title bar, no title text, no traffic lights. That is the
+        /// standard AppKit recipe for custom chrome, and it keeps every behaviour a titled window has.
+        /// </remarks>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner, bool chromeless)
+        {
             // AppKit refuses to build a window anywhere but the main thread, and it refuses by
             // raising an Objective-C exception -- which unwinds through managed frames into
             // std::terminate and takes the process with it, with no managed stack to say why. Check
@@ -154,6 +172,9 @@ namespace MS.Internal.Interop
                 ? NSWindowStyleMaskBorderless
                 : (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                    NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable);
+            // Chromeless keeps every titled-window behaviour and only takes the title bar away, so the
+            // content view extends over where it would have been.
+            if (chromeless) styleMask |= NSWindowStyleMaskFullSizeContentView;
 
             _window = SendInitWindow(alloc, Sel("initWithContentRect:styleMask:backing:defer:"),
                                      frame, styleMask, NSBackingStoreBuffered, false);
@@ -197,6 +218,24 @@ namespace MS.Internal.Interop
             // release it, which would dangle). We detect the close by polling isVisible and route it to
             // WPF as a WM_CLOSE; the window is torn down for real from CocoaWindow.Destroy.
             SendVoidBool(_window, Sel("setReleasedWhenClosed:"), false);
+
+            if (chromeless)
+            {
+                // Take the title bar away without giving up being a titled window: transparent bar, no
+                // title text, and none of the three traffic-light buttons -- WPF drew its own caption
+                // and close/minimise/maximise buttons in the content, and the native ones would sit on
+                // top of them. Combined with FullSizeContentView above, the content view covers the
+                // whole frame, so the window looks exactly as it does on Windows under WindowStyle=None.
+                const nint NSWindowTitleHidden = 1;
+                const nuint NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2;
+                SendVoidBool(_window, Sel("setTitlebarAppearsTransparent:"), true);
+                SendVoidNInt(_window, Sel("setTitleVisibility:"), NSWindowTitleHidden);
+                foreach (nuint b in new[] { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
+                {
+                    IntPtr button = SendPtrNUInt(_window, Sel("standardWindowButton:"), b);
+                    if (button != IntPtr.Zero) SendVoidBool(button, Sel("setHidden:"), true);
+                }
+            }
 
             if (borderless)
             {
@@ -264,6 +303,21 @@ namespace MS.Internal.Interop
                 IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
                 SendVoidBool(app, Sel("activateIgnoringOtherApps:"), true);
             }
+            // NEVER pump from inside a pump. This loop exists to let a window created at startup finish
+            // mapping before the caller carries on, and that is safe only at the top level. Reached
+            // from within PumpEvents it re-enters event dispatch on a half-built window, and when the
+            // handler being re-entered creates a window of its own the recursion has no bottom:
+            //
+            //   MouseMove -> app shows an overlay -> Window.Show -> Create -> PumpUntilVisible
+            //             -> PumpEvents -> next MouseMove -> app shows an overlay -> ...
+            //
+            // which is exactly what a docking drag does (an overlay window per drag target, shown on
+            // mouse-move); it span at 100% CPU until the stack ran out. Win32 has no equivalent
+            // behaviour to preserve here: CreateWindowEx does not dispatch input, and a window created
+            // inside a message handler simply appears once that handler returns and the message loop
+            // continues -- which is precisely what skipping the pump gives.
+            if (s_pumpDepth > 0) return;
+
             for (int i = 0; i < 120; i++)   // ~ up to 120 * 8ms; breaks as soon as visible (usually a few iterations)
             {
                 PumpEvents(8);
@@ -419,6 +473,7 @@ namespace MS.Internal.Interop
             double scale = GetBackingScale();
             if (scale <= 0) scale = 1.0;
             SetContentSizePoints(cx / scale, cy / scale);
+            TraceWindow($"size cx={cx} cy={cy}");
         }
 
         private void SetContentSizePoints(double width, double height)
@@ -457,6 +512,16 @@ namespace MS.Internal.Interop
         public void SetFrameOrigin(int xPixels, int yPixels)
         {
             if (_window == IntPtr.Zero) return;
+
+            // CW_USEDEFAULT is "no position", not a coordinate. Passing it on builds a frame at
+            // int.MinValue, which AppKit rejects with an Objective-C exception that terminates the
+            // process (see the same guard in HwndWrapper). WPF sends it whenever it moves a window it
+            // was never given a position for; leaving the window where it is, is the whole meaning of
+            // the sentinel.
+            const int CW_USEDEFAULT = unchecked((int)0x80000000);
+            if (xPixels == CW_USEDEFAULT || yPixels == CW_USEDEFAULT) return;
+
+            TraceWindow($"move x={xPixels} y={yPixels}");
             double scale = GetBackingScale();
             double xPt = xPixels / scale;
             double yTopPt = yPixels / scale;
@@ -802,6 +867,28 @@ namespace MS.Internal.Interop
                 }
             }
 
+            // Same problem, no owner to borrow from: a top-level WPF Window (an overlay/adorner, which
+            // sets no Owner) is created at CW_USEDEFAULT -- far off-screen -- and backingScaleFactor
+            // then answers for the PRIMARY display, not the one the app is on. On a machine whose
+            // built-in display is Retina and whose external one is not, the window reports 2 while it is
+            // off-screen and 1 once moved, and it flips back to 2 on the next resize-then-move.
+            //
+            // That disagreement is not cosmetic: WPF converts DIPs to device pixels with the DPI it was
+            // told at creation and SetContentSizePixels divides by whatever this returns NOW, so every
+            // such window came out at half or double its intended size, changing on each move. A drag
+            // adorner sized for the app window covered the whole screen instead.
+            //
+            // So fall back to the app's main window, which is on the display the adorner belongs to,
+            // for as long as this window is not yet on a screen of its own.
+            if (_window != IntPtr.Zero && Send(_window, Sel("screen")) == IntPtr.Zero)
+            {
+                CocoaWindow main = MainWindowForScale();
+                if (main != null && !ReferenceEquals(main, this))
+                {
+                    return main.GetBackingScale();
+                }
+            }
+
             double scale = 0;
             if (_window != IntPtr.Zero)
             {
@@ -822,6 +909,73 @@ namespace MS.Internal.Interop
                 if (mainScreen != IntPtr.Zero) scale = SendDouble(mainScreen, Sel("backingScaleFactor"));
             }
             return scale > 0 ? scale : 1.0;
+        }
+
+        /// <summary>
+        /// Hand key status to an ordinary window when the window that had it is going away.
+        /// </summary>
+        /// <remarks>
+        /// Closing or hiding the key window can leave the application with NO key window at all —
+        /// AppKit does not always promote another one, and it never does for a window we order out
+        /// ourselves. A keyless app is not obviously broken to look at (it still renders, and still
+        /// receives mouse-moved events, though with a nil window on them) but it cannot be used:
+        /// clicks are consumed as failed activation attempts and no menu will open. Re-docking a tool
+        /// window does exactly this — the floating window holding key is closed — which presented as
+        /// the whole app freezing while continuing to draw.
+        /// </remarks>
+        private static void PromoteKeyWindow(CocoaWindow leaving)
+        {
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            if (app != IntPtr.Zero && Send(app, Sel("keyWindow")) != IntPtr.Zero) return;   // still fine
+
+            CocoaWindow next = null;
+            lock (s_lock)
+            {
+                foreach (CocoaWindow cw in s_byView.Values)
+                {
+                    if (ReferenceEquals(cw, leaving) || cw._borderless || cw._window == IntPtr.Zero) continue;
+                    if (!SendBool(cw._window, Sel("isVisible"))) continue;
+                    // Prefer the app's main window; otherwise the first ordinary window still on screen.
+                    if (next == null || (app != IntPtr.Zero && cw._window == Send(app, Sel("mainWindow"))))
+                        next = cw;
+                }
+            }
+
+            if (next == null) return;
+            next.TraceWindow("PROMOTE to key");
+            SendVoidPtr(next._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+        }
+
+        /// <summary>The window whose display a not-yet-placed window should take its scale from: the
+        /// app's main (else key) window, falling back to any registered ordinary window.</summary>
+        private static CocoaWindow MainWindowForScale()
+        {
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            if (app != IntPtr.Zero)
+            {
+                foreach (string sel in new[] { "mainWindow", "keyWindow" })
+                {
+                    IntPtr w = Send(app, Sel(sel));
+                    if (w == IntPtr.Zero) continue;
+                    CocoaWindow cw = FromHandle(Send(w, Sel("contentView")));
+                    if (cw != null && !cw._borderless) return cw;
+                }
+            }
+
+            // Nothing is key yet (this can run while the first window is still coming up), so take any
+            // ordinary window that is already on a screen.
+            lock (s_lock)
+            {
+                foreach (CocoaWindow cw in s_byView.Values)
+                {
+                    if (!cw._borderless && cw._window != IntPtr.Zero &&
+                        Send(cw._window, Sel("screen")) != IntPtr.Zero)
+                    {
+                        return cw;
+                    }
+                }
+            }
+            return null;
         }
 
         /// <summary>Current content-view size in pixels (points * backing scale).</summary>
@@ -885,6 +1039,58 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>Close and release the window.</summary>
+        /// <summary>Order the NSWindow off or back onto the screen (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>
+        /// <remarks>
+        /// orderOut: rather than close: — the window stays alive and keeps its content view, its
+        /// surface and its handle, so the very same window can be shown again. That is what an app
+        /// reusing a cached overlay expects (a docking drag hides its adorner windows between drags
+        /// and shows them again on the next one), and it is why hiding must NOT go through Destroy.
+        ///
+        /// Re-showing a borderless window uses orderFront: rather than makeKeyAndOrderFront:, matching
+        /// how it was first shown: an adorner or tooltip must not steal key focus from the window
+        /// being dragged.
+        /// </remarks>
+        // WF_TRACE_WINDOWS=1 traces every window's creation, geometry and show/hide. The first thing to
+        // reach for when a window is the wrong size, in the wrong place, or on screen when it should
+        // not be -- an invisible window left over the app swallows every click, which presents as the
+        // app having frozen rather than as anything to do with windows.
+        private static readonly bool s_traceWindows = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1";
+
+        private void TraceWindow(string what)
+        {
+            if (!s_traceWindows || _window == IntPtr.Zero) return;
+            NSRect f = SendRect(_window, Sel("frame"));
+            Console.Error.WriteLine(
+                $"[win] {what} view=0x{_contentView:x} borderless={_borderless} " +
+                $"frame=({f.x},{f.y} {f.width}x{f.height}) scale={GetBackingScale()} " +
+                $"visible={SendBool(_window, Sel("isVisible"))}");
+        }
+
+        public void SetVisible(bool visible)
+        {
+            if (_window == IntPtr.Zero) return;
+            TraceWindow(visible ? "show" : "hide");
+
+            if (!visible)
+            {
+                // Set BEFORE ordering out: CheckClosed reads isVisible on the pump thread and treats
+                // "was on screen, now isn't, and we didn't destroy it" as the user having clicked the
+                // close button. Without this flag every Hide() would raise a WM_CLOSE and WPF would
+                // tear the window down for real -- the opposite of hiding it, and fatal for a main
+                // window, whose Hide() would quit the app.
+                bool wasKey = SendBool(_window, Sel("isKeyWindow"));
+                _hiddenByUs = true;
+                SendVoidPtr(_window, Sel("orderOut:"), IntPtr.Zero);
+                // orderOut: never promotes a successor, so hiding the key window strands the app
+                // without one. See PromoteKeyWindow.
+                if (wasKey) PromoteKeyWindow(this);
+                return;
+            }
+
+            _hiddenByUs = false;
+            SendVoidPtr(_window, Sel(_borderless ? "orderFront:" : "makeKeyAndOrderFront:"), IntPtr.Zero);
+        }
+
         public void Destroy()
         {
             _destroyedByUs = true;
@@ -897,12 +1103,18 @@ namespace MS.Internal.Interop
                 }
             }
 
+            bool wasKey = _window != IntPtr.Zero && SendBool(_window, Sel("isKeyWindow"));
+
             if (_window != IntPtr.Zero)
             {
                 Send(_window, Sel("close"));
                 _window = IntPtr.Zero;
             }
             _contentView = IntPtr.Zero;
+
+            // Closing the key window can leave the app with none — which makes it unusable while it
+            // carries on rendering. Docking a floating tool window closes exactly that window.
+            if (wasKey) PromoteKeyWindow(this);
         }
 
         /// <summary>Raised (on the pump thread) when the user closes the window via its title-bar close
@@ -918,10 +1130,60 @@ namespace MS.Internal.Interop
 
         private bool _wasVisible;
         private bool _destroyedByUs;
+        private bool _hiddenByUs;
+
+        /// <summary>
+        /// Backstop for the keyless-app state: if this app is frontmost yet has no key window, give
+        /// key status back to an ordinary window.
+        /// </summary>
+        /// <remarks>
+        /// PromoteKeyWindow covers the two paths we control (closing and hiding), but a window can lose
+        /// key for reasons we never see, and the resulting state is bad enough — the app renders but
+        /// cannot be clicked, with no visible cause — to be worth detecting rather than trusting we
+        /// found every path. Gated on the app being ACTIVE so this can never pull focus from another
+        /// application; a backgrounded app is supposed to have no key window.
+        /// </remarks>
+        private void RecoverKeyWindow()
+        {
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            if (app == IntPtr.Zero) return;
+            if (!SendBool(app, Sel("isActive"))) return;
+            if (Send(app, Sel("keyWindow")) != IntPtr.Zero) return;
+            PromoteKeyWindow(null);
+        }
+
+        /// <summary>Raised when the window becomes, or stops being, the key window. True = activated.
+        /// The host turns this into the WM_ACTIVATE/WM_SETFOCUS pair WPF expects.</summary>
+        public event Action<bool> ActiveChanged;
+
+        private bool _wasKey;
+
+        /// <summary>
+        /// Detect key-window changes and report them, so WPF learns the window was activated.
+        /// </summary>
+        /// <remarks>
+        /// Polled, like the close and resize checks beside it, because this backend deliberately owns
+        /// no NSWindow delegate. Without it WPF was never told about activation at all: Window.IsActive
+        /// stayed false for the app's whole life, and every visual keyed off focus stayed switched off
+        /// — a docking tab's selection border (which lights on IsKeyboardFocusWithin) simply never
+        /// appeared, and neither did anything else drawn only when the window is active.
+        /// </remarks>
+        private void CheckActivated()
+        {
+            if (_window == IntPtr.Zero || _destroyedByUs) return;
+
+            bool key = SendBool(_window, Sel("isKeyWindow"));
+            if (key == _wasKey) return;
+            _wasKey = key;
+            TraceWindow(key ? "ACTIVATE" : "DEACTIVATE");
+            ActiveChanged?.Invoke(key);
+        }
 
         private void CheckClosed()
         {
-            if (_window == IntPtr.Zero || _destroyedByUs) return;
+            // _hiddenByUs: an orderOut: from SetVisible looks exactly like a user close from here
+            // (isVisible goes false), and reporting that would destroy a window WPF only hid.
+            if (_window == IntPtr.Zero || _destroyedByUs || _hiddenByUs) return;
             bool visible = SendBool(_window, Sel("isVisible"));
             if (visible)
             {
@@ -1080,9 +1342,20 @@ namespace MS.Internal.Interop
         /// delivery) - draining alone does not, which leaves the CAMetalLayer occluded. Called from
         /// the Dispatcher's run loop each frame in place of a bare managed wait.
         /// </summary>
+        // > 0 while PumpEvents is on the stack. Window creation consults this and declines to pump
+        // again (see PumpUntilVisible), which is what keeps event dispatch from nesting into itself.
+        private static int s_pumpDepth;
+
         internal static void PumpEvents(int maxMilliseconds)
         {
             if (!s_appInitialized) return;
+            s_pumpDepth++;
+            try { PumpEventsCore(maxMilliseconds); }
+            finally { s_pumpDepth--; }
+        }
+
+        private static void PumpEventsCore(int maxMilliseconds)
+        {
 
             IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
             IntPtr mode = s_defaultRunLoopMode ??= MakeNSString("kCFRunLoopDefaultMode");
@@ -1172,6 +1445,8 @@ namespace MS.Internal.Interop
             foreach (CocoaWindow w in windows)
             {
                 try { w.CheckResize(); } catch { /* a torn-down window shouldn't break the pump */ }
+                try { w.RecoverKeyWindow(); } catch { /* never let recovery break the pump */ }
+                try { w.CheckActivated(); } catch { /* a torn-down window shouldn't break the pump */ }
                 try { w.CheckClosed(); } catch { /* a torn-down window shouldn't break the pump */ }
             }
         }
@@ -1225,17 +1500,58 @@ namespace MS.Internal.Interop
             if (!IsMouseType(type)) return;
 
             IntPtr window = Send(evt, Sel("window"));
-            if (window == IntPtr.Zero) return;
-            IntPtr view = Send(window, Sel("contentView"));
-            CocoaWindow w = FromHandle(view);
-            if (w == null) return;
+            IntPtr view = window != IntPtr.Zero ? Send(window, Sel("contentView")) : IntPtr.Zero;
+            CocoaWindow w = view != IntPtr.Zero ? FromHandle(view) : null;
+
+            // An event we cannot attribute to a live window is DROPPED, and dropping a mouse-UP is not
+            // survivable: whatever was mid-drag never learns the button was released, so its capture is
+            // never given up and the app stops responding from then on. This happens for real -- a drag
+            // that creates or destroys windows (undocking makes a floating window, docking closes it)
+            // leaves AppKit holding events whose window is gone or not ours.
+            if (window == IntPtr.Zero || w == null)
+            {
+                bool isUp = type == NSLeftMouseUp || type == NSRightMouseUp || type == NSOtherMouseUp;
+                if (s_traceInput)
+                {
+                    IntPtr nsApp = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+                    bool appActive = nsApp != IntPtr.Zero && SendBool(nsApp, Sel("isActive"));
+                    IntPtr keyWin = nsApp != IntPtr.Zero ? Send(nsApp, Sel("keyWindow")) : IntPtr.Zero;
+                    Console.Error.WriteLine(
+                        $"[input] DROPPED type={type} evtWin=0x{window:x} view=0x{view:x} " +
+                        $"reason={(window == IntPtr.Zero ? "no-window" : "unregistered-window")} " +
+                        $"capture=0x{MouseCaptureHandle:x} appActive={appActive} keyWin=0x{keyWin:x}");
+                }
+
+                // Deliver a dropped release to whoever holds capture: that is the element the button was
+                // pressed against, and the only party that can end the drag.
+                if (isUp && MouseCaptureHandle != IntPtr.Zero)
+                {
+                    CocoaWindow capWin = FromHandle(MouseCaptureHandle);
+                    if (capWin != null)
+                    {
+                        NSPoint gp = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+                        double cs = capWin.GetBackingScale();
+                        int gx = (int)Math.Round(gp.x * cs);
+                        int gy = (int)Math.Round((PrimaryScreenHeightPoints() - gp.y) * cs);
+                        capWin.GetClientScreenOriginPixels(out int ox2, out int oy2);
+                        if (s_traceInput)
+                            Console.Error.WriteLine($"[input] RESCUED up -> capture 0x{MouseCaptureHandle:x}");
+                        handler(new CocoaMouseMessage(MouseCaptureHandle, (int)type, 0,
+                                                      gx - ox2, gy - oy2, 0, Environment.TickCount));
+                    }
+                }
+                return;
+            }
 
             // A plain mouse-moved event is delivered to the KEY window, but the cursor may actually be
             // over a floating popup (combo dropdown/menu). Resolve the window under the global cursor
             // and report the move relative to IT, so hover/highlight and the mouse-over element track
             // the popup rather than the window beneath it. (Button/drag events already go to the right
             // window, since clicks are delivered to the clicked window.)
-            if (type == NSMouseMoved)
+            // ...unless a window holds capture, in which case the capture block below owns the routing
+            // and this hover redirection must not run: it would send moves to whatever is under the
+            // pointer while a drag is in progress.
+            if (type == NSMouseMoved && MouseCaptureHandle == IntPtr.Zero)
             {
                 // Use THIS event's location (converted to screen) rather than the current global cursor,
                 // so batched/coalesced moves are deterministic and match where the event happened.
@@ -1251,6 +1567,26 @@ namespace MS.Internal.Interop
                     uw.GetClientScreenOriginPixels(out int ox, out int oy);
                     handler(new CocoaMouseMessage(underView, (int)type, 0, gx - ox, gy - oy, 0, Environment.TickCount));
                     return;
+                }
+            }
+
+            // While a window holds the mouse capture, EVERY mouse event belongs to it, whatever window
+            // the pointer is actually over. That is what Win32 SetCapture guarantees and what WPF's
+            // capture model is built on, and AppKit does not do it: it delivers each event to the window
+            // under the cursor. So the moment a drag put a NEW window under the pointer -- undocking a
+            // tool window creates a floating one right there -- the events went to that window instead,
+            // the captured element in the ORIGINAL window never saw the mouse-up, and its drag never
+            // ended. Capture then stayed held for the life of the app: WPF routed all later input to
+            // that element, and a menu (which needs to take capture itself, and gives up if capture is
+            // already held) could no longer open anywhere.
+            IntPtr captured = MouseCaptureHandle;
+            if (captured != IntPtr.Zero && captured != view)
+            {
+                CocoaWindow cap = FromHandle(captured);
+                if (cap != null)
+                {
+                    view = captured;
+                    w = cap;
                 }
             }
 
@@ -1284,8 +1620,22 @@ namespace MS.Internal.Interop
                 button = (int)SendNInt(evt, Sel("buttonNumber"));
             }
 
+            // WF_TRACE_INPUT=1: one line per button event (moves are far too noisy), showing which
+            // window AppKit delivered it to, who holds capture, and where it was finally routed. This
+            // is what tells apart "the event never arrived", "it went to the wrong window" and "capture
+            // is stuck", which look identical from the outside -- the app simply stops responding.
+            if (s_traceInput && type != NSMouseMoved && type != NSLeftMouseDragged &&
+                type != NSRightMouseDragged && type != NSOtherMouseDragged)
+            {
+                Console.Error.WriteLine(
+                    $"[input] type={type} evtWin=0x{Send(window, Sel("contentView")):x} " +
+                    $"capture=0x{MouseCaptureHandle:x} -> target=0x{view:x} at ({x},{y})");
+            }
+
             handler(new CocoaMouseMessage(view, (int)type, button, x, y, wheel, Environment.TickCount));
         }
+
+        private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
 
         // ---- keyboard input ---------------------------------------------------------
 
@@ -1613,6 +1963,7 @@ namespace MS.Internal.Interop
             public double y;
         }
 
+        private const ulong NSWindowStyleMaskFullSizeContentView = 1 << 15;
         private const ulong NSWindowStyleMaskTitled = 1 << 0;
         private const ulong NSWindowStyleMaskClosable = 1 << 1;
         private const ulong NSWindowStyleMaskMiniaturizable = 1 << 2;

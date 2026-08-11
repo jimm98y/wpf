@@ -69,6 +69,14 @@ namespace MS.Internal.Interop
             if (!borderless) BrowserAccessibility.Attach(Handle);
         }
 
+        /// <summary>Show/hide the canvas (WPF's ShowWindow SW_HIDE/SW_SHOW), keeping it and this
+        /// handle alive so the same window can be shown again.</summary>
+        public void SetVisible(bool visible)
+        {
+            if (Handle == IntPtr.Zero) return;
+            Js.SetWindowVisible((int)Handle, visible);
+        }
+
         public void Destroy()
         {
             if (Handle == IntPtr.Zero)
@@ -437,6 +445,9 @@ namespace MS.Internal.Interop
 
             [JSImport("createWindow", Module)]
             internal static partial void CreateWindow(int handle, string title, int x, int y, int width, int height, bool borderless);
+
+            [JSImport("setWindowVisible", Module)]
+            internal static partial void SetWindowVisible(int handle, bool visible);
 
             [JSImport("destroyWindow", Module)]
             internal static partial void DestroyWindow(int handle);

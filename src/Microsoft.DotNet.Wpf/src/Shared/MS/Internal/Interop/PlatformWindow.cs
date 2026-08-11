@@ -38,6 +38,18 @@ namespace MS.Internal.Interop
         void GetWindowPixelSize(out int width, out int height);
         void GetClientScreenOriginPixels(out int sx, out int sy);
         double GetBackingScale();
+
+        /// <summary>Show or hide the window, for WPF's ShowWindow(SW_HIDE / SW_SHOW*) — i.e.
+        /// Window.Hide(), Visibility=Collapsed, and the second Show() that follows.</summary>
+        /// <remarks>
+        /// Destroy() used to be the only way off the screen, so Hide() was silently a no-op on every
+        /// non-Windows head: a window, once up, could not be taken down and put back. Anything that
+        /// reuses a cached overlay window therefore accumulated them on screen. WPF's docking
+        /// adorners are the clearest case — one hidden overlay per drag target, shown and hidden
+        /// again on every drag — and they piled up as stale windows nothing would ever close.
+        /// </remarks>
+        void SetVisible(bool visible);
+
         void Destroy();
 
         /// <summary>Raised (on the UI/pump thread) when the window's backing scale factor changes,

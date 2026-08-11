@@ -41,6 +41,16 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     installListeners();
 }
 
+// Show/hide without tearing the canvas down (WPF's Window.Hide(), not Close()), so the same
+// window can be shown again -- what a caller reusing a cached window, such as a docking adorner
+// hidden between drags, expects. display:none rather than visibility:hidden: a hidden window must
+// not keep taking pointer events from what is behind it.
+export function setWindowVisible(handle, visible) {
+    const w = windows.get(handle);
+    if (!w) return;
+    w.canvas.style.display = visible ? "block" : "none";
+}
+
 export function destroyWindow(handle) {
     const w = windows.get(handle);
     if (!w) return;

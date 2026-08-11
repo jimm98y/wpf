@@ -56,6 +56,10 @@ namespace MS.Internal.Interop
         /// <summary>Move/resize a view created by <see cref="CreateView"/> (top-left device pixels).</summary>
         void SetViewFrame(IntPtr handle, int x, int y, int width, int height);
 
+        /// <summary>Show or hide a view created by <see cref="CreateView"/>, keeping it in the
+        /// hierarchy so it can be shown again (WPF's Window.Hide(), not Close()).</summary>
+        void SetViewVisible(IntPtr handle, bool visible);
+
         /// <summary>Remove a view created by <see cref="CreateView"/> from the activity.</summary>
         void DestroyView(IntPtr handle);
 
@@ -179,6 +183,18 @@ namespace MS.Internal.Interop
             }
 
             RaiseResized();
+        }
+
+        /// <summary>Show/hide the view (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>
+        /// <remarks>
+        /// The view stays in the activity's hierarchy, keeping its Surface and this window's handle
+        /// valid, so a caller that hides and re-shows a cached window (a docking adorner between
+        /// drags) gets the same window back rather than a destroyed one.
+        /// </remarks>
+        public void SetVisible(bool visible)
+        {
+            if (_handle == IntPtr.Zero) return;
+            Host?.SetViewVisible(_handle, visible);
         }
 
         public void Destroy()

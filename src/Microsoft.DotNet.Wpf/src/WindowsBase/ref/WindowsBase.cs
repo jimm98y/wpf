@@ -19,6 +19,7 @@ namespace MS.Internal.Interop
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void SetVisible(bool visible) { }
         public void Destroy() { }
         public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -80,6 +81,7 @@ namespace MS.Internal.Interop
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void SetVisible(bool visible) { }
         public void Destroy() { }
         public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -143,11 +145,14 @@ namespace MS.Internal.Interop
         public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaKeyMessage> KeyInput { add { } remove { } }
         public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaMouseMessage> MouseInput { add { } remove { } }
         public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public static event System.Action SystemAppearanceChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless) { }
+        public void SetVisible(bool visible) { }
         public void Destroy() { }
         public void DisableMicaBackdrop() { }
         public void EnableMicaBackdrop() { }
@@ -275,6 +280,7 @@ namespace MS.Internal.Interop
         void HideSoftKeyboard(System.IntPtr handle);
         void SetImeCursorRect(System.IntPtr handle, int x, int y, int width, int height);
         void ShowSoftKeyboard(System.IntPtr handle, bool multiline, bool password);
+        void SetViewVisible(System.IntPtr handle, bool visible);
         void DestroyView(System.IntPtr handle);
         void GetScreenPixels(out int width, out int height);
         void RequestWake();
@@ -288,6 +294,7 @@ namespace MS.Internal.Interop
     {
         bool IsBorderless { get; }
         event System.Action<double> ScaleChanged;
+        void SetVisible(bool visible);
         void Destroy();
         double GetBackingScale();
         void GetClientScreenOriginPixels(out int sx, out int sy);
@@ -351,6 +358,7 @@ namespace MS.Internal.Interop
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void SetVisible(bool visible) { }
         public void Destroy() { }
         public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -407,6 +415,7 @@ namespace MS.Internal.Interop.Wayland
         public static void AfterDispatch() { }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
+        public void SetVisible(bool visible) { }
         public void Destroy() { }
         public static void EnsureApplication() { }
         public static MS.Internal.Interop.Wayland.WaylandWindow FromHandle(System.IntPtr handle) { throw null; }

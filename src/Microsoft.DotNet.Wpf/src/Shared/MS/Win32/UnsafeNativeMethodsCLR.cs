@@ -86,6 +86,8 @@ namespace MS.Win32
 
             const int SWP_NOSIZE = 0x0001;
             const int SWP_NOMOVE = 0x0002;
+            const int SWP_SHOWWINDOW = 0x0040;
+            const int SWP_HIDEWINDOW = 0x0080;
             MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
             if (cocoa != null)
             {
@@ -103,6 +105,21 @@ namespace MS.Win32
                 if ((flags & SWP_NOMOVE) == 0 && cocoa.IsBorderless)
                 {
                     cocoa.SetFrameOrigin(x, y);
+                }
+
+                // SetWindowPos is ALSO how WPF shows and hides a window, not just how it moves one, and
+                // ignoring these two flags left those windows stuck in whatever state they were last in.
+                // Window.ShowHelper routes a TOPMOST window's show through SWP_SHOWWINDOW rather than
+                // ShowWindow(SW_SHOW) -- and every docking adorner is topmost -- so once such a window
+                // had been hidden it could never come back. SWP_HIDEWINDOW is the matching path, used
+                // when ShowInTaskbar changes.
+                if ((flags & SWP_HIDEWINDOW) != 0)
+                {
+                    cocoa.SetVisible(false);
+                }
+                else if ((flags & SWP_SHOWWINDOW) != 0)
+                {
+                    cocoa.SetVisible(true);
                 }
             }
             return true;
@@ -147,9 +164,16 @@ namespace MS.Win32
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "ShowWindow")]
         private static extern bool ShowWindowNative(HandleRef hWnd, int nCmdShow);
 
-        // The Cocoa window is already ordered-front when created, so showing is a no-op there. The
-        // STATE changes are not: Window.WindowState = Minimized/Maximized routes through here, and
-        // returning true without doing anything is why it silently did nothing off-Windows.
+        // The window is already ordered-front when created, so the FIRST show is a no-op off-Windows.
+        // Everything else routed through here is not:
+        //   * the STATE changes -- Window.WindowState = Minimized/Maximized -- which returning true
+        //     without doing anything is why they silently did nothing off-Windows;
+        //   * and SW_HIDE, plus the show that follows it. Window.Hide(), Visibility=Collapsed and
+        //     Popup teardown all arrive as SW_HIDE, and with no platform call behind it a window
+        //     could only ever be destroyed, never taken off the screen and put back. Anything that
+        //     reuses a hidden window then leaked one per use: the docking adorners are shown and
+        //     hidden on every drag, so a few drags left a stack of dead overlay windows on screen
+        //     that nothing would ever close.
         public static bool ShowWindow(HandleRef hWnd, int nCmdShow)
         {
             if (OperatingSystem.IsWindows())
@@ -161,6 +185,18 @@ namespace MS.Win32
             {
                 MS.Internal.Interop.Wayland.WaylandWindow.SetWindowState(hWnd.Handle, nCmdShow);
             }
+
+            // SW_HIDE is the only value that hides; every other SW_* shows (the minimize/maximize
+            // ones are state changes on a window that stays on screen, already handled above).
+            if (nCmdShow == NativeMethods.SW_HIDE ||
+                nCmdShow == NativeMethods.SW_SHOW || nCmdShow == NativeMethods.SW_SHOWNA ||
+                nCmdShow == NativeMethods.SW_NORMAL || nCmdShow == NativeMethods.SW_SHOWNOACTIVATE ||
+                nCmdShow == NativeMethods.SW_RESTORE)
+            {
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)
+                    ?.SetVisible(nCmdShow != NativeMethods.SW_HIDE);
+            }
+
             return true;
         }
 

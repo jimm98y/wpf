@@ -54,7 +54,22 @@ namespace System.Windows.Interop
         {
             if (!OperatingSystem.IsWindows())
             {
-                // Off-Windows the teardown below is all Win32 mouse-tracking/capture/deactivation
+                // Give up the mouse capture FIRST if this window still holds it. WPF clears its own
+                // capture only when a provider emits a CancelCapture report, and nothing else will now:
+                // the window is being destroyed, so no ReleaseMouseCapture is coming. Skipping it left
+                // Mouse.Captured pointing at an element inside a window that no longer exists, and WPF
+                // then routed every later click to that dead element -- the whole app stopped responding
+                // while continuing to render, and no menu would open (opening one needs capture, which
+                // something else still held). Docking a floating tool window destroys the window
+                // mid-drag, which is exactly this case. On Windows the OS does it for us: DestroyWindow
+                // releases capture and posts WM_CAPTURECHANGED.
+                if (_haveCapture)
+                {
+                    try { ((IMouseInputProvider)this).ReleaseMouseCapture(); }
+                    catch { /* teardown must not throw */ }
+                }
+
+                // The rest of the teardown below is all Win32 mouse-tracking/capture/deactivation
                 // (TrackMouseEvent, GetCapture, WindowFromPoint, ...) that has no analog here; just
                 // unsubscribe from Cocoa input and drop the input site.
                 if (OperatingSystem.IsBrowser())
@@ -213,6 +228,8 @@ namespace System.Windows.Interop
             {
                 _haveCapture = true;
                 if (_source != null) MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = _source.Handle;
+                if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
+                    Console.Error.WriteLine($"[input] ACQUIRE capture -> 0x{(_source?.Handle ?? IntPtr.Zero):x}");
                 return true;
             }
 
@@ -322,6 +339,8 @@ namespace System.Windows.Interop
                     try { _site.ReportInput(report); } catch { }
                 }
                 MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
+                if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
+                    Console.Error.WriteLine("[input] RELEASE capture");
                 return;
             }
 
@@ -1470,7 +1489,49 @@ namespace System.Windows.Interop
 
         private void OnCocoaMouseInput(MS.Internal.Interop.CocoaWindow.CocoaMouseMessage msg)
         {
+            // WF_TRACE_INPUT: the state INSIDE WPF when a button event arrives. Everything below this
+            // point (delivery, routing, OS capture) can be verified from the platform layer, but
+            // "input arrives and nothing happens" is decided here: by Mouse.Captured (a stale capture
+            // swallows every click) and Mouse.DirectlyOver (null means hit-testing found nothing).
+            if (msg.NSType is 1 or 2 or 3 or 4 &&
+                Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
+            {
+                MouseDevice mouse = _site?.CriticalInputManager?.PrimaryMouseDevice;
+                Console.Error.WriteLine(
+                    $"[wpf] type={msg.NSType} view=0x{msg.View:x} mine={(msg.View == (_source?.Handle ?? IntPtr.Zero))} " +
+                    $"srcDisposed={_source?.IsDisposed} captured={mouse?.Captured?.GetType().Name ?? "<null>"} " +
+                    $"over={mouse?.DirectlyOver?.GetType().Name ?? "<null>"} " +
+                    $"activeSrc={(mouse?.CriticalActiveSource == null ? "<null>" : (ReferenceEquals(mouse.CriticalActiveSource, _source) ? "this" : "other"))}");
+            }
+
             if (_source == null || _site == null || _source.IsDisposed) return;
+
+            // Self-heal an ORPHANED capture: WPF still believes an element holds the mouse, but the
+            // window that element lived in has been destroyed.
+            //
+            // WPF clears capture only when it processes a CancelCapture report, and it only processes
+            // one whose source is live and current -- so the dying window's own provider cannot do it
+            // during teardown, however early it tries: by then its source is disposed and the report is
+            // dropped. Nothing else ever emits one, so capture stayed pointing at the dead element for
+            // the rest of the process. Every subsequent click was routed to it and swallowed, and no
+            // menu could open (opening one takes capture, which something else still held) -- the app
+            // looked frozen while rendering perfectly. Closing a floating tool window at the end of a
+            // docking drag is exactly this case.
+            //
+            // This provider IS live, so the report is accepted here. Win32 needs none of it: the OS
+            // releases capture when the capturing window is destroyed and posts WM_CAPTURECHANGED.
+            MouseDevice device = _site?.CriticalInputManager?.PrimaryMouseDevice;
+            if (device?.Captured is DependencyObject capturedElement)
+            {
+                PresentationSource capturedSource = PresentationSource.CriticalFromVisual(capturedElement);
+                if (capturedSource == null || capturedSource.IsDisposed)
+                {
+                    _site.ReportInput(new RawMouseInputReport(
+                        InputMode.Foreground, Environment.TickCount, _source,
+                        RawMouseActions.CancelCapture, 0, 0, 0, IntPtr.Zero));
+                }
+            }
+
             if (msg.View != _source.Handle) return;   // route to the provider that owns this NSView
 
             const int NSLeftDown = 1, NSLeftUp = 2, NSRightDown = 3, NSRightUp = 4, NSMouseMoved = 5,

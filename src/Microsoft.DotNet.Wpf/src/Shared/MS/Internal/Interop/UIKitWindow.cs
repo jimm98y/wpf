@@ -117,6 +117,20 @@ namespace MS.Internal.Interop
             s_zOrder.Add(this);
         }
 
+        /// <summary>Show/hide the view (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>
+        /// <remarks>
+        /// setHidden: rather than removeFromSuperview: the view keeps its place in the hierarchy and
+        /// its Metal layer, so the same window can be shown again without being rebuilt — which is
+        /// what a caller that hides and re-shows a cached window (a docking adorner between drags)
+        /// needs. A hidden UIView also stops receiving touches, so a hidden window cannot swallow
+        /// input, matching the platform behaviour on the other heads.
+        /// </remarks>
+        public void SetVisible(bool visible)
+        {
+            if (_view == IntPtr.Zero) return;
+            SendVoidBool(_view, Sel("setHidden:"), !visible);
+        }
+
         public void Destroy()
         {
             if (_view == IntPtr.Zero)

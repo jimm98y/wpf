@@ -63,7 +63,30 @@ namespace MS.Win32
                     // dropdowns, menus, tooltips); everything else is a normal titled top-level window.
                     const int WS_CHILD = 0x40000000;
                     const uint WS_POPUP = 0x80000000;
-                    bool borderless = (style & WS_CHILD) != 0 || ((uint)style & WS_POPUP) != 0;
+                    // WS_EX_LAYERED counts as borderless too, and is a different kind of window: a real
+                    // top-level WPF Window that set AllowsTransparency. WPF asks for per-pixel alpha
+                    // through the EXTENDED style, so reading only `style` classified these as ordinary
+                    // titled windows and they came up opaque, with a title bar. Every drag adorner is
+                    // built this way, so a docking drag showed blank grey boxes instead of adorners:
+                    // only a borderless window gets the clear-background, no-shadow, non-activating
+                    // treatment the popups already rely on, which is exactly what an adorner wants.
+                    const int WS_EX_LAYERED = 0x00080000;
+                    bool borderless = (style & WS_CHILD) != 0 || ((uint)style & WS_POPUP) != 0
+                                   || (exStyle & WS_EX_LAYERED) != 0;
+
+                    // CHROMELESS is the other half of "no native title bar", and deliberately NOT the
+                    // same thing as borderless. Window.CreateWindowStyle clears WS_CAPTION for exactly
+                    // one WPF setting -- WindowStyle=None -- meaning "no title bar, I draw my own
+                    // chrome". A floating tool window is the everyday case, and it came up with a
+                    // macOS title bar stacked above the caption it had drawn itself.
+                    //
+                    // It must not simply be folded into `borderless`, because these two want opposite
+                    // things from AppKit. A borderless NSWindow answers NO to canBecomeKeyWindow, which
+                    // is right for a menu or an adorner (they must never steal focus) and fatal for a
+                    // real window: it could never take keyboard input, and would look frozen. So this
+                    // is passed separately, and the backend keeps the window titled-but-chromeless.
+                    const int WS_CAPTION = 0x00C00000;
+                    bool chromeless = !borderless && (style & WS_CAPTION) == 0;
 
                     int cw = width > 0 ? width : (borderless ? 1 : 1024);
                     int ch = height > 0 ? height : (borderless ? 1 : 768);
@@ -72,8 +95,16 @@ namespace MS.Win32
                     // the primary monitor. Preserve it verbatim -- do NOT treat x<=0 as "unspecified", or
                     // the popup gets yanked to the default (100) on the primary monitor. Only top-level
                     // windows (created at CW_USEDEFAULT-ish coordinates) get the default substitution.
-                    int cx = borderless ? x : (x > 0 ? x : 100);
-                    int cy = borderless ? y : (y > 0 ? y : 100);
+                    //
+                    // CW_USEDEFAULT itself is the exception, and must never be forwarded as if it were a
+                    // position: it is int.MinValue, and AppKit rejects a frame built from it outright --
+                    // "Invalid parameter not satisfying: CGRectContainsRect(...)", raised as an
+                    // Objective-C exception that unwinds through managed frames and terminates the
+                    // process. A WPF Window that never set Left/Top (every docking adorner) is created
+                    // exactly this way, so starting a drag killed the app.
+                    const int CW_USEDEFAULT = unchecked((int)0x80000000);
+                    int cx = borderless && x != CW_USEDEFAULT ? x : (x > 0 ? x : 100);
+                    int cy = borderless && y != CW_USEDEFAULT ? y : (y > 0 ? y : 100);
                     if (OperatingSystem.IsBrowser())
                     {
                         // Browser: the window is a canvas element (see BrowserWindow). Popups are
@@ -134,13 +165,17 @@ namespace MS.Win32
                         var cocoa = new MS.Internal.Interop.CocoaWindow();
                         // Pass the owner handle so a popup inherits its owner's display/backing scale
                         // (and therefore opens on the same monitor as the window it belongs to).
-                        cocoa.Create(name, cx, cy, cw, ch, borderless, parent);
+                        cocoa.Create(name, cx, cy, cw, ch, borderless, parent, chromeless);
                         // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
                         // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
                         cocoa.Resized += OnCocoaResized;
                         // Route a title-bar close-button click to a WM_CLOSE (which fires Closing/Closed
                         // and tears the window down, exactly as the Win32 close path does).
                         cocoa.Closed += OnCocoaClosed;
+                        // Key-window changes become WM_ACTIVATE, without which WPF never learns the
+                        // window is active: Window.IsActive stays false forever and every visual keyed
+                        // off focus (a docking tab's selection border, for one) never lights up.
+                        cocoa.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = cocoa;
                         _handle = cocoa.ContentView;
                     }
@@ -296,6 +331,19 @@ namespace MS.Win32
                 if (_handle != IntPtr.Zero)
                 {
                     lock (s_byHandleLock) { s_byHandle.Remove(_handle); }
+
+                    // A window that still holds the mouse capture is being destroyed. MouseCaptureHandle
+                    // is this stack's stand-in for Win32 GetCapture(), and it is cleared only on an
+                    // orderly release -- so a capturing window that is CLOSED instead left it pointing at
+                    // a dead window forever. GetCapture() then reported capture that nothing could
+                    // release, and WPF routed all subsequent mouse input to a window that no longer
+                    // existed: every click went nowhere, app-wide. Closing a floating tool window at the
+                    // end of a drag (docking it) does exactly this, which is why re-docking killed input.
+                    // Win32 has no equivalent bug: DestroyWindow releases capture itself.
+                    if (MS.Internal.Interop.PlatformWindow.MouseCaptureHandle == _handle)
+                    {
+                        MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
+                    }
                 }
                 _platformWindow?.Destroy();
                 _platformWindow = null;
@@ -394,6 +442,29 @@ namespace MS.Win32
 
         // The user clicked the title-bar close button: dispatch WM_CLOSE through the same path a
         // SendMessage would (including the DefWindowProc-style destroy when no hook cancels it).
+        /// <summary>A Cocoa key-window change becomes the WM_ACTIVATE + WM_SETFOCUS / WM_KILLFOCUS
+        /// sequence Win32 delivers, dispatched through the same hook chain as every other message.</summary>
+        /// <remarks>
+        /// Both messages are needed, and they answer different questions. WM_ACTIVATE is what
+        /// Window.IsActive tracks; WM_SETFOCUS is what makes HwndSource restore keyboard focus into
+        /// the element tree, which is what IsKeyboardFocusWithin — and therefore a focus-styled
+        /// border — actually keys off.
+        /// </remarks>
+        private void OnCocoaActiveChanged(bool active)
+        {
+            if (_handle == IntPtr.Zero) return;
+            const int WM_ACTIVATE = 0x0006, WM_SETFOCUS = 0x0007, WM_KILLFOCUS = 0x0008;
+            const int WA_INACTIVE = 0, WA_ACTIVE = 1;
+            bool handled = false;
+            try
+            {
+                WndProc(_handle, WM_ACTIVATE, (IntPtr)(active ? WA_ACTIVE : WA_INACTIVE), IntPtr.Zero, ref handled);
+                handled = false;
+                WndProc(_handle, active ? WM_SETFOCUS : WM_KILLFOCUS, IntPtr.Zero, IntPtr.Zero, ref handled);
+            }
+            catch { }   // a callback exception must not break the Cocoa event pump that raised this
+        }
+
         private void OnCocoaClosed(IntPtr handle)
         {
             const int WM_CLOSE = 0x0010;
