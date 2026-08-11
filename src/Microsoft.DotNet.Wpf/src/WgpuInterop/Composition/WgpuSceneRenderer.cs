@@ -1283,12 +1283,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // composite scissors to the live target/clip. Containment only gates CREATING
                 // the stable entry (a partial first sighting must not bake cropped content
                 // under the permanent key); until then, transient frames use position keys.
-                long stableKey = LayerCacheKey(v, world, region, shiftReusable: true);
+                long stableKey = LayerCacheKey(v, world, region, shiftReusable: true, fullTarget: fullTarget);
                 long key = stableKey;
                 bool cacheHit = _layerCache.TryGetValue(key, out CachedLayer? cl);
                 if (!cacheHit && !shiftReusable)
                 {
-                    key = LayerCacheKey(v, world, region, shiftReusable: false);
+                    key = LayerCacheKey(v, world, region, shiftReusable: false, fullTarget: fullTarget);
                     cacheHit = _layerCache.TryGetValue(key, out cl);
                     // Flick throttle: during fast scrolls a layer first seen partially would
                     // re-bake a full-target texture (+ CPU mask) at EVERY new offset. Reuse
@@ -1630,7 +1630,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void HF(float f) => HV(BitConverter.SingleToInt32Bits(f));
         private void HR(Rect r) { HF(r.X); HF(r.Y); HF(r.Width); HF(r.Height); }
 
-        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region, bool shiftReusable = true)
+        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region, bool shiftReusable = true, bool fullTarget = false)
         {
             _hash = unchecked((long)1469598103934665603UL);
             // Key on region SIZE, not origin, and on translation RELATIVE to the region origin. A cached
@@ -1646,6 +1646,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // content is baked blank); mixing in the absolute position makes each scroll offset a distinct
             // key so it re-renders fresh at the current position until it is fully in view. See CollectVisual.
             if (!shiftReusable) { HV(0x5C0117); HV(region.X); HV(region.Y); HF(world.M31); HF(world.M32); }
+            // A layer that does NOT cover the whole target is re-composited at its REGION origin, so its
+            // cached texture encodes where the content sits WITHIN that region. Scrolling moves the region
+            // origin and the world translation together, so that relative offset -- and the texture -- stay
+            // valid, which is what makes the scroll-invariant key sound. A RenderTransform that translates
+            // the layer inside a STATIONARY region breaks the assumption: the offset changes but the key
+            // would not, so the stale texture is re-composited at the old position and the layer looks
+            // frozen. That is the Fluent ComboBox dropdown, whose DropShadowEffect makes it a cached layer:
+            // its entrance animation baked once and then stopped part-way open, flipping between the stale
+            // bake and fresh ones on hover. Hashing the relative offset keeps scrolling on the fast path and
+            // forces a re-render only when the layer genuinely moves within its region. Full-target layers
+            // are excluded: their region never moves, so hashing it would defeat shift-reuse, and they are
+            // already corrected at composite time via OrigTX/OrigTY.
+            else if (!fullTarget) { HF(world.M31 - region.X); HF(world.M32 - region.Y); }
             float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
             if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
