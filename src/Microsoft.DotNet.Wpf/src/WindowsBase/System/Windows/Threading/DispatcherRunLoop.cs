@@ -136,6 +136,14 @@ namespace System.Windows.Threading
         private const int EFD_CLOEXEC = 0x80000;   // O_CLOEXEC
         private const int EFD_NONBLOCK = 0x800;    // O_NONBLOCK
 
+        private const int RTLD_LAZY = 1;
+
+        [DllImport("libc")]
+        private static extern IntPtr dlopen([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int mode);
+
+        [DllImport("libc")]
+        private static extern IntPtr dlsym(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string symbol);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int eventfd(uint initval, int flags);
 
@@ -393,9 +401,16 @@ namespace System.Windows.Threading
         private IntPtr _cfRunLoop;
         private IntPtr _cfSource;
         private IntPtr _cfTimer;
+        private IntPtr _cfObserver;
         private GCHandle _cfSelf;
         private static CFRunLoopPerformCallBack s_performCallback;
         private static CFRunLoopTimerCallBack s_timerCallback;
+        private static CFRunLoopObserverCallBack s_observerCallback;
+
+        // The observer fires from inside whatever is running the run loop, which during ordinary
+        // pumping is nextEventMatchingMask -- itself called from the pump. Servicing the queue again
+        // from there would nest the pump inside itself, so re-entrant callbacks return immediately.
+        [ThreadStatic] private static bool t_inRunLoopCallback;
 
         private const double FarFutureSeconds = 1.0e9;
 
@@ -407,11 +422,21 @@ namespace System.Windows.Threading
                 return;
             }
 
-            // kCFRunLoopCommonModes is a CFStringRef constant whose CONTENTS are that same name, and
-            // CFRunLoop matches modes by string equality -- so a string built here is interchangeable
-            // with the exported symbol, and no dlsym dance is needed. CocoaWindow does the same for
-            // kCFRunLoopDefaultMode.
-            IntPtr commonModes = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopCommonModes", kCFStringEncodingUTF8);
+            // kCFRunLoopCommonModes has to be the EXPORTED CONSTANT, not a string with the same
+            // characters. CFRunLoopAddSource/AddTimer/AddObserver recognise the common-modes SET by
+            // POINTER IDENTITY against that constant; any other CFStringRef -- including one spelling
+            // "kCFRunLoopCommonModes" -- is taken as an ordinary mode of that literal name, a mode
+            // nothing ever runs, so everything registered with it silently never fires. (Ordinary
+            // modes such as kCFRunLoopDefaultMode ARE resolved by name, which is why CocoaWindow can
+            // build that one by hand; common modes is the special case.) Read the real symbol out of
+            // CoreFoundation and fall back to the by-name string only if that somehow fails.
+            bool ownsModes = false;
+            IntPtr commonModes = GetCFStringConstant("kCFRunLoopCommonModes");
+            if (commonModes == IntPtr.Zero)
+            {
+                commonModes = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopCommonModes", kCFStringEncodingUTF8);
+                ownsModes = true;
+            }
             if (commonModes == IntPtr.Zero)
             {
                 return;
@@ -446,11 +471,70 @@ namespace System.Windows.Threading
                 CFRunLoopAddTimer(_cfRunLoop, _cfTimer, commonModes);
             }
 
-            CFRelease(commonModes);
+            // The source only performs when Signal() signals it, and Signal() only runs when dispatcher
+            // work is posted. A live resize posts none: the gesture is noticed solely by CocoaWindow's
+            // size poll, which is the very thing that needed to run -- so nothing signals, nothing
+            // reconciles, no layout work appears to signal with, and the window stretches its old
+            // drawable for the whole drag. An OBSERVER breaks that cycle because the run loop drives it
+            // rather than a signal: in the common modes it fires as AppKit's event-tracking loop
+            // iterates, and stays quiet while the loop sleeps (idle is spent blocked in Wait, where no
+            // run loop is running at all).
+            s_observerCallback ??= ObserverCallback;
+            CFRunLoopObserverContext observerContext = default;
+            observerContext.info = info;
+            _cfObserver = CFRunLoopObserverCreate(IntPtr.Zero,
+                                                  kCFRunLoopBeforeTimers | kCFRunLoopBeforeWaiting,
+                                                  true,   // repeats
+                                                  0,
+                                                  Marshal.GetFunctionPointerForDelegate(s_observerCallback),
+                                                  ref observerContext);
+            if (_cfObserver != IntPtr.Zero)
+            {
+                CFRunLoopAddObserver(_cfRunLoop, _cfObserver, commonModes);
+            }
+
+            // Only release a string we created; the exported constant is not ours to release.
+            if (ownsModes)
+            {
+                CFRelease(commonModes);
+            }
         }
 
         private static void PerformCallback(IntPtr info) => PumpFromRunLoop(info);
         private static void TimerCallback(IntPtr timer, IntPtr info) => PumpFromRunLoop(info);
+
+        /// <summary>
+        /// Read an exported CFStringRef constant (e.g. kCFRunLoopCommonModes) out of CoreFoundation.
+        /// dlsym yields the ADDRESS OF the variable, so the CFStringRef is one dereference further in.
+        /// </summary>
+        private static IntPtr GetCFStringConstant(string name)
+        {
+            try
+            {
+                IntPtr handle = dlopen(CoreFoundation, RTLD_LAZY);
+                if (handle == IntPtr.Zero)
+                {
+                    return IntPtr.Zero;
+                }
+
+                IntPtr symbol = dlsym(handle, name);
+                return symbol == IntPtr.Zero ? IntPtr.Zero : Marshal.ReadIntPtr(symbol);
+            }
+            catch (DllNotFoundException) { return IntPtr.Zero; }
+            catch (EntryPointNotFoundException) { return IntPtr.Zero; }
+        }
+
+        private static void ObserverCallback(IntPtr observer, nint activity, IntPtr info)
+        {
+            if (t_inRunLoopCallback)
+            {
+                return;
+            }
+
+            t_inRunLoopCallback = true;
+            try { PumpFromRunLoop(info); }
+            finally { t_inRunLoopCallback = false; }
+        }
 
         private static void PumpFromRunLoop(IntPtr info)
         {
@@ -504,6 +588,22 @@ namespace System.Windows.Threading
         private delegate void CFRunLoopPerformCallBack(IntPtr info);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void CFRunLoopTimerCallBack(IntPtr timer, IntPtr info);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void CFRunLoopObserverCallBack(IntPtr observer, nint activity, IntPtr info);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CFRunLoopObserverContext
+        {
+            public nint version;
+            public IntPtr info;
+            public IntPtr retain;
+            public IntPtr release;
+            public IntPtr copyDescription;
+        }
+
+        // CFRunLoopActivity
+        private const nint kCFRunLoopBeforeTimers = 1 << 1;
+        private const nint kCFRunLoopBeforeWaiting = 1 << 5;
 
         private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
 
@@ -527,6 +627,12 @@ namespace System.Windows.Threading
         private static extern void CFRunLoopTimerSetNextFireDate(IntPtr timer, double fireDate);
         [DllImport(CoreFoundation)]
         private static extern void CFRunLoopTimerInvalidate(IntPtr timer);
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFRunLoopObserverCreate(IntPtr allocator, nint activities, [MarshalAs(UnmanagedType.I1)] bool repeats, nint order, IntPtr callout, ref CFRunLoopObserverContext context);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopAddObserver(IntPtr runLoop, IntPtr observer, IntPtr mode);
+        [DllImport(CoreFoundation)]
+        private static extern void CFRunLoopObserverInvalidate(IntPtr observer);
         [DllImport(CoreFoundation)]
         private static extern double CFAbsoluteTimeGetCurrent();
         [DllImport(CoreFoundation)]
@@ -629,9 +735,15 @@ namespace System.Windows.Threading
 
             // Same on macOS: invalidate first (which removes them from every mode they were added
             // to), then release, then drop the handle the callbacks resolve through.
-            IntPtr source = _cfSource, timer = _cfTimer;
+            IntPtr source = _cfSource, timer = _cfTimer, observer = _cfObserver;
             _cfSource = IntPtr.Zero;
             _cfTimer = IntPtr.Zero;
+            _cfObserver = IntPtr.Zero;
+            if (observer != IntPtr.Zero)
+            {
+                CFRunLoopObserverInvalidate(observer);
+                CFRelease(observer);
+            }
             if (timer != IntPtr.Zero)
             {
                 CFRunLoopTimerInvalidate(timer);
