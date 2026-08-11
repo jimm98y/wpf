@@ -122,6 +122,34 @@
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
   </ItemGroup>
 
+  <!--
+    Deploy the Mono System.Windows.Forms into an app that only hosts WinForms TRANSITIVELY, i.e. one
+    that references a UseWindowsForms library (a WindowsFormsHost-bearing control library, say) but
+    does not set UseWindowsForms itself, so the item group above never fired for it.
+
+    Everything else in that chain copies itself down a project reference normally — Mono.System.Drawing,
+    WindowsFormsIntegration, Accessibility all arrive. System.Windows.Forms alone does not: it is
+    public-signed with the ECMA key so its identity is byte-for-byte the framework's, and conflict
+    resolution in the consuming project therefore treats it as a framework assembly that lost to an
+    ambient v10.0.0.0 and drops it. (In the library itself it is a PRIMARY reference and wins, which
+    is why the library's own output is complete and only the app's is missing it — the app then dies
+    with a FileNotFoundException the first time it shows the hosted control, and nothing at build
+    time says a word.)
+
+    Guarded on the sibling actually being present, so this copies only into apps that really do carry
+    the WinForms chain, and never into a pure-WPF app.
+  -->
+  <Target Name="_WpfWebGpuDeployTransitiveWinForms"
+          AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != ''">
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)Mono.System.Drawing.dll') and !Exists('$(OutDir)System.Windows.Forms.dll')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll') and !Exists('$(PublishDir)System.Windows.Forms.dll')" />
+  </Target>
+
   <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider; evict the framework
        System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433. -->
   <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"

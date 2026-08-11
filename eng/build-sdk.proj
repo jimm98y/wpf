@@ -112,6 +112,12 @@
     <_Proj Include="$(_Src)WgpuInterop/Browser/WgpuInterop.Browser.csproj" Condition="'$(SkipBrowser)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/System.Windows.Forms.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/System.Drawing.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- ElementHost / WindowsFormsHost. This is the WebGPU flavour, built against the two projects
+         above; the Arcade build produces a same-named assembly from the Windows-only original, and
+         that one references the real System.Windows.Forms v10.0.0.0 so it cannot bind to the Mono
+         WinForms it would ship beside. The SDK packs THIS output (Exists()-guarded), so leaving the
+         project unbuilt shipped a package with no WindowsFormsHost in it and no error anywhere. -->
+    <_Proj Include="$(_Src)WinFormsInterop/integration/WindowsFormsIntegration.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
 
     <!-- Packed last, from everything above. -->
     <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj" />

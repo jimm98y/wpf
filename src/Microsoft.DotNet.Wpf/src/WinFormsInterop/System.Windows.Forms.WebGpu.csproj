@@ -20,7 +20,25 @@
     <DefineConstants>MONO;SECURITY_DEP;NET_4_5</DefineConstants>
     <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0114;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661</NoWarn>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <SignAssembly>false</SignAssembly>
+    <!--
+      Public-signed with the ECMA key, which is what makes this assembly's identity
+      "System.Windows.Forms, Version=4.0.0.0, PublicKeyToken=b77a5c561934e089" — byte for byte the
+      identity every WinForms library on nuget.org was compiled against (.NET Core 3.x kept WinForms
+      at 4.0.0.0, and .NET signs it with the ECMA key). Unsigned, the simple name matched but the key
+      did not, and the compiler refuses to unify across a differing public key: referencing e.g.
+      Microsoft.Web.WebView2.WinForms failed with CS0012 "the type 'Control' is defined in an
+      assembly that is not referenced", naming an assembly that was in fact sitting right there.
+      Version differences ARE tolerated (CS1701), so this one identity covers the whole ecosystem.
+
+      PublicSign, not real signing: the ECMA key is public and has no private half. Same pattern the
+      CrossPlatform test projects already use — see eng/snk/ECMA.snk.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
+    <!-- Mono.System.Drawing and the raster helper are not strong-named; a signed assembly may
+         reference them, the compiler just says so. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RunAnalyzers>false</RunAnalyzers>
     <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>

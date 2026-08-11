@@ -42,7 +42,8 @@ namespace System.Windows.Forms {
 		private Environment.SpecialFolder rootFolder = Environment.SpecialFolder.Desktop;
 		private string selectedPath = string.Empty;
 		private bool showNewFolderButton = true;
-		
+		private bool useDescriptionForTitle;
+
 		private Label descriptionLabel;
 		private Button cancelButton;
 		private Button okButton;
@@ -189,7 +190,24 @@ namespace System.Windows.Forms {
 				return descriptionLabel.Text;
 			}
 		}
-		
+
+		// .NET Core 3.0 added this to FolderBrowserDialog and every version since has it, so app code
+		// written against modern WinForms uses it freely; vendored Mono predates it, and its absence
+		// is a compile error rather than a merely degraded dialog. Applied in RunDialog, the one
+		// point at which both the description and the form are known to exist.
+		[Browsable(true)]
+		[DefaultValue(false)]
+		[Localizable(false)]
+		public bool UseDescriptionForTitle {
+			set {
+				useDescriptionForTitle = value;
+			}
+
+			get {
+				return useDescriptionForTitle;
+			}
+		}
+
 		[Browsable(true)]
 		[DefaultValue(Environment.SpecialFolder.Desktop)]
 		[Localizable(false)]
@@ -256,6 +274,16 @@ namespace System.Windows.Forms {
 		{
 			folderBrowserTreeView.RootFolder = RootFolder;
 			folderBrowserTreeView.SelectedPath = SelectedPath;
+
+			// UseDescriptionForTitle promotes the description into the title bar, which is what the
+			// modern (Vista-style) dialog does; the label is then redundant and would leave a blank
+			// band at the top of the tree, so it is collapsed rather than merely emptied.
+			if (useDescriptionForTitle) {
+				form.Text = descriptionLabel.Text;
+				descriptionLabel.Visible = false;
+			} else {
+				descriptionLabel.Visible = true;
+			}
 
 			form.Refresh ();
 			

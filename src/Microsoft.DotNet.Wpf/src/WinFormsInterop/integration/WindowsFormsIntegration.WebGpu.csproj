@@ -16,7 +16,13 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <NoWarn>$(NoWarn);CA1416;CS8002</NoWarn>
+    <!-- Public-signed with the same ECMA key as System.Windows.Forms next door, because that one is
+         strong-named now and a strong-named assembly can only grant InternalsVisibleTo to a named
+         public key (see host/InternalsVisibleTo.cs, which this satisfies). -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <AnalysisLevel>none</AnalysisLevel>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>

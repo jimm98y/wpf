@@ -108,6 +108,11 @@
          an option here, so Windows needs exactly the same assemblies as macOS and Linux. -->
     <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll')" />
     <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll')" />
+    <!-- NOT $(WpfBin)WindowsFormsIntegration: that is the ARCADE build of the Windows-only original,
+         which references the real System.Windows.Forms v10.0.0.0 and so cannot bind against the Mono
+         one shipped beside it here. The WebGPU flavour under integration/ is the one built against
+         our WinForms — see the Exists() guard below, which is what silently produced a package with
+         no ElementHost/WindowsFormsHost in it while that project had never been built. -->
     <None Include="$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll')" />
     <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 

@@ -64,6 +64,26 @@
     </Page>
   </ItemDefinitionGroup>
 
+  <!--
+    The implicit-using set a WPF project gets: the base one MINUS these two, exactly as the
+    WindowsDesktop SDK does it (Microsoft.NET.Sdk.WindowsDesktop.WPF.props). It has to: a global
+    using sits in the SAME scope as the file's own usings rather than being outranked by them, so
+    `global using System.IO` makes the name Path ambiguous with System.Windows.Shapes.Path and every
+    file that draws one fails with CS0104. System.Net.Http collides the same way.
+
+    We turn UseWPF off before the base SDK evaluates (Sdk.targets), so that SDK's own removal never
+    fires and a ported WPF app hit the collision here and nowhere else.
+
+    Deliberately in PROPS, not targets: a Remove only affects Includes that came before it, so from
+    targets this would also strip a `<Using Include="System.IO"/>` written in the project body,
+    leaving a project no way to opt back in. Here the body still wins, which is what a project that
+    uses this SDK purely for the WPF references, with no XAML of its own, needs.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and ('$(ImplicitUsings)' == 'true' or '$(ImplicitUsings)' == 'enable')">
+    <Using Remove="System.IO" />
+    <Using Remove="System.Net.Http" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(EnableDefaultItems)' != 'false'">
     <ApplicationDefinition Include="App.xaml"
                            Condition="'$(EnableDefaultApplicationDefinition)' != 'false' and Exists('$(MSBuildProjectDirectory)/App.xaml')" />

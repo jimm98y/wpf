@@ -1,0 +1,424 @@
+// System.Windows.Forms.Integration.WindowsFormsHost, for the cross-platform (WebGPU) stack. The
+// mirror of ElementHost next door: that embeds a WPF element tree in a WinForms app, this embeds a
+// WinForms control tree in a WPF app. Same namespace, same type name and the same core API as the
+// Windows-only original, so existing app code -- `<WindowsFormsHost x:Name="host"/>` plus
+// `host.Child = myWinFormsControl` -- compiles and runs unchanged.
+//
+// How it works, and why it is not a bitmap:
+//
+//   * The WinForms side is ORDINARY WinForms. The child lives in a real (never-shown) Form, so the
+//     Mono control tree does its own layout, painting, themes, focus, timers and double buffering
+//     exactly as in a standalone app. None of that is re-implemented here.
+//
+//   * Only presentation changes. The XplatUIWebGpu driver records each window as a SceneVisual --
+//     the SAME type WPF's own compositor emits -- so a hosted control's scene is registered with
+//     EmbeddedContent and composited by WpfCompositionSink as another child of the WPF root. One
+//     WebGPU render pass, one surface: no intermediate bitmap, no readback, no second swap chain,
+//     and no airspace, which is the defect that defined the Windows-only original.
+//
+// Why it is NOT an HwndHost. The original derives from HwndHost and hands WPF a child HWND. There
+// are no HWNDs here -- the driver's handles are managed Hwnd objects, and the whole point of the
+// port is not to require Win32 -- so this derives from FrameworkElement and bridges at the scene
+// level instead. <see cref="Handle"/> is therefore IntPtr.Zero; see the note on it.
+//
+// Coordinates: the driver works in 96dpi points, which are also WPF's DIPs, so the two agree on
+// sizes; EmbeddedItem wants a DEVICE-pixel rect plus the point->device scale, which is this
+// element's transform to the render root times the target's DPI.
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using Microsoft.Wpf.Interop.WebGpu.Composition;
+using SD = System.Drawing;
+using SWF = System.Windows.Forms;
+// Both halves of the stack define these names, and inside System.Windows.Forms.Integration the
+// WINFORMS ones win by proximity -- so the WPF input types have to be named explicitly or the
+// overrides below silently bind to nothing (CS0115).
+using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
+using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
+
+namespace System.Windows.Forms.Integration
+{
+    /// <summary>Hosts a Windows Forms <see cref="SWF.Control"/> inside a WPF element tree.</summary>
+    public class WindowsFormsHost : FrameworkElement, IDisposable
+    {
+        // The driver only records scenes in GPU-raster mode; without it every hosted window paints
+        // into a backing bitmap that nothing on this path ever reads, and the host renders empty.
+        // Both variables are read into `static readonly` fields when their declaring types
+        // initialize, so they have to be set before the first WinForms type is touched -- which is
+        // what this static constructor guarantees, since reaching any WinForms type through this
+        // class necessarily runs it first.
+        static WindowsFormsHost()
+        {
+            if (Environment.GetEnvironmentVariable("WF_WEBGPU") == null)
+                Environment.SetEnvironmentVariable("WF_WEBGPU", "1");
+            if (Environment.GetEnvironmentVariable("WF_GPU_RASTER") == null)
+                Environment.SetEnvironmentVariable("WF_GPU_RASTER", "1");
+        }
+
+        // Every live host, and the ONE render tick that serves them all. The message pump
+        // (Application.DoEvents) is process-wide and EmbeddedContent.Set replaces the whole hosted
+        // set, so a per-instance tick would both pump N times a frame and let each host erase the
+        // others' scenes -- two hosts in one window, and only the last one drawn would appear.
+        private static readonly List<WindowsFormsHost> s_hosts = new List<WindowsFormsHost>();
+        private static readonly object s_lock = new object();
+        private static bool s_ticking;
+        private static int s_lastPaintVersion = -1;
+
+        private readonly SWF.Form _container;      // the hosted surface; registered with the driver, never shown as an OS window
+        private XplatUIWebGpu _driver;
+        private SWF.Control _child;
+        private int _formOx, _formOy;              // the container's origin in the driver's screen space, refreshed each frame
+        private bool _leftDown;
+        private bool _disposed;
+        private double _lastDevX = double.NaN, _lastDevY, _lastDevW, _lastDevH;
+
+        public WindowsFormsHost()
+        {
+            // Borderless and never shown: the driver registers the window tree and paints it, but
+            // with no per-OS host attached to this form it never reaches a screen of its own. Its
+            // pixels only exist as the scene this element composites.
+            _container = new SWF.Form
+            {
+                FormBorderStyle = SWF.FormBorderStyle.None,
+                ShowInTaskbar = false,
+                StartPosition = SWF.FormStartPosition.Manual,
+                MinimumSize = SD.Size.Empty,
+            };
+
+            Focusable = true;                      // or typed text can never reach the hosted controls
+            Loaded += (s, e) => Attach();
+            Unloaded += (s, e) => Detach();
+        }
+
+        // ---- public surface ---------------------------------------------------------------------
+
+        /// <summary>The hosted Windows Forms control. Assigning replaces the hosted tree.</summary>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public SWF.Control Child
+        {
+            get => _child;
+            set
+            {
+                if (ReferenceEquals(_child, value)) return;
+                SWF.Control old = _child;
+                if (old != null) _container.Controls.Remove(old);
+                _child = value;
+                if (value != null)
+                {
+                    // Fill: the original sizes the child to the host's arranged rect, and docking is
+                    // how WinForms expresses exactly that.
+                    value.Dock = SWF.DockStyle.Fill;
+                    _container.Controls.Add(value);
+                    value.Invalidate(true);
+                }
+                InvalidateMeasure();
+                OnChildChanged(new ChildChangedEventArgs(old));
+            }
+        }
+
+        /// <summary>Raised after <see cref="Child"/> is replaced.</summary>
+        public event EventHandler<ChildChangedEventArgs> ChildChanged;
+
+        protected virtual void OnChildChanged(ChildChangedEventArgs e) => ChildChanged?.Invoke(this, e);
+
+        /// <summary>
+        /// Always <see cref="IntPtr.Zero"/>: this host has no OS window.
+        /// </summary>
+        /// <remarks>
+        /// The Windows-only original inherits this from HwndHost, where it is a real child HWND, and
+        /// app code uses it to reach the hosted content with Win32 calls (SetWindowPos to force a
+        /// resize, SetFocus, and so on). None of that applies here -- WPF layout sizes this element
+        /// and the scene follows it -- and there is no handle that would make those calls meaningful.
+        /// Zero rather than a driver handle precisely so that the usual `if (h == IntPtr.Zero)
+        /// return;` guard in such code takes the early exit instead of P/Invoking into a user32 that
+        /// does not exist on this platform.
+        /// </remarks>
+        public IntPtr Handle => IntPtr.Zero;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (!disposing) return;
+            Detach();
+            _child = null;
+            _container.Dispose();
+        }
+
+        // ---- layout ------------------------------------------------------------------------------
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            if (_child == null) return new Size(0, 0);
+
+            // The child's own preferred size, as the original does -- but never the infinity WPF
+            // hands out inside a StackPanel/ScrollViewer, which a WinForms control cannot express.
+            SD.Size pref;
+            try { pref = _child.GetPreferredSize(SD.Size.Empty); }
+            catch { pref = _child.Size; }
+
+            double w = double.IsInfinity(availableSize.Width) ? pref.Width : availableSize.Width;
+            double h = double.IsInfinity(availableSize.Height) ? pref.Height : availableSize.Height;
+            return new Size(Math.Max(0, w), Math.Max(0, h));
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            // Push WPF's arranged size into the hosted window. DIPs and the driver's points are both
+            // 96dpi, so this is a straight round -- the DPI scale enters only at composition time.
+            int w = Math.Max(1, (int)Math.Round(finalSize.Width));
+            int h = Math.Max(1, (int)Math.Round(finalSize.Height));
+            if (_container.ClientSize.Width != w || _container.ClientSize.Height != h)
+            {
+                _container.ClientSize = new SD.Size(w, h);
+                _container.PerformLayout();
+                _container.Invalidate(true);
+            }
+            return finalSize;
+        }
+
+        // The scene is injected by the compositor, not drawn here -- but WPF routes mouse input only
+        // to elements with hit-test geometry, so without this transparent fill every click would pass
+        // straight through and never reach the hosted controls.
+        protected override void OnRender(DrawingContext dc)
+            => dc.DrawRectangle(Brushes.Transparent, null, new Rect(RenderSize));
+
+        // ---- input: WPF over this element -> the WinForms driver --------------------------------
+        // A WPF point (DIPs, relative to this element = the container's client origin) becomes driver
+        // screen coordinates by adding the container's origin.
+
+        private (int X, int Y) ToDriver(Point p)
+            => (_formOx + (int)Math.Round(p.X), _formOy + (int)Math.Round(p.Y));
+
+        protected override void OnMouseMove(WpfMouseEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            _driver.InjectMouseMove(x, y, _leftDown);
+        }
+
+        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            Focus();
+            CaptureMouse();
+            var (x, y) = ToDriver(e.GetPosition(this));
+            _leftDown = true;
+            _driver.InjectMouseMove(x, y, false);
+            _driver.InjectMouseDown(x, y);
+            e.Handled = true;
+        }
+
+        protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            _leftDown = false;
+            _driver.InjectMouseUp(x, y);
+            ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        protected override void OnMouseWheel(MouseWheelEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            _driver.InjectWheel(x, y, e.Delta > 0 ? 120 : -120);
+            e.Handled = true;
+        }
+
+        protected override void OnTextInput(TextCompositionEventArgs e)
+        {
+            if (_driver == null) return;
+            foreach (char ch in e.Text) _driver.InjectChar(ch);
+            e.Handled = true;
+        }
+
+        protected override void OnKeyDown(WpfKeyEventArgs e)
+        {
+            if (_driver == null) return;
+            int vk = VirtualKey(e.Key);
+            if (vk == 0) return;
+            _driver.InjectKeyDown(vk);
+            e.Handled = true;
+        }
+
+        // WPF Key -> Win32 virtual-key, for the non-text keys WinForms editors act on. (Character
+        // input arrives through OnTextInput instead, already composed by the OS keyboard layout.)
+        private static int VirtualKey(Key k) => k switch
+        {
+            Key.Back => 0x08, Key.Tab => 0x09, Key.Enter => 0x0D, Key.Escape => 0x1B, Key.Delete => 0x2E,
+            Key.Left => 0x25, Key.Up => 0x26, Key.Right => 0x27, Key.Down => 0x28,
+            Key.Home => 0x24, Key.End => 0x23, Key.PageUp => 0x21, Key.PageDown => 0x22,
+            _ => 0,
+        };
+
+        // ---- the shared frame tick ---------------------------------------------------------------
+
+        private void Attach()
+        {
+            if (_disposed) return;
+            lock (s_lock)
+            {
+                if (s_hosts.Contains(this)) return;
+                s_hosts.Add(this);
+                if (!s_ticking)
+                {
+                    s_ticking = true;
+                    CompositionTarget.Rendering += OnRendering;
+                }
+            }
+
+            _driver = XplatUIWebGpu.GetInstance();
+            _container.CreateControl();
+            _container.Show();          // registers the window tree with the driver and paints it
+            foreach (SWF.Control c in Flatten(_container)) c.Invalidate(true);
+            SWF.Application.DoEvents();
+        }
+
+        private void Detach()
+        {
+            bool last;
+            lock (s_lock)
+            {
+                s_hosts.Remove(this);
+                last = s_hosts.Count == 0;
+                if (last && s_ticking)
+                {
+                    s_ticking = false;
+                    CompositionTarget.Rendering -= OnRendering;
+                }
+            }
+            // Nothing of ours is on screen any more; leaving the last scenes registered would freeze
+            // a ghost of the control tree over the window.
+            if (last)
+            {
+                EmbeddedContent.Set(null);
+                EmbeddedContent.SetCaret(0, 0, 0, 0, false);
+            }
+        }
+
+        private static void OnRendering(object sender, EventArgs e)
+        {
+            WindowsFormsHost[] hosts;
+            lock (s_lock) hosts = s_hosts.Count == 0 ? null : s_hosts.ToArray();
+            if (hosts == null) return;
+
+            // One pump for the whole process: this is what advances WinForms layout, paints,
+            // timers and the caret blink.
+            SWF.Application.DoEvents();
+
+            var items = new List<EmbeddedItem>();
+            WindowsFormsHost caretHost = null;
+            bool moved = false;
+            foreach (WindowsFormsHost h in hosts)
+            {
+                if (h.Collect(items)) moved = true;
+                // The driver has ONE caret, belonging to whatever has focus; mapping it through the
+                // wrong host's origin would place it in the wrong window. Keyboard focus is what
+                // identifies the right one -- with a single host, it is that host by elimination.
+                if (h.IsKeyboardFocusWithin || (hosts.Length == 1 && caretHost == null)) caretHost = h;
+            }
+            EmbeddedContent.Set(items);
+            caretHost?.PublishCaret();
+
+            // Present-on-change: a WPF frame is only worth forcing when the hosted pixels actually
+            // changed (a control repainted) or a host moved under them (a scroll or a splitter drag).
+            // Unconditional invalidation here would pin the whole app at full frame rate forever.
+            int version = hosts[0]._driver?.GetPaintVersion() ?? 0;
+            if (version != s_lastPaintVersion || moved)
+            {
+                s_lastPaintVersion = version;
+                foreach (WindowsFormsHost h in hosts) h.InvalidateVisual();
+            }
+        }
+
+        /// <summary>Add this host's window scenes, placed at its device rect. Returns true when that
+        /// rect changed since the previous frame.</summary>
+        private bool Collect(List<EmbeddedItem> into)
+        {
+            if (_driver == null || !IsVisible) return false;
+
+            PresentationSource src = PresentationSource.FromVisual(this);
+            if (src?.CompositionTarget == null || src.RootVisual == null) return false;
+
+            double dpi = src.CompositionTarget.TransformToDevice.M11;
+            Point origin;
+            try { origin = TransformToAncestor(src.RootVisual).Transform(new Point(0, 0)); }
+            catch { return false; }                 // transient, during layout or teardown
+
+            float hostDevX = (float)(origin.X * dpi), hostDevY = (float)(origin.Y * dpi);
+
+            long[] wins = _driver.GetPresentWindows(_container.Handle);
+            if (wins == null || wins.Length < 3) return false;
+            int ox = (int)wins[1], oy = (int)wins[2];
+            _formOx = ox; _formOy = oy;             // input mapping uses the same origin
+
+            for (int i = 0; i + 2 < wins.Length; i += 3)
+            {
+                IntPtr h = (IntPtr)wins[i];
+                object scene = _driver.GetWindowScene(h);
+                if (scene == null) continue;
+                long packed = _driver.GetWindowSizePacked(h);
+                int w = (int)(packed >> 32), ht = (int)(packed & 0xFFFFFFFF);
+                into.Add(new EmbeddedItem
+                {
+                    Scene = scene,
+                    DeviceX = hostDevX + ((int)wins[i + 1] - ox) * (float)dpi,
+                    DeviceY = hostDevY + ((int)wins[i + 2] - oy) * (float)dpi,
+                    DeviceW = w * (float)dpi,
+                    DeviceH = ht * (float)dpi,
+                    Scale = (float)dpi,
+                });
+            }
+
+            bool moved = _lastDevX != hostDevX || _lastDevY != hostDevY
+                      || _lastDevW != RenderSize.Width || _lastDevH != RenderSize.Height;
+            _lastDevX = hostDevX; _lastDevY = hostDevY;
+            _lastDevW = RenderSize.Width; _lastDevH = RenderSize.Height;
+            return moved;
+        }
+
+        /// <summary>Place the driver's text caret in device pixels, on top of the hosted scenes. The
+        /// recorded scenes do not contain it: WinForms drives it out of band through
+        /// CreateCaret/SetCaretPos, and its blink is advanced by the pump above.</summary>
+        private void PublishCaret()
+        {
+            if (_driver == null) { EmbeddedContent.SetCaret(0, 0, 0, 0, false); return; }
+
+            PresentationSource src = PresentationSource.FromVisual(this);
+            if (src?.CompositionTarget == null || src.RootVisual == null) return;
+            double dpi = src.CompositionTarget.TransformToDevice.M11;
+            Point origin;
+            try { origin = TransformToAncestor(src.RootVisual).Transform(new Point(0, 0)); }
+            catch { return; }
+
+            if (_driver.GetCaret(out int cx, out int cy, out int cw, out int ch))
+            {
+                EmbeddedContent.SetCaret(
+                    (float)(origin.X * dpi) + (cx - _formOx) * (float)dpi,
+                    (float)(origin.Y * dpi) + (cy - _formOy) * (float)dpi,
+                    Math.Max(1, cw) * (float)dpi, ch * (float)dpi, true);
+            }
+            else EmbeddedContent.SetCaret(0, 0, 0, 0, false);
+        }
+
+        private static IEnumerable<SWF.Control> Flatten(SWF.Control c)
+        {
+            yield return c;
+            foreach (SWF.Control child in c.Controls)
+                foreach (SWF.Control g in Flatten(child)) yield return g;
+        }
+    }
+}
