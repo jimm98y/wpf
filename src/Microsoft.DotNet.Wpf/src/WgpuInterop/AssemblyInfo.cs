@@ -29,6 +29,10 @@ using System.Runtime.CompilerServices;
 // GPU-rasterization proof: draws WinForms-style controls (bevels + text) as WgpuSceneRenderer
 // primitives (no libgdiplus), de-risking the System.Drawing-backend swap.
 [assembly: InternalsVisibleTo("WinFormsGpuRaster")]
+// The reverse embedding of the gallery's WindowsFormsHost: a WPF element tree hosted inside a
+// WinForms app (ElementHost). It wraps the scene HostedWpfContent publishes in a scale/clip visual
+// before handing it to the WinForms present path, so it needs the scene-graph types.
+[assembly: InternalsVisibleTo("WpfInWinForms")]
 // Our vendored System.Drawing's GPU-raster backend (SceneRecorder) records Graphics verbs into the
 // scene graph, so it needs the internal Scene/renderer types.
 [assembly: InternalsVisibleTo("Mono.System.Drawing")]

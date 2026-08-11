@@ -70,10 +70,16 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         _renderer = new WgpuSceneRenderer(ctx, LoadFont(), new SimpleTextShaper());
     }
 
+    // The face the presenter rasterizes control text with. It MUST stay in step with the one
+    // System.Drawing's GPU-raster backend measures with (TextMetrics.LoadFont) — the theme centres
+    // and clips text using those measurements, so a different face here misplaces every label. The
+    // Windows entry is not optional: without it this fell through to BuiltinBitmapFont, which is
+    // uppercase-only, and every control label rendered as its first letter alone ("Fast" -> "F").
     private static IFont LoadFont()
     {
         foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
                                      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                     "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf",
                                      "/fonts/Arial.ttf", "/fonts/LiberationSans-Regular.ttf" })   // browser VFS
             if (System.IO.File.Exists(p)) return new TrueTypeFont(System.IO.File.ReadAllBytes(p));
         return new BuiltinBitmapFont();

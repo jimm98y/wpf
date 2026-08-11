@@ -53,7 +53,7 @@
     <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the embedded WinForms content). -->
     <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Mono.System.Drawing"><HintPath>$(_Src)\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
   <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (WPF drags the framework

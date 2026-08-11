@@ -95,6 +95,9 @@ internal sealed class CocoaHost : IWinFormsHost
             object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
             if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
         }
+        // Embedded non-WinForms content LAST, so it draws over the control whose area it occupies.
+        var embedded = EmbeddedScenes.Get(ox, oy);
+        if (embedded != null) list.AddRange(embedded);
         return list;
     }
 
@@ -158,6 +161,9 @@ internal sealed class CocoaHost : IWinFormsHost
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
             Console.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
+            // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
+            // its backing scale now that both exist. Inert when nothing is embedded.
+            EmbeddedScenes.PublishHostWindow(_imageView, (float)scale);
         }
 
         Present();
@@ -182,7 +188,9 @@ internal sealed class CocoaHost : IWinFormsHost
             // readback / bitmap re-upload). Present ONLY when something changed (driver paint version)
             // or the caret blink toggled — and keep retrying while a present fails (e.g. Occluded until
             // the window is front-most). This makes an idle window cost ~nothing.
-            int ver = (int)_getVersion.Invoke(_driver, null);
+            // Fold in the embedded contributors' version too — a hosted WPF tree animates on its own
+            // clock and would otherwise never repaint (see EmbeddedScenes).
+            int ver = (int)_getVersion.Invoke(_driver, null) + EmbeddedScenes.CurrentVersion();
             bool caretOn = CaretOn();
             string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
             bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;

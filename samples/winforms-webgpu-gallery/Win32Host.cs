@@ -80,13 +80,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, _scale, srgb: true);
             Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, scale {_scale})");
         }
+        // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
+        // scale now that both exist. Inert when nothing is embedded.
+        EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
         Present();
     }
 
     public void Present()
     {
         if (_wgpu == null) return;
-        int ver = (int)_getVersion.Invoke(_driver, null);
+        // The driver's paint version covers the WinForms controls; embedded content (a hosted WPF
+        // tree) changes on its own clock, so fold its version in or a WPF-only animation never
+        // reaches the screen.
+        int ver = (int)_getVersion.Invoke(_driver, null) + EmbeddedScenes.CurrentVersion();
         bool caretOn = CaretOn();
         string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
         bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
@@ -122,7 +128,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     {
         switch (msg)
         {
-            case 0x0201: MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
+            // Take the keyboard back on a click in the WinForms area. Without this, a hosted child
+            // window that grabbed focus (an ElementHost's WPF tree) would keep it forever and the
+            // WinForms text box would stop receiving typed characters.
+            case 0x0201: SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
             case 0x0202: MouseAt(lParam, _up); Frame(); return IntPtr.Zero;     // WM_LBUTTONUP
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
             case 0x0102: _char.Invoke(_driver, new object[] { (char)(int)wParam }); Frame(); return IntPtr.Zero; // WM_CHAR
@@ -180,6 +189,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
             if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
         }
+        // Embedded non-WinForms content LAST, so it draws over the control whose area it occupies.
+        var embedded = EmbeddedScenes.Get(ox, oy);
+        if (embedded != null) list.AddRange(embedded);
         return list;
     }
 
@@ -226,4 +238,5 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     [DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr h);
     [DllImport("user32")] private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32")] private static extern short GetKeyState(int vk);
+    [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
 }

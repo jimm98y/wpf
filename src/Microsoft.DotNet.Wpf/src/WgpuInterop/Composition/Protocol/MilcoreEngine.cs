@@ -352,7 +352,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// reading them from the native IWICBitmapSource; or directly in tests).
         /// </summary>
         public void SetBitmap(uint handle, byte[] rgba, int width, int height)
-            => _bitmaps[handle] = new MilBitmap(rgba, width, height);
+        {
+            _bitmaps[handle] = new MilBitmap(rgba, width, height);
+            BumpResource(handle);   // an ImageBrush baked these pixels in; make its visual re-parse
+        }
 
         // Current decoded video frame for a MediaPlayer (TYPE_MEDIAPLAYER) resource, keyed by its handle. A
         // fresh RGBA array each frame (see WpfCompositionSink.SendVideoFrame) makes the texture re-upload.
@@ -723,6 +726,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var join = (LineJoin)Math.Min(r.U32(), 2u);
                     uint hDash = r.U32();              // hDashStyle@48
                     _pens[ph] = new MilPen(new StrokeStyle(thickness, cap, join, miter), hBrush, hDash);
+                    BumpResource(ph);
                     break;
                 }
                 case Mil.DashStyle:
@@ -736,6 +740,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var dashes = new double[dashesSize / 8];
                     for (int i = 0; i < dashes.Length; i++) dashes[i] = r.F64();
                     _dashStyles[dh] = (offset, dashes);
+                    BumpResource(dh);
                     break;
                 }
                 case Mil.RectangleGeometry:
@@ -930,6 +935,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // MilColorF: r,g,b,a floats. WPF brush Opacity scales the alpha.
                     float cr = r.F32(), cg = r.F32(), cb = r.F32(), ca = r.F32();
                     _solidBrushes[handle] = EncCol(cr, cg, cb, (float)(ca * opacity));
+                    BumpResource(handle);
                     break;
                 }
                 case Mil.LinearGradientBrush:
@@ -953,6 +959,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         Relative = mapping == 1, Spread = spread,
                         Stops = ReadGradientStops(ref r, stopsSize, opacity),
                     };
+                    BumpResource(h);
                     break;
                 }
                 case Mil.RadialGradientBrush:
@@ -977,6 +984,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         Relative = mapping == 1, Spread = spread,
                         Stops = ReadGradientStops(ref r, stopsSize, opacity),
                     };
+                    BumpResource(h);
                     break;
                 }
                 case Mil.HwndTargetCreate:
@@ -1092,6 +1100,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 128; var tile = (TileMode)r.U32();
                     r.Position = 144; uint hImg = r.U32();
                     _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity);
+                    BumpResource(h);
                     break;
                 }
                 case Mil.VisualBrush:
@@ -1110,6 +1119,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 144; uint hSource = r.U32();
                     _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity);
                     _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
+                    BumpResource(h);
                     break;
                 }
                 case Mil.BitmapCacheBrush:
@@ -1136,6 +1146,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                             unit, viewportUnits: 1 /* RelativeToBoundingBox */,
                             unit, viewboxUnits: 1, cacheOpacity);
                         _contentBrushes[h] = (hTarget, false);
+                        BumpResource(h);
                     }
                     break;
                 }
@@ -1512,16 +1523,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // -- the brush bitmap is rasterized AFTER this parse loop (RealizeContentBrushes), so
                     // the fill only resolves on the *next* frame's parse; skipping them leaves them blank.
                     if (_parsedDataRef.TryGetValue(kv.Key, out byte[]? prev) && ReferenceEquals(prev, data)
-                        && !_contentBrushConsumers.Contains(kv.Key) && !TransformDepsChanged(kv.Key))
+                        && !_contentBrushConsumers.Contains(kv.Key) && !ResourceDepsChanged(kv.Key))
                         continue;
                     v.Content.Clear();
                     _parseTouchedContentBrush = false;
-                    _parseTransformRefs.Clear();
+                    _parseResourceRefs.Clear();
                     _parseGuidesX.Clear(); _parseGuidesY.Clear();
                     ParseRenderData(data, v.Content);
                     ApplyParsedGuides(kv.Key, v);
                     if (_parseTouchedContentBrush) _contentBrushConsumers.Add(kv.Key); else _contentBrushConsumers.Remove(kv.Key);
-                    RecordTransformDeps(kv.Key);
+                    RecordResourceDeps(kv.Key);
                     _parsedDataRef[kv.Key] = data;
                     PerfParsed++;
                 }
@@ -1530,7 +1541,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     v.Content.Clear();
                     _parsedDataRef.Remove(kv.Key);
                     _contentBrushConsumers.Remove(kv.Key);
-                    _visualTransformDeps.Remove(kv.Key);
+                    _visualResourceDeps.Remove(kv.Key);
                 }
             }
             PerfParseTicks = System.Diagnostics.Stopwatch.GetTimestamp() - p0;
@@ -1558,7 +1569,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         && _renderData.TryGetValue(cdh, out byte[]? cdata))
                     {
                         cv.Content.Clear();
-                        _parseTransformRefs.Clear();
+                        _parseResourceRefs.Clear();
                         _parseGuidesX.Clear(); _parseGuidesY.Clear();
                         ParseRenderData(cdata, cv.Content);
                         ApplyParsedGuides(consumer, cv);
@@ -1823,7 +1834,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private void SetTransform(uint handle, Matrix3x2 m)
         {
             _transforms[handle] = m;
-            _transformVersion[handle] = _transformVersion.GetValueOrDefault(handle) + 1;   // for content that bakes it via PushTransform
+            BumpResource(handle);   // for content that bakes it via PushTransform
             foreach (KeyValuePair<uint, uint> kv in _visualTransform)
                 if (kv.Value == handle && _visuals.TryGetValue(kv.Key, out SceneVisual? v))
                     v.Transform = m;
@@ -1848,35 +1859,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             SetTransform(groupHandle, m);
         }
 
-        // Transform resources are baked into geometry at parse time (PushTransform). When such a
-        // transform animates, the consuming visual's render-data byte[] is unchanged (it holds the
-        // handle, not the matrix), so parse-skip must re-parse it. Track each visual's referenced
-        // transform handles + their version at parse, and the live version bumped on every SetTransform.
-        private readonly Dictionary<uint, int> _transformVersion = new();          // transform handle -> bump count
-        private readonly List<uint> _parseTransformRefs = new();                   // handles PushTransform'd during the current parse
-        private readonly Dictionary<uint, (uint Handle, int Ver)[]> _visualTransformDeps = new(); // visual -> deps snapshot
+        // Render data references resources (transforms, brushes, pens) by HANDLE, but the parse RESOLVES
+        // them into the visual's content -- a matrix baked into geometry, a colour baked into a fill. So
+        // when such a resource is updated, the consuming visual's render-data byte[] is unchanged and
+        // parse-skip would keep the stale value on screen: an animated RotateTransform frozen at its
+        // first angle, or a SolidColorBrush.Color assignment that never appears. Track each visual's
+        // referenced resource handles + their version at parse time, against the live version bumped
+        // whenever the resource is written (see BumpResource).
+        private readonly Dictionary<uint, int> _resourceVersion = new();          // resource handle -> bump count
+        private readonly List<uint> _parseResourceRefs = new();                   // handles resolved during the current parse
+        private readonly Dictionary<uint, (uint Handle, int Ver)[]> _visualResourceDeps = new(); // visual -> deps snapshot
 
-        // True if any transform the visual's content baked in (via PushTransform) changed since last parse.
-        private bool TransformDepsChanged(uint visual)
+        /// <summary>Record that a resource's value changed, so every visual whose parsed content baked
+        /// it in re-parses on the next Realize.</summary>
+        private void BumpResource(uint handle)
+            => _resourceVersion[handle] = _resourceVersion.GetValueOrDefault(handle) + 1;
+
+        // True if any resource the visual's content baked in changed since it was last parsed.
+        private bool ResourceDepsChanged(uint visual)
         {
-            if (!_visualTransformDeps.TryGetValue(visual, out (uint Handle, int Ver)[]? deps)) return false;
+            if (!_visualResourceDeps.TryGetValue(visual, out (uint Handle, int Ver)[]? deps)) return false;
             foreach ((uint Handle, int Ver) d in deps)
-                if (_transformVersion.GetValueOrDefault(d.Handle) != d.Ver) return true;
+                if (_resourceVersion.GetValueOrDefault(d.Handle) != d.Ver) return true;
             return false;
         }
 
-        // Snapshot the (distinct) transform handles this parse baked in, with their current version.
-        private void RecordTransformDeps(uint visual)
+        // Snapshot the (distinct) resource handles this parse baked in, with their current version.
+        private void RecordResourceDeps(uint visual)
         {
-            if (_parseTransformRefs.Count == 0) { _visualTransformDeps.Remove(visual); return; }
+            if (_parseResourceRefs.Count == 0) { _visualResourceDeps.Remove(visual); return; }
             var distinct = new List<(uint, int)>();
-            foreach (uint h in _parseTransformRefs)
+            foreach (uint h in _parseResourceRefs)
             {
                 bool seen = false;
                 foreach ((uint H, int _) in distinct) if (H == h) { seen = true; break; }
-                if (!seen) distinct.Add((h, _transformVersion.GetValueOrDefault(h)));
+                if (!seen) distinct.Add((h, _resourceVersion.GetValueOrDefault(h)));
             }
-            _visualTransformDeps[visual] = distinct.ToArray();
+            _visualResourceDeps[visual] = distinct.ToArray();
         }
 
         /// <summary>
@@ -2159,7 +2178,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         stack.Push(state);
                         uint hTransform = r.U32();
-                        if (hTransform != 0) _parseTransformRefs.Add(hTransform);   // record for parse-skip invalidation
+                        if (hTransform != 0) _parseResourceRefs.Add(hTransform);   // record for parse-skip invalidation
                         if (_transforms.TryGetValue(hTransform, out Matrix3x2 m))
                             state.Transform = m * state.Transform;
                         break;
@@ -2662,11 +2681,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private Brush? ResolveBrush(uint handle, Rect bounds)
         {
             if (handle == 0) return null;
+            // The brush's VALUE is baked into the content this parse produces, so the consuming visual
+            // must re-parse when the brush resource changes — a SolidColorBrush.Color assignment sends a
+            // brush update and leaves the render data untouched. See _visualResourceDeps.
+            _parseResourceRefs.Add(handle);
             if (_contentBrushes.ContainsKey(handle)) { _parseTouchedContentBrush = true; _contentBrushes2D.Add(handle); }
             if (_solidBrushes.TryGetValue(handle, out RgbaColor c)) return new SolidColorBrush(c);
             if (_gradients.TryGetValue(handle, out MilGradient? g)) return BuildGradient(g, bounds);
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
+            {
+                _parseResourceRefs.Add(ib.ImageHandle);   // the pixels are baked in too
                 return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity);
+            }
             return null;
         }
 
@@ -2675,6 +2701,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             if (handle != 0 && _pens.TryGetValue(handle, out MilPen pen))
             {
+                _parseResourceRefs.Add(handle);      // thickness/dashes are baked in; re-parse if the pen changes
+                if (pen.DashHandle != 0) _parseResourceRefs.Add(pen.DashHandle);
                 StrokeStyle style = pen.Style;
                 // WPF dash lengths are multiples of the pen thickness; scale to absolute pixels.
                 if (pen.DashHandle != 0 && _dashStyles.TryGetValue(pen.DashHandle, out (double Offset, double[] Dashes) ds) && ds.Dashes.Length > 0)

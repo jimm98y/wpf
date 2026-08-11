@@ -1,27 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The desktop head of the WPF-on-WebGPU gallery. It deliberately does NOT use
-       Microsoft.WindowsDesktop.App: this fork's WPF assemblies are referenced from artifacts/bin and
-       run on the stock Microsoft.NETCore.App, which is the whole point of the port (the same shape
-       WpfWebGpu.Sdk gives an app, and the same shape every other head here uses).
-
-       It also has to be that way for the WinForms card to work. The gallery hosts a Mono
-       System.Windows.Forms control tree via WindowsFormsHost; Microsoft.WindowsDesktop.App ships its
-       OWN System.Windows.Forms, and a framework assembly always wins over an app-local one, so with
-       that framework referenced the real WinForms loaded instead of Mono's, the SDK dropped the Mono
-       copy from the output as a "conflict", and the card died at runtime with
-       MissingMethodException: Control.set_BackColor(System.Drawing.Color), the two WinForms
-       disagreeing about which System.Drawing.Color is meant. Mono's must be the only WinForms. -->
+  <!-- WPF hosted INSIDE Windows Forms (the reverse of the winforms-in-wpf sample). The app is a
+       WinForms app on the Mono System.Windows.Forms + XplatUIWebGpu driver; an ElementHost embeds a
+       WPF element tree whose scene the WPF compositor publishes (HostedWpfContent) instead of
+       presenting, so both stacks composite into ONE WebGPU frame. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>WpfWebGpuGallery</AssemblyName>
-    <SelfContained>false</SelfContained>
+    <!-- Must match the InternalsVisibleTo in WgpuInterop/AssemblyInfo.cs: ElementHost wraps the
+         published scene in an internal SceneVisual. -->
+    <AssemblyName>WpfInWinForms</AssemblyName>
+    <StartupObject>Program</StartupObject>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <!-- Sample app: don't fail the build on code-quality analyzer suggestions (CA18xx/CA13xx). -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <AnalysisLevel>none</AnalysisLevel>
@@ -34,7 +27,25 @@
     <_Src>..\..\src\Microsoft.DotNet.Wpf\src</_Src>
   </PropertyGroup>
 
-  <!-- This fork's WPF, built from source into artifacts/ (run build.cmd first). -->
+  <!-- The per-OS windowing shell and the WebGPU present path are SHARED with the pure-WinForms
+       gallery, unchanged: this sample only adds the ElementHost that feeds it a WPF scene. -->
+  <ItemGroup>
+    <Compile Include="..\winforms-webgpu-gallery\IWinFormsHost.cs" Link="IWinFormsHost.cs" />
+    <Compile Include="..\winforms-webgpu-gallery\EmbeddedScenes.cs" Link="EmbeddedScenes.cs" />
+    <Compile Include="..\winforms-webgpu-gallery\WgpuPresenter.cs" Link="WgpuPresenter.cs" />
+    <Compile Include="..\winforms-webgpu-gallery\Win32Host.cs" Link="Win32Host.cs" />
+    <Compile Include="..\winforms-webgpu-gallery\CocoaHost.cs" Link="CocoaHost.cs" />
+  </ItemGroup>
+
+  <!-- The WinForms half: Mono's managed System.Windows.Forms with our driver, our vendored
+       System.Drawing (with the GPU-raster backend), and the WebGPU interop both halves share. -->
+  <ItemGroup>
+    <ProjectReference Include="$(_Src)\WinFormsInterop\System.Windows.Forms.WebGpu.csproj" />
+    <ProjectReference Include="$(_Src)\WinFormsInterop\sysdrawing\System.Drawing.WebGpu.csproj" />
+    <ProjectReference Include="$(_Src)\WgpuInterop\WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- The WPF half: the from-source assemblies built into artifacts/ (run build.cmd first). -->
   <ItemGroup>
     <Reference Include="PresentationFramework"><HintPath>$(_Wpf)\PresentationFramework\Release\net10.0\PresentationFramework.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationCore"><HintPath>$(_Wpf)\PresentationCore\Release\net10.0\PresentationCore.dll</HintPath><Private>true</Private></Reference>
@@ -50,15 +61,6 @@
     <Reference Include="PresentationFramework.Classic"><HintPath>$(_Wpf)\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI"><HintPath>$(_Wpf)\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Printing"><HintPath>$(_Wpf)\System.Printing.Managed\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
-  </ItemGroup>
-
-  <!-- From-source WebGPU interop + our Mono System.Windows.Forms (the shared WinFormsHost card
-       composites a WinForms control tree into the same WebGPU frame). The WgpuInterop ref is a
-       COMPILE dependency (WinFormsHost uses EmbeddedContent), not deployment-only. -->
-  <ItemGroup>
-    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Src)\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Mono.System.Drawing"><HintPath>$(_Src)\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
@@ -72,8 +74,8 @@
     <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
   </ItemGroup>
 
-  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
-       framework System.Drawing.Common WPF drags in). -->
+  <!-- Our vendored Mono.System.Drawing must be the SOLE System.Drawing.* provider: WPF drags in the
+       framework System.Drawing.Common, which would collide on those types (CS0433). -->
   <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
@@ -81,7 +83,8 @@
     </ItemGroup>
   </Target>
 
-  <!-- wgpu-native next to the app so PresentationCore's reflection loader resolves it, per RID. -->
+  <!-- wgpu-native next to the app so both the presenter's DllImport and PresentationCore's
+       reflection loader resolve it. Per RID, whichever is vendored in this fork. -->
   <ItemGroup>
     <None Include="$(_Src)\WgpuInterop\native\win-arm64\lib\wgpu_native.dll" Link="wgpu_native.dll"
           CopyToOutputDirectory="PreserveNewest" Visible="false"
@@ -94,15 +97,13 @@
           Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
   </ItemGroup>
 
-  <!-- App-local fonts, as the SDK deploys for any desktop app on this stack. -->
+  <!-- App-local fonts, as the SDK deploys for any non-Windows desktop app: Symbols carries the
+       Fluent theme's glyph icons and TwemojiMozilla the COLR emoji face. A glob matching nothing is
+       inert, so this is harmless on Windows where the system fonts cover it. -->
   <ItemGroup>
     <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
-          CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\NotoSansCJK-Regular.ttc" Link="fonts\NotoSansCJK-Regular.ttc"
-          CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\CascadiaCode-Regular.ttf" Link="fonts\CascadiaCode-Regular.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 

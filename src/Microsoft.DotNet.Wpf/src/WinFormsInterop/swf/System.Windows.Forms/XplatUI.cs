@@ -110,12 +110,23 @@ namespace System.Windows.Forms {
 
 		#region Public Static Properties
 
+		// GPU-raster paint mode (the XplatUIWebGpu driver's WF_GPU_RASTER switch, read here so the
+		// vendored Mono sources need no reference to the driver). Read once: the driver reads it once too.
+		static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+
 		public static bool RunningOnUnix {
 			get {
 				// The browser/WebAssembly has no Win32 GDI; treat it as "Unix" so TextRenderer and the
 				// themes take the GDI+/DrawString path (which our GPU-raster hooks intercept) rather than
 				// GetHdc/Win32DrawText.
 				if (OperatingSystem.IsBrowser ())
+					return true;
+				// Same reason on WINDOWS in GPU-raster mode: the Graphics the driver hands a control is
+				// recording into a WebGPU scene and has no libgdiplus/GDI backing at all, so GetHdc fails
+				// (ArgumentException: InvalidParameter) and every TextRenderer draw/measure throws --
+				// which is what left TextBox unpainted on the Windows head. Only the DrawString path is
+				// recordable, so select it.
+				if (s_gpuRaster)
 					return true;
 				int p = (int) Environment.OSVersion.Platform;
 

@@ -294,6 +294,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Already drawn into its owner above; it has no surface of its own to present to.
                 if (popupOverlays != null && t.IsLayered) continue;
 
+                // This window is hosted INSIDE a non-WPF app (a WinForms ElementHost): hand its scene
+                // to that host, which composites it into its own frame at the hosting control's rect.
+                // Deliberately before EnsureSurface -- a hosted window must never acquire a swap chain.
+                if (HostedWpfContent.Any && HostedWpfContent.IsClaimed(t.Hwnd))
+                {
+                    HostedWpfContent.Publish(t.Hwnd, root, t.Width, t.Height);
+                    continue;
+                }
+
                 if (s_logPath != null && (_diagCount < 5 || _diagCount % 30 == 0) && _diagCount < 200)
                 {
                     _diagCount++;
@@ -663,14 +672,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         // Default font for text-STRING glyph runs from embedded content (a real TrueType face so lowercase
         // renders; the built-in fallback is uppercase-only). Glyphs rasterize on the GPU at present time.
+        /// <summary>
+        /// The face used for glyph runs that arrive as TEXT rather than as pre-shaped glyph indices --
+        /// i.e. content from an embedded non-WPF stack (a WinForms control tree via EmbeddedContent).
+        /// WPF's own runs carry their own font, so this default never applies to them.
+        /// <para>
+        /// Every entry matters: the last-resort BuiltinBitmapFont is UPPERCASE-ONLY, so a miss here does
+        /// not fail loudly -- it renders every embedded label as its first letter alone ("WinForms
+        /// Button" -> "W  B"). That is exactly what the Windows head did until its system faces were
+        /// added below. This list must also stay in step with the face System.Drawing's GPU-raster
+        /// backend MEASURES with (TextMetrics.LoadFont), or the themes centre and clip text against
+        /// metrics that do not match what is drawn.
+        /// </para>
+        /// </summary>
         private static Text.IFont LoadDefaultFont()
         {
+            string appLocal = System.IO.Path.Combine(AppContext.BaseDirectory, "fonts");
             foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf",
                                          "/System/Library/Fonts/HelveticaNeue.ttc", "/Library/Fonts/Arial.ttf",
                                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                                         // Windows: without these the uppercase-only fallback below wins.
+                                         "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf",
+                                         // App-local fonts, as the SDK deploys beside a desktop app.
+                                         System.IO.Path.Combine(appLocal, "Selawik-Regular.ttf"),
+                                         System.IO.Path.Combine(appLocal, "LiberationSans-Regular.ttf"),
+                                         System.IO.Path.Combine(appLocal, "DejaVuSans.ttf"),
                                          // Browser (wasm): fonts live in the VFS at /fonts (main.js writes them
-                                         // before Main). Without this the fallback is uppercase-only, so embedded
-                                         // WinForms text renders as fragmented capitals.
+                                         // before Main).
                                          "/fonts/LiberationSans-Regular.ttf", "/fonts/DejaVuSans.ttf" })
                 if (System.IO.File.Exists(p)) return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(p));
             return new Text.BuiltinBitmapFont();
