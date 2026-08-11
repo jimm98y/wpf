@@ -54,6 +54,22 @@ namespace WgpuInterop.Tests.Harness
             q.F64(x); q.F64(y); q.F64(w); q.F64(hh); q.U32(0); return q.ToArray();
         }
 
+        /// <summary>
+        /// MILCMD_MESHGEOMETRY3D: Handle@4, PositionsSize@8, NormalsSize@12, TextureCoordinatesSize@16,
+        /// TriangleIndicesSize@20 (all BYTES), then positions/normals as MilPoint3F (3 floats each),
+        /// texture coordinates as MilPoint2D (2 DOUBLES each), then UInt32 indices.
+        /// </summary>
+        public static byte[] MeshGeometry3D(uint h, float[] positionsXyz, float[] normalsXyz, uint[] indices)
+        {
+            var q = new Buf(); q.U32(0x62); q.U32(h);
+            q.U32((uint)(positionsXyz.Length * 4)); q.U32((uint)(normalsXyz.Length * 4));
+            q.U32(0); q.U32((uint)(indices.Length * 4));
+            foreach (float f in positionsXyz) q.F32(f);
+            foreach (float f in normalsXyz) q.F32(f);
+            foreach (uint i in indices) q.U32(i);
+            return q.ToArray();
+        }
+
         /// <summary>MILCMD_GEOMETRYGROUP: Handle@4, hTransform@8, FillRule@12, ChildrenSize@16 (BYTES), children.</summary>
         public static byte[] GeometryGroup(uint h, uint fillRule, params uint[] children)
         {

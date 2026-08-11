@@ -30,6 +30,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, Visual3DNode> _visuals3D = new();
         private readonly Dictionary<uint, Viewport3DState> _viewports3D = new();
 
+        /// <summary>The decoded mesh for a resource handle (verification).</summary>
+        internal bool TryGetMesh(uint handle, out MeshGeometry3D mesh) => _meshes.TryGetValue(handle, out mesh!);
+
         // Kind: 0 diffuse, 1 specular, 2 emissive, 3 group.
         private struct MaterialDef
         {
@@ -250,6 +253,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < texCoords.Length; i++) { float u = (float)r.F64(), vv = (float)r.F64(); texCoords[i] = new Vector2(u, vv); }
                     var indices = new int[idxSize / 4];
                     for (int i = 0; i < indices.Length; i++) indices[i] = (int)r.U32();
+                    indices = DropInvalidTriangles(indices, positions.Length);
                     if (normals.Length != positions.Length) normals = ComputeNormals(positions, indices);
                     _meshes[h] = new MeshGeometry3D(positions, normals, indices, texCoords);
                     break;
@@ -585,6 +589,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             else if (s_dbg3d)
                 System.Console.WriteLine($"3D-TEX brush={brushHandle} not imageBrush; solid={_solidBrushes.ContainsKey(brushHandle)} content={_contentBrushes.ContainsKey(brushHandle)} imgBrushes={_imageBrushes.Count}");
             return (null, 0, 0);
+        }
+
+        // Drop triangles that name a vertex the mesh does not have (and any trailing partial
+        // triangle). WPF tolerates an over-long TriangleIndices list -- it just does not draw the
+        // triangles it cannot resolve -- and hand-written mesh generators overrun their vertex
+        // array remarkably often (a stack/slice loop that emits `(stack+1)*n` rows for its last
+        // stack). Handing those indices to WebGPU is not merely a few missing triangles: the
+        // out-of-range fetch fails the draw and the whole 3D pass comes back EMPTY, so one bad
+        // triangle blanks the entire Viewport3D. Filtering here (once, at decode) keeps the
+        // valid geometry and matches what these apps look like on milcore.
+        private static int[] DropInvalidTriangles(int[] indices, int vertexCount)
+        {
+            int valid = 0;
+            for (int i = 0; i + 2 < indices.Length; i += 3)
+                if (InRange(indices[i]) && InRange(indices[i + 1]) && InRange(indices[i + 2])) valid += 3;
+
+            if (valid == indices.Length) return indices;
+
+            var kept = new int[valid];
+            int o = 0;
+            for (int i = 0; i + 2 < indices.Length; i += 3)
+            {
+                int a = indices[i], b = indices[i + 1], c = indices[i + 2];
+                if (!InRange(a) || !InRange(b) || !InRange(c)) continue;
+                kept[o++] = a; kept[o++] = b; kept[o++] = c;
+            }
+            return kept;
+
+            bool InRange(int index) => (uint)index < (uint)vertexCount;
         }
 
         private static Vector3[] ComputeNormals(Vector3[] positions, int[] indices)

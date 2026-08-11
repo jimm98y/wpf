@@ -40,6 +40,12 @@
     <!-- windows head payload sources (overridable). Defaults to the local from-source testhost
          (a staged win-arm64 fork runtime) and the WebGPU native runtime deployed beside the sample. -->
     <WpfWinRuntimeDir Condition="'$(WpfWinRuntimeDir)' == ''">C:/Git/wpf-testhost/shared/Microsoft.WindowsDesktop.App/10.0.9/</WpfWinRuntimeDir>
+    <!-- The gallery's TFM moved from net10.0-windows to net10.0, and this pointed at the old output
+         directory. Every Include below is Exists-gated, so the package still built - just without a
+         WebGPU backend in it, and every app built against it died at startup with
+         "DllNotFoundException: wgpu_native". Probe both, and see WpfWebGpuValidateInputs, which now
+         refuses to pack a windows head that has no backend rather than shipping that silently. -->
+    <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == '' and Exists('$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/wgpu_native.dll')">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/</WgpuWinNativeDir>
     <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == ''">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0-windows/</WgpuWinNativeDir>
 
     <!-- Which flavors can be packed from this machine's outputs? -->
@@ -154,6 +160,10 @@
            Text="Nothing to pack: neither the net10.0 fork build ($(WpfBin)PresentationFramework/Release/net10.0/) nor a staged win-arm64 runtime ($(WpfWinRuntimeDir)) is present. Build the fork or set WpfWinRuntimeDir." />
     <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')"
            Text="The windows head needs the fork-built Accessibility.dll ($(WpfBin)Accessibility/Release/net10.0/). Build the fork; do NOT substitute the WindowsDesktop framework copy." />
+    <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)wgpu_native.dll')"
+           Text="The windows head has no WebGPU backend: no wgpu_native.dll under $(WgpuWinNativeDir). Build samples/wpf-webgpu-gallery (which stages wgpu-native + ANGLE) or set WgpuWinNativeDir. Packing without it produces an SDK whose apps all fail at startup with DllNotFoundException." />
+    <Warning Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)libEGL.dll')"
+             Text="No ANGLE runtime under $(WgpuWinNativeDir) — the windows head will have no OpenGL backend, which is the only one available on some machines (e.g. a VM with a virtualized GPU)." />
     <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
            Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
     <Warning Condition="'$(_HasForkNet10)' != 'true'"

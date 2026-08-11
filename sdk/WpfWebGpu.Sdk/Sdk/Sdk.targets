@@ -114,7 +114,7 @@
 
        Deliberately NOT unix-only. Microsoft.WindowsDesktop.App is never an option on this stack, and
        on Windows it is actively harmful: it ships its own System.Windows.Forms, a framework assembly
-       always wins over an app-local one, and the SDK then drops the Mono copy as a "conflict" -- so
+       always wins over an app-local one, and the SDK then drops the Mono copy as a "conflict" — so
        the real WinForms loaded, and anything mixing the two died at runtime (MissingMethodException:
        Control.set_BackColor, the two WinForms disagreeing about System.Drawing.Color). Every head
        gets exactly the same assemblies. -->
