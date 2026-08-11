@@ -62,11 +62,33 @@ struct VSOut {
     @location(2) uv       : vec2<f32>,
 };
 
+// Normals transform by the INVERSE TRANSPOSE of the model matrix, not by the model matrix. The two
+// agree under rotation and uniform scale -- which is why using the model matrix looked fine for a
+// long time -- but under NON-uniform scale the model matrix tilts a normal toward the stretched
+// axis. The fractal-tree sample scales every branch by about (0.25, 1.5, 0.25), so its normals
+// leaned along the branch and each branch was shaded dark-to-light ALONG its length instead of
+// across it, a lighting direction milcore does not produce.
+//
+// Derived here rather than uploaded: it is ~30 flops per vertex, against 64 more bytes in a uniform
+// block that is read once per DRAW (thousands of times a frame) -- and measurably so, growing the
+// block from 736 to 800 bytes cost this backend more than 4x the frame time.
+//
+// For a column-major mat3 with columns a,b,c, inverse() has ROWS cross(b,c)/det, cross(c,a)/det,
+// cross(a,b)/det -- so building a matrix with those as COLUMNS is transpose(inverse(m)) directly.
+fn invTranspose3(m : mat3x3<f32>) -> mat3x3<f32> {
+    let a = m[0]; let b = m[1]; let c = m[2];
+    let r0 = cross(b, c); let r1 = cross(c, a); let r2 = cross(a, b);
+    let det = dot(a, r0);
+    if (abs(det) < 1e-12) { return m; }      // singular (a zero scale): nothing better to do
+    let k = 1.0 / det;
+    return mat3x3<f32>(r0 * k, r1 * k, r2 * k);
+}
+
 @vertex
 fn vs_main(@location(0) pos : vec3<f32>, @location(1) normal : vec3<f32>, @location(2) uv : vec2<f32>) -> VSOut {
     var o : VSOut;
     o.pos = u.mvp * vec4<f32>(pos, 1.0);
-    o.normal = (u.model * vec4<f32>(normal, 0.0)).xyz;
+    o.normal = invTranspose3(mat3x3<f32>(u.model[0].xyz, u.model[1].xyz, u.model[2].xyz)) * normal;
     o.worldPos = (u.model * vec4<f32>(pos, 1.0)).xyz;
     o.uv = uv;
     return o;
@@ -201,22 +223,15 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             Matrix4x4 viewProj = view * proj * viewportMatrix;
 
             var models = new List<Draw3D>(viewport.Models.Count);
+            var slots = new List<DrawSlot>(viewport.Models.Count);
+            int baseSlot = _slot3DCursor;
             foreach (Model3D model in viewport.Models)
             {
                 MeshGeometry3D mesh = model.Mesh;
                 if (mesh.Indices.Length == 0) continue;
                 if (!model.HasFrontMaterial && !model.HasBackMaterial) continue;
 
-                byte[] vbytes = BuildMeshVertices(mesh);
-                byte[] ibytes = new byte[mesh.Indices.Length * sizeof(uint)];
-                Buffer.BlockCopy(mesh.Indices, 0, ibytes, 0, ibytes.Length);
-
-                IntPtr vbuf = _ctx.CreateBuffer((ulong)vbytes.Length, WGPUBufferUsage.Vertex | WGPUBufferUsage.CopyDst);
-                IntPtr ibuf = _ctx.CreateBuffer((ulong)ibytes.Length, WGPUBufferUsage.Index | WGPUBufferUsage.CopyDst);
-                _ctx.WriteBuffer(vbuf, vbytes);
-                _ctx.WriteBuffer(ibuf, ibytes);
-                DeferReleaseBuffer(vbuf);
-                DeferReleaseBuffer(ibuf);
+                (IntPtr vbuf, IntPtr ibuf) = GetMeshBuffers(mesh);
 
                 // A model is semi-transparent if either side's material has a sub-1 colour alpha or a
                 // texture that contains any translucent texel. Such models render with depth-write off,
@@ -241,11 +256,6 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
                 void AddDraw(Material3D mat, bool backFace, bool isTransparent)
                 {
-                    byte[] uni = BuildModelUniform(model.Transform * viewProj, model.Transform, cam.Position,
-                        viewport.Lights, viewport.AmbientColor, mat, backFace);
-                    IntPtr ubuf = _ctx.CreateBuffer((ulong)uni.Length, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
-                    _ctx.WriteBuffer(ubuf, uni);
-
                     // Diffuse texture. Three sources, in priority order:
                     //  1. LIVE 2D content (VisualBrush) -> render its subtree into a GPU texture THIS frame
                     //     (a plan pass before the 3D pass), no CPU readback -> interactive 2D-in-3D.
@@ -272,13 +282,19 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                         texView = White3DView();
                     }
 
-                    IntPtr bindGroup = Create3DBindGroup(ubuf, (ulong)uni.Length, texView, backFace, depthWrite: !isTransparent);
-                    DeferReleaseBindGroup(bindGroup);
-                    DeferReleaseBuffer(ubuf);
+                    // The uniform block goes into one shared buffer at this draw's slot; the bind group
+                    // that names that slot is built once and reused across frames (Resolve3DSlots).
+                    slots.Add(new DrawSlot(texView, backFace, !isTransparent));
+                    WriteModelUniform(baseSlot + slots.Count - 1,
+                        model.Transform * viewProj, model.Transform, cam.Position,
+                        viewport.Lights, viewport.AmbientColor, mat, backFace);
 
-                    models.Add(new Draw3D(vbuf, ibuf, bindGroup, (uint)mesh.Indices.Length, backFace, isTransparent));
+                    models.Add(new Draw3D(vbuf, ibuf, IntPtr.Zero, (uint)mesh.Indices.Length, backFace, isTransparent));
                 }
             }
+
+            Resolve3DSlots(baseSlot, slots, models);
+            _slot3DCursor = baseSlot + slots.Count;
 
             plan.Add(new LayerPass(colorView, ReadbackFormat, models, depthView, msaaColorView));
             EmitFullScreenQuad(outData, outFormat, FillKind.Layer, colorView, 1f, 1f, 1f, (float)Math.Clamp(opacity, 0.0, 1.0), 0f, 0f, clip, width, height);
@@ -413,14 +429,214 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             return _white3DView;
         }
 
-        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong size, IntPtr textureView, bool backFace, bool depthWrite)
+        // ---- per-draw uniforms + bind groups ------------------------------------------------
+        //
+        // Everything below exists because a 3D scene is made of MANY draws of FEW distinct things,
+        // and the cost that matters is per-DRAW resource creation, not per-draw GPU work. Creating a
+        // uniform buffer and a bind group for every draw, every frame, put the fractal-tree sample
+        // (~4000 branches) at 1.3fps against milcore's 44 on the same machine and the same scene.
+        //
+        // Instead: all of a viewport's uniform blocks go into ONE buffer (one upload per frame) and
+        // each draw's bind group -- which names its slot's byte range plus its texture -- is built
+        // once and reused for as long as the scene keeps that slot pointing at the same texture and
+        // pipeline variant. A frame of an unchanged scene then creates nothing at all.
+
+        /// <summary>What a draw's bind group has to describe; a slot is rebuilt only when this changes.</summary>
+        private readonly struct DrawSlot
+        {
+            public readonly IntPtr TexView;
+            public readonly bool BackFace, DepthWrite;
+            public DrawSlot(IntPtr texView, bool backFace, bool depthWrite)
+            { TexView = texView; BackFace = backFace; DepthWrite = depthWrite; }
+            public bool Matches(in DrawSlot o) => TexView == o.TexView && BackFace == o.BackFace && DepthWrite == o.DepthWrite;
+        }
+
+        // The uniform block is 184 floats; bind-group entry offsets must be a multiple of the
+        // device's minUniformBufferOffsetAlignment, which is 256 everywhere this runs.
+        private const int Uniform3DFloats = 32 + 24 + MaxLights3D * 16;   // 2 mat4 + 6 vec4 + lights
+        private const int Uniform3DStride = ((Uniform3DFloats * 4) + 255) & ~255;
+
+        private byte[] _uniform3DStaging = new byte[Uniform3DStride * 64];
+        private IntPtr _uniform3DBuffer;
+        private int _uniform3DCapacity;                       // slots the buffer can hold
+        private int _slot3DCursor;                            // next free slot THIS frame
+
+        // Slot resources replaced during a frame, released at the START of the next one.
+        //
+        // NOT DeferReleaseBuffer/DeferReleaseBindGroup: those are flushed by FlushFrameReleases,
+        // which a NESTED render (RenderToRgba for an offscreen readback, run in the middle of a
+        // frame) calls in its finally -- so a nested render that grew the slot buffer freed the
+        // bind groups the outer, still-unexecuted pass was holding, and wgpu aborted the process
+        // with "invalid bind group". By the next BeginFrame the frame that used them has been
+        // submitted, and wgpu keeps a released resource alive until its in-flight work completes.
+        private readonly List<IntPtr> _retiredBindGroups3D = new();
+        private readonly List<IntPtr> _retiredBuffers3D = new();
+        private readonly List<DrawSlot> _slotDesc = new();    // what each cached bind group was built for
+        private readonly List<IntPtr> _slotBindGroups = new();
+
+        /// <summary>Reset the frame's slot allocation and free last frame's retired slots.</summary>
+        private void BeginFrame3D()
+        {
+            _slot3DCursor = 0;
+            if (_retiredBindGroups3D.Count > 0)
+            {
+                foreach (IntPtr bg in _retiredBindGroups3D) wgpuBindGroupRelease(bg);
+                _retiredBindGroups3D.Clear();
+            }
+            if (_retiredBuffers3D.Count > 0)
+            {
+                foreach (IntPtr b in _retiredBuffers3D) wgpuBufferRelease(b);
+                _retiredBuffers3D.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Uploads this viewport's uniform blocks in one write and gives every draw its bind group,
+        /// creating only the ones whose slot changed since last frame.
+        /// </summary>
+        /// <param name="baseSlot">
+        /// Where this viewport's slots start. Slots are numbered across the WHOLE frame, not per
+        /// viewport: a second Viewport3D reusing slot 0 would overwrite the first one's uniforms
+        /// before either pass has executed.
+        /// </param>
+        private void Resolve3DSlots(int baseSlot, List<DrawSlot> slots, List<Draw3D> models)
+        {
+            if (slots.Count == 0) return;
+            int end = baseSlot + slots.Count;
+
+            // Grow the shared buffer in steps, and only ever grow: a reallocation invalidates every
+            // bind group that names it, so doing it per frame would defeat the whole cache. The old
+            // buffer and bind groups are released at END of frame -- an earlier viewport's pass is
+            // still holding them, and its uniforms are still correct in the old buffer.
+            if (_uniform3DBuffer == IntPtr.Zero || end > _uniform3DCapacity)
+            {
+                int capacity = Math.Max(64, _uniform3DCapacity);
+                while (capacity < end) capacity *= 2;
+                if (_uniform3DBuffer != IntPtr.Zero) _retiredBuffers3D.Add(_uniform3DBuffer);
+                _uniform3DBuffer = _ctx.CreateBuffer((ulong)((long)capacity * Uniform3DStride),
+                    WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
+                _uniform3DCapacity = capacity;
+                InvalidateSlotBindGroups();
+            }
+
+            _ctx.WriteBuffer(_uniform3DBuffer, (ulong)((long)baseSlot * Uniform3DStride),
+                _uniform3DStaging.AsSpan(baseSlot * Uniform3DStride, slots.Count * Uniform3DStride));
+
+            for (int i = 0; i < slots.Count; i++)
+            {
+                int slot = baseSlot + i;
+                DrawSlot want = slots[i];
+                if (slot < _slotBindGroups.Count)
+                {
+                    if (_slotDesc[slot].Matches(want))
+                    {
+                        models[i] = models[i].WithBindGroup(_slotBindGroups[slot]);
+                        continue;
+                    }
+                    if (_slotBindGroups[slot] != IntPtr.Zero) _retiredBindGroups3D.Add(_slotBindGroups[slot]);
+                }
+
+                IntPtr bg = Create3DBindGroup(_uniform3DBuffer, (ulong)((long)slot * Uniform3DStride),
+                    (ulong)(Uniform3DFloats * 4), want.TexView, want.BackFace, want.DepthWrite);
+
+                if (slot < _slotBindGroups.Count) { _slotBindGroups[slot] = bg; _slotDesc[slot] = want; }
+                else
+                {
+                    // Slots are assigned in order, so this only ever appends at the end.
+                    while (_slotBindGroups.Count < slot) { _slotBindGroups.Add(IntPtr.Zero); _slotDesc.Add(default); }
+                    _slotBindGroups.Add(bg); _slotDesc.Add(want);
+                }
+                models[i] = models[i].WithBindGroup(bg);
+            }
+        }
+
+        /// <summary>Drops every cached slot bind group (retired: a pass this frame may still hold one).</summary>
+        private void InvalidateSlotBindGroups()
+        {
+            foreach (IntPtr bg in _slotBindGroups) if (bg != IntPtr.Zero) _retiredBindGroups3D.Add(bg);
+            _slotBindGroups.Clear();
+            _slotDesc.Clear();
+        }
+
+        // A mesh's vertex/index buffers, uploaded once and reused for as long as the scene keeps
+        // referencing that mesh.
+        //
+        // These used to be rebuilt and re-uploaded PER MODEL, PER FRAME -- which is catastrophic
+        // exactly where 3D gets interesting, because a scene with many instances of one shape shares
+        // a single MeshGeometry3D. The fractal-tree sample draws ~4000 branches off ONE cylinder:
+        // that was ~8000 buffer creations and ~4000 redundant vertex re-packs every frame, and it ran
+        // at 1.3fps against milcore's 44.
+        //
+        // Keyed on the mesh INSTANCE, which is safe because MeshGeometry3D is immutable and the
+        // decoder replaces the instance (rather than mutating it) when a mesh resource is updated.
+        private sealed class GpuMesh
+        {
+            public IntPtr Vbuf, Ibuf;
+            public int LastUsedFrame;
+        }
+
+        private readonly Dictionary<MeshGeometry3D, GpuMesh> _meshCache =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance as IEqualityComparer<MeshGeometry3D>);
+
+        // Frames a mesh may go unused before its buffers are released. Generous: re-uploading is far
+        // more expensive than holding a few hundred KB, and scenes routinely hide/show geometry.
+        private const int MeshCacheIdleFrames = 240;
+
+        private (IntPtr Vbuf, IntPtr Ibuf) GetMeshBuffers(MeshGeometry3D mesh)
+        {
+            if (!_meshCache.TryGetValue(mesh, out GpuMesh? gm))
+            {
+                byte[] vbytes = BuildMeshVertices(mesh);
+                byte[] ibytes = new byte[mesh.Indices.Length * sizeof(uint)];
+                Buffer.BlockCopy(mesh.Indices, 0, ibytes, 0, ibytes.Length);
+                gm = new GpuMesh
+                {
+                    Vbuf = _ctx.CreateBufferMapped(vbytes, WGPUBufferUsage.Vertex),
+                    Ibuf = _ctx.CreateBufferMapped(ibytes, WGPUBufferUsage.Index),
+                };
+                _meshCache[mesh] = gm;
+            }
+            gm.LastUsedFrame = _frameId;
+            return (gm.Vbuf, gm.Ibuf);
+        }
+
+        /// <summary>Releases mesh buffers untouched for a while. Called once per frame.</summary>
+        private void EvictStaleMeshes()
+        {
+            if (_meshCache.Count == 0) return;
+            List<MeshGeometry3D>? dead = null;
+            foreach (KeyValuePair<MeshGeometry3D, GpuMesh> kv in _meshCache)
+                if (_frameId - kv.Value.LastUsedFrame > MeshCacheIdleFrames)
+                    (dead ??= new List<MeshGeometry3D>()).Add(kv.Key);
+            if (dead is null) return;
+            foreach (MeshGeometry3D m in dead)
+            {
+                GpuMesh gm = _meshCache[m];
+                wgpuBufferRelease(gm.Vbuf);
+                wgpuBufferRelease(gm.Ibuf);
+                _meshCache.Remove(m);
+            }
+        }
+
+        // wgpuRenderPipelineGetBindGroupLayout hands back a NEW reference per call, so asking for it
+        // once per model per frame both cost a call and leaked one layout per draw.
+        private readonly Dictionary<(WGPUCullMode Cull, bool DepthWrite), IntPtr> _bindGroupLayouts3D = new();
+
+        private IntPtr Get3DBindGroupLayout(WGPUCullMode cull, bool depthWrite)
+        {
+            if (_bindGroupLayouts3D.TryGetValue((cull, depthWrite), out IntPtr cached)) return cached;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(Get3DPipeline(ReadbackFormat, cull, depthWrite), 0);
+            _bindGroupLayouts3D[(cull, depthWrite)] = layout;
+            return layout;
+        }
+
+        private IntPtr Create3DBindGroup(IntPtr uniformBuffer, ulong offset, ulong size, IntPtr textureView, bool backFace, bool depthWrite)
         {
             // Auto pipeline layouts are only compatible with the pipeline they came from, so the bind
             // group must be created against the SAME cull AND depth-write variant it will be drawn with.
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(
-                Get3DPipeline(ReadbackFormat, backFace ? WGPUCullMode.Front : WGPUCullMode.Back, depthWrite), 0);
+            IntPtr layout = Get3DBindGroupLayout(backFace ? WGPUCullMode.Front : WGPUCullMode.Back, depthWrite);
             var entries = stackalloc WGPUBindGroupEntry[3];
-            entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = 0, size = size };
+            entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = uniformBuffer, offset = offset, size = size };
             entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = textureView };
             entries[2] = new WGPUBindGroupEntry { binding = 2, sampler = LinearSampler() };
             var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 3, entries = entries };
@@ -577,14 +793,25 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
         // Uniform layout matches the WGSL struct U: 2 mat4 + 6 vec4 header, then MaxLights3D Light
         // (4 vec4 each). std140 alignment is satisfied (all vec4-aligned).
-        private static byte[] BuildModelUniform(Matrix4x4 mvp, Matrix4x4 model, Vector3 camPos,
-            IReadOnlyList<Light3D> lights, RgbaColor ambient, Material3D mat, bool flipNormals = false)
+        //
+        // Written straight into the shared staging array at the slot's stride offset: with thousands
+        // of draws a per-model float[]+byte[] pair was megabytes of garbage every frame.
+        private void WriteModelUniform(int slot, Matrix4x4 mvp, Matrix4x4 model, Vector3 camPos,
+            IReadOnlyList<Light3D> lights, RgbaColor ambient, Material3D mat, bool flipNormals)
         {
-            const int headerFloats = 32 + 24;                 // 2 mat4 (32) + 6 vec4 (24)
-            var f = new float[headerFloats + MaxLights3D * 16];
+            int need = (slot + 1) * Uniform3DStride;
+            if (_uniform3DStaging.Length < need)
+            {
+                int size = _uniform3DStaging.Length;
+                while (size < need) size *= 2;
+                Array.Resize(ref _uniform3DStaging, size);
+            }
+
+            Span<float> f = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(
+                _uniform3DStaging.AsSpan(slot * Uniform3DStride, Uniform3DFloats * 4));
             int o = 0;
             WriteMatrix(f, ref o, mvp);
-            WriteMatrix(f, ref o, model);
+            WriteMatrix(f, ref o, model);   // the shader derives the normal matrix from this
             f[o++] = camPos.X; f[o++] = camPos.Y; f[o++] = camPos.Z; f[o++] = 0f;
             f[o++] = ambient.R; f[o++] = ambient.G; f[o++] = ambient.B; f[o++] = 1f;
             f[o++] = mat.Diffuse.R; f[o++] = mat.Diffuse.G; f[o++] = mat.Diffuse.B; f[o++] = mat.Diffuse.A;
@@ -601,12 +828,12 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 f[o++] = d.X; f[o++] = d.Y; f[o++] = d.Z; f[o++] = l.OuterConeCos;
                 f[o++] = l.ConstantAtten; f[o++] = l.LinearAtten; f[o++] = l.QuadraticAtten; f[o++] = l.InnerConeCos;
             }
-            var bytes = new byte[f.Length * sizeof(float)];
-            Buffer.BlockCopy(f, 0, bytes, 0, bytes.Length);
-            return bytes;
+            // A slot re-used by a draw with FEWER lights must not keep the old ones: the light count
+            // gates the shader loop, but zeroing the tail keeps a slot's bytes a function of its draw.
+            for (; o < Uniform3DFloats; o++) f[o] = 0f;
         }
 
-        private static void WriteMatrix(float[] dst, ref int o, Matrix4x4 m)
+        private static void WriteMatrix(Span<float> dst, ref int o, Matrix4x4 m)
         {
             dst[o++] = m.M11; dst[o++] = m.M12; dst[o++] = m.M13; dst[o++] = m.M14;
             dst[o++] = m.M21; dst[o++] = m.M22; dst[o++] = m.M23; dst[o++] = m.M24;
@@ -616,6 +843,16 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
         private void ReleaseResources3D()
         {
+            foreach (GpuMesh gm in _meshCache.Values) { wgpuBufferRelease(gm.Vbuf); wgpuBufferRelease(gm.Ibuf); }
+            _meshCache.Clear();
+            InvalidateSlotBindGroups();
+            foreach (IntPtr bg in _retiredBindGroups3D) wgpuBindGroupRelease(bg);
+            _retiredBindGroups3D.Clear();
+            foreach (IntPtr b in _retiredBuffers3D) wgpuBufferRelease(b);
+            _retiredBuffers3D.Clear();
+            if (_uniform3DBuffer != IntPtr.Zero) { wgpuBufferRelease(_uniform3DBuffer); _uniform3DBuffer = IntPtr.Zero; _uniform3DCapacity = 0; }
+            foreach (IntPtr layout in _bindGroupLayouts3D.Values) wgpuBindGroupLayoutRelease(layout);
+            _bindGroupLayouts3D.Clear();
             foreach (IntPtr pipeline in _pipelines3D.Values) wgpuRenderPipelineRelease(pipeline);
             _pipelines3D.Clear();
             if (_shader3D != IntPtr.Zero) { wgpuShaderModuleRelease(_shader3D); _shader3D = IntPtr.Zero; }

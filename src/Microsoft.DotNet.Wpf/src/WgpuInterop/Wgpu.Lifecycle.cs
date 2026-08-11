@@ -28,6 +28,11 @@ namespace Microsoft.Wpf.Interop.WebGpu
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void wgpuBindGroupRelease(IntPtr bindGroup);
 
+        // wgpuRenderPipelineGetBindGroupLayout returns a NEW reference on every call, so a caller
+        // that asks per draw leaks one layout per draw without this.
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuBindGroupLayoutRelease(IntPtr bindGroupLayout);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void wgpuSamplerRelease(IntPtr sampler);
 

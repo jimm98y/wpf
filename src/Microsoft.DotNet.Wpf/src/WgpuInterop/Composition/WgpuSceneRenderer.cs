@@ -131,11 +131,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
 
         /// <summary>Begin a logical composition frame (drives coverage-cache eviction).</summary>
-        public void BeginFrame() => _frameId++;
+        public void BeginFrame() { _frameId++; BeginFrame3D(); }
 
         /// <summary>End the frame: return pooled layers and evict stale coverage-cache entries.</summary>
         public void EndFrame()
         {
+            EvictStaleMeshes();
+
             // The animation detector holds one small entry per geometry hash ever drawn under a
             // rotation. Nothing else would ever remove them, so a long session accumulates one
             // per shape forever; anything untouched for a few frames is not animating by
@@ -764,6 +766,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 Vbuf = vbuf; Ibuf = ibuf; BindGroup = bindGroup; IndexCount = indexCount; BackFace = backFace; Transparent = transparent;
             }
+            /// <summary>The same draw once its slot's (cached) bind group is known.</summary>
+            public Draw3D WithBindGroup(IntPtr bindGroup)
+                => new(Vbuf, Ibuf, bindGroup, IndexCount, BackFace, Transparent);
         }
 
         private sealed class LayerPass

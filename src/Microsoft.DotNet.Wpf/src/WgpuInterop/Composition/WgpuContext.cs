@@ -399,11 +399,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 #endif
         }
 
-        public void WriteBuffer(IntPtr buffer, ReadOnlySpan<byte> data)
+        public void WriteBuffer(IntPtr buffer, ReadOnlySpan<byte> data) => WriteBuffer(buffer, 0, data);
+
+        public void WriteBuffer(IntPtr buffer, ulong offset, ReadOnlySpan<byte> data)
         {
             fixed (byte* p = data)
             {
-                wgpuQueueWriteBuffer(Queue, buffer, 0, p, (nuint)data.Length);
+                wgpuQueueWriteBuffer(Queue, buffer, offset, p, (nuint)data.Length);
             }
         }
 
