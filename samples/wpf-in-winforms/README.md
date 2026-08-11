@@ -72,23 +72,33 @@ type in either text box.
 ### Self-test
 
 ```powershell
-.\bin\Release\net10.0\WpfInWinForms.exe 30 selftest    # exit 0 = pass
+.\bin\Release\net10.0\WpfInWinForms.exe 30 selftest          # exit 0 = pass
+.\bin\Release\net10.0\WpfInWinForms.exe 30 selftest mouse    # also drives the real pointer
 ```
 
-It clicks the WinForms button through the driver, drives the trackbar, and clicks the **WPF** button
-with real OS input (`SetCursorPos` + `SendInput`), then asserts both click counters advanced and the
-WPF tree is live, saving before/after frames.
+`selftest` clicks the WinForms button through the driver, drives the trackbar, flips the radio and
+checkbox (the WinForms → WPF paths), saves before/after frames, and asserts:
 
-> Real OS input means it **moves the actual mouse pointer**. Don't run it alongside another UI test —
-> that is what made a neighbouring sample's self-test look broken during development.
+- the WPF tree is live,
+- where the WPF button is **drawn** is where it is **clickable** (the scene is composited at the
+  control's position in the host's frame, while input arrives at the hosted window's own client rect
+  — nothing ties those together automatically),
+- the host's client area equals the presented surface, so the compositor is not **rescaling** the
+  frame on the way to the screen. That one is not cosmetic: the window was originally created with
+  the form size as the *window* size, so the client area came out smaller (864×521 for an 880×560
+  form), the frame was stretched into it, and every hit-test drifted — a click landed on the control
+  *above* the cursor, worse the further down the window you clicked.
 
-Synthetic window messages deliberately do *not* work here: WPF drops mouse messages sent to an
-inactive window that has neither capture nor the real cursor over it ("spurious mouse event"), which
-is why the self-test drives the OS instead. That it passes is the interesting part — it proves the
-hosted tree is hit-testable at the screen position it is *drawn* at.
+It deliberately needs **no mouse**, so it is safe to run on a machine somebody is using. Add `mouse`
+to also click the WPF button with the physical pointer (`SetCursorPos` + `SendInput`) — a stronger
+end-to-end proof, but it loses races against a human and against any other UI test running at the
+same time.
 
-Diagnostics: `WF_TRACE_INPUT=1` traces the messages the hosted window sees and how WPF routed them;
-`WF_WEBGPU_SAVE=<png>` sets where the self-test writes its frames.
+Synthetic window messages are not an option for the WPF half: WPF drops mouse messages sent to an
+inactive window that has neither capture nor the real cursor over it ("spurious mouse event").
+
+Diagnostics: `WF_TRACE_INPUT=1` traces the messages the hosted window sees, how WPF routed them, and
+the scene/window placement; `WF_WEBGPU_SAVE=<png>` sets where the self-test writes its frames.
 
 ## Prerequisites
 

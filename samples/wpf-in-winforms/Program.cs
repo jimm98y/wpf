@@ -46,6 +46,8 @@ internal static class Program
 
         int seconds = args.Length > 0 && int.TryParse(args[0], out int sec) ? sec : 0;
         bool selftest = Array.IndexOf(args, "selftest") >= 0;
+        bool mouseTest = Array.IndexOf(args, "mouse") >= 0;      // also drive the physical pointer
+        selftest |= mouseTest;
 
         // ---- the WinForms side ------------------------------------------------------------
         var form = new SWF.Form
@@ -140,11 +142,14 @@ internal static class Program
                 SD.Point wf = wfButton.PointToScreen(new SD.Point(wfButton.Width / 2, wfButton.Height / 2));
                 shell.InjectClickScreen(wf.X, wf.Y);
                 track.Value = 88;
-                host.MoveCursorTo(wpf.Button);
             }
-            if (selftest && frame == 30) host.PressLeft();
-            if (selftest && frame == 36) host.ReleaseLeft();
-            if (selftest && frame == 44)
+            // "mouse": also click the WPF button with the REAL pointer, proving the hosted tree is
+            // hit-testable end to end. Opt-in, because it moves the physical cursor and so loses to a
+            // human using the machine -- the assertions below get the same coverage without it.
+            if (mouseTest && frame == 30) host.MoveCursorTo(wpf.Button);
+            if (mouseTest && frame == 36) OsInput.PressLeft();
+            if (mouseTest && frame == 40) OsInput.ReleaseLeft();
+            if (selftest && frame == 52)
             {
                 shell.SaveFrame(SelftestPng);
                 Console.WriteLine($"saved frame -> {SelftestPng}");
@@ -153,13 +158,35 @@ internal static class Program
                 radioB.Checked = true;
                 check.Checked = false;
             }
-            if (selftest && frame == 56)
+            if (selftest && frame == 64)
             {
                 string after = SelftestPng.Replace(".png", "-after.png");
                 shell.SaveFrame(after);
                 Console.WriteLine($"saved frame -> {after}");
-                Console.WriteLine($"selftest: winforms clicks={wfClicks} wpf clicks={s_wpfClicks} wpfLive={host.IsLive}");
-                return wfClicks >= 1 && s_wpfClicks >= 1 && host.IsLive ? 0 : 5;
+
+                // Where the WPF button is DRAWN must be where it is CLICKABLE. This is the assertion
+                // that catches a host surface which does not map 1:1 onto its client area (the frame
+                // gets rescaled, and clicks land on whatever is drawn above the cursor).
+                bool aligned = host.TryGetAlignment(wpf.Button, out SD.Point drawn, out SD.Point clickable);
+                int dx = drawn.X - clickable.X, dy = drawn.Y - clickable.Y;
+                bool onTarget = aligned && Math.Abs(dx) <= 1 && Math.Abs(dy) <= 1;
+
+                // And the frame must not be RESCALED on the way to the screen. The surface is the form
+                // size in device pixels; if the window's client area differs, the compositor stretches
+                // the frame into it and every hit-test drifts, the more the further from the origin --
+                // a click landing on the control above the cursor. Neither coordinate above can see
+                // that, because both live in surface space; only the client rect tells you.
+                bool sized = OsInput.TryGetClientSize(EmbeddedScenes.HostWindow, out int cw, out int ch);
+                int sw = (int)Math.Round(form.Width * EmbeddedScenes.HostScale);
+                int sh = (int)Math.Round(form.Height * EmbeddedScenes.HostScale);
+                bool oneToOne = sized && cw == sw && ch == sh;
+
+                Console.WriteLine($"selftest: winforms clicks={wfClicks} wpfLive={host.IsLive} " +
+                                  $"wpf button drawn at {drawn} clickable at {clickable} (delta {dx},{dy}) " +
+                                  $"client {cw}x{ch} vs surface {sw}x{sh}" +
+                                  (mouseTest ? $" wpf clicks={s_wpfClicks}" : ""));
+                bool ok = wfClicks >= 1 && host.IsLive && onTarget && oneToOne && (!mouseTest || s_wpfClicks >= 1);
+                return ok ? 0 : 5;
             }
 
             if (seconds > 0 && clock.Elapsed.TotalSeconds > seconds) break;

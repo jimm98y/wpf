@@ -48,6 +48,7 @@ internal sealed class ElementHost : SWF.Control
     private float _scale = 1f;
     private int _placedX = int.MinValue, _placedY, _placedW, _placedH;
     private bool _failed;
+    private bool _loggedPlacement;
 
     // WF_TRACE_INPUT=1 logs the mouse/focus messages the hosted WPF window sees — the first thing to
     // check when the WPF tree draws but does not react.
@@ -226,42 +227,51 @@ internal sealed class ElementHost : SWF.Control
         wrap.Children.Add(sv);
 
         SD.Point s = PointToScreen(SD.Point.Empty);
+        if (s_traceInput && !_loggedPlacement)
+        {
+            _loggedPlacement = true;
+            Console.WriteLine($"elementhost placement: scene=({s.X - ox},{s.Y - oy}) window=({_placedX / _scale},{_placedY / _scale}) " +
+                              $"ptToScreen=({s.X},{s.Y}) formOrigin=({ox},{oy})");
+        }
         return new List<(object, int, int)> { (wrap, s.X - ox, s.Y - oy) };
     }
 
     // ---- self-test input ------------------------------------------------------------------
-    //
-    // These drive the REAL OS cursor and the REAL input queue (SetCursorPos + SendInput) rather than
-    // posting synthetic window messages, because WPF deliberately drops the latter: an inactive
-    // HwndMouseInputProvider ignores a mouse message unless the window has capture or the actual
-    // cursor is over it ("spurious mouse event"). Going through the OS is also a far better test --
-    // a pass proves the hosted WPF tree is hit-testable at the screen position it is DRAWN at, which
-    // is the whole claim this sample makes. Move / press / release are separate calls so the host
-    // loop pumps between them, exactly as it would for a human.
 
-    /// <summary>Put the real cursor over the centre of a hosted WPF element.</summary>
-    internal bool MoveCursorTo(WPF.FrameworkElement target)
+    /// <summary>
+    /// Where the centre of a hosted WPF element is DRAWN, and where it is CLICKABLE, both in the host
+    /// window's client pixels. They must agree: the scene is composited at this control's position in
+    /// the host's frame, while input arrives at the hosted window's own client rect, and nothing ties
+    /// the two together automatically. They came apart when the host's surface did not map 1:1 onto
+    /// its client area -- the compositor rescaled the frame, so what you saw drifted from what you
+    /// hit, worse the further from the origin you looked. Asserting this needs no mouse, which also
+    /// makes it safe to run on a machine somebody is using.
+    /// </summary>
+    internal bool TryGetAlignment(WPF.FrameworkElement target, out SD.Point drawn, out SD.Point clickable)
     {
+        drawn = clickable = SD.Point.Empty;
         if (_source?.RootVisual is not System.Windows.Media.Visual root || target == null) return false;
-        if (!OperatingSystem.IsWindows()) return false;
         WPF.Point c = target.TransformToAncestor(root)
                             .Transform(new WPF.Point(target.ActualWidth / 2, target.ActualHeight / 2));
-        var pt = new POINT { x = (int)Math.Round(c.X * _scale), y = (int)Math.Round(c.Y * _scale) };
-        if (!ClientToScreen(_source.Handle, ref pt)) return false;
-        SetForegroundWindow(EmbeddedScenes.HostWindow);   // capture (and so ButtonBase) needs this
-        return SetCursorPos(pt.x, pt.y);
+
+        // Drawn: element DIPs -> this control's points -> host client pixels, the path Collect uses.
+        SD.Point origin = PointToScreen(SD.Point.Empty);
+        drawn = new SD.Point((int)Math.Round((origin.X + c.X) * _scale), (int)Math.Round((origin.Y + c.Y) * _scale));
+
+        // Clickable: the same element point in the hosted window's client pixels, mapped to screen by
+        // the OS and back into the host's client space.
+        var pt = new SD.Point((int)Math.Round(c.X * _scale), (int)Math.Round(c.Y * _scale));
+        if (!OsInput.TryMapClientToClient(_source.Handle, EmbeddedScenes.HostWindow, ref pt)) return false;
+        clickable = pt;
+        return true;
     }
 
-    internal void PressLeft() => SendMouse(MOUSEEVENTF_LEFTDOWN);
-    internal void ReleaseLeft() => SendMouse(MOUSEEVENTF_LEFTUP);
-
-    private static void SendMouse(uint flags)
+    /// <summary>Put the real cursor over the centre of a hosted WPF element, aiming at where it is
+    /// DRAWN (see <see cref="TryGetAlignment"/>). Manual/opt-in: it moves the physical pointer.</summary>
+    internal bool MoveCursorTo(WPF.FrameworkElement target)
     {
-        if (!OperatingSystem.IsWindows()) return;
-        var input = new INPUT { type = INPUT_MOUSE };
-        input.mi.dwFlags = flags;
-        if (SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>()) != 1)
-            Console.Error.WriteLine($"SendInput(0x{flags:x}) rejected (0x{Marshal.GetLastWin32Error():x})");
+        if (!TryGetAlignment(target, out SD.Point drawn, out _)) return false;
+        return OsInput.MoveCursorToClientPoint(EmbeddedScenes.HostWindow, drawn.X, drawn.Y);
     }
 
     private int SceneVersion()
@@ -284,24 +294,5 @@ internal sealed class ElementHost : SWF.Control
         base.Dispose(disposing);
     }
 
-    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
-    private const uint INPUT_MOUSE = 0;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int x, y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
-
-    // INPUT is { DWORD type; union { MOUSEINPUT; KEYBDINPUT; HARDWAREINPUT } }. MOUSEINPUT is the
-    // largest arm of the union, so declaring it directly gives the exact 40-byte 64-bit layout --
-    // and the size matters: SendInput rejects the call outright if cbSize is not exactly right.
-    [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT { public uint type; public MOUSEINPUT mi; }
-
     [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
-    [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32")] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT pt);
-    [DllImport("user32")] private static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32", SetLastError = true)] private static extern uint SendInput(uint n, INPUT[] inputs, int size);
 }

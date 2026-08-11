@@ -71,14 +71,23 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowExW failed (0x{Marshal.GetLastWin32Error():x})");
 
+        _scale = GetDpiForWindow(_hwnd) / 96f;   // DPI scale: render at device pixels (crisp)
+
+        // CreateWindowEx sizes the WHOLE window, caption and borders included, but the surface we
+        // present is the form-sized CLIENT area. Left as it was, the client area came out smaller than
+        // the form (864x521 for an 880x560 form) and the compositor stretched the frame down into it:
+        // everything drew ~7% short vertically, and because ClientDip assumes a 1:1 client the hit-test
+        // point drifted further off the further down the window you clicked -- a click landed on the
+        // control ABOVE the one under the cursor. Grow the window so the CLIENT is exactly form-sized.
+        ResizeClientTo(_form.Width, _form.Height);
+
         if (_gpuRaster)
         {
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _hwnd);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
-            _scale = GetDpiForWindow(_hwnd) / 96f;   // DPI scale: render at device pixels (crisp)
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, _scale, srgb: true);
-            Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, scale {_scale})");
+            Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, scale {_scale}, client {ClientSize()})");
         }
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
         // scale now that both exist. Inert when nothing is embedded.
@@ -131,7 +140,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             // Take the keyboard back on a click in the WinForms area. Without this, a hosted child
             // window that grabbed focus (an ElementHost's WPF tree) would keep it forever and the
             // WinForms text box would stop receiving typed characters.
-            case 0x0201: SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
+            case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
             case 0x0202: MouseAt(lParam, _up); Frame(); return IntPtr.Zero;     // WM_LBUTTONUP
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
             case 0x0102: _char.Invoke(_driver, new object[] { (char)(int)wParam }); Frame(); return IntPtr.Zero; // WM_CHAR
@@ -142,6 +151,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
                 if (vk is 33 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 46)
                 { _keyDown.Invoke(_driver, new object[] { vk }); Frame(); }
                 return IntPtr.Zero;
+            case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             case 0x0010: DestroyWindow(hwnd); return IntPtr.Zero;                // WM_CLOSE
             case 0x0002: PostQuitMessage(0); return IntPtr.Zero;                 // WM_DESTROY
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -149,6 +159,54 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     }
 
     private void Frame() { Application.DoEvents(); Present(); }
+
+    private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
+    private void Trace(string what, IntPtr lParam)
+    {
+        if (!s_trace) return;
+        (int x, int y) = ClientDip(lParam);
+        Console.WriteLine($"win32host: {what} client dip ({x},{y})");
+    }
+
+    private string ClientSize()
+    {
+        GetClientRect(_hwnd, out RECT r);
+        return $"{r.right - r.left}x{r.bottom - r.top}";
+    }
+
+    // Grow/shrink the window so its CLIENT area is exactly logicalW x logicalH points at the current
+    // DPI -- i.e. exactly the surface the presenter configures. Any mismatch is not a cosmetic border:
+    // the compositor rescales the presented frame into the client rect, which silently breaks the
+    // 1:1 mapping ClientDip relies on to turn a click into a driver coordinate.
+    private void ResizeClientTo(int logicalW, int logicalH)
+    {
+        var r = new RECT { left = 0, top = 0, right = (int)Math.Round(logicalW * _scale), bottom = (int)Math.Round(logicalH * _scale) };
+        int style = (int)GetWindowLongPtrW(_hwnd, -16);     // GWL_STYLE
+        int exStyle = (int)GetWindowLongPtrW(_hwnd, -20);   // GWL_EXSTYLE
+        // The per-DPI variant accounts for this window's DPI rather than the process default; it only
+        // exists on Windows 10 1607+, so fall back to the classic call.
+        if (!AdjustWindowRectExForDpi(ref r, style, false, exStyle, GetDpiForWindow(_hwnd)))
+            AdjustWindowRectEx(ref r, style, false, exStyle);
+        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, r.right - r.left, r.bottom - r.top,
+                     0x0002 | 0x0004 | 0x0010);            // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+    }
+
+    // The user resized the window: adopt the new client area as the form's size so the WinForms
+    // layout, the driver's windows and the swap chain all agree again (Present reconfigures when the
+    // size it is handed changes).
+    private void OnClientResized()
+    {
+        if (_wgpu == null) return;
+        GetClientRect(_hwnd, out RECT r);
+        int lw = (int)Math.Round((r.right - r.left) / _scale), lh = (int)Math.Round((r.bottom - r.top) / _scale);
+        if (lw <= 0 || lh <= 0) return;                     // minimised
+        if (lw == _form.Width && lh == _form.Height) return;
+        _form.Width = lw;
+        _form.Height = lh;
+        Application.DoEvents();                             // let the WinForms layout settle first
+        _lastVer = -1;                                      // force a present at the new size
+        Present();
+    }
 
     private void MouseAt(IntPtr lParam, MethodInfo inject)
     {
@@ -239,4 +297,13 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     [DllImport("user32")] private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32")] private static extern short GetKeyState(int vk);
     [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
+    [DllImport("user32")] private static extern bool GetClientRect(IntPtr hWnd, out RECT r);
+    [DllImport("user32")] private static extern bool AdjustWindowRectEx(ref RECT r, int style, bool menu, int exStyle);
+    [DllImport("user32")] private static extern bool AdjustWindowRectExForDpi(ref RECT r, int style, bool menu, int exStyle, uint dpi);
+    [DllImport("user32")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
 }
