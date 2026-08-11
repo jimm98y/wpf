@@ -27,21 +27,14 @@
     <_Src>..\..\src\Microsoft.DotNet.Wpf\src</_Src>
   </PropertyGroup>
 
-  <!-- The per-OS windowing shell and the WebGPU present path are SHARED with the pure-WinForms
-       gallery, unchanged: this sample only adds the ElementHost that feeds it a WPF scene. -->
-  <ItemGroup>
-    <Compile Include="..\winforms-webgpu-gallery\IWinFormsHost.cs" Link="IWinFormsHost.cs" />
-    <Compile Include="..\winforms-webgpu-gallery\EmbeddedScenes.cs" Link="EmbeddedScenes.cs" />
-    <Compile Include="..\winforms-webgpu-gallery\WgpuPresenter.cs" Link="WgpuPresenter.cs" />
-    <Compile Include="..\winforms-webgpu-gallery\Win32Host.cs" Link="Win32Host.cs" />
-    <Compile Include="..\winforms-webgpu-gallery\CocoaHost.cs" Link="CocoaHost.cs" />
-  </ItemGroup>
-
-  <!-- The WinForms half: Mono's managed System.Windows.Forms with our driver, our vendored
-       System.Drawing (with the GPU-raster backend), and the WebGPU interop both halves share. -->
+  <!-- The WinForms half: Mono's managed System.Windows.Forms with our driver (which now owns its own
+       on-screen presentation, so this sample needs no host loop), our vendored System.Drawing with
+       the GPU-raster backend, the WebGPU interop both halves share, and WindowsFormsIntegration for
+       System.Windows.Forms.Integration.ElementHost. An SDK-built app gets all of these from the SDK. -->
   <ItemGroup>
     <ProjectReference Include="$(_Src)\WinFormsInterop\System.Windows.Forms.WebGpu.csproj" />
     <ProjectReference Include="$(_Src)\WinFormsInterop\sysdrawing\System.Drawing.WebGpu.csproj" />
+    <ProjectReference Include="$(_Src)\WinFormsInterop\integration\WindowsFormsIntegration.WebGpu.csproj" />
     <ProjectReference Include="$(_Src)\WgpuInterop\WgpuInterop.csproj" />
   </ItemGroup>
 

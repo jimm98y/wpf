@@ -106,19 +106,39 @@
 
   <!-- ============================== unix desktop extras ============================== -->
 
-  <!-- macOS/Linux desktop WinForms: a UseWindowsForms app runs on the fork's Mono
-       System.Windows.Forms, its vendored Mono.System.Drawing, and Accessibility. -->
-  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+  <!-- ======================== WinForms (every desktop head) ======================== -->
+
+  <!-- A UseWindowsForms app runs on the fork's Mono System.Windows.Forms, its vendored
+       Mono.System.Drawing, Accessibility, and WindowsFormsIntegration (ElementHost, for hosting a WPF
+       element tree inside a WinForms control).
+
+       Deliberately NOT unix-only. Microsoft.WindowsDesktop.App is never an option on this stack, and
+       on Windows it is actively harmful: it ships its own System.Windows.Forms, a framework assembly
+       always wins over an app-local one, and the SDK then drops the Mono copy as a "conflict" -- so
+       the real WinForms loaded, and anything mixing the two died at runtime (MissingMethodException:
+       Control.set_BackColor, the two WinForms disagreeing about System.Drawing.Color). Every head
+       gets exactly the same assemblies. -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
   </ItemGroup>
 
-  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider on unix; evict the
-       framework System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433. -->
+  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider; evict the framework
+       System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433. -->
   <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
-          Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
                      Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Same reason, at RUNTIME: a UseWindowsForms app must not resolve Microsoft.WindowsDesktop.App,
+       or its System.Windows.Forms shadows the one deployed beside the app. -->
+  <Target Name="_WpfWebGpuDropWindowsDesktopForWinForms"
+          BeforeTargets="GenerateBuildRuntimeConfigurationFiles;GeneratePublishRuntimeConfigurationFiles"
+          Condition="'$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <RuntimeFramework Remove="@(RuntimeFramework)" Condition="'%(RuntimeFramework.FrameworkName)' == 'Microsoft.WindowsDesktop.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App'" />
     </ItemGroup>
   </Target>
 

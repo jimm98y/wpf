@@ -42,6 +42,9 @@ internal sealed class CocoaHost : IWinFormsHost
         _getPresent = dt.GetMethod("GetPresentWindows", BindingFlags.NonPublic | BindingFlags.Instance);
         _getScene = dt.GetMethod("GetWindowScene", BindingFlags.NonPublic | BindingFlags.Instance);
         _getVersion = dt.GetMethod("GetPaintVersion", BindingFlags.NonPublic | BindingFlags.Instance);
+        // Claim the app's on-screen host slot, so the driver's message loop drives THIS window
+        // rather than creating a second one of its own.
+        PresentationHost.Attach(this);
     }
 
     // ---- composite the WinForms window tree into one bitmap ----------------------

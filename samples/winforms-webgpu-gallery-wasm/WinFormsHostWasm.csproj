@@ -36,8 +36,11 @@
 
   <!-- Shared present path + host interface reused from the desktop host (platform-neutral). -->
   <ItemGroup>
-    <Compile Include="..\winforms-webgpu-gallery\WgpuPresenter.cs" Link="WgpuPresenter.cs" />
-    <Compile Include="..\winforms-webgpu-gallery\IWinFormsHost.cs" Link="IWinFormsHost.cs" />
+    <!-- The present path and the host contract now live in the WinForms assembly itself
+         (WinFormsInterop/host); the browser head still compiles its own copy because BrowserHost
+         drives its loop from JS rather than through PresentationHost. -->
+    <Compile Include="..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\host\WgpuPresenter.cs" Link="WgpuPresenter.cs" />
+    <Compile Include="..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\host\IWinFormsHost.cs" Link="IWinFormsHost.cs" />
   </ItemGroup>
 
   <!-- Root the reflection-heavy assemblies so trimming keeps the driver's reflected members and the

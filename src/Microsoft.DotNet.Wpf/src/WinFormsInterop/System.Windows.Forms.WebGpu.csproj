@@ -50,6 +50,13 @@
     <Compile Include="gen/XplatUIWebGpu.cs" />
     <Compile Include="gen/XplatUIWebGpu.Core.cs" />
     <Compile Include="shims/*.cs" />
+
+    <!-- On-screen presentation: the per-OS window + event pump and the shared WebGPU present path.
+         This belongs to the WinForms assembly, not to a host app: real WinForms puts its own windows
+         on screen, so Application.Run(form) has to work for an app that references nothing else.
+         (These files used to live in the winforms-webgpu-gallery sample, which is why every sample
+         had to hand-roll its own message loop.) -->
+    <Compile Include="host/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -63,6 +70,9 @@
     <!-- Our own vendored Mono System.Drawing (the GPU-raster backend target), replacing the
          System.Drawing.Common 6.0.0 NuGet package. -->
     <ProjectReference Include="sysdrawing/System.Drawing.WebGpu.csproj" />
+    <!-- host/ presents through the shared WebGPU scene renderer; internals are exposed to this
+         assembly by name in WgpuInterop/AssemblyInfo.cs. -->
+    <ProjectReference Include="../WgpuInterop/WgpuInterop.csproj" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
     <PackageReference Include="System.CodeDom" Version="10.0.0" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.0" />

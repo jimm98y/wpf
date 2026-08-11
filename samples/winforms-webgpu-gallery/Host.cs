@@ -43,42 +43,59 @@ internal static class Host
         cb.CheckedChanged += (s2, e) => Console.WriteLine($"CheckBox -> {cb.Checked}");
         list.SelectedIndexChanged += (s2, e) => Console.WriteLine($"List -> {list.SelectedItem}");
 
-        // Force initial paint of the whole tree, then host on screen.
-        f.CreateControl();
-        f.Show();
-        foreach (Control c in Flatten(f)) c.Invalidate(true);
-        Application.DoEvents();
-
-        // Pick the platform windowing shell; the WebGPU present path below is identical on both.
-        IWinFormsHost host = OperatingSystem.IsWindows() ? new Win32Host(f) : new CocoaHost(f);
-        host.Show();
-        Console.WriteLine($"WinForms window shown ({(OperatingSystem.IsWindows() ? "Win32" : "Cocoa")}). Interact with it, or wait for timeout.");
-
-        // Self-test (arg "selftest"): inject clicks through the driver like real NSEvent clicks do,
-        // proving the on-screen window is interactive (click -> handler -> label update -> re-present).
+        // From here on this is an ORDINARY WinForms app: the window, the message pump and the WebGPU
+        // present all belong to System.Windows.Forms now (WinFormsInterop/host), so Application.Run
+        // is all it takes. It used to need a hand-rolled window + pump + present loop right here.
         bool selftest = Array.IndexOf(args, "selftest") >= 0;
+        int exit = 0;
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        int frame = 0;
-        while (true)
+        if (seconds > 0)
         {
-            if (selftest && frame == 10) { host.InjectClickScreen(btn.Left + btn.Width/2, btn.Top + btn.Height/2); }
-            if (selftest && frame == 20) { host.InjectClickScreen(btn.Left + btn.Width/2, btn.Top + btn.Height/2); }
-            if (selftest && frame == 30) { var p = cb.PointToScreen(new Point(8, cb.Height/2)); host.InjectClickScreen(p.X, p.Y); }
-            Application.DoEvents();     // drain any WinForms-side messages (repaints from Invalidate)
-            host.Present();             // reflect current state on screen
-            if (!host.Pump()) break;    // route OS input; false when the window closes
-            if (selftest && frame == 40) { host.SaveFrame(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wf-onscreen.png")); Console.WriteLine("saved on-screen frame"); break; }
-            if (seconds > 0 && sw.Elapsed.TotalSeconds > seconds) break;
-            frame++;
-            Thread.Sleep(16);
+            var close = new System.Windows.Forms.Timer { Interval = seconds * 1000 };
+            close.Tick += (s2, e) => { close.Stop(); f.Close(); };
+            close.Start();
         }
+
+        // Self-test: inject clicks through the driver like real window messages do, proving the
+        // on-screen window is interactive (click -> handler -> label update -> re-present).
+        if (selftest)
+        {
+            int step = 0;
+            var probe = new System.Windows.Forms.Timer { Interval = 150 };
+            probe.Tick += (s2, e) =>
+            {
+                switch (++step)
+                {
+                    case 2: ClickAt(btn.Left + btn.Width / 2, btn.Top + btn.Height / 2); break;
+                    case 4: ClickAt(btn.Left + btn.Width / 2, btn.Top + btn.Height / 2); break;
+                    case 6: var p = cb.PointToScreen(new Point(8, cb.Height / 2)); ClickAt(p.X, p.Y); break;
+                    case 8:
+                        exit = clicks == 2 && !cb.Checked ? 0 : 5;
+                        probe.Stop();
+                        f.Close();
+                        break;
+                }
+            };
+            probe.Start();
+        }
+
+        Console.WriteLine("WinForms window shown. Interact with it, or wait for the timeout.");
+        Application.Run(f);
         Console.WriteLine($"done. total clicks={clicks} checkbox={cb.Checked}");
-        return selftest ? (clicks == 2 && !cb.Checked ? 0 : 5) : 0;
+        return exit;
     }
 
-    private static System.Collections.Generic.IEnumerable<Control> Flatten(Control c)
-    { yield return c; foreach (Control ch in c.Controls) foreach (var g in Flatten(ch)) yield return g; }
+    // A click at a screen point through the driver's own hit-testing — the same entry real window
+    // messages take, minus the physical mouse (which would lose races with whoever is at the keyboard).
+    private static void ClickAt(int x, int y)
+    {
+        object driver = typeof(Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+            .GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .GetValue(null);
+        driver.GetType().GetMethod("InjectClick",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+              .Invoke(driver, new object[] { x, y });
+    }
 
     // Draw real WinForms controls through the GPU-raster seam and render the recorded scene with WGSL.
     private static int GpuRasterTest(string outPath)
@@ -145,7 +162,7 @@ internal static class Host
             ctx, tf, new Microsoft.Wpf.Interop.WebGpu.Composition.Text.SimpleTextShaper());
         byte[] rgba = renderer.RenderToRgba((Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual)scene,
             W, H, Microsoft.Wpf.Interop.WebGpu.Composition.RgbaColor.FromBytes(212, 208, 200, 255), srgbOutput: true);
-        CocoaHost.SaveRgbaPng(rgba, W, H, outPath);
+        Microsoft.Wpf.Interop.WebGpu.Composition.PngWriter.Write(outPath, rgba, W, H, maxWidth: W);
         Console.WriteLine($"GPU-rasterized real Graphics/ControlPaint drawing -> {outPath}");
         return 0;
     }

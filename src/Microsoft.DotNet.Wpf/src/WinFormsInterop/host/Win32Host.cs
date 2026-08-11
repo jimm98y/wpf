@@ -42,6 +42,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
+        // Claim the app's on-screen host slot, so the driver's message loop drives THIS window
+        // rather than creating a second one of its own.
+        PresentationHost.Attach(this);
     }
 
     public void Show()

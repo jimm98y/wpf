@@ -5,6 +5,20 @@ WPF app (`WindowsFormsHost`); here a **WPF element tree is embedded in a WinForm
 (`ElementHost`), on this fork's cross-platform stack: Mono's managed `System.Windows.Forms` driven by
 the `XplatUIWebGpu` driver, hosting WPF rendered by the managed WebGPU compositor.
 
+`ElementHost` is **`System.Windows.Forms.Integration.ElementHost`**, shipped in
+`WindowsFormsIntegration.dll` by `WpfWebGpu.Sdk` on every desktop head — same namespace, type name
+and core API as the Windows-only original, so existing WinForms+WPF code compiles and runs unchanged:
+
+```csharp
+var host = new ElementHost { Dock = DockStyle.Fill, Child = myWpfControl };
+Controls.Add(host);
+Application.Run(new Form1());
+```
+
+This sample is an ordinary `Application.Run` app — no host loop, no windowing code, no compositor
+code. The window, the message pump and the WebGPU present belong to `System.Windows.Forms` itself
+(`WinFormsInterop/host`), exactly as real WinForms puts its own windows on screen.
+
 ![the sample](docs/wpf-in-winforms.png)
 
 Left: ordinary WinForms controls, painted through the GPU-raster `System.Drawing` backend. Right: a
@@ -41,9 +55,10 @@ two native windows — the WinForms controls and the WPF tree end up in the same
 exactly the shape `EmbeddedContent` already had for the opposite direction, and it now has a
 counterpart, `HostedWpfContent`.
 
-The WinForms host files (`Win32Host`, `CocoaHost`, `WgpuPresenter`, `IWinFormsHost`) are **shared
-verbatim** with the pure-WinForms `winforms-webgpu-gallery`; the only addition is `EmbeddedScenes`, a
-hook the hosts consult for extra scenes and which is inert when nothing is embedded.
+The host shell (`Win32Host`, `CocoaHost`, `WgpuPresenter`, `PresentationHost`) lives in the WinForms
+assembly, and the driver's message loop drives it from `GetMessage`'s idle path — which is what makes
+`Application.Run` behave like real WinForms. `ElementHost` plugs into it through `EmbeddedScenes`, a
+registry the host consults for extra scenes each frame and which is empty in a plain WinForms app.
 
 ### Per-platform
 

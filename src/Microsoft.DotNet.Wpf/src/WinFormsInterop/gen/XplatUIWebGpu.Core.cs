@@ -435,10 +435,65 @@ namespace System.Windows.Forms
 		internal override object StartLoop(Thread thread) => (object)1;
 		internal override void EndLoop(Thread thread) { }
 
+		// ---- timers --------------------------------------------------------------
+		//
+		// System.Windows.Forms.Timer is how ordinary WinForms code does anything periodic, so the
+		// driver has to service it: Timer.Enabled just registers here, and the message loop fires the
+		// due ones on its way past. Mono's other drivers do the same thing against their native
+		// pumps; ours has a managed one, so this is a list and a clock.
+
+		private readonly List<Timer> timers = new List<Timer>();
+
+		internal override void SetTimer(Timer timer)
+		{
+			lock (timers) { if (!timers.Contains(timer)) timers.Add(timer); }
+		}
+
+		internal override void KillTimer(Timer timer)
+		{
+			lock (timers) timers.Remove(timer);
+		}
+
+		/// <summary>Fire every timer whose deadline has passed, and return the shortest wait until the
+		/// next one is due (or -1 when none are). Ticks run OUTSIDE the lock: a handler is arbitrary
+		/// app code and routinely starts or stops timers.</summary>
+		private int TickTimers()
+		{
+			Timer[] due = null;
+			int count = 0;
+			long now = Timer.StopWatchNowMilliseconds;
+			int next = -1;
+			lock (timers)
+			{
+				if (timers.Count == 0) return -1;
+				foreach (Timer t in timers)
+				{
+					long remaining = t.Expires - now;
+					if (remaining <= 0)
+					{
+						(due ??= new Timer[timers.Count])[count++] = t;
+						t.Update(now);
+						remaining = t.Expires - now;
+					}
+					if (next < 0 || remaining < next) next = (int)Math.Max(0, remaining);
+				}
+			}
+			for (int i = 0; i < count; i++)
+			{
+				try { due[i].FireTick(); }
+				catch (Exception ex) { Console.Error.WriteLine("Timer.Tick: " + ex); }
+			}
+			return next;
+		}
+
 		internal override bool GetMessage(object queue_id, ref MSG msg, IntPtr hWnd, int wFilterMin, int wFilterMax)
 		{
 			while (true)
 			{
+				// Before anything else, because a Tick handler is app code that can post messages,
+				// change the UI (so the next present has something to show) or quit the app.
+				int nextTimer = TickTimers();
+
 				if (queue.Count > 0)
 				{
 					msg = queue.Dequeue();
@@ -446,9 +501,20 @@ namespace System.Windows.Forms
 					return true;
 				}
 				if (quit) return false;
-				// No queued messages: nothing left to do in this in-memory (input-less) driver.
-				// On-screen driver would block on OS input here; for now, idle ends the pump.
-				return false;
+				// No queued messages. With a window on screen this is simply an idle frame: present
+				// whatever changed, let the OS hand us input (which refills the queue), and go round
+				// again -- that is what makes Application.Run(form) behave like real WinForms. With no
+				// windowing shell (headless render tests, WF_WEBGPU=0) there is nothing left to do and
+				// idle ends the pump, which is what this driver originally did unconditionally.
+				if (!PresentationHost.Tick())
+				{
+					// No on-screen host. A timer still pending is the one reason the loop is not
+					// finished: a headless app can legitimately be waiting on nothing else.
+					if (nextTimer < 0) return false;
+					PresentationHost.Idle(nextTimer);
+					continue;
+				}
+				PresentationHost.Idle(nextTimer);
 			}
 		}
 

@@ -1,22 +1,22 @@
 // WPF inside Windows Forms — WPF on WebGPU.
 //
-// A Windows Forms app (Mono's managed System.Windows.Forms on the XplatUIWebGpu driver) whose form
-// contains ordinary WinForms controls AND an ElementHost holding a live WPF element tree. Both are
-// composited into ONE WebGPU frame: the WinForms controls are recorded as scenes by the GPU-raster
-// System.Drawing backend, the WPF tree is decoded from WPF's own MILCMD stream by MilcoreEngine, and
-// WgpuPresenter renders both in a single pass onto the window's surface.
+// Deliberately an ORDINARY Windows Forms app: it builds a Form, drops a
+// System.Windows.Forms.Integration.ElementHost on it, sets ElementHost.Child to a WPF element tree,
+// and calls Application.Run. There is no host loop, no windowing code and no compositor code here --
+// that all lives in the WinForms assembly and in ElementHost, which is the point: existing
+// WinForms+WPF code compiles and runs on this stack unchanged.
 //
 // What it demonstrates beyond "it draws":
 //   * live WPF animation inside the WinForms window (the spinner runs off a WPF DispatcherTimer);
-//   * WinForms -> WPF: the trackbar drives a WPF Slider and the WPF gauge bound to it;
+//   * WinForms -> WPF: the trackbar drives a WPF Slider, the radios mutate a shared SolidColorBrush,
+//     the checkbox adds/removes a WPF DropShadowEffect;
 //   * WPF -> WinForms: clicking the WPF button updates a WinForms label;
 //   * real input on both sides — the WPF tree is a real HwndSource, so it hit-tests, hovers,
 //     focuses and takes the keyboard for itself.
 //
-// Run:  WF_WEBGPU=1 WF_GPU_RASTER=1 WpfInWinForms.exe [seconds] [selftest]
+// Run:  WpfInWinForms.exe [seconds] [selftest] [mouse]
 
 using System;
-using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -25,18 +25,19 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using SD = System.Drawing;
 using SWF = System.Windows.Forms;
+using System.Windows.Forms.Integration;
 
 internal static class Program
 {
     private static int s_wpfClicks;
     private static SWF.Label s_fromWpf;
+    private static int s_exitCode;
 
     [STAThread]
     private static int Main(string[] args)
     {
-        // The WinForms driver + GPU-raster paint path, and WPF's managed WebGPU compositor. All three
-        // must be set before either stack initializes, so do it first.
-        Environment.SetEnvironmentVariable("WF_WEBGPU", "1");
+        // The WinForms GPU-raster paint path and WPF's managed WebGPU compositor. Both must be set
+        // before either stack initializes. (An SDK-built app gets these from the SDK instead.)
         Environment.SetEnvironmentVariable("WF_GPU_RASTER", "1");
         if (Environment.GetEnvironmentVariable("WPF_USE_WEBGPU_COMPOSITION") == null)
             Environment.SetEnvironmentVariable("WPF_USE_WEBGPU_COMPOSITION", "1");
@@ -45,9 +46,8 @@ internal static class Program
         SWF.Application.SetCompatibleTextRenderingDefault(false);
 
         int seconds = args.Length > 0 && int.TryParse(args[0], out int sec) ? sec : 0;
-        bool selftest = Array.IndexOf(args, "selftest") >= 0;
-        bool mouseTest = Array.IndexOf(args, "mouse") >= 0;      // also drive the physical pointer
-        selftest |= mouseTest;
+        bool mouseTest = Array.IndexOf(args, "mouse") >= 0;
+        bool selftest = mouseTest || Array.IndexOf(args, "selftest") >= 0;
 
         // ---- the WinForms side ------------------------------------------------------------
         var form = new SWF.Form
@@ -82,14 +82,14 @@ internal static class Program
 
         form.Controls.AddRange(new SWF.Control[] { banner, group, echoGroup, typeLabel, typeBox });
 
-        // ---- the WPF side -----------------------------------------------------------------
+        // ---- the WPF side, hosted by the stock ElementHost API -----------------------------
         WpfPanel wpf = BuildWpfPanel();
-        var host = new ElementHost(wpf.Root)
+        var host = new ElementHost
         {
             Left = 420, Top = 40, Width = 424, Height = 440,
+            Child = wpf.Root,
         };
         form.Controls.Add(host);
-        host.Register();
 
         // ---- the two directions of interaction ---------------------------------------------
         int wfClicks = 0;
@@ -106,8 +106,6 @@ internal static class Program
         };
         wpf.Gauge.Value = track.Value;
 
-        // WF_TRACE_INPUT=1 traces the hosted tree's view of the mouse alongside ElementHost's message
-        // trace — together they say whether input reached the WPF window and whether WPF routed it.
         if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
         {
             wpf.Button.MouseEnter += (s, e) => Console.WriteLine("wpf trace: MouseEnter");
@@ -115,95 +113,24 @@ internal static class Program
             wpf.Button.PreviewMouseLeftButtonUp += (s, e) => Console.WriteLine($"wpf trace: up captured={System.Windows.Input.Mouse.Captured != null} pressed={wpf.Button.IsPressed}");
         }
 
-        // Paint the whole tree once, then bring up the native window + WebGPU surface.
-        form.CreateControl();
-        form.Show();
-        foreach (SWF.Control c in Flatten(form)) c.Invalidate(true);
-        SWF.Application.DoEvents();
+        if (seconds > 0) AutoClose(form, seconds);
+        if (selftest) SelfTest.Arm(form, host, wpf, wfButton, track, radioB, check, mouseTest,
+                                   () => wfClicks, () => s_wpfClicks, code => s_exitCode = code);
 
-        IWinFormsHost shell = OperatingSystem.IsWindows() ? new Win32Host(form) : new CocoaHost(form);
-        shell.Show();
-        Console.WriteLine($"WinForms window shown ({(OperatingSystem.IsWindows() ? "Win32" : "Cocoa")}); WPF hosted via ElementHost.");
-
-        // ---- the host loop: WinForms messages, WPF dispatcher, one present ------------------
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        int frame = 0;
-        while (true)
-        {
-            SWF.Application.DoEvents();   // WinForms messages (repaints from Invalidate)
-            host.Pump();                  // WPF: layout, animation, render -> scene published
-            shell.Present();              // both sides composited in one WebGPU pass
-            if (!shell.Pump()) break;     // OS input; false when the window closes
-
-            // Drive both sides the way a user would, with the loop pumping in between: a driver-level
-            // click on the WinForms button, and the REAL cursor + real mouse input over the WPF one.
-            if (selftest && frame == 20)
-            {
-                SD.Point wf = wfButton.PointToScreen(new SD.Point(wfButton.Width / 2, wfButton.Height / 2));
-                shell.InjectClickScreen(wf.X, wf.Y);
-                track.Value = 88;
-            }
-            // "mouse": also click the WPF button with the REAL pointer, proving the hosted tree is
-            // hit-testable end to end. Opt-in, because it moves the physical cursor and so loses to a
-            // human using the machine -- the assertions below get the same coverage without it.
-            if (mouseTest && frame == 30) host.MoveCursorTo(wpf.Button);
-            if (mouseTest && frame == 36) OsInput.PressLeft();
-            if (mouseTest && frame == 40) OsInput.ReleaseLeft();
-            if (selftest && frame == 52)
-            {
-                shell.SaveFrame(SelftestPng);
-                Console.WriteLine($"saved frame -> {SelftestPng}");
-                // The remaining WinForms -> WPF paths: a brush the WPF tree shares, and a WPF effect.
-                // Both must reach the screen without anything on the WinForms side being invalidated.
-                radioB.Checked = true;
-                check.Checked = false;
-            }
-            if (selftest && frame == 64)
-            {
-                string after = SelftestPng.Replace(".png", "-after.png");
-                shell.SaveFrame(after);
-                Console.WriteLine($"saved frame -> {after}");
-
-                // Where the WPF button is DRAWN must be where it is CLICKABLE. This is the assertion
-                // that catches a host surface which does not map 1:1 onto its client area (the frame
-                // gets rescaled, and clicks land on whatever is drawn above the cursor).
-                bool aligned = host.TryGetAlignment(wpf.Button, out SD.Point drawn, out SD.Point clickable);
-                int dx = drawn.X - clickable.X, dy = drawn.Y - clickable.Y;
-                bool onTarget = aligned && Math.Abs(dx) <= 1 && Math.Abs(dy) <= 1;
-
-                // And the frame must not be RESCALED on the way to the screen. The surface is the form
-                // size in device pixels; if the window's client area differs, the compositor stretches
-                // the frame into it and every hit-test drifts, the more the further from the origin --
-                // a click landing on the control above the cursor. Neither coordinate above can see
-                // that, because both live in surface space; only the client rect tells you.
-                bool sized = OsInput.TryGetClientSize(EmbeddedScenes.HostWindow, out int cw, out int ch);
-                int sw = (int)Math.Round(form.Width * EmbeddedScenes.HostScale);
-                int sh = (int)Math.Round(form.Height * EmbeddedScenes.HostScale);
-                bool oneToOne = sized && cw == sw && ch == sh;
-
-                Console.WriteLine($"selftest: winforms clicks={wfClicks} wpfLive={host.IsLive} " +
-                                  $"wpf button drawn at {drawn} clickable at {clickable} (delta {dx},{dy}) " +
-                                  $"client {cw}x{ch} vs surface {sw}x{sh}" +
-                                  (mouseTest ? $" wpf clicks={s_wpfClicks}" : ""));
-                bool ok = wfClicks >= 1 && host.IsLive && onTarget && oneToOne && (!mouseTest || s_wpfClicks >= 1);
-                return ok ? 0 : 5;
-            }
-
-            if (seconds > 0 && clock.Elapsed.TotalSeconds > seconds) break;
-            frame++;
-            Thread.Sleep(16);
-        }
-
+        SWF.Application.Run(form);
         Console.WriteLine($"done. winforms clicks={wfClicks} wpf clicks={s_wpfClicks}");
-        return 0;
+        return s_exitCode;
     }
 
-    private static string SelftestPng =>
-        Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE")
-        ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wpf-in-winforms.png");
+    private static void AutoClose(SWF.Form form, int seconds)
+    {
+        var timer = new SWF.Timer { Interval = seconds * 1000 };
+        timer.Tick += (s, e) => { timer.Stop(); form.Close(); };
+        timer.Start();
+    }
 
     // The hosted WPF tree, plus the handles the WinForms side drives it through.
-    private sealed class WpfPanel
+    internal sealed class WpfPanel
     {
         internal FrameworkElement Root;
         internal Border Card;
@@ -301,13 +228,5 @@ internal static class Program
         timer.Tick += (s, e) => { angle = (angle + 2.5) % 360; spin.Angle = angle; };
         timer.Start();
         return p;
-    }
-
-    private static System.Collections.Generic.IEnumerable<SWF.Control> Flatten(SWF.Control c)
-    {
-        yield return c;
-        foreach (SWF.Control k in c.Controls)
-            foreach (SWF.Control d in Flatten(k))
-                yield return d;
     }
 }

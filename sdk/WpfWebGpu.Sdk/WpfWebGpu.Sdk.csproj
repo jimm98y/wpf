@@ -94,9 +94,15 @@
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
 
-    <!-- WinForms (Mono System.Windows.Forms) for UseWindowsForms apps (unix desktop). -->
+    <!-- WinForms for UseWindowsForms apps, on EVERY desktop head (see Sdk.targets): the Mono
+         System.Windows.Forms — which owns its own on-screen presentation, so Application.Run works —
+         its vendored System.Drawing, Accessibility, and WindowsFormsIntegration for
+         System.Windows.Forms.Integration.ElementHost (hosting a WPF tree inside a WinForms control).
+         This is deliberately NOT a per-OS payload: Microsoft.WindowsDesktop.App's WinForms is never
+         an option here, so Windows needs exactly the same assemblies as macOS and Linux. -->
     <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll')" />
     <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll')" />
+    <None Include="$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll')" />
     <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 
     <!-- Native wgpu for the unix desktop heads. Each is packed only if staged on this machine

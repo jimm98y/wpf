@@ -44,8 +44,10 @@ namespace System.Windows.Forms {
 		internal override void GetCursorInfo(IntPtr cursor, out int width, out int height, out int hotspot_x, out int hotspot_y) { width = default(int); height = default(int); hotspot_x = default(int); hotspot_y = default(int); }
 		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea) { hwnd = default(IntPtr); GrabConfined = default(bool); GrabArea = default(Rectangle); }
 		internal override void SendAsyncMethod(AsyncMethodData method) {  }
-		internal override void SetTimer(Timer timer) {  }
-		internal override void KillTimer(Timer timer) {  }
+		// Timers are implemented in the CORE driver (XplatUIWebGpu.Core.cs): System.Windows.Forms.Timer
+		// is how ordinary WinForms code does anything periodic, and with these left as the generated
+		// no-ops Timer.Tick never fired -- an Application.Run app whose only work is on a timer simply
+		// hung. See TickTimers, driven from the message loop's idle path.
 		internal override IntPtr GetFocus() { return IntPtr.Zero; }
 		internal override IntPtr GetActive() { return IntPtr.Zero; }
 		internal override IntPtr GetPreviousWindow(IntPtr hwnd) { return IntPtr.Zero; }
