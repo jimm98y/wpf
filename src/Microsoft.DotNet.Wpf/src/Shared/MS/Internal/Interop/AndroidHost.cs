@@ -22,6 +22,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
 using Android.Content.Res;
@@ -644,7 +645,7 @@ internal sealed class WpfPrintDocumentAdapter : Android.Print.PrintDocumentAdapt
     }
 }
 
-internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost
+internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost, IAndroidClipboardHost, IAndroidDialogHost
 {
     private readonly Activity _activity;
     private readonly FrameLayout _root;
@@ -795,6 +796,373 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         if (!_views.Remove(handle, out View? view)) return;
         _root.RemoveView(view);
         view.Dispose();
+    }
+
+    // ---- clipboard ------------------------------------------------------------
+    //
+    // IAndroidClipboardHost, so a WPF Ctrl+C reaches the SYSTEM clipboard and can be pasted into
+    // another app. android.content.ClipboardManager needs a Context, which is why this half lives in
+    // the payload rather than in WindowsBase; see the header of AndroidClipboard.cs.
+    //
+    // Main-thread only, and every caller arrives on the dispatcher thread, which on this head IS the
+    // main Looper thread. No marshalling is needed and none is done.
+
+    private ClipboardManager? Clipboard =>
+        _activity.GetSystemService(Context.ClipboardService) as ClipboardManager;
+
+    public void Clear()
+    {
+        ClipboardManager? clipboard = Clipboard;
+        if (clipboard is null) return;
+
+        // ClearPrimaryClip is API 28+. Below that the nearest thing is an empty clip, which leaves
+        // the clipboard holding an empty string rather than nothing -- the observable difference is
+        // only whether a paste target thinks it has something to paste, and an empty string is the
+        // closer of the two available answers.
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+        {
+            clipboard.ClearPrimaryClip();
+        }
+        else
+        {
+            clipboard.PrimaryClip = ClipData.NewPlainText("", "");
+        }
+    }
+
+    public void SetText(string value)
+    {
+        ClipboardManager? clipboard = Clipboard;
+        if (clipboard is null) return;
+
+        // The first argument is a user-visible LABEL, not the payload: Android shows it in the
+        // clipboard UI on some versions. The app's own name is the honest thing to put there.
+        clipboard.PrimaryClip = ClipData.NewPlainText(_activity.PackageName ?? "WPF", value ?? "");
+    }
+
+    public string? GetText()
+    {
+        ClipboardManager? clipboard = Clipboard;
+        ClipData? clip = clipboard?.PrimaryClip;
+        if (clip is null || clip.ItemCount == 0) return null;
+
+        // CoerceToText rather than Item.Text: a clip put there by another app may be a URI or an
+        // Intent, and coercion is Android's own documented way of asking "what would this look like
+        // as text", which is exactly what a paste into a TextBox wants.
+        return clip.GetItemAt(0)?.CoerceToText(_activity);
+    }
+
+    /// <summary>
+    ///  Not supported: Android carries non-text clip data as a content:// URI, so an image would
+    ///  have to be written somewhere a ContentProvider can serve it, and this head declares none.
+    /// </summary>
+    /// <remarks>
+    ///  Returning false rather than pretending: PlatformClipboard then reports the image as absent,
+    ///  which is true, instead of putting a URI on the clipboard that nothing can resolve.
+    /// </remarks>
+    public bool SetData(string mimeType, byte[] data) => false;
+
+    public byte[]? GetData(string mimeType) => null;
+
+    public bool ContainsData(string mimeType) => false;
+
+    // ---- file dialogs ---------------------------------------------------------
+    //
+    // IAndroidDialogHost, over the Storage Access Framework. See AndroidDialogs.cs for why this is
+    // asynchronous and why the results are copied into the cache directory rather than handed back
+    // as content:// URIs.
+    //
+    // The activity has to forward its OnActivityResult to HandleActivityResult below; a head that
+    // forgets would otherwise leave every pick pending for ever, which is why OnActivityDestroyed
+    // completes anything outstanding.
+
+    private const int RequestOpen = 0x57_50_01;      // arbitrary, distinct, and unlikely to collide
+    private const int RequestOpenTree = 0x57_50_02;
+    private const int RequestCreate = 0x57_50_03;
+
+    private TaskCompletionSource<string[]>? _pendingPick;
+    private TaskCompletionSource<bool>? _pendingExport;
+    private string? _exportSource;
+
+    public Task<string[]> PickFilesAsync(string[]? mimeTypes, bool multiple, bool directory)
+    {
+        if (_pendingPick is not null && !_pendingPick.Task.IsCompleted)
+        {
+            return Task.FromResult(Array.Empty<string>());
+        }
+
+        var completion = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingPick = completion;
+
+        try
+        {
+            if (directory)
+            {
+                _activity.StartActivityForResult(new Intent(Intent.ActionOpenDocumentTree), RequestOpenTree);
+                return completion.Task;
+            }
+
+            var intent = new Intent(Intent.ActionOpenDocument);
+            intent.AddCategory(Intent.CategoryOpenable);
+            intent.SetType(SingleMimeType(mimeTypes));
+
+            if (mimeTypes is { Length: > 1 })
+            {
+                intent.PutExtra(Intent.ExtraMimeTypes, ToMimeTypes(mimeTypes));
+            }
+
+            if (multiple)
+            {
+                intent.PutExtra(Intent.ExtraAllowMultiple, true);
+            }
+
+            _activity.StartActivityForResult(intent, RequestOpen);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"WPF Android: the file picker could not start: {e}");
+            _pendingPick = null;
+            return Task.FromResult(Array.Empty<string>());
+        }
+
+        return completion.Task;
+    }
+
+    public Task<bool> ExportFileAsync(string path, string mimeType)
+    {
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return Task.FromResult(false);
+
+        if (_pendingExport is not null && !_pendingExport.Task.IsCompleted)
+        {
+            return Task.FromResult(false);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingExport = completion;
+        _exportSource = path;
+
+        try
+        {
+            var intent = new Intent(Intent.ActionCreateDocument);
+            intent.AddCategory(Intent.CategoryOpenable);
+            intent.SetType(string.IsNullOrEmpty(mimeType) ? "application/octet-stream" : mimeType);
+            intent.PutExtra(Intent.ExtraTitle, System.IO.Path.GetFileName(path));
+
+            _activity.StartActivityForResult(intent, RequestCreate);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"WPF Android: the save picker could not start: {e}");
+            _pendingExport = null;
+            return Task.FromResult(false);
+        }
+
+        return completion.Task;
+    }
+
+    public string ReserveSavePath(string suggestedName)
+    {
+        string name = string.IsNullOrEmpty(suggestedName) ? "document" : suggestedName;
+        string directory = System.IO.Path.Combine(
+            _activity.CacheDir?.AbsolutePath ?? System.IO.Path.GetTempPath(),
+            "wpf-save-" + Guid.NewGuid().ToString("N"));
+
+        System.IO.Directory.CreateDirectory(directory);
+        return System.IO.Path.Combine(directory, name);
+    }
+
+    /// <summary>
+    ///  Forwarded from the activity's OnActivityResult. Returns true when the result was one of
+    ///  ours, so the caller can fall through to its own handling otherwise.
+    /// </summary>
+    public bool HandleActivityResult(int requestCode, Result resultCode, Intent? data)
+    {
+        switch (requestCode)
+        {
+            case RequestOpen:
+            case RequestOpenTree:
+                CompletePick(resultCode, data, requestCode == RequestOpenTree);
+                return true;
+
+            case RequestCreate:
+                CompleteExport(resultCode, data);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Fails anything still outstanding, so a torn-down activity does not hang an await.</summary>
+    public void CancelPendingDialogs()
+    {
+        _pendingPick?.TrySetResult(Array.Empty<string>());
+        _pendingPick = null;
+        _pendingExport?.TrySetResult(false);
+        _pendingExport = null;
+    }
+
+    private void CompletePick(Result resultCode, Intent? data, bool tree)
+    {
+        TaskCompletionSource<string[]>? pending = _pendingPick;
+        _pendingPick = null;
+        if (pending is null) return;
+
+        if (resultCode != Result.Ok || data is null)
+        {
+            pending.TrySetResult(Array.Empty<string>());
+            return;
+        }
+
+        try
+        {
+            var paths = new List<string>();
+
+            // A multi-select result puts the URIs in ClipData and leaves Data null; a single
+            // selection is the other way round. Both shapes have to be read or multi-select
+            // silently returns nothing.
+            if (data.ClipData is { ItemCount: > 0 } clip)
+            {
+                for (int i = 0; i < clip.ItemCount; i++)
+                {
+                    string? copied = CopyContentUri(clip.GetItemAt(i)?.Uri, tree);
+                    if (copied is not null) paths.Add(copied);
+                }
+            }
+            else if (data.Data is { } uri)
+            {
+                string? copied = CopyContentUri(uri, tree);
+                if (copied is not null) paths.Add(copied);
+            }
+
+            pending.TrySetResult(paths.ToArray());
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"WPF Android: reading the picked file failed: {e}");
+            pending.TrySetResult(Array.Empty<string>());
+        }
+    }
+
+    private void CompleteExport(Result resultCode, Intent? data)
+    {
+        TaskCompletionSource<bool>? pending = _pendingExport;
+        string? source = _exportSource;
+        _pendingExport = null;
+        _exportSource = null;
+
+        if (pending is null) return;
+
+        if (resultCode != Result.Ok || data?.Data is null || source is null || !System.IO.File.Exists(source))
+        {
+            pending.TrySetResult(false);
+            return;
+        }
+
+        try
+        {
+            using System.IO.Stream? destination = _activity.ContentResolver?.OpenOutputStream(data.Data);
+            if (destination is null) { pending.TrySetResult(false); return; }
+
+            using System.IO.FileStream input = System.IO.File.OpenRead(source);
+            input.CopyTo(destination);
+            pending.TrySetResult(true);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"WPF Android: exporting the saved file failed: {e}");
+            pending.TrySetResult(false);
+        }
+    }
+
+    /// <summary>
+    ///  Copies a content:// document into the app's cache and returns that path.
+    /// </summary>
+    /// <remarks>
+    ///  Nothing in .NET can open a content:// URI, and the grant on one is not permanent, so a path
+    ///  handed straight to File.ReadAllBytes would fail. A local copy is what makes the result mean
+    ///  what a WPF caller expects FileName to mean.
+    /// </remarks>
+    private string? CopyContentUri(Android.Net.Uri? uri, bool tree)
+    {
+        if (uri is null) return null;
+
+        // A directory pick yields a TREE uri, which is not a document and cannot be opened. There is
+        // no local path for a folder either, so the tree uri's own string is returned: an
+        // application that asked for a folder gets an identifier it can hand back to the platform,
+        // which is the most that exists here.
+        if (tree) return uri.ToString();
+
+        try
+        {
+            string name = QueryDisplayName(uri) ?? "document";
+            string directory = System.IO.Path.Combine(
+                _activity.CacheDir?.AbsolutePath ?? System.IO.Path.GetTempPath(),
+                "wpf-picked-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+
+            string destination = System.IO.Path.Combine(directory, name);
+
+            using System.IO.Stream? input = _activity.ContentResolver?.OpenInputStream(uri);
+            if (input is null) return null;
+
+            using System.IO.FileStream output = System.IO.File.Create(destination);
+            input.CopyTo(output);
+            return destination;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"WPF Android: could not copy {uri}: {e}");
+            return null;
+        }
+    }
+
+    private string? QueryDisplayName(Android.Net.Uri uri)
+    {
+        try
+        {
+            using Android.Database.ICursor? cursor = _activity.ContentResolver?.Query(
+                uri, new[] { Android.Provider.IOpenableColumns.DisplayName }, null, null, null);
+
+            if (cursor is not null && cursor.MoveToFirst())
+            {
+                int column = cursor.GetColumnIndex(Android.Provider.IOpenableColumns.DisplayName);
+                if (column >= 0) return cursor.GetString(column);
+            }
+        }
+        catch (Exception)
+        {
+            // Fall through to the default name; a missing display name is not worth failing a pick.
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    ///  The single type an ACTION_OPEN_DOCUMENT intent filters on. EXTRA_MIME_TYPES narrows it
+    ///  further when there is more than one; the intent's own type has to stay broad or the extra
+    ///  is ignored.
+    /// </summary>
+    private static string SingleMimeType(string[]? mimeTypes)
+        => mimeTypes is { Length: 1 } ? ToMimeType(mimeTypes[0]) : "*/*";
+
+    private static string[] ToMimeTypes(string[] extensions)
+    {
+        var types = new string[extensions.Length];
+        for (int i = 0; i < extensions.Length; i++) types[i] = ToMimeType(extensions[i]);
+        return types;
+    }
+
+    /// <summary>
+    ///  Maps a bare extension to a MIME type through Android's own table, which is the one the
+    ///  document providers agree with.
+    /// </summary>
+    private static string ToMimeType(string extension)
+    {
+        if (string.IsNullOrEmpty(extension)) return "*/*";
+
+        string bare = extension.TrimStart('.').ToLowerInvariant();
+        string? mime = Android.Webkit.MimeTypeMap.Singleton?.GetMimeTypeFromExtension(bare);
+        return string.IsNullOrEmpty(mime) ? "*/*" : mime;
     }
 
     // ---- metrics --------------------------------------------------------------

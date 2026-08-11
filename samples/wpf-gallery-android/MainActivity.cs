@@ -29,6 +29,29 @@ namespace WpfGalleryAndroid;
                          | ConfigChanges.Density | ConfigChanges.KeyboardHidden)]
 public class MainActivity : Activity
 {
+    private AndroidHost? _host;
+
+    /// <summary>
+    ///  Forwards the Storage Access Framework's answer to the host.
+    /// </summary>
+    /// <remarks>
+    ///  Only the Activity receives this, so a head that omits the override leaves every
+    ///  OpenFileDialog awaiting for ever rather than failing. It is the one piece of ceremony an
+    ///  Android head has to add for file dialogs to work; see AndroidDialogs.cs.
+    /// </remarks>
+    protected override void OnActivityResult(int requestCode, Result resultCode, Android.Content.Intent? data)
+    {
+        if (_host?.HandleActivityResult(requestCode, resultCode, data) == true) return;
+        base.OnActivityResult(requestCode, resultCode, data);
+    }
+
+    protected override void OnDestroy()
+    {
+        // Anything still pending would otherwise never complete.
+        _host?.CancelPendingDialogs();
+        base.OnDestroy();
+    }
+
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
@@ -57,6 +80,9 @@ public class MainActivity : Activity
         // are not forced to implement it.
         AndroidAccessibility.Host = host;
         AndroidPrint.Host = host;
+        AndroidClipboard.Host = host;
+        AndroidDialogs.Host = host;
+        _host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's
         // real content size rather than a zero one.

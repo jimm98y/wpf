@@ -227,6 +227,22 @@ That code lives in the `System.Private.Windows.Core` binary shared with WinForms
 it cannot be patched here. `Clipboard` already routes around it through `MacDataObject` — an
 `IDataObject` that never touches OLE, despite the name — and `PlatformClipboard`.
 
+`PlatformClipboard` now has a backend for **all six heads**, not just this one and macOS. Browser,
+iOS and Android used to fall through to its "unavailable" answers, which meant `Clipboard.SetText`
+reached `MacDataObject`'s in-process dictionary and stopped there: nothing a WPF app copied could be
+pasted into another application, and nothing copied elsewhere could be pasted in. The three are
+genuinely different mechanisms rather than copies of each other — `UIKitClipboard` drives
+`UIPasteboard` through the Objective-C runtime, `AndroidClipboard` reaches `ClipboardManager` through
+the head payload (it needs a `Context`, which WindowsBase cannot have), and `BrowserClipboard`
+bridges the browser's *asynchronous* clipboard to WPF's synchronous API.
+
+That last one is worth reading `browser-window.js` for. It works because key events are queued by the
+DOM listener and drained by the dispatcher on the next animation frame, so a Ctrl+V gives the order
+`keydown (queued)` → `paste` → `rAF` → WPF handles the keydown — and the cache the `paste` event
+fills is already warm by the time `Clipboard.GetText` asks. The one thing no browser permits anybody
+to implement is reading the system clipboard with no paste gesture at all; that needs a permission
+prompt, and firing one on every `Clipboard.ContainsText` would be intolerable.
+
 **Drag-and-drop works around it the same way.** `WaylandDragDrop.cs` speaks `wl_data_device` in both
 directions; `LinuxDragDrop.cs` in PresentationCore turns that into WPF's events, supplying its own
 `DragDataObject` (over a `wl_data_offer`) and `MemoryDataObject` (for a bare value handed to

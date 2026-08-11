@@ -13,6 +13,8 @@ namespace Microsoft.Win32
         protected abstract bool RunDialog(System.IntPtr hwndOwner);
         public virtual bool? ShowDialog() { throw null; }
         public bool? ShowDialog(System.Windows.Window owner) { throw null; }
+        public virtual System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public virtual System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
     }
     public abstract partial class CommonItemDialog : Microsoft.Win32.CommonDialog
     {
@@ -30,6 +32,8 @@ namespace Microsoft.Win32
         protected virtual void OnItemOk(System.ComponentModel.CancelEventArgs e) { }
         protected override bool RunDialog(System.IntPtr hwndOwner) { throw null; }
         public override void Reset() { }
+        public override System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public override System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
         public override string ToString() { throw null; }
     }
     public abstract partial class FileDialog : Microsoft.Win32.CommonItemDialog
@@ -108,6 +112,7 @@ namespace Microsoft.Win32
         public bool CreatePrompt { get { throw null; } set { } }
         public bool CreateTestFile { get { throw null; } set { } }
         public bool OverwritePrompt { get { throw null; } set { } }
+        public System.Threading.Tasks.Task<bool> CommitAsync() { throw null; }
         public System.IO.Stream OpenFile() { throw null; }
         public override void Reset() { }
     }

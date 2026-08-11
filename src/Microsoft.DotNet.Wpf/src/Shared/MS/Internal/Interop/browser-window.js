@@ -536,6 +536,7 @@ function installListeners() {
     listenersInstalled = true;
 
     installDragListeners();
+    installClipboardListeners();
 
     window.addEventListener("mousemove", (e) => pushMouse(0, e));
     window.addEventListener("mousedown", (e) => pushMouse(1, e));
@@ -592,6 +593,282 @@ function pushKey(isDown, e) {
     // Tab/Space/arrows/Backspace reach WPF instead of scrolling/navigating.
     if (isDown && !e.metaKey && e.key !== "F5" && e.key !== "F12")
         e.preventDefault();
+}
+
+// ---- clipboard --------------------------------------------------------------------------------
+//
+// WPF's Clipboard API is synchronous and the browser's is not, which is normally where a port gives
+// up. It works here because of an accident of the existing design that is worth stating plainly:
+// key events are QUEUED by the listener and drained by the dispatcher on the next animation frame,
+// not handed to WPF inside the DOM handler. For a Ctrl+V that gives the order
+//
+//     keydown (queued)  ->  paste (fills the cache below)  ->  rAF  ->  WPF handles the keydown
+//
+// so by the time WPF asks Clipboard.GetText the cache is already warm. Nothing needed reordering.
+//
+// The cache is filled from exactly two places, and deliberately NOT from navigator.clipboard.read:
+// reading the system clipboard needs a permission prompt, and firing one every time an application
+// happens to call Clipboard.ContainsText would be intolerable. So:
+//
+//   * the paste event, which is a real user gesture and needs no permission -- this is how text
+//     copied in ANOTHER application arrives;
+//   * this module's own writes, which is how in-application copy/paste works.
+//
+// What that leaves genuinely unavailable is reading the system clipboard with no paste gesture at
+// all. No browser permits it without a prompt, so no implementation of this API can offer it.
+//
+// Writing goes out through navigator.clipboard.writeText, which needs TRANSIENT USER ACTIVATION.
+// The rAF hop above costs about 16ms of a five-second window, so a Ctrl+C is comfortably inside it.
+// execCommand("copy") is kept as the fallback for browsers that refuse the async API.
+
+let clipText = null;         // last text seen or written, null when nothing is known
+let clipPng = null;          // ditto, as a Uint8Array
+
+function installClipboardListeners() {
+    document.addEventListener("paste", (e) => {
+        const data = e.clipboardData;
+        if (!data) return;
+
+        const text = data.getData("text/plain");
+        if (text) clipText = text;
+
+        for (const item of data.items || []) {
+            if (item.type !== "image/png") continue;
+            const file = item.getAsFile();
+            if (!file) continue;
+            // Asynchronous, so this lands one frame later than the text. An image pasted twice is
+            // therefore right the second time; there is no synchronous way to read a Blob.
+            file.arrayBuffer()
+                .then((buffer) => { clipPng = new Uint8Array(buffer); })
+                .catch(() => {});
+        }
+    });
+}
+
+/// Last-resort copy for browsers that refuse navigator.clipboard: a hidden textarea plus the
+/// deprecated execCommand, which is synchronous and still universally implemented.
+function copyViaTextarea(value) {
+    try {
+        const area = document.createElement("textarea");
+        area.value = value;
+        area.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+    } catch (e) {
+        console.warn("WPF clipboard write failed:", e);
+    }
+}
+
+export function clipboardSetText(value) {
+    clipText = value ?? "";
+    try {
+        const written = navigator.clipboard?.writeText(clipText);
+        if (written) written.catch(() => copyViaTextarea(clipText));
+        else copyViaTextarea(clipText);
+    } catch {
+        copyViaTextarea(clipText);
+    }
+}
+
+export function clipboardGetText() {
+    return clipText ?? "";
+}
+
+export function clipboardHasText() {
+    return clipText !== null && clipText !== "";
+}
+
+export function clipboardClear() {
+    clipText = null;
+    clipPng = null;
+    // Also empty the SYSTEM clipboard, or Clipboard.Clear() would only forget locally while another
+    // application could still paste what this one put there.
+    try { navigator.clipboard?.writeText("")?.catch(() => {}); } catch {}
+}
+
+export function clipboardSetPng(bytes) {
+    clipPng = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    try {
+        if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+        const blob = new Blob([clipPng], { type: "image/png" });
+        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).catch(() => {});
+    } catch (e) {
+        console.warn("WPF clipboard image write failed:", e);
+    }
+}
+
+/// Base64 rather than a byte array: the return direction of the array marshaller is the fiddly one,
+/// and an image on a clipboard is small enough that the encoding costs nothing worth measuring.
+export function clipboardGetPng() {
+    if (!clipPng || clipPng.length === 0) return "";
+    let binary = "";
+    for (let i = 0; i < clipPng.length; i++) binary += String.fromCharCode(clipPng[i]);
+    return btoa(binary);
+}
+
+export function clipboardHasPng() {
+    return clipPng !== null && clipPng.length > 0;
+}
+
+// ---- file dialogs -----------------------------------------------------------------------------
+//
+// A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean
+// something different here and the difference is not hidden:
+//
+//   open  an <input type=file> click. The user picks from their real machine; what comes back is a
+//         NAME and the BYTES, never a path -- the page is never told where the file lives. The bytes
+//         are written into the wasm virtual file system under /wpf-picked, and THAT path is what
+//         FileName returns, so an application that does File.ReadAllBytes(dlg.FileName) works
+//         unchanged. This is the same trick the head already uses to make bundled fonts visible.
+//
+//   save  a download. There is no way to write to a chosen location and no way to learn where the
+//         browser put it, so SaveFileDialog hands back a path inside the same virtual file system;
+//         the application writes there as usual and the head then offers the result as a download.
+//         Calling code does not change; only the last step is a browser gesture rather than a write.
+//
+// showOpenFilePicker (the File System Access API) would give a real handle and a genuine save, but
+// it is Chromium-only and needs a secure context, so the input element is what actually works
+// everywhere. The picker is deliberately NOT reused between calls: a fresh element each time avoids
+// a stale change listener firing an old promise.
+
+let pickedSequence = 0;
+
+/// Opens the file picker and resolves to a JSON envelope the managed side parses:
+///   { "ok": bool, "names": [ "/wpf-picked/3/report.csv", ... ] }
+/// Rejection is never propagated: a cancelled picker is an ordinary answer, not an error.
+export function pickFilesAsync(accept, multiple, directory) {
+    return new Promise((resolve) => {
+        try {
+            const input = document.createElement("input");
+            input.type = "file";
+            if (accept) input.accept = accept;
+            if (multiple) input.multiple = true;
+            // Directory selection is webkitdirectory everywhere that supports it at all.
+            if (directory) { input.webkitdirectory = true; input.setAttribute("webkitdirectory", ""); }
+            input.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+
+            let settled = false;
+            // Set the instant a change event arrives, BEFORE the files are read. Reading is async
+            // and a large file takes longer than the cancellation fallback's timeout, so without
+            // this a slow read would be reported as a cancellation while it was still in progress.
+            let changed = false;
+
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                input.remove();
+                resolve(JSON.stringify(value));
+            };
+
+            input.addEventListener("change", async () => {
+                changed = true;
+                try {
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) { finish({ ok: false, names: [] }); return; }
+
+                    const dir = `/wpf-picked/${++pickedSequence}`;
+                    mkdirp(dir);
+
+                    const names = [];
+                    for (const file of files) {
+                        const bytes = new Uint8Array(await file.arrayBuffer());
+                        // webkitRelativePath is set only for a directory pick, and it is the only
+                        // way to keep the tree's shape rather than flattening it.
+                        const relative = file.webkitRelativePath || file.name;
+                        const path = `${dir}/${relative}`;
+                        mkdirp(path.slice(0, path.lastIndexOf("/")));
+                        writeFile(path, bytes);
+                        names.push(path);
+                    }
+                    finish({ ok: true, names });
+                } catch (e) {
+                    console.warn("WPF file picker failed:", e);
+                    finish({ ok: false, names: [] });
+                }
+            });
+
+            // "cancel" is the modern signal and is not universal; without it a cancelled picker
+            // would leave the promise pending for ever and the awaiting dialog would never return.
+            // The focus fallback fires when the window regains focus with no change event, which is
+            // what a cancellation looks like in a browser that lacks the event.
+            input.addEventListener("cancel", () => finish({ ok: false, names: [] }));
+            window.addEventListener("focus", () => {
+                setTimeout(() => { if (!changed) finish({ ok: false, names: [] }); }, 500);
+            }, { once: true });
+
+            document.body.appendChild(input);
+            input.click();
+        } catch (e) {
+            console.warn("WPF file picker could not open:", e);
+            resolve(JSON.stringify({ ok: false, names: [] }));
+        }
+    });
+}
+
+/// Reserves a path in the virtual file system for a save, and returns it. Nothing is written here:
+/// the application writes to the path, then calls offerDownload.
+export function reserveSavePath(suggestedName) {
+    const dir = `/wpf-picked/${++pickedSequence}`;
+    mkdirp(dir);
+    return `${dir}/${suggestedName || "download"}`;
+}
+
+/// Hands a file the application has just written to the browser as a download.
+export function offerDownload(path, mimeType) {
+    try {
+        const bytes = readFile(path);
+        if (!bytes) return false;
+
+        const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = path.slice(path.lastIndexOf("/") + 1);
+        link.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        // Revoked on a timer rather than immediately: revoking before the browser has started the
+        // download cancels it in Firefox.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        return true;
+    } catch (e) {
+        console.warn("WPF download failed:", e);
+        return false;
+    }
+}
+
+// The wasm virtual file system, reached through whichever handle this runtime exposes. Module.FS is
+// the long-standing one; globalThis.FS appears when the runtime is built with FS exported.
+function fs() {
+    return globalThis.Module?.FS ?? globalThis.FS ?? null;
+}
+
+function mkdirp(path) {
+    const f = fs();
+    if (!f || !path) return;
+    let built = "";
+    for (const part of path.split("/")) {
+        if (!part) continue;
+        built += "/" + part;
+        try { f.mkdir(built); } catch { /* already there */ }
+    }
+}
+
+function writeFile(path, bytes) {
+    const f = fs();
+    if (!f) throw new Error("no wasm file system to write the picked file into");
+    f.writeFile(path, bytes);
+}
+
+function readFile(path) {
+    const f = fs();
+    if (!f) return null;
+    try { return f.readFile(path); } catch { return null; }
 }
 
 // ---- printing ---------------------------------------------------------------------------------

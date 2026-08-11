@@ -273,6 +273,12 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\MacClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidWindow.cs" />

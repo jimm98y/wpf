@@ -210,6 +210,36 @@ namespace MS.Internal.Interop
     {
         public static MS.Internal.Interop.IAndroidPrintHost Host { get { throw null; } set { } }
     }
+    public static partial class AndroidClipboard
+    {
+        public const string TypePng = "image/png";
+        public const string TypeString = "text/plain";
+        public static bool IsAvailable { get { throw null; } }
+        public static MS.Internal.Interop.IAndroidClipboardHost Host { get { throw null; } set { } }
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
+    public static partial class BrowserClipboard
+    {
+        public const string TypePng = "image/png";
+        public const string TypeString = "text/plain";
+        public static bool IsAvailable { get { throw null; } }
+        public static void Clear() { }
+        public static bool ContainsData(string type) { throw null; }
+        public static bool ContainsString() { throw null; }
+        public static byte[] GetData(string type) { throw null; }
+        public static string GetString() { throw null; }
+        public static void SetData(string type, byte[] data) { }
+        public static void SetString(string value) { }
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
+    public static partial class BrowserDialogs
+    {
+        public static bool IsAvailable { get { throw null; } }
+        public static string FilterToAccept(string filter) { throw null; }
+        public static bool OfferDownload(string path, string mimeType) { throw null; }
+        public static string ReserveSavePath(string suggestedName) { throw null; }
+        public static System.Threading.Tasks.Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory) { throw null; }
+    }
     public partial interface IAndroidAccessibilityHost
     {
         void InvalidateAccessibilityNode(System.IntPtr handle, int nodeId);
@@ -217,6 +247,26 @@ namespace MS.Internal.Interop
     public partial interface IAndroidPrintHost
     {
         bool Print(string jobName, byte[] document, double pageWidth, double pageHeight);
+    }
+    public partial interface IAndroidClipboardHost
+    {
+        void Clear();
+        bool ContainsData(string mimeType);
+        byte[] GetData(string mimeType);
+        string GetText();
+        bool SetData(string mimeType, byte[] data);
+        void SetText(string value);
+    }
+    public static partial class AndroidDialogs
+    {
+        public static bool IsAvailable { get { throw null; } }
+        public static MS.Internal.Interop.IAndroidDialogHost Host { get { throw null; } set { } }
+    }
+    public partial interface IAndroidDialogHost
+    {
+        System.Threading.Tasks.Task<bool> ExportFileAsync(string path, string mimeType);
+        System.Threading.Tasks.Task<string[]> PickFilesAsync(string[] mimeTypes, bool multiple, bool directory);
+        string ReserveSavePath(string suggestedName);
     }
     public partial interface IAndroidHost
     {
@@ -249,6 +299,27 @@ namespace MS.Internal.Interop
         void SetFrameOrigin(int xPixels, int yPixels);
     }
     public static partial class MacClipboard
+    {
+        public const string TypePng = "public.png";
+        public const string TypeString = "public.utf8-plain-text";
+        public static bool IsAvailable { get { throw null; } }
+        public static void Clear() { }
+        public static bool ContainsData(string type) { throw null; }
+        public static bool ContainsString() { throw null; }
+        public static byte[] GetData(string type) { throw null; }
+        public static string GetString() { throw null; }
+        public static void SetData(string type, byte[] data) { }
+        public static void SetString(string value) { }
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("ios")]
+    public static partial class UIKitDialogs
+    {
+        public static bool IsAvailable { get { throw null; } }
+        public static string ReserveSavePath(string suggestedName) { throw null; }
+        public static System.Threading.Tasks.Task<string[]> ShowExportPanelAsync(string path) { throw null; }
+        public static System.Threading.Tasks.Task<string[]> ShowOpenPanelAsync(string[] contentTypes, bool multiple, bool directory) { throw null; }
+    }
+    public static partial class UIKitClipboard
     {
         public const string TypePng = "public.png";
         public const string TypeString = "public.utf8-plain-text";
