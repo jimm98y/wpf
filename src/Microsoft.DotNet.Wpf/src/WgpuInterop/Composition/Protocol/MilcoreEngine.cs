@@ -2178,6 +2178,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         uint hImg = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap bmp))
                             EmitFill(output, new RectangleGeometry(rect), new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height), state);
+                        else
+                            EmitVectorImage(output, hImg, rect, state);
                         break;
                     }
                     case Mil.DrawVideo:
@@ -2321,6 +2323,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 nested.OpacityMask = hMask != 0 ? ResolveBrush(hMask, ContentBounds(nested.Content)) : null;
                 parent.Add(new NestedVisualDraw(nested));
             }
+        }
+
+
+        /// <summary>
+        /// Draw a VECTOR ImageSource (a DrawingImage) into <paramref name="dest"/>, scaling the
+        /// drawing's natural bounds onto that rectangle.
+        /// </summary>
+        /// <remarks>
+        /// An <c>&lt;Image Source="{StaticResource someDrawingImage}"/&gt;</c> arrives as MILCMD_DRAW_IMAGE
+        /// exactly like a bitmap one, but its handle names a Drawing rather than a bitmap. Only the
+        /// bitmap lookup was implemented, so every vector icon asset silently drew NOTHING -- the
+        /// error/warning/message icons in a tool window, for instance, while their labels rendered
+        /// fine. WPF has already applied the Image's Stretch when it computed this rect, so the
+        /// remaining mapping is a plain fill of the destination.
+        /// </remarks>
+        private void EmitVectorImage(List<DrawingPrimitive> output, uint hImageSource, Rect dest, RenderState state)
+        {
+            if (!_drawingImages.ContainsKey(hImageSource)) return;
+            if (dest.Width <= 0 || dest.Height <= 0) return;
+
+            // Natural size = the bounds of the wrapped drawing, measured the same way brush content is.
+            Rect src = VisualSubtreeBounds(BuildDrawingVisual(hImageSource), Matrix3x2.Identity);
+            if (src.Width <= 0 || src.Height <= 0) return;
+
+            var map = Matrix3x2.CreateTranslation(-src.X, -src.Y)
+                    * Matrix3x2.CreateScale(dest.Width / src.Width, dest.Height / src.Height)
+                    * Matrix3x2.CreateTranslation(dest.X, dest.Y);
+
+            RenderState inner = state;
+            inner.Transform = map * state.Transform;
+            EmitDrawingResource(output, hImageSource, inner);
         }
 
         /// <summary>Active render-data push state (clip/opacity/transform), baked into draws.</summary>
