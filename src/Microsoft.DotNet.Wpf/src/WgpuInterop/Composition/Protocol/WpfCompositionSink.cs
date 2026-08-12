@@ -426,8 +426,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Configure(ts);
         }
 
+        private static readonly bool s_tracePresent =
+            System.Environment.GetEnvironmentVariable("WF_TRACE_PRESENT") == "1";
+
         private void Present(TargetSurface ts, SceneVisual root, MilTarget t)
         {
+            // WF_TRACE_PRESENT=1: which target actually reaches the screen, and when. This is the one
+            // thing the windowing traces cannot show -- a window can be created, shown and unoccluded
+            // and still display nothing, because presenting it is a separate step driven by WPF having
+            // composed a frame for it.
+            if (s_tracePresent)
+            {
+                System.Console.Error.WriteLine(
+                    $"[present] hwnd=0x{t.Hwnd:x} {t.Width}x{t.Height} visible=" +
+                    Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd));
+            }
+
             // Nothing to present to. Asking for the next texture of a Fifo swap chain whose surface
             // the compositor has stopped scheduling BLOCKS -- on the UI thread, until the window is
             // visible again -- so this check has to come before the acquire, not after.

@@ -2128,17 +2128,6 @@ namespace System.Windows.Controls.Primitives
             childBounds.Offset(bestTranslation);
             screenBounds = GetScreenBounds(targetBounds, placementTargetInterestPoints[(int)InterestPoint.TopLeft]);
 
-            // WF_TRACE_INPUT: the three rectangles that decide where a popup lands, in DEVICE pixels.
-            // targetBounds is the placement target (e.g. a menu item) converted to screen coordinates;
-            // if THAT is wrong the popup is misplaced however correct everything downstream is, and the
-            // screenBounds clamp below then pins it to a screen edge, which hides the original error.
-            if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
-            {
-                Console.Error.WriteLine(
-                    $"[popup] target={targetBounds} screen={screenBounds} child={childBounds} " +
-                    $"translation={bestTranslation} placement={placement}");
-            }
-
             Rect intersection = Rect.Intersect(screenBounds, childBounds);
 
             // See if width/height of intersection are less than child's

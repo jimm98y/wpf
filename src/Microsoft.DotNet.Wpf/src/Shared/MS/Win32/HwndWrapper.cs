@@ -86,13 +86,7 @@ namespace MS.Win32
                     // real window: it could never take keyboard input, and would look frozen. So this
                     // is passed separately, and the backend keeps the window titled-but-chromeless.
                     const int WS_CAPTION = 0x00C00000;
-                    // WPF_MAC_NO_CHROMELESS=1 restores the previous behaviour (a native title bar on a
-                    // WindowStyle=None window). A diagnostic switch: chromeless windows changed what
-                    // contentRectForFrameRect: reports, and therefore the client origin every
-                    // screen-coordinate calculation is built on, so this isolates that class of bug
-                    // from the rest of the window work without a rebuild.
-                    bool chromeless = !borderless && (style & WS_CAPTION) == 0 &&
-                                      Environment.GetEnvironmentVariable("WPF_MAC_NO_CHROMELESS") != "1";
+                    bool chromeless = !borderless && (style & WS_CAPTION) == 0;
 
                     int cw = width > 0 ? width : (borderless ? 1 : 1024);
                     int ch = height > 0 ? height : (borderless ? 1 : 768);

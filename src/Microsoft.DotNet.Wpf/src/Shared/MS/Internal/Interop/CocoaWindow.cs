@@ -349,10 +349,35 @@ namespace MS.Internal.Interop
                 // so nothing can re-enter the application the way PumpEvents did.
                 try
                 {
+                    // Background, NOT Render: invoking AT a priority runs everything at that priority
+                    // and ABOVE, so Background drains the whole queue including Render (where WPF's
+                    // layout and MediaContext frame live) while Render alone leaves pending layout
+                    // behind. A window shown before its content has been laid out presents an EMPTY
+                    // frame, which is why a menu appeared only once some later event forced a real
+                    // render -- moving the mouse over it. Same idiom, and same reason, as ElementHost's
+                    // per-frame pump.
                     System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
-                        () => { }, System.Windows.Threading.DispatcherPriority.Render);
+                        () => { }, System.Windows.Threading.DispatcherPriority.Background);
                 }
                 catch { /* no dispatcher on this thread, or it is shutting down */ }
+
+                // A WPF render is not enough on its own: a freshly ordered-in window's CAMetalLayer
+                // stays OCCLUDED until the window-server handshake completes, and while it is occluded
+                // wgpu hands back no drawable, so the window is simply blank. That handshake needs the
+                // RUN LOOP to turn over, which is what the (skipped) pump below would have done.
+                //
+                // Spin the run loop directly instead: CFRunLoopRunInMode dispatches timers and sources
+                // WITHOUT dequeuing NSEvents, so no input is delivered and none of the re-entrancy this
+                // early return exists to prevent can happen. Bounded, and stops as soon as the window
+                // reports itself unoccluded.
+                const ulong NSWindowOcclusionStateVisibleNested = 1UL << 1;
+                IntPtr mode = s_defaultRunLoopMode ??= MakeNSString("kCFRunLoopDefaultMode");
+                for (int i = 0; i < 20; i++)
+                {
+                    if (((ulong)(long)Send(_window, Sel("occlusionState")) & NSWindowOcclusionStateVisibleNested) != 0)
+                        break;
+                    CFRunLoopRunInMode(mode, 0.005, false);
+                }
                 return;
             }
 
@@ -1164,6 +1189,28 @@ namespace MS.Internal.Interop
 
             _hiddenByUs = false;
             SendVoidPtr(_window, Sel(_borderless ? "orderFront:" : "makeKeyAndOrderFront:"), IntPtr.Zero);
+
+            if (s_traceWindows)
+            {
+                // The state AFTER ordering in. A window can present frames at the right position and
+                // still be invisible: ordered out, behind another window, at the wrong level, or fully
+                // transparent. These are the four, measured rather than assumed.
+                Console.Error.WriteLine(
+                    $"[shown] view=0x{_contentView:x} isVisible={SendBool(_window, Sel("isVisible"))} " +
+                    $"occlusion=0x{(ulong)(long)Send(_window, Sel("occlusionState")):x} " +
+                    $"level={(long)Send(_window, Sel("level"))} " +
+                    $"alpha={SendDouble(_window, Sel("alphaValue"))} " +
+                    $"windowNumber={(long)Send(_window, Sel("windowNumber"))} " +
+                    $"onActiveSpace={SendBool(_window, Sel("isOnActiveSpace"))}");
+            }
+
+            // Complete the window-server handshake here, exactly as creation does when it shows the
+            // window itself. A window ordered front has an OCCLUDED CAMetalLayer until the run loop
+            // has turned over: wgpu hands back no drawable, so nothing is painted and the window comes
+            // up EMPTY until some unrelated event happens to run the loop. Creation used to be the only
+            // place a window was shown, so this was only ever done there; now that a window WPF created
+            // hidden is shown from here instead, this is where the handshake has to happen for it.
+            PumpUntilVisible(activate: !_borderless);
         }
 
         /// <summary>Start an AppKit window drag from the event being handled. This is the API made
@@ -1940,6 +1987,11 @@ namespace MS.Internal.Interop
             UIntPtr maxStringLength, out UIntPtr actualStringLength, [Out] ushort[] unicodeString);
         [DllImport(CoreFoundation)] private static extern IntPtr CFDataGetBytePtr(IntPtr data);
         [DllImport(CoreFoundation)] private static extern void CFRelease(IntPtr cf);
+        // NSString and CFStringRef are toll-free bridged, so the mode created by MakeNSString is a
+        // valid CFStringRef here.
+        [DllImport(CoreFoundation)]
+        private static extern int CFRunLoopRunInMode(IntPtr mode, double seconds,
+                                                     [MarshalAs(UnmanagedType.I1)] bool returnAfterSourceHandled);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
 
         // ---- cursor -----------------------------------------------------------------

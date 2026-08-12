@@ -1418,9 +1418,56 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     return EllipsePath(e.Center, e.RadiusX, e.RadiusY);
                 case RoundedRectangleGeometry rr:
                     return RoundedRectPath(rr.Rect, rr.RadiusX, rr.RadiusY);
+                case CombinedGeometry cg when RectSubtractPath(cg) is { } sub:
+                    return sub;
                 default:
                     return RectPath(GeometryBounds(g));
             }
+        }
+
+
+        /// <summary>
+        /// Flatten rectangle-minus-rectangle (WPF's CombinedGeometry with Exclude) into a path, as up
+        /// to four axis-aligned pieces. Returns null when the operands are not both rectangles, or the
+        /// mode is not Exclude, leaving the caller's bounds fallback in place.
+        /// </summary>
+        /// <remarks>
+        /// A clip is the one place a CombinedGeometry MUST NOT be approximated by its bounds: the
+        /// bounds are a superset, so the hole disappears, and (before GeometryBounds learned about
+        /// composites) the bounds came back EMPTY, which clipped away the entire clipped visual. That
+        /// is what made a docking panel's active-tab frame invisible -- it is a border clipped by
+        /// (content rect EXCLUDE the gap where the active tab meets it), so the whole frame vanished
+        /// while unclipped borders drew normally.
+        /// </remarks>
+        private static PathGeometry? RectSubtractPath(CombinedGeometry cg)
+        {
+            if (cg.Mode != GeometryCombineMode.Exclude) return null;
+            if (cg.Geometry1 is not RectangleGeometry a || cg.Geometry2 is not RectangleGeometry b) return null;
+
+            Rect r = a.Rect, h = b.Rect;
+            float rx1 = r.X + r.Width, ry1 = r.Y + r.Height;
+            float hx0 = Math.Max(h.X, r.X), hy0 = Math.Max(h.Y, r.Y);
+            float hx1 = Math.Min(h.X + h.Width, rx1), hy1 = Math.Min(h.Y + h.Height, ry1);
+
+            var figures = new List<PathFigure>();
+            void Add(float x0, float y0, float x1, float y1)
+            {
+                if (x1 - x0 <= 0 || y1 - y0 <= 0) return;
+                figures.AddRange(RectPath(new Rect(x0, y0, x1 - x0, y1 - y0)).Figures);
+            }
+
+            if (hx1 <= hx0 || hy1 <= hy0)
+            {
+                Add(r.X, r.Y, rx1, ry1);            // no overlap: the hole misses the rect entirely
+            }
+            else
+            {
+                Add(r.X, r.Y, rx1, hy0);            // above the hole
+                Add(r.X, hy1, rx1, ry1);            // below it
+                Add(r.X, hy0, hx0, hy1);            // left of it
+                Add(hx1, hy0, rx1, hy1);            // right of it
+            }
+            return new PathGeometry(FillRule.NonZero, figures);
         }
 
         private const float Kappa = 0.5522847498f;   // 4/3 * (sqrt(2) - 1): circle arc as a cubic Bézier
@@ -2986,8 +3033,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             EllipseGeometry e => new Rect(e.Center.X - e.RadiusX, e.Center.Y - e.RadiusY, 2 * e.RadiusX, 2 * e.RadiusY),
             PolygonGeometry p => PointsBounds(p.Points),
             PathGeometry path => PathBounds(path),
+            // Composites: the union of the children's bounds. Without these the fallback below
+            // reported an EMPTY rect, which silently clipped away everything it touched.
+            CombinedGeometry c => UnionRect(GeometryBounds(c.Geometry1), GeometryBounds(c.Geometry2)),
+            GeometryGroup gg => GroupBounds(gg),
             _ => new Rect(0, 0, 0, 0),
         };
+
+        private static Rect UnionRect(Rect a, Rect b)
+        {
+            if (a.Width <= 0 || a.Height <= 0) return b;
+            if (b.Width <= 0 || b.Height <= 0) return a;
+            float x0 = Math.Min(a.X, b.X), y0 = Math.Min(a.Y, b.Y);
+            float x1 = Math.Max(a.X + a.Width, b.X + b.Width), y1 = Math.Max(a.Y + a.Height, b.Y + b.Height);
+            return new Rect(x0, y0, x1 - x0, y1 - y0);
+        }
+
+        private static Rect GroupBounds(GeometryGroup g)
+        {
+            var r = new Rect(0, 0, 0, 0);
+            foreach (Geometry child in g.Children) r = UnionRect(r, GeometryBounds(child));
+            return r;
+        }
 
         private static Rect PathBounds(PathGeometry path)
         {
