@@ -131,6 +131,9 @@ namespace MS.Internal.Interop
             SendVoidBool(_view, Sel("setHidden:"), !visible);
         }
 
+        /// <summary>No-op: iOS windows are not user-movable (one fullscreen UIWindow).</summary>
+        public void BeginMoveDrag() { }
+
         public void Destroy()
         {
             if (_view == IntPtr.Zero)

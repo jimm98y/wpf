@@ -125,6 +125,19 @@ namespace MS.Win32
 
         internal static bool AdjustWindowRectEx(ref NativeMethods.RECT lpRect, int dwStyle, bool bMenu, int dwExStyle)
         {
+            // Off-Windows there is no user32 to ask, and this is reached on a live path: HwndSource
+            // sizes a SizeToContent window (every Popup is one) through here on layout, so an
+            // unguarded P/Invoke here is a DllNotFoundException that kills the process the first time
+            // a popup lays out.
+            //
+            // The rect is grown from a client size to the outer window size by the non-client frame.
+            // These windows have none to add: popups are borderless, and a WindowStyle=None window
+            // draws its own chrome inside the client area. So the client rect IS the window rect.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             bool returnValue = SafeNativeMethodsPrivate.IntAdjustWindowRectEx(ref lpRect, dwStyle, bMenu, dwExStyle);
             if (!returnValue)
             {

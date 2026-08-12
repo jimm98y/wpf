@@ -197,6 +197,9 @@ namespace MS.Internal.Interop
             Host?.SetViewVisible(_handle, visible);
         }
 
+        /// <summary>No-op: Android windows are not user-movable (one fullscreen activity).</summary>
+        public void BeginMoveDrag() { }
+
         public void Destroy()
         {
             if (_handle == IntPtr.Zero)

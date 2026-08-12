@@ -866,6 +866,11 @@ namespace MS.Internal.Interop.Wayland
             WaylandDisplay.Flush();
         }
 
+        /// <summary>Not wired yet: the Wayland equivalent is xdg_toplevel.move, which needs the seat
+        /// and the serial of the button press that started the drag. Left as a no-op rather than
+        /// guessed at, so a caption drag simply does nothing here instead of moving the wrong window.</summary>
+        public void BeginMoveDrag() { }
+
         public void Destroy()
         {
             if (_destroyed) return;

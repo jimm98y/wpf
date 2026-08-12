@@ -20,6 +20,7 @@ namespace MS.Internal.Interop
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void SetVisible(bool visible) { }
+        public void BeginMoveDrag() { }
         public void Destroy() { }
         public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -82,6 +83,7 @@ namespace MS.Internal.Interop
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void SetVisible(bool visible) { }
+        public void BeginMoveDrag() { }
         public void Destroy() { }
         public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -152,7 +154,9 @@ namespace MS.Internal.Interop
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless, bool visible) { }
         public void SetVisible(bool visible) { }
+        public void BeginMoveDrag() { }
         public void Destroy() { }
         public void DisableMicaBackdrop() { }
         public void EnableMicaBackdrop() { }
@@ -295,6 +299,7 @@ namespace MS.Internal.Interop
         bool IsBorderless { get; }
         event System.Action<double> ScaleChanged;
         void SetVisible(bool visible);
+        void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();
         void GetClientScreenOriginPixels(out int sx, out int sy);
@@ -359,6 +364,7 @@ namespace MS.Internal.Interop
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void SetVisible(bool visible) { }
+        public void BeginMoveDrag() { }
         public void Destroy() { }
         public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -416,6 +422,7 @@ namespace MS.Internal.Interop.Wayland
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
         public void SetVisible(bool visible) { }
+        public void BeginMoveDrag() { }
         public void Destroy() { }
         public static void EnsureApplication() { }
         public static MS.Internal.Interop.Wayland.WaylandWindow FromHandle(System.IntPtr handle) { throw null; }

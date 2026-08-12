@@ -144,6 +144,22 @@ namespace MS.Internal.Interop
         /// </remarks>
         public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner, bool chromeless)
         {
+            Create(title, x, y, width, height, borderless, owner, chromeless, visible: true);
+        }
+
+        /// <summary>
+        /// As above, plus <paramref name="visible"/>: whether the window should actually be put on
+        /// screen now (Win32's WS_VISIBLE at CreateWindowEx time).
+        /// </summary>
+        /// <remarks>
+        /// Showing unconditionally desynchronises WPF from the platform, and the divergence is
+        /// unrecoverable: WPF creates a window it intends to keep HIDDEN (every docking adorner is
+        /// created this way), we put it on screen anyway, and WPF -- still believing it hidden --
+        /// makes the app's later Hide() a no-op, so nothing ever orders it out. The window then sits
+        /// invisible-to-WPF but on top of the app, swallowing every click underneath it.
+        /// </remarks>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner, bool chromeless, bool visible)
+        {
             // AppKit refuses to build a window anywhere but the main thread, and it refuses by
             // raising an Objective-C exception -- which unwinds through managed frames into
             // std::terminate and takes the process with it, with no managed stack to say why. Check
@@ -230,6 +246,10 @@ namespace MS.Internal.Interop
                 const nuint NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2;
                 SendVoidBool(_window, Sel("setTitlebarAppearsTransparent:"), true);
                 SendVoidNInt(_window, Sel("setTitleVisibility:"), NSWindowTitleHidden);
+                // NOTE: the window stays MOVABLE. AppKit is kept out of the app's title-bar area by the
+                // content view answering NO to -mouseDownCanMoveWindow (see AddMouseDownCanMoveWindow),
+                // not by setMovable:NO -- which would also disable -performWindowDragWithEvent: and so
+                // break the app's own caption drag, leaving the window impossible to move.
                 foreach (nuint b in new[] { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
                 {
                     IntPtr button = SendPtrNUInt(_window, Sel("standardWindowButton:"), b);
@@ -257,7 +277,7 @@ namespace MS.Internal.Interop
                 // requested screen position instead of centering. NSFloatingWindowLevel = 3.
                 SendVoidNInt(_window, Sel("setLevel:"), 3);
                 SetFrameOrigin(x, y);
-                SendVoidPtr(_window, Sel("orderFront:"), IntPtr.Zero);
+                if (visible) SendVoidPtr(_window, Sel("orderFront:"), IntPtr.Zero);
             }
             else
             {
@@ -269,7 +289,7 @@ namespace MS.Internal.Interop
                 // (macOS has none) so the client width matches Windows and a Width-relative tab fills.
                 SetOuterFramePoints(width - Win32NonClientWidthPts, height - Win32ResizeFramePts);
 
-                SendVoidPtr(_window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                if (visible) SendVoidPtr(_window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
                 Send(_window, Sel("center"));
             }
 
@@ -290,7 +310,7 @@ namespace MS.Internal.Interop
             // move) happens to run the loop. Pump it the same way, but don't activateIgnoringOtherApps:
             // for a popup -- it floats above without taking key focus, and stealing focus here would
             // dismiss the very menu we're opening.
-            PumpUntilVisible(activate: !borderless);
+            if (visible) PumpUntilVisible(activate: !borderless);
         }
 
         // Run the Cocoa run loop until the window server reports this window on-screen (its occlusion
@@ -316,7 +336,25 @@ namespace MS.Internal.Interop
             // behaviour to preserve here: CreateWindowEx does not dispatch input, and a window created
             // inside a message handler simply appears once that handler returns and the message loop
             // continues -- which is precisely what skipping the pump gives.
-            if (s_pumpDepth > 0) return;
+            if (s_pumpDepth > 0)
+            {
+                // Skipping the pump leaves the window ordered-in but never PAINTED: its first frame is
+                // a WPF render, and this early return is taken exactly when a window is created from
+                // inside input handling -- which is every menu, dropdown and tooltip. The window sat
+                // there empty until the next unrelated event happened to drive a render, so a menu
+                // "did not open" until the pointer moved over it.
+                //
+                // Flushing the Dispatcher to Render priority paints it now. This is NOT the recursion
+                // that made the pump dangerous: no AppKit event is dequeued and no input is dispatched,
+                // so nothing can re-enter the application the way PumpEvents did.
+                try
+                {
+                    System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                        () => { }, System.Windows.Threading.DispatcherPriority.Render);
+                }
+                catch { /* no dispatcher on this thread, or it is shutting down */ }
+                return;
+            }
 
             for (int i = 0; i < 120; i++)   // ~ up to 120 * 8ms; breaks as soon as visible (usually a few iterations)
             {
@@ -565,7 +603,18 @@ namespace MS.Internal.Interop
             double topLeftYpt = screenH - content.y - content.height;
             sx = (int)Math.Round(content.x * scale);
             sy = (int)Math.Round(topLeftYpt * scale);
+
+            if (s_traceWindows && !_tracedOrigin)
+            {
+                _tracedOrigin = true;
+                Console.Error.WriteLine(
+                    $"[origin] view=0x{_contentView:x} borderless={_borderless} screenH={screenH} " +
+                    $"frame=({frame.x},{frame.y} {frame.width}x{frame.height}) " +
+                    $"content=({content.x},{content.y} {content.width}x{content.height}) -> client=({sx},{sy})");
+            }
         }
+
+        private bool _tracedOrigin;
 
         /// <summary>
         /// Converts a rectangle in client device pixels (top-left origin, the units WPF hands out)
@@ -656,6 +705,7 @@ namespace MS.Internal.Interop
 
             CocoaAccessibility.AddViewAccessibility(cls);
             AddGestureMethods(cls);
+            AddMouseDownCanMoveWindow(cls);
 
             // NSDraggingDestination is implemented BY THE VIEW on macOS, not by a delegate, so the
             // drop methods join the accessibility ones on this class.
@@ -680,6 +730,31 @@ namespace MS.Internal.Interop
         private static double s_gestureMagnification = 1;
         private static double s_gestureRotation;
         private static bool s_gestureActive;
+
+        private delegate bool BoolViewImpl(IntPtr self, IntPtr sel);
+        private static BoolViewImpl s_cannotMoveWindowImpl;
+
+        /// <summary>
+        /// Answer NO to -mouseDownCanMoveWindow, so AppKit never drags the window because the user
+        /// pressed on our content.
+        /// </summary>
+        /// <remarks>
+        /// This is the narrow lever for a window whose chrome the app draws. AppKit asks the view
+        /// under the pointer whether a press there may move the window; a plain NSView can say yes,
+        /// and then a click on the app's own menu bar dragged the window instead of opening the menu.
+        ///
+        /// Deliberately NOT setMovable:NO, which was the first attempt: that stops those unwanted
+        /// drags but also makes -performWindowDragWithEvent: do nothing (AppKit refuses to drag a
+        /// window that is not movable), so the app's OWN title bar stopped working too and no window
+        /// could be moved at all. Saying "this view is not a drag handle" leaves the window movable,
+        /// which is what BeginMoveDrag needs.
+        /// </remarks>
+        private static void AddMouseDownCanMoveWindow(IntPtr cls)
+        {
+            s_cannotMoveWindowImpl = static (self, sel) => false;   // kept alive: the runtime stores the raw pointer
+            class_addMethod(cls, Sel("mouseDownCanMoveWindow"),
+                            Marshal.GetFunctionPointerForDelegate(s_cannotMoveWindowImpl), "c@:");
+        }
 
         private static void AddGestureMethods(IntPtr cls)
         {
@@ -1089,6 +1164,37 @@ namespace MS.Internal.Interop
 
             _hiddenByUs = false;
             SendVoidPtr(_window, Sel(_borderless ? "orderFront:" : "makeKeyAndOrderFront:"), IntPtr.Zero);
+        }
+
+        /// <summary>Start an AppKit window drag from the event being handled. This is the API made
+        /// for exactly this case -- a window whose title bar is drawn by the app -- and it runs
+        /// AppKit's own move loop, so the window tracks the mouse and snapping/spaces behave natively.
+        /// Chromeless windows set movable:NO (AppKit's title-bar drag would otherwise swallow clicks
+        /// meant for the app's own menu bar), which makes this the ONLY way they can be moved.</summary>
+        public void BeginMoveDrag()
+        {
+            if (_window == IntPtr.Zero) return;
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            IntPtr evt = app != IntPtr.Zero ? Send(app, Sel("currentEvent")) : IntPtr.Zero;
+            if (evt == IntPtr.Zero) return;
+
+            SendVoidPtr(_window, Sel("performWindowDragWithEvent:"), evt);
+
+            // That call is a MODAL loop inside AppKit: it runs until the button is released, our pump
+            // does not run, and AppKit swallows the mouse-up. Anything holding WPF mouse capture when
+            // the drag began therefore never sees its release, and a capture that is never released
+            // makes the whole app stop responding to clicks -- the exact failure this stack has already
+            // produced twice by other routes. Hand WPF the release the OS ate.
+            Action<CocoaMouseMessage> handler = MouseInput;
+            if (handler == null || _contentView == IntPtr.Zero) return;
+
+            NSPoint global = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+            double scale = GetBackingScale();
+            int gx = (int)Math.Round(global.x * scale);
+            int gy = (int)Math.Round((PrimaryScreenHeightPoints() - global.y) * scale);
+            GetClientScreenOriginPixels(out int ox, out int oy);
+            handler(new CocoaMouseMessage(_contentView, (int)NSLeftMouseUp, 0,
+                                          gx - ox, gy - oy, 0, Environment.TickCount));
         }
 
         public void Destroy()

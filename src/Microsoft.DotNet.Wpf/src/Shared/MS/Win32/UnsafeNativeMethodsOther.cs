@@ -260,8 +260,22 @@ namespace MS.Win32
 
         // note that this method exists in UnsafeNativeMethodsCLR.cs but with a different signature
         // using a HandleRef for the hWnd instead of an IntPtr, and not using an IntPtr for lParam
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto)]
-        internal static extern IntPtr SendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+        [DllImport(ExternDll.User32, EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessageNative(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>Routes off-Windows to the target's managed WndProc, exactly as
+        /// <see cref="UnsafeSendMessage"/> does. Window.DragMove() posts WM_SYSCOMMAND through THIS
+        /// overload, so leaving it as a bare P/Invoke made dragging a window by its own chrome a
+        /// DllNotFoundException on every non-Windows head.</summary>
+        internal static IntPtr SendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HwndWrapper.DispatchMessage(hWnd, (int)msg, wParam, lParam);
+            }
+
+            return SendMessageNative(hWnd, msg, wParam, lParam);
+        }
 
         // note that this method exists in UnsafeNativeMethodsCLR.cs but with a different signature
         // using a HandleRef for the hWnd instead of an IntPtr, and not using an IntPtr for lParam

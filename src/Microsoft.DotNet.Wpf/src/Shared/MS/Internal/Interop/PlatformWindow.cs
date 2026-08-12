@@ -50,6 +50,15 @@ namespace MS.Internal.Interop
         /// </remarks>
         void SetVisible(bool visible);
 
+        /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
+        /// WindowChrome's caption area) — the window follows the mouse until the button is released.
+        /// </summary>
+        /// <remarks>
+        /// Win32 runs a modal move loop inside DefWindowProc for this; each platform has its own
+        /// equivalent, and a window with app-drawn chrome has no other way to be moved at all.
+        /// </remarks>
+        void BeginMoveDrag();
+
         void Destroy();
 
         /// <summary>Raised (on the UI/pump thread) when the window's backing scale factor changes,

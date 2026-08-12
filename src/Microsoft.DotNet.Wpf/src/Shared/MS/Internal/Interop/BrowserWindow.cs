@@ -77,6 +77,9 @@ namespace MS.Internal.Interop
             Js.SetWindowVisible((int)Handle, visible);
         }
 
+        /// <summary>No-op: a browser page cannot move its own window from script.</summary>
+        public void BeginMoveDrag() { }
+
         public void Destroy()
         {
             if (Handle == IntPtr.Zero)

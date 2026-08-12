@@ -86,7 +86,13 @@ namespace MS.Win32
                     // real window: it could never take keyboard input, and would look frozen. So this
                     // is passed separately, and the backend keeps the window titled-but-chromeless.
                     const int WS_CAPTION = 0x00C00000;
-                    bool chromeless = !borderless && (style & WS_CAPTION) == 0;
+                    // WPF_MAC_NO_CHROMELESS=1 restores the previous behaviour (a native title bar on a
+                    // WindowStyle=None window). A diagnostic switch: chromeless windows changed what
+                    // contentRectForFrameRect: reports, and therefore the client origin every
+                    // screen-coordinate calculation is built on, so this isolates that class of bug
+                    // from the rest of the window work without a rebuild.
+                    bool chromeless = !borderless && (style & WS_CAPTION) == 0 &&
+                                      Environment.GetEnvironmentVariable("WPF_MAC_NO_CHROMELESS") != "1";
 
                     int cw = width > 0 ? width : (borderless ? 1 : 1024);
                     int ch = height > 0 ? height : (borderless ? 1 : 768);
@@ -165,7 +171,12 @@ namespace MS.Win32
                         var cocoa = new MS.Internal.Interop.CocoaWindow();
                         // Pass the owner handle so a popup inherits its owner's display/backing scale
                         // (and therefore opens on the same monitor as the window it belongs to).
-                        cocoa.Create(name, cx, cy, cw, ch, borderless, parent, chromeless);
+                        // WS_VISIBLE decides whether the window goes on screen NOW. WPF creates
+                        // windows it means to keep hidden (docking adorners, cached popups) without it,
+                        // and showing them anyway leaves WPF and the platform permanently disagreeing.
+                        const int WS_VISIBLE = 0x10000000;
+                        cocoa.Create(name, cx, cy, cw, ch, borderless, parent, chromeless,
+                                     (style & WS_VISIBLE) != 0);
                         // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
                         // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
                         cocoa.Resized += OnCocoaResized;
@@ -465,6 +476,26 @@ namespace MS.Win32
             catch { }   // a callback exception must not break the Cocoa event pump that raised this
         }
 
+        /// <summary>
+        /// WM_SYSCOMMAND / SC_MOVE, i.e. "start dragging this window" — what Window.DragMove() and
+        /// WindowChrome's caption drag both come down to. Win32 answers it with a modal move loop
+        /// inside DefWindowProc; off-Windows the platform window runs its own.
+        /// </summary>
+        /// <remarks>
+        /// Without this a window with app-drawn chrome cannot be moved at all. It only became
+        /// reachable once the Cocoa backend stopped letting AppKit drag chromeless windows by their
+        /// (invisible) title bar, since that was swallowing the clicks the app's menu bar needed.
+        /// </remarks>
+        private bool HandleSysCommandMove(IntPtr wParam)
+        {
+            const int SC_MOVE = 0xF010, SC_MOUSEMOVE = SC_MOVE + 0x02;
+            int command = (int)wParam & 0xFFF0;
+            if (command != SC_MOVE && ((int)wParam) != SC_MOUSEMOVE) return false;
+
+            try { _platformWindow?.BeginMoveDrag(); } catch { }
+            return true;
+        }
+
         private void OnCocoaClosed(IntPtr handle)
         {
             const int WM_CLOSE = 0x0010;
@@ -491,7 +522,18 @@ namespace MS.Win32
             // The default result for messages we handle is 0.
             IntPtr result = IntPtr.Zero;
             WindowMessage message = (WindowMessage)msg;
-        
+
+            // Off-Windows there is no DefWindowProc to run the modal move loop this message asks for,
+            // so answer it here before the hooks (none of them handle it, and an unhandled one would
+            // simply be dropped, leaving the window immovable).
+            const int WM_SYSCOMMAND = 0x0112;
+            if (msg == WM_SYSCOMMAND && !OperatingSystem.IsWindows() && HandleSysCommandMove(wParam))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+
             // Call all of the hooks
             if(_hooks is not null)
             {
