@@ -30,6 +30,25 @@
     <UseWPF Condition="'$(UseWPF)' == ''">true</UseWPF>
   </PropertyGroup>
 
+  <!--
+    WpfPlatform=browser has to be a GLOBAL property, because it selects the base SDK above before the
+    project body is read — and MSBuild passes global properties down to every ProjectReference. In a
+    single-project sample that is invisible; in a real app it means each of its CLASS LIBRARIES also
+    builds as a WebAssembly application: each gets its own boot shim and web scaffolding (an
+    index.html, main.js and a full copy of the font bundle appear in the library's source folder),
+    each webcil-converts the whole framework into its own wwwroot/_framework, and the head then fails
+    to assemble a bundle out of 120 projects all claiming to own '_framework/DirectWriteForwarder.wasm'.
+
+    Only the head is the web app. Undefining the property on the way down leaves the libraries as
+    ordinary net10.0 IL — which is exactly what a wasm head consumes, and what a Blazor app's class
+    libraries are too.
+  -->
+  <ItemDefinitionGroup Condition="'$(WpfPlatform)' == 'browser'">
+    <ProjectReference>
+      <UndefineProperties>WpfPlatform</UndefineProperties>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(WpfPlatform)' == 'browser'" />
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(WpfPlatform)' != 'browser'" />
 

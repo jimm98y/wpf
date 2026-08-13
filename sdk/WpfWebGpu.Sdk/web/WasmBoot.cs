@@ -23,6 +23,8 @@ internal static class WpfWebGpuWasmBoot
     {
         try
         {
+            InstallFirstChanceLogging();
+
             Console.WriteLine("WpfWebGpu: initializing WebGPU...");
             await WgpuBrowser.InitializeAsync();
             Console.WriteLine("WpfWebGpu: WebGPU ready, starting WPF...");
@@ -46,6 +48,32 @@ internal static class WpfWebGpuWasmBoot
             Console.WriteLine($"WpfWebGpu BOOT FAILED: {ex}");
             return 1;
         }
+    }
+
+    /// <summary>
+    ///  With WPF_WEBGPU_LOG_FIRST_CHANCE=1 (?firstchance=1 on the page), print EVERY exception the
+    ///  moment it is thrown, with its stack.
+    /// </summary>
+    /// <remarks>
+    ///  There is no debugger to attach to a wasm page, and an app that catches an exception and shows
+    ///  only its Message leaves nothing to diagnose from -- a browser port hits a run of
+    ///  PlatformNotSupportedExceptions whose Message is the same generic sentence whatever the cause,
+    ///  so the stack is the only thing that identifies WHICH api is missing. Off by default: this
+    ///  fires for exceptions the app handles perfectly well, so it is noisy by design.
+    /// </remarks>
+    private static void InstallFirstChanceLogging()
+    {
+        if (Environment.GetEnvironmentVariable("WPF_WEBGPU_LOG_FIRST_CHANCE") != "1") return;
+
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            try
+            {
+                Console.WriteLine($"FIRSTCHANCE {e.Exception.GetType().FullName}: {e.Exception.Message}\n{e.Exception.StackTrace}");
+            }
+            catch { }   // logging must never itself break the app
+        };
+        Console.WriteLine("WpfWebGpu: first-chance exception logging enabled");
     }
 
     private static MethodInfo FindAppEntryPoint()

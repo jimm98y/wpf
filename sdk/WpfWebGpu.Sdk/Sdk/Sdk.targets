@@ -284,6 +284,12 @@
     <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">true</PublishTrimmed>
     <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
     <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- Keep EXCEPTION MESSAGES. Trimming otherwise substitutes resource lookups with their keys, so
+         every failure in the browser reads like "Arg_PlatformNotSupported" instead of saying what is
+         not supported. That turns ordinary diagnosis into guesswork precisely where diagnosis is
+         hardest: there is no debugger attached to a wasm page, and the message is often all the app
+         gets to show. The size cost is a few hundred KB against a bundle measured in megabytes. -->
+    <UseSystemResourceKeys Condition="'$(UseSystemResourceKeys)' == ''">false</UseSystemResourceKeys>
     <!-- WPF needs real cultures (SystemFonts, text formatting). -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Trimming otherwise flips this off, and reflection-based JsonSerializer then throws
@@ -293,6 +299,12 @@
          this SDK targets existing reflection-heavy WPF apps, unmodified. -->
     <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- Fingerprinting publishes _framework/dotnet.native.js under a content-hashed name as well as
+         its plain one, and the placeholder task then refuses the duplicate ("already mapped to
+         dotnet.native.<hash>.js"). The page served is our own index.html, which asks for the stable
+         names, so nothing here needs cache-busting filenames. -->
+    <WasmFingerprintAssets Condition="'$(WasmFingerprintAssets)' == ''">false</WasmFingerprintAssets>
+    <StaticWebAssetsFingerprintContent Condition="'$(StaticWebAssetsFingerprintContent)' == ''">false</StaticWebAssetsFingerprintContent>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
@@ -353,9 +365,92 @@
           BeforeTargets="PrepareForILLink"
           Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(PublishTrimmed)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
-      <_WpfWebGpuAppAsm Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- SATELLITES are excluded: a localized app ships Foo.resources.dll per culture (Roslyn alone
+           brings a dozen), and ILLink rejects one as a ROOT — "error IL1032: Root assembly
+           'Microsoft.CodeAnalysis.CSharp.resources' could not be found" — because a root is looked up
+           by assembly identity and a satellite is not in that set. They also need no rooting: a
+           satellite's resources are reached through its main assembly, which IS rooted below.
+           Identified two ways because either alone leaks one: the culture subdirectory they are copied
+           into, and the .resources suffix. -->
+      <_WpfWebGpuAppAsm Include="@(ReferenceCopyLocalPaths)"
+                        Condition="'%(Extension)' == '.dll' and '%(ReferenceCopyLocalPaths.DestinationSubDirectory)' == '' and !$([System.String]::Copy('%(Filename)').EndsWith('.resources'))" />
       <TrimmerRootAssembly Include="@(_WpfWebGpuAppAsm->'%(Filename)'->Distinct())" />
     </ItemGroup>
+  </Target>
+
+  <!--
+    A browser bundle is FLAT: every assembly becomes _framework/<name>.wasm, whatever folder it was
+    published from. Real apps publish assemblies into SUBFOLDERS as well, and those are private
+    payloads for something that cannot exist in a browser at all — Roslyn's out-of-process MSBuild
+    host (BuildHost-net472/, BuildHost-netcore/, each a complete second copy of dozens of assemblies),
+    per-architecture folders (amd64/, arm64/), tools/, and an app's own plugin drop folder.
+
+    Flattening them is not merely wasteful, it is fatal: two files with one identity collide while the
+    bundle is assembled, and the build dies in ManagedToNativeGenerator with "The assembly 'Humanizer,
+    Version=2.14.0.0' has already been loaded into this MetadataLoadContext" — a message that names
+    neither the folder nor the app that brought it in.
+
+    SATELLITES are the one kind of nested assembly that is genuinely part of the app (fr/App.resources.dll),
+    and the wasm SDK bundles them with their culture, so they stay.
+  -->
+  <!-- Computes @(_WpfWebGpuAppPayload) once: both the publish staging below and the AOT bundling
+       further down need the same list, and recomputing it in two places would let them disagree. -->
+  <Target Name="_WpfWebGpuComputeAppPayload"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuAppPayload Include="$(OutDir)%(WpfWebGpuBrowserPayloadDir.Identity)/**/*"
+                            Condition="'@(WpfWebGpuBrowserPayloadDir)' != '' and '@(_WpfWebGpuAppPayload)' == ''" />
+    </ItemGroup>
+    <ItemGroup>
+      <_WpfWebGpuAppPayload>
+        <PayloadPath>$([MSBuild]::MakeRelative($([System.IO.Path]::GetFullPath('$(OutDir)')), '%(FullPath)'))</PayloadPath>
+      </_WpfWebGpuAppPayload>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_WpfWebGpuBrowserDropNestedPayloads"
+          DependsOnTargets="_WpfWebGpuComputeAppPayload"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <!-- Nested = published into a SUBFOLDER. A wasm bundle is flat (every assembly becomes
+           _framework/<name>.wasm), so two files in different folders claim one name and the build dies
+           in ManagedToNativeGenerator with "The assembly 'Humanizer, Version=2.14.0.0' has already been
+           loaded into this MetadataLoadContext" — a message naming neither folder nor culprit.
+           Satellites are the one nested kind the wasm SDK does handle, so they stay. -->
+      <_WpfWebGpuPackagePayload Include="@(ResolvedFileToPublish)"
+          Condition="'%(Extension)' == '.dll'
+                     and $([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\','/').Contains('/'))
+                     and !$([System.String]::Copy('%(Filename)').EndsWith('.resources'))" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuPackagePayload)" />
+
+    </ItemGroup>
+
+    <!-- The payload list itself is computed by _WpfWebGpuComputeAppPayload (above), which this
+         target depends on; it is shared with the AOT bundling target so the two cannot diverge. -->
+
+    <PropertyGroup>
+      <!-- Built as a property first: a transform with embedded quotes cannot be written directly into
+           a task attribute (MSB4012 "the expression cannot be used in this context"). -->
+      <_WpfWebGpuPayloadJson>[@(_WpfWebGpuAppPayload->'&quot;%(PayloadPath)&quot;', ',')]</_WpfWebGpuPayloadJson>
+    </PropertyGroup>
+
+
+    <Copy SourceFiles="@(_WpfWebGpuAppPayload)"
+          DestinationFiles="@(_WpfWebGpuAppPayload->'$(PublishDir)wwwroot/payload/%(PayloadPath)')"
+          SkipUnchangedFiles="true" Condition="'@(_WpfWebGpuAppPayload)' != ''" />
+
+    <!-- A manifest, for the same reason fonts/index.json exists: a directory cannot be listed over HTTP,
+         so the boot script has to be told what to mount. -->
+    <WriteLinesToFile File="$(PublishDir)wwwroot/payload/index.json" Lines="$(_WpfWebGpuPayloadJson)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" Condition="'@(_WpfWebGpuAppPayload)' != ''" />
+
+    <!-- Say what happened either way: silently thinning an app's output looks exactly like the bundle
+         having lost assemblies. -->
+    <Message Importance="normal" Condition="'@(_WpfWebGpuAppPayload)' != ''"
+             Text="WpfWebGpu: staged @(_WpfWebGpuAppPayload->Count()) app payload files for the wasm filesystem: @(_WpfWebGpuAppPayload->'%(PayloadPath)', ', ')" />
+    <Message Importance="normal" Condition="'@(_WpfWebGpuPackagePayload)' != ''"
+             Text="WpfWebGpu: excluded @(_WpfWebGpuPackagePayload->Count()) package-private assemblies published into subfolders: @(_WpfWebGpuPackagePayload->'%(RelativePath)', ', ')" />
   </Target>
 
   <!-- Browser equivalent of _WpfWebGpuOverlaySystemEventsShim. The framework's SystemEvents/Registry
@@ -371,6 +466,15 @@
       <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','Microsoft.Win32.Registry'))" />
       <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.SystemEvents.dll" />
       <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.Registry.dll" />
+
+      <!-- System.Diagnostics.Process in the browser throws PlatformNotSupportedException from every
+           member, GetCurrentProcess() included — and that one is pure self-inspection, which apps use
+           for status bars and telemetry rather than for spawning anything. A single such call in a
+           constructor took out this app's entire plugin system before any plugin was even looked at.
+           The shim answers self-inspection with the runtime's real numbers and refuses only what a
+           browser truly cannot do. -->
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Diagnostics.Process'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Diagnostics.Process.dll" />
     </ItemGroup>
   </Target>
 

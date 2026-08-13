@@ -43,6 +43,7 @@ try {
         .withEnvironmentVariable('WPF_USE_WEBGPU_COMPOSITION', '1')
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
+    if (params.has('firstchance')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_LOG_FIRST_CHANCE', '1');
     if (args) builder = builder.withApplicationArguments(...args.split(','));
     const runtime = await builder.create();
     const { setModuleImports, runMain, Module } = runtime;
@@ -64,6 +65,32 @@ try {
         if (!resp.ok) { console.error(`font fetch failed: ${name}`); return; }
         Module.FS.writeFile(`/fonts/${name}`, new Uint8Array(await resp.arrayBuffer()));
     }));
+
+    // Mount the app's own payload folders (its plugin drop folder, for one) into the wasm VFS at the
+    // SAME relative path they occupy next to the .exe on the desktop. AppContext.BaseDirectory is "/"
+    // here, so an app doing Path.Combine(AppContext.BaseDirectory, "Plugins") and loading assemblies
+    // from it works unchanged. The build stages these (see _WpfWebGpuBrowserDropNestedPayloads) and
+    // writes payload/index.json, because a directory cannot be listed over HTTP.
+    try {
+        const manifest = await fetch('./payload/index.json');
+        if (manifest.ok) {
+            const entries = await manifest.json();
+            if (entries.length) {
+                status.innerText = 'loading app payload…';
+                await Promise.all(entries.map(async (rel) => {
+                    const resp = await fetch(`./payload/${rel}`);
+                    if (!resp.ok) { console.error(`payload fetch failed: ${rel}`); return; }
+                    const path = `/${rel}`;
+                    Module.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+                    Module.FS.writeFile(path, new Uint8Array(await resp.arrayBuffer()));
+                }));
+                console.log(`WpfWebGpu: mounted ${entries.length} app payload files`);
+            }
+        }
+    } catch (e) {
+        // An app with no payload folder is the normal case; never let this stop the boot.
+        console.warn('app payload mount skipped:', e);
+    }
 
     status.innerText = 'starting WPF…';
     // Environment telemetry: canvas/viewport/scale, printed at boot and on resize
