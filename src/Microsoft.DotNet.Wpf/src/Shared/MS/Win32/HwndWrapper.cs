@@ -88,6 +88,21 @@ namespace MS.Win32
                     const int WS_CAPTION = 0x00C00000;
                     bool chromeless = !borderless && (style & WS_CAPTION) == 0;
 
+                    // ACTIVATABLE is the third, orthogonal question: may this window take keyboard
+                    // focus? It is not answerable from the chrome, because WS_EX_LAYERED is set for two
+                    // unrelated reasons -- a popup, and any Window with AllowsTransparency=true (see
+                    // HwndSource.Initialize). Treating every layered window as a popup made a
+                    // transparent top-level window unfocusable: a command palette or splash screen
+                    // could never become key, so it never activated and therefore never DEACTIVATED,
+                    // and the usual "close myself on Window.Deactivated" dismissal never ran -- the
+                    // window sat on top of the app ignoring clicks, outliving even a minimise.
+                    //
+                    // WPF states the intent explicitly instead: WS_EX_NOACTIVATE marks the windows
+                    // that must never take focus (Popup.CreateWindow sets it on every menu, tooltip
+                    // and dropdown), and child windows never do either.
+                    const int WS_EX_NOACTIVATE = 0x08000000;
+                    bool activatable = (style & WS_CHILD) == 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
+
                     int cw = width > 0 ? width : (borderless ? 1 : 1024);
                     int ch = height > 0 ? height : (borderless ? 1 : 768);
                     // A borderless popup is given a real screen position (device pixels), which is
@@ -170,7 +185,7 @@ namespace MS.Win32
                         // and showing them anyway leaves WPF and the platform permanently disagreeing.
                         const int WS_VISIBLE = 0x10000000;
                         cocoa.Create(name, cx, cy, cw, ch, borderless, parent, chromeless,
-                                     (style & WS_VISIBLE) != 0);
+                                     (style & WS_VISIBLE) != 0, activatable);
                         // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
                         // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
                         cocoa.Resized += OnCocoaResized;

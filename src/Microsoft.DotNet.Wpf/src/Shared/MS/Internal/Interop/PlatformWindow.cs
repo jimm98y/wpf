@@ -50,6 +50,28 @@ namespace MS.Internal.Interop
         /// </remarks>
         void SetVisible(bool visible);
 
+        /// <summary>
+        /// As above, plus <paramref name="activate"/>: whether showing should also take focus —
+        /// Win32's SW_SHOW vs SW_SHOWNA / SetWindowPos's SWP_NOACTIVATE.
+        /// </summary>
+        /// <remarks>
+        /// WPF uses that flag to say which windows may steal focus: a Popup is always shown
+        /// non-activating, an ordinary Window is not. Backends that cannot distinguish the two just
+        /// show the window, which is what the single-argument overload always did.
+        /// </remarks>
+        void SetVisible(bool visible, bool activate) => SetVisible(visible);
+
+        /// <summary>
+        /// Bring this window to the front and give it focus — Win32's SetForegroundWindow /
+        /// SetActiveWindow, i.e. what Window.Activate() comes down to.
+        /// </summary>
+        /// <remarks>
+        /// Backends with no notion of activation do nothing, which is what these calls did everywhere
+        /// off-Windows before: SetActiveWindow returned zero without acting, and SetForegroundWindow
+        /// was a raw user32 P/Invoke, so Window.Activate() threw DllNotFoundException outright.
+        /// </remarks>
+        void Activate() { }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>

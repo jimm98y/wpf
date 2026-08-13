@@ -160,6 +160,20 @@ namespace MS.Internal.Interop
         /// </remarks>
         public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner, bool chromeless, bool visible)
         {
+            Create(title, x, y, width, height, borderless, owner, chromeless, visible, activatable: !borderless);
+        }
+
+        /// <summary>
+        /// As above, plus <paramref name="activatable"/>: whether this window may take key focus.
+        /// </summary>
+        /// <remarks>
+        /// Only meaningful together with <paramref name="borderless"/>, and it is what separates a
+        /// popup from a real window that happens to be transparent -- see EnsureWindowClass. WPF marks
+        /// the windows that must never take focus with WS_EX_NOACTIVATE (Popup.CreateWindow), which is
+        /// what the caller tests; everything else is a window the user can be expected to type into.
+        /// </remarks>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner, bool chromeless, bool visible, bool activatable)
+        {
             // AppKit refuses to build a window anywhere but the main thread, and it refuses by
             // raising an Objective-C exception -- which unwinds through managed frames into
             // std::terminate and takes the process with it, with no managed stack to say why. Check
@@ -179,7 +193,8 @@ namespace MS.Internal.Interop
             if (width <= 0) width = borderless ? 1 : 800;
             if (height <= 0) height = borderless ? 1 : 600;
 
-            IntPtr nsWindowClass = objc_getClass("NSWindow");
+            _activatable = activatable;
+            IntPtr nsWindowClass = EnsureWindowClass();
             IntPtr alloc = Send(nsWindowClass, Sel("alloc"));
 
             var frame = new NSRect { x = x, y = y, width = width, height = height };
@@ -194,6 +209,10 @@ namespace MS.Internal.Interop
 
             _window = SendInitWindow(alloc, Sel("initWithContentRect:styleMask:backing:defer:"),
                                      frame, styleMask, NSBackingStoreBuffered, false);
+
+            // Must be registered before anything can order the window in: -canBecomeKeyWindow is asked
+            // by AppKit during that call, not later.
+            if (activatable) s_activatable.Add(_window);
 
             // Our own NSView subclass rather than the stock content view, because VoiceOver walks the
             // VIEW hierarchy: an accessibility client asks the view what its children are, and only a
@@ -390,6 +409,7 @@ namespace MS.Internal.Interop
         }
 
         private bool _borderless;
+        private bool _activatable;
         private IntPtr _ownerHandle;
 
         /// <summary>True for popup/menu windows (borderless, floating); they get moved to their
@@ -708,6 +728,56 @@ namespace MS.Internal.Interop
 
             px = x * scale;
             py = (PrimaryScreenHeightPoints() - y) * scale;
+        }
+
+        // ---- activatable borderless windows -------------------------------------------------
+        //
+        // A borderless NSWindow answers NO to -canBecomeKeyWindow, and AppKit gives no property to
+        // change that -- it must be OVERRIDDEN. That default is right for a menu, a tooltip or a drag
+        // adorner, and WRONG for a real top-level window that merely paints its own chrome.
+        //
+        // WPF makes such a window borderless without meaning "never focus me": AllowsTransparency
+        // sets WS_EX_LAYERED (HwndSource.Initialize), which is the same bit a popup carries, so a
+        // WindowStyle=None + AllowsTransparency window -- a command palette, a splash screen -- came
+        // up unfocusable. It could never become key, so it never activated, and therefore could never
+        // DEACTIVATE either: anything closing itself on Window.Deactivated (the standard way to
+        // dismiss a palette) stayed on screen forever, ignoring clicks elsewhere and outliving even
+        // the minimising of the app.
+        //
+        // So the class is created once and the behaviour is per-window: only handles registered in
+        // s_activatable answer YES, leaving popups and adorners exactly as they were.
+
+        private static IntPtr s_windowClass;
+        private static readonly HashSet<IntPtr> s_activatable = new HashSet<IntPtr>();
+
+        private delegate bool BoolWindowImpl(IntPtr self, IntPtr sel);
+        private static BoolWindowImpl s_canBecomeKeyImpl;
+        private static BoolWindowImpl s_canBecomeMainImpl;
+
+        private static IntPtr EnsureWindowClass()
+        {
+            if (s_windowClass != IntPtr.Zero) return s_windowClass;
+
+            // Re-registering an existing class pair aborts the process, so look it up first.
+            IntPtr existing = objc_getClass("WpfWindow");
+            if (existing != IntPtr.Zero) return s_windowClass = existing;
+
+            IntPtr nsWindow = objc_getClass("NSWindow");
+            if (nsWindow == IntPtr.Zero) return IntPtr.Zero;
+
+            IntPtr cls = objc_allocateClassPair(nsWindow, "WpfWindow", UIntPtr.Zero);
+            if (cls == IntPtr.Zero) return s_windowClass = nsWindow;   // fall back to stock NSWindow
+
+            // Kept alive in static fields: the runtime stores the raw function pointer.
+            s_canBecomeKeyImpl  = static (self, sel) => s_activatable.Contains(self);
+            s_canBecomeMainImpl = static (self, sel) => s_activatable.Contains(self);
+            class_addMethod(cls, Sel("canBecomeKeyWindow"),
+                            Marshal.GetFunctionPointerForDelegate(s_canBecomeKeyImpl), "c@:");
+            class_addMethod(cls, Sel("canBecomeMainWindow"),
+                            Marshal.GetFunctionPointerForDelegate(s_canBecomeMainImpl), "c@:");
+
+            objc_registerClassPair(cls);
+            return s_windowClass = cls;
         }
 
         // The content-view class, synthesised once. Its only job beyond being an NSView is to answer
@@ -1166,9 +1236,30 @@ namespace MS.Internal.Interop
                 $"visible={SendBool(_window, Sel("isVisible"))}");
         }
 
-        public void SetVisible(bool visible)
+        /// <summary>Make this the key window (Win32 SetForegroundWindow / Window.Activate).</summary>
+        public void Activate()
         {
             if (_window == IntPtr.Zero) return;
+            if (_borderless && !_activatable) return;   // a popup must never take focus
+            SendVoidPtr(_window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+        }
+
+        public void SetVisible(bool visible) => SetVisible(visible, activate: true);
+
+        /// <summary>
+        /// As above, plus <paramref name="activate"/>: whether showing should also take key focus.
+        /// </summary>
+        /// <remarks>
+        /// This is Win32's SW_SHOW vs SW_SHOWNA (and SetWindowPos's SWP_NOACTIVATE), which WPF uses to
+        /// say which windows may steal focus: a Popup is always shown non-activating, a Window with
+        /// ShowActivated=true is not. Collapsing the two lost that intent -- the only distinction left
+        /// was the window's own chrome, so a transparent top-level window could never be focused.
+        /// A window that may not become key at all ignores the request.
+        /// </remarks>
+        public void SetVisible(bool visible, bool activate)
+        {
+            if (_window == IntPtr.Zero) return;
+            activate &= !_borderless || _activatable;
             TraceWindow(visible ? "show" : "hide");
 
             if (!visible)
@@ -1188,7 +1279,7 @@ namespace MS.Internal.Interop
             }
 
             _hiddenByUs = false;
-            SendVoidPtr(_window, Sel(_borderless ? "orderFront:" : "makeKeyAndOrderFront:"), IntPtr.Zero);
+            SendVoidPtr(_window, Sel(activate ? "makeKeyAndOrderFront:" : "orderFront:"), IntPtr.Zero);
 
             if (s_traceWindows)
             {
@@ -1210,7 +1301,7 @@ namespace MS.Internal.Interop
             // up EMPTY until some unrelated event happens to run the loop. Creation used to be the only
             // place a window was shown, so this was only ever done there; now that a window WPF created
             // hidden is shown from here instead, this is where the handshake has to happen for it.
-            PumpUntilVisible(activate: !_borderless);
+            PumpUntilVisible(activate: activate);
         }
 
         /// <summary>Start an AppKit window drag from the event being handled. This is the API made
@@ -1260,6 +1351,7 @@ namespace MS.Internal.Interop
 
             if (_window != IntPtr.Zero)
             {
+                s_activatable.Remove(_window);
                 Send(_window, Sel("close"));
                 _window = IntPtr.Zero;
             }

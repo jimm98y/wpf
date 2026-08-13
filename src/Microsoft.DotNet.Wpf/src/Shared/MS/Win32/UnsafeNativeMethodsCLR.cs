@@ -119,7 +119,13 @@ namespace MS.Win32
                 }
                 else if ((flags & SWP_SHOWWINDOW) != 0)
                 {
-                    cocoa.SetVisible(true);
+                    // SWP_NOACTIVATE carries WPF's "show this without giving it focus": Popup always
+                    // sets it, Window.ShowHelper sets it only for ShowActivated=false. Dropping it
+                    // meant a transparent top-level window (WS_EX_LAYERED, so indistinguishable from a
+                    // popup by chrome alone) could never take focus, hence never activate and never
+                    // deactivate -- a command palette that closes on Deactivated stayed up for good.
+                    const int SWP_NOACTIVATE = 0x0010;
+                    cocoa.SetVisible(true, (flags & SWP_NOACTIVATE) == 0);
                 }
             }
             return true;
@@ -193,8 +199,12 @@ namespace MS.Win32
                 nCmdShow == NativeMethods.SW_NORMAL || nCmdShow == NativeMethods.SW_SHOWNOACTIVATE ||
                 nCmdShow == NativeMethods.SW_RESTORE)
             {
+                // SW_SHOWNA / SW_SHOWNOACTIVATE mean "show but do not take focus" -- how WPF shows
+                // every Popup, and any Window with ShowActivated=false. The rest activate.
+                bool activate = nCmdShow != NativeMethods.SW_SHOWNA &&
+                                nCmdShow != NativeMethods.SW_SHOWNOACTIVATE;
                 MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)
-                    ?.SetVisible(nCmdShow != NativeMethods.SW_HIDE);
+                    ?.SetVisible(nCmdShow != NativeMethods.SW_HIDE, activate);
             }
 
             return true;
@@ -1176,8 +1186,24 @@ namespace MS.Win32
         public static IntPtr GetActiveWindow() =>
             OperatingSystem.IsWindows() ? GetActiveWindowNative() : IntPtr.Zero;
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool SetForegroundWindow(HandleRef hWnd);
+        [DllImport(ExternDll.User32, EntryPoint = "SetForegroundWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool SetForegroundWindowNative(HandleRef hWnd);
+
+        // Off-Windows this was a raw user32 P/Invoke on a platform with no user32: Window.Activate()
+        // threw DllNotFoundException rather than activating anything. Route it to the platform window,
+        // which knows how to take focus (and how to refuse, for a popup).
+        public static bool SetForegroundWindow(HandleRef hWnd)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetForegroundWindowNative(hWnd);
+            }
+
+            MS.Internal.Interop.IPlatformWindow window =
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+            window?.Activate();
+            return window != null;
+        }
 
         [return: MarshalAs(UnmanagedType.Bool)]
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
@@ -1186,9 +1212,18 @@ namespace MS.Win32
         [DllImport(ExternDll.User32, EntryPoint = "SetActiveWindow", SetLastError = true)]
         private static extern IntPtr SetActiveWindowNative(HandleRef hWnd);
 
-        // Off-Windows activation is handled by the platform window driver; no HWND to activate.
+        // Off-Windows, hand the request to the platform window rather than dropping it: returning zero
+        // without acting meant Window.Activate() silently did nothing.
         public static IntPtr SetActiveWindow(HandleRef hWnd)
-            => OperatingSystem.IsWindows() ? SetActiveWindowNative(hWnd) : IntPtr.Zero;
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetActiveWindowNative(hWnd);
+            }
+
+            MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.Activate();
+            return IntPtr.Zero;
+        }
 
         //Refactor shared native methods so that parser dependency
         // is in separate file. 
