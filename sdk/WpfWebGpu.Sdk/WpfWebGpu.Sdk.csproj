@@ -99,6 +99,7 @@
     <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
+    <None Include="$(WpfBin)System.Diagnostics.Process/Release/net10.0/System.Diagnostics.Process.dll" Pack="true" PackagePath="lib/wpf-browser/" />
 
     <!-- WinForms for UseWindowsForms apps, on EVERY desktop head (see Sdk.targets): the Mono
          System.Windows.Forms — which owns its own on-screen presentation, so Application.Run works —

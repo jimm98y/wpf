@@ -16,6 +16,7 @@ namespace Microsoft.Win32
         private readonly Dictionary<string, RegistryKey> _subKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, object> _values = new(StringComparer.OrdinalIgnoreCase);
         public string Name { get; }
+        public Microsoft.Win32.SafeHandles.SafeRegistryHandle Handle => new Microsoft.Win32.SafeHandles.SafeRegistryHandle();
         internal RegistryKey(string name) { Name = name; }
 
         public RegistryKey OpenSubKey(string name) => OpenSubKey(name, false);
@@ -99,5 +100,33 @@ namespace Microsoft.Win32
             (string.IsNullOrEmpty(rest) ? h : h.CreateSubKey(rest)).SetValue(valueName, value);
         }
         public static void SetValue(string keyName, string valueName, object value, RegistryValueKind valueKind) => SetValue(keyName, valueName, value);
+    }
+}
+
+namespace Microsoft.Win32.SafeHandles
+{
+    /// <summary>
+    ///  Present so that references to the registry HANDLE type still resolve.
+    /// </summary>
+    /// <remarks>
+    ///  The type has to EXIST because libraries P/Invoke registry APIs through it
+    ///  (Microsoft.VisualStudio.Threading's RegNotifyChangeKeyValue, for one), and a missing type in a
+    ///  method SIGNATURE is not a lazy failure: mono-aot-cross refuses the whole assembly with "Could
+    ///  not load signature ... Could not resolve type with token", which took down an entire AOT build.
+    ///
+    ///  Deliberately NOT derived from SafeHandle, which was the first attempt: SafeHandle is a critical
+    ///  finalizer type, and merely having one in this assembly made the interpreter refuse the class
+    ///  ("NIY encountered in method Microsoft.Win32.Registry:.cctor", then a fatal assertion) — so the
+    ///  fix for the AOT build broke the interpreter build instead. Only the type's NAME is ever needed:
+    ///  nothing off Windows calls these methods, and no instance is ever created by the runtime.
+    /// </remarks>
+    public sealed class SafeRegistryHandle : System.IDisposable
+    {
+        public SafeRegistryHandle() { }
+        public SafeRegistryHandle(System.IntPtr preexistingHandle, bool ownsHandle) { }
+        public bool IsInvalid => true;
+        public bool IsClosed => true;
+        public System.IntPtr DangerousGetHandle() => System.IntPtr.Zero;
+        public void Dispose() { }
     }
 }

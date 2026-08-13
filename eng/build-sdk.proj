@@ -96,6 +96,7 @@
     <!-- Cross-platform stand-ins for the Windows-only assemblies. -->
     <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
     <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
 
     <!-- The desktop renderer. Built transitively above, but named explicitly so a failure
          here is attributed to the renderer rather than to PresentationFramework. -->
