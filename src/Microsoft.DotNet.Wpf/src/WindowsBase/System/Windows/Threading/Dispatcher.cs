@@ -2238,6 +2238,26 @@ namespace System.Windows.Threading
 
                         RaiseIdleIfQuiescent();
                     }
+                    catch (Exception tickException)
+                    {
+                        // A throw from the tick body must NOT end the pump. Input is delivered inside
+                        // it (PumpEvents raises WPF's routed events directly), so an ordinary
+                        // application bug in a click handler used to escape here, exit the loop, and
+                        // leave the page permanently frozen: no further ticks means no layout, no
+                        // render and no input, with the window still on screen looking alive. That is
+                        // the harshest failure mode available, and it is not what any other head does
+                        // -- on Windows and macOS the exception is offered to Dispatcher.UnhandledException
+                        // and the app carries on if it handles it.
+                        //
+                        // So offer it the same way. Unhandled, it is reported and the pump still
+                        // continues: on the desktop the process would die and the user would restart
+                        // it, but here the page is the process, and killing the loop denies the app
+                        // even the chance to show its own error UI.
+                        if (!CatchException(tickException))
+                        {
+                            Console.WriteLine($"WPF browser dispatcher: unhandled exception in pump tick (pump continues): {tickException}");
+                        }
+                    }
                     finally
                     {
                         SynchronizationContext.SetSynchronizationContext(oldSyncContext);
@@ -2248,7 +2268,14 @@ namespace System.Windows.Threading
                             if (tms > _pumpTickMaxMs) _pumpTickMaxMs = tms;
                             if (++_pumpTickCount == 120)
                             {
-                                Console.WriteLine($"PERF/tick: avg={_pumpTickTotalMs / 120:F1}ms max={_pumpTickMaxMs:F1}ms over 120 ticks");
+                                // Heap size and collection counts ride along: on the browser the
+                                // only window into managed memory is what the app prints, and
+                                // "it gets slower the longer it runs" is either heap growth or it
+                                // is not -- worth one measurement per 120 ticks to tell which.
+                                Console.WriteLine(
+                                    $"PERF/tick: avg={_pumpTickTotalMs / 120:F1}ms max={_pumpTickMaxMs:F1}ms over 120 ticks" +
+                                    $" | heap={GC.GetTotalMemory(false) / (1024 * 1024)}MB" +
+                                    $" gc0={GC.CollectionCount(0)} gc2={GC.CollectionCount(2)}");
                                 _pumpTickCount = 0; _pumpTickTotalMs = 0; _pumpTickMaxMs = 0;
                             }
                         }
@@ -2262,9 +2289,9 @@ namespace System.Windows.Threading
             }
             catch (Exception e)
             {
-                // An exception escaping ProcessQueue is fatal on the desktop too (it
-                // unwinds Application.Run); surface it before the async-void rethrow
-                // turns it into an opaque unhandled promise rejection.
+                // Only the loop's own plumbing reaches here now (the tick body handles its own
+                // exceptions above); surface it before the async-void rethrow turns it into an
+                // opaque unhandled promise rejection.
                 Console.WriteLine($"WPF browser dispatcher pump failed: {e}");
                 throw;
             }

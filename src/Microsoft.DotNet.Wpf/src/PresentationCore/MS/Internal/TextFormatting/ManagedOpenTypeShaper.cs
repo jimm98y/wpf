@@ -110,8 +110,17 @@ namespace MS.Internal.TextFormatting
 
             try
             {
-                return SubstituteCore(glyphTypeface, text, charCount, glyphs, glyphCount,
-                                      glyphCapacity, clusterMap, canGlyphAlone);
+                if (TryGetCachedSubstitution(glyphTypeface, text, charCount, glyphs, glyphCapacity,
+                                             clusterMap, canGlyphAlone, out int cached))
+                {
+                    return cached;
+                }
+
+                int produced = SubstituteCore(glyphTypeface, text, charCount, glyphs, glyphCount,
+                                              glyphCapacity, clusterMap, canGlyphAlone);
+                CacheSubstitution(glyphTypeface, text, charCount, glyphs, produced, glyphCapacity,
+                                  clusterMap, canGlyphAlone);
+                return produced;
             }
             catch (Exception e)
             {
@@ -121,6 +130,126 @@ namespace MS.Internal.TextFormatting
                 if (s_log) Log($"GSUB face='{FamilyOf(glyphTypeface)}' THREW {e}");
                 return glyphCount;
             }
+        }
+
+        // ---- shaped-run cache ---------------------------------------------------------------
+        //
+        // Substitution is a PURE function of (face, characters): the same string through the same font
+        // always yields the same glyphs, cluster map and independence flags. It is also expensive —
+        // every call walks the font's GSUB tables lookup by lookup, reading them two bytes at a time
+        // (FontTable.GetUShort), because this port shapes in managed code where Windows would call
+        // DirectWrite.
+        //
+        // That cost is paid over and over for identical text. WPF re-formats a line whenever its
+        // visual is re-rendered, and anything that animates puts the whole scene through render and
+        // commit EVERY FRAME — so an app with one spinner re-shapes all its visible labels 60 times a
+        // second. In WpfHexEditorIDE this was the single largest remaining cost once the GC problem
+        // was fixed, with shaping frames dominating an at-rest profile.
+        //
+        // Keyed on the typeface instance and the run's characters. Bounded and cleared wholesale when
+        // full: text runs are highly repetitive, so a plain cap keeps the common case hot without the
+        // bookkeeping of an eviction policy.
+        private const int ShapeCacheLimit = 4096;
+
+        private sealed class ShapedRun
+        {
+            public ushort[] Glyphs;
+            public ushort[] ClusterMap;
+            public int[] CanGlyphAlone;   // null when the caller did not ask for it
+            public int GlyphCount;
+        }
+
+        // Runs longer than this are not cached: long runs repeat far less often, cost more to copy in
+        // and out, and are what a text-heavy view (an editor's lines, a log panel) produces endlessly.
+        private const int ShapeCacheMaxRunLength = 128;
+
+        // ThreadStatic rather than locked: text formatting is bound to the thread that owns the
+        // Dispatcher, and a per-thread cache needs no synchronisation on this hot path.
+        //
+        // Nested by typeface so the inner dictionary is keyed by STRING ALONE, which lets a lookup use
+        // the span alternate lookup and touch no allocation at all. The first version keyed a single
+        // dictionary on (typeface, string) and built that string on EVERY call -- including hits -- so
+        // consulting the cache allocated a string per shaped run, at shaping rates. Caching to avoid
+        // work while allocating to ask the cache is self-defeating: it trades processor time for
+        // garbage, and in a wasm runtime whose collector is not cheap that is a poor trade.
+        [ThreadStatic] private static Dictionary<GlyphTypeface, Dictionary<string, ShapedRun>> s_shapeCache;
+
+        private static unsafe bool TryGetCachedSubstitution(
+            GlyphTypeface glyphTypeface, char* text, int charCount,
+            ushort* glyphs, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone,
+            out int glyphCountOut)
+        {
+            glyphCountOut = 0;
+            if (charCount > ShapeCacheMaxRunLength) return false;
+
+            Dictionary<GlyphTypeface, Dictionary<string, ShapedRun>> cache = s_shapeCache;
+            if (cache == null || !cache.TryGetValue(glyphTypeface, out Dictionary<string, ShapedRun> forFace))
+            {
+                return false;
+            }
+
+            // Span lookup: finds the entry without materialising the key.
+            if (!forFace.GetAlternateLookup<ReadOnlySpan<char>>()
+                        .TryGetValue(new ReadOnlySpan<char>(text, charCount), out ShapedRun run))
+            {
+                return false;
+            }
+
+            // The caller wants independence flags this entry was not asked to record: recompute.
+            if (canGlyphAlone != null && run.CanGlyphAlone == null) return false;
+
+            // Does not fit the caller's buffers: report the size so it can grow and come back, exactly
+            // as the uncached path does, and leave the buffers untouched.
+            if (run.GlyphCount > glyphCapacity)
+            {
+                glyphCountOut = run.GlyphCount;
+                return true;
+            }
+
+            for (int g = 0; g < run.GlyphCount; g++) glyphs[g] = run.Glyphs[g];
+            for (int c = 0; c < charCount; c++) clusterMap[c] = run.ClusterMap[c];
+            if (canGlyphAlone != null)
+            {
+                for (int c = 0; c < charCount; c++) canGlyphAlone[c] = run.CanGlyphAlone[c];
+            }
+
+            glyphCountOut = run.GlyphCount;
+            return true;
+        }
+
+        private static unsafe void CacheSubstitution(
+            GlyphTypeface glyphTypeface, char* text, int charCount,
+            ushort* glyphs, int glyphCount, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone)
+        {
+            // Only in-place results are cacheable: when the run did not fit, the buffers still hold
+            // the caller's input and there is nothing to remember.
+            if (glyphCount <= 0 || glyphCount > glyphCapacity) return;
+            if (charCount > ShapeCacheMaxRunLength) return;
+
+            Dictionary<GlyphTypeface, Dictionary<string, ShapedRun>> cache = s_shapeCache ??= new();
+            if (!cache.TryGetValue(glyphTypeface, out Dictionary<string, ShapedRun> forFace))
+            {
+                forFace = new Dictionary<string, ShapedRun>(StringComparer.Ordinal);
+                cache[glyphTypeface] = forFace;
+            }
+
+            if (forFace.Count >= ShapeCacheLimit) forFace.Clear();
+
+            var run = new ShapedRun
+            {
+                Glyphs = new ushort[glyphCount],
+                ClusterMap = new ushort[charCount],
+                GlyphCount = glyphCount,
+            };
+            for (int g = 0; g < glyphCount; g++) run.Glyphs[g] = glyphs[g];
+            for (int c = 0; c < charCount; c++) run.ClusterMap[c] = clusterMap[c];
+            if (canGlyphAlone != null)
+            {
+                run.CanGlyphAlone = new int[charCount];
+                for (int c = 0; c < charCount; c++) run.CanGlyphAlone[c] = canGlyphAlone[c];
+            }
+
+            forFace[new string(text, 0, charCount)] = run;
         }
 
         private static unsafe int SubstituteCore(
