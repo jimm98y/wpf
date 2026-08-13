@@ -36,6 +36,11 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     host().appendChild(canvas);
     windows.set(handle, { canvas, borderless });
     canvases().set(handle, canvas);
+    // A TOP-LEVEL window fills the viewport from the start. The browser has exactly one viewport and
+    // no desktop to be a window on, so the only sensible reading of a main window here is the one the
+    // resize handler already applies -- it just never ran until the user actually resized, so the app
+    // opened at whatever size it was designed for (a corner of the page) and only snapped to full size
+    // on the first resize event. Popups keep their requested size: they are positioned, not maximized.
     setContentSize(handle, width, height);
     if (!borderless && title) document.title = title;
     installListeners();
@@ -62,6 +67,17 @@ export function destroyWindow(handle) {
 export function setContentSize(handle, width, height) {
     const w = windows.get(handle);
     if (!w) return;
+
+    // A TOP-LEVEL window always fills the viewport. There is one viewport and no desktop to be a
+    // window on, so a main window is inherently maximized here -- which is what the resize handler
+    // already assumed, and the only reason it looked right after a resize. At startup WPF applies the
+    // size the app was DESIGNED for (Window.Width/Height) just after creating the window, so the app
+    // opened at e.g. 1200x800 in a corner of the page and only snapped to full size when the user
+    // happened to resize the browser. Popups are exempt: they are positioned and sized deliberately.
+    if (!w.borderless) {
+        width = window.innerWidth;
+        height = window.innerHeight;
+    }
     // Identical size is a strict no-op: macOS fires window-resize bursts with
     // unchanged dimensions, a same-value canvas.width write still blanks the
     // canvas, and the queued synthetic WM_SIZE would re-layout and invalidate

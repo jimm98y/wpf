@@ -609,6 +609,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static void wgpuTextureViewRelease(IntPtr textureView) => WgpuBrowserJs.Release((int)textureView);
         internal static void wgpuBufferRelease(IntPtr buffer) => WgpuBrowserJs.Release((int)buffer);
         internal static void wgpuBindGroupRelease(IntPtr bindGroup) => WgpuBrowserJs.Release((int)bindGroup);
+        // The 3D path releases layouts as well as bind groups; without this the browser flavor does
+        // not compile at all, so the whole head silently kept running last-known-good binaries.
+        internal static void wgpuBindGroupLayoutRelease(IntPtr bindGroupLayout) => WgpuBrowserJs.Release((int)bindGroupLayout);
         internal static void wgpuSamplerRelease(IntPtr sampler) => WgpuBrowserJs.Release((int)sampler);
         internal static void wgpuCommandEncoderRelease(IntPtr commandEncoder) => WgpuBrowserJs.Release((int)commandEncoder);
         internal static void wgpuCommandBufferRelease(IntPtr commandBuffer) => WgpuBrowserJs.Release((int)commandBuffer);
