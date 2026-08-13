@@ -283,6 +283,10 @@ export function finishEncoder(encoderId) {
 }
 
 export function submit(queueId, commandBufferId) {
+    // Frame counter for the on-screen FPS readout (see main.js). Counted HERE, at the point work is
+    // handed to the GPU, so it reports frames the app actually drew -- not requestAnimationFrame
+    // callbacks, which keep ticking at display rate whether or not anything was rendered.
+    globalThis.__wpfFrameCount = (globalThis.__wpfFrameCount || 0) + 1;
     get(queueId).submit([get(commandBufferId)]);
 }
 

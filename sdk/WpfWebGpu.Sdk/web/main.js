@@ -92,6 +92,31 @@ try {
         console.warn('app payload mount skipped:', e);
     }
 
+    // ?fps=1 -- a live readout in the corner of the page.
+    //
+    // Two numbers, because they answer different questions and only one of them is "the frame rate":
+    // DRAW is how often the app actually submitted a frame to the GPU, RAF is how often the browser
+    // offered one. RAF near the display rate with a low DRAW means the app is idle, not slow;
+    // both low together means the frame loop is genuinely struggling.
+    if (params.has('fps')) {
+        const el = document.createElement('div');
+        el.style.cssText = 'position:fixed;right:6px;top:6px;z-index:2147483647;padding:3px 7px;' +
+            'font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#0f0;background:rgba(0,0,0,.72);' +
+            'border-radius:4px;pointer-events:none;white-space:pre';
+        document.body.appendChild(el);
+        let raf = 0, lastDraw = 0, t0 = performance.now();
+        const tick = () => { raf++; requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+        setInterval(() => {
+            const now = performance.now();
+            const secs = (now - t0) / 1000;
+            const draws = (globalThis.__wpfFrameCount || 0) - lastDraw;
+            el.textContent = `draw ${(draws / secs).toFixed(0)} fps\nraf  ${(raf / secs).toFixed(0)} fps`;
+            lastDraw = globalThis.__wpfFrameCount || 0;
+            raf = 0; t0 = now;
+        }, 500);
+    }
+
     status.innerText = 'starting WPF…';
     // Environment telemetry: canvas/viewport/scale, printed at boot and on resize
     // (perf reports are meaningless without knowing the rendered pixel count).
