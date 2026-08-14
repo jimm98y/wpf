@@ -231,6 +231,19 @@ namespace MS.Internal.Interop
 
         public double GetBackingScale() => ScreenScale();
 
+        /// <summary>
+        /// The display's refresh ceiling. maximumFramesPerSecond is 120 on a ProMotion iPad and 60
+        /// elsewhere; it is the ceiling rather than the current adaptive rate, which is what WPF
+        /// wants for pacing.
+        /// </summary>
+        public double GetRefreshRateHz()
+        {
+            IntPtr screen = Send(objc_getClass("UIScreen"), Sel("mainScreen"));
+            if (screen == IntPtr.Zero) return 0;
+            nint fps = SendNInt(screen, Sel("maximumFramesPerSecond"));
+            return fps > 0 ? fps : 0;
+        }
+
         /// <summary>Topmost registered window containing the point (top-left device pixels).</summary>
         public static IntPtr HitTest(int x, int y)
         {

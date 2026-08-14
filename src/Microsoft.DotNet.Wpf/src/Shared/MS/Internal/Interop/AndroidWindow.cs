@@ -83,6 +83,13 @@ namespace MS.Internal.Interop
         /// (DisplayMetrics.Density — 1.0 at mdpi, 3.5 on a modern phone).</summary>
         double Density { get; }
 
+        /// <summary>
+        /// The display's refresh rate in Hz (Display.getRefreshRate), or 0 when it cannot be read.
+        /// Phones have shipped 90Hz and 120Hz panels for years; WPF paces itself against this, and
+        /// without it every one of them ran at 60. See IPlatformWindow.GetRefreshRateHz.
+        /// </summary>
+        double RefreshRateHz => 0;
+
         /// <summary>The activity's content area in device pixels — the whole screen minus system bars.</summary>
         void GetScreenPixels(out int width, out int height);
 
@@ -274,6 +281,8 @@ namespace MS.Internal.Interop
         /// and layout follows that. Popups keep their requested geometry.
         /// </summary>
         private bool IsFullScreenTopLevel => !IsBorderless && Host != null;
+
+        public double GetRefreshRateHz() => Host?.RefreshRateHz ?? 0;
 
         public double GetBackingScale()
         {

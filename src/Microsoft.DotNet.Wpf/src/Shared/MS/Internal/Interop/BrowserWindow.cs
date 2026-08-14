@@ -228,6 +228,12 @@ namespace MS.Internal.Interop
 
         public double GetBackingScale() => Js.GetDevicePixelRatio();
 
+        /// <summary>
+        /// The page's animation-frame cadence, which IS the display refresh a browser will give us.
+        /// Measured over the first frames rather than declared, because no web API reports it.
+        /// </summary>
+        public double GetRefreshRateHz() => Js.GetRefreshRateHz();
+
         public static IntPtr HitTest(int x, int y) => (IntPtr)Js.HitTest(x, y);
 
         public static void SetCursor(string cssCursor) => Js.SetCursor(cssCursor);
@@ -488,6 +494,9 @@ namespace MS.Internal.Interop
 
             [JSImport("getScreenOriginY", Module)]
             internal static partial int GetScreenOriginY(int handle);
+
+            [JSImport("getRefreshRateHz", Module)]
+            internal static partial double GetRefreshRateHz();
 
             [JSImport("getDevicePixelRatio", Module)]
             internal static partial double GetDevicePixelRatio();

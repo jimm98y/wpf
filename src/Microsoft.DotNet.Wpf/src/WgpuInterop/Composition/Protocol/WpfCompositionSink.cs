@@ -89,6 +89,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Total frames successfully presented (diagnostics/tests).</summary>
         public int PresentedFrames { get; private set; }
 
+        // ---- the back channel: what WPF paces itself against -------------------------------
+        //
+        // MediaContext schedules the next commit from the display's refresh period and the time of
+        // the last present. On Windows milcore posts those after every present as
+        // MilMessage.Presented; nothing here did, so MediaContext used its "we don't know when vsync
+        // is" fallback of 17ms -- 58.8fps -- on every head, whatever the panel could do.
+        //
+        // One pending notification, not a queue: MediaContext only ever wants the LATEST present, and
+        // a backlog would have it pacing against a vblank that has already gone by.
+        private bool _presentedPending;
+        private ulong _presentedWindow;
+        private long _presentedTime;
+
+        private void NotePresented(ulong hwnd)
+        {
+            // WHICH window, not what rate: the display's refresh belongs to the windowing layer, and
+            // this assembly deliberately cannot see it. The caller resolves the handle. It has to be
+            // per-window rather than per-process because a machine can pair a 120Hz laptop panel with
+            // a 60Hz monitor, and dragging between them must change the pacing.
+            _presentedWindow = hwnd;
+            _presentedTime = System.Diagnostics.Stopwatch.GetTimestamp();
+            _presentedPending = true;
+        }
+
+        /// <summary>Reports the last present to WPF's scheduler. See IMilCompositionSink.</summary>
+        public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
+        {
+            windowHandle = (long)_presentedWindow;
+            presentationTime = _presentedTime;
+            if (!_presentedPending) return false;
+
+            _presentedPending = false;
+            return true;
+        }
+
         // Per-target (HWND) timestamp of the last present, to detect an isolated/idle frame that needs a
         // compositor flush vs. a frame inside a continuous animation burst (which composites on its own).
         private readonly System.Collections.Generic.Dictionary<ulong, long> _lastPresentTicks = new();
@@ -529,6 +564,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (pres == WGPUStatus.Success)
             {
                 PresentedFrames++;
+                NotePresented(t.Hwnd);
                 // Commit the compositor transaction so a frame shows immediately even if the window then goes
                 // idle (an autoresizing CAMetalLayer sublayer's contents otherwise stay uncommitted until an
                 // unrelated relayout — e.g. a resize — so a static window is blank until you resize it).

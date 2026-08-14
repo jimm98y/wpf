@@ -169,6 +169,29 @@ namespace System.Windows.Media.Composition
         /// (unknown handle, no root, or no synchronous GPU readback on this platform).
         /// </summary>
         byte[] ReadbackTarget(int channelId, uint targetHandle);
+
+        /// <summary>
+        /// The back channel: reports the last present so WPF can pace itself against the display.
+        /// Returns false when nothing is pending.
+        /// </summary>
+        /// <remarks>
+        /// On Windows milcore posts MilMessage.Presented after every present, and MediaContext uses
+        /// the refresh rate and timestamp in it to decide when the next commit should happen. The
+        /// managed backend posted nothing, so that whole mechanism sat idle and scheduling fell to
+        /// the "we don't know when vsync is" fallback of 17ms -- 58.8fps, on every head, whatever the
+        /// display could do.
+        /// </remarks>
+        /// <param name="windowHandle">
+        /// The window that was presented. The backend cannot resolve its refresh rate -- the
+        /// windowing layer owns that -- so it reports which window and the caller looks it up.
+        /// </param>
+        /// <param name="presentationTime">
+        /// When the present happened, in QueryPerformanceCounter counts (Stopwatch timestamps off
+        /// Windows, which is what the shim returns). This is the PHASE, and it matters as much as the
+        /// rate: a timer that knows the period but not where the last vblank was lands mid-interval
+        /// and slips a whole frame.
+        /// </param>
+        bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime);
     }
 
     /// <summary>
@@ -204,6 +227,29 @@ namespace System.Windows.Media.Composition
 
             /// <summary>Install (or clear) the managed composition backend.</summary>
             internal static void Register(IMilCompositionSink sink) => s_sink = sink;
+
+            /// <summary>
+            /// The refresh rate, in Hz, of the display the given window is on; 0 when unknown.
+            /// </summary>
+            /// <remarks>
+            /// Lives here rather than in the backend because the backend has no reference to the
+            /// windowing assembly, by design. Failures answer 0, which keeps WPF on the fallback it
+            /// used before any of this existed.
+            /// </remarks>
+            internal static int RefreshRateFor(long windowHandle)
+            {
+                try
+                {
+                    MS.Internal.Interop.IPlatformWindow window =
+                        MS.Internal.Interop.PlatformWindow.FromHandle((IntPtr)windowHandle);
+                    double hz = window?.GetRefreshRateHz() ?? 0;
+                    return hz > 0 ? (int)Math.Round(hz) : 0;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
 
             /// <summary>Allocate a process-unique managed channel id.</summary>
             internal static int NewChannelId() =>
@@ -311,6 +357,7 @@ namespace System.Windows.Media.Composition
             private readonly System.Reflection.MethodInfo _commit;
             private readonly System.Reflection.MethodInfo _syncFlush;
             private readonly System.Reflection.MethodInfo _readbackTarget;
+            private readonly System.Reflection.MethodInfo _tryDequeuePresented;
 
             internal ReflectionMilCompositionSink(object impl)
             {
@@ -330,6 +377,7 @@ namespace System.Windows.Media.Composition
                 _commit = Bind(t, "Commit");
                 _syncFlush = Bind(t, "SyncFlush");
                 _readbackTarget = Bind(t, "ReadbackTarget");
+                _tryDequeuePresented = Bind(t, "TryDequeuePresented");
             }
 
             private static System.Reflection.MethodInfo Bind(Type t, string name)
@@ -388,6 +436,15 @@ namespace System.Windows.Media.Composition
 
             public byte[] ReadbackTarget(int channelId, uint targetHandle) =>
                 (byte[])_readbackTarget.Invoke(_impl, new object[] { channelId, targetHandle });
+
+            public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
+            {
+                object[] args = { channelId, 0L, 0L };
+                bool any = (bool)_tryDequeuePresented.Invoke(_impl, args);
+                windowHandle = (long)args[1];
+                presentationTime = (long)args[2];
+                return any;
+            }
         }
 
         /// <summary>
@@ -1357,9 +1414,26 @@ namespace System.Windows.Media.Composition
             {
                 if (_sink != null)
                 {
-                    // No back-channel messages from the managed backend.
                     message = default;
-                    return false;
+                    if (!_sink.TryDequeuePresented(_managedId, out long windowHandle, out long presentationTime))
+                        return false;
+
+                    int refreshRate = ManagedComposition.RefreshRateFor(windowHandle);
+                    if (refreshRate <= 0)
+                    {
+                        // Claiming a rate we do not know would be worse than saying nothing: WPF
+                        // would pace against a period it invented. Leave it on its own fallback.
+                        return false;
+                    }
+
+                    // The managed backend presents straight to the surface with no desktop compositor
+                    // in between, so DWM is the honest result code -- and it is the arm that takes the
+                    // reported refresh rate as authoritative rather than re-deriving one.
+                    message.Type = MilMessage.Type.Presented;
+                    message.Presented.PresentationResults = MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_DWM;
+                    message.Presented.RefreshRate = refreshRate;
+                    message.Presented.PresentationTime = presentationTime;
+                    return true;
                 }
 
                 Invariant.Assert(_hChannel != IntPtr.Zero);

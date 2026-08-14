@@ -24,6 +24,7 @@ namespace MS.Internal.Interop
         public void Destroy() { }
         public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
+        public double GetRefreshRateHz() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public static System.IntPtr GetNativeWindow(System.IntPtr handle) { throw null; }
@@ -87,6 +88,7 @@ namespace MS.Internal.Interop
         public void Destroy() { }
         public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
+        public double GetRefreshRateHz() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -166,6 +168,7 @@ namespace MS.Internal.Interop
         public static MS.Internal.Interop.CocoaWindow FromHandle(System.IntPtr view) { throw null; }
         public static void SetTitle(System.IntPtr handle, string title) { }
         public double GetBackingScale() { throw null; }
+        public double GetRefreshRateHz() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -298,6 +301,7 @@ namespace MS.Internal.Interop
     public partial interface IAndroidHost
     {
         double Density { get; }
+        double RefreshRateHz { get { throw null; } }
         bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless);
         void HideSoftKeyboard(System.IntPtr handle);
         void SetImeCursorRect(System.IntPtr handle, int x, int y, int width, int height);
@@ -319,6 +323,7 @@ namespace MS.Internal.Interop
         void SetVisible(bool visible);
         void SetVisible(bool visible, bool activate) { }
         void Activate() { }
+        double GetRefreshRateHz() { throw null; }
         void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();
@@ -388,6 +393,7 @@ namespace MS.Internal.Interop
         public void Destroy() { }
         public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
+        public double GetRefreshRateHz() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -447,6 +453,7 @@ namespace MS.Internal.Interop.Wayland
         public static void EnsureApplication() { }
         public static MS.Internal.Interop.Wayland.WaylandWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
+        public double GetRefreshRateHz() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }

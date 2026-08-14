@@ -1013,6 +1013,48 @@ namespace MS.Internal.Interop
         /// back to the main screen so it is reliable even at HwndTarget-construction time.
         /// WPF_MAC_FORCE_SCALE overrides it (used to exercise the Retina path on a 1x display).
         /// </summary>
+        /// <summary>
+        /// The refresh rate of the display this window is on, in Hz.
+        /// </summary>
+        /// <remarks>
+        /// -[NSScreen maximumFramesPerSecond] is the honest answer on a ProMotion panel, where the
+        /// mode's own refresh rate reads as the current adaptive rate rather than the ceiling. It is
+        /// macOS 12+; older systems and any screen that answers 0 fall back to the display mode's
+        /// rate, which CoreGraphics reports as 0 for some internal panels -- hence the final 0,
+        /// meaning "cannot say", which leaves WPF's existing fallback in charge.
+        /// </remarks>
+        public double GetRefreshRateHz()
+        {
+            IntPtr screen = _window != IntPtr.Zero ? Send(_window, Sel("screen")) : IntPtr.Zero;
+            if (screen == IntPtr.Zero) screen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+            if (screen == IntPtr.Zero) return 0;
+
+            if (SendBoolSel(screen, Sel("respondsToSelector:"), Sel("maximumFramesPerSecond")))
+            {
+                nint fps = SendNInt(screen, Sel("maximumFramesPerSecond"));
+                if (fps > 0) return fps;
+            }
+
+            // Fall back to the CoreGraphics display mode for the screen's own display id.
+            IntPtr description = Send(screen, Sel("deviceDescription"));
+            if (description == IntPtr.Zero) return 0;
+            IntPtr number = SendPtrRet(description, Sel("objectForKey:"), MakeNSString("NSScreenNumber"));
+            if (number == IntPtr.Zero) return 0;
+
+            IntPtr mode = CGDisplayCopyDisplayMode((uint)SendNInt(number, Sel("unsignedIntValue")));
+            if (mode == IntPtr.Zero) return 0;
+            double hz = CGDisplayModeGetRefreshRate(mode);
+            CGDisplayModeRelease(mode);
+            return hz;
+        }
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool SendBoolSel(IntPtr receiver, IntPtr selector, IntPtr arg);
+
+        [DllImport(CoreGraphicsFramework)] private static extern IntPtr CGDisplayCopyDisplayMode(uint display);
+        [DllImport(CoreGraphicsFramework)] private static extern double CGDisplayModeGetRefreshRate(IntPtr mode);
+        [DllImport(CoreGraphicsFramework)] private static extern void CGDisplayModeRelease(IntPtr mode);
+
         public double GetBackingScale()
         {
             string force = Environment.GetEnvironmentVariable("WPF_MAC_FORCE_SCALE");
@@ -2069,6 +2111,7 @@ namespace MS.Internal.Interop
 
         private const string Carbon = "/System/Library/Frameworks/Carbon.framework/Carbon";
         private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+        private const string CoreGraphicsFramework = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
 
         [DllImport(Carbon)] private static extern IntPtr TISCopyCurrentKeyboardInputSource();
         [DllImport(Carbon)] private static extern IntPtr TISGetInputSourceProperty(IntPtr inputSource, IntPtr propertyKey);

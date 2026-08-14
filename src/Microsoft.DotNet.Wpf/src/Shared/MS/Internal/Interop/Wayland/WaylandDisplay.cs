@@ -33,12 +33,29 @@ namespace MS.Internal.Interop.Wayland
         public int X, Y;            // position in the compositor's global space, logical px
         public int Width, Height;   // current mode, device px
         public int Scale = 1;       // integer buffer scale
+        public int RefreshMilliHz;  // current mode's refresh, milli-Hz (60000 = 60Hz); 0 = unknown
     }
 
     [SupportedOSPlatform("linux")]
     internal static unsafe class WaylandDisplay
     {
         public static IntPtr Display { get; private set; }
+
+        /// <summary>
+        /// The refresh rate of the output a surface is on, in Hz, or 0 when it is not known yet.
+        /// Falls back to the first output that reported a mode, which is the right answer on the
+        /// single-monitor case and a reasonable one before the compositor has said where we are.
+        /// </summary>
+        public static double RefreshRateForSurface(IntPtr surface)
+        {
+            WaylandOutput? best = null;
+            foreach (WaylandOutput o in Outputs)
+            {
+                if (o.RefreshMilliHz <= 0) continue;
+                best ??= o;
+            }
+            return best is null ? 0 : best.RefreshMilliHz / 1000.0;
+        }
         public static IntPtr Registry { get; private set; }
         public static IntPtr Compositor { get; private set; }
         public static IntPtr Subcompositor { get; private set; }
@@ -392,6 +409,9 @@ namespace MS.Internal.Interop.Wayland
                 if (o is null) return;
                 o.Width = width;
                 o.Height = height;
+                // wl_output reports refresh in mHz. WPF paces itself against it; see
+                // IPlatformWindow.GetRefreshRateHz.
+                o.RefreshMilliHz = refresh;
             }
             catch { }
         }

@@ -72,6 +72,22 @@ namespace MS.Internal.Interop
         /// </remarks>
         void Activate() { }
 
+        /// <summary>
+        /// The refresh rate of the display this window is on, in Hz, or 0 when the head cannot say.
+        /// </summary>
+        /// <remarks>
+        /// WPF paces itself against the display: MediaContext schedules the next commit from the
+        /// refresh period, and only falls back to a hardcoded "about a vblank" of 17ms when nothing
+        /// has told it the rate -- which off Windows was every frame, because the notification that
+        /// carries it (MilMessage.Presented) is sent by milcore and had no managed equivalent. 17ms
+        /// is 58.8Hz, so every head ran at 60fps whatever the panel could do, and a 100Hz or 120Hz
+        /// display was simply left on the table.
+        ///
+        /// Zero means unknown and keeps the old fallback, which is the right answer for a backend
+        /// that genuinely cannot ask.
+        /// </remarks>
+        double GetRefreshRateHz() => 0;
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>

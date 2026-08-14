@@ -2163,6 +2163,20 @@ namespace System.Windows.Media
 
                 Channel.Commit();
 
+                // The managed backend composites and presents INSIDE Commit, synchronously, and has
+                // no message processor to tell us about it afterwards -- on Windows that call is what
+                // milcore's render thread makes when it posts MilMessage.Presented. So collect the
+                // notification here, at the one moment the state machine is expecting one: the commit
+                // above has just put us in WaitingForResponse.
+                //
+                // Without this the back channel stays silent, _animationRenderRate is never learnt,
+                // and scheduling falls to the "we don't know when vsync is" fallback of 17ms -- which
+                // is 58.8fps and is what every non-Windows head ran at, on any display.
+                if (DUCE.ManagedComposition.IsEnabled)
+                {
+                    NotifyChannelMessage();
+                }
+
                 if (_commitPendingAfterRender)
                 {
                     //

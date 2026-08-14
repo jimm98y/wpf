@@ -697,6 +697,8 @@ namespace MS.Internal.Interop.Wayland
 
         // ---- IPlatformWindow ------------------------------------------------------------------
 
+        public double GetRefreshRateHz() => WaylandDisplay.RefreshRateForSurface(_surface);
+
         public double GetBackingScale()
         {
             string? force = Environment.GetEnvironmentVariable("WPF_LINUX_FORCE_SCALE");

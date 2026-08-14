@@ -205,6 +205,30 @@ export function getScreenOriginY(handle) {
 
 export function getDevicePixelRatio() { return dpr(); }
 
+// The display refresh, which no web API reports: measure the animation-frame cadence instead.
+// Sampled continuously and reported as the median of the recent intervals, so a few slow frames
+// (a background tab, a garbage collection) do not drag the answer down. Zero until enough frames
+// have gone by, which means "cannot say" and leaves WPF's own fallback in charge.
+let _rafTimes = [];
+let _rafHz = 0;
+(function sampleRefresh() {
+    const tick = (t) => {
+        _rafTimes.push(t);
+        if (_rafTimes.length > 31) _rafTimes.shift();
+        if (_rafTimes.length >= 11) {
+            const gaps = [];
+            for (let i = 1; i < _rafTimes.length; i++) gaps.push(_rafTimes[i] - _rafTimes[i - 1]);
+            gaps.sort((a, b) => a - b);
+            const median = gaps[Math.floor(gaps.length / 2)];
+            if (median > 0) _rafHz = 1000 / median;
+        }
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+})();
+
+export function getRefreshRateHz() { return _rafHz; }
+
 export function getViewportWidthPixels() { return Math.round(window.innerWidth * dpr()); }
 
 export function getViewportHeightPixels() { return Math.round(window.innerHeight * dpr()); }

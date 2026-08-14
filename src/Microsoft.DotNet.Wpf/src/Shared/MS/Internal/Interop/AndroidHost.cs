@@ -1404,6 +1404,31 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
 
     public double Density => _activity.Resources?.DisplayMetrics?.Density ?? 1.0;
 
+    /// <summary>
+    /// The display's refresh rate. WindowManager.DefaultDisplay is deprecated but is the only route
+    /// below API 30, and Activity.Display (API 30+) is the supported one; either answers the same
+    /// question, so take whichever this device offers.
+    /// </summary>
+    public double RefreshRateHz
+    {
+        get
+        {
+            try
+            {
+                Android.Views.Display? display = Build.VERSION.SdkInt >= BuildVersionCodes.R
+                    ? _activity.Display
+                    : _activity.WindowManager?.DefaultDisplay;
+                float hz = display?.RefreshRate ?? 0f;
+                return hz > 0f ? hz : 0.0;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WPF Android: could not read the display refresh rate: {e.Message}");
+                return 0.0;
+            }
+        }
+    }
+
     public void GetScreenPixels(out int width, out int height)
     {
         // The root's laid-out size once there is one (it excludes the system bars, which is what a
