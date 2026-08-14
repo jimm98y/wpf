@@ -2133,6 +2133,8 @@ namespace System.Windows
         protected internal sealed override void OnVisualParentChanged(System.Windows.DependencyObject oldParent) { }
         public void Show() { }
         public bool? ShowDialog() { throw null; }
+        public System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
     }
     public sealed partial class WindowCollection : System.Collections.ICollection, System.Collections.IEnumerable
     {

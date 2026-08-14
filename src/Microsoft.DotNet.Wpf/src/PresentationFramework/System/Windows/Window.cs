@@ -12,6 +12,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shell;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 using MS.Internal;
 using MS.Internal.AppModel;
@@ -440,6 +441,7 @@ namespace System.Windows
                 // clears _showingAsDialog and accelerators related fields
                 ClearShowKeyboardCueState();
                 _showingAsDialog = false;
+                _asyncModal = false;   // never came up; nothing will call DoDialogHide
 
                 // using catch and throw instead of catch(Exception e) throw e;  since the former
                 // gives the complete call stack upto the offending method where the exception is thrown
@@ -465,11 +467,85 @@ namespace System.Windows
                     }
                 }
 #endif //FIGURE_OUT
-                _showingAsDialog = false;
+                // In the blocking case this runs only once the nested frame has returned, i.e. once
+                // the dialog has closed. The ASYNCHRONOUS modal has no frame, so ShowHelper returns
+                // with the dialog still on screen -- clearing the flag here would end its dialog-hood
+                // while it is still open, which breaks it silently: setting DialogResult throws
+                // ("can be set only after Window is created and shown as dialog"), and the WM_CLOSE
+                // path skips DoDialogHide, so the awaiting caller is never released. DoDialogHide
+                // clears the flag for that case, exactly as it does for the blocking one.
+                if (!_asyncModal)
+                {
+                    _showingAsDialog = false;
+                }
             }
             return _dialogResult;
         }
 
+
+        /// <summary>
+        ///  Shows the window as a modal dialog without blocking the caller, completing when the
+        ///  dialog closes.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   Identical to <see cref="ShowDialog"/> in every respect except how the caller waits:
+        ///   the owner and every other window on the thread are disabled for the dialog's lifetime,
+        ///   and the result is the same value <see cref="ShowDialog"/> would have returned.
+        ///  </para>
+        ///  <para>
+        ///   It exists because three of this port's heads cannot implement <see cref="ShowDialog"/>
+        ///   at all. Browser, iOS and Android each run inside a loop the dispatcher does not own --
+        ///   the JS event loop, UIKit's run loop, Android's Looper -- so a nested dispatcher frame
+        ///   cannot block there and <see cref="ShowDialog"/> throws. On Windows, macOS and Linux this
+        ///   runs the ordinary modal dialog and hands back an already-completed task, so one piece of
+        ///   application code awaiting this works on all six heads.
+        ///  </para>
+        /// </remarks>
+        public Task<bool?> ShowDialogAsync()
+        {
+            VerifyContextAndObjectState();
+
+            // Heads that can block keep the real modal loop: identical behaviour, already finished.
+            if (!CannotBlockForModal)
+            {
+                return Task.FromResult(ShowDialog());
+            }
+
+            _dialogCompletion = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _asyncModal = true;
+
+            try
+            {
+                // Runs the whole ShowDialog path -- validation, owner, disabling the thread's windows
+                // -- and returns as soon as the window is up, because ShowHelper skips the frame.
+                ShowDialog();
+            }
+            catch
+            {
+                _asyncModal = false;
+                _dialogCompletion = null;
+                throw;
+            }
+
+            return _dialogCompletion.Task;
+        }
+
+        /// <summary>
+        ///  Shows the window as a modal dialog owned by <paramref name="owner"/>, without blocking.
+        /// </summary>
+        public Task<bool?> ShowDialogAsync(Window owner)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            Owner = owner;
+            return ShowDialogAsync();
+        }
+
+        /// <summary>
+        ///  True on the heads whose run loop cannot be re-entered, so no modal call can block there.
+        /// </summary>
+        private static bool CannotBlockForModal =>
+            OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
 
         /// <summary>
         ///     This method tries to activate the Window.
@@ -3634,6 +3710,33 @@ namespace System.Windows
         {
             Debug.Assert(_threadWindowHandles != null, "_threadWindowHandles must not be null at this point");
 
+            // Modality is enforced at the HWND level: EnumThreadWindows collects the thread's windows
+            // and EnableWindow disables them. Neither exists off Windows, so _threadWindowHandles comes
+            // back EMPTY and a dialog was modal in name only -- its owner stayed fully interactive
+            // underneath it. Disable the Window objects instead, which is the same effect by the route
+            // the framework itself offers, and skip the dialog so it can still be used.
+            if (!OperatingSystem.IsWindows())
+            {
+                Application app = Application.Current;
+                if (app != null)
+                {
+                    foreach (Window w in app.Windows)
+                    {
+                        if (w != this && w.IsLoaded)
+                        {
+                            w.IsEnabled = state;
+                        }
+                    }
+                }
+
+                if (state)
+                {
+                    _threadWindowHandles = null;
+                }
+
+                return;
+            }
+
             for (int i = 0; i < _threadWindowHandles.Count; i++)
             {
                 IntPtr hWnd = _threadWindowHandles[i];
@@ -4468,6 +4571,15 @@ namespace System.Windows
             // clears _showingAsDialog
             _showingAsDialog = false;
 
+            // The asynchronous modal has no frame to unblock, so this is where its caller is released.
+            // Deliberately after _dialogResult has been coerced above and before the windows are
+            // re-enabled below, so an awaiting caller sees exactly what a blocking one would.
+            if (_asyncModal)
+            {
+                _asyncModal = false;
+                ComponentDispatcher.PopModal();
+            }
+
             // enable previous window stuff goes here...
             wasActive = _swh.IsActiveWindow;
 
@@ -4501,6 +4613,13 @@ namespace System.Windows
 
                 // rare situation, figure this out later
                 // talk to user team as to what we need to do here
+            }
+
+            TaskCompletionSource<bool?> completion = _dialogCompletion;
+            if (completion != null)
+            {
+                _dialogCompletion = null;
+                completion.TrySetResult(_dialogResult);
             }
         }
 
@@ -5593,18 +5712,30 @@ namespace System.Windows
                 //
                 Debug.Assert(_dispatcherFrame == null, "_dispatcherFrame must be null here");
 
-                try
+                if (_asyncModal)
                 {
-                    // tell users we're going modal
+                    // ShowDialogAsync: the window is up and every other window on the thread is
+                    // disabled, which is what modality IS. The only thing not done is blocking the
+                    // caller, and that is the one thing a browser cannot do -- so the caller awaits
+                    // the Task that DoDialogHide completes instead. Modal state is announced for the
+                    // same reason as below, and withdrawn in DoDialogHide rather than here.
                     ComponentDispatcher.PushModal();
-
-                    _dispatcherFrame = new DispatcherFrame();
-                    Dispatcher.PushFrame(_dispatcherFrame);
                 }
-                finally
+                else
                 {
-                    // tell users we're going non-modal
-                    ComponentDispatcher.PopModal();
+                    try
+                    {
+                        // tell users we're going modal
+                        ComponentDispatcher.PushModal();
+
+                        _dispatcherFrame = new DispatcherFrame();
+                        Dispatcher.PushFrame(_dispatcherFrame);
+                    }
+                    finally
+                    {
+                        // tell users we're going non-modal
+                        ComponentDispatcher.PopModal();
+                    }
                 }
             }
 
@@ -7310,6 +7441,8 @@ namespace System.Windows
         private IntPtr                      _dialogOwnerHandle = IntPtr.Zero;
         private IntPtr                      _dialogPreviousActiveHandle;
         private DispatcherFrame             _dispatcherFrame;
+        private bool                        _asyncModal;          // ShowDialogAsync: no frame to push
+        private TaskCompletionSource<bool?> _dialogCompletion;    // completed by DoDialogHide
 
         private WindowStartupLocation       _windowStartupLocation = WindowStartupLocation.Manual;
 
