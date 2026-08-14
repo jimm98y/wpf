@@ -12,6 +12,7 @@
 const windows = new Map();   // handle -> { canvas, borderless }
 const queue = [];
 let zTop = 10;
+let mainHandle = null;   // the first non-borderless window IS the page; the rest float over it
 let listenersInstalled = false;
 
 function canvases() {
@@ -27,14 +28,42 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     const canvas = document.createElement("canvas");
     canvas.dataset.wpfHandle = String(handle);
     canvas.style.display = "block";
-    canvas.style.position = borderless ? "fixed" : "relative";
+
+    // Three kinds of window, not two.
+    //
+    // The MAIN window is the page: it sits in normal flow and fills the viewport. A POPUP (menu,
+    // tooltip, drag adorner) floats at the coordinates WPF gives it. A SECOND TOP-LEVEL WINDOW -- a
+    // dialog, a tool window, a splash screen -- is neither, and treating it like the main window is
+    // why dialogs were invisible: laid out in flow BELOW a main canvas that already fills the
+    // viewport, i.e. off the bottom of the page, and stretched to viewport size by setContentSize.
+    // The app was showing them correctly and nobody could see them.
+    //
+    // A secondary window therefore floats like a popup, keeps the size WPF asked for, and is CENTRED
+    // when no meaningful position was given (WPF hands out CW_USEDEFAULT for a window that never set
+    // Left/Top, which is most dialogs).
+    const secondary = !borderless && mainHandle !== null && mainHandle !== handle;
+    if (!borderless && mainHandle === null) mainHandle = handle;
+
+    canvas.style.position = (borderless || secondary) ? "fixed" : "relative";
     // Popups are created AT their target position (CreateWindowEx semantics): WPF may
     // not issue a follow-up move when the creation coordinates already match.
-    canvas.style.left = borderless ? `${x / dpr()}px` : "0px";
-    canvas.style.top = borderless ? `${y / dpr()}px` : "0px";
-    canvas.style.zIndex = String(borderless ? ++zTop : 1);
+    if (borderless) {
+        canvas.style.left = `${x / dpr()}px`;
+        canvas.style.top  = `${y / dpr()}px`;
+    } else if (secondary) {
+        const w = (width  > 1 ? width  : 400) / dpr();
+        const h = (height > 1 ? height : 300) / dpr();
+        const usable = (v) => Number.isFinite(v) && v > 0 && v < 32000;
+        canvas.style.left = usable(x) ? `${x / dpr()}px` : `${Math.max(0, (window.innerWidth  - w) / 2)}px`;
+        canvas.style.top  = usable(y) ? `${y / dpr()}px` : `${Math.max(0, (window.innerHeight - h) / 2)}px`;
+        canvas.style.boxShadow = "0 8px 40px rgba(0,0,0,.45)";
+    } else {
+        canvas.style.left = "0px";
+        canvas.style.top  = "0px";
+    }
+    canvas.style.zIndex = String((borderless || secondary) ? ++zTop : 1);
     host().appendChild(canvas);
-    windows.set(handle, { canvas, borderless });
+    windows.set(handle, { canvas, borderless, secondary });
     canvases().set(handle, canvas);
     // A TOP-LEVEL window fills the viewport from the start. The browser has exactly one viewport and
     // no desktop to be a window on, so the only sensible reading of a main window here is the one the
@@ -74,7 +103,7 @@ export function setContentSize(handle, width, height) {
     // size the app was DESIGNED for (Window.Width/Height) just after creating the window, so the app
     // opened at e.g. 1200x800 in a corner of the page and only snapped to full size when the user
     // happened to resize the browser. Popups are exempt: they are positioned and sized deliberately.
-    if (!w.borderless) {
+    if (!w.borderless && !w.secondary) {
         width = window.innerWidth;
         height = window.innerHeight;
     }
@@ -588,7 +617,7 @@ function installListeners() {
 
     window.addEventListener("resize", () => {
         for (const [handle, w] of windows) {
-            if (w.borderless) continue;
+            if (w.borderless || w.secondary) continue;   // only the main window tracks the viewport
             // Mimic the OS resizing a maximized window: the main canvas tracks the
             // viewport; setContentSize queues the synthetic WM_SIZE for WPF.
             setContentSize(handle, window.innerWidth, window.innerHeight);
