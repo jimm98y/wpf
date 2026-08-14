@@ -59,6 +59,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
         /// <summary>Draws routed to the local-space (resampled) coverage cache rather than the exact device-space path.</summary>
         internal static int PerfLocalCoverage;
+
+        /// <summary>
+        /// Native bind-group-layout acquisitions since the process started.
+        /// </summary>
+        /// <remarks>
+        /// A LEAK counter, which is why it is a lifetime total and deliberately NOT cleared by
+        /// <see cref="PerfReset"/> like the per-frame ones next to it: every acquisition used to be a
+        /// leaked reference, so what matters is whether the number keeps climbing while an
+        /// application renders, not what it was during one frame. In steady state it must not move.
+        /// </remarks>
+        internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
         internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
@@ -2051,7 +2062,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private IntPtr CreateClipBindGroup(WGPUTextureFormat format, IntPtr layerView, IntPtr maskView, IntPtr sampler)
         {
 
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, FillKind.Clip), 0);
+            IntPtr layout = GetBindGroupLayout(format, FillKind.Clip);
             var entries = stackalloc WGPUBindGroupEntry[3];
             entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = layerView };
             entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = maskView };
@@ -3718,7 +3729,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // pass (ReadbackFormat), so the group belonged to a different pipeline and wgpu aborted
                 // the process at wgpuCommandEncoderFinish with "Exclusive pipelines don't match". Each
                 // pending bind now carries the format of its own pass (R8Unorm for the mask passes).
-                IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(layoutFmt, di.Kind, di.SourceCopy), 0);
+                IntPtr layout = GetBindGroupLayout(layoutFmt, di.Kind, di.SourceCopy);
                 var entry = new WGPUBindGroupEntry { binding = 0, buffer = _frameStorageBuf, offset = (ulong)off, size = (ulong)size };
                 var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
                 IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
@@ -3871,6 +3882,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (_idView != IntPtr.Zero) { wgpuTextureViewRelease(_idView); wgpuTextureRelease(_idTex); _idView = _idTex = IntPtr.Zero; }
             ReleaseAtlas();
             ReleaseResources3D();
+            // Before the pipelines they came from: a layout holds a reference to its pipeline.
+            foreach (IntPtr layout in _bindGroupLayouts.Values) wgpuBindGroupLayoutRelease(layout);
+            _bindGroupLayouts.Clear();
             foreach (IntPtr pipeline in _pipelines.Values) wgpuRenderPipelineRelease(pipeline);
             _pipelines.Clear();
             foreach (IntPtr pipeline in _effectPipelines.Values) wgpuRenderPipelineRelease(pipeline);
@@ -4004,8 +4018,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private IntPtr CreateEffectBindGroup(ShaderEffectDef def, IntPtr inputView)
         {
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(
-                ResolvePipeline(ReadbackFormat, FillKind.ShaderEffect, def.ShaderId), 0);
+            IntPtr layout = GetBindGroupLayout(ReadbackFormat, FillKind.ShaderEffect, effectId: def.ShaderId);
 
             bool hasConsts = def.FloatConstants.Length > 0;
             // 1 uniform + 2 entries per sampler.
@@ -4037,6 +4050,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = (nuint)n, entries = entries };
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+        }
+
+        /// <summary>
+        /// The group-0 bind group layout for a pipeline, cached.
+        /// </summary>
+        /// <remarks>
+        /// wgpuRenderPipelineGetBindGroupLayout hands back a NEW reference on every call, so asking
+        /// for one per bind group -- which is per DRAW, per FRAME -- leaked a layout every time. The
+        /// 3D path had already learnt this (see Get3DBindGroupLayout) and the 2D one had not, so the
+        /// leak grew with frames rendered times draws per frame, for as long as an app was on screen.
+        /// There is nothing per-draw about a layout: it is a property of the pipeline, and the
+        /// pipelines are themselves cached, so one lookup keyed the same way serves every draw that
+        /// will ever use it.
+        /// </remarks>
+        private readonly Dictionary<(WGPUTextureFormat Format, FillKind Kind, bool SourceCopy, int EffectId), IntPtr> _bindGroupLayouts = new();
+
+        private IntPtr GetBindGroupLayout(WGPUTextureFormat format, FillKind kind, bool sourceCopy = false, int effectId = -1)
+        {
+            var key = (format, kind, sourceCopy, effectId);
+            if (_bindGroupLayouts.TryGetValue(key, out IntPtr cached)) return cached;
+
+            PerfLayoutAcquires++;
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(ResolvePipeline(format, kind, effectId, sourceCopy), 0);
+            _bindGroupLayouts[key] = layout;
+            return layout;
         }
 
         private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind) => GetPipeline(format, kind, false);
@@ -4429,7 +4467,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var (tex, view) = CreateEdgeTexture(data);
             DeferReleaseTexView(tex, view);
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(passFormat, kind, sourceCopy), 0);
+            IntPtr layout = GetBindGroupLayout(passFormat, kind, sourceCopy);
             var entry = new WGPUBindGroupEntry { binding = 0, textureView = view };
             var bgDesc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
             IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &bgDesc);
@@ -4753,7 +4791,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
 
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind, sourceCopy), 0);
+            IntPtr layout = GetBindGroupLayout(format, kind, sourceCopy);
             if (kind is FillKind.MaskBrush or FillKind.MaskImage)
             {
                 // binding(1) = ramp (gradient) or image (fs_maskimage); identical layout.
@@ -4918,7 +4956,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
 
             PerfBindGroups++;
-            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(GetPipeline(format, kind, sourceCopy), 0);
+            IntPtr layout = GetBindGroupLayout(format, kind, sourceCopy);
             var entries = stackalloc WGPUBindGroupEntry[2];
             entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = view };
             entries[1] = new WGPUBindGroupEntry { binding = 1, sampler = sampler };
