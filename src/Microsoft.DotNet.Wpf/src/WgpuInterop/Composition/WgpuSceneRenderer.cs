@@ -71,6 +71,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// which is why several draws in one beats one draw in each.</summary>
         internal static int PerfPasses;
 
+        /// <summary>Edge textures CREATED this frame -- the segment lists coverage masks and strokes
+        /// upload. A settled scene should create none: see RentEdgeTexture.</summary>
+        internal static int PerfEdgeTextures;
+
         /// <summary>
         /// Native bind-group-layout acquisitions since the process started.
         /// </summary>
@@ -83,7 +87,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -679,6 +683,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _pendingTexUploads.Clear();
             foreach ((IntPtr Tex, IntPtr View, int W, int H) t in _relPoolTex) ReturnLayerTexture(t.Tex, t.View, t.W, t.H);
             _relPoolTex.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int H) t in _relEdgeTex) ReturnEdgeTexture(t.Tex, t.View, t.H);
+            _relEdgeTex.Clear();
             // Return this frame's geometry buffers to the free pool (reused next frame). By the time
             // we get here the frame is submitted; the buffers are reused a frame later, by which point
             // the GL backend has drained them -> no per-frame CreateBuffer churn / upload stalls.
@@ -3944,6 +3950,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _freeVtx.Clear(); _freeIdx.Clear(); _inUseBufs.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeLayerTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
             _freeLayerTex.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int _) in _freeEdgeTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
+            _freeEdgeTex.Clear();
             if (_idView != IntPtr.Zero) { wgpuTextureViewRelease(_idView); wgpuTextureRelease(_idTex); _idView = _idTex = IntPtr.Zero; }
             ReleaseAtlas();
             ReleaseResources3D();
@@ -4403,6 +4411,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private (IntPtr Texture, IntPtr View) CreateTexture(byte[] pixels, int width, int height, WGPUTextureFormat format, int bytesPerPixel)
         {
+            IntPtr texture = NewSampledTexture(width, height, format);
+            UploadTexture(texture, pixels, width, height, bytesPerPixel);
+            return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
+        }
+
+        /// <summary>An empty sampled texture. Split from the upload so a pooled one can be refilled.</summary>
+        private IntPtr NewSampledTexture(int width, int height, WGPUTextureFormat format)
+        {
             PerfTextures++;
             var texDesc = new WGPUTextureDescriptor
             {
@@ -4413,7 +4429,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
-            IntPtr texture = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            return wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+        }
+
+        private void UploadTexture(IntPtr texture, byte[] pixels, int width, int height, int bytesPerPixel)
+        {
 #if WGPU_BROWSER
             // The browser's JS WebGPU backend has no Metal command-buffer accounting problem;
             // queue.writeTexture is simplest and mapped ranges can't be marshaled to JS.
@@ -4436,7 +4456,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 var glSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
                 fixed (byte* p = pixels)
                     wgpuQueueWriteTexture(_ctx.Queue, &glDest, p, (nuint)pixels.Length, &glLayout, &glSize);
-                return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
+                return;
             }
 
             // Desktop (Metal/…): stage into a mappedAtCreation buffer (a pure CPU copy, no command
@@ -4461,7 +4481,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int soff = AllocTexStaging(staging, alignedBpr * height);
             _pendingTexUploads.Add(new PendingTexUpload { StagingOffset = soff, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr });
 #endif
-            return (texture, wgpuTextureCreateView(texture, IntPtr.Zero));
         }
 
         private (IntPtr Texture, IntPtr View) CreateRgbaTexture(byte[] rgba, int width, int height)
@@ -4516,21 +4535,75 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // them with textureLoad — the GL-ES-3.0/ANGLE stand-in for a fragment storage buffer (which that
         // backend can't bind). The f32 bit patterns ride verbatim in the u32 channels. Each mask/stroke
         // gets its own texture, so shader indices are relative (slot 0 = this object's header).
-        private (IntPtr Tex, IntPtr View) CreateEdgeTexture(ReadOnlySpan<byte> data)
+        private (IntPtr Tex, IntPtr View, int Height) CreateEdgeTexture(ReadOnlySpan<byte> data)
         {
             int slots = Math.Max(1, (data.Length + 7) / 8);
-            int height = (slots + EdgeTexWidth - 1) / EdgeTexWidth;
+            int rows = (slots + EdgeTexWidth - 1) / EdgeTexWidth;
+
+            // Rounded up to a power of two so that a path which grows by a segment between frames --
+            // which is what an animating path does -- lands in the same bucket and reuses the same
+            // texture. Extra rows are never indexed: the shader maps slot i to (i % EdgeTexWidth,
+            // i / EdgeTexWidth), which does not depend on the texture's height at all.
+            int height = BucketRows(rows);
+
             byte[] padded = new byte[EdgeTexWidth * height * 8];
             data.CopyTo(padded);   // trailing texels stay zero (never indexed)
-            return CreateTexture(padded, EdgeTexWidth, height, WGPUTextureFormat.RG32Uint, 8);
+
+            (IntPtr tex, IntPtr view) = RentEdgeTexture(height);
+            UploadTexture(tex, padded, EdgeTexWidth, height, 8);
+            return (tex, view, height);
+        }
+
+        private static int BucketRows(int rows)
+        {
+            int bucket = 1;
+            while (bucket < rows) bucket <<= 1;
+            return bucket;
+        }
+
+        // Pooled edge textures (RG32Uint, TextureBinding|CopyDst, always EdgeTexWidth wide).
+        //
+        // Every coverage mask and every stroke uploads its segment list as one of these, and until
+        // now each was a texture CREATED and destroyed inside a single frame. Measured on twenty
+        // animating 200-segment paths that was twenty texture creations a frame; on the static and
+        // simply-animated scenes it is zero, because the coverage cache answers those before any of
+        // this runs. Creating and destroying textures per frame is the cost the layer pool next door
+        // was already written to avoid, on the same reasoning and for the same backends.
+        private readonly List<(IntPtr Tex, IntPtr View, int H)> _freeEdgeTex = new();
+        private readonly List<(IntPtr Tex, IntPtr View, int H)> _relEdgeTex = new();
+
+        private (IntPtr Tex, IntPtr View) RentEdgeTexture(int height)
+        {
+            for (int i = 0; i < _freeEdgeTex.Count; i++)
+            {
+                if (_freeEdgeTex[i].H != height) continue;
+                (IntPtr Tex, IntPtr View, int H) hit = _freeEdgeTex[i];
+                _freeEdgeTex.RemoveAt(i);
+                return (hit.Tex, hit.View);
+            }
+
+            PerfEdgeTextures++;
+            IntPtr tex = NewSampledTexture(EdgeTexWidth, height, WGPUTextureFormat.RG32Uint);
+            return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
+        }
+
+        private void ReturnEdgeTexture(IntPtr tex, IntPtr view, int height)
+        {
+            const int Cap = 64;   // bound the pool; a scene that briefly needed many gives them back
+            if (tex == IntPtr.Zero || _freeEdgeTex.Count >= Cap)
+            {
+                if (tex != IntPtr.Zero) { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
+                return;
+            }
+            _freeEdgeTex.Add((tex, view, height));
         }
 
         // Builds an edge texture and an auto-layout bind group (binding 0) for the given coverage/stroke
         // pipeline, in one step. Replaces the old storage-buffer + BuildBatchedStorage bind.
         private IntPtr EdgeBindGroup(ReadOnlySpan<byte> data, WGPUTextureFormat passFormat, FillKind kind, bool sourceCopy = false)
         {
-            var (tex, view) = CreateEdgeTexture(data);
-            DeferReleaseTexView(tex, view);
+            var (tex, view, height) = CreateEdgeTexture(data);
+            _relEdgeTex.Add((tex, view, height));   // back to the pool at the end of the frame
             PerfBindGroups++;
             IntPtr layout = GetBindGroupLayout(passFormat, kind, sourceCopy);
             var entry = new WGPUBindGroupEntry { binding = 0, textureView = view };
