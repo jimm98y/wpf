@@ -67,6 +67,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         internal static int PerfDrawItems, PerfDrawCalls;
 
+        /// <summary>Render passes encoded this frame. A pass costs an attachment load and store,
+        /// which is why several draws in one beats one draw in each.</summary>
+        internal static int PerfPasses;
+
         /// <summary>
         /// Native bind-group-layout acquisitions since the process started.
         /// </summary>
@@ -79,7 +83,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -1149,6 +1153,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // its format if it draws text).
         private void ExecutePass(IntPtr encoder, LayerPass lp, IntPtr atlasView)
         {
+            PerfPasses++;
             if (lp.Models3D is { } models)
             {
                 ExecutePass3D(encoder, lp.TargetView, lp.MsaaColorView, lp.DepthView, lp.Format, models);
