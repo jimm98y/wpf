@@ -59,6 +59,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // built while zoomed out is too coarse once the world scale tightens the tolerance.
         // Zoom is stable frame to frame, so this rebuilds on a zoom change and then stays warm.
         internal float PathCacheTolerance = float.MaxValue;
+
+        // Memo for WgpuSceneRenderer.SnapGeometry, and it exists to protect the one above.
+        //
+        // Guideline snapping returns a NEW geometry holding the snapped rectangle, and a new
+        // instance starts with a cold PathCache -- so a visual with a GuidelineSet re-converted its
+        // shape to a path on every frame however stable it was, and the memo above never once hit
+        // for it. Snapping a given shape under a given transform lands on the same rectangle every
+        // time, so the snapped instance is kept here and reused, which lets it build its own path
+        // once and keep it.
+        internal Geometry SnapCache;
     }
 
     internal sealed class RectangleGeometry : Geometry

@@ -90,6 +90,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
+
         internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
@@ -1579,13 +1580,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static Rect Inflate(Rect r, float by)
             => new Rect(r.X - by, r.Y - by, MathF.Max(0f, r.Width + by * 2f), MathF.Max(0f, r.Height + by * 2f));
 
+        private static bool SameRect(Rect a, Rect b)
+            => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height;
+
         private static Geometry? SnapGeometry(Geometry geo, Guides g, Matrix3x2 world)
         {
             switch (geo)
             {
-                case RectangleGeometry r: return new RectangleGeometry(SnapRect(r.Rect, g, world));
+                case RectangleGeometry r:
+                {
+                    Rect snapped = SnapRect(r.Rect, g, world);
+
+                    // Nothing moved: hand back the ORIGINAL, so the caller keeps the primitive it
+                    // already had and the geometry keeps the path it already converted.
+                    if (SameRect(snapped, r.Rect)) return null;
+
+                    if (r.SnapCache is RectangleGeometry cached && SameRect(cached.Rect, snapped)) return cached;
+                    var fresh = new RectangleGeometry(snapped);
+                    r.SnapCache = fresh;
+                    return fresh;
+                }
                 case RoundedRectangleGeometry rr:
-                    return new RoundedRectangleGeometry(SnapRect(rr.Rect, g, world), rr.RadiusX, rr.RadiusY);
+                {
+                    Rect snapped = SnapRect(rr.Rect, g, world);
+                    if (SameRect(snapped, rr.Rect)) return null;
+
+                    if (rr.SnapCache is RoundedRectangleGeometry cached && SameRect(cached.Rect, snapped)) return cached;
+                    var fresh = new RoundedRectangleGeometry(snapped, rr.RadiusX, rr.RadiusY);
+                    rr.SnapCache = fresh;
+                    return fresh;
+                }
                 default: return null;
             }
         }
