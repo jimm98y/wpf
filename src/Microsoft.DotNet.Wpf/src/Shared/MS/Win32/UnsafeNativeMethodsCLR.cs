@@ -187,28 +187,40 @@ namespace MS.Win32
                 return ShowWindowNative(hWnd, nCmdShow);
             }
 
-            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            MS.Internal.Interop.IPlatformWindow window =
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+            if (window is null)
             {
-                MS.Internal.Interop.Wayland.WaylandWindow.SetWindowState(hWnd.Handle, nCmdShow);
+                return true;
             }
 
-            // SW_HIDE is the only value that hides; every other SW_* shows (the minimize/maximize
-            // ones are state changes on a window that stays on screen, already handled above).
-            if (nCmdShow == NativeMethods.SW_HIDE ||
-                nCmdShow == NativeMethods.SW_SHOW || nCmdShow == NativeMethods.SW_SHOWNA ||
-                nCmdShow == NativeMethods.SW_NORMAL || nCmdShow == NativeMethods.SW_SHOWNOACTIVATE ||
-                nCmdShow == NativeMethods.SW_RESTORE)
+            bool show = ShowsWindow(nCmdShow);
+            window.SetVisible(show, ActivatesWindow(nCmdShow));
+
+            if (show)
             {
-                // SW_SHOWNA / SW_SHOWNOACTIVATE mean "show but do not take focus" -- how WPF shows
-                // every Popup, and any Window with ShowActivated=false. The rest activate.
-                bool activate = nCmdShow != NativeMethods.SW_SHOWNA &&
-                                nCmdShow != NativeMethods.SW_SHOWNOACTIVATE;
-                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)
-                    ?.SetVisible(nCmdShow != NativeMethods.SW_HIDE, activate);
+                window.SetWindowState(nCmdShow);
             }
 
             return true;
         }
+
+        // SW_HIDE is the only value that hides. EVERY other SW_* shows -- including the
+        // minimize/maximize ones, which is what this used to get wrong: they were treated as state
+        // changes on a window that was already on screen, and skipped. A Window created with
+        // WindowState=Maximized is shown by WPF with SW_SHOWMAXIMIZED and nothing else, so it was
+        // never made visible at all -- built, surfaced, composited into a window the window server
+        // was never told to display. It reported onscreen=0 with correct bounds, and the renderer
+        // sat in "no drawable" for as long as it ran.
+        internal static bool ShowsWindow(int nCmdShow) => nCmdShow != NativeMethods.SW_HIDE;
+
+        // SW_SHOWNA / SW_SHOWNOACTIVATE mean "show but do not take focus" -- how WPF shows every
+        // Popup, and any Window with ShowActivated=false. SW_SHOWMINNOACTIVE says the same of a
+        // minimized one. The rest activate.
+        internal static bool ActivatesWindow(int nCmdShow) =>
+            nCmdShow != NativeMethods.SW_SHOWNA &&
+            nCmdShow != NativeMethods.SW_SHOWNOACTIVATE &&
+            nCmdShow != NativeMethods.SW_SHOWMINNOACTIVE;
 
         public static void DeleteObject(HandleRef hObject)
         {

@@ -974,16 +974,33 @@ namespace MS.Internal.Interop.Wayland
             return true;
         }
 
-        /// <summary>Minimize/maximize/restore, via libdecor (which owns the toplevel).</summary>
-        public static void SetWindowState(IntPtr handle, int state)
+        /// <summary>
+        /// Minimize/maximize/restore, via libdecor (which owns the toplevel). The argument is the
+        /// SW_* value WPF asked for.
+        /// </summary>
+        /// <remarks>
+        /// The values matched here used to be 1 and 2, which are SW_NORMAL and SW_SHOWMINIMIZED --
+        /// so "show normally" minimized the window and "minimize" maximized it, and the maximize WPF
+        /// actually sends (SW_SHOWMAXIMIZED, 3) fell through to unset_maximized. It is now the
+        /// IPlatformWindow member every head implements, against the real constants.
+        /// </remarks>
+        public void SetWindowState(int state)
         {
-            WaylandWindow? w = FromHandle(handle);
-            if (w is null || w._frame == IntPtr.Zero) return;
+            if (_frame == IntPtr.Zero) return;
             switch (state)
             {
-                case 1: WlDecor.libdecor_frame_set_minimized(w._frame); break;   // SW_MINIMIZE
-                case 2: WlDecor.libdecor_frame_set_maximized(w._frame); break;   // SW_MAXIMIZE
-                default: WlDecor.libdecor_frame_unset_maximized(w._frame); break;
+                case 2:   // SW_SHOWMINIMIZED
+                case 6:   // SW_MINIMIZE
+                case 7:   // SW_SHOWMINNOACTIVE
+                    WlDecor.libdecor_frame_set_minimized(_frame);
+                    break;
+                case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
+                    WlDecor.libdecor_frame_set_maximized(_frame);
+                    break;
+                case 1:   // SW_NORMAL
+                case 9:   // SW_RESTORE
+                    WlDecor.libdecor_frame_unset_maximized(_frame);
+                    break;
             }
         }
 

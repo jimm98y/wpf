@@ -1023,6 +1023,41 @@ namespace MS.Internal.Interop
         /// rate, which CoreGraphics reports as 0 for some internal panels -- hence the final 0,
         /// meaning "cannot say", which leaves WPF's existing fallback in charge.
         /// </remarks>
+        /// <summary>
+        /// Minimize/maximize/restore. AppKit spells maximize "zoom", which fills the screen's
+        /// VISIBLE frame (menu bar and Dock excluded) rather than going fullscreen -- the same thing
+        /// a maximized window means on Windows.
+        /// </summary>
+        /// <remarks>
+        /// zoom: toggles, so it is only sent when the window is not already zoomed -- otherwise a
+        /// second SW_SHOWMAXIMIZED (WPF sends one on every Show of an already-maximized window)
+        /// would restore it instead.
+        /// </remarks>
+        public void SetWindowState(int state)
+        {
+            if (_window == IntPtr.Zero) return;
+
+            switch (state)
+            {
+                case 2:   // SW_SHOWMINIMIZED
+                case 6:   // SW_MINIMIZE
+                case 7:   // SW_SHOWMINNOACTIVE
+                    SendVoidPtr(_window, Sel("miniaturize:"), IntPtr.Zero);
+                    break;
+
+                case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
+                    if (SendBool(_window, Sel("isMiniaturized"))) SendVoidPtr(_window, Sel("deminiaturize:"), IntPtr.Zero);
+                    if (!SendBool(_window, Sel("isZoomed"))) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    break;
+
+                case 1:   // SW_NORMAL
+                case 9:   // SW_RESTORE
+                    if (SendBool(_window, Sel("isMiniaturized"))) SendVoidPtr(_window, Sel("deminiaturize:"), IntPtr.Zero);
+                    if (SendBool(_window, Sel("isZoomed"))) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    break;
+            }
+        }
+
         public double GetRefreshRateHz()
         {
             IntPtr screen = _window != IntPtr.Zero ? Send(_window, Sel("screen")) : IntPtr.Zero;

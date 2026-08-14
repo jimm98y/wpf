@@ -88,6 +88,19 @@ namespace MS.Internal.Interop
         /// </remarks>
         double GetRefreshRateHz() => 0;
 
+        /// <summary>
+        /// Minimize, maximize or restore. <paramref name="state"/> is the SW_* value WPF asked for.
+        /// </summary>
+        /// <remarks>
+        /// A head that cannot express these does nothing, and the window stays the size it was --
+        /// which is what every head except Wayland did before, except that the window ALSO never
+        /// appeared: ShowWindow only called SetVisible for the SW_* values it recognised, and
+        /// SW_SHOWMAXIMIZED was not among them. WPF asks for exactly that when a Window is created
+        /// with WindowState=Maximized, so such a window was built, given a surface, told to composite
+        /// -- and never ordered onto the screen. See UnsafeNativeMethodsCLR.ShowWindow.
+        /// </remarks>
+        void SetWindowState(int state) { }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>

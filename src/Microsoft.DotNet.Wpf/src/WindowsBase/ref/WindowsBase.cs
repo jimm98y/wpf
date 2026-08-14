@@ -25,6 +25,7 @@ namespace MS.Internal.Interop
         public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
+        public void SetWindowState(int state) { }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public static System.IntPtr GetNativeWindow(System.IntPtr handle) { throw null; }
@@ -89,6 +90,7 @@ namespace MS.Internal.Interop
         public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
+        public void SetWindowState(int state) { }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -169,6 +171,7 @@ namespace MS.Internal.Interop
         public static void SetTitle(System.IntPtr handle, string title) { }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
+        public void SetWindowState(int state) { }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -324,6 +327,7 @@ namespace MS.Internal.Interop
         void SetVisible(bool visible, bool activate) { }
         void Activate() { }
         double GetRefreshRateHz() { throw null; }
+        void SetWindowState(int state) { }
         void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();
@@ -394,6 +398,7 @@ namespace MS.Internal.Interop
         public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
+        public void SetWindowState(int state) { }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -454,6 +459,7 @@ namespace MS.Internal.Interop.Wayland
         public static MS.Internal.Interop.Wayland.WaylandWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
+        public void SetWindowState(int state) { }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
