@@ -9,11 +9,14 @@
 // with the shared PathRasterizer -- so real fonts reuse the same anti-aliased
 // fill as everything else, with no native dependency (works on every platform).
 //
-// Scope: TrueType simple glyphs, Unicode cmap format 4 (BMP), horizontal
-// metrics. This delivers real outlines, counters (holes) and proportional
-// advances. Complex-script shaping (HarfBuzz: ligatures, marks, GSUB/GPOS),
-// CFF/OTF PostScript outlines and composite glyphs are future work behind this
-// same seam.
+// Scope: TrueType simple AND composite glyphs, the cmap formats CmapTable reads,
+// horizontal metrics, colour glyphs (COLR/CPAL and CBDT/sbix), and OpenType font
+// VARIATIONS -- fvar/avar/gvar, so a variable font draws at the weight and slant
+// asked for instead of at its default master. See VariableFont.cs.
+//
+// PostScript (CFF) outlines are the sibling reader, CffFont; complex-script
+// shaping is PresentationCore's ManagedOpenTypeShaper, above this seam. CFF2 --
+// a variable font with PostScript outlines -- is read by neither.
 //
 
 using System;
@@ -66,6 +69,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly float _emboldenStrength;   // base-pixel outline dilation per side (0 = none)
         private readonly float _shear;              // oblique x-shear coefficient (0 = none)
 
+        private readonly VariableFont? _variations;  // fvar/avar/gvar, null on a static font
+
+        // Advance deltas fall out of the same gvar read that varies the outline (the phantom points),
+        // so they are kept as that read produces them rather than computed a second time.
+        private readonly Dictionary<int, float> _advanceDeltas = new();
+
         public int PixelsPerEm => BaseEmPixels;
 
         public int GlyphCount => _numGlyphs;
@@ -81,8 +90,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             _data = data;
             _sfntBase = sfntOffset;
-            if (synthesizeBold) _emboldenStrength = BaseEmPixels * EmboldenFraction;
-            if (synthesizeOblique) _shear = ObliqueShear;
 
             Dictionary<string, int> tables = ReadTableDirectory();
             int head = Require(tables, "head");
@@ -133,6 +140,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _loca[i] = indexToLocFormat == 0 ? (uint)U16(loca + i * 2) * 2 : U32(loca + i * 4);
 
             _cmap = new CmapTable(_data, cmap);
+
+            // Font variations. Asking the font for the weight or slant it was DESIGNED with beats
+            // faking one from the default master, so the simulation flags become an instance request
+            // wherever the face has an axis that can answer them, and only fall back to dilating and
+            // shearing the outline where it has not. See SelectInstance.
+            _variations = VariableFont.TryRead(_data, tables);
+            bool variedBold = false, variedOblique = false;
+            if (_variations is not null)
+                SelectInstance(_variations, synthesizeBold, synthesizeOblique, out variedBold, out variedOblique);
+
+            if (synthesizeBold && !variedBold) _emboldenStrength = BaseEmPixels * EmboldenFraction;
+            if (synthesizeOblique && !variedOblique) _shear = ObliqueShear;
 
             // Color glyphs (emoji): COLR layers reference outline glyphs in this same
             // font, coloured from the CPAL palette.
@@ -218,8 +237,65 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figures.Count > 0;
         }
 
-        private ushort AdvanceWidth(int gid)
-            => _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
+        /// <summary>
+        ///  Turns the bold/oblique simulation flags into a point in the font's own design space.
+        /// </summary>
+        /// <remarks>
+        ///  A variable font already contains the bold the caller is asking for; emboldening its
+        ///  default master instead produces a shape the designer never drew, with the wrong stem
+        ///  contrast and the wrong sidebearings. So when there is a 'wght' axis, Bold means "go as
+        ///  far towards 700 as this axis goes", and only a font without one gets the dilation.
+        ///  Italic is the same story told twice, because a family may express it as a 0/1 'ital'
+        ///  switch or as a continuous 'slnt' angle in degrees (negative leans right).
+        /// </remarks>
+        private static void SelectInstance(VariableFont variations, bool bold, bool oblique,
+                                           out bool variedBold, out bool variedOblique)
+        {
+            variedBold = variedOblique = false;
+            var request = new Dictionary<uint, float>();
+
+            if (bold && variations.TryGetAxis(VariableFont.AxisWeight, out VariationAxis weight)
+                && weight.Max > weight.Default)
+            {
+                request[VariableFont.AxisWeight] = Math.Min(700f, weight.Max);
+                variedBold = true;
+            }
+
+            if (oblique)
+            {
+                if (variations.TryGetAxis(VariableFont.AxisItalic, out VariationAxis ital) && ital.Max >= 1f)
+                {
+                    request[VariableFont.AxisItalic] = 1f;
+                    variedOblique = true;
+                }
+                else if (variations.TryGetAxis(VariableFont.AxisSlant, out VariationAxis slnt) && slnt.Min < 0f)
+                {
+                    // 'slnt' is degrees of clockwise lean, so an italic is NEGATIVE. -20 matches the
+                    // synthetic shear this replaces (tan 20 degrees).
+                    request[VariableFont.AxisSlant] = Math.Max(-20f, slnt.Min);
+                    variedOblique = true;
+                }
+            }
+
+            if (request.Count > 0) variations.SetInstance(request);
+        }
+
+        private float AdvanceWidth(int gid)
+        {
+            float advance = _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
+            if (_variations is null || !_variations.IsVaried) return advance;
+
+            // An instance moves the advance as well as the outline, and the two come from the same
+            // deltas -- so the glyph has to have been read for the answer to exist. Reading it here
+            // is what keeps a caller that only ever asks for metrics (measuring a line before
+            // drawing it) from getting the default master's widths.
+            if (!_advanceDeltas.TryGetValue(gid, out float delta))
+            {
+                ReadGlyphContours(gid, 0);
+                _advanceDeltas.TryGetValue(gid, out delta);
+            }
+            return advance + delta;
+        }
 
         /// <summary>True if the glyph for <paramref name="c"/> is a composite glyph.</summary>
         public bool IsCompositeGlyph(char c)
@@ -253,11 +329,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int p = _glyfOffset + (int)start;
             int numContours = (short)U16(p);
             return numContours >= 0
-                ? ReadSimpleContours(p + 10, numContours)
-                : ReadCompositeContours(p + 10, depth);
+                ? ReadSimpleContours(p + 10, numContours, gid)
+                : ReadCompositeContours(p + 10, depth, gid);
         }
 
-        private List<Contour> ReadSimpleContours(int p, int numContours)
+        private List<Contour> ReadSimpleContours(int p, int numContours, int gid)
         {
             var contours = new List<Contour>(numContours);
             if (numContours == 0) return contours;
@@ -300,6 +376,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 ys[i] = y;
             }
 
+            // One array of every point in the glyph, plus the four PHANTOM points gvar addresses as
+            // if they were ordinary ones. Their absolute positions do not matter here -- they take
+            // part in no contour, so nothing interpolates against them -- but the gap between the
+            // first two IS the advance width, so their deltas are where a variable font says how
+            // much wider Bold is than Regular.
+            var points = new Vector2[numPoints + 4];
+            for (int i = 0; i < numPoints; i++) points[i] = new Vector2(xs[i], ys[i]);   // font units, y up
+            points[numPoints + 1] = new Vector2(RawAdvanceWidth(gid), 0f);
+
+            ApplyVariations(gid, points, numPoints, endPts);
+
             int contourStart = 0;
             for (int ci = 0; ci < numContours; ci++)
             {
@@ -312,7 +399,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     for (int k = 0; k < n; k++)
                     {
                         int idx = contourStart + k;
-                        pts[k] = new Vector2(xs[idx], ys[idx]); // font units, y up
+                        pts[k] = points[idx];
                         on[k] = (flags[idx] & 0x01) != 0;
                     }
                     contours.Add(new Contour(pts, on));
@@ -322,10 +409,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return contours;
         }
 
+        private ushort RawAdvanceWidth(int gid)
+            => _advanceWidths.Length == 0 ? (ushort)0 : _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
+
+        /// <summary>
+        ///  Moves a glyph's points to the selected instance, and records what that did to its advance.
+        /// </summary>
+        private void ApplyVariations(int gid, Vector2[] points, int realPointCount, int[] contourEnds)
+        {
+            if (_variations is null || !_variations.IsVaried || !_variations.HasOutlineDeltas) return;
+
+            Vector2[]? deltas = _variations.GetGlyphDeltas(gid, points.Length, contourEnds, points);
+            if (deltas is null)
+            {
+                _advanceDeltas[gid] = 0f;
+                return;
+            }
+
+            for (int i = 0; i < points.Length; i++) points[i] += deltas[i];
+
+            // The advance is the distance between the two horizontal phantom points, so what the
+            // instance did to it is the difference of their deltas.
+            _advanceDeltas[gid] = deltas[realPointCount + 1].X - deltas[realPointCount].X;
+        }
+
+        /// <summary>One component of a composite glyph: which glyph, and where it sits.</summary>
+        private struct Component
+        {
+            public int Gid;
+            public float A, B, C, D;   // 2x2 transform
+            public float Dx, Dy;       // offset, font units
+        }
+
         // Composite glyph: each component references another glyph with a 2x2
         // transform + offset (font units). Components are read recursively and
         // their points transformed into this glyph's space.
-        private List<Contour> ReadCompositeContours(int p, int depth)
+        //
+        // A variable font varies a composite by moving its COMPONENTS, not their outlines: gvar
+        // treats each component's offset as one point, so an accented letter's accent shifts as the
+        // weight changes. Reading the whole component list first is what makes that possible -- the
+        // deltas are indexed by component number, so they cannot be applied while still parsing.
+        private List<Contour> ReadCompositeContours(int p, int depth, int gid)
         {
             var result = new List<Contour>();
             const int ARG_1_AND_2_ARE_WORDS = 0x0001;
@@ -335,6 +459,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             const int WE_HAVE_AN_X_AND_Y_SCALE = 0x0040;
             const int WE_HAVE_A_TWO_BY_TWO = 0x0080;
 
+            var components = new List<Component>();
             bool more = true;
             while (more)
             {
@@ -358,20 +483,62 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 float dx = (flags & ARGS_ARE_XY_VALUES) != 0 ? arg1 : 0f;
                 float dy = (flags & ARGS_ARE_XY_VALUES) != 0 ? arg2 : 0f;
 
-                foreach (Contour comp in ReadGlyphContours(compGid, depth + 1))
-                {
-                    var pts = new Vector2[comp.Points.Length];
-                    for (int i = 0; i < pts.Length; i++)
-                    {
-                        Vector2 q = comp.Points[i];
-                        pts[i] = new Vector2(a * q.X + c * q.Y + dx, b * q.X + d * q.Y + dy);
-                    }
-                    result.Add(new Contour(pts, comp.OnCurve));
-                }
-
+                components.Add(new Component { Gid = compGid, A = a, B = b, C = c, D = d, Dx = dx, Dy = dy });
                 more = (flags & MORE_COMPONENTS) != 0;
             }
+
+            VaryComponents(gid, components);
+
+            foreach (Component comp in components)
+            {
+                foreach (Contour c in ReadGlyphContours(comp.Gid, depth + 1))
+                {
+                    var pts = new Vector2[c.Points.Length];
+                    for (int i = 0; i < pts.Length; i++)
+                    {
+                        Vector2 q = c.Points[i];
+                        pts[i] = new Vector2(comp.A * q.X + comp.C * q.Y + comp.Dx,
+                                             comp.B * q.X + comp.D * q.Y + comp.Dy);
+                    }
+                    result.Add(new Contour(pts, c.OnCurve));
+                }
+            }
             return result;
+        }
+
+        /// <summary>
+        ///  Moves a composite's components to the selected instance.
+        /// </summary>
+        /// <remarks>
+        ///  The "points" of a composite are its component offsets, one each, followed by the same
+        ///  four phantom points a simple glyph has. There is no contour to interpolate along, so a
+        ///  component the tuple does not mention simply does not move -- which is why no contour ends
+        ///  are passed.
+        /// </remarks>
+        private void VaryComponents(int gid, List<Component> components)
+        {
+            if (_variations is null || !_variations.IsVaried || !_variations.HasOutlineDeltas) return;
+
+            int n = components.Count;
+            var points = new Vector2[n + 4];
+            for (int i = 0; i < n; i++) points[i] = new Vector2(components[i].Dx, components[i].Dy);
+            points[n + 1] = new Vector2(RawAdvanceWidth(gid), 0f);
+
+            Vector2[]? deltas = _variations.GetGlyphDeltas(gid, points.Length, Array.Empty<int>(), points);
+            if (deltas is null)
+            {
+                _advanceDeltas[gid] = 0f;
+                return;
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                Component c = components[i];
+                c.Dx += deltas[i].X;
+                c.Dy += deltas[i].Y;
+                components[i] = c;
+            }
+            _advanceDeltas[gid] = deltas[n + 1].X - deltas[n].X;
         }
 
         // Converts a glyph's font-unit contours to screen-space (y-down) figures,
