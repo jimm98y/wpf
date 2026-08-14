@@ -61,6 +61,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLocalCoverage;
 
         /// <summary>
+        /// Draws recorded this frame: <see cref="PerfDrawItems"/> counts what the scene asked for,
+        /// <see cref="PerfDrawCalls"/> the drawIndexed calls that carried them. The ratio is what
+        /// batching buys, and a scene where they are equal is one where nothing could be merged.
+        /// </summary>
+        internal static int PerfDrawItems, PerfDrawCalls;
+
+        /// <summary>
         /// Native bind-group-layout acquisitions since the process started.
         /// </summary>
         /// <remarks>
@@ -72,7 +79,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -3787,33 +3794,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vbuf, (ulong)data.VbOffset, (ulong)(data.Verts.Count * sizeof(float)));
             wgpuRenderPassEncoderSetIndexBuffer(pass, ibuf, WGPUIndexFormat.Uint32, (ulong)data.IbOffset, (ulong)(data.Indices.Count * sizeof(uint)));
 
-            foreach (DrawItem d in data.Draws)
+            // Nothing bound yet in this pass: a render pass starts with no pipeline, no bind group
+            // and a scissor covering the whole attachment, so the first draw always sets all three.
+            IntPtr boundPipeline = IntPtr.Zero, boundBindGroup = IntPtr.Zero;
+            bool haveScissor = false;
+            int bx = 0, by = 0, bw = 0, bh = 0;
+
+            List<DrawItem> draws = data.Draws;
+            for (int i = 0; i < draws.Count; i++)
             {
+                DrawItem d = draws[i];
                 if (d.Clip.IsEmpty) continue;
-                wgpuRenderPassEncoderSetPipeline(pass, ResolvePipeline(format, d.Kind, d.EffectId, d.SourceCopy));
-                switch (d.Kind)
+
+                IntPtr pipeline = ResolvePipeline(format, d.Kind, d.EffectId, d.SourceCopy);
+                IntPtr bindGroup = BindGroupFor(d, atlasBindGroup);
+
+                // Absorb every following item that would be drawn with exactly this state out of the
+                // very next indices. Nearly all of them are one quad, and a run of them -- the glyphs
+                // of a line of text, the cells of a grid -- differs only in vertex data, which is
+                // already sitting contiguously in the shared buffer. Merging preserves order, because
+                // one drawIndexed processes its indices in order just as the separate calls did.
+                uint firstIndex = d.FirstIndex, indexCount = d.IndexCount;
+                int merged = 1;
+                while (i + merged < draws.Count)
                 {
-                    case FillKind.Textured:
-                    case FillKind.Layer:
-                    case FillKind.Blur:
-                    case FillKind.Shadow:
-                    case FillKind.Clip:
-                    case FillKind.Coverage:
-                    case FillKind.MaskBrush:
-                    case FillKind.MaskImage:
-                    case FillKind.ShapeBrush:   // group 0 = gradient ramp + sampler + brush params
-                    case FillKind.BrushAlpha:
-                    case FillKind.Id:
-                    case FillKind.Stroke:
-                    case FillKind.StrokeDraw:   // group 0 = the batched segment storage buffer (patched in by BuildBatchedStorage)
-                    case FillKind.ShaderEffect: // group 0 = constants uniform (optional) + input texture + sampler
-                        wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup, 0, null);
-                        break;
-                    case FillKind.Text:
-                        // Glyph runs share the atlas bind group; path masks carry their own.
-                        wgpuRenderPassEncoderSetBindGroup(pass, 0, d.BindGroup != IntPtr.Zero ? d.BindGroup : atlasBindGroup, 0, null);
-                        break;
+                    DrawItem n = draws[i + merged];
+                    if (n.Clip.IsEmpty) break;                                  // a gap in the indices
+                    if (n.FirstIndex != firstIndex + indexCount) break;         // not contiguous
+                    if (n.Kind != d.Kind || n.EffectId != d.EffectId || n.SourceCopy != d.SourceCopy) break;
+                    if (n.Clip.X != d.Clip.X || n.Clip.Y != d.Clip.Y ||
+                        n.Clip.W != d.Clip.W || n.Clip.H != d.Clip.H) break;
+                    if (BindGroupFor(n, atlasBindGroup) != bindGroup) break;
+
+                    indexCount += n.IndexCount;
+                    merged++;
                 }
+                i += merged - 1;
+
                 // Rebase the absolute scissor into the (possibly region-sized) target + clamp.
                 int sx = d.Clip.X - originX, sy = d.Clip.Y - originY, sw = d.Clip.W, sh = d.Clip.H;
                 if (texW > 0)
@@ -3824,10 +3841,53 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (sy + sh > texH) sh = texH - sy;
                     if (sw <= 0 || sh <= 0) continue;
                 }
-                wgpuRenderPassEncoderSetScissorRect(pass, (uint)sx, (uint)sy, (uint)sw, (uint)sh);
-                wgpuRenderPassEncoderDrawIndexed(pass, d.IndexCount, 1, d.FirstIndex, 0, 0);
+
+                if (pipeline != boundPipeline)
+                {
+                    wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+                    boundPipeline = pipeline;
+                }
+
+                // Zero means this kind binds nothing at group 0 (a plain Shape fill is driven
+                // entirely by its vertex attributes), and leaving whatever was bound before in place
+                // is what the unbatched version did too.
+                if (bindGroup != IntPtr.Zero && bindGroup != boundBindGroup)
+                {
+                    wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+                    boundBindGroup = bindGroup;
+                }
+
+                if (!haveScissor || sx != bx || sy != by || sw != bw || sh != bh)
+                {
+                    wgpuRenderPassEncoderSetScissorRect(pass, (uint)sx, (uint)sy, (uint)sw, (uint)sh);
+                    haveScissor = true;
+                    bx = sx; by = sy; bw = sw; bh = sh;
+                }
+
+                PerfDrawItems += merged;
+                PerfDrawCalls++;
+                wgpuRenderPassEncoderDrawIndexed(pass, indexCount, 1, firstIndex, 0, 0);
             }
         }
+
+        /// <summary>
+        /// The group-0 bind group a draw needs, or Zero for the kinds that bind nothing there.
+        /// </summary>
+        private static IntPtr BindGroupFor(DrawItem d, IntPtr atlasBindGroup) => d.Kind switch
+        {
+            FillKind.Textured or FillKind.Layer or FillKind.Blur or FillKind.Shadow or
+            FillKind.Clip or FillKind.Coverage or FillKind.MaskBrush or FillKind.MaskImage or
+            FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
+            FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
+            FillKind.StrokeDraw or
+            FillKind.ShaderEffect         // group 0 = constants uniform (optional) + input texture + sampler
+                => d.BindGroup,
+
+            // Glyph runs share the atlas bind group; path masks carry their own.
+            FillKind.Text => d.BindGroup != IntPtr.Zero ? d.BindGroup : atlasBindGroup,
+
+            _ => IntPtr.Zero,
+        };
 
         private void DeferReleaseSampled(IntPtr texture, IntPtr view, IntPtr bindGroup)
         {
