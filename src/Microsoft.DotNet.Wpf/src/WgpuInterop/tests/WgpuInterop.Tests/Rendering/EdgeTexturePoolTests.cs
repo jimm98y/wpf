@@ -33,6 +33,10 @@ namespace WgpuInterop.Tests.Rendering
     {
         public EdgeTexturePoolTests(GpuFixture gpu) : base(gpu) { }
 
+        // Long enough to get past the mask cache's 60-frame retention, plus a stretch to measure.
+        private const int SettleFrames = 90;
+        private const int MeasureFrames = 20;
+
         private const int W = 400, H = 400;
         private const int Paths = 8;
         private const int Frames = 10;
@@ -92,6 +96,44 @@ namespace WgpuInterop.Tests.Rendering
                 $"{Frames} frames of {Paths} continuously changing complex paths created {created} GPU " +
                 "textures. They differ in content, not in size, so the pool should have had one ready " +
                 "for each.");
+        }
+
+        private void Frame(WgpuSceneRenderer renderer, int f)
+        {
+            renderer.BeginFrame();
+            renderer.RenderToRgba(Wiggling(f), W, H, White);
+            renderer.EndFrame();
+        }
+
+        /// <summary>
+        /// The R8 masks those same paths render into come from a pool too, but only once the mask
+        /// cache lets go of them: an entry is kept for 60 frames against a scroll cycling back to a
+        /// phase it has already drawn. So this has to run long enough to reach that steady state --
+        /// a short run would measure the cache filling, which creates textures however good the pool
+        /// is, and would conclude the wrong thing.
+        /// </summary>
+        [Fact]
+        public void ALongAnimationSettlesIntoReusingItsMasks()
+        {
+            WgpuSceneRenderer renderer = NewRenderer();
+
+            // BeginFrame/EndFrame, as the compositor sink calls them. They are what advances the
+            // frame counter and run the cache eviction, so a loop of bare RenderToRgba calls never
+            // ages anything out and would measure a cache that only ever grows.
+            for (int f = 0; f < SettleFrames; f++) Frame(renderer, f);
+
+            int created = 0;
+            for (int f = SettleFrames; f < SettleFrames + MeasureFrames; f++)
+            {
+                WgpuSceneRenderer.PerfReset();
+                Frame(renderer, f);
+                created += WgpuSceneRenderer.PerfMaskTextures;
+            }
+
+            Assert.True(created * 4 < Paths * MeasureFrames,
+                $"{MeasureFrames} settled frames of {Paths} animating paths created {created} mask " +
+                $"textures, against {Paths * MeasureFrames} masks drawn. Once the cache is evicting at " +
+                "the rate the scene is producing, the pool should be handing almost all of them back.");
         }
     }
 }

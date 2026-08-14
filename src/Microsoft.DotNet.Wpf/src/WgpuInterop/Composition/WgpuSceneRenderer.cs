@@ -75,6 +75,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// upload. A settled scene should create none: see RentEdgeTexture.</summary>
         internal static int PerfEdgeTextures;
 
+        /// <summary>Coverage-mask textures CREATED this frame, as opposed to taken from the pool.</summary>
+        internal static int PerfMaskTextures;
+
         /// <summary>
         /// Native bind-group-layout acquisitions since the process started.
         /// </summary>
@@ -87,7 +90,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int PerfLayoutAcquires;
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -187,7 +190,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
                     ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
                     if (c.BlurTex != IntPtr.Zero) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
-                    if (c.MaskTex != IntPtr.Zero) { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
+                    if (c.MaskTex != IntPtr.Zero) ReturnMaskTexture(c.MaskTex, c.MaskView, c.Rw, c.Rh);
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
             }
@@ -212,8 +215,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     if (kv.Value.LastFrame >= _frameId - 60) continue;
                     (deadC ??= new List<long>()).Add(kv.Key);
-                    wgpuTextureViewRelease(kv.Value.View);
-                    wgpuTextureRelease(kv.Value.Tex);
+                    ReturnMaskTexture(kv.Value.Tex, kv.Value.View, kv.Value.W, kv.Value.H);
                 }
                 if (deadC != null) foreach (long k in deadC) _covCache.Remove(k);
             }
@@ -254,8 +256,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 CachedMask c = kv.Value;
                 wgpuBindGroupRelease(c.BindGroup);
                 if (c.BindGroupCopy != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupCopy);
-                wgpuTextureViewRelease(c.View);
-                wgpuTextureRelease(c.Tex);
+                ReturnMaskTexture(c.Tex, c.View, c.W, c.H);
             }
             if (dead != null) foreach (long k in dead) _maskCache.Remove(k);
         }
@@ -1876,6 +1877,53 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             };
             IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
             return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
+        }
+
+        // Pooled coverage-mask textures (R8, RenderAttachment|TextureBinding). Same bargain as the
+        // layer pool above, for the masks a path that misses the coverage cache renders into.
+        //
+        // EXACT size, no bucketing, and the measurement is why: a shape that animates keeps its own
+        // mask size across frames even while its outline changes -- eight wiggling 200-segment paths
+        // produced eighty masks in ten frames but only EIGHT distinct sizes, one per path, and twenty
+        // animating strokes produced four. Rounding sizes up into buckets would buy nothing over that
+        // and would cost real pixels: a mask is a render attachment, so an oversized one clears an
+        // oversized area, and it is sampled with normalized uv, so it would need every uv rescaled.
+        private readonly List<(IntPtr Tex, IntPtr View, int W, int H)> _freeMaskTex = new();
+
+        private (IntPtr Tex, IntPtr View) RentMaskTexture(int width, int height)
+        {
+            for (int i = 0; i < _freeMaskTex.Count; i++)
+            {
+                if (_freeMaskTex[i].W != width || _freeMaskTex[i].H != height) continue;
+                (IntPtr Tex, IntPtr View, int W, int H) hit = _freeMaskTex[i];
+                _freeMaskTex.RemoveAt(i);
+                return (hit.Tex, hit.View);
+            }
+
+            PerfTextures++;
+            PerfMaskTextures++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
+                format = WGPUTextureFormat.R8Unorm,
+                mipLevelCount = 1,
+                sampleCount = 1,
+            };
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            return (tex, wgpuTextureCreateView(tex, IntPtr.Zero));
+        }
+
+        private void ReturnMaskTexture(IntPtr tex, IntPtr view, int width, int height)
+        {
+            const int Cap = 64;
+            if (tex == IntPtr.Zero || _freeMaskTex.Count >= Cap)
+            {
+                if (tex != IntPtr.Zero) { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
+                return;
+            }
+            _freeMaskTex.Add((tex, view, width, height));
         }
 
         private void ReturnLayerTexture(IntPtr tex, IntPtr view, int width, int height)
@@ -3952,6 +4000,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _freeLayerTex.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _) in _freeEdgeTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
             _freeEdgeTex.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeMaskTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
+            _freeMaskTex.Clear();
             if (_idView != IntPtr.Zero) { wgpuTextureViewRelease(_idView); wgpuTextureRelease(_idTex); _idView = _idTex = IntPtr.Zero; }
             ReleaseAtlas();
             ReleaseResources3D();
@@ -4795,18 +4845,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             IntPtr bg = EdgeBindGroup(MemoryMarshal.AsBytes(es), WGPUTextureFormat.R8Unorm, FillKind.Stroke);
 
-            PerfTextures++;
-            var texDesc = new WGPUTextureDescriptor
-            {
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 },
-                format = WGPUTextureFormat.R8Unorm,
-                mipLevelCount = 1,
-                sampleCount = 1,
-            };
-            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
-            view = wgpuTextureCreateView(tex, IntPtr.Zero);
+            (tex, view) = RentMaskTexture(w, h);
 
             // Full-target quad in the mask's own NDC; uv = mask-local pixel coords; the flat vertex
             // colour carries (segCount, halfWidth) — matching fs_stroke's decoding.
@@ -4845,18 +4884,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // (GL ES 3.0 / ANGLE can't bind a fragment storage buffer).
             IntPtr edgeBg = EdgeBindGroup(MemoryMarshal.AsBytes(es2), WGPUTextureFormat.R8Unorm, FillKind.Coverage);
 
-            PerfTextures++;
-            var texDesc = new WGPUTextureDescriptor
-            {
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 },
-                format = WGPUTextureFormat.R8Unorm,
-                mipLevelCount = 1,
-                sampleCount = 1,
-            };
-            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
-            IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
+            (IntPtr tex, IntPtr view) = RentMaskTexture(w, h);
 
             PerfBindGroups++;
             // One full-target quad in the mask texture's own NDC — deliberately NOT ToNdc,
@@ -5062,18 +5090,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             IntPtr rampView = GetOrCreateRampView(BrushStops(brush));
 
-            PerfTextures++;
-            var texDesc = new WGPUTextureDescriptor
-            {
-                usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
-                format = WGPUTextureFormat.R8Unorm,
-                mipLevelCount = 1,
-                sampleCount = 1,
-            };
-            tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
-            view = wgpuTextureCreateView(tex, IntPtr.Zero);
+            (tex, view) = RentMaskTexture(width, height);
 
             IntPtr bg = CreateBrushBindGroup(WGPUTextureFormat.R8Unorm, FillKind.BrushAlpha, IntPtr.Zero, rampView, ubuf, uni.Length);
             DeferReleaseBindGroup(bg);
