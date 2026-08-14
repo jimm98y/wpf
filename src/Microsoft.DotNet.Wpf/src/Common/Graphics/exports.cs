@@ -236,8 +236,15 @@ namespace System.Windows.Media.Composition
             /// windowing assembly, by design. Failures answer 0, which keeps WPF on the fallback it
             /// used before any of this existed.
             /// </remarks>
+            // Escape hatch. Pacing against the real refresh is a behaviour change to the frame
+            // scheduler, and a scheduler is exactly the thing you want to be able to switch off on a
+            // machine where it misbehaves without rebuilding anything.
+            private static readonly bool s_refreshPacing =
+                Environment.GetEnvironmentVariable("WPF_WEBGPU_REFRESH_PACING") != "0";
+
             internal static int RefreshRateFor(long windowHandle)
             {
+                if (!s_refreshPacing) return 0;
                 try
                 {
                     MS.Internal.Interop.IPlatformWindow window =

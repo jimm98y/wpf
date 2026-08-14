@@ -46,16 +46,28 @@ namespace Wpf.Platform.Tests
         }
 
         /// <summary>
-        /// A window that was never created has no display to report, and must say 0 rather than
-        /// guessing -- an invented rate is worse than none, because WPF would pace against it.
+        /// Asking a window that was never created must not throw, and must not invent a number.
         /// </summary>
+        /// <remarks>
+        /// It is allowed to answer with the main display's rate -- a window not yet placed on a
+        /// screen still has to say something, and the head it belongs to is the right one to guess
+        /// with. What it must not do is fail: this is called from the present path, once a frame, and
+        /// an exception there would take down compositing over a diagnostic.
+        ///
+        /// This deliberately does NOT assert zero. It did at first, and the assertion was wrong
+        /// rather than the code -- it passed on a machine whose main screen answered nothing and
+        /// failed the moment a display was reachable, which is a test measuring the room it runs in.
+        /// </remarks>
         [Fact]
-        public void AnUncreatedWindowSaysItCannotTell()
+        public void AnUncreatedWindowAnswersWithoutThrowing()
         {
             IPlatformWindow window = CurrentHeadWindow();
             Assert.SkipWhen(window is null, "no windowing head on this platform");
 
-            Assert.Equal(0, window.GetRefreshRateHz());
+            double hz = window.GetRefreshRateHz();
+
+            Assert.True(hz == 0 || (hz >= Slowest && hz <= Fastest),
+                $"an uncreated window reported {hz}Hz, which is neither 'unknown' nor a display");
         }
 
         private static IPlatformWindow CurrentHeadWindow()
