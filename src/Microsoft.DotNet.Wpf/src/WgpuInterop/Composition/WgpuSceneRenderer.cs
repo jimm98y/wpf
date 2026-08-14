@@ -849,7 +849,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<LayerPass> plan = _plan; plan.Clear();
                 _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
+
+                // Timed on this path as well as on RenderSceneToView. The two do the same collect and
+                // encode work and differ only in where the pixels end up, so leaving the counters on
+                // one of them meant every headless measurement of that work read as zero.
+                long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
+                PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
 
                 IntPtr device = _ctx.Device;
                 int bytesPerRow = AlignUp(width * 4, 256);
@@ -870,11 +876,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 IntPtr atlasView = EnsureAtlasView(AnyText(mainData, plan));
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(device, IntPtr.Zero);
 
+                long e0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 BuildBatchedGeometry(plan, mainData);
                 BuildBatchedStorage();
                 FlushPendingTexUploads(encoder);
                 foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                 ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, outFormat), atlasView);
+                PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
 
                 var copySrc = new WGPUTexelCopyTextureInfo { texture = targetTex, aspect = WGPUTextureAspect.All };
                 var copyDst = new WGPUTexelCopyBufferInfo
