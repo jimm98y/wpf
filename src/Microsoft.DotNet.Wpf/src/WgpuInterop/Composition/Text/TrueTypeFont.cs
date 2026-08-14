@@ -231,9 +231,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>IGlyphOutlineFont: glyph outline by index (at BaseEmPixels, baseline y=0).</summary>
+        // Built outlines, by glyph id.
+        //
+        // A glyph's outline in font units is the same every time it is asked for, and it is asked for
+        // a great deal: MilcoreEngine builds the geometry of EVERY glyph of every text run while
+        // parsing render data, so a visual holding a paragraph rebuilds hundreds of outlines from the
+        // font tables -- contours, composites and variation deltas -- each time its render data
+        // changes. Dragging a splitter changes it on every frame.
+        //
+        // Handing back the cached list is safe because nobody mutates it: the callers (GlyphRunPainter
+        // .ScaleFigures, WgpuSceneRenderer.TransformGeometry) all build new figures rather than moving
+        // these. Bounded by the glyphs the application actually draws.
+        private readonly Dictionary<int, List<PathFigure>> _outlineCache = new();
+
         public bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures)
         {
+            if (_outlineCache.TryGetValue(glyphId, out List<PathFigure>? cached))
+            {
+                figures = cached;
+                return figures.Count > 0;
+            }
+
             figures = (glyphId >= 0 && glyphId < _numGlyphs) ? BuildGlyphFigures(glyphId) : new List<PathFigure>();
+            _outlineCache[glyphId] = figures;
             return figures.Count > 0;
         }
 
