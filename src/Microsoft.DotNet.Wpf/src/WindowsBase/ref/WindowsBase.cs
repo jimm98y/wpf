@@ -155,7 +155,10 @@ namespace MS.Internal.Interop
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless, bool visible) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner, bool chromeless, bool visible, bool activatable) { }
         public void SetVisible(bool visible) { }
+        public void SetVisible(bool visible, bool activate) { }
+        public void Activate() { }
         public void BeginMoveDrag() { }
         public void Destroy() { }
         public void DisableMicaBackdrop() { }
@@ -226,6 +229,17 @@ namespace MS.Internal.Interop
         public static bool IsAvailable { get { throw null; } }
         public static MS.Internal.Interop.IAndroidClipboardHost Host { get { throw null; } set { } }
     }
+    public static partial class AndroidDragDrop
+    {
+        public static bool IsAvailable { get { throw null; } }
+        public static bool IsDragSourceActive { get { throw null; } }
+        public static MS.Internal.Interop.IAndroidDragDropHost Host { get { throw null; } set { } }
+        public static void NotifyDragEnded(System.IntPtr windowHandle) { }
+        public static void NotifyDragExited(System.IntPtr windowHandle) { }
+        public static void NotifyDragLocation(System.IntPtr windowHandle, int xPixels, int yPixels, string[] mimeTypes) { }
+        public static bool NotifyDragStarted(System.IntPtr windowHandle, string[] mimeTypes) { throw null; }
+        public static bool NotifyDrop(System.IntPtr windowHandle, int xPixels, int yPixels, string[] mimeTypes, string[] textItems, string[] uriItems) { throw null; }
+    }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public static partial class BrowserClipboard
     {
@@ -256,6 +270,10 @@ namespace MS.Internal.Interop
     public partial interface IAndroidPrintHost
     {
         bool Print(string jobName, byte[] document, double pageWidth, double pageHeight);
+    }
+    public partial interface IAndroidDragDropHost
+    {
+        bool StartDrag(System.IntPtr windowHandle, string[] mimeTypes, string text, string[] uris);
     }
     public partial interface IAndroidClipboardHost
     {
@@ -299,6 +317,8 @@ namespace MS.Internal.Interop
         bool IsBorderless { get; }
         event System.Action<double> ScaleChanged;
         void SetVisible(bool visible);
+        void SetVisible(bool visible, bool activate) { }
+        void Activate() { }
         void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();

@@ -124,7 +124,21 @@ namespace System.Windows
         private static DragDropEffects RunDetached(DragState state)
         {
             DispatcherTimer? timer = null;
-            timer = StartTicking(state, () => timer?.Stop());
+            timer = StartTicking(state, () =>
+            {
+                timer?.Stop();
+
+                // The drag outlived the DoDragDrop call that started it, so that call could not
+                // release the data it carries -- and the data is what an in-process drop is answered
+                // with, which is nearly every drag inside one application. Releasing it here is what
+                // makes the difference between the drop getting the dragged object and getting an
+                // empty one.
+                PlatformDragSource.ReleaseCurrentData();
+
+                // The iOS drag interaction was armed with this drag's payload; nothing is going to
+                // lift it now.
+                if (OperatingSystem.IsIOS()) MS.Internal.Interop.UIKitDragDrop.ClearPending();
+            });
             return DragDropEffects.None;
         }
 
@@ -190,6 +204,16 @@ namespace System.Windows
             /// <summary>Advances the drag. Returns true when it is over.</summary>
             internal bool Tick()
             {
+                // On iOS the same touch can be picked up by UIKit's own lift gesture, which starts a
+                // system drag carrying the data this loop was armed with (see UIKitDragDrop). Two
+                // drags driving one drop target is one too many, and the system one is the better of
+                // them -- it can leave the application -- so this one stands down.
+                if (OperatingSystem.IsIOS() && MS.Internal.Interop.UIKitDragDrop.IsSystemDragActive)
+                {
+                    Cancel();
+                    return true;
+                }
+
                 MouseDevice mouse = Mouse.PrimaryDevice;
                 bool released = mouse.LeftButton != MouseButtonState.Pressed;
 

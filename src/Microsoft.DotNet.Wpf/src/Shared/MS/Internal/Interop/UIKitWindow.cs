@@ -115,6 +115,10 @@ namespace MS.Internal.Interop
 
             s_byView[_view] = this;
             s_zOrder.Add(this);
+
+            // After the view is registered: a drag can arrive as soon as the interactions exist, and
+            // the drop target resolves the window from the view it names.
+            UIKitDragDrop.AttachInteractions(_view);
         }
 
         /// <summary>Show/hide the view (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>

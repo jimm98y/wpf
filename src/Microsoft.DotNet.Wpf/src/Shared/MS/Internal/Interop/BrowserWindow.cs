@@ -316,6 +316,22 @@ namespace MS.Internal.Interop
                 string type = e.GetProperty("t").GetString();
                 switch (type)
                 {
+                    case "s":
+                    {
+                        // Display scale changed (window moved to a different-DPI screen, or the user
+                        // zoomed). Same contract as the macOS head's ScaleChanged: HwndTarget updates
+                        // its DPI scale, re-lays-out and reconfigures the render surface. The size
+                        // report that follows keeps the surface and the backing store in step.
+                        int handle = e.GetProperty("h").GetInt32();
+                        double scale = e.GetProperty("d").GetDouble();
+                        if (s_byHandle.TryGetValue((IntPtr)handle, out BrowserWindow scaled))
+                        {
+                            scaled.ScaleChanged?.Invoke(scale);
+                            scaled.Resized?.Invoke(e.GetProperty("x").GetInt32(), e.GetProperty("y").GetInt32());
+                        }
+                        break;
+                    }
+
                     case "m":
                     {
                         int kind = e.GetProperty("k").GetInt32();

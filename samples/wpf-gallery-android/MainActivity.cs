@@ -82,6 +82,7 @@ public class MainActivity : Activity
         AndroidPrint.Host = host;
         AndroidClipboard.Host = host;
         AndroidDialogs.Host = host;
+        AndroidDragDrop.Host = host;
         _host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's

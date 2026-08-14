@@ -645,7 +645,137 @@ internal sealed class WpfPrintDocumentAdapter : Android.Print.PrintDocumentAdapt
     }
 }
 
-internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost, IAndroidClipboardHost, IAndroidDialogHost
+/// <summary>
+/// The Java-facing drag listener, one per view, forwarding android.view.DragEvent into WindowsBase.
+///
+/// Every WPF window's view gets one whether or not anything in it has AllowDrop set: which element
+/// is under the pointer is not known until the drag arrives, and WPF decides. A registration that is
+/// too narrow shows the user a drag passing over a window that would in fact have taken the data --
+/// the same reasoning the Cocoa backend gives for registering every type it can map.
+/// </summary>
+internal sealed class WpfDragListener : Java.Lang.Object, View.IOnDragListener
+{
+    private readonly IntPtr _wpfHandle;
+
+    public WpfDragListener(IntPtr wpfHandle) => _wpfHandle = wpfHandle;
+
+    public bool OnDrag(View? view, DragEvent? e)
+    {
+        if (e is null) return false;
+
+        int x = (int)e.GetX();
+        int y = (int)e.GetY();
+
+        switch (e.Action)
+        {
+            case DragAction.Started:
+                // Returning false here unsubscribes this view from the WHOLE drag, drop included.
+                return AndroidDragDrop.NotifyDragStarted(_wpfHandle, MimeTypes(e));
+
+            case DragAction.Entered:
+                // Carries no usable position; the location event that follows raises WPF's DragEnter.
+                return true;
+
+            case DragAction.Location:
+                AndroidDragDrop.NotifyDragLocation(_wpfHandle, x, y, MimeTypes(e));
+                return true;
+
+            case DragAction.Exited:
+                AndroidDragDrop.NotifyDragExited(_wpfHandle);
+                return true;
+
+            case DragAction.Drop:
+                ReadClip(e, out string[]? text, out string[]? uris);
+                return AndroidDragDrop.NotifyDrop(_wpfHandle, x, y, MimeTypes(e), text, uris);
+
+            case DragAction.Ended:
+                AndroidDragDrop.NotifyDragEnded(_wpfHandle);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static string[] MimeTypes(DragEvent e)
+    {
+        ClipDescription? description = e.ClipDescription;
+        if (description is null) return Array.Empty<string>();
+
+        var types = new string[description.MimeTypeCount];
+        for (int i = 0; i < types.Length; i++) types[i] = description.GetMimeType(i) ?? string.Empty;
+        return types;
+    }
+
+    /// <summary>
+    /// The dropped items, split by kind. ClipData is non-null ONLY on ACTION_DROP -- Android's own
+    /// rule, so an app cannot read what is merely passing over it -- which is why this is the one
+    /// place data is pulled out of a drag.
+    /// </summary>
+    private static void ReadClip(DragEvent e, out string[]? text, out string[]? uris)
+    {
+        text = null;
+        uris = null;
+
+        ClipData? clip = e.ClipData;
+        if (clip is null) return;
+
+        List<string>? texts = null;
+        List<string>? links = null;
+        for (int i = 0; i < clip.ItemCount; i++)
+        {
+            ClipData.Item? item = clip.GetItemAt(i);
+            if (item is null) continue;
+
+            if (item.Uri is Android.Net.Uri uri)
+            {
+                (links ??= new List<string>()).Add(uri.ToString()!);
+            }
+            else if (!string.IsNullOrEmpty(item.Text))
+            {
+                (texts ??= new List<string>()).Add(item.Text!);
+            }
+        }
+
+        text = texts?.ToArray();
+        uris = links?.ToArray();
+    }
+}
+
+/// <summary>
+/// The shadow the user drags. A stock View.DragShadowBuilder snapshots the view it is given, and the
+/// view here is the whole WPF window -- a full-screen ghost following the finger, and a blank one at
+/// that, since a SurfaceView's pixels are not in the view hierarchy's draw at all. So this draws a
+/// small translucent tile instead: something is under the finger, and it is not the entire app.
+/// </summary>
+internal sealed class WpfDragShadow : View.DragShadowBuilder
+{
+    private const int SizeDip = 48;
+
+    private readonly int _size;
+    private readonly Paint _paint;
+
+    public WpfDragShadow(View view) : base(view)
+    {
+        _size = Math.Max(1, (int)Math.Round(SizeDip * view.Resources!.DisplayMetrics!.Density));
+        _paint = new Paint(PaintFlags.AntiAlias) { Color = Android.Graphics.Color.Argb(140, 120, 120, 120) };
+    }
+
+    public override void OnProvideShadowMetrics(Android.Graphics.Point? outShadowSize, Android.Graphics.Point? outShadowTouchPoint)
+    {
+        outShadowSize?.Set(_size, _size);
+        outShadowTouchPoint?.Set(_size / 2, _size / 2);   // centred on the finger
+    }
+
+    public override void OnDrawShadow(Canvas? canvas)
+    {
+        if (canvas is null) return;
+        float radius = _size * 0.2f;
+        canvas.DrawRoundRect(0f, 0f, _size, _size, radius, radius, _paint);
+    }
+}
+
+internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost, IAndroidClipboardHost, IAndroidDialogHost, IAndroidDragDropHost
 {
     private readonly Activity _activity;
     private readonly FrameLayout _root;
@@ -728,8 +858,12 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
             : new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent);
 
+        // Every window listens for drags; WPF decides whether the element under the pointer wants one.
+        view.SetOnDragListener(new WpfDragListener(handle));
+
         _root.AddView(view, lp);
         _views[handle] = view;
+
         return true;
     }
 
@@ -804,6 +938,99 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         if (!_views.Remove(handle, out View? view)) return;
         _root.RemoveView(view);
         view.Dispose();
+    }
+
+    // ---- drag and drop --------------------------------------------------------
+    //
+    // IAndroidDragDropHost: the outgoing half. The incoming half is WpfDragListener, attached to
+    // every view in CreateView. See the header of AndroidDragDrop.cs for what Android's model can
+    // and cannot carry.
+
+    public bool StartDrag(IntPtr handle, string[] mimeTypes, string? text, string[]? uris)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return false;
+
+        // startDragAndDrop, and DRAG_FLAG_GLOBAL with it, is API 24. Below that a drag can only be
+        // local, and this head has a better local drag already (ManagedDragLoop) -- so decline and
+        // let the caller use it rather than start a worse one.
+        if (Build.VERSION.SdkInt < BuildVersionCodes.N) return false;
+
+        ClipData? clip = BuildClip(mimeTypes, text, uris);
+        if (clip is null) return false;
+
+        // GLOBAL takes the drag outside the app (in multi-window; harmless otherwise), and
+        // GLOBAL_URI_READ is what makes a dropped file readable by whoever receives it -- without it
+        // a file drop arrives as a URI the other app is not permitted to open.
+        // The flags parameter is bound as a plain int, not as DragFlags.
+        return view.StartDragAndDrop(clip, new WpfDragShadow(view), null,
+                                     (int)(DragFlags.Global | DragFlags.GlobalUriRead));
+    }
+
+    /// <summary>
+    /// A ClipData carrying what Android can carry, described by everything WPF offered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The description lists every MIME type of the drag, including ones with no item behind them:
+    /// a receiver picks from that list, and our own windows recognise the in-process marker in it
+    /// and take the original data object instead of anything on the wire. An item is still needed --
+    /// a ClipData must have at least one -- so a drag with neither text nor URIs gets an empty text
+    /// item to hang the description on.
+    /// </para>
+    /// <para>
+    /// A <c>file://</c> URI is the exception, and it is not a small one: a global drag calls
+    /// ClipData.prepareToLeaveProcess, and StrictMode turns any raw file URI still in the clip into
+    /// a FileUriExposedException -- which is exactly what WPF's DataFormats.FileDrop produces. Making
+    /// a file shareable needs a content:// URI from a FileProvider, and a FileProvider is a manifest
+    /// entry in the APPLICATION, which a program that merely hosts WPF has not got. This is the same
+    /// wall AndroidClipboard documents for non-text data. So content: URIs are carried, file: ones
+    /// are dropped, and text/uri-list is not advertised when nothing survived to serve it -- better
+    /// than promising a format and handing over an exception.
+    /// </para>
+    /// </remarks>
+    private static ClipData? BuildClip(string[] mimeTypes, string? text, string[]? uris)
+    {
+        List<ClipData.Item>? items = null;
+        bool droppedFileUri = false;
+        if (uris is not null)
+        {
+            foreach (string uri in uris)
+            {
+                if (string.IsNullOrEmpty(uri)) continue;
+                if (uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) { droppedFileUri = true; continue; }
+                (items ??= new List<ClipData.Item>()).Add(new ClipData.Item(Android.Net.Uri.Parse(uri)));
+            }
+        }
+
+        if (droppedFileUri)
+        {
+            Console.WriteLine("WPF Android: file:// URIs were left out of a drag -- Android only lets a " +
+                              "content:// URI leave the process, which needs a FileProvider in the app.");
+        }
+
+        string[] types = mimeTypes is { Length: > 0 } ? mimeTypes : new[] { ClipDescription.MimetypeTextPlain };
+        if (items is null) types = Array.FindAll(types, t => t != "text/uri-list");
+        if (types.Length == 0) types = new[] { ClipDescription.MimetypeTextPlain };
+        var description = new ClipDescription("WPF", types);
+
+        ClipData? clip = null;
+        if (items is not null)
+        {
+            foreach (ClipData.Item item in items)
+            {
+                if (clip is null) clip = new ClipData(description, item);
+                else clip.AddItem(item);
+            }
+        }
+
+        if (text is not null)
+        {
+            var item = new ClipData.Item(text);
+            if (clip is null) clip = new ClipData(description, item);
+            else clip.AddItem(item);
+        }
+
+        return clip ?? new ClipData(description, new ClipData.Item(string.Empty));
     }
 
     // ---- clipboard ------------------------------------------------------------

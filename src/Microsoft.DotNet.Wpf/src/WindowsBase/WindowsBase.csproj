@@ -318,6 +318,9 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WindowsPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsResolver.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\ObjCBlock.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformTouch.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformGesture.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDragDrop.cs" />

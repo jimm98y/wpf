@@ -215,6 +215,14 @@ namespace System.Windows
         /// <summary>The data of the drag this process started, while it is in flight.</summary>
         internal static IDataObject? CurrentData { get; private set; }
 
+        /// <summary>
+        ///  Releases <see cref="CurrentData"/> at the end of a drag that outlived the call that
+        ///  started it. See <see cref="PlatformDragDrop.DragSourceFinished"/>.
+        /// </summary>
+        internal static void ReleaseCurrentData() => CurrentData = null;
+
+        private static readonly Action s_releaseCurrentData = ReleaseCurrentData;
+
         internal static DragDropEffects DoDragDrop(DependencyObject dragSource, object data, DragDropEffects allowedEffects)
         {
             IDataObject dataObject = DataObjectFactory.Create(data);
@@ -245,25 +253,50 @@ namespace System.Windows
             var eventSource = (UnsafeNativeMethods.IOleDropSource)new OleDragSource(dragSource);
 
             CurrentData = dataObject;
+
+            // Set on the paths whose drag outlives this call, so the `finally` does not pull the
+            // data out from under a drag the user is still holding. Whoever set it releases it:
+            // ManagedDragLoop when its timer finishes, a backend through DragSourceFinished.
+            bool detached = false;
+            PlatformDragDrop.DragSourceFinished ??= s_releaseCurrentData;
             try
             {
                 // Only the transport differs per head; everything above this point, and the whole
                 // drop side, is shared.
                 int performed;
                 bool started;
-                if (ManagedDragLoop.IsRequired)
-                {
-                    // No platform transport on this head at all, so the drag runs in managed code and
-                    // stays inside the application. See ManagedDragLoop for why that is most of a drag.
-                    return ManagedDragLoop.Run(dragSource, allowedEffects, eventSource);
-                }
-                else if (OperatingSystem.IsMacOS())
+                if (OperatingSystem.IsMacOS())
                 {
                     // AppKit ends a drag on Escape itself, so the source gets no query-continue hook
                     // and needs none -- see CocoaDragDrop.
                     performed = MS.Internal.Interop.CocoaDragDrop.StartDrag(
                         surface, mimes.ToArray(), mime => Encode(dataObject, mime), (int)allowedEffects,
                         out started, effect => eventSource.OleGiveFeedback(effect));
+                }
+                else if (OperatingSystem.IsAndroid())
+                {
+                    // Reports None whatever happens: startDragAndDrop returns before the drop, and
+                    // there is no frame to wait on the outcome with. See AndroidDragDrop.
+                    performed = MS.Internal.Interop.AndroidDragDrop.StartDrag(
+                        surface, mimes.ToArray(), mime => Encode(dataObject, mime), (int)allowedEffects,
+                        out started);
+                    detached = started;
+                }
+                else if (OperatingSystem.IsIOS())
+                {
+                    // Likewise: a UIDragInteraction session begins on a lift the user makes, not on
+                    // this call. See UIKitDragDrop.
+                    performed = MS.Internal.Interop.UIKitDragDrop.StartDrag(
+                        surface, mimes.ToArray(), mime => Encode(dataObject, mime), (int)allowedEffects,
+                        out started);
+                    detached = started;
+                }
+                else if (OperatingSystem.IsBrowser())
+                {
+                    // No transport on this head at all: a page cannot start an HTML5 drag from
+                    // script, only from a dragstart the browser itself raised.
+                    performed = 0;
+                    started = false;
                 }
                 else
                 {
@@ -274,12 +307,14 @@ namespace System.Windows
                 }
 
                 // The platform would not begin the drag. The commonest reason is that the gesture is
-                // a TOUCH one: both transports need a held pointer button to hang the drag off, and a
-                // finger provides none. Rather than let a drag on a touchscreen do nothing at all,
-                // run it inside the application, where the finger is all that is needed. A drag with
-                // no gesture behind it -- DoDragDrop called from nowhere -- is refused there in turn.
+                // a TOUCH one: the desktop transports need a held pointer button to hang the drag
+                // off, and a finger provides none. Rather than let a drag on a touchscreen do nothing
+                // at all, run it inside the application, where the finger is all that is needed. A
+                // drag with no gesture behind it -- DoDragDrop called from nowhere -- is refused
+                // there in turn.
                 if (!started)
                 {
+                    detached = ManagedDragLoop.IsRequired;
                     return ManagedDragLoop.Run(dragSource, allowedEffects, eventSource);
                 }
 
@@ -287,7 +322,7 @@ namespace System.Windows
             }
             finally
             {
-                CurrentData = null;
+                if (!detached) CurrentData = null;
             }
         }
 

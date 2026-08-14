@@ -50,6 +50,7 @@ public class MainActivity : Activity
         AndroidAccessibility.Host = host;
         AndroidPrint.Host = host;
         AndroidClipboard.Host = host;
+        AndroidDragDrop.Host = host;
 
         System.Environment.SetEnvironmentVariable("WPF_USE_WEBGPU_COMPOSITION", "1");
 

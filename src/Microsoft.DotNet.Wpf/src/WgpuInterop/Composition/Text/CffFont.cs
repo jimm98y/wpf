@@ -11,10 +11,16 @@
 // fills -- so CFF text reuses the same anti-aliased path as everything else.
 //
 // Supports: Type 2 charstrings (all path + arithmetic operators, local/global
-// subrs, the flex family), CID-keyed fonts (FDArray/FDSelect per-glyph subrs),
-// cmap formats 4/12/6/0, and DirectWrite-style synthetic bold/oblique. Not
-// supported: the legacy 'seac' accent composition and CFF2 -- both rare in the
-// shipping fonts this targets.
+// subrs, the flex family), 'seac' accent composition via endchar, CID-keyed fonts
+// (FDArray/FDSelect per-glyph subrs), cmap formats 4/12/6/0, and DirectWrite-style
+// synthetic bold/oblique. Not supported: CFF2.
+//
+// 'seac' is the legacy way to say "an accented letter is a letter plus an accent",
+// inherited from Type 1. A glyph that uses it has NO outline of its own -- its
+// charstring is four numbers and an endchar -- so ignoring the operator did not
+// degrade such a glyph, it erased it. The two arguments naming the parts are codes
+// in StandardEncoding, an encoding the font need not carry and that has nothing to
+// do with the cmap, which is why resolving them takes the charset (below).
 //
 
 using System;
@@ -48,6 +54,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly int _gsubrBias;
         private readonly CffIndex _localSubrs;   // non-CID
         private readonly int _lsubrBias;
+
+        // Charset: glyph -> SID (the glyph name's index into the standard strings + String INDEX).
+        // Values <= 2 are the three PREDEFINED charsets and stand for themselves; anything larger is
+        // the absolute offset of the font's own charset table. Only seac needs it, so the inverse
+        // map it actually wants is built on first use rather than at load.
+        private readonly int _charset;
+        private Dictionary<int, int>? _sidToGid;
 
         // CID-keyed: each glyph selects a font dict (FDSelect) with its own local subrs.
         private readonly bool _isCid;
@@ -116,6 +129,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _charStrings = ReadIndex(charStringsOff, out _);
             if (_charStrings.Count != 0 && _charStrings.Count != _numGlyphs)
                 _numGlyphs = _charStrings.Count; // CFF is authoritative for the glyph count
+
+            int charsetOp = topDict.TryGetValue(15, out double[]? cso) && cso.Length == 1 ? (int)cso[0] : 0;
+            _charset = charsetOp > 2 ? cff + charsetOp : charsetOp;   // 0/1/2 name a predefined charset
 
             _isCid = topDict.ContainsKey(1230); // ROS operator marks a CID-keyed font
             if (_isCid)
@@ -193,10 +209,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (gid < 0 || gid >= _charStrings.Count) return new List<PathFigure>();
 
-            var interp = new Type2Interp(this, LocalSubrsFor(gid), LocalBiasFor(gid));
-            (int cs, int csEnd) = _charStrings.Range(gid);
-            interp.Run(cs, csEnd);
-            List<PathFigure> figures = interp.Figures;
+            List<PathFigure> figures = RunCharstring(gid, Vector2.Zero, allowSeac: true);
 
             // Font units (y up) -> base pixels (y down).
             TransformFigures(figures, p => new Vector2(p.X * _scale, -p.Y * _scale));
@@ -204,6 +217,108 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_shear != 0f) TransformFigures(figures, p => new Vector2(p.X - _shear * p.Y, p.Y));
             return figures;
         }
+
+        /// <summary>
+        /// Runs one glyph's charstring and returns its outline in FONT UNITS, translated by
+        /// <paramref name="offset"/>. seac composes in that space -- its adx/ady are font units and
+        /// the parts have to be assembled before BuildGlyphFigures scales, emboldens and shears the
+        /// result, or the accent would be placed against a different coordinate system than the
+        /// letter. <paramref name="allowSeac"/> is false for the parts themselves: a composite may
+        /// name two simple glyphs, not two more composites.
+        /// </summary>
+        private List<PathFigure> RunCharstring(int gid, Vector2 offset, bool allowSeac = false)
+        {
+            if (gid < 0 || gid >= _charStrings.Count) return new List<PathFigure>();
+
+            var interp = new Type2Interp(this, LocalSubrsFor(gid), LocalBiasFor(gid), allowSeac);
+            (int cs, int csEnd) = _charStrings.Range(gid);
+            interp.Run(cs, csEnd);
+
+            if (offset != Vector2.Zero) TransformFigures(interp.Figures, p => p + offset);
+            return interp.Figures;
+        }
+
+        /// <summary>
+        /// The glyph a StandardEncoding code names, or -1. seac's two arguments are codes in that
+        /// fixed encoding -- not glyph ids, and not Unicode -- so the route runs code -> SID ->
+        /// charset -> glyph, entirely past the cmap.
+        /// </summary>
+        private int GlyphForStandardCode(int code)
+        {
+            // A CID-keyed font's charset holds CIDs, not name SIDs, and such fonts never use seac.
+            if (_isCid || code < 0 || code >= StandardEncodingSids.Length) return -1;
+
+            int sid = StandardEncodingSids[code];
+            if (sid == 0) return -1;
+            return SidToGid().TryGetValue(sid, out int gid) ? gid : -1;
+        }
+
+        /// <summary>
+        /// Inverts the charset into SID -> glyph. The table stores the mapping the other way round
+        /// (glyph i names SID x), because everything except seac walks it in that direction.
+        /// </summary>
+        private Dictionary<int, int> SidToGid()
+        {
+            if (_sidToGid != null) return _sidToGid;
+
+            var map = new Dictionary<int, int>(_numGlyphs) { [0] = 0 };   // .notdef
+            int last = _charStrings.Count;
+            if (_charset <= 2)
+            {
+                // A predefined charset. ISOAdobe (0) IS glyph i = SID i for the first 229 glyphs; the
+                // two Expert charsets are a different order entirely, and a font that selects one is
+                // a symbol/oldstyle set with no accented composites to resolve, so it gets nothing.
+                if (_charset == 0)
+                    for (int gid = 1; gid < last; gid++) map.TryAdd(gid, gid);
+            }
+            else
+            {
+                int format = _data[_charset];
+                int p = _charset + 1;
+                if (format == 0)
+                {
+                    for (int gid = 1; gid < last && p + 1 < _data.Length; gid++, p += 2)
+                        map.TryAdd(U16(p), gid);
+                }
+                else if (format == 1 || format == 2)
+                {
+                    // Ranges: a first SID and a count of the CONSECUTIVE SIDs that follow it, which
+                    // works because a charset usually names glyphs in standard-string order.
+                    int step = format == 1 ? 3 : 4;
+                    for (int gid = 1; gid < last && p + step <= _data.Length; p += step)
+                    {
+                        int first = U16(p);
+                        int nLeft = format == 1 ? _data[p + 2] : U16(p + 2);
+                        for (int i = 0; i <= nLeft && gid < last; i++)
+                            map.TryAdd(first + i, gid++);
+                    }
+                }
+            }
+            return _sidToGid = map;
+        }
+
+        // StandardEncoding as CFF states it: the SID each of the 256 codes names, 0 where the code is
+        // unassigned. Codes 32..126 are simply SID = code - 31; the upper half is sparse, so the whole
+        // thing is written out to stay checkable against Appendix B of the CFF spec.
+        private static readonly byte[] StandardEncodingSids =
+        {
+            0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,     // 0
+            0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,     // 16
+            1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,    // 32  space..slash
+            17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,    // 48  zero..question
+            33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,  44,  45,  46,  47,  48,    // 64  at..O
+            49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,    // 80  P..underscore
+            65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,    // 96  quoteleft..o
+            81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  95,  0,     // 112 p..asciitilde
+            0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,     // 128
+            0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,     // 144
+            0,   96,  97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,   // 160 exclamdown..fl
+            0,   111, 112, 113, 114, 0,   115, 116, 117, 118, 119, 120, 121, 122, 0,   123,   // 176 endash..questiondown
+            0,   124, 125, 126, 127, 128, 129, 130, 131, 0,   132, 133, 0,   134, 135, 136,   // 192 grave..caron
+            137, 0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,     // 208 emdash
+            0,   138, 0,   139, 0,   0,   0,   0,   140, 141, 142, 143, 0,   0,   0,   0,     // 224 AE, ordfeminine, Lslash..ordmasculine
+            0,   144, 0,   0,   0,   145, 0,   0,   146, 147, 148, 149, 0,   0,   0,   0,     // 240 ae, dotlessi, lslash..germandbls
+        };
 
         private CffIndex LocalSubrsFor(int gid)
         {
@@ -282,6 +397,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             private readonly CffFont _font;
             private readonly CffIndex _localSubrs;
             private readonly int _lsubrBias;
+            private readonly bool _allowSeac;
 
             private readonly double[] _stack = new double[48];
             private int _sp;
@@ -293,9 +409,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             public readonly List<PathFigure> Figures = new();
 
-            public Type2Interp(CffFont font, CffIndex localSubrs, int lsubrBias)
+            public Type2Interp(CffFont font, CffIndex localSubrs, int lsubrBias, bool allowSeac = false)
             {
-                _font = font; _localSubrs = localSubrs; _lsubrBias = lsubrBias;
+                _font = font; _localSubrs = localSubrs; _lsubrBias = lsubrBias; _allowSeac = allowSeac;
             }
 
             public void Run(int start, int end) => Exec(start, end, 0);
@@ -429,8 +545,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         }
                         case 11: // return
                             return;
-                        case 14: // endchar (seac accent composition not supported)
-                            TakeWidth(oddIsWidth: false, 0);
+                        case 14: // endchar -- with four arguments left, an accent composition (seac)
+                            // Valid argument counts are 0, 1 (width), 4 (seac) and 5 (width + seac),
+                            // so odd parity is what distinguishes a leading width here. Testing for
+                            // "more than none" instead, as this did, ate a seac's adx as a width.
+                            TakeWidth(oddIsWidth: true, 0);
+                            if (_sp >= 4) Seac((float)_stack[0], (float)_stack[1], (int)_stack[2], (int)_stack[3]);
                             if (_open != null) _open.Closed = true;
                             _ended = true;
                             return;
@@ -453,6 +573,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             break;
                     }
                 }
+            }
+
+            /// <summary>
+            /// Draws the two glyphs an accented composite is made of: the base letter at the origin,
+            /// then the accent shifted by (adx, ady). Type 1's seac also passed the accent's left
+            /// side bearing so the shift could be corrected for it; Type 2 dropped that argument
+            /// because the offset already is the placement, which makes this a plain translation.
+            /// </summary>
+            private void Seac(float adx, float ady, int bchar, int achar)
+            {
+                if (!_allowSeac) return;
+
+                int bgid = _font.GlyphForStandardCode(bchar);
+                int agid = _font.GlyphForStandardCode(achar);
+                if (bgid >= 0) Figures.AddRange(_font.RunCharstring(bgid, Vector2.Zero));
+                if (agid >= 0) Figures.AddRange(_font.RunCharstring(agid, new Vector2(adx, ady)));
             }
 
             private void RelCurve(int i)

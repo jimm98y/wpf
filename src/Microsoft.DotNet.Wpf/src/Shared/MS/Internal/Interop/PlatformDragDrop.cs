@@ -54,6 +54,19 @@ namespace MS.Internal.Interop
         internal static IPlatformDropTarget? Target { get; set; }
 
         /// <summary>
+        ///  Installed by PresentationCore; invoked by a backend when a drag THIS process started has
+        ///  finished.
+        /// </summary>
+        /// <remarks>
+        ///  A drag on a head that cannot block (Android, iOS, the browser) outlives the DoDragDrop
+        ///  call that began it: the call returns as soon as the platform has the drag, and the drop
+        ///  happens later. The dragged data has to stay reachable until then -- it is what an
+        ///  in-process drop is answered with -- so releasing it cannot be the caller's `finally`, and
+        ///  this is how the backend says the moment has come.
+        /// </remarks>
+        internal static Action? DragSourceFinished { get; set; }
+
+        /// <summary>
         ///  The type advertised on every drag WPF starts, marking it as this process's own.
         /// </summary>
         /// <remarks>

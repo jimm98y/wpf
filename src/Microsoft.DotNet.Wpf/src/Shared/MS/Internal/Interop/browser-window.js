@@ -22,6 +22,46 @@ function canvases() {
 
 function dpr() { return window.devicePixelRatio || 1; }
 
+// ---- display scale changes ---------------------------------------------------------------------
+//
+// devicePixelRatio is not fixed: dragging the window to a display with a different DPI changes it,
+// and so does a browser zoom. Nothing fires "resize" for that on its own -- the window is the same
+// CSS size -- so the canvases kept their old backing-store resolution and WPF kept its old DPI
+// scale, leaving the whole UI rendered for the previous display until the page was reloaded.
+//
+// matchMedia on the CURRENT ratio is the standard way to be told: the query stops matching the
+// instant the ratio changes. It is one-shot, so it re-arms itself with the new value each time.
+let lastDpr = dpr();
+let dprQuery = null;
+
+function watchDpr() {
+    if (!window.matchMedia) return;
+    if (dprQuery) dprQuery.removeEventListener("change", onDprChange);
+    dprQuery = window.matchMedia(`(resolution: ${dpr()}dppx)`);
+    dprQuery.addEventListener("change", onDprChange, { once: true });
+}
+
+function onDprChange() {
+    const scale = dpr();
+    watchDpr();                       // re-arm for the next change
+    if (Math.abs(scale - lastDpr) < 0.01) return;
+    lastDpr = scale;
+
+    for (const [handle, w] of windows) {
+        // Re-apply the CSS size so the backing store is recomputed at the new ratio. Reading it back
+        // from the element keeps this independent of how the window was sized in the first place.
+        const cssW = parseFloat(w.canvas.style.width)  || w.canvas.clientWidth;
+        const cssH = parseFloat(w.canvas.style.height) || w.canvas.clientHeight;
+        w.canvas.width  = Math.max(1, Math.round(cssW * scale));
+        w.canvas.height = Math.max(1, Math.round(cssH * scale));
+        // Tell the managed side: HwndTarget updates its DPI scale, re-lays-out and reconfigures the
+        // render surface. Sent per window because each has its own HwndTarget.
+        queue.push({ t: "s", h: handle, d: scale,
+                     x: Math.max(1, Math.round(cssW * scale)),
+                     y: Math.max(1, Math.round(cssH * scale)) });
+    }
+}
+
 function host() { return document.getElementById("wpf-host") ?? document.body; }
 
 export function createWindow(handle, title, x, y, width, height, borderless) {
@@ -614,6 +654,8 @@ function installListeners() {
 
     window.addEventListener("keydown", (e) => pushKey(true, e));
     window.addEventListener("keyup", (e) => pushKey(false, e));
+
+    watchDpr();
 
     window.addEventListener("resize", () => {
         for (const [handle, w] of windows) {
