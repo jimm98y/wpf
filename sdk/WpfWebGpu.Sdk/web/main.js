@@ -5,6 +5,7 @@ import { dotnet } from './_framework/dotnet.js'
 import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserWindow from './browser-window.js'
 import * as wpfBrowserMedia from './browser-media.js'
+import * as wpfBrowserWebView from './browser-webview.js'
 
 const status = document.getElementById('wpf-status');
 
@@ -54,6 +55,7 @@ try {
     setModuleImports('wgpuInterop', wgpuInterop);
     setModuleImports('wpfBrowserWindow', wpfBrowserWindow);
     setModuleImports('wpfBrowserMedia', wpfBrowserMedia);
+    setModuleImports('wpfBrowserWebView', wpfBrowserWebView);
 
     // Mount the bundled fonts into the wasm VFS where WPF's managed font catalog
     // scans on the browser (SystemFontCatalog: /fonts).

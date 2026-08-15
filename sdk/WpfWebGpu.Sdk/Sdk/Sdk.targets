@@ -559,7 +559,7 @@
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/main.js" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/main.js')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js"
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js;$(WpfWebGpuSdkRoot)web/browser-webview.js"
           DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
     <ItemGroup>
       <!-- .ttc as well as .ttf: the CJK font is an OpenType COLLECTION (five language families in

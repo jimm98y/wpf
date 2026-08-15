@@ -47,11 +47,15 @@ namespace MS.Internal.Interop.WebView
                 return new IOSWebViewBackend();
             }
 
+            if (OperatingSystem.IsBrowser())
+            {
+                return new BrowserWebViewBackend();
+            }
+
             // Each remaining head joins here as its backend lands, in this order (the ordering is
             // not cosmetic -- Android is Linux as far as OperatingSystem is concerned, so it must be
             // asked before Linux or it is answered by Linux's backend):
             //
-            //   IsBrowser                    -> BrowserWebViewBackend  (<iframe>)
             //   IsAndroid                    -> AndroidWebViewBackend  (android.webkit.WebView)
             //   IsLinux                      -> LinuxWebViewBackend    (WPE WebKit on a subsurface)
             //

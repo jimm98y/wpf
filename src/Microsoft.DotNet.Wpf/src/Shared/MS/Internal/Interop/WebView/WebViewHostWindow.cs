@@ -41,8 +41,20 @@ namespace MS.Internal.Interop.WebView
                 return Win32.Create(parent, width, height);
             }
 
+            if (OperatingSystem.IsBrowser())
+            {
+                // No window to make: the browser head's overlay is an <iframe> the backend creates
+                // in the DOM, keyed by this handle. All that is needed here is a value that is
+                // unique and not zero -- the range avoids HwndWrapper's synthetic handles
+                // (0x7F00_0000+) and BrowserWindow's (0x0B00_0000+), so a handle can always be told
+                // apart from a window's by inspection.
+                return (IntPtr)System.Threading.Interlocked.Increment(ref s_browserHandle);
+            }
+
             return IntPtr.Zero;
         }
+
+        private static int s_browserHandle = 0x0C00_0000;
 
         /// <summary>
         /// Move and resize the host window, in device pixels relative to the window it was created
@@ -62,6 +74,10 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// Destroy the host window. A no-op on the browser head: there is no window, and the
+        /// backend's Detach removes the iframe -- it owns the DOM element, this only owns the key.
+        /// </summary>
         internal static void Destroy(IntPtr window)
         {
             if (window != IntPtr.Zero && OperatingSystem.IsWindows())
