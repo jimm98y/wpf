@@ -172,21 +172,44 @@ internal static class Program
             Title = "WPF on WebGPU — Feature Gallery",
             Width = 1180,
             Height = 760,
-            WindowState = WindowState.Maximized,
+            // WPF_GALLERY_WINDOWED=1 opens at the size above instead of maximized. Maximized makes
+            // every renderer measurement a full-screen one, which is rarely what you want when the
+            // thing you are looking at is a single panel.
+            WindowState = Environment.GetEnvironmentVariable("WPF_GALLERY_WINDOWED") == "1"
+                ? WindowState.Normal
+                : WindowState.Maximized,
             Background = new SolidColorBrush(Color.FromRgb(0xEC, 0xEF, 0xF3)),
             Content = overlay,
         };
 
-        // A little live motion so it's obvious frames are composited continuously.
+        // CONTINUOUS motion ticks once per FRAME and is derived from ELAPSED TIME.
+        //
+        // These four used to advance by a fixed step on the 33ms timer below, which made them stutter
+        // for two compounding reasons. The window composites at the display's rate -- 100fps here --
+        // so a ~30Hz update moves in visible jumps however evenly those ticks arrive; and a
+        // DispatcherTimer runs at Background priority, so once the pointer is over the window its
+        // ticks get preempted by input and the jumps stop being evenly spaced as well. That is the
+        // "smooth until you move the mouse, then permanently choppy" the gallery used to show, with
+        // the 3D scene beside it staying fluent because its own motion was already per-frame.
+        //
+        // Rates are the old per-tick steps expressed per second (3 degrees per 33ms == 90 deg/s), so
+        // the gallery looks the same, just smooth.
+        var motionClock = System.Diagnostics.Stopwatch.StartNew();
+        CompositionTarget.Rendering += (s, e) =>
+        {
+            double t = motionClock.Elapsed.TotalSeconds;
+            spin.Angle = (t * 90.0) % 360.0;
+            rot3d.Angle = (t * 45.0) % 360.0;
+            progress.Value = (t * 30.0) % 101.0;
+            liveSlider.Value = 50 + 45 * Math.Sin(t * 2.4);
+        };
+
+        // Discrete state cycling stays on a timer: these switch between states rather than moving,
+        // so a coarse, slow tick is exactly what is wanted.
         int frame = 0;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         timer.Tick += (s, e) =>
         {
-            // Drive control state every frame -> WPF re-renders -> the sink re-composites live.
-            spin.Angle = (frame * 3) % 360;
-            rot3d.Angle = (frame * 1.5) % 360;
-            progress.Value = frame % 101;
-            liveSlider.Value = 50 + 45 * Math.Sin(frame * 0.08);
             if (list.Items.Count > 0) list.SelectedIndex = (frame / 25) % list.Items.Count;
             if (tabs.Items.Count > 0) tabs.SelectedIndex = (frame / 45) % tabs.Items.Count;
             autoCheck.IsChecked = (frame / 40) % 2 == 0;
