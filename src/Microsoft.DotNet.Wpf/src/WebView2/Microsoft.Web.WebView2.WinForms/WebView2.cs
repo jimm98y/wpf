@@ -70,6 +70,8 @@ namespace Microsoft.Web.WebView2.WinForms
 
         private void OnHostWindowReady()
         {
+            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
+                Console.WriteLine("[wv2] HostWindowReady, host=0x" + EmbeddedScenes.HostWindow.ToString("x"));
             EmbeddedScenes.HostWindowReady -= OnHostWindowReady;
             BeginInitialize();
         }
@@ -143,8 +145,14 @@ namespace Microsoft.Web.WebView2.WinForms
                 return;
             }
 
+            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
+                Console.WriteLine("[wv2] BeginInitialize creating host");
+
             _host = CoreWebView2Host.Create(EmbeddedScenes.HostWindow,
                                             Math.Max(1, Width), Math.Max(1, Height));
+
+            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
+                Console.WriteLine("[wv2] host=" + (_host is null ? "null" : "created, hwnd=0x" + _host.HostWindow.ToString("x")));
 
             if (_host is null)
             {
