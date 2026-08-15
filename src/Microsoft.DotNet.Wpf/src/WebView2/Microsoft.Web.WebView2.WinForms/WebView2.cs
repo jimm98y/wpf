@@ -70,10 +70,32 @@ namespace Microsoft.Web.WebView2.WinForms
 
         private void OnHostWindowReady()
         {
-            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
-                Console.WriteLine("[wv2] HostWindowReady, host=0x" + EmbeddedScenes.HostWindow.ToString("x"));
             EmbeddedScenes.HostWindowReady -= OnHostWindowReady;
-            BeginInitialize();
+
+            // Deferred by one loop iteration rather than run inline: this event is raised from inside
+            // the host's PublishHostWindow, part-way through bringing the window up, and starting an
+            // engine from there means doing it before the loop has pumped anything. A one-shot timer
+            // is the mechanism that works here -- Control.BeginInvoke does not, because the control
+            // has no dispatched handle yet on this driver.
+            //
+            // KNOWN ISSUE, and this deferral is NOT its fix: on the Windows head the engine's
+            // environment-creation callback never arrives under this driver's loop, so the control
+            // initialises and then waits forever. Ruled out so far: the apartment (STA), the host
+            // window (created, and the engine's child window with it), the loader (present, and the
+            // creation call returns success), and message pumping (the driver's loop dispatches Win32
+            // messages, and pumping additionally from application code changes nothing). The same
+            // backend works in a plain Win32 message loop and under WPF, so the difference is
+            // something this driver's loop does, not the backend.
+            var start = new Timer { Interval = 1 };
+
+            start.Tick += (s, e) =>
+            {
+                start.Stop();
+                start.Dispose();
+                BeginInitialize();
+            };
+
+            start.Start();
         }
 
         // ---- properties ---------------------------------------------------------------------------
@@ -145,14 +167,8 @@ namespace Microsoft.Web.WebView2.WinForms
                 return;
             }
 
-            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
-                Console.WriteLine("[wv2] BeginInitialize creating host");
-
             _host = CoreWebView2Host.Create(EmbeddedScenes.HostWindow,
                                             Math.Max(1, Width), Math.Max(1, Height));
-
-            if (Environment.GetEnvironmentVariable("WV2_TRACE") == "1")
-                Console.WriteLine("[wv2] host=" + (_host is null ? "null" : "created, hwnd=0x" + _host.HostWindow.ToString("x")));
 
             if (_host is null)
             {
