@@ -1813,11 +1813,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w, bx, by);
         }
 
+        // Everything a primitive renders FROM has to be in here. Anything that is not is invisible to
+        // the layer cache: the key matches, the bake is reused, and the layer keeps showing the old
+        // picture -- which does not look like a caching bug, it looks like the content has frozen or
+        // is animating at some fraction of the frame rate.
         private void HashPrimitive(DrawingPrimitive p)
         {
+            // SourceCopy replaces the target instead of blending, so the same geometry and brush
+            // produce different pixels with and without it.
+            if (p.SourceCopy) HV(41);
             switch (p)
             {
-                case GeometryFill f: HV(1); HashGeo(f.Geometry); HashBrush(f.Brush); break;
+                // IsGlyph selects gamma-corrected coverage (text weight), so it changes the pixels
+                // for identical geometry and brush.
+                case GeometryFill f: HV(1); HashGeo(f.Geometry); HashBrush(f.Brush); if (f.IsGlyph) HV(42); break;
                 // Hash THROUGH a nested visual: its content is the scope's real content, and a
                 // change inside it must move the layer-cache key or the group renders stale.
                 case NestedVisualDraw nv:
@@ -1825,20 +1834,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (nv.Visual.OpacityMask is { } nvm) HashBrush(nvm);
                     foreach (DrawingPrimitive np in nv.Visual.Content) HashPrimitive(np);
                     break;
-                case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HF((float)s.Style.Thickness); break;
+                case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HashStroke(s.Style); break;
                 // Must hash the fill/stroke brushes too -- a brush-only change (e.g. a menu item's
                 // hover highlight: transparent -> blue with the geometry unchanged) would otherwise
                 // leave the layer-cache key unchanged and the card would render the stale (un-hovered) state.
                 case GeometryDrawing d:
                     HV(3); HashGeo(d.Geometry);
                     if (d.Fill != null) { HV(31); HashBrush(d.Fill); }
-                    if (d.Stroke != null) { HV(32); HashBrush(d.Stroke); HF((float)d.StrokeStyle.Thickness); }
+                    if (d.Stroke != null) { HV(32); HashBrush(d.Stroke); HashStroke(d.StrokeStyle); }
                     break;
-                case GlyphRunDraw g: HV(4); HV(g.Text.GetHashCode()); HF(g.Origin.X); HF(g.Origin.Y); HF(g.EmSize); break;
+                // The COLOUR was missing here, so a run whose brush animated -- a value that turns red
+                // as it crosses a threshold, a label fading in -- kept rendering its first colour for
+                // as long as its text, position and size stayed put.
+                case GlyphRunDraw g:
+                    HV(4); HV(g.Text.GetHashCode()); HF(g.Origin.X); HF(g.Origin.Y); HF(g.EmSize);
+                    HF(g.Color.R); HF(g.Color.G); HF(g.Color.B); HF(g.Color.A);
+                    break;
                 case Viewport3DDraw v3:
                     HV(5);
                     HF(v3.Camera.Position.X); HF(v3.Camera.Position.Y); HF(v3.Camera.Position.Z);
                     HF(v3.Camera.LookDirection.X); HF(v3.Camera.LookDirection.Y); HF(v3.Camera.LookDirection.Z);
+                    // The viewport rect drives both the projection and the size of the region the pass
+                    // renders into (Emit3DViewport), so a resized 3D panel is a different picture.
+                    HR(v3.Viewport);
+                    // Lighting: a scene lit by a moving light animates with nothing else changing.
+                    HF(v3.AmbientColor.R); HF(v3.AmbientColor.G); HF(v3.AmbientColor.B);
+                    foreach (Light3D l in v3.Lights)
+                    {
+                        HV((long)l.Kind);
+                        HF(l.Direction.X); HF(l.Direction.Y); HF(l.Direction.Z);
+                        HF(l.Position.X); HF(l.Position.Y); HF(l.Position.Z);
+                        HF(l.Color.R); HF(l.Color.G); HF(l.Color.B); HF(l.Color.A);
+                    }
                     foreach (Model3D m in v3.Models)
                     {
                         Matrix4x4 t = m.Transform;
@@ -1847,8 +1874,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         HF(m.DiffuseColor.R); HF(m.DiffuseColor.G); HF(m.DiffuseColor.B);
                     }
                     break;
+                // Unreachable while every DrawingPrimitive above is handled, and it must STAY that
+                // way: a new primitive kind that landed here would hash to a constant, so a layer
+                // containing one would never notice it changing.
                 default: HV(9); break;
             }
+        }
+
+        private void HashStroke(in StrokeStyle s)
+        {
+            // Thickness alone was hashed. Everything else about a pen changes the pixels too, and
+            // DashOffset in particular is what "marching ants" and indeterminate progress indicators
+            // animate -- with nothing else about the drawing moving at all.
+            HF((float)s.Thickness);
+            HV((long)s.Cap); HV((long)s.Join); HF((float)s.MiterLimit); HF((float)s.DashOffset);
+            if (s.DashArray is { } dashes) { HV(43); foreach (double d in dashes) HF((float)d); }
         }
 
         private void HashGeo(Geometry g)
@@ -2423,14 +2463,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return (tex, view);
         }
 
-        // A Viewport3D no longer appears here. Its pass is sized to the viewport's own device rect
-        // (Emit3DViewport), so it neither needs full-target dimensions itself nor forces them on the
-        // clip/mask/effect layers above it -- which is what made a 3D panel bake window-sized textures
-        // all the way up the tree, on every frame the 3D animated.
+        // A Viewport3D with a real viewport rect no longer appears here. Its pass is sized to that
+        // rect (Emit3DViewport), so it neither needs full-target dimensions itself nor forces them on
+        // the clip/mask/effect layers above it -- which is what made a 3D panel bake window-sized
+        // textures all the way up the tree, on every frame the 3D animated.
+        //
+        // An EMPTY viewport rect still does, because it means "fill the whole render target": there is
+        // no rect to size a region from, and no bounds for it to contribute to an enclosing layer
+        // (AccumulateContentBounds), so a region-sized layer would crop it away entirely.
         private static bool HasFullTargetContent(SceneVisual v)
         {
             if (v.ClipGeometry != null || v.OpacityMask != null) return true;
+            if (FillsTargetWith3D(v)) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
+            return false;
+        }
+
+        private static bool FillsTargetWith3D(SceneVisual v)
+        {
+            foreach (DrawingPrimitive p in v.Content)
+                if (p is Viewport3DDraw { Viewport.Width: <= 0 } or Viewport3DDraw { Viewport.Height: <= 0 })
+                    return true;
             return false;
         }
 
@@ -2442,6 +2495,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // either any more; see HasFullTargetContent.
         private static bool HasNestedFullTargetContent(SceneVisual v)
         {
+            if (FillsTargetWith3D(v)) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
             return false;
         }
@@ -2500,6 +2554,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     case GeometryStroke s: AccGeometry(s.Geometry, world, (float)s.Style.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
                     case GeometryDrawing d: AccGeometry(d.Geometry, world, (float)d.StrokeStyle.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
                     case GlyphRunDraw g: AccText(g, world, ref minX, ref minY, ref maxX, ref maxY); break;
+                    // A Viewport3D occupies its viewport rect. This used to be unnecessary because a
+                    // Viewport3D forced its enclosing layer full-target; now that the layer is sized
+                    // to its content, leaving 3D out of the bounds gave a region that excluded it and
+                    // the 3D was cropped away entirely. An EMPTY rect means "fill the target" and
+                    // still forces full-target (see HasFullTargetContent), so it never reaches here.
+                    case Viewport3DDraw v3 when v3.Viewport.Width > 0 && v3.Viewport.Height > 0:
+                        AccRect(v3.Viewport.X, v3.Viewport.Y, v3.Viewport.Width, v3.Viewport.Height, world, 0f,
+                            ref minX, ref minY, ref maxX, ref maxY);
+                        break;
                 }
             }
             foreach (SceneVisual c in v.Children)
