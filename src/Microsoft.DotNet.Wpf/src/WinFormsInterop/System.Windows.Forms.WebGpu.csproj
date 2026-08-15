@@ -86,6 +86,7 @@
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewInterop.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/MacWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/IOSWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/ObjCBlock.cs" />
 
     <!-- On-screen presentation: the per-OS window + event pump and the shared WebGPU present path.

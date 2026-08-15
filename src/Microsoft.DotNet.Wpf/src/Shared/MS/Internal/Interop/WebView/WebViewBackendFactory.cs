@@ -42,12 +42,15 @@ namespace MS.Internal.Interop.WebView
                 return new MacWebViewBackend();
             }
 
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
+            {
+                return new IOSWebViewBackend();
+            }
+
             // Each remaining head joins here as its backend lands, in this order (the ordering is
-            // not cosmetic -- iOS and macOS are both Darwin, and Android is Linux as far as
-            // OperatingSystem is concerned, so the more specific head must be asked first; macOS is
-            // already above, so iOS must be tested before Linux rather than before macOS):
+            // not cosmetic -- Android is Linux as far as OperatingSystem is concerned, so it must be
+            // asked before Linux or it is answered by Linux's backend):
             //
-            //   IsIOS/IsMacCatalyst/IsTvOS   -> IOSWebViewBackend      (WKWebView + UIKit)
             //   IsBrowser                    -> BrowserWebViewBackend  (<iframe>)
             //   IsAndroid                    -> AndroidWebViewBackend  (android.webkit.WebView)
             //   IsLinux                      -> LinuxWebViewBackend    (WPE WebKit on a subsurface)

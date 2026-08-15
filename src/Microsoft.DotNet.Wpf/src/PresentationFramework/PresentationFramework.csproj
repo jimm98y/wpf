@@ -77,6 +77,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewInterop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\MacWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\IOSWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\EventSourceActivity.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TelemetryEventSource.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TraceLoggingProvider.cs" />
