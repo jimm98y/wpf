@@ -171,7 +171,9 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 dx0 = MathF.Min(p0.X, p1.X); dy0 = MathF.Min(p0.Y, p1.Y);
                 dx1 = MathF.Max(p0.X, p1.X); dy1 = MathF.Max(p0.Y, p1.Y);
             }
-            else { dx0 = 0; dy0 = 0; dx1 = width; dy1 = height; }
+            // An empty viewport means "fill the target" -- in ABSOLUTE device coords, because the
+            // target of a nested layer starts at (_devOX,_devOY) rather than at the origin.
+            else { dx0 = _devOX; dy0 = _devOY; dx1 = _devOX + width; dy1 = _devOY + height; }
             float dw = MathF.Max(1f, dx1 - dx0), dh = MathF.Max(1f, dy1 - dy0);
 
             // Keep the 3D inside its rect: scissor-intersect the clip with the device rect.
@@ -179,9 +181,25 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                 (int)MathF.Ceiling(dw), (int)MathF.Ceiling(dh)));
             if (clip.IsEmpty) return;
 
-            var (_, colorView) = CreateLayerTexture(width, height);     // single-sample resolve target
-            IntPtr msaaColorView = CreateMsaaColorTexture(width, height, ReadbackFormat, Msaa3D);
-            IntPtr depthView = CreateDepthTexture(width, height, Msaa3D);
+            // The 3D pass is sized to the VIEWPORT's device rect, not to the window.
+            //
+            // A Viewport3D is almost always a panel inside a larger window, and its three attachments
+            // -- the resolve target, the multisampled colour and the depth buffer -- used to be
+            // allocated at full target size whatever that panel's size was. On a maximized window that
+            // is 3840x1077 of MSAA colour plus depth, cleared and rasterized every frame, to draw a
+            // cube occupying a fraction of it; and because a Viewport3D forced its enclosing
+            // clip/mask/effect layers full-target too (HasFullTargetContent), every one of those baked
+            // a window-sized texture as well, re-baked on each frame the 3D animated.
+            //
+            // Rounded OUT to whole pixels so the rect is covered completely, and capped at the target
+            // size so a degenerate or enormous viewport can never ask for more than the old behaviour.
+            int rx3 = (int)MathF.Floor(dx0), ry3 = (int)MathF.Floor(dy0);
+            int rw3 = Math.Min(width, Math.Max(1, (int)MathF.Ceiling(dx1) - rx3));
+            int rh3 = Math.Min(height, Math.Max(1, (int)MathF.Ceiling(dy1) - ry3));
+
+            var (_, colorView) = CreateLayerTexture(rw3, rh3);          // single-sample resolve target
+            IntPtr msaaColorView = CreateMsaaColorTexture(rw3, rh3, ReadbackFormat, Msaa3D);
+            IntPtr depthView = CreateDepthTexture(rw3, rh3, Msaa3D);
 
             float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
@@ -212,9 +230,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
                 }
             }
-            // Map full NDC [-1,1] to the device rect's NDC sub-region (y flipped: device y grows down).
-            float sx = (dx1 - dx0) / width, sy = (dy1 - dy0) / height;
-            float tx = (dx0 + dx1) / width - 1f, ty = 1f - (dy0 + dy1) / height;
+            // Map full NDC [-1,1] onto the device rect AS IT SITS INSIDE THE REGION TEXTURE (y flipped:
+            // device y grows down). Since the region is that same rect rounded out, this is within a
+            // pixel of the identity -- but it must be computed rather than assumed, both to absorb that
+            // rounding and because the rect's absolute position has to cancel against the region origin.
+            float sx = (dx1 - dx0) / rw3, sy = (dy1 - dy0) / rh3;
+            float tx = ((dx0 - rx3) + (dx1 - rx3)) / rw3 - 1f;
+            float ty = 1f - ((dy0 - ry3) + (dy1 - ry3)) / rh3;
             var viewportMatrix = new Matrix4x4(
                 sx, 0, 0, 0,
                 0, sy, 0, 0,
@@ -297,7 +319,9 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             _slot3DCursor = baseSlot + slots.Count;
 
             plan.Add(new LayerPass(colorView, ReadbackFormat, models, depthView, msaaColorView));
-            EmitFullScreenQuad(outData, outFormat, FillKind.Layer, colorView, 1f, 1f, 1f, (float)Math.Clamp(opacity, 0.0, 1.0), 0f, 0f, clip, width, height);
+            // Composite the region texture at its device position rather than as a full-screen quad.
+            EmitLayerQuad(outData, outFormat, FillKind.Layer, colorView, 1f, 1f, 1f,
+                (float)Math.Clamp(opacity, 0.0, 1.0), rx3, ry3, rw3, rh3, clip, width, height);
         }
 
         private void ExecutePass3D(IntPtr encoder, IntPtr resolveView, IntPtr msaaColorView, IntPtr depthView, WGPUTextureFormat format, List<Draw3D> models)
