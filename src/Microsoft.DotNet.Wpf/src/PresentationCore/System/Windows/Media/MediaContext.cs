@@ -529,6 +529,35 @@ namespace System.Windows.Media
         /// Specifies the minimum time before making the next rendering operation
         /// active
         /// </param>
+        /// <summary>
+        /// How long to wait before the next render when interlocked presentation is off -- which is
+        /// always, off-Windows.
+        ///
+        /// The delay exists so the render loop cannot outrun the compositor. It was a flat 10ms,
+        /// chosen when nothing reported back when the display had actually refreshed, and it set a
+        /// hard ceiling of 1/(render + 10ms): a 5.7ms frame on a 100Hz panel ran at 64fps and no
+        /// display could ever do better. Now that each present reports the window's refresh rate,
+        /// only the unused REMAINDER of the refresh period has to be waited out, so the frame rate
+        /// is bounded by the display (or by the render itself, if it is the slower of the two)
+        /// rather than by a constant.
+        ///
+        /// Never zero: at zero the next render is queued at Render priority with nothing to yield
+        /// to, and input and layout starve behind a render loop that always has work.
+        /// </summary>
+        private TimeSpan NonInterlockedDelay(long renderStartTicks)
+        {
+            if (_reportedRefreshRate <= 0)
+            {
+                return _timeDelay;
+            }
+
+            long period = TimeSpan.TicksPerSecond / _reportedRefreshRate;
+            long remaining = period - (CurrentTicks - renderStartTicks);
+            return remaining < MinimumRenderDelay.Ticks ? MinimumRenderDelay : TimeSpan.FromTicks(remaining);
+        }
+
+        private static readonly TimeSpan MinimumRenderDelay = TimeSpan.FromMilliseconds(1);
+
         private void ScheduleNextRenderOp(TimeSpan minimumDelay)
         {
             //
@@ -695,6 +724,17 @@ namespace System.Windows.Media
             int displayRefreshRate
             )
         {
+            // Recorded whether or not interlocked presentation is on, and deliberately NOT into
+            // _animationRenderRate: that field also drives HasCommittedThisVBlankInterval and the
+            // vblank estimator, which are interlock-only machinery and must keep seeing "unknown".
+            // Off-Windows the interlock is permanently off (see EnterInterlockedPresentation), so
+            // everything below this point is skipped -- and skipping it is what left the render loop
+            // on its fixed fallback delay however fast the display actually was.
+            if (displayRefreshRate > 0)
+            {
+                _reportedRefreshRate = Math.Min(displayRefreshRate, 1000);
+            }
+
             if (InterlockIsEnabled)
             {
                 Debug.Assert(_interlockState == InterlockState.WaitingForResponse,
@@ -1855,6 +1895,7 @@ namespace System.Windows.Media
                 //
 
                 bool interlockWasNotWaiting = !InterlockIsWaiting;
+                long renderStartTicks = CurrentTicks;
 
                 //
                 // This is the big Render!
@@ -1880,7 +1921,7 @@ namespace System.Windows.Media
                     // thread
                     //
 
-                    ScheduleNextRenderOp(_timeDelay);
+                    ScheduleNextRenderOp(NonInterlockedDelay(renderStartTicks));
                 }
                 else if (interlockWasNotWaiting)
                 {
@@ -2750,6 +2791,10 @@ namespace System.Windows.Media
 
         // Time to wait for unthrottled renders
         private TimeSpan _timeDelay = TimeSpan.FromMilliseconds(10);
+
+        // The display refresh rate last reported by the compositor with a present, in Hz; 0 until
+        // one arrives. See NotifyPresented and NonInterlockedDelay.
+        private int _reportedRefreshRate;
 
         // A flag to determine if RenderComplete event is raised. We only
         // raise the event if Render + Commit happens.

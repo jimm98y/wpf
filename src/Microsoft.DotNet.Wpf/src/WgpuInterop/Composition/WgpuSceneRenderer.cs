@@ -855,8 +855,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // encode work and differ only in where the pixels end up, so leaving the counters on
                 // one of them meant every headless measurement of that work read as zero.
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long ca0 = GC.GetAllocatedBytesForCurrentThread();
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, outFormat);
                 PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
+                PerfCollectAlloc += GC.GetAllocatedBytesForCurrentThread() - ca0;
 
                 IntPtr device = _ctx.Device;
                 int bytesPerRow = AlignUp(width * 4, 256);
@@ -1466,7 +1468,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly struct Guides
         {
             public readonly float[]? X, XOff, Y, YOff;
-            public Guides(float[]? x, float[]? xo, float[]? y, float[]? yo) { X = x; XOff = xo; Y = y; YOff = yo; }
+            /// <summary>
+            /// Bumped whenever the device-space guidelines are rebuilt. Consumers that memoize a
+            /// result derived from these guides key on it: the arrays themselves are refilled IN
+            /// PLACE, so their identity says nothing about whether the values changed.
+            /// </summary>
+            public readonly int Version;
+            public Guides(float[]? x, float[]? xo, float[]? y, float[]? yo, int version = 0)
+            { X = x; XOff = xo; Y = y; YOff = yo; Version = version; }
             public bool Active => X is not null || Y is not null;
 
             public float SnapX(float x) => x + Nearest(X, XOff, x);
@@ -1505,16 +1514,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static DrawingPrimitive SnapPrimitive(DrawingPrimitive p, Guides g, Matrix3x2 world)
         {
-            switch (p)
+            // Same primitive, same guidelines, same axis-aligned world -> the same snapped result.
+            if (p.SnapGuidesVersion == g.Version &&
+                p.SnapM11 == world.M11 && p.SnapM22 == world.M22 &&
+                p.SnapM31 == world.M31 && p.SnapM32 == world.M32)
             {
-                case GeometryFill f when SnapGeometry(f.Geometry, g, world) is { } sg:
-                    return new GeometryFill(sg, f.Brush);
-                case GeometryDrawing d when SnapDrawing(d, g, world) is { } sd:
-                    return sd;
-                // A stroked arbitrary PATH cannot be reduced to edges to snap, so it passes through.
-                default:
-                    return p;
+                return p.SnapResult ?? p;
             }
+
+            DrawingPrimitive result = p switch
+            {
+                GeometryFill f when SnapGeometry(f.Geometry, g, world) is { } sg => new GeometryFill(sg, f.Brush),
+                GeometryDrawing d when SnapDrawing(d, g, world) is { } sd => sd,
+                // A stroked arbitrary PATH cannot be reduced to edges to snap, so it passes through.
+                _ => p,
+            };
+
+            p.SnapResult = ReferenceEquals(result, p) ? null : result;
+            p.SnapM11 = world.M11; p.SnapM22 = world.M22;
+            p.SnapM31 = world.M31; p.SnapM32 = world.M32;
+            p.SnapGuidesVersion = g.Version;
+            return result;
         }
 
         /// <summary>
@@ -1631,16 +1651,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return new Rect(x0, y0, MathF.Max(0f, x1 - x0), MathF.Max(0f, y1 - y0));
         }
 
+        // Device-space guidelines for a visual, memoized ON the visual.
+        //
+        // A themed application resolves guidelines for most of its visuals on nearly every frame --
+        // every Border, separator, underline and control background carries a GuidelineSet -- and
+        // each resolve allocated four float[]. In a full-screen IDE that alone was 264KB per frame,
+        // all of it collected within a few frames. The inputs are the visual's own (immutable)
+        // guideline arrays and the axis-aligned part of the world matrix, so a frame that neither
+        // moves nor rescales the visual can reuse the previous answer outright; and when the world
+        // DOES change, the arrays are refilled in place rather than reallocated, so a scroll or a
+        // resize costs nothing either. Only the first sighting of a visual allocates.
         private static Guides ResolveGuides(SceneVisual v, Matrix3x2 world)
         {
             if (v.GuidelinesX is null && v.GuidelinesY is null) return default;
             if (MathF.Abs(world.M12) > 1e-6f || MathF.Abs(world.M21) > 1e-6f) return default;
 
-            static void Build(float[]? local, float scale, float translate, out float[]? dev, out float[]? off)
+            // Reference equality on the source arrays, not contents: a new GuidelineSet arrives as a
+            // new array, and re-pushing the same one is the common case by far.
+            if (ReferenceEquals(v.GuidesSrcX, v.GuidelinesX) && ReferenceEquals(v.GuidesSrcY, v.GuidelinesY) &&
+                v.GuidesM11 == world.M11 && v.GuidesM22 == world.M22 &&
+                v.GuidesM31 == world.M31 && v.GuidesM32 == world.M32)
+            {
+                return new Guides(v.GuidesDevX, v.GuidesOffX, v.GuidesDevY, v.GuidesOffY, v.GuidesVersion);
+            }
+
+            static void Build(float[]? local, float scale, float translate, ref float[]? dev, ref float[]? off)
             {
                 if (local is null || local.Length == 0) { dev = null; off = null; return; }
-                dev = new float[local.Length];
-                off = new float[local.Length];
+                if (dev is null || dev.Length != local.Length)
+                {
+                    dev = new float[local.Length];
+                    off = new float[local.Length];
+                }
                 for (int i = 0; i < local.Length; i++)
                 {
                     float d = local[i] * scale + translate;
@@ -1649,9 +1691,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
 
-            Build(v.GuidelinesX, world.M11, world.M31, out float[]? gx, out float[]? ox);
-            Build(v.GuidelinesY, world.M22, world.M32, out float[]? gy, out float[]? oy);
-            return new Guides(gx, ox, gy, oy);
+            Build(v.GuidelinesX, world.M11, world.M31, ref v.GuidesDevX, ref v.GuidesOffX);
+            Build(v.GuidelinesY, world.M22, world.M32, ref v.GuidesDevY, ref v.GuidesOffY);
+
+            v.GuidesSrcX = v.GuidelinesX;
+            v.GuidesSrcY = v.GuidelinesY;
+            v.GuidesM11 = world.M11; v.GuidesM22 = world.M22;
+            v.GuidesM31 = world.M31; v.GuidesM32 = world.M32;
+            v.GuidesVersion++;
+
+            return new Guides(v.GuidesDevX, v.GuidesOffX, v.GuidesDevY, v.GuidesOffY, v.GuidesVersion);
         }
 
         // Composite a cached region layer into the parent (no render passes needed on a hit).        // Composite a cached region layer into the parent (no render passes needed on a hit).
@@ -2725,7 +2774,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (drawing.Fill is { } fillBrush)
-                EmitFill(new GeometryFill(drawing.Geometry, fillBrush), world, opacity, clip, width, height, format, data);
+                EmitFill(drawing.FillPrimitive ??= new GeometryFill(drawing.Geometry, fillBrush),
+                    world, opacity, clip, width, height, format, data);
 
             if (drawing.Stroke is { } strokeBrush && drawing.StrokeStyle.Thickness > 0)
             {
@@ -2742,7 +2792,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return;
                 }
                 PathGeometry path = drawing.Geometry as PathGeometry ?? GeometryToPath(drawing.Geometry, LocalTolerance(world));
-                EmitStroke(new GeometryStroke(path, strokeBrush, drawing.StrokeStyle), world, opacity, clip, width, height, format, data);
+                if (!ReferenceEquals(drawing.StrokePrimitivePath, path))
+                {
+                    drawing.StrokePrimitivePath = path;
+                    drawing.StrokePrimitive = new GeometryStroke(path, strokeBrush, drawing.StrokeStyle);
+                }
+                EmitStroke(drawing.StrokePrimitive, world, opacity, clip, width, height, format, data);
             }
         }
 
@@ -2768,9 +2823,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     EmitGpuStroke(stroke.Geometry, half, solidStroke, world, opacity, clip, width, height, format, data);
                 return;
             }
-            PathGeometry outline = PathStroker.Stroke(stroke.Geometry, style, LocalTolerance(world));
+            PathGeometry outline = StrokeOutline(stroke.Geometry, style, LocalTolerance(world));
             EmitCoverageMask(outline, stroke.Brush, world, opacity, clip, width, height, format, data);
         }
+
+        // The stroked outline of a path, memoized on the path (see Geometry.StrokeCache).
+        //
+        // Keyed by the style and the flattening tolerance as well as the geometry, because the same
+        // shape can legitimately be stroked with two different pens, and because the tolerance
+        // tightens with the world scale exactly as it does for PathCache. One entry, not a
+        // dictionary: a given geometry is drawn with one pen in every case worth optimising, and a
+        // geometry that really is stroked two ways just misses and allocates as it did before.
+        private static PathGeometry StrokeOutline(PathGeometry geometry, StrokeStyle style, float tolerance)
+        {
+            if (geometry.StrokeCache is { } cached &&
+                geometry.StrokeCacheTolerance == tolerance &&
+                SameStrokeStyle(geometry.StrokeCacheStyle, style))
+            {
+                return cached;
+            }
+
+            PathGeometry outline = PathStroker.Stroke(geometry, style, tolerance);
+            geometry.StrokeCache = outline;
+            geometry.StrokeCacheStyle = style;
+            geometry.StrokeCacheTolerance = tolerance;
+            return outline;
+        }
+
+        // Reference equality on DashArray: a pen keeps its array, and two pens that happen to hold
+        // equal dash patterns in different arrays only cost a miss.
+        private static bool SameStrokeStyle(in StrokeStyle a, in StrokeStyle b)
+            => a.Thickness == b.Thickness && a.Cap == b.Cap && a.Join == b.Join &&
+               a.MiterLimit == b.MiterLimit && a.DashOffset == b.DashOffset &&
+               ReferenceEquals(a.DashArray, b.DashArray);
 
         // The SDF stroke uses one device-space half-width, so it is exact only when the world
         // scale is (near-)uniform (rotation is fine; non-uniform scale would need an elliptical

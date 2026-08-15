@@ -69,6 +69,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // time, so the snapped instance is kept here and reused, which lets it build its own path
         // once and keep it.
         internal Geometry SnapCache;
+
+        // Memo for the CPU stroke-to-outline (PathStroker.Stroke), which is what every stroke that
+        // the analytic SDF path cannot express falls back to -- and that is most of them in a real
+        // application, because WPF's default Pen joins are MITER while the SDF path handles round.
+        // Stroking builds a complete new PathGeometry (both offset sides of every segment, plus the
+        // joins and caps), so a themed window that draws a few hundred bordered controls allocated
+        // half a megabyte per frame re-deriving outlines that had not changed. As with PathCache
+        // above, the fresh instance also left the outline's own hash/bounds memos permanently cold.
+        internal PathGeometry StrokeCache;
+        internal StrokeStyle StrokeCacheStyle;
+        internal float StrokeCacheTolerance = float.MaxValue;
     }
 
     internal sealed class RectangleGeometry : Geometry
@@ -363,6 +374,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public bool SourceCopy { get; set; }
 
+        // The guideline-snapped rebuild of this primitive (WgpuSceneRenderer.SnapPrimitive), memoized
+        // for the world matrix and guideline generation it was built against. Snapping allocates a
+        // replacement primitive -- and for a stroked drawing a replacement geometry and stroke style
+        // as well -- and a static bordered control snaps to the same answer on every frame.
+        internal DrawingPrimitive SnapResult;
+        internal float SnapM11, SnapM22, SnapM31, SnapM32;
+        internal int SnapGuidesVersion = -1;
     }
 
     /// <summary>A single fill instruction: geometry + brush.</summary>
@@ -479,6 +497,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             Geometry = geometry; Fill = fill; Stroke = stroke; StrokeStyle = strokeStyle;
         }
+
+        // The fill half of this drawing as a standalone primitive, which is how the renderer emits
+        // it (a Border's background and its border are one GeometryDrawing but two draws). Every
+        // field above is get-only, so the wrapper is valid for as long as the drawing is, and
+        // building a fresh one per frame was pure garbage -- the largest single remaining source of
+        // it once the stroke outlines were memoized.
+        internal GeometryFill FillPrimitive;
+
+        // The stroke half, likewise -- but keyed by the flattened path it strokes, because that is
+        // what GeometryToPath rebuilds when the world scale tightens the flattening tolerance.
+        internal GeometryStroke StrokePrimitive;
+        internal PathGeometry StrokePrimitivePath;
     }
 
     /// <summary>
@@ -660,6 +690,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public float[]? GuidelinesX { get; set; }
         public float[]? GuidelinesY { get; set; }
+
+        // The above resolved into DEVICE space, memoized for the world matrix they were resolved
+        // against (see WgpuSceneRenderer.ResolveGuides). Fields rather than properties because the
+        // arrays are refilled through `ref` when the world changes, so a moving visual reuses them
+        // instead of allocating a fresh set every frame.
+        internal float[]? GuidesDevX, GuidesOffX, GuidesDevY, GuidesOffY;
+        internal float[]? GuidesSrcX, GuidesSrcY;
+        internal float GuidesM11, GuidesM22, GuidesM31, GuidesM32;
+        internal int GuidesVersion;
 
         /// <summary>Drawing content recorded by this visual, in local space.</summary>
         public List<DrawingPrimitive> Content { get; } = new();
