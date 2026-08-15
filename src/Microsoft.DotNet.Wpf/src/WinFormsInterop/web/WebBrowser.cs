@@ -114,31 +114,42 @@ namespace System.Windows.Forms
 
             _readyState = WebBrowserReadyState.Loading;
 
-            _backend.AttachAsync(_hostWindow).ContinueWith(t =>
+            Task attach = _backend.AttachAsync(_hostWindow);
+
+            // Watched from a Timer rather than continued with ContinueWith + BeginInvoke.
+            //
+            // The engine completes on the UI thread, but a task continuation resumes on the thread
+            // pool, so the work has to come back. Control.BeginInvoke is the obvious way and does not
+            // work on this driver: its handles are managed counters and the posted delegate is never
+            // dispatched -- which is how this first failed, with the engine starting perfectly and
+            // the control never hearing about it. A Timer tick IS dispatched, by the driver's own
+            // loop, on the UI thread.
+            var watch = new Timer { Interval = 10 };
+
+            watch.Tick += (s, e) =>
             {
-                if (t.IsFaulted)
+                if (!attach.IsCompleted)
                 {
                     return;
                 }
 
-                void Ready()
-                {
-                    UpdateEngineBounds();
+                watch.Stop();
+                watch.Dispose();
 
-                    Action pending = _pending;
-                    _pending = null;
-                    pending?.Invoke();
+                if (attach.IsFaulted)
+                {
+                    _initializationFailure = attach.Exception?.GetBaseException();
+                    return;
                 }
 
-                if (InvokeRequired)
-                {
-                    BeginInvoke((Action)Ready);
-                }
-                else
-                {
-                    Ready();
-                }
-            }, TaskScheduler.Default);
+                UpdateEngineBounds();
+
+                Action pending = _pending;
+                _pending = null;
+                pending?.Invoke();
+            };
+
+            watch.Start();
         }
 
         private void WhenReady(Action action)
@@ -423,6 +434,7 @@ namespace System.Windows.Forms
         private void OnBackendNavigationStarting(object sender, WebViewNavigationStartingEventArgs e)
         {
             _readyState = WebBrowserReadyState.Loading;
+            _navigatedRaised = false;
 
             if (!AllowNavigation && _url is not null)
             {
@@ -444,14 +456,17 @@ namespace System.Windows.Forms
             _bridge.OnDocumentChanged();
 
             _readyState = WebBrowserReadyState.Interactive;
-
-            Uri uri = Uri.TryCreate(_backend.Source, UriKind.Absolute, out Uri parsed) ? parsed : _url;
-            OnNavigated(new WebBrowserNavigatedEventArgs(uri));
+            RaiseNavigated();
         }
 
         private void OnBackendNavigationCompleted(object sender, WebViewNavigationCompletedEventArgs e)
         {
             _readyState = WebBrowserReadyState.Complete;
+
+            // A string or stream navigation produces no SourceChanged -- the engine never leaves
+            // about:blank -- so Navigated would otherwise be skipped entirely and a handler would see
+            // DocumentCompleted for a document it was never told about.
+            RaiseNavigated();
 
             if (_objectForScripting is not null)
             {
@@ -461,6 +476,22 @@ namespace System.Windows.Forms
             Uri uri = Uri.TryCreate(_backend.Source, UriKind.Absolute, out Uri parsed) ? parsed : _url;
             OnDocumentCompleted(new WebBrowserDocumentCompletedEventArgs(uri));
         }
+
+        /// <summary>Raise Navigated once per navigation, from whichever event gets there first.</summary>
+        private void RaiseNavigated()
+        {
+            if (_navigatedRaised)
+            {
+                return;
+            }
+
+            _navigatedRaised = true;
+
+            Uri uri = Uri.TryCreate(_backend.Source, UriKind.Absolute, out Uri parsed) ? parsed : _url;
+            OnNavigated(new WebBrowserNavigatedEventArgs(uri));
+        }
+
+        private bool _navigatedRaised;
 
         protected virtual void OnNavigating(WebBrowserNavigatingEventArgs e) => Navigating?.Invoke(this, e);
 

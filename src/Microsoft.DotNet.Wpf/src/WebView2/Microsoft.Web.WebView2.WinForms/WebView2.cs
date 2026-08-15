@@ -77,15 +77,6 @@ namespace Microsoft.Web.WebView2.WinForms
             // engine from there means doing it before the loop has pumped anything. A one-shot timer
             // is the mechanism that works here -- Control.BeginInvoke does not, because the control
             // has no dispatched handle yet on this driver.
-            //
-            // KNOWN ISSUE, and this deferral is NOT its fix: on the Windows head the engine's
-            // environment-creation callback never arrives under this driver's loop, so the control
-            // initialises and then waits forever. Ruled out so far: the apartment (STA), the host
-            // window (created, and the engine's child window with it), the loader (present, and the
-            // creation call returns success), and message pumping (the driver's loop dispatches Win32
-            // messages, and pumping additionally from application code changes nothing). The same
-            // backend works in a plain Win32 message loop and under WPF, so the difference is
-            // something this driver's loop does, not the backend.
             var start = new Timer { Interval = 1 };
 
             start.Tick += (s, e) =>
@@ -179,11 +170,29 @@ namespace Microsoft.Web.WebView2.WinForms
 
             _ready = _host.Ready;
 
-            _ready.ContinueWith(t =>
-            {
-                RaiseInitializationCompleted(t.Exception?.GetBaseException());
+            // Watched from a Timer rather than continued with ContinueWith + BeginInvoke.
+            //
+            // The engine completes on the UI thread, but a task continuation resumes on the thread
+            // pool, so the work has to come back. Control.BeginInvoke is the obvious way and does
+            // not work on this driver: its handles are managed counters and the posted delegate is
+            // never dispatched, which is exactly how this failed -- the engine started perfectly and
+            // the control simply never heard about it. A Timer tick IS dispatched, by the driver's
+            // own loop, on the UI thread.
+            var watch = new Timer { Interval = 10 };
 
-                if (t.IsFaulted)
+            watch.Tick += (s, e) =>
+            {
+                if (!_ready.IsCompleted)
+                {
+                    return;
+                }
+
+                watch.Stop();
+                watch.Dispose();
+
+                RaiseInitializationCompleted(_ready.Exception?.GetBaseException());
+
+                if (_ready.IsFaulted)
                 {
                     return;
                 }
@@ -193,13 +202,15 @@ namespace Microsoft.Web.WebView2.WinForms
                 Action pending = _pending;
                 _pending = null;
                 pending?.Invoke();
-            }, TaskScheduler.Default);
+            };
+
+            watch.Start();
         }
 
         private void RaiseInitializationCompleted(Exception error)
         {
-            // Marshalled onto the control's thread when there is one: the seam completes its task on
-            // whichever thread the engine answered on, and a WinForms handler must not run there.
+            // Called on the UI thread already (see the Timer in BeginInitialize), so there is no
+            // marshalling here: Control.BeginInvoke would silently drop it on this driver.
             void Raise()
             {
                 if (error is null)
@@ -215,14 +226,7 @@ namespace Microsoft.Web.WebView2.WinForms
                     this, new CoreWebView2InitializationCompletedEventArgs(error));
             }
 
-            if (InvokeRequired)
-            {
-                BeginInvoke((Action)Raise);
-            }
-            else
-            {
-                Raise();
-            }
+            Raise();
         }
 
         private void WhenReady(Action action)

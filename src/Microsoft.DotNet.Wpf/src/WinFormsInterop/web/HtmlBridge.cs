@@ -116,13 +116,29 @@ namespace System.Windows.Forms
                 return "null";
             }
 
-            // A deadline, because a page that is mid-navigation can leave a script queued: without
-            // one, a property read would hang the application rather than answer.
-            DateTime deadline = DateTime.UtcNow.AddSeconds(10);
+            // A deadline, because a page mid-navigation can leave a script queued and a property read
+            // would otherwise hang the application rather than answer.
+            //
+            // Kept SHORT on purpose. This wait is on the UI thread, so the budget is the longest the
+            // window may stop responding for -- and it is spent in full on every read that cannot be
+            // answered, which is what a not-yet-loaded document produces. A page that is running
+            // normally answers in single-digit milliseconds; a page that cannot answer in two seconds
+            // is not going to be helped by ten, it is just going to freeze the application five times
+            // longer while it fails.
+            DateTime deadline = DateTime.UtcNow.AddSeconds(2);
 
             while (!pending.IsCompleted && DateTime.UtcNow < deadline)
             {
+                // BOTH pumps, and both are needed.
+                //
+                // Application.DoEvents drains the driver's own managed message queue, which is what
+                // keeps the WinForms half of the application alive while we wait. It does NOT reach
+                // the real Win32 queue -- and the engine answers through a COM callback dispatched
+                // from there, so waiting on DoEvents alone never sees the result and every property
+                // on the object model reads back null after the timeout below.
                 Application.DoEvents();
+                PresentationHost.Current?.Pump();
+
                 System.Threading.Thread.Sleep(1);
             }
 
