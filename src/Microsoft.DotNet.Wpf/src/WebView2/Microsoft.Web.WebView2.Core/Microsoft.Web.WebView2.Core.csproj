@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A cross-platform replacement for the Windows-only Microsoft.Web.WebView2.Core assembly.
+
+    Built with the SAME strong-name identity (name + AssemblyVersion + public key token
+    2a8ab48044d2601e via PUBLIC signing, which .NET Core accepts because it verifies only the token,
+    never the signature) so it satisfies references compiled against the real package and shadows it
+    in the app output. The WpfWebGpu.Sdk substitutes it for every head; see Sdk.targets.
+
+    The public key was extracted from the real assembly rather than invented: a token is a hash of
+    the key, so an arbitrary key with a matching token cannot be produced.
+
+    Same reasoning, and the same mechanism, as the root shims/ projects (Microsoft.Win32.Registry and
+    friends). Standalone and outside Arcade, exactly as WinFormsInterop is, so the repo-wide build
+    customization and the code-style-as-error analyzers do not apply.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.Web.WebView2.Core</AssemblyName>
+    <RootNamespace>Microsoft.Web.WebView2.Core</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!--
+      Matches the real package this fork was validated against (1.0.4022.49). The identity has to be
+      one an application's reference can bind to; the runtime unifies by simple name once the token
+      matches, so a build against a nearby version still resolves here.
+    -->
+    <AssemblyVersion>1.0.4022.49</AssemblyVersion>
+    <FileVersion>1.0.4022.49</FileVersion>
+    <Version>1.0.4022.49</Version>
+
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>../webview2.publickey</AssemblyOriginatorKeyFile>
+
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1416;CS3016;CS0067</NoWarn>
+
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <_Shared>$(MSBuildThisFileDirectory)../../Shared/MS/Internal/Interop/WebView</_Shared>
+  </PropertyGroup>
+
+  <!--
+    The engine seam, compiled in by source. It is internal and never crosses an assembly boundary,
+    which is why the same files are compiled into PresentationFramework and System.Windows.Forms too
+    (the three cannot reference one another). ObjCBlock comes along because the macOS backend needs
+    it for evaluateJavaScript's completion block.
+  -->
+  <ItemGroup>
+    <Compile Include="$(_Shared)/WebViewTypes.cs" />
+    <Compile Include="$(_Shared)/IWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/WebViewScript.cs" />
+    <Compile Include="$(_Shared)/WebViewBackendFactory.cs" />
+    <Compile Include="$(_Shared)/WebViewHostWindow.cs" />
+    <Compile Include="$(_Shared)/Platform/WindowsWebViewInterop.cs" />
+    <Compile Include="$(_Shared)/Platform/WindowsWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/Platform/MacWebViewBackend.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Shared/MS/Internal/Interop/ObjCBlock.cs" />
+  </ItemGroup>
+
+</Project>

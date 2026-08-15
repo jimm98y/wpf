@@ -9,7 +9,10 @@
     <!-- WPF0001: ThemeMode/ThemeModeConverter are [Experimental], and this is the assembly that
          DEFINES them. Application, Window, ThemeManager and WindowBackdropManager all use them
          internally, so the opt-in diagnostic necessarily fires on its own implementation. -->
-    <NoWarn>$(NoWarn);0618;1058;SYSLIB5005;WPF0001</NoWarn>
+    <!-- CS3016: the UnmanagedCallersOnly thunks in the web-view backend take a CallConvs array,
+         which is not CLS-compliant as an attribute argument. Suppressed exactly as WindowsBase and
+         System.Windows.Primitives already do for the same construct. -->
+    <NoWarn>$(NoWarn);0618;1058;SYSLIB5005;WPF0001;CS3016</NoWarn>
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
     <Platforms>AnyCPU;x86;x64;arm64</Platforms>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -62,6 +65,18 @@
     <Compile Include="$(WpfSharedDir)\MS\Utility\ItemMap.cs" />
     <Compile Include="$(WpfSharedDir)\System\Windows\Interop\OSVersionHelper.cs" />
     <Compile Include="$(WpfSharedDir)\System\Windows\Interop\OperatingSystemVersion.cs" />
+    <!-- The cross-platform web-view seam behind System.Windows.Controls.WebBrowser. Shared source
+         rather than a reference because System.Windows.Forms and Microsoft.Web.WebView2.Core compile
+         the same files into themselves, and those three assemblies cannot reference one another. No
+         instance of these internal types ever crosses an assembly boundary. -->
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewTypes.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\IWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewScript.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewBackendFactory.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewHostWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewInterop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\MacWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\EventSourceActivity.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TelemetryEventSource.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TraceLoggingProvider.cs" />
@@ -798,6 +813,7 @@
     <Compile Include="System\Windows\Controls\VirtualizingStackPanel.cs" />
     <Compile Include="System\Windows\Controls\VisualStates.cs" />
     <Compile Include="System\Windows\Controls\WebBrowser.cs" />
+    <Compile Include="System\Windows\Controls\WebBrowser.WebView.cs" />
     <Compile Include="System\Windows\Controls\WrapPanel.cs" />
     <Compile Include="System\Windows\ControlTemplate.cs" />
     <Compile Include="System\Windows\CornerRadius.cs" />

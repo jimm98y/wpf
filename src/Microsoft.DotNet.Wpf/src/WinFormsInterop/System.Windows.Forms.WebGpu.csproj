@@ -69,6 +69,25 @@
     <Compile Include="gen/XplatUIWebGpu.Core.cs" />
     <Compile Include="shims/*.cs" />
 
+    <!-- The WebBrowser control and its HtmlDocument object model. OUTSIDE swf/ on purpose: that
+         tree is vendored Mono source kept pristine so it can be refreshed from upstream, and this is
+         ours. Mono's own WebBrowser (which drove Gecko) was pruned at vendoring; the event args,
+         WebBrowserReadyState and the dialog forms it left behind are reused by these. -->
+    <Compile Include="web/*.cs" />
+
+    <!-- The cross-platform engine seam, compiled in by source. Internal, and never crossing an
+         assembly boundary, which is why PresentationFramework and Microsoft.Web.WebView2.Core each
+         compile the same files into themselves: the three cannot reference one another. -->
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewTypes.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/IWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewScript.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewBackendFactory.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewHostWindow.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewInterop.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/MacWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/ObjCBlock.cs" />
+
     <!-- On-screen presentation: the per-OS window + event pump and the shared WebGPU present path.
          This belongs to the WinForms assembly, not to a host app: real WinForms puts its own windows
          on screen, so Application.Run(form) has to work for an app that references nothing else.
