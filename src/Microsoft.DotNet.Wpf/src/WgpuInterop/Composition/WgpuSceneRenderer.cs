@@ -2423,22 +2423,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return (tex, view);
         }
 
+        // A Viewport3D no longer appears here. Its pass is sized to the viewport's own device rect
+        // (Emit3DViewport), so it neither needs full-target dimensions itself nor forces them on the
+        // clip/mask/effect layers above it -- which is what made a 3D panel bake window-sized textures
+        // all the way up the tree, on every frame the 3D animated.
         private static bool HasFullTargetContent(SceneVisual v)
         {
             if (v.ClipGeometry != null || v.OpacityMask != null) return true;
-            foreach (DrawingPrimitive p in v.Content) if (p is Viewport3DDraw) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
             return false;
         }
 
         // A clip/mask/effect visual can be region-sized unless something NESTED below it still needs
-        // full-target dimensions: a Viewport3D in its own content, or a descendant clip/mask/3D layer
-        // (rendered into this layer's region texture, those nested full-target passes would otherwise
-        // get out-of-bounds scissors). The visual's OWN clip/mask does not force full-target -- its
-        // region is computed by the caller (clip-path device bounds / content clip).
+        // full-target dimensions: a descendant clip/mask layer (rendered into this layer's region
+        // texture, those nested full-target passes would otherwise get out-of-bounds scissors). The
+        // visual's OWN clip/mask does not force full-target -- its region is computed by the caller
+        // (clip-path device bounds / content clip). A Viewport3D in its own content does not force it
+        // either any more; see HasFullTargetContent.
         private static bool HasNestedFullTargetContent(SceneVisual v)
         {
-            foreach (DrawingPrimitive p in v.Content) if (p is Viewport3DDraw) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
             return false;
         }
