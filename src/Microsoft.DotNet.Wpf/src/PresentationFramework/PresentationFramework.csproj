@@ -81,6 +81,8 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\BrowserWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\AndroidWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\AndroidWebViewRegistration.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\LinuxWebViewRegistration.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\LinuxWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\EventSourceActivity.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TelemetryEventSource.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TraceLoggingProvider.cs" />

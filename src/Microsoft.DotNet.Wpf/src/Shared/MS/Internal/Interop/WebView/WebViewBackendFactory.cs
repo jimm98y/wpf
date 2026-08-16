@@ -60,13 +60,13 @@ namespace MS.Internal.Interop.WebView
                 return new AndroidWebViewBackend();
             }
 
-            // The last head joins here when its backend lands:
-            //
-            //   IsLinux                      -> LinuxWebViewBackend    (WPE WebKit on a subsurface)
-            //
-            // Until then this returns null, and the CONTROL turns that into a clear "no web engine
-            // on this platform" failure. It must never become a control that renders an empty
-            // rectangle and says nothing.
+            if (OperatingSystem.IsLinux())
+            {
+                return new LinuxWebViewBackend();
+            }
+
+            // No engine on this platform. The caller must surface that rather than show an empty
+            // rectangle -- see the class remarks on IWebViewBackend.
             return null;
         }
     }

@@ -90,6 +90,8 @@
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/BrowserWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/AndroidWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/AndroidWebViewRegistration.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/LinuxWebViewRegistration.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/LinuxWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/ObjCBlock.cs" />
 
     <!-- On-screen presentation: the per-OS window + event pump and the shared WebGPU present path.
