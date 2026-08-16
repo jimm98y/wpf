@@ -744,16 +744,41 @@ namespace System.Windows.Media.Imaging
         {
             int bitsPerPixel = Format.BitsPerPixel;
             int rowBytes = checked((sourceRect.Width * bitsPerPixel + 7) / 8);
-            int srcByteX = checked((sourceRect.X * bitsPerPixel) / 8);
+            int srcBitX = checked(sourceRect.X * bitsPerPixel);
+            int srcByteX = srcBitX / 8;
+            // For a format narrower than a byte the requested run usually starts PART WAY INTO a
+            // byte -- with 1bpp only every eighth column is byte-aligned -- and copying whole bytes
+            // then hands back a run offset by up to seven pixels. The returned bits have to be
+            // re-packed so the run's first pixel lands in the top bits of the first output byte,
+            // which is where a caller reading the result as a sourceRect.Width-wide bitmap looks.
+            int bitShift = srcBitX % 8;
 
             byte* dst = (byte*)buffer;
             for (int row = 0; row < sourceRect.Height; row++)
             {
-                int srcIndex = checked((sourceRect.Y + row) * _managedStride + srcByteX);
+                int srcRow = checked((sourceRect.Y + row) * _managedStride);
+                int srcIndex = checked(srcRow + srcByteX);
                 int dstIndex = checked(row * stride);
-                for (int b = 0; b < rowBytes; b++)
+
+                if (bitShift == 0)
                 {
-                    dst[dstIndex + b] = _managedPixels[srcIndex + b];
+                    for (int b = 0; b < rowBytes; b++)
+                    {
+                        dst[dstIndex + b] = _managedPixels[srcIndex + b];
+                    }
+                }
+                else
+                {
+                    // Each output byte straddles two source bytes. Bits pulled in past the end of
+                    // the row are beyond the requested width, so reading zero there is harmless.
+                    int rowEnd = Math.Min(srcRow + _managedStride, _managedPixels.Length);
+                    for (int b = 0; b < rowBytes; b++)
+                    {
+                        int si = srcIndex + b;
+                        int high = si < rowEnd ? _managedPixels[si] : 0;
+                        int low = si + 1 < rowEnd ? _managedPixels[si + 1] : 0;
+                        dst[dstIndex + b] = (byte)(((high << bitShift) | (low >> (8 - bitShift))) & 0xFF);
+                    }
                 }
             }
         }

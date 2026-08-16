@@ -89,33 +89,69 @@ namespace System.Windows.Media.Imaging
             _bitmapInit.EnsureInitializedComplete();
             BitmapSourceSafeMILHandle wicFormatter = null;
 
-            // Off-Windows there is no native WIC format converter. Do the conversion on the source's
-            // managed (Bgra32) pixel backing. Grayscale destination formats (Gray8/16/32Float, BlackWhite)
-            // are computed via luminance; any other destination is passed through as Bgra32 (best effort,
-            // enough to keep the image visible). Result is published as this bitmap's Bgra32 backing.
+            // Off-Windows there is no native WIC format converter, so the conversion runs on the
+            // source's managed pixel backing.
+            //
+            // The SOURCE is expanded to straight BGRA32 by ManagedPixelConverter, which is what
+            // knows how to read a format narrower than 32 bits -- sub-byte formats especially, where
+            // a byte holds up to eight pixels. Doing that inline here is what this used to attempt,
+            // by stepping the source four bytes per pixel whatever its format actually was: Bgr24
+            // skewed along each row, Gray8 read four pixels' worth per pixel, and 1/2/4bpp read
+            // clean off the end of the buffer.
+            //
+            // The DESTINATION is still only honoured to the extent the managed backing can express
+            // it: greyscale destinations (Gray8/16/32Float, BlackWhite) are computed by luminance,
+            // anything else keeps the expanded colour. Either way the backing is published as
+            // Bgra32, which is what this bitmap then reports as its format.
             if (Source?._managedPixels != null)
             {
-                int sw = Source.PixelWidth, sh = Source.PixelHeight, sstride = Source._managedStride;
-                byte[] src = Source._managedPixels;
-                byte[] dst = new byte[sw * 4 * sh];
+                int sw = Source.PixelWidth, sh = Source.PixelHeight;
+                byte[] dst = ManagedPixelConverter.ToBgra32(
+                    Source._managedPixels, Source._managedStride, sw, sh, Source.Format, Source.Palette);
+
+                if (dst == null)
+                {
+                    // A format the converter does not know. Leaving the source untouched keeps
+                    // whatever it already was rather than publishing pixels read as the wrong shape.
+                    dst = new byte[sw * 4 * sh];
+                }
+
                 Guid g = DestinationFormat.Guid;
                 bool gray = g == PixelFormats.Gray8.Guid || g == PixelFormats.Gray16.Guid
                          || g == PixelFormats.Gray32Float.Guid || g == PixelFormats.BlackWhite.Guid;
-                for (int y = 0; y < sh; y++)
+                if (gray)
                 {
-                    int si = y * sstride, di = y * sw * 4;
-                    for (int x = 0; x < sw; x++, si += 4, di += 4)
+                    for (int i = 0; i < dst.Length; i += 4)
                     {
-                        byte b = src[si], gg = src[si + 1], r = src[si + 2], a = src[si + 3];
-                        if (gray)
-                        {
-                            byte l = (byte)((r * 77 + gg * 150 + b * 29) >> 8);   // Rec.601 luma
-                            dst[di] = dst[di + 1] = dst[di + 2] = l; dst[di + 3] = a;
-                        }
-                        else { dst[di] = b; dst[di + 1] = gg; dst[di + 2] = r; dst[di + 3] = a; }
+                        byte l = (byte)((dst[i + 2] * 77 + dst[i + 1] * 150 + dst[i] * 29) >> 8);  // Rec.601 luma
+                        dst[i] = dst[i + 1] = dst[i + 2] = l;
                     }
                 }
-                _managedPixels = dst; _managedStride = sw * 4; _format = PixelFormats.Bgra32;
+
+                // A PREMULTIPLIED destination has to come back premultiplied, and be labelled so.
+                // The converter above always produces straight colour, so asking for Pbgra32 and
+                // getting straight bytes back leaves the caller to premultiply-or-not by guesswork:
+                // the XPS/PDF image path asks for Pbgra32 precisely so it can undo the
+                // premultiplication itself, and undoing it on data that was never premultiplied
+                // washes half-transparent pixels out (a 50% grey came back at 253 instead of 127).
+                bool premultiplied = g == PixelFormats.Pbgra32.Guid;
+                if (premultiplied)
+                {
+                    for (int i = 0; i < dst.Length; i += 4)
+                    {
+                        byte a = dst[i + 3];
+                        if (a != 255)
+                        {
+                            dst[i] = (byte)(dst[i] * a / 255);
+                            dst[i + 1] = (byte)(dst[i + 1] * a / 255);
+                            dst[i + 2] = (byte)(dst[i + 2] * a / 255);
+                        }
+                    }
+                }
+
+                _managedPixels = dst;
+                _managedStride = sw * 4;
+                _format = premultiplied ? PixelFormats.Pbgra32 : PixelFormats.Bgra32;
                 _pixelWidth = sw; _pixelHeight = sh; _isSourceCached = Source.IsSourceCached;
                 CreationCompleted = true;
                 UpdateCachedSettings();

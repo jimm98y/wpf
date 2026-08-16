@@ -265,6 +265,17 @@ namespace System.Windows.Media.Imaging
         /// TreatAsSafe - No inputs are provided, no information is exposed.
         private unsafe void UpdateUnmanaged()
         {
+            // CreateInternalPalette hands back an INVALID handle where there is no WIC -- which is
+            // every platform in this fork -- and the managed decode/render path reads Colors
+            // directly, so there is nothing to copy down into. Its comment already said this was
+            // skipped; it was not, and calling through anyway made simply CONSTRUCTING a
+            // BitmapPalette from a list of colours throw DllNotFoundException for WindowsCodecs.dll.
+            // That is every indexed bitmap, before a single pixel is looked at.
+            if (_palette == null || _palette.IsInvalid)
+            {
+                return;
+            }
+
             Debug.Assert(_palette != null && !_palette.IsInvalid);
 
             int numColors = Math.Min(256, _colors.Count);
