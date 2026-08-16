@@ -1,4 +1,6 @@
 // Auto-generated non-core XplatUIDriver stub overrides (defaults). Core methods are in XplatUIWebGpu.Core.cs.
+// Clipboard is implemented in XplatUIWebGpu.Clipboard.cs and drag and drop in XplatUIWebGpu.DragDrop.cs;
+// neither belongs here, and a stub for either silently un-implements a working feature (see gen-driver.txt).
 using System; using System.Drawing; using System.Threading; using System.Collections;
 namespace System.Windows.Forms {
 	internal partial class XplatUIWebGpu : XplatUIDriver {
@@ -60,12 +62,6 @@ namespace System.Windows.Forms {
 		internal override void MenuToScreen(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void ScreenToMenu(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void SetIcon(IntPtr handle, Icon icon) {  }
-		internal override void ClipboardClose(IntPtr handle) {  }
-		internal override IntPtr ClipboardOpen(bool primary_selection) { return IntPtr.Zero; }
-		internal override int ClipboardGetID(IntPtr handle, string format) { return 0; }
-		internal override void ClipboardStore(IntPtr handle, object obj, int id, XplatUI.ObjectToClipboard converter, bool copy) {  }
-		internal override int[] ClipboardAvailableFormats(IntPtr handle) { return default(int[]); }
-		internal override object ClipboardRetrieve(IntPtr handle, int id, XplatUI.ClipboardToObject converter) { return default(object); }
 		internal override void DrawReversibleLine(Point start, Point end, Color backColor) {  }
 		internal override void DrawReversibleRectangle(IntPtr handle, Rectangle rect, int line_width) {  }
 		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor) {  }

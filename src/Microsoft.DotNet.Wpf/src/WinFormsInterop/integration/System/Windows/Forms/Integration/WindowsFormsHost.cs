@@ -296,6 +296,47 @@ namespace System.Windows.Forms.Integration
             return ToWinFormsEffects(performed);
         }
 
+        /// <summary>
+        /// The system clipboard, for the WinForms driver. Text only, which is what can honestly
+        /// cross a process boundary -- see the note in XplatUIWebGpu.Clipboard.cs.
+        /// </summary>
+        private sealed class WpfClipboardBridge : SWF.IClipboardBridge
+        {
+            public bool TryGetText(out string text)
+            {
+                text = null;
+                try
+                {
+                    if (!System.Windows.Clipboard.ContainsText()) return false;
+                    text = System.Windows.Clipboard.GetText();
+                    return text != null;
+                }
+                catch
+                {
+                    // A clipboard is shared with the rest of the desktop and can fail for reasons
+                    // that are nothing to do with this application (another process holding it, no
+                    // clipboard at all on a headless box). Paste declining to produce anything is a
+                    // far better answer than an exception out of a Ctrl+V.
+                    return false;
+                }
+            }
+
+            public void SetText(string text)
+            {
+                try { System.Windows.Clipboard.SetText(text); } catch { }
+            }
+
+            public bool ContainsText()
+            {
+                try { return System.Windows.Clipboard.ContainsText(); } catch { return false; }
+            }
+
+            public void Clear()
+            {
+                try { System.Windows.Clipboard.Clear(); } catch { }
+            }
+        }
+
         // The two DragDropEffects enums carry the same values (they are both the Win32 DROPEFFECT
         // bits), but they are different types, so the cast has to be written down somewhere.
         private static SWF.DragDropEffects ToWinFormsEffects(WpfDragDropEffects e) => (SWF.DragDropEffects)(int)e;
@@ -369,6 +410,10 @@ namespace System.Windows.Forms.Integration
             // element -- the driver has no window of its own to start one from.
             AllowDrop = true;
             _driver.StartDragRequested = OnHostedControlStartedDrag;
+
+            // Copy and paste in a hosted control reach the SYSTEM clipboard the same way: the
+            // driver's assembly cannot see WPF's Clipboard, so the host lends it one.
+            XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
 
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it
