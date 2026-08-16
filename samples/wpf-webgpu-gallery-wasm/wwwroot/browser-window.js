@@ -12,6 +12,7 @@
 const windows = new Map();   // handle -> { canvas, borderless }
 const queue = [];
 let zTop = 10;
+let mainHandle = null;   // the first non-borderless window IS the page; the rest float over it
 let listenersInstalled = false;
 
 function canvases() {
@@ -21,24 +22,107 @@ function canvases() {
 
 function dpr() { return window.devicePixelRatio || 1; }
 
+// ---- display scale changes ---------------------------------------------------------------------
+//
+// devicePixelRatio is not fixed: dragging the window to a display with a different DPI changes it,
+// and so does a browser zoom. Nothing fires "resize" for that on its own -- the window is the same
+// CSS size -- so the canvases kept their old backing-store resolution and WPF kept its old DPI
+// scale, leaving the whole UI rendered for the previous display until the page was reloaded.
+//
+// matchMedia on the CURRENT ratio is the standard way to be told: the query stops matching the
+// instant the ratio changes. It is one-shot, so it re-arms itself with the new value each time.
+let lastDpr = dpr();
+let dprQuery = null;
+
+function watchDpr() {
+    if (!window.matchMedia) return;
+    if (dprQuery) dprQuery.removeEventListener("change", onDprChange);
+    dprQuery = window.matchMedia(`(resolution: ${dpr()}dppx)`);
+    dprQuery.addEventListener("change", onDprChange, { once: true });
+}
+
+function onDprChange() {
+    const scale = dpr();
+    watchDpr();                       // re-arm for the next change
+    if (Math.abs(scale - lastDpr) < 0.01) return;
+    lastDpr = scale;
+
+    for (const [handle, w] of windows) {
+        // Re-apply the CSS size so the backing store is recomputed at the new ratio. Reading it back
+        // from the element keeps this independent of how the window was sized in the first place.
+        const cssW = parseFloat(w.canvas.style.width)  || w.canvas.clientWidth;
+        const cssH = parseFloat(w.canvas.style.height) || w.canvas.clientHeight;
+        w.canvas.width  = Math.max(1, Math.round(cssW * scale));
+        w.canvas.height = Math.max(1, Math.round(cssH * scale));
+        // Tell the managed side: HwndTarget updates its DPI scale, re-lays-out and reconfigures the
+        // render surface. Sent per window because each has its own HwndTarget.
+        queue.push({ t: "s", h: handle, d: scale,
+                     x: Math.max(1, Math.round(cssW * scale)),
+                     y: Math.max(1, Math.round(cssH * scale)) });
+    }
+}
+
 function host() { return document.getElementById("wpf-host") ?? document.body; }
 
 export function createWindow(handle, title, x, y, width, height, borderless) {
     const canvas = document.createElement("canvas");
     canvas.dataset.wpfHandle = String(handle);
     canvas.style.display = "block";
-    canvas.style.position = borderless ? "fixed" : "relative";
+
+    // Three kinds of window, not two.
+    //
+    // The MAIN window is the page: it sits in normal flow and fills the viewport. A POPUP (menu,
+    // tooltip, drag adorner) floats at the coordinates WPF gives it. A SECOND TOP-LEVEL WINDOW -- a
+    // dialog, a tool window, a splash screen -- is neither, and treating it like the main window is
+    // why dialogs were invisible: laid out in flow BELOW a main canvas that already fills the
+    // viewport, i.e. off the bottom of the page, and stretched to viewport size by setContentSize.
+    // The app was showing them correctly and nobody could see them.
+    //
+    // A secondary window therefore floats like a popup, keeps the size WPF asked for, and is CENTRED
+    // when no meaningful position was given (WPF hands out CW_USEDEFAULT for a window that never set
+    // Left/Top, which is most dialogs).
+    const secondary = !borderless && mainHandle !== null && mainHandle !== handle;
+    if (!borderless && mainHandle === null) mainHandle = handle;
+
+    canvas.style.position = (borderless || secondary) ? "fixed" : "relative";
     // Popups are created AT their target position (CreateWindowEx semantics): WPF may
     // not issue a follow-up move when the creation coordinates already match.
-    canvas.style.left = borderless ? `${x / dpr()}px` : "0px";
-    canvas.style.top = borderless ? `${y / dpr()}px` : "0px";
-    canvas.style.zIndex = String(borderless ? ++zTop : 1);
+    if (borderless) {
+        canvas.style.left = `${x / dpr()}px`;
+        canvas.style.top  = `${y / dpr()}px`;
+    } else if (secondary) {
+        const w = (width  > 1 ? width  : 400) / dpr();
+        const h = (height > 1 ? height : 300) / dpr();
+        const usable = (v) => Number.isFinite(v) && v > 0 && v < 32000;
+        canvas.style.left = usable(x) ? `${x / dpr()}px` : `${Math.max(0, (window.innerWidth  - w) / 2)}px`;
+        canvas.style.top  = usable(y) ? `${y / dpr()}px` : `${Math.max(0, (window.innerHeight - h) / 2)}px`;
+        canvas.style.boxShadow = "0 8px 40px rgba(0,0,0,.45)";
+    } else {
+        canvas.style.left = "0px";
+        canvas.style.top  = "0px";
+    }
+    canvas.style.zIndex = String((borderless || secondary) ? ++zTop : 1);
     host().appendChild(canvas);
-    windows.set(handle, { canvas, borderless });
+    windows.set(handle, { canvas, borderless, secondary });
     canvases().set(handle, canvas);
+    // A TOP-LEVEL window fills the viewport from the start. The browser has exactly one viewport and
+    // no desktop to be a window on, so the only sensible reading of a main window here is the one the
+    // resize handler already applies -- it just never ran until the user actually resized, so the app
+    // opened at whatever size it was designed for (a corner of the page) and only snapped to full size
+    // on the first resize event. Popups keep their requested size: they are positioned, not maximized.
     setContentSize(handle, width, height);
     if (!borderless && title) document.title = title;
     installListeners();
+}
+
+// Show/hide without tearing the canvas down (WPF's Window.Hide(), not Close()), so the same
+// window can be shown again -- what a caller reusing a cached window, such as a docking adorner
+// hidden between drags, expects. display:none rather than visibility:hidden: a hidden window must
+// not keep taking pointer events from what is behind it.
+export function setWindowVisible(handle, visible) {
+    const w = windows.get(handle);
+    if (!w) return;
+    w.canvas.style.display = visible ? "block" : "none";
 }
 
 export function destroyWindow(handle) {
@@ -52,6 +136,17 @@ export function destroyWindow(handle) {
 export function setContentSize(handle, width, height) {
     const w = windows.get(handle);
     if (!w) return;
+
+    // A TOP-LEVEL window always fills the viewport. There is one viewport and no desktop to be a
+    // window on, so a main window is inherently maximized here -- which is what the resize handler
+    // already assumed, and the only reason it looked right after a resize. At startup WPF applies the
+    // size the app was DESIGNED for (Window.Width/Height) just after creating the window, so the app
+    // opened at e.g. 1200x800 in a corner of the page and only snapped to full size when the user
+    // happened to resize the browser. Popups are exempt: they are positioned and sized deliberately.
+    if (!w.borderless && !w.secondary) {
+        width = window.innerWidth;
+        height = window.innerHeight;
+    }
     // Identical size is a strict no-op: macOS fires window-resize bursts with
     // unchanged dimensions, a same-value canvas.width write still blanks the
     // canvas, and the queued synthetic WM_SIZE would re-layout and invalidate
@@ -109,6 +204,30 @@ export function getScreenOriginY(handle) {
 }
 
 export function getDevicePixelRatio() { return dpr(); }
+
+// The display refresh, which no web API reports: measure the animation-frame cadence instead.
+// Sampled continuously and reported as the median of the recent intervals, so a few slow frames
+// (a background tab, a garbage collection) do not drag the answer down. Zero until enough frames
+// have gone by, which means "cannot say" and leaves WPF's own fallback in charge.
+let _rafTimes = [];
+let _rafHz = 0;
+(function sampleRefresh() {
+    const tick = (t) => {
+        _rafTimes.push(t);
+        if (_rafTimes.length > 31) _rafTimes.shift();
+        if (_rafTimes.length >= 11) {
+            const gaps = [];
+            for (let i = 1; i < _rafTimes.length; i++) gaps.push(_rafTimes[i] - _rafTimes[i - 1]);
+            gaps.sort((a, b) => a - b);
+            const median = gaps[Math.floor(gaps.length / 2)];
+            if (median > 0) _rafHz = 1000 / median;
+        }
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+})();
+
+export function getRefreshRateHz() { return _rafHz; }
 
 export function getViewportWidthPixels() { return Math.round(window.innerWidth * dpr()); }
 
@@ -380,9 +499,163 @@ function pushMouse(kind, e, wheel = 0) {
     });
 }
 
+// ---- drag and drop (drop target only) ------------------------------------
+//
+// The browser can RECEIVE a drag -- text or a URL dragged in from another tab, another
+// application, or the desktop -- but it cannot start one on WPF's behalf: an HTML5 drag
+// begins from a dragstart event on a draggable element, and DoDragDrop is called from
+// managed code in the middle of a mouse gesture, which is not that. Drags that stay
+// inside the application therefore run in ManagedDragLoop instead, and this half is
+// purely about drags arriving from outside.
+//
+// TWO BROWSER RULES SHAPE EVERYTHING BELOW:
+//
+//   1. A drop only happens where dragover called preventDefault(), and that decision is
+//      SYNCHRONOUS. WPF's answer is not: the hit-test runs when the dispatcher next
+//      drains this queue. So the last effect WPF reported is cached and used to answer
+//      the next dragover -- accurate within one frame, which is imperceptible while a
+//      pointer is moving, and self-correcting because dragover fires continuously.
+//   2. getData() only returns anything during the drop event itself. The strings are
+//      therefore read out here, at drop, and travel with the queued event; before that,
+//      only the TYPE list is knowable, which is exactly what WPF needs to answer
+//      DragEnter/DragOver anyway.
+//
+// Dropped FILES are deliberately not mapped. WPF's FileDrop format promises filesystem
+// paths and a browser never exposes them, so an app asking for FileDrop gets nothing
+// rather than something that looks like a path and is not one.
+
+let dragEffect = 0;          // last effect WPF reported: 0 none, 1 copy, 2 move, 4 link
+let dragInside = 0;          // handle the drag is currently over, 0 when outside
+
+export function setDragEffect(effect) { dragEffect = effect | 0; }
+
+function dropEffectName(effect) {
+    if (effect & 2) return "move";
+    if (effect & 1) return "copy";
+    if (effect & 4) return "link";
+    return "none";
+}
+
+// What the SOURCE permits, as WPF effects. effectAllowed is a fixed vocabulary.
+function allowedEffects(transfer) {
+    switch (transfer?.effectAllowed) {
+        case "copy": return 1;
+        case "move": return 2;
+        case "link": return 4;
+        case "copyMove": return 3;
+        case "copyLink": return 5;
+        case "linkMove": return 6;
+        case "none": return 0;
+        default: return 7;   // "all", "uninitialized", or absent
+    }
+}
+
+function pushDrag(kind, e, data) {
+    let handle = topmostWindowAt(e.clientX, e.clientY);
+    if (!handle) return 0;
+
+    const r = windows.get(handle).canvas.getBoundingClientRect();
+    queue.push({
+        t: "d", k: kind, h: handle,
+        x: Math.round((e.clientX - r.left) * dpr()),
+        y: Math.round((e.clientY - r.top) * dpr()),
+        a: allowedEffects(e.dataTransfer),
+        // Types the drag offers. Browsers already speak MIME here, which is the
+        // vocabulary the WPF side maps from, so these travel unchanged.
+        m: e.dataTransfer ? Array.from(e.dataTransfer.types) : [],
+        v: data ?? null,
+    });
+    return handle;
+}
+
+function installDragListeners() {
+    window.addEventListener("dragenter", (e) => {
+        e.preventDefault();
+        const handle = pushDrag(0, e);
+        if (handle) dragInside = handle;
+    });
+
+    window.addEventListener("dragover", (e) => {
+        const handle = pushDrag(1, e);
+        if (!handle) return;
+
+        // Rule 1: this is what makes the drop possible at all, and what the browser
+        // draws its cursor from.
+        if (dragEffect !== 0) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = dropEffectName(dragEffect);
+        }
+    });
+
+    window.addEventListener("dragleave", (e) => {
+        // dragleave also fires when moving between elements INSIDE the canvas, where the
+        // drag has not really left. Only a leave that lands outside every window counts.
+        if (topmostWindowAt(e.clientX, e.clientY)) return;
+        if (!dragInside) return;
+
+        queue.push({ t: "d", k: 2, h: dragInside, x: 0, y: 0, a: 0, m: [], v: null });
+        dragInside = 0;
+        dragEffect = 0;
+    });
+
+    window.addEventListener("drop", (e) => {
+        e.preventDefault();
+
+        // Rule 2: read everything now, while the data is still readable.
+        const data = {};
+        if (e.dataTransfer) {
+            for (const type of e.dataTransfer.types) {
+                if (type === "Files") continue;      // no paths exist to hand over
+                data[type] = e.dataTransfer.getData(type);
+            }
+        }
+
+        pushDrag(3, e, data);
+        dragInside = 0;
+        dragEffect = 0;
+    });
+}
+
+// A touch/pen CONTACT, as distinct from the mouse the browser also synthesizes for the first
+// finger. Pointer events carry an id and a pointerType, so several can be alive at once -- which is
+// the whole thing the mouse cannot express.
+//
+// The synthesized mouse is deliberately left alone: a TouchDevice raises the Touch events and drives
+// Manipulation but does not promote itself to the mouse, so suppressing the browser's compatibility
+// mouse events would gain pinch and lose Button.Click.
+function pushContact(kind, e) {
+    let handle = topmostWindowAt(e.clientX, e.clientY);
+    if (!handle) {
+        for (const [h, w] of windows) { if (!w.borderless) { handle = h; break; } }
+        if (!handle) return;
+    }
+    const r = windows.get(handle).canvas.getBoundingClientRect();
+    queue.push({
+        t: "tc", k: kind, h: handle, id: e.pointerId | 0,
+        x: Math.round((e.clientX - r.left) * dpr()),
+        y: Math.round((e.clientY - r.top) * dpr()),
+        // A pen reports real pressure; a finger reports a constant 0.5 or 1 that measures nothing,
+        // and the mouse reports 0.5 while a button is down. Only the pen's is passed on, so
+        // StylusPoint.PressureFactor does not carry a number nobody measured.
+        p: e.pointerType === "pen" ? e.pressure : -1,
+        // tiltX/tiltY are degrees from vertical and are what the seam takes directly. Zero from a
+        // finger means "flat", not "measured as flat", so only a pen's are sent.
+        tx: e.pointerType === "pen" ? (e.tiltX ?? 0) : undefined,
+        ty: e.pointerType === "pen" ? (e.tiltY ?? 0) : undefined,
+        // The inverted (eraser) end. Pointer Events has no flag for it: it arrives as a fifth
+        // BUTTON, bit 5 of buttons, in place of the tip's bit 0. Sent only when set, so the
+        // ordinary pen and finger payloads are unchanged.
+        inv: e.pointerType === "pen" && (e.buttons & 32) !== 0 ? true : undefined,
+        ts: Math.round(e.timeStamp),
+    });
+}
+
 function installListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;
+
+    installDragListeners();
+    installClipboardListeners();
 
     window.addEventListener("mousemove", (e) => pushMouse(0, e));
     window.addEventListener("mousedown", (e) => pushMouse(1, e));
@@ -395,12 +668,22 @@ function installListeners() {
     }, { passive: false });
     window.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    // Touch and pen only: a mouse already has its own path above, and routing it through both would
+    // deliver every click twice.
+    const isContact = (e) => e.pointerType === "touch" || e.pointerType === "pen";
+    window.addEventListener("pointerdown", (e) => { if (isContact(e)) pushContact(1, e); });
+    window.addEventListener("pointermove", (e) => { if (isContact(e)) pushContact(0, e); });
+    window.addEventListener("pointerup", (e) => { if (isContact(e)) pushContact(2, e); });
+    window.addEventListener("pointercancel", (e) => { if (isContact(e)) pushContact(3, e); });
+
     window.addEventListener("keydown", (e) => pushKey(true, e));
     window.addEventListener("keyup", (e) => pushKey(false, e));
 
+    watchDpr();
+
     window.addEventListener("resize", () => {
         for (const [handle, w] of windows) {
-            if (w.borderless) continue;
+            if (w.borderless || w.secondary) continue;   // only the main window tracks the viewport
             // Mimic the OS resizing a maximized window: the main canvas tracks the
             // viewport; setContentSize queues the synthetic WM_SIZE for WPF.
             setContentSize(handle, window.innerWidth, window.innerHeight);
@@ -431,6 +714,282 @@ function pushKey(isDown, e) {
     // Tab/Space/arrows/Backspace reach WPF instead of scrolling/navigating.
     if (isDown && !e.metaKey && e.key !== "F5" && e.key !== "F12")
         e.preventDefault();
+}
+
+// ---- clipboard --------------------------------------------------------------------------------
+//
+// WPF's Clipboard API is synchronous and the browser's is not, which is normally where a port gives
+// up. It works here because of an accident of the existing design that is worth stating plainly:
+// key events are QUEUED by the listener and drained by the dispatcher on the next animation frame,
+// not handed to WPF inside the DOM handler. For a Ctrl+V that gives the order
+//
+//     keydown (queued)  ->  paste (fills the cache below)  ->  rAF  ->  WPF handles the keydown
+//
+// so by the time WPF asks Clipboard.GetText the cache is already warm. Nothing needed reordering.
+//
+// The cache is filled from exactly two places, and deliberately NOT from navigator.clipboard.read:
+// reading the system clipboard needs a permission prompt, and firing one every time an application
+// happens to call Clipboard.ContainsText would be intolerable. So:
+//
+//   * the paste event, which is a real user gesture and needs no permission -- this is how text
+//     copied in ANOTHER application arrives;
+//   * this module's own writes, which is how in-application copy/paste works.
+//
+// What that leaves genuinely unavailable is reading the system clipboard with no paste gesture at
+// all. No browser permits it without a prompt, so no implementation of this API can offer it.
+//
+// Writing goes out through navigator.clipboard.writeText, which needs TRANSIENT USER ACTIVATION.
+// The rAF hop above costs about 16ms of a five-second window, so a Ctrl+C is comfortably inside it.
+// execCommand("copy") is kept as the fallback for browsers that refuse the async API.
+
+let clipText = null;         // last text seen or written, null when nothing is known
+let clipPng = null;          // ditto, as a Uint8Array
+
+function installClipboardListeners() {
+    document.addEventListener("paste", (e) => {
+        const data = e.clipboardData;
+        if (!data) return;
+
+        const text = data.getData("text/plain");
+        if (text) clipText = text;
+
+        for (const item of data.items || []) {
+            if (item.type !== "image/png") continue;
+            const file = item.getAsFile();
+            if (!file) continue;
+            // Asynchronous, so this lands one frame later than the text. An image pasted twice is
+            // therefore right the second time; there is no synchronous way to read a Blob.
+            file.arrayBuffer()
+                .then((buffer) => { clipPng = new Uint8Array(buffer); })
+                .catch(() => {});
+        }
+    });
+}
+
+/// Last-resort copy for browsers that refuse navigator.clipboard: a hidden textarea plus the
+/// deprecated execCommand, which is synchronous and still universally implemented.
+function copyViaTextarea(value) {
+    try {
+        const area = document.createElement("textarea");
+        area.value = value;
+        area.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+    } catch (e) {
+        console.warn("WPF clipboard write failed:", e);
+    }
+}
+
+export function clipboardSetText(value) {
+    clipText = value ?? "";
+    try {
+        const written = navigator.clipboard?.writeText(clipText);
+        if (written) written.catch(() => copyViaTextarea(clipText));
+        else copyViaTextarea(clipText);
+    } catch {
+        copyViaTextarea(clipText);
+    }
+}
+
+export function clipboardGetText() {
+    return clipText ?? "";
+}
+
+export function clipboardHasText() {
+    return clipText !== null && clipText !== "";
+}
+
+export function clipboardClear() {
+    clipText = null;
+    clipPng = null;
+    // Also empty the SYSTEM clipboard, or Clipboard.Clear() would only forget locally while another
+    // application could still paste what this one put there.
+    try { navigator.clipboard?.writeText("")?.catch(() => {}); } catch {}
+}
+
+export function clipboardSetPng(bytes) {
+    clipPng = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    try {
+        if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+        const blob = new Blob([clipPng], { type: "image/png" });
+        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).catch(() => {});
+    } catch (e) {
+        console.warn("WPF clipboard image write failed:", e);
+    }
+}
+
+/// Base64 rather than a byte array: the return direction of the array marshaller is the fiddly one,
+/// and an image on a clipboard is small enough that the encoding costs nothing worth measuring.
+export function clipboardGetPng() {
+    if (!clipPng || clipPng.length === 0) return "";
+    let binary = "";
+    for (let i = 0; i < clipPng.length; i++) binary += String.fromCharCode(clipPng[i]);
+    return btoa(binary);
+}
+
+export function clipboardHasPng() {
+    return clipPng !== null && clipPng.length > 0;
+}
+
+// ---- file dialogs -----------------------------------------------------------------------------
+//
+// A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean
+// something different here and the difference is not hidden:
+//
+//   open  an <input type=file> click. The user picks from their real machine; what comes back is a
+//         NAME and the BYTES, never a path -- the page is never told where the file lives. The bytes
+//         are written into the wasm virtual file system under /wpf-picked, and THAT path is what
+//         FileName returns, so an application that does File.ReadAllBytes(dlg.FileName) works
+//         unchanged. This is the same trick the head already uses to make bundled fonts visible.
+//
+//   save  a download. There is no way to write to a chosen location and no way to learn where the
+//         browser put it, so SaveFileDialog hands back a path inside the same virtual file system;
+//         the application writes there as usual and the head then offers the result as a download.
+//         Calling code does not change; only the last step is a browser gesture rather than a write.
+//
+// showOpenFilePicker (the File System Access API) would give a real handle and a genuine save, but
+// it is Chromium-only and needs a secure context, so the input element is what actually works
+// everywhere. The picker is deliberately NOT reused between calls: a fresh element each time avoids
+// a stale change listener firing an old promise.
+
+let pickedSequence = 0;
+
+/// Opens the file picker and resolves to a JSON envelope the managed side parses:
+///   { "ok": bool, "names": [ "/wpf-picked/3/report.csv", ... ] }
+/// Rejection is never propagated: a cancelled picker is an ordinary answer, not an error.
+export function pickFilesAsync(accept, multiple, directory) {
+    return new Promise((resolve) => {
+        try {
+            const input = document.createElement("input");
+            input.type = "file";
+            if (accept) input.accept = accept;
+            if (multiple) input.multiple = true;
+            // Directory selection is webkitdirectory everywhere that supports it at all.
+            if (directory) { input.webkitdirectory = true; input.setAttribute("webkitdirectory", ""); }
+            input.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+
+            let settled = false;
+            // Set the instant a change event arrives, BEFORE the files are read. Reading is async
+            // and a large file takes longer than the cancellation fallback's timeout, so without
+            // this a slow read would be reported as a cancellation while it was still in progress.
+            let changed = false;
+
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                input.remove();
+                resolve(JSON.stringify(value));
+            };
+
+            input.addEventListener("change", async () => {
+                changed = true;
+                try {
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) { finish({ ok: false, names: [] }); return; }
+
+                    const dir = `/wpf-picked/${++pickedSequence}`;
+                    mkdirp(dir);
+
+                    const names = [];
+                    for (const file of files) {
+                        const bytes = new Uint8Array(await file.arrayBuffer());
+                        // webkitRelativePath is set only for a directory pick, and it is the only
+                        // way to keep the tree's shape rather than flattening it.
+                        const relative = file.webkitRelativePath || file.name;
+                        const path = `${dir}/${relative}`;
+                        mkdirp(path.slice(0, path.lastIndexOf("/")));
+                        writeFile(path, bytes);
+                        names.push(path);
+                    }
+                    finish({ ok: true, names });
+                } catch (e) {
+                    console.warn("WPF file picker failed:", e);
+                    finish({ ok: false, names: [] });
+                }
+            });
+
+            // "cancel" is the modern signal and is not universal; without it a cancelled picker
+            // would leave the promise pending for ever and the awaiting dialog would never return.
+            // The focus fallback fires when the window regains focus with no change event, which is
+            // what a cancellation looks like in a browser that lacks the event.
+            input.addEventListener("cancel", () => finish({ ok: false, names: [] }));
+            window.addEventListener("focus", () => {
+                setTimeout(() => { if (!changed) finish({ ok: false, names: [] }); }, 500);
+            }, { once: true });
+
+            document.body.appendChild(input);
+            input.click();
+        } catch (e) {
+            console.warn("WPF file picker could not open:", e);
+            resolve(JSON.stringify({ ok: false, names: [] }));
+        }
+    });
+}
+
+/// Reserves a path in the virtual file system for a save, and returns it. Nothing is written here:
+/// the application writes to the path, then calls offerDownload.
+export function reserveSavePath(suggestedName) {
+    const dir = `/wpf-picked/${++pickedSequence}`;
+    mkdirp(dir);
+    return `${dir}/${suggestedName || "download"}`;
+}
+
+/// Hands a file the application has just written to the browser as a download.
+export function offerDownload(path, mimeType) {
+    try {
+        const bytes = readFile(path);
+        if (!bytes) return false;
+
+        const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = path.slice(path.lastIndexOf("/") + 1);
+        link.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        // Revoked on a timer rather than immediately: revoking before the browser has started the
+        // download cancels it in Firefox.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        return true;
+    } catch (e) {
+        console.warn("WPF download failed:", e);
+        return false;
+    }
+}
+
+// The wasm virtual file system, reached through whichever handle this runtime exposes. Module.FS is
+// the long-standing one; globalThis.FS appears when the runtime is built with FS exported.
+function fs() {
+    return globalThis.Module?.FS ?? globalThis.FS ?? null;
+}
+
+function mkdirp(path) {
+    const f = fs();
+    if (!f || !path) return;
+    let built = "";
+    for (const part of path.split("/")) {
+        if (!part) continue;
+        built += "/" + part;
+        try { f.mkdir(built); } catch { /* already there */ }
+    }
+}
+
+function writeFile(path, bytes) {
+    const f = fs();
+    if (!f) throw new Error("no wasm file system to write the picked file into");
+    f.writeFile(path, bytes);
+}
+
+function readFile(path) {
+    const f = fs();
+    if (!f) return null;
+    try { return f.readFile(path); } catch { return null; }
 }
 
 // ---- printing ---------------------------------------------------------------------------------
