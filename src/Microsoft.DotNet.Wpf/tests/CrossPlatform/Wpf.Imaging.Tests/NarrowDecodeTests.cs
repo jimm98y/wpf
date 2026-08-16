@@ -225,6 +225,103 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(30, got[0]); Assert.Equal(20, got[1]); Assert.Equal(10, got[2]);
         }
 
+        // ---- BMP ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// A palettised BMP, built bottom-up with four-byte row padding as the format requires. These
+        /// used to be REJECTED outright -- "only uncompressed 24/32-bit BMP is supported" -- so 1, 4
+        /// and 8-bit BMPs, which is what icons and a great many old assets are, would not load at all.
+        /// </summary>
+        private static byte[] BuildBmp(int width, int height, int bpp, byte[] topDownRows, Color[] table)
+        {
+            int srcStride = ((width * bpp + 7) / 8 + 3) & ~3;
+            int packedStride = (width * bpp + 7) / 8;
+            int tableBytes = table.Length * 4;
+            int pixelOffset = 14 + 40 + tableBytes;
+            var bmp = new byte[pixelOffset + srcStride * height];
+
+            bmp[0] = (byte)'B'; bmp[1] = (byte)'M';
+            BitConverter.GetBytes(bmp.Length).CopyTo(bmp, 2);
+            BitConverter.GetBytes(pixelOffset).CopyTo(bmp, 10);
+            BitConverter.GetBytes(40).CopyTo(bmp, 14);           // BITMAPINFOHEADER
+            BitConverter.GetBytes(width).CopyTo(bmp, 18);
+            BitConverter.GetBytes(height).CopyTo(bmp, 22);       // positive: bottom-up
+            BitConverter.GetBytes((short)1).CopyTo(bmp, 26);
+            BitConverter.GetBytes((short)bpp).CopyTo(bmp, 28);
+            BitConverter.GetBytes(0).CopyTo(bmp, 30);            // BI_RGB
+            BitConverter.GetBytes(table.Length).CopyTo(bmp, 46); // biClrUsed
+
+            for (int i = 0; i < table.Length; i++)
+            {
+                int e = 14 + 40 + i * 4;
+                bmp[e] = table[i].B; bmp[e + 1] = table[i].G; bmp[e + 2] = table[i].R;
+            }
+
+            // Rows are stored bottom-up.
+            for (int y = 0; y < height; y++)
+            {
+                Array.Copy(topDownRows, y * packedStride,
+                           bmp, pixelOffset + (height - 1 - y) * srcStride, packedStride);
+            }
+            return bmp;
+        }
+
+        [Fact]
+        public void AFourBitBmpDecodesAsIndexed4RightWayUp()
+        {
+            var table = new[]
+            {
+                Color.FromRgb(0, 0, 0), Color.FromRgb(255, 0, 0),
+                Color.FromRgb(0, 255, 0), Color.FromRgb(0, 0, 255),
+            };
+            const int W = 4, H = 2;
+            int stride = (W * 4 + 7) / 8;               // 2
+            // Two DIFFERENT rows, so a decoder that forgot BMP is stored bottom-up cannot pass.
+            byte[] rows = { 0x01, 0x23, 0x32, 0x10 };
+
+            BitmapFrame frame = Decode(BuildBmp(W, H, 4, rows, table));
+
+            Assert.Equal(PixelFormats.Indexed4, frame.Format);
+            Assert.Equal(4, frame.Palette.Colors.Count);
+            Assert.Equal(Color.FromRgb(0, 255, 0), frame.Palette.Colors[2]);
+
+            var got = new byte[stride * H];
+            frame.CopyPixels(got, stride, 0);
+            Assert.Equal(rows, got);
+        }
+
+        [Fact]
+        public void AnEightBitBmpDecodesAsIndexed8()
+        {
+            var table = new Color[256];
+            for (int i = 0; i < 256; i++) table[i] = Color.FromRgb((byte)i, (byte)(255 - i), 0);
+
+            const int W = 3, H = 2;
+            byte[] rows = { 0, 1, 2, 200, 201, 202 };   // stride 3 pads to 4 in the file
+
+            BitmapFrame frame = Decode(BuildBmp(W, H, 8, rows, table));
+
+            Assert.Equal(PixelFormats.Indexed8, frame.Format);
+            var got = new byte[W * H];
+            frame.CopyPixels(got, W, 0);
+            Assert.Equal(rows, got);
+        }
+
+        /// <summary>A 1-bit BMP, the shape an icon mask takes.</summary>
+        [Fact]
+        public void AOneBitBmpDecodesAsIndexed1()
+        {
+            var table = new[] { Color.FromRgb(0, 0, 0), Color.FromRgb(255, 255, 255) };
+            byte[] rows = { 0b10100000 };               // 8 pixels, one row
+
+            BitmapFrame frame = Decode(BuildBmp(8, 1, 1, rows, table));
+
+            Assert.Equal(PixelFormats.Indexed1, frame.Format);
+            var got = new byte[1];
+            frame.CopyPixels(got, 1, 0);
+            Assert.Equal(0b10100000, got[0]);
+        }
+
         /// <summary>
         /// And the point of all of it: a narrow frame still renders. The composition path converts
         /// it, so an Indexed4 frame has to arrive at the backend as the colours its palette names.
