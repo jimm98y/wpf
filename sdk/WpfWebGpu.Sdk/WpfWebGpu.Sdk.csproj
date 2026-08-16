@@ -48,6 +48,13 @@
     <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == '' and Exists('$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/wgpu_native.dll')">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/</WgpuWinNativeDir>
     <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == ''">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0-windows/</WgpuWinNativeDir>
 
+    <!-- Where WebView2Loader.dll is staged for the windows head. It is the one native dependency the
+         web view has on Windows (the Edge runtime itself is an OS component, not shipped here).
+         Probed first beside the gallery, exactly as wgpu-native is, then in the NuGet cache, so a
+         machine that has ever restored the WebView2 package can pack without extra steps. -->
+    <WebView2LoaderDir Condition="'$(WebView2LoaderDir)' == '' and Exists('$(WgpuWinNativeDir)WebView2Loader.dll')">$(WgpuWinNativeDir)</WebView2LoaderDir>
+    <WebView2LoaderDir Condition="'$(WebView2LoaderDir)' == ''">$(NuGetPackageRoot)microsoft.web.webview2/1.0.4022.49/runtimes/win-arm64/native/</WebView2LoaderDir>
+
     <!-- Which flavors can be packed from this machine's outputs? -->
     <_HasForkNet10 Condition="Exists('$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll')">true</_HasForkNet10>
     <_HasWinRuntime Condition="Exists('$(WpfWinRuntimeDir)PresentationFramework.dll')">true</_HasWinRuntime>
@@ -117,6 +124,21 @@
     <None Include="$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll')" />
     <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 
+    <!-- WebView2, for BOTH UI stacks and on EVERY head.
+
+         These carry the real package's strong-name identity (1.0.4022.49, token 2a8ab48044d2601e),
+         so an application that already has <PackageReference Include="Microsoft.Web.WebView2"/>
+         compiles and binds against them unchanged and runs on whatever engine the head actually has
+         — WebView2 on Windows, WKWebView on macOS/iOS, and so on. Sdk.targets evicts the real
+         package's assemblies in favour of these; see _WpfWebGpuStripWebView2Package there.
+
+         Core and Wpf are packed for every desktop head; the WinForms control is packed beside them
+         because it is only REFERENCED when UseWindowsForms is set (again, Sdk.targets), and a single
+         folder keeps the three versions from drifting apart. -->
+    <None Include="$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll" Pack="true" PackagePath="lib/wpf-webview2/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll')" />
+    <None Include="$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll" Pack="true" PackagePath="lib/wpf-webview2/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll')" />
+    <None Include="$(WpfBin)Microsoft.Web.WebView2.WinForms/Release/net10.0/Microsoft.Web.WebView2.WinForms.dll" Pack="true" PackagePath="lib/wpf-webview2-winforms/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.WinForms/Release/net10.0/Microsoft.Web.WebView2.WinForms.dll')" />
+
     <!-- Native wgpu for the unix desktop heads. Each is packed only if staged on this machine
          (eng/fetch-wgpu.ps1 -Rid <rid>), so a package built on a Mac carries the macOS backend and
          one built on Linux carries the Linux one; Sdk.targets then picks by RID at consume time. -->
@@ -158,6 +180,16 @@
     <None Include="$(WgpuWinNativeDir)wgpu_native.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)wgpu_native.dll')" />
     <None Include="$(WgpuWinNativeDir)libEGL.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)libEGL.dll')" />
     <None Include="$(WgpuWinNativeDir)libGLESv2.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)libGLESv2.dll')" />
+
+    <!-- The WebView2 loader, which is the ONLY native dependency the web view has on Windows: it
+         exports CreateCoreWebView2EnvironmentWithOptions, and WindowsWebViewBackend P/Invokes it to
+         start the Edge runtime. The runtime itself is an OS component (preinstalled on Windows 11)
+         and is not shipped here — only this ~150 KB shim is.
+
+         Staged the same way wgpu-native is (see WebView2LoaderDir), so the pack is Exists()-gated and
+         a machine without it produces a diagnosable error rather than a package whose every
+         web-hosting app dies with DllNotFoundException. -->
+    <None Include="$(WebView2LoaderDir)WebView2Loader.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WebView2LoaderDir)WebView2Loader.dll')" />
   </ItemGroup>
 
   <!-- Fail early with a readable message instead of packing a broken SDK. -->
@@ -166,6 +198,20 @@
            Text="Nothing to pack: neither the net10.0 fork build ($(WpfBin)PresentationFramework/Release/net10.0/) nor a staged win-arm64 runtime ($(WpfWinRuntimeDir)) is present. Build the fork or set WpfWinRuntimeDir." />
     <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')"
            Text="The windows head needs the fork-built Accessibility.dll ($(WpfBin)Accessibility/Release/net10.0/). Build the fork; do NOT substitute the WindowsDesktop framework copy." />
+    <!-- The three WebView2 assemblies move together or not at all: they share an identity and a
+         version, and a package carrying only some of them resolves half an application's references
+         to ours and half to the real (Windows-only) package, which fails at run time off Windows in
+         a way that points nowhere near this SDK. -->
+    <Error Condition="'$(_HasForkNet10)' == 'true' and
+                      Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
+                      !Exists('$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll')"
+           Text="Microsoft.Web.WebView2.Core was built but Microsoft.Web.WebView2.Wpf was not. Build src/Microsoft.DotNet.Wpf/src/WebView2/Microsoft.Web.WebView2.Wpf (and .WinForms); shipping one without the other resolves half an app's references to the real Windows-only package." />
+
+    <Error Condition="'$(_HasWinRuntime)' == 'true' and
+                      Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
+                      !Exists('$(WebView2LoaderDir)WebView2Loader.dll')"
+           Text="The windows head packs the WebView2 assemblies but has no WebView2Loader.dll under $(WebView2LoaderDir). Restore the Microsoft.Web.WebView2 package or set WebView2LoaderDir. Without it every web view on Windows fails at startup with DllNotFoundException, exactly as a missing wgpu_native.dll does." />
+
     <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)wgpu_native.dll')"
            Text="The windows head has no WebGPU backend: no wgpu_native.dll under $(WgpuWinNativeDir). Build samples/wpf-webgpu-gallery (which stages wgpu-native + ANGLE) or set WgpuWinNativeDir. Packing without it produces an SDK whose apps all fail at startup with DllNotFoundException." />
     <Warning Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)libEGL.dll')"

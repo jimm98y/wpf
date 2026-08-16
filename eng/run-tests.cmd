@@ -24,6 +24,7 @@ call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Geometry.Test
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Input.Tests\Wpf.Input.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Printing.Tests\Wpf.Printing.Tests.csproj" %*
 call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.Text.Tests\Wpf.Text.Tests.csproj" %*
+call :run "%REPO%\src\Microsoft.DotNet.Wpf\tests\CrossPlatform\Wpf.WebView.Tests\Wpf.WebView.Tests.csproj" %*
 
 exit /b %RC%
 

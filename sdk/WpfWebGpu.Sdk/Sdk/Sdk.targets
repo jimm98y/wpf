@@ -160,6 +160,64 @@
     </ItemGroup>
   </Target>
 
+  <!-- ============================== WebView2 (every head) ============================== -->
+
+  <!--
+    WebView2 for a WPF or WinForms app, on every head.
+
+    The assemblies in lib/wpf-webview2 carry the REAL package's strong-name identity, so they satisfy
+    a reference compiled against Microsoft.Web.WebView2 and run on whatever engine the head has. They
+    are referenced whenever the app uses either UI stack, because a WebView2 reference is normally
+    transitive (a control library pulls it in) and gating on the app's own PackageReference would
+    miss exactly those apps.
+
+    The WinForms control is separate: it links against the Mono System.Windows.Forms, so referencing
+    it from a pure-WPF app would drag that whole stack in.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2/*.dll" Private="true" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuUseWinForms)' == 'true'">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2-winforms/*.dll" Private="true" />
+  </ItemGroup>
+
+  <!--
+    Evict the REAL Microsoft.Web.WebView2 assemblies when the app (or something it references) brings
+    the package along.
+
+    Without this the compiler sees two assemblies with the same identity and fails, and if it did not,
+    the package's own copy would win at run time and immediately fail: it is a COM wrapper that needs
+    WebView2Loader.dll and an Edge runtime, which is precisely what does not exist off Windows. The
+    same shape, and the same reasoning, as _WpfWebGpuStripFrameworkDrawing above.
+  -->
+  <Target Name="_WpfWebGpuStripWebView2Package" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="('%(FileName)' == 'Microsoft.Web.WebView2.Core' or
+                                 '%(FileName)' == 'Microsoft.Web.WebView2.Wpf' or
+                                 '%(FileName)' == 'Microsoft.Web.WebView2.WinForms') and
+                                !$([System.String]::Copy('%(ReferencePath.Identity)').Contains('$(WpfWebGpuSdkRoot)'))" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    The real package also drops WebView2Loader.dll into the output through its own targets. Ours
+    needs it too on Windows -- WindowsWebViewBackend P/Invokes CreateCoreWebView2EnvironmentWithOptions
+    from it -- so it is deliberately left alone there, and removed everywhere else, where it is a
+    Windows binary that can only confuse a deployment.
+  -->
+  <Target Name="_WpfWebGpuDropWebView2LoaderOffWindows" AfterTargets="Build;Publish"
+          Condition="'$(_WpfWebGpuWin)' != 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuStrayLoader Include="$(OutDir)WebView2Loader.dll" Condition="'$(OutDir)' != ''" />
+      <_WpfWebGpuStrayLoader Include="$(PublishDir)WebView2Loader.dll" Condition="'$(PublishDir)' != ''" />
+      <_WpfWebGpuStrayLoader Include="$(OutDir)runtimes/**/WebView2Loader.dll" Condition="'$(OutDir)' != ''" />
+    </ItemGroup>
+    <Delete Files="@(_WpfWebGpuStrayLoader)" ContinueOnError="true" />
+  </Target>
+
   <!-- Same reason, at RUNTIME: a UseWindowsForms app must not resolve Microsoft.WindowsDesktop.App,
        or its System.Windows.Forms shadows the one deployed beside the app. -->
   <Target Name="_WpfWebGpuDropWindowsDesktopForWinForms"
@@ -501,7 +559,7 @@
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/main.js" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
           Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/main.js')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js"
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js;$(WpfWebGpuSdkRoot)web/browser-webview.js"
           DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
     <ItemGroup>
       <!-- .ttc as well as .ttf: the CJK font is an OpenType COLLECTION (five language families in

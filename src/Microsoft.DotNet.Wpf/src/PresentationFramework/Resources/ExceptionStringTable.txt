@@ -1001,6 +1001,9 @@ AxNoSinkAdvise=Cannot Advise event interface '{0}'. ('{1}')
 AxNoConnectionPointContainer=Source object does not expose IConnectionPointContainer.
 AxNoConnectionPoint=Cannot create connection point for event interface '{0}'.
 WebBrowserNoCastToIWebBrowser2=Cannot get IWebBrowser2 from the native ActiveX control.
+WebBrowserNoEngine=No web engine is available on this platform, so web content cannot be hosted.
+WebBrowserTargetFrameNotSupported=Navigating a named target frame is not supported by this web engine.
+WebBrowserDocumentNotSupported=WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.
 AxWindowlessControl=ActiveX control is windowless. Windowless ActiveX controls are not supported.
 
 ; Navigation
