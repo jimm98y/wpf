@@ -463,6 +463,121 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(PixelFormats.Bgra32, frame.Format);
         }
 
+        // ---- encoding ------------------------------------------------------------------------
+
+        /// <summary>
+        /// Save a narrow bitmap and it comes back the same FORMAT, not just the same pixels. Widening
+        /// everything to RGBA8 on the way out meant loading a 1-bit PNG and saving it produced a file
+        /// thirty-two times the size, and a "lossless" round trip that kept every pixel still lost
+        /// what the image was.
+        /// </summary>
+        [Theory]
+        [InlineData(1)]
+        [InlineData(4)]
+        [InlineData(8)]
+        public void AnIndexedBitmapSavesAsAnIndexedPng(int bpp)
+        {
+            var colors = new List<Color>();
+            for (int i = 0; i < (1 << bpp); i++)
+                colors.Add(Color.FromRgb((byte)(i * 7), (byte)(255 - i * 5), (byte)(i * 3)));
+            var palette = new BitmapPalette(colors);
+
+            PixelFormat format = bpp switch
+            {
+                1 => PixelFormats.Indexed1,
+                4 => PixelFormats.Indexed4,
+                _ => PixelFormats.Indexed8,
+            };
+
+            const int W = 9, H = 3;                  // odd width: the last byte of a row is partial
+            int stride = (W * bpp + 7) / 8;
+            var packed = new byte[stride * H];
+            new Random(7).NextBytes(packed);
+
+            BitmapSource src = BitmapSource.Create(W, H, 96, 96, format, palette, packed, stride);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(src));
+            using var saved = new MemoryStream();
+            encoder.Save(saved);
+
+            BitmapFrame back = Decode(saved.ToArray());
+
+            Assert.Equal(format, back.Format);
+            Assert.Equal(colors.Count, back.Palette.Colors.Count);
+
+            var got = new byte[stride * H];
+            back.CopyPixels(got, stride, 0);
+            Assert.Equal(packed, got);
+        }
+
+        [Fact]
+        public void AGreyBitmapSavesAsAGreyPng()
+        {
+            const int W = 5, H = 2;
+            byte[] grey = { 0, 40, 90, 160, 255, 255, 160, 90, 40, 0 };
+            BitmapSource src = BitmapSource.Create(W, H, 96, 96, PixelFormats.Gray8, null, grey, W);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(src));
+            using var saved = new MemoryStream();
+            encoder.Save(saved);
+
+            BitmapFrame back = Decode(saved.ToArray());
+
+            Assert.Equal(PixelFormats.Gray8, back.Format);
+            var got = new byte[W * H];
+            back.CopyPixels(got, W, 0);
+            Assert.Equal(grey, got);
+        }
+
+        /// <summary>
+        /// A palette entry that is not opaque has to reach the file, as tRNS, and come back.
+        /// </summary>
+        [Fact]
+        public void APaletteAlphaSurvivesTheRoundTrip()
+        {
+            var palette = new BitmapPalette(new[]
+            {
+                Color.FromArgb(0, 10, 20, 30),       // transparent
+                Color.FromArgb(255, 200, 100, 50),
+            });
+            var packed = new byte[] { 0x40 };        // 1bpp: index 0 then index 1
+
+            BitmapSource src = BitmapSource.Create(2, 1, 96, 96, PixelFormats.Indexed1, palette, packed, 1);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(src));
+            using var saved = new MemoryStream();
+            encoder.Save(saved);
+
+            BitmapFrame back = Decode(saved.ToArray());
+
+            Assert.Equal(PixelFormats.Indexed1, back.Format);
+            Assert.Equal(0, back.Palette.Colors[0].A);
+            Assert.Equal(255, back.Palette.Colors[1].A);
+        }
+
+        /// <summary>A 32bpp source must still save as truecolour -- the narrow path is not a catch-all.</summary>
+        [Fact]
+        public void A32BppBitmapStillSavesAsTruecolour()
+        {
+            var bgra = new byte[] { 10, 20, 30, 255, 40, 50, 60, 128 };
+            BitmapSource src = BitmapSource.Create(2, 1, 96, 96, PixelFormats.Bgra32, null, bgra, 8);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(src));
+            using var saved = new MemoryStream();
+            encoder.Save(saved);
+
+            BitmapFrame back = Decode(saved.ToArray());
+
+            Assert.Equal(PixelFormats.Bgra32, back.Format);
+            var got = new byte[8];
+            back.CopyPixels(got, 8, 0);
+            Assert.Equal(bgra, got);
+        }
+
         /// <summary>
         /// And the point of all of it: a narrow frame still renders. The composition path converts
         /// it, so an Indexed4 frame has to arrive at the backend as the colours its palette names.
