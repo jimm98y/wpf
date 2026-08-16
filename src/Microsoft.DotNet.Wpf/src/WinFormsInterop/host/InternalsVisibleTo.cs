@@ -8,6 +8,12 @@ using System.Runtime.CompilerServices;
 // may only befriend a named public key, so this has to move in lockstep with SignAssembly there.
 [assembly: InternalsVisibleTo("WindowsFormsIntegration, PublicKey=00000000000000000400000000000000")]
 
+// The interop-seam tests (tests/CrossPlatform/Wpf.WinFormsInterop.Tests), which drive the driver's
+// drag-and-drop surface directly: SetAllowDrop's target registry and StartDrag's hand-off to the
+// host are internal, and both are logic rather than platform calls, so they are worth asserting
+// without a real drag.
+[assembly: InternalsVisibleTo("Wpf.WinFormsInterop.Tests, PublicKey=00000000000000000400000000000000")]
+
 // The WinForms WebView2 control needs the same seam for the same reason ElementHost does, and needs
 // it more acutely: a web engine must be parented to a REAL native window, and this driver's
 // Control.Handle is a managed counter (XplatUIWebGpu mints them with next_handle++), not an HWND.

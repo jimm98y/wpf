@@ -39,6 +39,9 @@ using SWF = System.Windows.Forms;
 // overrides below silently bind to nothing (CS0115).
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
+using WpfDragEventArgs = System.Windows.DragEventArgs;
+using WpfDragDropEffects = System.Windows.DragDropEffects;
+using WpfDragDropKeyStates = System.Windows.DragDropKeyStates;
 
 namespace System.Windows.Forms.Integration
 {
@@ -238,6 +241,83 @@ namespace System.Windows.Forms.Integration
             e.Handled = true;
         }
 
+        // ---- drag and drop ---------------------------------------------------------------
+        //
+        // The host is a WPF drop target standing exactly where the hosted controls are drawn, so a
+        // drag over it is a drag over them. Each event is handed to the driver, which finds the
+        // control under the point and raises the WinForms event on it -- the same routing an
+        // injected click takes. The effect the control chooses comes back and becomes the WPF
+        // answer, which is what shows the user the right cursor.
+
+        protected override void OnDragEnter(WpfDragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            e.Effects = ToWpfEffects(_driver.InjectDragEnter(x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        protected override void OnDragOver(WpfDragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            e.Effects = ToWpfEffects(_driver.InjectDragOver(x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        protected override void OnDragLeave(WpfDragEventArgs e)
+        {
+            _driver?.InjectDragLeave();
+            e.Handled = true;
+        }
+
+        protected override void OnDrop(WpfDragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(this));
+            e.Effects = ToWpfEffects(_driver.InjectDragDrop(x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// A hosted control called DoDragDrop. The drag has to be started by WPF, from a WPF element,
+        /// so the host starts it on the control's behalf and hands back what the drop decided.
+        /// </summary>
+        private SWF.DragDropEffects OnHostedControlStartedDrag(object data, SWF.DragDropEffects allowed)
+        {
+            System.Windows.IDataObject payload = DragDropData.ToWpf(data);
+            if (payload == null) return SWF.DragDropEffects.None;
+
+            WpfDragDropEffects performed = System.Windows.DragDrop.DoDragDrop(
+                this, payload, ToWpfEffects(allowed));
+            return ToWinFormsEffects(performed);
+        }
+
+        // The two DragDropEffects enums carry the same values (they are both the Win32 DROPEFFECT
+        // bits), but they are different types, so the cast has to be written down somewhere.
+        private static SWF.DragDropEffects ToWinFormsEffects(WpfDragDropEffects e) => (SWF.DragDropEffects)(int)e;
+
+        private static WpfDragDropEffects ToWpfEffects(SWF.DragDropEffects e) => (WpfDragDropEffects)(int)e;
+
+        /// <summary>
+        /// The modifier and button state WinForms drag handlers read, in the Win32 MK_* bits their
+        /// KeyState is defined in terms of.
+        /// </summary>
+        private static int KeyState(WpfDragEventArgs e)
+        {
+            int state = 0;
+            if ((e.KeyStates & WpfDragDropKeyStates.LeftMouseButton) != 0) state |= 0x0001;
+            if ((e.KeyStates & WpfDragDropKeyStates.RightMouseButton) != 0) state |= 0x0002;
+            if ((e.KeyStates & WpfDragDropKeyStates.ShiftKey) != 0) state |= 0x0004;
+            if ((e.KeyStates & WpfDragDropKeyStates.ControlKey) != 0) state |= 0x0008;
+            if ((e.KeyStates & WpfDragDropKeyStates.MiddleMouseButton) != 0) state |= 0x0010;
+            if ((e.KeyStates & WpfDragDropKeyStates.AltKey) != 0) state |= 0x0020;
+            return state;
+        }
+
         protected override void OnTextInput(TextCompositionEventArgs e)
         {
             if (_driver == null) return;
@@ -281,6 +361,15 @@ namespace System.Windows.Forms.Integration
             }
 
             _driver = XplatUIWebGpu.GetInstance();
+
+            // Drag and drop crosses here in both directions. AllowDrop on the HOST is what makes WPF
+            // route drags to this element at all, and a hosted control asking to be a drop target is
+            // the only reason to want it; DoDragDrop inside the hosted control comes back out
+            // through StartDragRequested, because the drag has to be started by WPF against a WPF
+            // element -- the driver has no window of its own to start one from.
+            AllowDrop = true;
+            _driver.StartDragRequested = OnHostedControlStartedDrag;
+
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it
             foreach (SWF.Control c in Flatten(_container)) c.Invalidate(true);
