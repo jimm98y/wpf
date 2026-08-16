@@ -184,6 +184,154 @@ namespace System.Windows.Media.Imaging
             return dst;
         }
 
+        /// <summary>
+        /// The other direction: pack a straight BGRA32 buffer INTO <paramref name="dest"/>, which may
+        /// be narrower than a byte per pixel. <paramref name="stride"/> receives the packed row size.
+        /// Returns null for a destination this does not know, or for an indexed destination with no
+        /// palette to match against.
+        ///
+        /// This is what makes a request like FormatConvertedBitmap(src, Indexed4, palette) mean
+        /// something: without it the result was 32bpp wearing another format's name, so an
+        /// application that asked to quantise an image and then looked at Format -- or saved it --
+        /// was told something untrue.
+        /// </summary>
+        internal static byte[] FromBgra32(byte[] bgra, int width, int height, PixelFormat dest,
+            BitmapPalette palette, out int stride)
+        {
+            stride = 0;
+            int bpp = Bpp(dest);
+            if (bpp == 0 || bgra == null || width <= 0 || height <= 0) return null;
+
+            bool indexed = dest.Palettized;
+            System.Collections.Generic.IList<Color> colors = palette?.Colors;
+            if (indexed && (colors == null || colors.Count == 0)) return null;
+
+            stride = checked((width * bpp + 7) / 8);
+            var dst = new byte[checked(stride * height)];
+
+            // Nearest-colour matching is a scan of up to 256 entries per pixel, and the images that
+            // reach it are overwhelmingly made of few distinct colours (that is why they are being
+            // palettised), so remembering each answer turns almost all of them into a lookup.
+            var nearest = indexed ? new System.Collections.Generic.Dictionary<int, int>() : null;
+            int maxIndex = indexed ? Math.Min(colors.Count, 1 << bpp) - 1 : 0;
+
+            for (int y = 0; y < height; y++)
+            {
+                int rowStart = y * stride;
+                int si = y * width * 4;
+
+                for (int x = 0; x < width; x++, si += 4)
+                {
+                    byte b = bgra[si], g = bgra[si + 1], r = bgra[si + 2], a = bgra[si + 3];
+                    int value;
+
+                    if (indexed)
+                    {
+                        int key = (r << 16) | (g << 8) | b;
+                        if (!nearest.TryGetValue(key, out value))
+                        {
+                            value = NearestPaletteIndex(colors, maxIndex, r, g, b);
+                            nearest[key] = value;
+                        }
+                    }
+                    else if (bpp < 8 || dest.Format == PixelFormatEnum.Gray8 || dest.Format == PixelFormatEnum.Gray16)
+                    {
+                        // Greyscale destinations quantise the Rec.601 luma to the levels available.
+                        int luma = (r * 77 + g * 150 + b * 29) >> 8;
+                        int levels = (1 << bpp) - 1;
+                        value = dest.Format switch
+                        {
+                            PixelFormatEnum.Gray16 => luma,          // high byte only; see below
+                            PixelFormatEnum.Gray8 => luma,
+                            // ROUND to the nearest level rather than truncating. Truncating makes
+                            // the top level unreachable except from an exact 255 -- for BlackWhite,
+                            // where there is only one level above zero, that turns every grey but
+                            // pure white into black and the picture comes out nearly blank.
+                            _ => (luma * levels + 127) / 255,
+                        };
+                    }
+                    else
+                    {
+                        value = 0;   // handled by the wide-format switch below
+                    }
+
+                    if (bpp < 8)
+                    {
+                        int perByte = 8 / bpp;
+                        int shift = 8 - bpp - (x % perByte) * bpp;
+                        dst[rowStart + x / perByte] |= (byte)(value << shift);
+                        continue;
+                    }
+
+                    int di = rowStart + x * (bpp / 8);
+                    switch (dest.Format)
+                    {
+                        case PixelFormatEnum.Indexed8:
+                            dst[di] = (byte)value;
+                            break;
+                        case PixelFormatEnum.Gray8:
+                            dst[di] = (byte)value;
+                            break;
+                        case PixelFormatEnum.Gray16:
+                            dst[di] = (byte)value; dst[di + 1] = (byte)value;
+                            break;
+                        case PixelFormatEnum.Bgr555:
+                        {
+                            int v = ((r * 31 / 255) << 10) | ((g * 31 / 255) << 5) | (b * 31 / 255);
+                            dst[di] = (byte)(v & 0xFF); dst[di + 1] = (byte)(v >> 8);
+                            break;
+                        }
+                        case PixelFormatEnum.Bgr565:
+                        {
+                            int v = ((r * 31 / 255) << 11) | ((g * 63 / 255) << 5) | (b * 31 / 255);
+                            dst[di] = (byte)(v & 0xFF); dst[di + 1] = (byte)(v >> 8);
+                            break;
+                        }
+                        case PixelFormatEnum.Bgr24:
+                            dst[di] = b; dst[di + 1] = g; dst[di + 2] = r;
+                            break;
+                        case PixelFormatEnum.Rgb24:
+                            dst[di] = r; dst[di + 1] = g; dst[di + 2] = b;
+                            break;
+                        case PixelFormatEnum.Bgr32:
+                            dst[di] = b; dst[di + 1] = g; dst[di + 2] = r; dst[di + 3] = 255;
+                            break;
+                        case PixelFormatEnum.Bgra32:
+                            dst[di] = b; dst[di + 1] = g; dst[di + 2] = r; dst[di + 3] = a;
+                            break;
+                        case PixelFormatEnum.Pbgra32:
+                            dst[di] = (byte)(b * a / 255); dst[di + 1] = (byte)(g * a / 255);
+                            dst[di + 2] = (byte)(r * a / 255); dst[di + 3] = a;
+                            break;
+                        default:
+                            stride = 0;
+                            return null;
+                    }
+                }
+            }
+
+            return dst;
+        }
+
+        private static int NearestPaletteIndex(System.Collections.Generic.IList<Color> colors,
+            int maxIndex, byte r, byte g, byte b)
+        {
+            int best = 0, bestDistance = int.MaxValue;
+            for (int i = 0; i <= maxIndex; i++)
+            {
+                Color c = colors[i];
+                int dr = c.R - r, dg = c.G - g, db = c.B - b;
+                int distance = dr * dr + dg * dg + db * db;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = i;
+                    if (distance == 0) break;
+                }
+            }
+            return best;
+        }
+
         private static byte Scale5(int v) => (byte)(v * 255 / 31);
 
         private static byte Unpremultiply(byte channel, byte alpha)

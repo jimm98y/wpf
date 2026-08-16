@@ -117,6 +117,31 @@ namespace System.Windows.Media.Imaging
                 }
 
                 Guid g = DestinationFormat.Guid;
+
+                // A destination that is not 32bpp BGRA is PACKED into its real layout and reported
+                // as itself -- including the sub-byte and indexed formats, which is what makes
+                // asking for Indexed4 or BlackWhite mean anything. Previously every destination came
+                // back 32bpp wearing the requested format's name, so quantising an image and then
+                // reading Format (or saving it) was told something untrue.
+                if (g != PixelFormats.Bgra32.Guid && g != PixelFormats.Pbgra32.Guid)
+                {
+                    byte[] packed = ManagedPixelConverter.FromBgra32(
+                        dst, sw, sh, DestinationFormat, DestinationPalette, out int packedStride);
+                    if (packed != null)
+                    {
+                        _managedPixels = packed;
+                        _managedStride = packedStride;
+                        _format = DestinationFormat;
+                        _palette = DestinationPalette;
+                        _pixelWidth = sw; _pixelHeight = sh; _isSourceCached = Source.IsSourceCached;
+                        CreationCompleted = true;
+                        UpdateCachedSettings();
+                        return;
+                    }
+                }
+
+                // Destinations the packer does not model (Gray32Float and the other float formats)
+                // keep the old best effort: greyscale by luminance, published as Bgra32.
                 bool gray = g == PixelFormats.Gray8.Guid || g == PixelFormats.Gray16.Guid
                          || g == PixelFormats.Gray32Float.Guid || g == PixelFormats.BlackWhite.Guid;
                 if (gray)
