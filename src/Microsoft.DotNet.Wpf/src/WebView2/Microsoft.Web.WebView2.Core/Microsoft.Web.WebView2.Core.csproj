@@ -68,6 +68,8 @@
     <Compile Include="$(_Shared)/Platform/MacWebViewBackend.cs" />
     <Compile Include="$(_Shared)/Platform/IOSWebViewBackend.cs" />
     <Compile Include="$(_Shared)/Platform/BrowserWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/Platform/AndroidWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/AndroidWebViewRegistration.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)../../Shared/MS/Internal/Interop/ObjCBlock.cs" />
   </ItemGroup>
 

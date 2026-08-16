@@ -52,11 +52,16 @@ namespace MS.Internal.Interop.WebView
                 return new BrowserWebViewBackend();
             }
 
-            // Each remaining head joins here as its backend lands, in this order (the ordering is
-            // not cosmetic -- Android is Linux as far as OperatingSystem is concerned, so it must be
-            // asked before Linux or it is answered by Linux's backend):
+            // Android BEFORE Linux, and that is not cosmetic: Android IS Linux as far as
+            // OperatingSystem is concerned, so asking the other way round answers every Android
+            // device with the Linux backend.
+            if (OperatingSystem.IsAndroid())
+            {
+                return new AndroidWebViewBackend();
+            }
+
+            // The last head joins here when its backend lands:
             //
-            //   IsAndroid                    -> AndroidWebViewBackend  (android.webkit.WebView)
             //   IsLinux                      -> LinuxWebViewBackend    (WPE WebKit on a subsurface)
             //
             // Until then this returns null, and the CONTROL turns that into a clear "no web engine

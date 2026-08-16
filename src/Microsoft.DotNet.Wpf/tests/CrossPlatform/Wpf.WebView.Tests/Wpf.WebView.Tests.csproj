@@ -49,6 +49,8 @@
     <Compile Include="$(_Shared)/WebViewTypes.cs" />
     <Compile Include="$(_Shared)/WebViewScript.cs" />
     <Compile Include="$(_Shared)/IWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/AndroidWebViewRegistration.cs" />
+    <Compile Include="$(_Shared)/Platform/AndroidWebViewBackend.cs" />
   </ItemGroup>
 
 </Project>
