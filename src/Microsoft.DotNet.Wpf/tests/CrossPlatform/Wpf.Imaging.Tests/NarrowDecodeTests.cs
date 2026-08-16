@@ -558,6 +558,57 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(255, back.Palette.Colors[1].A);
         }
 
+        /// <summary>
+        /// BMP has its own 1/4/8-bit palettised forms, so saving an indexed bitmap keeps it indexed.
+        /// Odd widths matter more here than anywhere: a BMP row is padded to a four-byte boundary,
+        /// on top of the sub-byte packing, and the rows are stored bottom-up.
+        /// </summary>
+        [Theory]
+        [InlineData(1, 11)]
+        [InlineData(4, 7)]
+        [InlineData(8, 5)]
+        public void AnIndexedBitmapSavesAsAPalettisedBmp(int bpp, int width)
+        {
+            var colors = new List<Color>();
+            for (int i = 0; i < (1 << bpp); i++)
+                colors.Add(Color.FromRgb((byte)(i * 3), (byte)(i * 5), (byte)(255 - i * 2)));
+            var palette = new BitmapPalette(colors);
+
+            PixelFormat format = bpp switch
+            {
+                1 => PixelFormats.Indexed1,
+                4 => PixelFormats.Indexed4,
+                _ => PixelFormats.Indexed8,
+            };
+
+            const int H = 4;
+            int stride = (width * bpp + 7) / 8;
+            var packed = new byte[stride * H];
+            new Random(11).NextBytes(packed);
+            // Clear any bits past the last pixel of each row: they are padding, and a decoder is
+            // free not to preserve them, so comparing them would be testing the wrong thing.
+            int usedBits = width * bpp;
+            if (usedBits % 8 != 0)
+            {
+                var mask = (byte)(0xFF << (8 - usedBits % 8));
+                for (int y = 0; y < H; y++) packed[y * stride + usedBits / 8] &= mask;
+            }
+
+            BitmapSource src = BitmapSource.Create(width, H, 96, 96, format, palette, packed, stride);
+
+            var encoder = new BmpBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(src));
+            using var saved = new MemoryStream();
+            encoder.Save(saved);
+
+            BitmapFrame back = Decode(saved.ToArray());
+
+            Assert.Equal(format, back.Format);
+            var got = new byte[stride * H];
+            back.CopyPixels(got, stride, 0);
+            Assert.Equal(packed, got);
+        }
+
         /// <summary>A 32bpp source must still save as truecolour -- the narrow path is not a catch-all.</summary>
         [Fact]
         public void A32BppBitmapStillSavesAsTruecolour()

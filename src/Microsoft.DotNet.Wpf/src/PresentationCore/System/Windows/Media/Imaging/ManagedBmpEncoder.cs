@@ -14,6 +14,7 @@
 // padding to compute.
 //
 
+using System.Collections.Generic;
 using System.IO;
 
 namespace System.Windows.Media.Imaging
@@ -25,6 +26,14 @@ namespace System.Windows.Media.Imaging
 
         internal static void Save(BitmapSource source, Stream stream)
         {
+            // BMP has 1, 4 and 8-bit palettised forms of its own, so a bitmap that is already one of
+            // them is written as itself rather than widened to 32bpp -- which the decoder now reads
+            // back as the same format, closing the round trip.
+            if (TrySavePalettized(source, stream))
+            {
+                return;
+            }
+
             byte[] bgra = source.CopyPixelsForManagedComposition(out int width, out int height, out int stride);
             if (bgra == null || width <= 0 || height <= 0)
             {
@@ -80,6 +89,85 @@ namespace System.Windows.Media.Imaging
                 Buffer.BlockCopy(bgra, y * stride, row, 0, width * 4);
                 stream.Write(row, 0, row.Length);
             }
+        }
+
+        /// <summary>
+        /// Writes an Indexed1/4/8 bitmap as a palettised BMP: the classic 40-byte
+        /// BITMAPINFOHEADER, a colour table, and the packed rows BOTTOM-UP with each padded to a
+        /// four-byte boundary. Returns false for anything else.
+        ///
+        /// Indexed2 is not among them because BMP has no 2-bit form; it takes the 32bpp path. Palette
+        /// ALPHA is also lost here -- a BMP colour table's fourth byte is reserved and readers ignore
+        /// it -- which is a property of the format rather than of this encoder.
+        /// </summary>
+        private static bool TrySavePalettized(BitmapSource source, Stream stream)
+        {
+            PixelFormat format = source.Format;
+            int bpp = format.BitsPerPixel;
+            if (!format.Palettized || (bpp != 1 && bpp != 4 && bpp != 8))
+            {
+                return false;
+            }
+
+            IList<Color> colors = source.Palette?.Colors;
+            if (colors == null || colors.Count == 0)
+            {
+                return false;
+            }
+
+            int width = source.PixelWidth, height = source.PixelHeight;
+            if (width <= 0 || height <= 0)
+            {
+                return false;
+            }
+
+            int packedStride = (width * bpp + 7) / 8;
+            var packed = new byte[checked(packedStride * height)];
+            source.CopyPixels(packed, packedStride, 0);
+
+            int fileStride = (packedStride + 3) & ~3;
+            int tableEntries = Math.Min(colors.Count, 1 << bpp);
+            int offBits = FileHeaderSize + 40 + tableEntries * 4;
+            int imageSize = fileStride * height;
+
+            var header = new byte[offBits];
+            int o = 0;
+            header[o++] = (byte)'B';
+            header[o++] = (byte)'M';
+            WriteU32(header, ref o, (uint)(offBits + imageSize));
+            WriteU32(header, ref o, 0);
+            WriteU32(header, ref o, (uint)offBits);
+
+            WriteU32(header, ref o, 40);                             // BITMAPINFOHEADER
+            WriteU32(header, ref o, (uint)width);
+            WriteU32(header, ref o, (uint)height);                   // positive: bottom-up
+            WriteU16(header, ref o, 1);                              // planes
+            WriteU16(header, ref o, (ushort)bpp);
+            WriteU32(header, ref o, 0);                              // BI_RGB
+            WriteU32(header, ref o, (uint)imageSize);
+            WriteU32(header, ref o, PixelsPerMetre(source.DpiX));
+            WriteU32(header, ref o, PixelsPerMetre(source.DpiY));
+            WriteU32(header, ref o, (uint)tableEntries);             // biClrUsed
+            WriteU32(header, ref o, 0);                              // biClrImportant
+
+            for (int i = 0; i < tableEntries; i++)
+            {
+                header[o++] = colors[i].B;
+                header[o++] = colors[i].G;
+                header[o++] = colors[i].R;
+                header[o++] = 0;                                     // reserved
+            }
+
+            stream.Write(header, 0, header.Length);
+
+            var row = new byte[fileStride];
+            for (int y = height - 1; y >= 0; y--)                    // bottom-up
+            {
+                Array.Clear(row, 0, row.Length);
+                Array.Copy(packed, y * packedStride, row, 0, packedStride);
+                stream.Write(row, 0, row.Length);
+            }
+            return true;
         }
 
         private static uint PixelsPerMetre(double dpi) =>
