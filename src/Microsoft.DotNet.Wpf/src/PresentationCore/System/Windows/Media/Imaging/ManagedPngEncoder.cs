@@ -8,6 +8,7 @@
 // zlib container (header + Adler-32), as the PNG IDAT chunk requires.
 //
 
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 
@@ -17,6 +18,15 @@ namespace System.Windows.Media.Imaging
     {
         internal static void Save(BitmapSource source, Stream stream)
         {
+            // A source that is ALREADY one of PNG's own narrow formats is written as that format
+            // rather than widened to RGBA8. Otherwise loading a 1-bit PNG and saving it produced a
+            // 32bpp file thirty-two times the size, and "lossless" round trips lost the format even
+            // where they kept every pixel.
+            if (TrySaveNarrow(source, stream))
+            {
+                return;
+            }
+
             // Straight (non-premultiplied) BGRA32, normalized by the same helper the managed
             // composition path uses (handles Bgra32/Pbgra32 without native WIC).
             byte[] bgra = source.CopyPixelsForManagedComposition(out int width, out int height, out int stride);
@@ -63,6 +73,12 @@ namespace System.Windows.Media.Imaging
                 }
             }
 
+            WriteIdatAndEnd(stream, raw);
+        }
+
+        /// <summary>Deflates the filtered scanlines into IDAT and closes the file with IEND.</summary>
+        private static void WriteIdatAndEnd(Stream stream, byte[] raw)
+        {
             using var idat = new MemoryStream();
             idat.WriteByte(0x78);   // zlib: 32K window, deflate
             idat.WriteByte(0x9C);   // default compression, header check
@@ -76,6 +92,98 @@ namespace System.Windows.Media.Imaging
             WriteChunk(stream, "IDAT"u8, idat.GetBuffer().AsSpan(0, (int)idat.Length));
 
             WriteChunk(stream, "IEND"u8, ReadOnlySpan<byte>.Empty);
+        }
+
+        /// <summary>
+        /// Writes <paramref name="source"/> in its own format when PNG has one that matches: a
+        /// palettised bitmap as colour type 3 with a PLTE (and a tRNS when any entry is not opaque),
+        /// a greyscale one as colour type 0. Returns false for anything else, which takes the RGBA
+        /// path above.
+        /// </summary>
+        private static bool TrySaveNarrow(BitmapSource source, Stream stream)
+        {
+            PixelFormat format = source.Format;
+            int bitDepth = format.BitsPerPixel;
+            bool indexed = format.Palettized && (bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8);
+            bool gray = format == PixelFormats.BlackWhite || format == PixelFormats.Gray2
+                     || format == PixelFormats.Gray4 || format == PixelFormats.Gray8
+                     || format == PixelFormats.Gray16;
+
+            if (!indexed && !gray)
+            {
+                return false;
+            }
+
+            IList<Color> colors = source.Palette?.Colors;
+            if (indexed && (colors == null || colors.Count == 0))
+            {
+                return false;   // an indexed bitmap with no palette has no colours to write
+            }
+
+            int width = source.PixelWidth, height = source.PixelHeight;
+            if (width <= 0 || height <= 0)
+            {
+                return false;
+            }
+
+            int stride = (width * bitDepth + 7) / 8;
+            var packed = new byte[checked(stride * height)];
+            source.CopyPixels(packed, stride, 0);
+
+            ReadOnlySpan<byte> signature = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A];
+            stream.Write(signature);
+
+            Span<byte> ihdr = stackalloc byte[13];
+            WriteU32(ihdr, (uint)width);
+            WriteU32(ihdr.Slice(4), (uint)height);
+            ihdr[8] = (byte)bitDepth;
+            ihdr[9] = indexed ? (byte)3 : (byte)0;
+            ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+            WriteChunk(stream, "IHDR"u8, ihdr);
+
+            Span<byte> phys = stackalloc byte[9];
+            WriteU32(phys, (uint)Math.Round(source.DpiX / 0.0254));
+            WriteU32(phys.Slice(4), (uint)Math.Round(source.DpiY / 0.0254));
+            phys[8] = 1;
+            WriteChunk(stream, "pHYs"u8, phys);
+
+            if (indexed)
+            {
+                var plte = new byte[colors.Count * 3];
+                for (int i = 0; i < colors.Count; i++)
+                {
+                    plte[i * 3] = colors[i].R;
+                    plte[i * 3 + 1] = colors[i].G;
+                    plte[i * 3 + 2] = colors[i].B;
+                }
+                WriteChunk(stream, "PLTE"u8, plte);
+
+                // tRNS is a per-entry alpha table, and may stop early: entries past its end are
+                // opaque by definition, so only the run up to the LAST non-opaque one is written.
+                int last = -1;
+                for (int i = 0; i < colors.Count; i++)
+                {
+                    if (colors[i].A != 255) last = i;
+                }
+                if (last >= 0)
+                {
+                    var trns = new byte[last + 1];
+                    for (int i = 0; i <= last; i++) trns[i] = colors[i].A;
+                    WriteChunk(stream, "tRNS"u8, trns);
+                }
+            }
+
+            byte[] raw = new byte[height * (1 + stride)];
+            int o = 0;
+            for (int y = 0; y < height; y++)
+            {
+                raw[o++] = 0;   // filter: None -- the packed row goes down verbatim
+                Array.Copy(packed, y * stride, raw, o, stride);
+                o += stride;
+            }
+
+            WriteIdatAndEnd(stream, raw);
+            return true;
         }
 
         private static void WriteChunk(Stream stream, ReadOnlySpan<byte> type, ReadOnlySpan<byte> data)
