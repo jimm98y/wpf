@@ -237,6 +237,7 @@ namespace MS.Internal.Interop
 
             // Make the content view layer-backed so wgpu can install a CAMetalLayer on it.
             _contentView = Send(_window, Sel("contentView"));
+            ObserveFrameChanges();
             SendVoidBool(_contentView, Sel("setWantsLayer:"), true);
 
             if (!string.IsNullOrEmpty(title))
@@ -1424,6 +1425,15 @@ namespace MS.Internal.Interop
                 }
             }
 
+            // Drop the frame observer before the view goes: the notification centre holds the token,
+            // not us, so a surviving observer would keep firing DetectResizes for a destroyed window.
+            if (_frameObserver != IntPtr.Zero)
+            {
+                IntPtr center = Send(objc_getClass("NSNotificationCenter"), Sel("defaultCenter"));
+                if (center != IntPtr.Zero) SendVoidPtr(center, Sel("removeObserver:"), _frameObserver);
+                _frameObserver = IntPtr.Zero;
+            }
+
             bool wasKey = _window != IntPtr.Zero && SendBool(_window, Sel("isKeyWindow"));
 
             if (_window != IntPtr.Zero)
@@ -1715,6 +1725,72 @@ namespace MS.Internal.Interop
         /// up. The run-loop source calls this so the resize is seen while the gesture is happening.
         /// </summary>
         internal static void ReconcileWindows() => DetectResizes();
+
+        // ---- synchronous resize notification -------------------------------------------------
+        //
+        // Polling is always LATE. DetectResizes runs from the dispatcher's run-loop source, which
+        // during a drag samples the window roughly every 25ms while the display refreshes every 10,
+        // so for two or three refreshes the window has a size WPF has not been told about and the
+        // frame on screen is one it drew for the previous one. Measured: 19.0ms from the resize to
+        // our noticing it, against 11.0ms through the notification below.
+        //
+        // NSViewFrameDidChangeNotification is posted SYNCHRONOUSLY from setFrameSize:, so handling it
+        // puts the size change, the relayout, the render and the present in the same run-loop turn as
+        // the resize that caused them -- which is the ordering Windows gets for free from WM_SIZE,
+        // and what HwndTarget.OnResize was already written to expect.
+        //
+        // This is a latency improvement and NOT what fixed the visible drift during a drag: that was
+        // the CAMetalLayer rescaling a correct drawable to bounds the window server had not committed
+        // yet, and it is fixed where it happens, by anchoring the layer's contents (MacInterop
+        // .CreateSurface). Being early only reduces how many frames are affected; it cannot reach
+        // zero, because the drawable and the layer bounds are committed by different mechanisms.
+        //
+        // The poll stays: a notification can be missed (a window created before this runs, a resize
+        // from a path that does not post), and being late is better than never noticing.
+
+        [UnmanagedCallersOnly]
+        private static void OnFrameChanged(IntPtr block, IntPtr notification)
+        {
+            // Runs on the main thread inside AppKit's layout. Anything thrown here would unwind
+            // through Objective-C frames, so nothing may escape.
+            try
+            {
+                DetectResizes();
+            }
+            catch
+            {
+            }
+        }
+
+        private IntPtr _frameObserver;
+        private IntPtr _frameBlock;
+
+        /// <summary>Ask the content view to post frame changes, and handle them as they happen.</summary>
+        private void ObserveFrameChanges()
+        {
+            if (_contentView == IntPtr.Zero || _frameObserver != IntPtr.Zero) return;
+
+            SendVoidBool(_contentView, Sel("setPostsFrameChangedNotifications:"), true);
+
+            IntPtr center = Send(objc_getClass("NSNotificationCenter"), Sel("defaultCenter"));
+            if (center == IntPtr.Zero) return;
+
+            IntPtr name = MakeNSString("NSViewFrameDidChangeNotification");
+            if (name == IntPtr.Zero) return;
+
+            unsafe
+            {
+                _frameBlock = MS.Internal.Interop.ObjCBlock.Create(
+                    (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnFrameChanged, IntPtr.Zero);
+            }
+            if (_frameBlock == IntPtr.Zero) return;
+
+            // addObserverForName:object:queue:usingBlock: with a nil queue delivers on the posting
+            // thread, synchronously -- which is the entire point; a main-queue block would be
+            // deferred to the next turn and be no better than the poll.
+            _frameObserver = SendObserver(center, Sel("addObserverForName:object:queue:usingBlock:"),
+                                          name, _contentView, IntPtr.Zero, _frameBlock);
+        }
 
         /// <summary>Raised (on the UI/pump thread) when the content size changes, in points.</summary>
         public event Action<int, int> Resized;
@@ -2223,6 +2299,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidNInt(IntPtr receiver, IntPtr selector, nint arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendObserver(IntPtr receiver, IntPtr selector, IntPtr name, IntPtr obj, IntPtr queue, IntPtr block);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr receiver, IntPtr selector, double arg);
