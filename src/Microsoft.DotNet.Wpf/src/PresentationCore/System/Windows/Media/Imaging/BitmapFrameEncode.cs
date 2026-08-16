@@ -239,6 +239,9 @@ namespace System.Windows.Media.Imaging
                 _pixelHeight = _source.PixelHeight;
                 _dpiX = _source.DpiX;
                 _dpiY = _source.DpiY;
+                // The palette too: an indexed frame whose palette is null falls through to the
+                // Palette getter's "ask the native bitmap for it" path, which needs WIC.
+                _palette = _source.Palette;
                 _managedPixels = _source._managedPixels;
                 _managedStride = _source._managedStride;
                 CreationCompleted = true;

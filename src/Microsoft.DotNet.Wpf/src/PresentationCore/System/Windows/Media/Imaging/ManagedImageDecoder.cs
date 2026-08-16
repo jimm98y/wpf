@@ -70,11 +70,27 @@ namespace System.Windows.Media.Imaging
 
             if (data.Length > 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G')
             {
-                bgra = DecodePng(data, out width, out height, out dpiX, out dpiY);
+                bgra = DecodePng(data, out width, out height, out dpiX, out dpiY,
+                    out PixelFormat pngFormat, out BitmapPalette pngPalette, out int pngStride);
+                if (pngStride != 0)
+                {
+                    return new List<BitmapSource>(1)
+                    {
+                        Materialize(bgra, width, height, dpiX, dpiY, pngFormat, pngPalette, pngStride),
+                    };
+                }
             }
             else if (data.Length > 2 && data[0] == 'B' && data[1] == 'M')
             {
-                bgra = DecodeBmp(data, out width, out height);
+                bgra = DecodeBmp(data, out width, out height,
+                    out PixelFormat bmpFormat, out BitmapPalette bmpPalette, out int bmpStride);
+                if (bmpStride != 0)
+                {
+                    return new List<BitmapSource>(1)
+                    {
+                        Materialize(bgra, width, height, dpiX, dpiY, bmpFormat, bmpPalette, bmpStride),
+                    };
+                }
             }
             else if (data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
             {
@@ -100,8 +116,12 @@ namespace System.Windows.Media.Imaging
         }
 
         private static BitmapSource Materialize(byte[] bgra, int width, int height, double dpiX, double dpiY)
+            => Materialize(bgra, width, height, dpiX, dpiY, PixelFormats.Bgra32, null, width * 4);
+
+        private static BitmapSource Materialize(byte[] pixels, int width, int height, double dpiX, double dpiY,
+            PixelFormat format, BitmapPalette palette, int stride)
         {
-            var source = BitmapSource.Create(width, height, dpiX, dpiY, PixelFormats.Bgra32, null, bgra, width * 4);
+            var source = BitmapSource.Create(width, height, dpiX, dpiY, format, palette, pixels, stride);
             source.Freeze();
             return source;
         }
@@ -130,7 +150,9 @@ namespace System.Windows.Media.Imaging
 
         // ---- PNG -----------------------------------------------------------------------
 
-        private static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY)
+        private static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY,
+            out PixelFormat narrowFormat, out BitmapPalette narrowPalette, out int narrowStride,
+            bool allowNarrow = true)
         {
             int pos = 8;
             width = 0; height = 0; dpiX = 96; dpiY = 96;
@@ -211,6 +233,71 @@ namespace System.Windows.Media.Imaging
             }
             byte[] rawBytes = raw.GetBuffer();
 
+            // Keep the file's own format where WPF has one for it, rather than expanding everything
+            // to 32bpp. A palette PNG is Indexed1/2/4/8 and a greyscale one is BlackWhite/Gray2/4/8;
+            // reporting Bgra32 for them told applications the wrong Format, handed back a null
+            // Palette, and cost 32x the memory for a 1bpp image.
+            //
+            // Interlaced images are excluded: Adam7 scatters each pass's pixels across the output,
+            // so their scanlines are not rows of the finished picture and there is nothing to copy
+            // straight through. They keep the expanded path.
+            //
+            // A greyscale PNG carrying a tRNS transparent-colour key is excluded too: the
+            // transparency it describes cannot be expressed in a Gray format, and dropping it would
+            // silently make transparent pixels opaque.
+            narrowFormat = default;
+            narrowPalette = null;
+            narrowStride = 0;
+            // allowNarrow is false where the caller composites the result itself and needs BGRA --
+            // an ICO entry, whose PNG is merged with the icon's own mask.
+            bool narrow = allowNarrow && interlace == 0 && bitDepth <= 8 &&
+                (colorType == 3 || (colorType == 0 && trns == null));
+
+            if (narrow)
+            {
+                narrowFormat = colorType == 3
+                    ? bitDepth switch
+                    {
+                        1 => PixelFormats.Indexed1,
+                        2 => PixelFormats.Indexed2,
+                        4 => PixelFormats.Indexed4,
+                        _ => PixelFormats.Indexed8,
+                    }
+                    : bitDepth switch
+                    {
+                        1 => PixelFormats.BlackWhite,
+                        2 => PixelFormats.Gray2,
+                        4 => PixelFormats.Gray4,
+                        _ => PixelFormats.Gray8,
+                    };
+
+                if (colorType == 3)
+                {
+                    if (palette == null || palette.Length < 3)
+                    {
+                        throw new InvalidDataException("PNG palette image has no PLTE chunk.");
+                    }
+
+                    int entries = palette.Length / 3;
+                    var colors = new List<Color>(entries);
+                    for (int i = 0; i < entries; i++)
+                    {
+                        // tRNS on a palette image is a per-entry alpha table, shorter than the
+                        // palette when the trailing entries are opaque.
+                        byte a = trns != null && i < trns.Length ? trns[i] : (byte)255;
+                        colors.Add(Color.FromArgb(a, palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]));
+                    }
+                    narrowPalette = new BitmapPalette(colors);
+                }
+
+                narrowStride = (width * bitDepth + 7) / 8;
+                var packedPixels = new byte[checked(narrowStride * height)];
+                int packedPos = 0;
+                DecodePass(rawBytes, ref packedPos, null, width, height, width, 0, 0, 1, 1,
+                    bitDepth, colorType, channels, palette, trns, packedPixels, narrowStride);
+                return packedPixels;
+            }
+
             var bgra = new byte[width * height * 4];
             int rawPos = 0;
             if (interlace == 0)
@@ -246,7 +333,8 @@ namespace System.Windows.Media.Imaging
         /// </summary>
         private static void DecodePass(byte[] raw, ref int rawPos, byte[] bgra,
             int passWidth, int passHeight, int outWidth, int outX0, int outY0, int outDx, int outDy,
-            int bitDepth, int colorType, int channels, byte[] palette, byte[] trns)
+            int bitDepth, int colorType, int channels, byte[] palette, byte[] trns,
+            byte[] packed = null, int packedStride = 0)
         {
             int bitsPerPixel = channels * bitDepth;
             int rowBytes = (passWidth * bitsPerPixel + 7) / 8;
@@ -302,8 +390,20 @@ namespace System.Windows.Media.Imaging
                         throw new InvalidDataException($"Unknown PNG filter {filter}.");
                 }
 
-                EmitRow(row, bgra, passWidth, (outY0 + y * outDy) * outWidth + outX0, outDx,
-                    bitDepth, colorType, palette, trns);
+                if (packed != null)
+                {
+                    // For a palette or greyscale PNG the UNFILTERED SCANLINE IS ALREADY the packed
+                    // pixel row -- PNG filtering is per byte, and an Indexed4 row really is two
+                    // pixels to the byte in exactly the layout WPF wants. So the narrow formats do
+                    // not need packing so much as they need not to be expanded. (Only reached for
+                    // non-interlaced images, where a pass row maps 1:1 onto an output row.)
+                    Array.Copy(row, 0, packed, y * packedStride, Math.Min(rowBytes, packedStride));
+                }
+                else
+                {
+                    EmitRow(row, bgra, passWidth, (outY0 + y * outDy) * outWidth + outX0, outDx,
+                        bitDepth, colorType, palette, trns);
+                }
                 (prev, row) = (row, prev);
             }
         }
@@ -439,7 +539,7 @@ namespace System.Windows.Media.Imaging
             {
                 byte[] png = new byte[imgSize];
                 Array.Copy(data, imgOff, png, 0, imgSize);
-                return DecodePng(png, out width, out height, out _, out _);
+                return DecodePng(png, out width, out height, out _, out _, out _, out _, out _, allowNarrow: false);
             }
 
             // BMP DIB entry.
@@ -552,8 +652,13 @@ namespace System.Windows.Media.Imaging
 
         // ---- BMP -----------------------------------------------------------------------
 
-        private static byte[] DecodeBmp(byte[] data, out int width, out int height)
+        private static byte[] DecodeBmp(byte[] data, out int width, out int height,
+            out PixelFormat narrowFormat, out BitmapPalette narrowPalette, out int narrowStride)
         {
+            narrowFormat = default;
+            narrowPalette = null;
+            narrowStride = 0;
+
             int pixelOffset = BitConverter.ToInt32(data, 10);
             width = BitConverter.ToInt32(data, 18);
             int rawHeight = BitConverter.ToInt32(data, 22);
@@ -562,12 +667,59 @@ namespace System.Windows.Media.Imaging
 
             bool topDown = rawHeight < 0;
             height = Math.Abs(rawHeight);
-            if (width <= 0 || height == 0 || (bpp != 24 && bpp != 32) || (compression != 0 && compression != 3))
+            bool palettized = bpp == 1 || bpp == 4 || bpp == 8;
+            if (width <= 0 || height == 0 || (bpp != 24 && bpp != 32 && !palettized) ||
+                (compression != 0 && compression != 3))
             {
-                throw new PlatformNotSupportedException("Only uncompressed 24/32-bit BMP is supported without native WIC.");
+                throw new PlatformNotSupportedException(
+                    "Only uncompressed 1/4/8/24/32-bit BMP is supported without native WIC.");
             }
 
-            int srcStride = ((width * bpp / 8) + 3) & ~3;
+            int srcStride = ((width * bpp + 7) / 8 + 3) & ~3;
+
+            // A palettised BMP is already the packed picture: its rows are Indexed1/4/8 in WPF's own
+            // layout, just bottom-up and padded to a four-byte boundary. These used to be rejected
+            // outright -- 1/4/8-bit BMPs are what icons, old assets and many screenshots are -- and
+            // the only work needed is to unflip the rows and drop the padding.
+            if (palettized)
+            {
+                int headerSize = BitConverter.ToInt32(data, 14);
+                int tableOffset = 14 + headerSize;
+                int used = data.Length > 50 ? BitConverter.ToInt32(data, 46) : 0;
+                int entries = used > 0 ? used : 1 << bpp;
+                if (tableOffset + entries * 4 > data.Length)
+                {
+                    throw new InvalidDataException("BMP colour table is truncated.");
+                }
+
+                var colors = new List<Color>(entries);
+                for (int i = 0; i < entries; i++)
+                {
+                    int e = tableOffset + i * 4;   // B, G, R, reserved
+                    colors.Add(Color.FromRgb(data[e + 2], data[e + 1], data[e]));
+                }
+                narrowPalette = new BitmapPalette(colors);
+                narrowFormat = bpp switch
+                {
+                    1 => PixelFormats.Indexed1,
+                    4 => PixelFormats.Indexed4,
+                    _ => PixelFormats.Indexed8,
+                };
+
+                narrowStride = (width * bpp + 7) / 8;
+                var packed = new byte[checked(narrowStride * height)];
+                for (int y = 0; y < height; y++)
+                {
+                    int srcRow = pixelOffset + (topDown ? y : height - 1 - y) * srcStride;
+                    if (srcRow + narrowStride > data.Length)
+                    {
+                        throw new InvalidDataException("BMP pixel data is truncated.");
+                    }
+                    Array.Copy(data, srcRow, packed, y * narrowStride, narrowStride);
+                }
+                return packed;
+            }
+
             var bgra = new byte[width * height * 4];
             for (int y = 0; y < height; y++)
             {

@@ -238,6 +238,154 @@ namespace Wpf.Imaging.Tests
             }
         }
 
+        // ---- converting TO a narrow format -------------------------------------------------
+
+        /// <summary>
+        /// Asking for a sub-byte destination has to give back a bitmap that IS that format -- packed
+        /// pixels, and Format saying so. Returning 32bpp under the requested format's name meant an
+        /// application that quantised an image and then read Format, or saved it, was told something
+        /// untrue while the bytes said otherwise.
+        /// </summary>
+        [Fact]
+        public void ConvertingToBlackWhitePacksOneBitPerPixel()
+        {
+            const int W = 8, H = 2;
+            var bgra = new byte[W * H * 4];
+            // Alternate near-black and near-white so the luminance threshold has an obvious answer.
+            for (int i = 0; i < W * H; i++)
+            {
+                byte v = (i % 2 == 0) ? (byte)20 : (byte)230;
+                bgra[i * 4] = bgra[i * 4 + 1] = bgra[i * 4 + 2] = v;
+                bgra[i * 4 + 3] = 255;
+            }
+            var src = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, bgra, W * 4);
+
+            var bw = new FormatConvertedBitmap(src, PixelFormats.BlackWhite, null, 0);
+
+            Assert.Equal(PixelFormats.BlackWhite, bw.Format);
+            Assert.Equal(1, bw.Format.BitsPerPixel);
+
+            var packed = new byte[H];               // one byte per 8-pixel row
+            bw.CopyPixels(packed, 1, 0);
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    bool bit = (packed[y] & (0x80 >> x)) != 0;
+                    bool expected = ((y * W + x) % 2) != 0;
+                    Assert.True(bit == expected, $"({x},{y}) should be {(expected ? "white" : "black")}");
+                }
+        }
+
+        /// <summary>
+        /// An indexed destination matches each colour to its NEAREST palette entry. The source
+        /// colours here are deliberately not exact palette entries, so a converter that only handled
+        /// exact matches, or that ignored the palette and wrote a luminance ramp, cannot pass.
+        /// </summary>
+        [Fact]
+        public void ConvertingToIndexed4PicksTheNearestPaletteEntry()
+        {
+            var palette = new BitmapPalette(new[]
+            {
+                Color.FromRgb(0, 0, 0), Color.FromRgb(255, 0, 0),
+                Color.FromRgb(0, 255, 0), Color.FromRgb(0, 0, 255),
+            });
+
+            const int W = 4, H = 1;
+            // Nearly-black, a dull red, a dull green, a dull blue -- as (R,G,B), none of them an
+            // exact palette entry, so only real nearest-colour matching lands on the right index.
+            (byte R, byte G, byte B)[] wanted =
+            {
+                (8, 8, 8), (200, 10, 10), (10, 200, 10), (10, 10, 200),
+            };
+            int[] expectedIndex = { 0, 1, 2, 3 };
+
+            var bgra = new byte[W * 4];
+            for (int x = 0; x < W; x++)
+            {
+                bgra[x * 4] = wanted[x].B;
+                bgra[x * 4 + 1] = wanted[x].G;
+                bgra[x * 4 + 2] = wanted[x].R;
+                bgra[x * 4 + 3] = 255;
+            }
+            var src = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, bgra, W * 4);
+
+            var indexed = new FormatConvertedBitmap(src, PixelFormats.Indexed4, palette, 0);
+
+            Assert.Equal(PixelFormats.Indexed4, indexed.Format);
+            Assert.NotNull(indexed.Palette);
+
+            var packed = new byte[2];               // 4 pixels x 4 bits
+            indexed.CopyPixels(packed, 2, 0);
+            for (int x = 0; x < W; x++)
+            {
+                int got = (packed[x / 2] >> ((x & 1) == 0 ? 4 : 0)) & 0xF;
+                Assert.True(got == expectedIndex[x],
+                    $"pixel {x} should map to palette entry {expectedIndex[x]}, got {got}");
+            }
+        }
+
+        /// <summary>
+        /// The round trip, which is what actually proves the two halves agree: an Indexed4 bitmap
+        /// converted to Bgra32 and back must land on the same indices. Either direction alone can be
+        /// self-consistently wrong -- both wrong in the same way cancels out only if they really are
+        /// inverses.
+        /// </summary>
+        [Fact]
+        public void IndexedSurvivesARoundTripThroughBgra32()
+        {
+            var palette = new BitmapPalette(new[]
+            {
+                Color.FromRgb(12, 34, 56), Color.FromRgb(200, 30, 40),
+                Color.FromRgb(30, 200, 40), Color.FromRgb(240, 240, 240),
+            });
+
+            const int W = 6, H = 3;
+            int stride = (W * 4 + 7) / 8;
+            byte[] indices = { 0, 1, 2, 3, 2, 1 };
+            var packed = new byte[stride * H];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    packed[y * stride + x / 2] |= (byte)(indices[x] << ((x & 1) == 0 ? 4 : 0));
+
+            var src = BitmapSource.Create(W, H, 96, 96, PixelFormats.Indexed4, palette, packed, stride);
+
+            var expanded = new FormatConvertedBitmap(src, PixelFormats.Bgra32, null, 0);
+            var back = new FormatConvertedBitmap(expanded, PixelFormats.Indexed4, palette, 0);
+
+            Assert.Equal(PixelFormats.Indexed4, back.Format);
+            var got = new byte[stride * H];
+            back.CopyPixels(got, stride, 0);
+            Assert.Equal(packed, got);
+        }
+
+        /// <summary>Gray4 as a destination: luminance quantised to sixteen levels, two to a byte.</summary>
+        [Fact]
+        public void ConvertingToGray4QuantisesLuminance()
+        {
+            const int W = 4, H = 1;
+            byte[] luma = { 0, 85, 170, 255 };
+            var bgra = new byte[W * 4];
+            for (int x = 0; x < W; x++)
+            {
+                bgra[x * 4] = bgra[x * 4 + 1] = bgra[x * 4 + 2] = luma[x];
+                bgra[x * 4 + 3] = 255;
+            }
+            var src = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, bgra, W * 4);
+
+            var gray = new FormatConvertedBitmap(src, PixelFormats.Gray4, null, 0);
+
+            Assert.Equal(PixelFormats.Gray4, gray.Format);
+            var packed = new byte[2];
+            gray.CopyPixels(packed, 2, 0);
+            for (int x = 0; x < W; x++)
+            {
+                int got = (packed[x / 2] >> ((x & 1) == 0 ? 4 : 0)) & 0xF;
+                int expected = luma[x] * 15 / 255;
+                Assert.True(Math.Abs(got - expected) <= 1,
+                    $"pixel {x} (luma {luma[x]}) should quantise to {expected}/15, got {got}");
+            }
+        }
+
         // ---- premultiplication ------------------------------------------------------------
 
         /// <summary>
