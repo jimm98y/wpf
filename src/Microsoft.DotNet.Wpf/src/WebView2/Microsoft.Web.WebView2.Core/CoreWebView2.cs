@@ -163,6 +163,20 @@ namespace Microsoft.Web.WebView2.Core
             await imageStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(true);
         }
 
+        /// <summary>
+        /// Print the current page to a PDF file. Returns true on success.
+        /// </summary>
+        /// <remarks>
+        /// Printing a web view means rendering it at paper size with pagination, which is the
+        /// browser engine's own job and is reachable on none of these backends through the small
+        /// surface they expose. Returning false rather than throwing because the real one returns
+        /// false for an ordinary failure (an unwritable path), so callers already handle it, and
+        /// there is nothing exceptional about a head that cannot print.
+        /// </remarks>
+        public Task<bool> PrintToPdfAsync(string resultFilePath,
+                                          CoreWebView2PrintSettings printSettings = null)
+            => Task.FromResult(false);
+
         // ---- deliberately unimplemented ------------------------------------------------------------
         //
         // Present so existing code compiles and binds, and throwing rather than no-opping so an

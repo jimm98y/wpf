@@ -204,9 +204,14 @@
 
   <!--
     The real package also drops WebView2Loader.dll into the output through its own targets. Ours
-    needs it too on Windows -- WindowsWebViewBackend P/Invokes CreateCoreWebView2EnvironmentWithOptions
-    from it -- so it is deliberately left alone there, and removed everywhere else, where it is a
+    needs it too on Windows (WindowsWebViewBackend P/Invokes CreateCoreWebView2EnvironmentWithOptions
+    from it), so it is deliberately left alone there, and removed everywhere else, where it is a
     Windows binary that can only confuse a deployment.
+
+    NOTE: never write a double hyphen in this file's comments. XML forbids it inside a comment, so
+    the whole SDK fails to load, and MSBuild reports that further down the import chain as an
+    unrelated-looking "MicrosoftNETBuildTasksAssembly is empty" pointing at the .NET SDK's own
+    props. Nothing names this file, and every consuming project stops building at once.
   -->
   <Target Name="_WpfWebGpuDropWebView2LoaderOffWindows" AfterTargets="Build;Publish"
           Condition="'$(_WpfWebGpuWin)' != 'true' and '$(TargetFramework)' != ''">
