@@ -44,6 +44,13 @@ namespace System.Windows.Media.Imaging
 
     internal static class ManagedGifDecoder
     {
+        // Set by DecodeImage for a lone full-screen image; read by Decode once the file is known to
+        // hold exactly one. Not thread safe, and neither is anything else on this path: a decode is
+        // one call on one thread.
+        [ThreadStatic] private static byte[]? LastFullScreenIndices;
+        [ThreadStatic] private static byte[]? LastFullScreenPalette;
+        [ThreadStatic] private static int LastFullScreenTransparentIndex;
+
         // Block introducers.
         private const byte Extension = 0x21;
         private const byte ImageDescriptor = 0x2C;
@@ -69,7 +76,19 @@ namespace System.Windows.Media.Imaging
         ///  predecessors, so callers can show any one of them without replaying the animation.
         /// </summary>
         internal static List<ManagedGifFrame> Decode(byte[] data, out int width, out int height)
+            => Decode(data, out width, out height, out _, out _);
+
+        /// <summary>
+        /// As above, and additionally hands back the file's own indexed picture when it holds a
+        /// SINGLE full-screen image -- the shape a static GIF has. <paramref name="indexed"/> is
+        /// null for an animation, whose composed canvas is not any one palette's image.
+        /// </summary>
+        internal static List<ManagedGifFrame> Decode(byte[] data, out int width, out int height,
+            out byte[]? indexed, out BitmapPalette? indexedPalette)
         {
+            LastFullScreenIndices = null;
+            LastFullScreenPalette = null;
+            LastFullScreenTransparentIndex = -1;
             if (!IsGif(data))
             {
                 throw new InvalidDataException("not a GIF: the signature did not match.");
@@ -93,6 +112,7 @@ namespace System.Windows.Media.Imaging
                 globalTable = ReadColorTable(data, ref pos, 2 << (packed & 0x07));
             }
 
+            int imageCount = 0;
             var frames = new List<ManagedGifFrame>();
 
             // The canvas every frame is composed onto. GIF has a background colour index, but the
@@ -140,6 +160,7 @@ namespace System.Windows.Media.Imaging
                 // Snapshot BEFORE drawing: disposal 3 restores the canvas to exactly this.
                 byte[]? restorePoint = disposal == DisposalRestorePrevious ? (byte[])canvas.Clone() : null;
 
+                imageCount++;
                 DecodeImage(data, ref pos, canvas, width, height, globalTable, transparentIndex,
                             out int frameLeft, out int frameTop, out int frameWidth, out int frameHeight);
 
@@ -172,6 +193,29 @@ namespace System.Windows.Media.Imaging
             {
                 throw new InvalidDataException("the GIF contained no image blocks.");
             }
+
+            indexed = null;
+            indexedPalette = null;
+            if (imageCount == 1 && LastFullScreenIndices != null && LastFullScreenPalette != null)
+            {
+                indexed = LastFullScreenIndices;
+
+                int entries = LastFullScreenPalette.Length / 3;
+                var colors = new List<Color>(entries);
+                for (int i = 0; i < entries; i++)
+                {
+                    // The transparent index is a hole in the picture; in an indexed bitmap that is
+                    // an entry whose alpha is zero.
+                    byte a = i == LastFullScreenTransparentIndex ? (byte)0 : (byte)255;
+                    colors.Add(Color.FromArgb(a,
+                        LastFullScreenPalette[i * 3], LastFullScreenPalette[i * 3 + 1],
+                        LastFullScreenPalette[i * 3 + 2]));
+                }
+                indexedPalette = new BitmapPalette(colors);
+            }
+
+            LastFullScreenIndices = null;
+            LastFullScreenPalette = null;
 
             return frames;
         }
@@ -234,6 +278,42 @@ namespace System.Windows.Media.Imaging
             byte[] indices = LzwDecode(data, ref pos, minCodeSize, frameWidth * frameHeight);
 
             int paletteEntries = palette.Length / 3;
+
+            // A GIF is an indexed image, and when the file is a single picture covering the whole
+            // logical screen the LZW output IS that picture -- one byte per pixel, in the palette
+            // the file carries. Handing that back lets a static GIF (the overwhelming majority of
+            // them) keep its own Indexed8 format instead of being expanded to 32bpp.
+            //
+            // Only for that shape. An ANIMATION is composed frame over frame with transparency and
+            // disposal, and successive frames may carry different local palettes, so the composed
+            // canvas genuinely is not any one palette's image. Partial frames (a small update rect)
+            // are the same story.
+            if (left == 0 && top == 0 && frameWidth == canvasWidth && frameHeight == canvasHeight)
+            {
+                byte[] full = indices;
+                if (interlaced)
+                {
+                    // Unscramble the four passes into picture order.
+                    full = new byte[canvasWidth * canvasHeight];
+                    for (int row = 0; row < frameHeight; row++)
+                    {
+                        int target = InterlacedRow(row, frameHeight);
+                        if (target < canvasHeight && (row + 1) * frameWidth <= indices.Length)
+                        {
+                            Array.Copy(indices, row * frameWidth, full, target * canvasWidth, frameWidth);
+                        }
+                    }
+                }
+                else if (indices.Length < canvasWidth * canvasHeight)
+                {
+                    full = new byte[canvasWidth * canvasHeight];
+                    Array.Copy(indices, full, indices.Length);
+                }
+
+                LastFullScreenIndices = full;
+                LastFullScreenPalette = palette;
+                LastFullScreenTransparentIndex = transparentIndex;
+            }
 
             for (int row = 0; row < frameHeight; row++)
             {

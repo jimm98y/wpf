@@ -322,6 +322,147 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(0b10100000, got[0]);
         }
 
+        // ---- GIF ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// GIF LZW, emitting every pixel as a literal and a clear code often enough that the code
+        /// width never has to grow. With a 256-entry table the codes are 9 bits and the dictionary
+        /// has 253 free slots after a clear, so clearing every 200 pixels keeps it there. Larger
+        /// than a real encoder would produce and perfectly valid, which is all a fixture needs.
+        /// </summary>
+        private static byte[] GifLzw(byte[] indices)
+        {
+            const int MinCodeSize = 8, Clear = 256, End = 257, CodeBits = 9;
+            var bits = new List<bool>();
+            void Emit(int code)
+            {
+                for (int i = 0; i < CodeBits; i++) bits.Add(((code >> i) & 1) != 0);   // LSB first
+            }
+
+            Emit(Clear);
+            for (int i = 0; i < indices.Length; i++)
+            {
+                if (i > 0 && i % 200 == 0) Emit(Clear);
+                Emit(indices[i]);
+            }
+            Emit(End);
+
+            var packed = new List<byte>();
+            for (int i = 0; i < bits.Count; i += 8)
+            {
+                int b = 0;
+                for (int j = 0; j < 8 && i + j < bits.Count; j++)
+                    if (bits[i + j]) b |= 1 << j;
+                packed.Add((byte)b);
+            }
+
+            // Sub-blocks: a length byte then up to 255 bytes, terminated by a zero length.
+            var body = new List<byte> { MinCodeSize };
+            for (int off = 0; off < packed.Count; off += 255)
+            {
+                int n = Math.Min(255, packed.Count - off);
+                body.Add((byte)n);
+                body.AddRange(packed.GetRange(off, n));
+            }
+            body.Add(0);
+            return body.ToArray();
+        }
+
+        /// <summary>A GIF with a 256-entry global table and one image block per entry in images.</summary>
+        private static byte[] BuildGif(int width, int height, Color[] table,
+            params (int Left, int Top, int W, int H, byte[] Indices)[] images)
+        {
+            var gif = new List<byte>();
+            gif.AddRange(new byte[] { (byte)'G', (byte)'I', (byte)'F', (byte)'8', (byte)'9', (byte)'a' });
+            gif.Add((byte)(width & 0xFF)); gif.Add((byte)(width >> 8));
+            gif.Add((byte)(height & 0xFF)); gif.Add((byte)(height >> 8));
+            gif.Add(0xF7);      // global table present, 256 entries
+            gif.Add(0); gif.Add(0);
+            for (int i = 0; i < 256; i++)
+            {
+                Color c = i < table.Length ? table[i] : Colors.Black;
+                gif.Add(c.R); gif.Add(c.G); gif.Add(c.B);
+            }
+
+            foreach ((int left, int top, int w, int h, byte[] indices) in images)
+            {
+                gif.Add(0x2C);
+                gif.Add((byte)(left & 0xFF)); gif.Add((byte)(left >> 8));
+                gif.Add((byte)(top & 0xFF)); gif.Add((byte)(top >> 8));
+                gif.Add((byte)(w & 0xFF)); gif.Add((byte)(w >> 8));
+                gif.Add((byte)(h & 0xFF)); gif.Add((byte)(h >> 8));
+                gif.Add(0);     // no local table, not interlaced
+                gif.AddRange(GifLzw(indices));
+            }
+
+            gif.Add(0x3B);      // trailer
+            return gif.ToArray();
+        }
+
+        [Fact]
+        public void AStaticGifDecodesAsIndexed8WithItsPalette()
+        {
+            var table = new Color[256];
+            for (int i = 0; i < 256; i++) table[i] = Color.FromRgb((byte)i, (byte)(i / 2), 64);
+
+            const int W = 5, H = 3;
+            var indices = new byte[W * H];
+            for (int i = 0; i < indices.Length; i++) indices[i] = (byte)(i * 7);
+
+            BitmapFrame frame = Decode(BuildGif(W, H, table, (0, 0, W, H, indices)));
+
+            Assert.Equal(PixelFormats.Indexed8, frame.Format);
+            Assert.NotNull(frame.Palette);
+            Assert.Equal(256, frame.Palette.Colors.Count);
+
+            var got = new byte[W * H];
+            frame.CopyPixels(got, W, 0);
+            Assert.Equal(indices, got);
+        }
+
+        /// <summary>
+        /// An ANIMATION must not take the indexed path. Its frames are composed one over another
+        /// with transparency and may carry different local palettes, so the composed canvas is not
+        /// any single palette's image -- reporting it as Indexed8 would be a lie about pixels that
+        /// no longer correspond to entries in any one table.
+        /// </summary>
+        [Fact]
+        public void AnAnimatedGifStays32Bpp()
+        {
+            var table = new Color[256];
+            for (int i = 0; i < 256; i++) table[i] = Color.FromRgb((byte)i, 0, 0);
+
+            const int W = 4, H = 2;
+            var first = new byte[W * H];
+            var second = new byte[W * H];
+            for (int i = 0; i < first.Length; i++) { first[i] = 10; second[i] = 200; }
+
+            byte[] gif = BuildGif(W, H, table, (0, 0, W, H, first), (0, 0, W, H, second));
+
+            using var stream = new MemoryStream(gif);
+            BitmapDecoder decoder = BitmapDecoder.Create(
+                stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+            Assert.Equal(2, decoder.Frames.Count);
+            Assert.Equal(PixelFormats.Bgra32, decoder.Frames[0].Format);
+        }
+
+        /// <summary>
+        /// A single image that does not cover the logical screen is a partial update, not the
+        /// picture, so it keeps the composed 32bpp canvas as well.
+        /// </summary>
+        [Fact]
+        public void AGifWhoseImageIsSmallerThanTheScreenStays32Bpp()
+        {
+            var table = new Color[256];
+            for (int i = 0; i < 256; i++) table[i] = Color.FromRgb((byte)i, 0, 0);
+
+            var indices = new byte[2 * 2];
+            BitmapFrame frame = Decode(BuildGif(6, 4, table, (1, 1, 2, 2, indices)));
+
+            Assert.Equal(PixelFormats.Bgra32, frame.Format);
+        }
+
         /// <summary>
         /// And the point of all of it: a narrow frame still renders. The composition path converts
         /// it, so an Indexed4 frame has to arrive at the backend as the colours its palette names.

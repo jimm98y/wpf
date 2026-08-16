@@ -42,7 +42,18 @@ namespace System.Windows.Media.Imaging
 
             if (ManagedGifDecoder.IsGif(data))
             {
-                List<ManagedGifFrame> gifFrames = ManagedGifDecoder.Decode(data, out int gifWidth, out int gifHeight);
+                List<ManagedGifFrame> gifFrames = ManagedGifDecoder.Decode(data, out int gifWidth, out int gifHeight,
+                    out byte[] gifIndexed, out BitmapPalette gifPalette);
+                if (gifIndexed != null && gifPalette != null)
+                {
+                    // A static GIF is an Indexed8 picture and keeps its own format.
+                    return new List<BitmapSource>(1)
+                    {
+                        Materialize(gifIndexed, gifWidth, gifHeight, 96, 96,
+                            PixelFormats.Indexed8, gifPalette, gifWidth),
+                    };
+                }
+
                 var decoded = new List<BitmapSource>(gifFrames.Count);
                 foreach (ManagedGifFrame frame in gifFrames)
                 {
