@@ -41,6 +41,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // DIP scene into that larger pixel target via HwndTarget._worldTransform.
             SetContentsScale(uiView, BackingScale(uiView));
 
+            // Anchor the drawable rather than stretching it to whatever bounds the layer currently
+            // has. Same reasoning as MacInterop.CreateSurface, and for the same reason it applies
+            // here: the GPU presents a drawable when it finishes, the layer's new bounds reach the
+            // render server when a Core Animation transaction commits, and those are two events. For
+            // one frame the layer holds a new-size drawable and the old bounds, and the default
+            // kCAGravityResize closes that gap by scaling -- which on macOS was a visible stretch,
+            // in the direction of the drag, for the whole gesture.
+            //
+            // UIKit resizes a view far less often than AppKit does, and the one case everybody sees
+            // -- rotation -- is masked, because UIKit cross-fades a snapshot across it. What is NOT
+            // masked is a live drag: the iPad split-view divider and Stage Manager resize the view
+            // continuously, exactly like a macOS window edge.
+            SetContentsGravity(uiView);
+
             var metalSource = new Wgpu.WGPUSurfaceSourceMetalLayer
             {
                 chain = new Wgpu.WGPUChainedStruct { next = null, sType = Wgpu.WGPUSType_SurfaceSourceMetalLayer },
@@ -56,6 +70,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (uiView == IntPtr.Zero) return;
             IntPtr layer = Send(uiView, Sel("layer"));
             if (layer != IntPtr.Zero) SendVoidDouble(layer, Sel("setContentsScale:"), scale);
+        }
+
+        /// <summary>
+        /// Anchor the layer's contents to the view's top-left corner instead of rescaling them to
+        /// fill it (see CreateSurface for why).
+        /// </summary>
+        /// <remarks>
+        /// kCAGravityTopLeft is named in the LAYER's coordinate space, and iOS puts a layer's origin
+        /// at its top-left with y increasing downwards, so "top left" is the visible top left and
+        /// this matches what MacInterop does. That is worth stating because the opposite is widely
+        /// believed -- the inversion people run into is real, but it comes from a layer with
+        /// geometryFlipped set, which a UIView's backing layer does not have.
+        ///
+        /// If it is nevertheless wrong, the symptom is unmistakable and so is the fix: drag the
+        /// split-view divider and watch where the uncovered strip appears. Along the edge being
+        /// dragged is correct; along the OPPOSITE edge, with the content sliding, means the anchor is
+        /// at the bottom and this constant should be "bottomLeft".
+        /// </remarks>
+        private static void SetContentsGravity(IntPtr uiView)
+        {
+            IntPtr layer = Send(uiView, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+
+            IntPtr topLeft = NSStringFrom("topLeft");   // kCAGravityTopLeft
+            if (topLeft != IntPtr.Zero) SendVoidPtr(layer, Sel("setContentsGravity:"), topLeft);
+        }
+
+        private static IntPtr NSStringFrom(string value)
+        {
+            IntPtr cls = objc_getClass("NSString");
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr utf8 = Marshal.StringToHGlobalAnsi(value);
+            try
+            {
+                return SendPtrPtr(cls, Sel("stringWithUTF8String:"), utf8);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(utf8);
+            }
         }
 
         /// <summary>
@@ -114,6 +168,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC)] private static extern IntPtr sel_registerName(string name);
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
