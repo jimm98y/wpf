@@ -36,6 +36,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         public static void FlushTransaction()
         {
             Send(objc_getClass("CATransaction"), Sel("flush"));
+            if (s_traceLayer) TraceLayer();
+        }
+
+        // ---- diagnostic: WPF_MAC_PRESLAYER=1 -------------------------------------------------
+        //
+        // Samples the PRESENTATION layer (what the window server is compositing right now) beside the
+        // model layer (the value we assigned) after every present. The earlier geometry trace read
+        // only the model layer, which by construction always agrees with what was just assigned.
+
+        private static readonly bool s_traceLayer =
+            Environment.GetEnvironmentVariable("WPF_MAC_PRESLAYER") == "1";
+
+        private static void TraceLayer()
+        {
+            foreach (var pair in s_metalLayers)
+            {
+                IntPtr view = pair.Key, layer = pair.Value;
+                if (view == IntPtr.Zero || layer == IntPtr.Zero) continue;
+
+                NSRect model = SendRect(layer, Sel("bounds"));
+                IntPtr presentation = Send(layer, Sel("presentationLayer"));
+                NSRect shown = presentation == IntPtr.Zero ? model : SendRect(presentation, Sel("bounds"));
+                NSRect viewBounds = SendRect(view, Sel("bounds"));
+
+                IntPtr window = Send(view, Sel("window"));
+                bool live = window != IntPtr.Zero && SendBool(window, Sel("inLiveResize"));
+                IntPtr anims = Send(layer, Sel("animationKeys"));
+                nuint animCount = anims == IntPtr.Zero ? 0 : SendNUInt(anims, Sel("count"));
+
+                Console.WriteLine(
+                    $"PRESLAYER view={viewBounds.width}x{viewBounds.height} " +
+                    $"model={model.width}x{model.height} shown={shown.width}x{shown.height} " +
+                    $"live={(live ? 1 : 0)} anims={animCount}");
+            }
         }
 
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the (runtime-detected)
@@ -90,6 +124,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // so the result is crisp. Must match CocoaWindow.GetBackingScale / the HwndTarget DPI scale.
             SendVoidDouble(metalLayer, Sel("setContentsScale:"), BackingScale(nsView));
             s_metalLayers[nsView] = metalLayer;   // remembered so contentsScale can track DPI at runtime
+
+            // Anchor the drawable to the top-left instead of stretching it to whatever the layer's
+            // bounds currently are. This is the resize drift, and it is a mismatch that cannot be
+            // designed away: a drawable is presented by the GPU when it finishes, the layer's bounds
+            // reach the window server when a Core Animation transaction commits, and the two are not
+            // the same event. Measured during a live drag -- the presentation layer, which is what is
+            // actually being composited, trails the bounds we assigned by one drag step every single
+            // frame (a 2702-wide drawable shown in a 2547-wide layer). With the default kCAGravityResize
+            // the server rescales the drawable to close that gap, so the content stretches by the
+            // amount of the last mouse movement and snaps back when the transaction lands. Anchored,
+            // the same gap costs an uncovered strip along the edge being dragged for one frame, which
+            // is what every native Cocoa application does during a live resize.
+            //
+            // NOTE this was tried once before and reverted because it rendered the app into the
+            // top-left quadrant. That was not this setting: contentsScale was 2 while the drawable was
+            // sized 1x (see PhysicalDisplayScale), so the drawable really did cover a quarter of the
+            // layer -- with resize gravity it was being scaled up to fit and merely looked blurry, and
+            // anchoring it only stopped hiding the other bug. That one is fixed; this one needs it.
+            IntPtr topLeft = NSStringFrom("topLeft");   // kCAGravityTopLeft
+            if (topLeft != IntPtr.Zero) SendVoidPtr(metalLayer, Sel("setContentsGravity:"), topLeft);
 
             // Match the CAMetalLayer's opacity to the hosting window's. Popup windows (menus, ComboBox,
             // ToolTip) are created non-opaque (CocoaWindow) so their drop shadow / rounded corners can
@@ -172,30 +226,86 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             // thin, blurry text. CAMetalLayer renders at native resolution regardless of the window's
             // backing, so when AppKit claims 1x, cross-check the physical panel via CoreGraphics (works
             // independent of HiDPI-awareness) and prefer 2x on an actually-Retina display.
-            if (scale < 1.5 && PhysicalDisplayScale() >= 1.5)
+            if (scale < 1.5 && PhysicalDisplayScale(window) >= 1.5)
                 scale = 2.0;
             return scale;
         }
 
-        // Largest native-pixels / point ("looks like") ratio across all ACTIVE displays. ~2 on a Retina
-        // panel (incl. scaled "More Space" modes, where it's >1.5), 1 on non-Retina. Scanning every
-        // display (not just the main one) covers a Retina laptop used as a SECONDARY behind a 1x main.
-        private static double PhysicalDisplayScale()
+        // Native-pixels / point ("looks like") ratio of the display a WINDOW is on: ~2 on a Retina
+        // panel (including the scaled "More Space" modes, where it is >1.5), 1 on anything else.
+        //
+        // Per window, NOT the best of every active display, which is what this used to take. On a
+        // Retina laptop driving a 1x external monitor that forced 2x on every window, including the
+        // ones on the 1x screen: the layer was told contentsScale 2 while the drawable was sized from
+        // AppKit's honest 1x, so Core Animation had a half-size image to fit a double-size backing
+        // store and resampled it on every frame. Measured directly, layer 1571x494pt @2 wanting
+        // 3142x988px against a 1571x494px drawable.
+        //
+        // Falls back to scanning every display when the window has no screen yet (not placed, or
+        // off-screen), where guessing high is the safer error: 1x on a Retina panel is visibly
+        // blurry, while 2x on a 1x panel only costs fill rate.
+        private static double PhysicalDisplayScale(IntPtr window)
         {
+            uint displayId = window == IntPtr.Zero ? 0 : DisplayIdOfWindow(window);
+            if (displayId != 0)
+            {
+                return ScaleOfDisplay(displayId);
+            }
+
             var ids = new uint[16];
             if (CGGetActiveDisplayList((uint)ids.Length, ids, out uint count) != 0 || count == 0)
                 return 1.0;
             double best = 1.0;
             for (uint i = 0; i < count && i < ids.Length; i++)
             {
-                IntPtr mode = CGDisplayCopyDisplayMode(ids[i]);
-                if (mode == IntPtr.Zero) continue;
-                double px = CGDisplayModeGetPixelWidth(mode);
-                double pt = CGDisplayModeGetWidth(mode);
-                CGDisplayModeRelease(mode);
-                if (pt > 0 && px / pt > best) best = px / pt;
+                double scale = ScaleOfDisplay(ids[i]);
+                if (scale > best) best = scale;
             }
             return best;
+        }
+
+        private static double ScaleOfDisplay(uint displayId)
+        {
+            IntPtr mode = CGDisplayCopyDisplayMode(displayId);
+            if (mode == IntPtr.Zero) return 1.0;
+            double px = CGDisplayModeGetPixelWidth(mode);
+            double pt = CGDisplayModeGetWidth(mode);
+            CGDisplayModeRelease(mode);
+            return pt > 0 ? px / pt : 1.0;
+        }
+
+        /// <summary>
+        /// The CGDirectDisplayID of the screen a window is on, from
+        /// NSScreen.deviceDescription[@"NSScreenNumber"]; 0 when it has no screen yet.
+        /// </summary>
+        private static uint DisplayIdOfWindow(IntPtr window)
+        {
+            IntPtr screen = Send(window, Sel("screen"));
+            if (screen == IntPtr.Zero) return 0;
+
+            IntPtr description = Send(screen, Sel("deviceDescription"));
+            if (description == IntPtr.Zero) return 0;
+
+            IntPtr key = NSStringFrom("NSScreenNumber");
+            if (key == IntPtr.Zero) return 0;
+
+            IntPtr number = SendPtrPtr(description, Sel("objectForKey:"), key);
+            return number == IntPtr.Zero ? 0 : (uint)SendNUInt(number, Sel("unsignedIntValue"));
+        }
+
+        private static IntPtr NSStringFrom(string value)
+        {
+            IntPtr cls = objc_getClass("NSString");
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr utf8 = Marshal.StringToHGlobalAnsi(value);
+            try
+            {
+                return SendPtrPtr(cls, Sel("stringWithUTF8String:"), utf8);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(utf8);
+            }
         }
 
         private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
@@ -236,6 +346,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nuint SendNUInt(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
