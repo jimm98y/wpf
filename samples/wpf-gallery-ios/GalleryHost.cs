@@ -40,6 +40,9 @@ internal static class GalleryHost
 
             if (Environment.GetEnvironmentVariable("WPF_IOS_ROTATE_TEST") == "1")
                 ScheduleRotateTest(rootView);
+
+            if (Environment.GetEnvironmentVariable("WPF_IOS_SIZEPROBE") == "1")
+                ScheduleSizeProbe(rootView);
         }
         catch (Exception e)
         {
@@ -83,6 +86,34 @@ internal static class GalleryHost
             var swapped = new CGRect { x = 0, y = 0, width = b.height, height = b.width };
             Console.WriteLine($"ROTATE: {b.width:F0}x{b.height:F0} -> {swapped.width:F0}x{swapped.height:F0}");
             SendVoidRect(rootView, SelReg("setFrame:"), swapped);
+        };
+        timer.Start();
+    }
+
+    /// <summary>
+    /// Report, once the tree has settled, what WPF actually laid the window out at against what the
+    /// view really is. ActualWidth read straight after App.Main is 0 -- the window has been shown but
+    /// not yet measured -- so the size that matters cannot be observed there.
+    /// </summary>
+    private static void ScheduleSizeProbe(IntPtr rootView)
+    {
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        timer.Tick += (s, e) =>
+        {
+            timer.Stop();
+            Window main = Application.Current?.MainWindow;
+            if (main == null) { Console.WriteLine("SIZEPROBE: no MainWindow"); return; }
+
+            CGRect b = SendRect(rootView, SelReg("bounds"));
+            Console.WriteLine(
+                $"SIZEPROBE: view={b.width:F0}x{b.height:F0}pt " +
+                $"window.Actual={main.ActualWidth:F0}x{main.ActualHeight:F0} " +
+                $"window.WidthHeight={main.Width:F0}x{main.Height:F0} " +
+                $"window.Min={main.MinWidth:F0}x{main.MinHeight:F0} " +
+                $"content.Actual={(main.Content as FrameworkElement)?.ActualWidth ?? -1:F0}x" +
+                $"{(main.Content as FrameworkElement)?.ActualHeight ?? -1:F0} " +
+                $"nav={(main.FindName("ControlsList") as FrameworkElement)?.ActualWidth ?? -1:F0} " +
+                $"frame={(main.FindName("RootContentFrame") as FrameworkElement)?.ActualWidth ?? -1:F0}");
         };
         timer.Start();
     }
