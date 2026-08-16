@@ -499,13 +499,27 @@ namespace MS.Internal.Interop.WebView
         /// done -- a caller clearing cookies is usually doing it for a reason.
         /// </summary>
         /// <summary>
-        /// WPE already exports every frame as a buffer, so this head is the best placed of all of
-        /// them to answer -- but the buffers belong to the Wayland layer that attaches them, and
-        /// encoding one to PNG needs a command it does not yet have. Refused rather than guessed.
+        /// The cheapest capture of any head: WPE exports every frame as a buffer anyway, and the
+        /// Wayland layer is already holding the last one it attached, so this only asks it to encode
+        /// pixels it has. Nothing is asked of the engine.
         /// </summary>
-        public Task<byte[]> CapturePreviewAsync(bool png) =>
-            Task.FromException<byte[]>(new NotSupportedException(
-                "Capturing a web view is not implemented on the Linux head yet."));
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            object captured = LinuxWebViewRegistration.Invoke(
+                LinuxWebViewCommands.CaptureFrame, _subsurface, png);
+
+            if (captured is byte[] bytes && bytes.Length > 0)
+            {
+                return Task.FromResult(bytes);
+            }
+
+            // No frame has been attached yet -- the page has not painted once. That is a real state,
+            // not a failure of the capture, and saying so beats handing back a blank image.
+            return Task.FromException<byte[]>(new InvalidOperationException(
+                "The web view has not produced a frame yet, so there is nothing to capture."));
+        }
 
         public Task ClearBrowsingDataAsync() =>
             throw new NotSupportedException(

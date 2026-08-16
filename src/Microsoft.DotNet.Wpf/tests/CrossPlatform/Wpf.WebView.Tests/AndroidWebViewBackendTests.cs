@@ -274,6 +274,62 @@ namespace Wpf.WebView.Tests
             Assert.Equal("\"a\\\"b\"", _head.LastPostedMessage);
         }
 
+        // ---- capture ---------------------------------------------------------------------------------
+
+        [Fact]
+        public async Task CaptureReturnsWhateverThePayloadEncoded()
+        {
+            var backend = new AndroidWebViewBackend();
+            await backend.AttachAsync(new IntPtr(1));
+
+            _head.CaptureResult = new byte[] { 0x89, 0x50, 0x4E, 0x47 };   // a PNG signature
+            byte[] bytes = await backend.CapturePreviewAsync(png: true);
+
+            Assert.Equal(_head.CaptureResult, bytes);
+        }
+
+        [Fact]
+        public async Task TheRequestedFormatReachesThePayload()
+        {
+            var backend = new AndroidWebViewBackend();
+            await backend.AttachAsync(new IntPtr(1));
+
+            _head.CaptureResult = new byte[] { 1 };
+
+            await backend.CapturePreviewAsync(png: false);
+            Assert.False((bool)_head.CaptureArgs[1]);
+
+            await backend.CapturePreviewAsync(png: true);
+            Assert.True((bool)_head.CaptureArgs[1]);
+        }
+
+        [Fact]
+        public async Task AnEmptyCaptureIsAFailureRatherThanAnEmptyImage()
+        {
+            var backend = new AndroidWebViewBackend();
+            await backend.AttachAsync(new IntPtr(1));
+
+            // This is the hardware-layer case: the view draws BLANK into a software canvas and the
+            // payload has nothing to hand back. Zero bytes must not surface as a valid image, or a
+            // caller writes an empty file and believes it captured something.
+            _head.CaptureResult = Array.Empty<byte>();
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => backend.CapturePreviewAsync(png: true));
+        }
+
+        [Fact]
+        public async Task ANullCaptureIsAlsoAFailure()
+        {
+            var backend = new AndroidWebViewBackend();
+            await backend.AttachAsync(new IntPtr(1));
+
+            _head.CaptureResult = null;
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => backend.CapturePreviewAsync(png: true));
+        }
+
         // ---- navigation ---------------------------------------------------------------------------------
 
         [Fact]
@@ -343,6 +399,8 @@ namespace Wpf.WebView.Tests
             internal string ScriptResult = "null";
             internal string SourceResult;
             internal string LastPostedMessage;
+            internal byte[] CaptureResult = Array.Empty<byte>();
+            internal object[] CaptureArgs = Array.Empty<object>();
 
             private Action<string, string> _sink;
 
@@ -364,6 +422,11 @@ namespace Wpf.WebView.Tests
 
                     case AndroidWebViewCommands.ExecuteScript:
                         ((Action<string>)args[2])(ScriptResult);
+                        return null;
+
+                    case AndroidWebViewCommands.CapturePreview:
+                        CaptureArgs = args;
+                        ((Action<byte[]>)args[2])(CaptureResult);
                         return null;
 
                     case AndroidWebViewCommands.PostMessage:
