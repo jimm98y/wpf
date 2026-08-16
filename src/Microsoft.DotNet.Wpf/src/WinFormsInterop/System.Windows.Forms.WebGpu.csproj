@@ -67,6 +67,8 @@
     <Compile Include="gen/Consts.cs" />
     <Compile Include="gen/XplatUIWebGpu.cs" />
     <Compile Include="gen/XplatUIWebGpu.Core.cs" />
+    <Compile Include="gen/XplatUIWebGpu.DragDrop.cs" />
+    <Compile Include="gen/XplatUIWebGpu.Clipboard.cs" />
     <Compile Include="shims/*.cs" />
 
     <!-- The WebBrowser control and its HtmlDocument object model. OUTSIDE swf/ on purpose: that

@@ -1,0 +1,90 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The WPF/WinForms interop seam: what happens where a hosted WinForms control meets WPF.
+
+    Drag and drop is the first thing here because it is the one interaction that has to cross the
+    boundary in BOTH directions: a drag entering the host has to reach the hosted control, and a
+    drag the hosted control starts has to be handed to WPF, which owns the window. The two stacks
+    have separate IDataObject types and separate DragDropEffects enums, so the crossing needs
+    adapters, and adapters are exactly the kind of thing that looks obviously right and is not.
+
+    References both fork assemblies by path, as the sibling suites do; skipped entirely when the
+    fork has not been built.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseAppHost>true</UseAppHost>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <NoWarn>$(NoWarn);CS8002;CA1416</NoWarn>
+
+    <!--
+      Strong-named with the ECMA standard key.
+
+      WindowsBase grants friend access to this assembly (WindowsBase/LibraryAssemblyInfo.cs) so the
+      clipboard tests can reach the internal PlatformClipboard seam, and a strong-named assembly only
+      accepts strong-named friends: without this the build fails with CS0281, "the public key of the
+      output assembly ('') does not match". The Arcade UnitTests projects get this from
+      StrongNameKeyId=ECMA, which this project does not inherit because it deliberately sits outside
+      Arcade (see the empty Directory.Build.props one level up).
+
+      PublicSign rather than real signing: the key is public, so there is no private half to sign
+      with, and public-signing is what produces an assembly carrying the right public key without
+      one. The key is vendored at eng/snk so the build does not depend on a NuGet cache path.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
+
+    <_Art>$(MSBuildThisFileDirectory)../../../../../artifacts/bin</_Art>
+    <!-- The WinForms halves build to their own bin/ rather than into artifacts/bin. -->
+    <_Swf>$(MSBuildThisFileDirectory)../../../src/WinFormsInterop/bin/Release/net10.0</_Swf>
+    <_ForkBuilt Condition="Exists('$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll') And Exists('$(_Swf)/System.Windows.Forms.dll')">true</_ForkBuilt>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
+    <Reference Include="WindowsBase"><HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework"><HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(_Swf)/System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsFormsIntegration"><HintPath>$(_Swf)/../../../integration/bin/Release/net10.0/WindowsFormsIntegration.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_Swf)/Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!--
+    Without the fork there is nothing these can bind against, so compile an explanatory stub instead
+    of the tests. A build error here would block anyone working only on the renderer.
+  -->
+  <ItemGroup Condition="'$(_ForkBuilt)' != 'true'">
+    <Compile Remove="**/*.cs" />
+    <Compile Include="NotBuilt.cs" />
+  </ItemGroup>
+
+  <Target Name="WarnIfForkNotBuilt" BeforeTargets="Build" Condition="'$(_ForkBuilt)' != 'true'">
+    <Warning Text="The WPF fork is not built, so the WinForms interop tests are excluded. Run eng/build-sdk.sh to enable them." />
+  </Target>
+
+  <!-- Copy the fork's assemblies next to the test binary; conflict resolution drops framework-named
+       ones from the copy set otherwise, and they are then missing at run time. -->
+  <Target Name="CopyForkAssemblies" AfterTargets="Build" Condition="'$(_ForkBuilt)' == 'true'">
+    <ItemGroup>
+      <_ForkAssembly Include="@(Reference->'%(HintPath)')" Condition="'%(Reference.HintPath)' != ''" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ForkAssembly)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="Exists('%(_ForkAssembly.Identity)')" />
+  </Target>
+
+</Project>

@@ -45,6 +45,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private long _gcBytes0, _perfRealizeAlloc, _perfRenderAlloc;
         private int _gc0, _gc1, _gc2;
         private int _perfFrames;
+        private int _perfSkipped;
+        private static readonly bool s_frameStats =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_FRAMESTATS") == "1";
+        private int _statsEntries, _statsRendered, _statsSkipped;
+
+        /// <summary>
+        /// Every target that wanted a frame got one on the last pass. Until that is true there is
+        /// nothing on screen to leave alone, so an unchanged frame still has to be drawn -- which is
+        /// what makes the first frame of a window, and of a window whose surface has just been
+        /// created, immune to the skip.
+        /// </summary>
+        private bool _presentedAllTargets;
+
+        private static readonly bool s_skipUnchanged =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_SKIP_UNCHANGED") != "0";
         private bool _disposed;
 
         // Optional diagnostics: when WPF_WEBGPU_SINK_LOG names a file, the sink appends
@@ -306,7 +321,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             string sig = "";
             foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
                 sig += $"0x{tk.Key:x}:{tk.Value.Width}x{tk.Value.Height}:{tk.Value.Transparency};";
-            if (sig != _targetsSig)
+            // NOTHING CHANGED SINCE THE LAST PRESENT -- so do not present again.
+            //
+            // A frame arrives here whenever WPF ticks, and WPF ticks continuously for as long as
+            // anything holds a CompositionTarget.Rendering handler or an animation clock, whether or
+            // not the picture is moving. Every one of those frames used to walk the scene, encode a
+            // command buffer and present it, producing a byte-identical image: measured on an idle
+            // full-screen editor, ~100 of them a second, each reporting zero visuals parsed, zero
+            // rasterizations and every layer served from cache. That is a laptop battery spent
+            // redrawing a still picture.
+            //
+            // "Changed" is decided by what ARRIVED, not by comparing pixels: a dispatched command, a
+            // bitmap, or a video frame (MilcoreEngine.Dirty). Two things force a render regardless.
+            // A change in the target signature covers a resize or a new window -- those reach the
+            // surface without necessarily passing through a command. And a scene painting a
+            // VisualBrush or DrawingBrush re-parses every frame by design, its fill resolving only on
+            // the following one, so an unchanged command stream there does not mean an unchanged
+            // picture.
+            //
+            // WPF_WEBGPU_SKIP_UNCHANGED=0 turns it off: a missed invalidation shows as a window that
+            // stops updating, and that is worth being able to rule out without a rebuild.
+            bool sigChanged = sig != _targetsSig;
+            if (s_frameStats)
+            {
+                // Counts every ENTRY, so it still reports when nothing renders -- which the normal
+                // PERF lines cannot, they fire every 60 RENDERED frames.
+                if (++_statsEntries % 200 == 0)
+                {
+                    Console.WriteLine($"RENDERSTATS: entries={_statsEntries} rendered={_statsRendered} " +
+                        $"skipped={_statsSkipped}");
+                }
+            }
+            if (s_skipUnchanged && !sigChanged && !_engine.Dirty && !_engine.HasContentBrushes
+                && _presentedAllTargets)
+            {
+                _renderer!.EndFrame();
+                _perfSkipped++;
+                _statsSkipped++;
+                return;
+            }
+
+            if (sigChanged)
             {
                 _targetsSig = sig;
                 foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
@@ -318,6 +373,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // them on top of its own content -- see NativePlatform.PopupsShareOwnerSurface.
             EnsureGpu();
             List<SceneVisual>? popupOverlays = CollectPopupOverlays();
+
+            // Every target that wanted a frame actually got one. A target that bailed out -- no
+            // surface yet, nothing to present into, a window the compositor is not showing -- leaves
+            // this false, which keeps the next frame from being skipped: there is no good picture on
+            // screen to preserve.
+            bool presentedEvery = true;
 
             foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
             {
@@ -358,14 +419,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Android delivers the native Surface asynchronously (surfaceCreated), so a window's
                 // first frame or two legitimately have nothing to present into; EnsureSurface builds
                 // the wgpu surface as soon as one exists. No other platform can be here.
-                if (ts.Surface == IntPtr.Zero) continue;
+                if (ts.Surface == IntPtr.Zero) { presentedEvery = false; continue; }
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                int presentedBefore = PresentedFrames;
                 Present(ts, popupOverlays != null ? Overlay(root, popupOverlays) : root, t);
                 _perfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+                // Present bails out for a window with no drawable, or one the compositor is not
+                // scheduling; that frame did not reach the screen, so nothing may be skipped after it.
+                if (PresentedFrames == presentedBefore) presentedEvery = false;
             }
             _perfRenderAlloc += GC.GetAllocatedBytesForCurrentThread() - ra1;
 
             _renderer!.EndFrame();
+            _statsRendered++;
+            _engine.ClearDirty();
+            _presentedAllTargets = presentedEvery;
 
             if (++_perfFrames >= 60 && (s_logPath != null || s_perfToConsole))
             {
@@ -373,7 +441,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 double msr(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 void Emit(string m) { Log(m); if (s_perfToConsole) Console.WriteLine(m); }
                 Emit($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
-                Emit($"PERF/frame: realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
+                Emit($"PERF/frame: skipped={_perfSkipped} realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} (localcache={WgpuSceneRenderer.PerfLocalCoverage}) textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
@@ -381,7 +449,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Emit($"PERF/gc: alloc={(allocNow - _gcBytes0) / 1024.0 / _perfFrames:0.0}KB/frame (realize={_perfRealizeAlloc / 1024.0 / _perfFrames:0.0} render={_perfRenderAlloc / 1024.0 / _perfFrames:0.0} [collect={WgpuSceneRenderer.PerfCollectAlloc / 1024.0 / _perfFrames:0.0} exec={WgpuSceneRenderer.PerfExecAlloc / 1024.0 / _perfFrames:0.0}]) gen0={g0 - _gc0} gen1={g1 - _gc1} gen2={g2 - _gc2} (over {_perfFrames} frames)");
                 _gcBytes0 = allocNow; _gc0 = g0; _gc1 = g1; _gc2 = g2; _perfRealizeAlloc = 0; _perfRenderAlloc = 0;
                 WgpuSceneRenderer.PerfCollectAlloc = 0; WgpuSceneRenderer.PerfExecAlloc = 0;
-                _perfFrames = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
+                _perfFrames = 0; _perfSkipped = 0; _perfRealizeTicks = 0; _perfRenderTicks = 0; _perfRenderOnlyTicks = 0; _perfPresentTicks = 0;
             }
         }
 

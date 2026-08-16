@@ -351,8 +351,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// Install decoded image pixels for an image-source handle (called by the host after
         /// reading them from the native IWICBitmapSource; or directly in tests).
         /// </summary>
+        /// <summary>
+        /// Something arrived that can change what the next frame looks like. Cleared by the sink once
+        /// it has presented; see the note on skipping unchanged frames in WpfCompositionSink.
+        ///
+        /// Set by the three entry points that actually mutate state: a dispatched command, a bitmap,
+        /// and a video frame. BeginCommand and AppendCommandData only accumulate bytes -- nothing is
+        /// decoded until EndCommand dispatches through SubmitCommand -- so marking them too would
+        /// only add noise.
+        /// </summary>
+        public bool Dirty { get; private set; } = true;
+
+        public void ClearDirty() => Dirty = false;
+
+        /// <summary>
+        /// True while any visual paints a VisualBrush or DrawingBrush. Those re-parse every frame by
+        /// design -- the brush is rasterized AFTER the parse loop, so its fill only resolves on the
+        /// FOLLOWING frame -- which means a frame with no incoming commands is not necessarily the
+        /// same picture as the one before it, and must not be skipped.
+        /// </summary>
+        public bool HasContentBrushes => _contentBrushConsumers.Count > 0;
+
         public void SetBitmap(uint handle, byte[] rgba, int width, int height)
         {
+            Dirty = true;
             _bitmaps[handle] = new MilBitmap(rgba, width, height);
             BumpResource(handle);   // an ImageBrush baked these pixels in; make its visual re-parse
         }
@@ -360,7 +382,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // Current decoded video frame for a MediaPlayer (TYPE_MEDIAPLAYER) resource, keyed by its handle. A
         // fresh RGBA array each frame (see WpfCompositionSink.SendVideoFrame) makes the texture re-upload.
         public void SetVideoFrame(uint mediaHandle, byte[] rgba, int width, int height)
-            => _videoFrames[mediaHandle] = new MilBitmap(rgba, width, height);
+        {
+            Dirty = true;
+            _videoFrames[mediaHandle] = new MilBitmap(rgba, width, height);
+        }
         private readonly Dictionary<uint, MilBitmap> _videoFrames = new();
         private readonly Dictionary<uint, uint> _visualContent = new();      // visual handle -> render-data handle
         private readonly Dictionary<uint, byte[]> _parsedDataRef = new();     // visual handle -> render-data byte[] last parsed (ref-equality change check)
@@ -571,6 +596,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         public void SubmitCommand(byte[] command)
         {
+            Dirty = true;
             var r = new MilReader(command);
             var id = (Mil)r.U32();
             Note($"cmd:0x{(uint)id:x2}");

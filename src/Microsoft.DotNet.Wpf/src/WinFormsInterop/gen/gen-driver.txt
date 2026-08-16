@@ -1,3 +1,9 @@
+// NOT IN THIS LIST, DELIBERATELY: the Clipboard members (ClipboardOpen/Close/GetID/Store/
+// Retrieve/AvailableFormats). They are implemented for real in XplatUIWebGpu.Clipboard.cs, and a
+// generated stub would silently take copy and paste back to doing nothing. The same goes for
+// SetAllowDrop and StartDrag, which are in XplatUIWebGpu.DragDrop.cs -- those were never in this
+// list because XplatUIDriver gives them non-abstract defaults, which is exactly why nobody noticed
+// they were missing.
 		internal override IntPtr InitializeDriver() { return IntPtr.Zero; }
 		internal override void ShutdownDriver(IntPtr token) {  }
 		internal override int CaptionHeight { get { return default(int); } }
@@ -57,12 +63,6 @@
 		internal override void MenuToScreen(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void ScreenToMenu(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void SetIcon(IntPtr handle, Icon icon) {  }
-		internal override void ClipboardClose(IntPtr handle) {  }
-		internal override IntPtr ClipboardOpen(bool primary_selection) { return IntPtr.Zero; }
-		internal override int ClipboardGetID(IntPtr handle, string format) { return 0; }
-		internal override void ClipboardStore(IntPtr handle, object obj, int id, XplatUI.ObjectToClipboard converter, bool copy) {  }
-		internal override int[] ClipboardAvailableFormats(IntPtr handle) { return default(int[]); }
-		internal override object ClipboardRetrieve(IntPtr handle, int id, XplatUI.ClipboardToObject converter) { return default(object); }
 		internal override void DrawReversibleLine(Point start, Point end, Color backColor) {  }
 		internal override void DrawReversibleRectangle(IntPtr handle, Rectangle rect, int line_width) {  }
 		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor) {  }

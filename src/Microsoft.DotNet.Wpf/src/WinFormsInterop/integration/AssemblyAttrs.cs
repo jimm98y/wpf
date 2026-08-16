@@ -11,3 +11,13 @@
 [assembly: System.Windows.Markup.XmlnsDefinition(
     "http://schemas.microsoft.com/netfx/2007/xaml/presentation",
     "System.Windows.Forms.Integration")]
+
+// The interop-seam tests (tests/CrossPlatform/Wpf.WinFormsInterop.Tests). The drag-and-drop
+// adapters are internal because nothing outside this assembly should be constructing them, but they
+// are also the part most worth testing directly: they translate between two stacks' data objects,
+// and a mistake there is invisible until a real drag carries the wrong thing.
+//
+// The public key is the ECMA standard one the test project public-signs with; a strong-named
+// assembly only accepts strong-named friends.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo(
+    "Wpf.WinFormsInterop.Tests, PublicKey=00000000000000000400000000000000")]

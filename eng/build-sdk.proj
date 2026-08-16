@@ -124,6 +124,18 @@
          project unbuilt shipped a package with no WindowsFormsHost in it and no error anywhere. -->
     <_Proj Include="$(_Src)WinFormsInterop/integration/WindowsFormsIntegration.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
 
+    <!-- The cross-platform WebView2 stand-ins, carrying the real package's strong-name identity so
+         an app that references Microsoft.Web.WebView2 binds to these instead. Sdk.targets references
+         them from lib/wpf-webview2 for every desktop head, and the SDK packs them Exists()-guarded,
+         so leaving them unbuilt shipped a package whose targets pointed at an empty folder, and
+         every consuming app failed with "the type or namespace name 'Web' does not exist in the
+         namespace 'Microsoft'", naming neither this file nor the SDK. Exactly the trap described for
+         WindowsFormsHost above, which is why they are listed here rather than left to a transitive
+         reference. -->
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.Core/Microsoft.Web.WebView2.Core.csproj" />
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.Wpf/Microsoft.Web.WebView2.Wpf.csproj" />
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.WinForms/Microsoft.Web.WebView2.WinForms.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
     <!-- Packed last, from everything above.
 
          TWO packages, not three. WpfWebGpuWasm.Sdk is gone: it was a separate MSBuild-SDK package id

@@ -142,10 +142,20 @@ namespace WgpuInterop.Tests.Protocol
                 new Ps().Op(Ps.MOV, Dst.ColorOut(), Src.Const(0).Mod(9)).Build(),
                 "unsupported source modifier");
 
+        // Structured flow control -- if/else/endif, rep/endrep, break -- is TRANSLATED now; see
+        // ShaderFlowControlTests. What remains refused is the unstructured half, which needs an
+        // address register and emitted functions rather than nested blocks.
+
         [Fact]
-        public void FlowControl_IsRefused()
-            => AssertRejected("flow control (if)",
-                new Ps().Raw(Ps.IF, 1, 0).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
+        public void SubroutineCall_IsRefused()
+            => AssertRejected("call",
+                new Ps().Raw(25, 1, 0).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
+                "unsupported opcode");
+
+        [Fact]
+        public void LoopWithAddressRegister_IsRefused()
+            => AssertRejected("loop/aL",
+                new Ps().Raw(27, 2, 0).Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build(),
                 "unsupported opcode");
 
         [Fact]

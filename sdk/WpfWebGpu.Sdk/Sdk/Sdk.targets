@@ -252,10 +252,12 @@
     from it), so it is deliberately left alone there, and removed everywhere else, where it is a
     Windows binary that can only confuse a deployment.
 
-    NOTE: no double hyphen anywhere in a comment in this file. It is not well-formed XML, MSBuild
-    then skips the WHOLE Sdk.targets without a word, and every consuming project dies at evaluation
-    with an unrelated-looking MSB4022 about $(MicrosoftNETBuildTasksAssembly). Only -v:diag says
-    "was not imported".
+    NOTE: never write a double hyphen in this file's comments. XML forbids it inside a comment, so
+    the whole SDK fails to load, and MSBuild reports that further down the import chain as an
+    unrelated-looking "MicrosoftNETBuildTasksAssembly is empty" pointing at the .NET SDK's own
+    props. Nothing names this file, and every consuming project stops building at once; only
+    -v:diag ever says "was not imported". The pack now runs XmlPeek over this file and Sdk.props
+    (see WpfWebGpuValidateInputs) so that a malformed comment fails there instead of in an app.
   -->
   <Target Name="_WpfWebGpuDropWebView2LoaderOffWindows" AfterTargets="Build;Publish"
           Condition="'$(_WpfWebGpuWin)' != 'true' and '$(TargetFramework)' != ''">
