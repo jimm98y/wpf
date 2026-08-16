@@ -207,6 +207,69 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// CapturePreview(format, IStream*, handler). Slot 30 of ICoreWebView2.
+        /// </summary>
+        internal static int WebView_CapturePreview(IntPtr w, int format, IntPtr stream, IntPtr handler) =>
+            ((delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr, IntPtr, int>)Vtbl(w)[30])(w, format, stream, handler);
+
+        /// <summary>
+        /// A memory-backed IStream, from shlwapi. Used rather than implementing IStream ourselves:
+        /// that interface has fourteen slots and the engine only ever writes to it, so authoring one
+        /// would be a lot of vtable for no behaviour of our own.
+        /// </summary>
+        [DllImport("shlwapi.dll", EntryPoint = "SHCreateMemStream")]
+        internal static extern IntPtr SHCreateMemStream(IntPtr initial, uint size);
+
+        /// <summary>Read everything an IStream holds, from the beginning.</summary>
+        internal static byte[] ReadStream(IntPtr stream)
+        {
+            // IStream slots: ISequentialStream::Read is 3, IStream::Seek is 5. Seeking to the end
+            // reports the length, which is cheaper and simpler than a Stat with its STATSTG struct.
+            var seek = (delegate* unmanaged[Stdcall]<IntPtr, long, uint, ulong*, int>)Vtbl(stream)[5];
+
+            ulong length;
+            ThrowIfFailed(seek(stream, 0, 2 /* STREAM_SEEK_END */, &length));
+
+            if (length == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            ulong ignored;
+            ThrowIfFailed(seek(stream, 0, 0 /* STREAM_SEEK_SET */, &ignored));
+
+            var read = (delegate* unmanaged[Stdcall]<IntPtr, byte*, uint, uint*, int>)Vtbl(stream)[3];
+            byte[] buffer = new byte[length];
+
+            fixed (byte* p = buffer)
+            {
+                uint total = 0;
+
+                // Read is permitted to return fewer bytes than asked for without failing, so this
+                // loops rather than trusting one call to drain the stream.
+                while (total < buffer.Length)
+                {
+                    uint got;
+                    ThrowIfFailed(read(stream, p + total, (uint)(buffer.Length - total), &got));
+
+                    if (got == 0)
+                    {
+                        break;
+                    }
+
+                    total += got;
+                }
+
+                if (total != buffer.Length)
+                {
+                    Array.Resize(ref buffer, (int)total);
+                }
+            }
+
+            return buffer;
+        }
+
         internal static void WebView_Reload(IntPtr w) =>
             ThrowIfFailed(((delegate* unmanaged[Stdcall]<IntPtr, int>)Vtbl(w)[31])(w));
 

@@ -498,6 +498,15 @@ namespace MS.Internal.Interop.WebView
         /// more of the GObject surface than this binding carries. Refused rather than reported as
         /// done -- a caller clearing cookies is usually doing it for a reason.
         /// </summary>
+        /// <summary>
+        /// WPE already exports every frame as a buffer, so this head is the best placed of all of
+        /// them to answer -- but the buffers belong to the Wayland layer that attaches them, and
+        /// encoding one to PNG needs a command it does not yet have. Refused rather than guessed.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png) =>
+            Task.FromException<byte[]>(new NotSupportedException(
+                "Capturing a web view is not implemented on the Linux head yet."));
+
         public Task ClearBrowsingDataAsync() =>
             throw new NotSupportedException(
                 "Clearing browsing data is not implemented on this head yet.");

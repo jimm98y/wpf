@@ -500,6 +500,119 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// takeSnapshotWithConfiguration:completionHandler: hands back an image object, which is then
+        /// encoded through ImageIO. Genuinely available here, unlike a CONTINUOUS capture -- which is
+        /// the distinction that made the whole seam an overlay: WKWebView will give you a still on
+        /// request, but not a stream of frames.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = GCHandle.Alloc(new SnapshotRequest { Completion = tcs, Png = png });
+
+            IntPtr block = ObjCBlock.Create(
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&SnapshotCompleted,
+                GCHandle.ToIntPtr(pending));
+
+            // A nil configuration means "the visible viewport", which is what a preview is.
+            SendVoidPtrPtr(_webView, Sel("takeSnapshotWithConfiguration:completionHandler:"),
+                           IntPtr.Zero, block);
+
+            return tcs.Task;
+        }
+
+        private sealed class SnapshotRequest
+        {
+            internal TaskCompletionSource<byte[]> Completion;
+            internal bool Png;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void SnapshotCompleted(IntPtr block, IntPtr image, IntPtr error)
+        {
+            GCHandle handle = GCHandle.FromIntPtr(ObjCBlock.ContextOf(block));
+            var request = (SnapshotRequest)handle.Target;
+
+            try
+            {
+                if (error != IntPtr.Zero || image == IntPtr.Zero)
+                {
+                    request.Completion.TrySetException(new InvalidOperationException(
+                        FromNSString(Send(error, Sel("localizedDescription"))) ?? "The capture failed."));
+                    return;
+                }
+
+                byte[] bytes = EncodeImage(image, request.Png);
+
+                if (bytes is null)
+                {
+                    request.Completion.TrySetException(
+                        new InvalidOperationException("The captured image could not be encoded."));
+                }
+                else
+                {
+                    request.Completion.TrySetResult(bytes);
+                }
+            }
+            catch (Exception ex)
+            {
+                request.Completion.TrySetException(ex);
+            }
+            finally
+            {
+                handle.Free();
+                ObjCBlock.Release(block);
+            }
+        }
+
+        /// <summary>
+        /// Encode an NSImage. AppKit has a direct route -- TIFF representation into an NSBitmapImageRep,
+        /// which knows both formats -- so ImageIO is not needed on this head.
+        /// </summary>
+        private static byte[] EncodeImage(IntPtr nsImage, bool png)
+        {
+            IntPtr tiff = Send(nsImage, Sel("TIFFRepresentation"));
+
+            if (tiff == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            IntPtr rep = SendPtrRet(Cls("NSBitmapImageRep"), Sel("imageRepWithData:"), tiff);
+
+            if (rep == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            // NSBitmapImageFileType: PNG 4, JPEG 3.
+            IntPtr data = SendPtrNIntPtr(rep, Sel("representationUsingType:properties:"),
+                                         png ? 4 : 3, EmptyDictionary());
+
+            return data == IntPtr.Zero ? null : CopyNSData(data);
+        }
+
+        private static IntPtr EmptyDictionary() => Send(Cls("NSDictionary"), Sel("dictionary"));
+
+        /// <summary>Copy an NSData's bytes into a managed array.</summary>
+        private static byte[] CopyNSData(IntPtr data)
+        {
+            nint length = SendNInt(data, Sel("length"));
+
+            if (length <= 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            IntPtr bytes = Send(data, Sel("bytes"));
+            byte[] managed = new byte[length];
+            Marshal.Copy(bytes, managed, 0, (int)length);
+            return managed;
+        }
+
         public Task ClearBrowsingDataAsync()
         {
             RequireAttached();
@@ -930,6 +1043,7 @@ namespace MS.Internal.Interop.WebView
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr r, IntPtr s, double a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr r, IntPtr s, CGRect a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr r, IntPtr s, IntPtr a);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNIntPtr(IntPtr r, IntPtr s, nint a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrNUInt(IntPtr r, IntPtr s, IntPtr a, nuint b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrNUIntPtr(IntPtr r, IntPtr s, IntPtr a, nuint b, IntPtr c);

@@ -469,6 +469,109 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// takeSnapshotWithConfiguration:completionHandler: hands back an image object, which is then
+        /// encoded through ImageIO. Genuinely available here, unlike a CONTINUOUS capture -- which is
+        /// the distinction that made the whole seam an overlay: WKWebView will give you a still on
+        /// request, but not a stream of frames.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = GCHandle.Alloc(new SnapshotRequest { Completion = tcs, Png = png });
+
+            IntPtr block = ObjCBlock.Create(
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&SnapshotCompleted,
+                GCHandle.ToIntPtr(pending));
+
+            // A nil configuration means "the visible viewport", which is what a preview is.
+            SendVoidPtrPtr(_webView, Sel("takeSnapshotWithConfiguration:completionHandler:"),
+                           IntPtr.Zero, block);
+
+            return tcs.Task;
+        }
+
+        private sealed class SnapshotRequest
+        {
+            internal TaskCompletionSource<byte[]> Completion;
+            internal bool Png;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void SnapshotCompleted(IntPtr block, IntPtr image, IntPtr error)
+        {
+            GCHandle handle = GCHandle.FromIntPtr(ObjCBlock.ContextOf(block));
+            var request = (SnapshotRequest)handle.Target;
+
+            try
+            {
+                if (error != IntPtr.Zero || image == IntPtr.Zero)
+                {
+                    request.Completion.TrySetException(new InvalidOperationException(
+                        FromNSString(Send(error, Sel("localizedDescription"))) ?? "The capture failed."));
+                    return;
+                }
+
+                byte[] bytes = EncodeImage(image, request.Png);
+
+                if (bytes is null)
+                {
+                    request.Completion.TrySetException(
+                        new InvalidOperationException("The captured image could not be encoded."));
+                }
+                else
+                {
+                    request.Completion.TrySetResult(bytes);
+                }
+            }
+            catch (Exception ex)
+            {
+                request.Completion.TrySetException(ex);
+            }
+            finally
+            {
+                handle.Free();
+                ObjCBlock.Release(block);
+            }
+        }
+
+        /// <summary>
+        /// Encode a UIImage. UIKit has one function per format, so unlike AppKit there is no
+        /// properties dictionary to build.
+        /// </summary>
+        private static byte[] EncodeImage(IntPtr uiImage, bool png)
+        {
+            IntPtr data = png
+                ? UIImagePNGRepresentation(uiImage)
+                : UIImageJPEGRepresentation(uiImage, 0.9);
+
+            return data == IntPtr.Zero ? null : CopyNSData(data);
+        }
+
+        /// <summary>Copy an NSData's bytes into a managed array.</summary>
+        private static byte[] CopyNSData(IntPtr data)
+        {
+            nint length = SendNInt(data, Sel("length"));
+
+            if (length <= 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            IntPtr bytes = Send(data, Sel("bytes"));
+            byte[] managed = new byte[length];
+            Marshal.Copy(bytes, managed, 0, (int)length);
+            return managed;
+        }
+
+        [DllImport("/System/Library/Frameworks/UIKit.framework/UIKit")]
+        private static extern IntPtr UIImagePNGRepresentation(IntPtr image);
+
+        [DllImport("/System/Library/Frameworks/UIKit.framework/UIKit")]
+        private static extern IntPtr UIImageJPEGRepresentation(IntPtr image, double quality);
+
         public Task ClearBrowsingDataAsync()
         {
             RequireAttached();

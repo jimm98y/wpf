@@ -136,6 +136,23 @@ namespace MS.Internal.Interop.WebView
         /// <summary>Drop cookies, cache and other origin-scoped storage for this profile.</summary>
         Task ClearBrowsingDataAsync();
 
+        /// <summary>
+        /// Capture what the view is currently showing, as encoded image bytes (PNG when
+        /// <paramref name="png"/> is true, otherwise JPEG).
+        /// </summary>
+        /// <remarks>
+        /// This is what makes a web view printable, and what lets one appear on 3D geometry: an
+        /// overlay contributes no pixels to the WPF scene, so a still is the only way its content
+        /// can become part of a drawing. It backs CoreWebView2.CapturePreviewAsync and
+        /// WebBrowser's GetDrawing.
+        ///
+        /// A still, and honestly only a still -- it is not a way to composite a live view. Where the
+        /// engine has no capture at all (an iframe cannot be read back at any price) this throws
+        /// rather than returning a blank image, because a blank page is indistinguishable from a
+        /// page that really is blank.
+        /// </remarks>
+        Task<byte[]> CapturePreviewAsync(bool png);
+
         // ---- events (raised on the creating thread) ---------------------------------------------
 
         event EventHandler<WebViewNavigationStartingEventArgs> NavigationStarting;

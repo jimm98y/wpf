@@ -56,6 +56,7 @@ namespace MS.Internal.Interop.WebView
         private static readonly Guid IID_ProcessFailed = new Guid("79e0aea4-990b-42d9-aa1d-0fcc2e5bc7f1");
         private static readonly Guid IID_DownloadStarting = new Guid("efedc989-c396-41ca-83f7-07f845a55724");
         private static readonly Guid IID_ICoreWebView2_4 = new Guid("20d02d59-6df2-42dc-bd06-f98a694b1302");
+        private static readonly Guid IID_CapturePreviewCompleted = new Guid("697e05e9-3d8f-45fa-96f4-8ffe1ededaf5");
 
         /// <summary>add_DownloadStarting on ICoreWebView2_4 (remove_ is the next slot).</summary>
         private const int SlotAddDownloadStarting = 75;
@@ -544,6 +545,75 @@ namespace MS.Internal.Interop.WebView
                     WebView2Interop.Controller_PutZoomFactor(_controller, value);
                 }
             }
+        }
+
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            // A memory-backed IStream from shlwapi rather than one of our own: the engine only ever
+            // writes to it, and authoring IStream would be fourteen vtable slots of no behaviour.
+            IntPtr stream = WebView2Interop.SHCreateMemStream(IntPtr.Zero, 0);
+
+            if (stream == IntPtr.Zero)
+            {
+                return Task.FromException<byte[]>(new OutOfMemoryException(
+                    "Could not allocate a stream for the capture."));
+            }
+
+            var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ComThunk done = null;
+
+            done = ComThunk.ForCompleted(IID_CapturePreviewCompleted, (hr, _) =>
+            {
+                // Called exactly once, so it retires itself and releases the stream here rather than
+                // living for the lifetime of the control.
+                _liveThunks.Remove(done);
+
+                try
+                {
+                    if (hr < 0)
+                    {
+                        tcs.TrySetException(System.Runtime.InteropServices.Marshal.GetExceptionForHR(hr));
+                    }
+                    else
+                    {
+                        tcs.TrySetResult(WebView2Interop.ReadStream(stream));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+                finally
+                {
+                    // The stream is ours to release. The THUNK is not disposed here: WebView2 is
+                    // still inside Invoke on it, and COM calls Release the moment this returns -- on
+                    // memory Dispose would already have freed. That is an access violation, not a
+                    // leak, and it is why ExecuteScriptAsync only unlists its handler too. Detach
+                    // disposes whatever is still listed.
+                    WebView2Interop.Release(stream);
+                }
+
+                return 0;
+            });
+
+            _liveThunks.Add(done);
+
+            // COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT: PNG 0, JPEG 1.
+            int hrStart = WebView2Interop.WebView_CapturePreview(_webview, png ? 0 : 1, stream, done.Pointer);
+
+            if (hrStart < 0)
+            {
+                // Safe to dispose here, unlike in the callback: the engine never took the handler,
+                // so nothing is going to call into it.
+                _liveThunks.Remove(done);
+                WebView2Interop.Release(stream);
+                done.Dispose();
+                WebView2Interop.ThrowIfFailed(hrStart);
+            }
+
+            return tcs.Task;
         }
 
         public Task ClearBrowsingDataAsync()

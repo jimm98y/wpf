@@ -668,6 +668,14 @@ namespace System.Windows.Controls
         /// </remarks>
         internal override System.Windows.Media.DrawingGroup GetDrawing()
         {
+            // The base is PrintWindow over the hosted HWND, which was right for the WebOC and is not
+            // right for a modern engine: they render out of process and through the compositor, so
+            // PrintWindow comes back with the blank bitmap it pre-fills. Ask the engine instead.
+            if (!UseLegacyActiveX)
+            {
+                return GetWebViewDrawing();
+            }
+
             return base.GetDrawing();
         }
 

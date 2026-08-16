@@ -272,6 +272,66 @@ namespace System.Windows.Controls
         private static Uri ToUriOrNull(string uri) =>
             Uri.TryCreate(uri, UriKind.Absolute, out Uri parsed) ? parsed : null;
 
+        /// <summary>
+        /// The drawing content of this control: a still of the page.
+        /// </summary>
+        /// <remarks>
+        /// The base implementation is PrintWindow over the hosted HWND, which was right for the IE
+        /// WebOC -- it painted into that HWND with GDI. It is not right for any engine here: they
+        /// render out of process and through the compositor, so PrintWindow returns the blank
+        /// bitmap this method fills in as a fallback. The engine's own capture is asked instead.
+        ///
+        /// This is also what puts a web view on 3D geometry. An overlay contributes nothing to a
+        /// VisualBrush, so Viewport2DVisual3D would show an empty surface; a still can be drawn.
+        /// Still, not live -- see IWebViewBackend.CapturePreviewAsync.
+        ///
+        /// Synchronous, because GetDrawing is, so the wait pumps the dispatcher exactly as
+        /// InvokeScript does and carries the same reentrancy caveat.
+        /// </remarks>
+        private System.Windows.Media.DrawingGroup GetWebViewDrawing()
+        {
+            if (WebViewBackend is null || !WebViewBackend.IsAttached)
+            {
+                return null;
+            }
+
+            Task<byte[]> pending;
+
+            try
+            {
+                pending = WebViewBackend.CapturePreviewAsync(png: true);
+            }
+            catch (NotSupportedException)
+            {
+                // A head whose engine cannot be captured at all (an iframe). Nothing to draw, and
+                // null is what the caller already handles for "no content".
+                return null;
+            }
+
+            var frame = new System.Windows.Threading.DispatcherFrame();
+
+            pending.ContinueWith(
+                _ => Dispatcher.BeginInvoke((Action)(() => frame.Continue = false)),
+                TaskScheduler.Default);
+
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+
+            if (pending.IsFaulted || pending.Result is not byte[] bytes || bytes.Length == 0)
+            {
+                return null;
+            }
+
+            var source = System.Windows.Media.Imaging.BitmapFrame.Create(
+                new MemoryStream(bytes),
+                System.Windows.Media.Imaging.BitmapCreateOptions.None,
+                System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+
+            var drawing = new System.Windows.Media.DrawingGroup();
+            drawing.Children.Add(new System.Windows.Media.ImageDrawing(source, new Rect(RenderSize)));
+            drawing.Freeze();
+            return drawing;
+        }
+
         // ---- scripting -----------------------------------------------------------------------------
 
         /// <summary>

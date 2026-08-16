@@ -409,6 +409,15 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// android.webkit.WebView can draw itself into a Canvas over a Bitmap, but that is a Java
+        /// call and belongs to the head payload like everything else here. Refused until a payload
+        /// answers the command, rather than returning an empty image.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png) =>
+            Task.FromException<byte[]>(new NotSupportedException(
+                "Capturing a web view is not implemented by this application's Android head."));
+
         public Task ClearBrowsingDataAsync()
         {
             RequireAttached();
