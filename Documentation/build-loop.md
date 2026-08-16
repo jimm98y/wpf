@@ -7,7 +7,7 @@ How to build this fork without waiting ten minutes for a no-op.
 | driver | what it builds | when to use it |
 |---|---|---|
 | `build.cmd` / `build.sh` | `Microsoft.Dotnet.Wpf.sln` through Arcade | working on the WPF assemblies |
-| `eng/build-sdk.cmd` / `.sh` | the assemblies **and** the `WpfWebGpu.Sdk` NuGet packages, each project via a separate `dotnet build` | producing something an app can consume |
+| `eng/build-sdk.cmd` / `.sh` | the assemblies **and** the `WpfWebGpu.Sdk` + `WpfWebGpu.Fonts` NuGet packages, each project via a separate `dotnet build` | producing something an app can consume (see [porting-an-app.md](porting-an-app.md)) |
 
 Arcade invokes MSBuild with its own property set — the `artifacts/` layout, generated version
 properties, `Platform`. A bare `dotnet build Foo.csproj` uses a different one. Neither is wrong, but

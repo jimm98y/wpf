@@ -74,7 +74,7 @@
        SystemFontCatalog iOS branch probes AppContext.BaseDirectory/fonts. Same set the wasm head
        bundles (Liberation Sans is metric-compatible with Helvetica/Arial). -->
   <ItemGroup>
-    <BundleResource Include="../../../../../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <BundleResource Include="../../../../../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--

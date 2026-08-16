@@ -103,7 +103,7 @@
   <!-- iOS has no readable system font directory, so fonts travel in the bundle; SystemFontCatalog's
        iOS branch probes AppContext.BaseDirectory/fonts. -->
   <ItemGroup>
-    <BundleResource Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <BundleResource Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- mono-aot-cross must RESOLVE every assembly the WPF closure names, even unreachable ones. -->

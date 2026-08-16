@@ -10,9 +10,9 @@ REM   eng\build-sdk.cmd -p:SkipPack=true      build only
 REM
 REM Any extra arguments are forwarded to msbuild verbatim.
 REM
-REM The lib\wpf-windows head is packed from a staged win-arm64 fork runtime, which this
-REM script does not produce -- build it with build.cmd and point WpfWinRuntimeDir at it
-REM (see sdk\WpfWebGpu.Sdk\WpfWebGpu.Sdk.csproj).
+REM The SDK package carries the WebGPU backend for EVERY head, and packing without one is an
+REM error. Stage them once per clone (native\ is gitignored):
+REM   pwsh src\Microsoft.DotNet.Wpf\src\WgpuInterop\eng\fetch-wgpu.ps1 -All
 setlocal
 
 set "REPO=%~dp0.."

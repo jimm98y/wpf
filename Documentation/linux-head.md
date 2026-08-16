@@ -469,7 +469,7 @@ to **Liberation Sans** on Linux (Arial metrics, different weight and spacing fro
 
 That was the SAME defect as the missing Cascadia Code: a substitution table naming a font the head did
 not bundle. **Fixed** -- Selawik 1.01 (SIL OFL 1.1, github.com/microsoft/Selawik) is vendored in
-`sdk/WpfWebGpu.Sdk/web/fonts/` as `Selawik-{Regular,Semibold,Bold,Light,Semilight}.ttf` with its
+`sdk/WpfWebGpu.Fonts/fonts/` as `Selawik-{Regular,Semibold,Bold,Light,Semilight}.ttf` with its
 licence beside it, and deployed by a `Selawik*.ttf` glob so added weights need no further edit. Every
 head now renders the UI in the face the substitution was designed around, on macOS and Linux alike.
 
@@ -925,7 +925,7 @@ eng/run-linux.sh --media -- video.webm --auto 13                  # media transp
 # the upstream sample still builds for Windows. Repack + evict first or the build silently uses the
 # last-packed SDK:
 #   ./.dotnet/dotnet build src/.../WgpuInterop/WgpuInterop.csproj -c Release   # assemble.sh does NOT build
-#   sdk/WpfWebGpu.Sdk/assemble.sh && rm -rf ~/.nuget/packages/wpfwebgpu.sdk
+#   sdk/WpfWebGpu.Sdk/assemble.sh && rm -rf ~/.nuget/packages/wpfwebgpu.sdk ~/.nuget/packages/wpfwebgpu.fonts
 #   ./.dotnet/dotnet build "../WPF-Samples/Sample Applications/WPFGallery/WPFGallery.Linux.csproj" -c Release
 python3 eng/check-path-casing.py                                  # csproj paths vs the filesystem
 python3 eng/check-font-substitutions.py                           # every preferred substitute is bundled or OS-provided

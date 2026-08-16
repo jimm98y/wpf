@@ -1,5 +1,0 @@
-<Project>
-
-  <Import Project="Sdk.targets" Sdk="WpfWebGpu.Sdk" Version="0.1.1" />
-
-</Project>

@@ -2,26 +2,40 @@
   WpfWebGpu.Sdk — build a standard WPF application project against the from-source
   WPF-on-WebGPU stack by switching the project's Sdk attribute:
 
-      <Project Sdk="WpfWebGpu.Sdk/0.1.0">
+      <Project Sdk="WpfWebGpu.Sdk/0.1.1">
 
-  Target selection:
-    - net10.0-windows TFM  : passes through to the regular WindowsDesktop SDK path
-                             (UseWPF), so Visual Studio's XAML designer and Windows
-                             builds keep working untouched.
-    - net10.0 TFM          : macOS desktop head on the packaged WPF fork (WebGPU
-                             composition, Cocoa windowing), including XAML markup
-                             compilation via the packaged PresentationBuildTasks.
+  That, and a TargetFramework of net10.0 (NOT net10.0-windows), is the whole conversion
+  of an existing Windows WPF app.
+
+  Head selection, all from the one Sdk id:
+    - net10.0 TFM          : the desktop head for whatever platform the build is
+                             targeting — Windows, macOS or Linux — on the packaged WPF
+                             fork (WebGPU composition, Win32/Cocoa/Wayland windowing),
+                             including XAML markup compilation via the packaged
+                             PresentationBuildTasks. The head follows the RID, not the
+                             TFM moniker, so one project file serves all three.
+    - net10.0-android TFM  : Android head (SurfaceView + the desktop renderer).
+    - net10.0-ios TFM      : iOS head (Metal/CAMetalLayer, wgpu linked statically).
     - -p:WpfPlatform=browser : WebAssembly head (WebGPU via JS interop). Must be a
-                             global property (command line or Directory.Build.props)
-                             because it selects the base SDK before the project body
-                             is evaluated. Example:
+                             GLOBAL property — on the command line — because it selects
+                             the base SDK (Microsoft.NET.Sdk.WebAssembly) before the
+                             project body or a Directory.Build.props has been read:
                                dotnet publish -f net10.0 -p:WpfPlatform=browser
+                             This used to have its own package id (WpfWebGpuWasm.Sdk)
+                             whose entire content was that one property. It is gone;
+                             Sdk.targets errors out if the property arrives too late to
+                             have taken effect, which is the one thing the extra id
+                             actually bought.
 -->
 <Project>
 
   <PropertyGroup>
     <UsingWpfWebGpuSdk>true</UsingWpfWebGpuSdk>
     <WpfWebGpuSdkRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</WpfWebGpuSdkRoot>
+    <!-- Records that the browser decision was taken HERE, where it can still select the base SDK.
+         Sdk.targets compares this against the final $(WpfPlatform) to catch a project that set the
+         property in its body, which reads as "browser" everywhere except where it mattered. -->
+    <_WpfWebGpuBrowserFromProps Condition="'$(WpfPlatform)' == 'browser'">true</_WpfWebGpuBrowserFromProps>
     <!-- This is a WPF-on-WebGPU SDK: default the project into the WPF build pipeline so
          consuming .csproj files no longer need (and must not rely on) UseWPF. Every flavor
          supplies WPF from this SDK's packaged fork assemblies, never the WindowsDesktop

@@ -130,22 +130,22 @@
        the app-local fonts folder. The packaged SDK deploys this automatically (Sdk.targets); samples
        that reference the fork by path have to do it themselves, or every icon is a missing-glyph box. -->
   <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/Symbols.ttf"
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/Symbols.ttf"
           Link="fonts/Symbols.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <!-- Cascadia Code for its programming ligatures: the fallbacks have none. -->
-    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/CascadiaCode-Regular.ttf"
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/CascadiaCode-Regular.ttf"
           Link="fonts/CascadiaCode-Regular.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <!-- Selawik (the Segoe UI substitute) once it is vendored; a glob matching nothing is inert. -->
-    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/Selawik*.ttf"
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/Selawik*.ttf"
           Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <!-- Noto Sans CJK, the same collection the packaged SDK deploys. A sample that references the
          fork by path has to deploy it itself, or Japanese/Chinese/Korean text is missing glyphs on
          any box without the CJK language packs installed. -->
-    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/NotoSansCJK-Regular.ttc"
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/NotoSansCJK-Regular.ttc"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false" />
     <!-- The COLR emoji face the SDK ships: the system emoji fonts are colour BITMAPS
          (CBDT/CBLC, sbix) that this renderer cannot draw, so without this emoji are blank. -->
-    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Sdk/web/fonts/TwemojiMozilla.ttf"
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/TwemojiMozilla.ttf"
           CopyToOutputDirectory="PreserveNewest" Link="fonts/TwemojiMozilla.ttf" Visible="false" />
   </ItemGroup>
 

@@ -25,7 +25,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TABLE = ROOT / "src/Microsoft.DotNet.Wpf/src/DirectWriteForwarder/Stub/Managed/FontFactoryState.cs"
-BUNDLED_DIR = ROOT / "sdk/WpfWebGpu.Sdk/web/fonts"
+BUNDLED_DIR = ROOT / "sdk/WpfWebGpu.Fonts/fonts"
 
 # Faces we deliberately rely on the OS for, rather than shipping. Everything here is either present on
 # every target of the head that needs it, or is a same-platform alias we can assume.
@@ -82,7 +82,7 @@ def main():
     if problems:
         print("\nFONT SUBSTITUTION CHECK FAILED\n")
         print("\n".join(problems))
-        print("\nEither vendor the font into sdk/WpfWebGpu.Sdk/web/fonts (and add it to the deploy lists,\n"
+        print("\nEither vendor the font into sdk/WpfWebGpu.Fonts/fonts (and add it to the deploy lists,\n"
               "which name files explicitly), or add it to OS_PROVIDED if the OS really does supply it.")
         return 1
 

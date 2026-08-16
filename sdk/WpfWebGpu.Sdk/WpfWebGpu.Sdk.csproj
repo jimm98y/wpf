@@ -7,13 +7,21 @@
      (assemble.sh / assemble.cmd are thin wrappers around exactly that.)
      Rerun after rebuilding the fork so the packaged assemblies are current.
 
-     Flavors are packed based on what's available on the build machine:
-       - unix/browser payload (lib/wpf, lib/wpf-browser, lib/wpf-winforms, native/osx-arm64)
-         comes from the net10.0 cross-platform fork build under artifacts/bin — packed when it
-         exists ($(_HasForkNet10)).
-       - the windows head payload (lib/wpf-windows, native/win-arm64) comes from a staged
-         win-arm64 fork runtime ($(WpfWinRuntimeDir), defaults to the local testhost) plus the
-         WebGPU native runtime ($(WgpuWinNativeDir)) — packed when it exists ($(_HasWinRuntime)). -->
+     ONE package, ONE payload, for every head.
+
+     This used to pack per-flavor payloads whose presence depended on what the packing machine
+     happened to have on disk: lib/wpf for the cross-platform heads out of artifacts/bin, and a
+     SEPARATE lib/wpf-windows copied out of a staged win-arm64 runtime directory ($(WpfWinRuntimeDir),
+     which defaulted to a hard-coded C:\ path). That predated the port being fully managed. It has
+     been wrong since — the same AnyCPU net10.0 assemblies run on every head — and it was wrong in the
+     silent way: the staged directory is nothing's build output, so nothing updates it, and the
+     package shipped Windows binaries a week older than the fork it was packed from while every other
+     head got current ones.
+
+     There is now one managed payload (lib/wpf) built from artifacts/bin, and the native backend for
+     EVERY RID ships in the package rather than only the ones staged locally, so a package built on
+     any machine is the same package. Fonts moved out entirely (WpfWebGpu.Fonts) — they were 27 MB of
+     a 40 MB package and only two heads read them. -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
@@ -21,12 +29,15 @@
     <PackageId>WpfWebGpu.Sdk</PackageId>
     <Version>0.1.1</Version>
     <Authors>wpf-webgpu</Authors>
-    <Description>MSBuild SDK that builds standard WPF application projects against the from-source WPF-on-WebGPU stack (windows, macOS desktop, and WebAssembly/browser). Every head is self-contained: WPF comes from the packaged fork assemblies, never the stock WindowsDesktop framework.</Description>
+    <Description>MSBuild SDK that builds standard WPF application projects against the from-source WPF-on-WebGPU stack (Windows, macOS, Linux, Android, iOS and WebAssembly/browser). Every head is self-contained: WPF comes from the packaged fork assemblies, never the stock WindowsDesktop framework.</Description>
     <PackageType>MSBuildSdk</PackageType>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <EnableDefaultItems>false</EnableDefaultItems>
-    <NoWarn>$(NoWarn);NU5100;NU5110;NU5111;NU5128</NoWarn>
+    <!-- NU5100/NU5103: lib/wpf, lib/wpf-desktop and friends are not target-framework folders. That is
+         deliberate — this is an MSBuild SDK whose targets pick a payload per head, not a library
+         package NuGet resolves by TFM. -->
+    <NoWarn>$(NoWarn);NU5100;NU5103;NU5110;NU5111;NU5128</NoWarn>
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <AnalysisLevel>none</AnalysisLevel>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
@@ -35,35 +46,29 @@
     <WpfRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</WpfRepoRoot>
     <WpfBin>$(WpfRepoRoot)artifacts/bin/</WpfBin>
     <WgpuInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/</WgpuInteropDir>
+    <WgpuNativeDir>$(WgpuInteropDir)native/</WgpuNativeDir>
     <WinFormsInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WinFormsInterop/</WinFormsInteropDir>
 
-    <!-- windows head payload sources (overridable). Defaults to the local from-source testhost
-         (a staged win-arm64 fork runtime) and the WebGPU native runtime deployed beside the sample. -->
-    <WpfWinRuntimeDir Condition="'$(WpfWinRuntimeDir)' == ''">C:/Git/wpf-testhost/shared/Microsoft.WindowsDesktop.App/10.0.9/</WpfWinRuntimeDir>
-    <!-- The gallery's TFM moved from net10.0-windows to net10.0, and this pointed at the old output
-         directory. Every Include below is Exists-gated, so the package still built - just without a
-         WebGPU backend in it, and every app built against it died at startup with
-         "DllNotFoundException: wgpu_native". Probe both, and see WpfWebGpuValidateInputs, which now
-         refuses to pack a windows head that has no backend rather than shipping that silently. -->
-    <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == '' and Exists('$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/wgpu_native.dll')">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0/</WgpuWinNativeDir>
-    <WgpuWinNativeDir Condition="'$(WgpuWinNativeDir)' == ''">$(WpfRepoRoot)samples/wpf-webgpu-gallery/bin/Release/net10.0-windows/</WgpuWinNativeDir>
+    <!-- Where WebView2Loader.dll comes from for the Windows heads. It is the one native dependency
+         the web view has on Windows (the Edge runtime itself is an OS component, not shipped here).
+         Probed in the NuGet cache, so any machine that has ever restored the WebView2 package can
+         pack without extra steps; override for an offline build. -->
+    <WebView2PackageDir Condition="'$(WebView2PackageDir)' == ''">$(NuGetPackageRoot)microsoft.web.webview2/1.0.4022.49/</WebView2PackageDir>
 
-    <!-- Where WebView2Loader.dll is staged for the windows head. It is the one native dependency the
-         web view has on Windows (the Edge runtime itself is an OS component, not shipped here).
-         Probed first beside the gallery, exactly as wgpu-native is, then in the NuGet cache, so a
-         machine that has ever restored the WebView2 package can pack without extra steps. -->
-    <WebView2LoaderDir Condition="'$(WebView2LoaderDir)' == '' and Exists('$(WgpuWinNativeDir)WebView2Loader.dll')">$(WgpuWinNativeDir)</WebView2LoaderDir>
-    <WebView2LoaderDir Condition="'$(WebView2LoaderDir)' == ''">$(NuGetPackageRoot)microsoft.web.webview2/1.0.4022.49/runtimes/win-arm64/native/</WebView2LoaderDir>
-
-    <!-- Which flavors can be packed from this machine's outputs? -->
-    <_HasForkNet10 Condition="Exists('$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll')">true</_HasForkNet10>
-    <_HasWinRuntime Condition="Exists('$(WpfWinRuntimeDir)PresentationFramework.dll')">true</_HasWinRuntime>
+    <!-- Packing without a backend for every head is an ERROR, not a warning: an SDK that is missing
+         one RID's wgpu-native produces apps that build clean and die at startup with
+         DllNotFoundException, on a machine that is by definition not the one that packed it. Set
+         this to pack a deliberately partial SDK for local iteration. -->
+    <WpfWebGpuAllowPartialNative Condition="'$(WpfWebGpuAllowPartialNative)' == ''">false</WpfWebGpuAllowPartialNative>
   </PropertyGroup>
 
-  <!-- Always present: the SDK itself, host page templates, the fork markup compiler + targets. -->
+  <!-- ===================== the SDK itself, markup compiler, host page ===================== -->
   <ItemGroup>
     <None Include="Sdk/**" Pack="true" PackagePath="Sdk/" />
 
+    <!-- The browser host page and the JS interop modules. The FONTS that used to sit beside these
+         are a separate package now (WpfWebGpu.Fonts); see Sdk.targets, which PackageReferences it
+         only on the heads that have no system fonts to fall back on. -->
     <None Include="web/**" Pack="true" PackagePath="web/" />
     <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" Condition="Exists('$(WgpuInteropDir)Browser/wgpu-interop.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js')" />
@@ -72,57 +77,68 @@
     <!-- XAML markup compiler (fork build) + its targets — required by every head. -->
     <None Include="$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll" Pack="true" PackagePath="tools/net10.0/" />
     <None Include="$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/targets/Microsoft.WinFX.targets" Pack="true" PackagePath="targets/" />
-
-    <!-- The desktop WebGPU interop (P/Invoke wgpu-native) — used by both the unix and windows
-         heads, and always available (built directly under WgpuInterop). -->
-    <None Include="$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
   </ItemGroup>
 
-  <!-- ============================ unix / browser payload ============================ -->
-  <ItemGroup Condition="'$(_HasForkNet10)' == 'true'">
-    <!-- Shared WPF assemblies (net10.0 cross-platform fork build). -->
-    <!-- Every theme, on every head. A theme is resolved by NAME at runtime
-         (Assembly.Load of "PresentationFramework.{ThemeName}"), so one that is not in the payload
-         is not a theme that falls back gracefully. It is a FileNotFoundException the moment
-         anything asks for it, and what asks may be a control's default style rather than the app.
-         The assemblies are pure compiled XAML with no platform dependency, so there is nothing
-         Windows-only about Aero, AeroLite, Luna or Royale except their names. -->
-    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;System.Windows.Input.Manipulations;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale;PresentationUI" />
-    <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
-    <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
+  <!-- ============================ the managed WPF payload ============================ -->
+  <!-- ONE set of assemblies, referenced by every head (Sdk.targets). All AnyCPU net10.0, all out of
+       artifacts/bin — Windows included, which is what removing WPF's native DLLs bought.
 
-    <!-- Desktop flavor extras: the real managed System.Printing + the cross-platform SystemEvents/Registry shims. -->
-    <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+       Every theme ships, on every head. A theme is resolved by NAME at runtime (Assembly.Load of
+       "PresentationFramework.{ThemeName}"), so one that is not in the payload is not a theme that
+       falls back gracefully: it is a FileNotFoundException the moment anything asks for it, and what
+       asks may be a control's default style rather than the app. The assemblies are pure compiled
+       XAML with no platform dependency, so there is nothing Windows-only about Aero, AeroLite, Luna
+       or Royale except their names.
+
+       UIAutomationClient/UIAutomationClientSideProviders, System.Windows.Controls.Ribbon,
+       System.Windows.Presentation and Accessibility used to be in the Windows-only payload. They are
+       ordinary managed assemblies that build for net10.0 like the rest, and an app that uses a Ribbon
+       or drives itself through a UIA client should not stop working because it was built for Linux. -->
+  <ItemGroup>
+    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;PresentationUI;Accessibility;System.Windows.Input.Manipulations;System.Windows.Primitives;System.Windows.Presentation;System.Windows.Controls.Ribbon;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
+    <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
+    <!-- Two whose project name differs from their assembly name. -->
+    <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
+    <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf/" />
+  </ItemGroup>
+
+  <!-- ============================ per-flavor managed extras ============================ -->
+  <ItemGroup>
+    <!-- Desktop (Windows, macOS, Linux, Android): the WebGPU interop that P/Invokes wgpu-native,
+         plus the cross-platform SystemEvents/Registry shims. The shims are packed here rather than
+         in their own folder because the Windows head references this folder's interop by name and
+         takes the REAL Win32-backed runtime packages for the other two — see Sdk.targets. -->
+    <None Include="$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
 
-    <!-- Browser flavor: JS-interop WebGPU + Accessibility ref. System.Printing is the same real
-         assembly the desktop flavor gets; the contract-only reference assembly used to ship here
-         because mono-wasm resolves XpsDocumentWriter EAGERLY while setting up DocumentViewerBase and
-         the desktop cycle-breaker did not have the type at all. The real one has it, so both flavors
-         can now use the same assembly and printing works in the browser rather than silently doing
-         nothing (XpsDocumentWriter.Write was an empty method body in the ref). -->
+    <!-- iOS: the same assembly name built against the iOS bindings (Metal/CAMetalLayer + UIKit)
+         instead of the desktop platform layer. Needs the ios workload to have been built. -->
+    <None Include="$(WgpuInteropDir)Ios/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-ios/" Condition="Exists('$(WgpuInteropDir)Ios/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')" />
+
+    <!-- Browser: JS-interop WebGPU over navigator.gpu, plus the shims. System.Diagnostics.Process is
+         browser-only: the framework's throws PlatformNotSupportedException from every member,
+         GetCurrentProcess() included, and that one is pure self-inspection which apps use for status
+         bars and telemetry rather than for spawning anything. -->
     <None Include="$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-browser/" Condition="Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')" />
-    <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-browser/" />
     <None Include="$(WpfBin)System.Diagnostics.Process/Release/net10.0/System.Diagnostics.Process.dll" Pack="true" PackagePath="lib/wpf-browser/" />
 
-    <!-- WinForms for UseWindowsForms apps, on EVERY desktop head (see Sdk.targets): the Mono
-         System.Windows.Forms — which owns its own on-screen presentation, so Application.Run works —
-         its vendored System.Drawing, Accessibility, and WindowsFormsIntegration for
-         System.Windows.Forms.Integration.ElementHost (hosting a WPF tree inside a WinForms control).
-         This is deliberately NOT a per-OS payload: Microsoft.WindowsDesktop.App's WinForms is never
-         an option here, so Windows needs exactly the same assemblies as macOS and Linux. -->
+    <!-- WinForms for UseWindowsForms apps, on EVERY desktop head: the Mono System.Windows.Forms —
+         which owns its own on-screen presentation, so Application.Run works — its vendored
+         System.Drawing, and WindowsFormsIntegration for ElementHost/WindowsFormsHost. Deliberately
+         NOT a per-OS payload: Microsoft.WindowsDesktop.App's WinForms is never an option here, so
+         Windows needs exactly the same assemblies as macOS and Linux. (Accessibility.dll used to be
+         duplicated here; it is in lib/wpf now, which every head references.) -->
     <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll')" />
     <None Include="$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll')" />
     <!-- NOT $(WpfBin)WindowsFormsIntegration: that is the ARCADE build of the Windows-only original,
          which references the real System.Windows.Forms v10.0.0.0 and so cannot bind against the Mono
          one shipped beside it here. The WebGPU flavour under integration/ is the one built against
-         our WinForms — see the Exists() guard below, which is what silently produced a package with
-         no ElementHost/WindowsFormsHost in it while that project had never been built. -->
+         our WinForms — see the Exists() guard, which is what silently produced a package with no
+         ElementHost/WindowsFormsHost in it while that project had never been built. -->
     <None Include="$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll')" />
-    <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
 
     <!-- WebView2, for BOTH UI stacks and on EVERY head.
 
@@ -130,98 +146,125 @@
          so an application that already has <PackageReference Include="Microsoft.Web.WebView2"/>
          compiles and binds against them unchanged and runs on whatever engine the head actually has
          — WebView2 on Windows, WKWebView on macOS/iOS, and so on. Sdk.targets evicts the real
-         package's assemblies in favour of these; see _WpfWebGpuStripWebView2Package there.
-
-         Core and Wpf are packed for every desktop head; the WinForms control is packed beside them
-         because it is only REFERENCED when UseWindowsForms is set (again, Sdk.targets), and a single
-         folder keeps the three versions from drifting apart. -->
+         package's assemblies in favour of these; see _WpfWebGpuStripWebView2Package there. -->
     <None Include="$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll" Pack="true" PackagePath="lib/wpf-webview2/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll')" />
     <None Include="$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll" Pack="true" PackagePath="lib/wpf-webview2/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll')" />
     <None Include="$(WpfBin)Microsoft.Web.WebView2.WinForms/Release/net10.0/Microsoft.Web.WebView2.WinForms.dll" Pack="true" PackagePath="lib/wpf-webview2-winforms/" Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.WinForms/Release/net10.0/Microsoft.Web.WebView2.WinForms.dll')" />
-
-    <!-- Native wgpu for the unix desktop heads. Each is packed only if staged on this machine
-         (eng/fetch-wgpu.ps1 -Rid <rid>), so a package built on a Mac carries the macOS backend and
-         one built on Linux carries the Linux one; Sdk.targets then picks by RID at consume time. -->
-    <None Include="$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-arm64/" Condition="Exists('$(WgpuInteropDir)native/osx-arm64/lib/libwgpu_native.dylib')" />
-    <None Include="$(WgpuInteropDir)native/osx-x64/lib/libwgpu_native.dylib" Pack="true" PackagePath="native/osx-x64/" Condition="Exists('$(WgpuInteropDir)native/osx-x64/lib/libwgpu_native.dylib')" />
-    <None Include="$(WgpuInteropDir)native/linux-arm64/lib/libwgpu_native.so" Pack="true" PackagePath="native/linux-arm64/" Condition="Exists('$(WgpuInteropDir)native/linux-arm64/lib/libwgpu_native.so')" />
-    <None Include="$(WgpuInteropDir)native/linux-x64/lib/libwgpu_native.so" Pack="true" PackagePath="native/linux-x64/" Condition="Exists('$(WgpuInteropDir)native/linux-x64/lib/libwgpu_native.so')" />
   </ItemGroup>
 
-  <!-- ============================== windows head payload ============================== -->
-  <ItemGroup Condition="'$(_HasWinRuntime)' == 'true'">
-    <!-- Managed WPF (win-arm64 fork build). Curated to the WPF surface only — System.*/Microsoft.*
-         that belong to NETCore.App or arrive as PackageReferences are intentionally excluded so
-         they don't shadow the runtime with a stale copy. -->
-    <_WpfWin Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;DirectWriteForwarder;ReachFramework;System.Printing;PresentationUI;System.Windows.Presentation;System.Windows.Controls.Ribbon;System.Windows.Input.Manipulations;System.Windows.Primitives;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;PresentationFramework.Fluent;PresentationFramework.Aero2;PresentationFramework.Aero;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
-    <None Include="@(_WpfWin->'$(WpfWinRuntimeDir)%(Identity).dll')" Pack="true" PackagePath="lib/wpf-windows/" />
+  <!-- ================================ the native backend ================================ -->
+  <!--
+    The GPU backend for EVERY head, in the one package: wgpu-native, plus ANGLE on the platforms
+    that have an OpenGL path.
 
-    <!-- The MSAA interop assembly, from the fork build rather than from $(WpfWinRuntimeDir).
-         Everything else in the windows head comes out of the staged runtime directory, but that
-         directory is laid out like Microsoft.WindowsDesktop.App and this is the one assembly in it
-         the fork did not used to build. It does now (src/Microsoft.DotNet.Wpf/src/Accessibility),
-         so the head has no WindowsDesktop framework assembly left in it. Only UIAutomationClient
-         and UIAutomationClientSideProviders need it. -->
-    <None Include="$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll" Pack="true" PackagePath="lib/wpf-windows/"
-          Condition="Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')" />
+    These used to be packed only if the packing machine happened to have them staged, which meant the
+    package's contents depended on who built it: one packed on a Mac carried macOS, one packed here
+    carried win-arm64, and nothing said so. An app built against the wrong one fails at startup with
+    DllNotFoundException on a machine that is by definition not the one that packed it.
 
-    <!-- No WPF native runtime. wpfgfx_cor3, PresentationNative_cor3 and PenImc_cor3 used to be packed
-         here; nothing loads them any more and shipping them only invited something to start again:
-           * wpfgfx    - composition is the managed WebGPU engine, geometry/bounds and text are managed,
-                         and media now goes through WindowsMediaBackend (Media Foundation) instead of
-                         the milcore media player, whose frames the managed compositor could not see.
-           * PresNative- Line Services, PTS and OS-version checks are managed; the speller prefers WinRT
-                         and the hyphenator degrades to no-hyphenation if it is absent.
-           * PenImc    - stylus/touch runs on the WM_POINTER stack, which needs no native helper
-                         (StylusLogic.IsPointerStackEnabled).
-         vcruntime140_cor3 went with them: it was only there to satisfy the three above. -->
+    Staged by eng/fetch-wgpu.ps1, which is what CI and a fresh clone run, and which fetches BOTH
+    libraries into native/<rid>/lib:
 
-    <!-- WebGPU native runtime (wgpu-native + ANGLE GL), win-arm64. -->
-    <None Include="$(WgpuWinNativeDir)wgpu_native.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)wgpu_native.dll')" />
-    <None Include="$(WgpuWinNativeDir)libEGL.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)libEGL.dll')" />
-    <None Include="$(WgpuWinNativeDir)libGLESv2.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WgpuWinNativeDir)libGLESv2.dll')" />
+        pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -All
+
+    Missing RIDs are an error unless -p:WpfWebGpuAllowPartialNative=true (see WpfWebGpuValidateInputs).
+    iOS is the one head that gets a STATIC archive: an app cannot dlopen a third-party dylib there, so
+    the binding links libwgpu_native.a in with @(NativeReference)/ForceLoad instead of P/Invoking a
+    shared library.
+  -->
+  <ItemGroup>
+    <!-- The STAGING DIRECTORY is the unit, not a list of filenames: whatever fetch-wgpu.ps1 put in
+         native/<rid>/lib for a RID is that RID's GPU payload, and it ships as one directory. That is
+         what lets ANGLE join wgpu-native without this file having to learn about it per platform,
+         and it is why the fetch script drops both into the same folder.
+
+         The globs are by EXTENSION rather than '*' because the archives also carry things an app
+         must never receive: wgpu_native.lib (a 52 MB import/static library), .pdb symbols, and a
+         second static libwgpu_native.a beside the shared library on Linux, macOS and Android. iOS is
+         the one RID where the .a IS the payload. -->
+    <None Include="$(WgpuNativeDir)win-x64/lib/*.dll"             Pack="true" PackagePath="native/win-x64/" />
+    <None Include="$(WgpuNativeDir)win-arm64/lib/*.dll"           Pack="true" PackagePath="native/win-arm64/" />
+    <None Include="$(WgpuNativeDir)linux-x64/lib/*.so"            Pack="true" PackagePath="native/linux-x64/" />
+    <None Include="$(WgpuNativeDir)linux-arm64/lib/*.so"          Pack="true" PackagePath="native/linux-arm64/" />
+    <None Include="$(WgpuNativeDir)osx-x64/lib/*.dylib"           Pack="true" PackagePath="native/osx-x64/" />
+    <None Include="$(WgpuNativeDir)osx-arm64/lib/*.dylib"         Pack="true" PackagePath="native/osx-arm64/" />
+    <None Include="$(WgpuNativeDir)android-arm64/lib/*.so"        Pack="true" PackagePath="native/android-arm64/" />
+    <None Include="$(WgpuNativeDir)android-x64/lib/*.so"          Pack="true" PackagePath="native/android-x64/" />
+    <None Include="$(WgpuNativeDir)ios-arm64/lib/*.a"             Pack="true" PackagePath="native/ios-arm64/" />
+    <None Include="$(WgpuNativeDir)ios-arm64-simulator/lib/*.a"   Pack="true" PackagePath="native/ios-arm64-simulator/" />
 
     <!-- The WebView2 loader, which is the ONLY native dependency the web view has on Windows: it
          exports CreateCoreWebView2EnvironmentWithOptions, and WindowsWebViewBackend P/Invokes it to
          start the Edge runtime. The runtime itself is an OS component (preinstalled on Windows 11)
-         and is not shipped here — only this ~150 KB shim is.
-
-         Staged the same way wgpu-native is (see WebView2LoaderDir), so the pack is Exists()-gated and
-         a machine without it produces a diagnosable error rather than a package whose every
-         web-hosting app dies with DllNotFoundException. -->
-    <None Include="$(WebView2LoaderDir)WebView2Loader.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WebView2LoaderDir)WebView2Loader.dll')" />
+         and is not shipped here — only this ~150 KB shim, per architecture, straight out of the
+         restored package so the two Windows RIDs cannot end up with one architecture's copy. -->
+    <None Include="$(WebView2PackageDir)runtimes/win-x64/native/WebView2Loader.dll"   Pack="true" PackagePath="native/win-x64/"   Condition="Exists('$(WebView2PackageDir)runtimes/win-x64/native/WebView2Loader.dll')" />
+    <None Include="$(WebView2PackageDir)runtimes/win-arm64/native/WebView2Loader.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WebView2PackageDir)runtimes/win-arm64/native/WebView2Loader.dll')" />
   </ItemGroup>
 
   <!-- Fail early with a readable message instead of packing a broken SDK. -->
   <Target Name="WpfWebGpuValidateInputs" BeforeTargets="GenerateNuspec">
-    <Error Condition="'$(_HasForkNet10)' != 'true' and '$(_HasWinRuntime)' != 'true'"
-           Text="Nothing to pack: neither the net10.0 fork build ($(WpfBin)PresentationFramework/Release/net10.0/) nor a staged win-arm64 runtime ($(WpfWinRuntimeDir)) is present. Build the fork or set WpfWinRuntimeDir." />
-    <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WpfBin)Accessibility/Release/net10.0/Accessibility.dll')"
-           Text="The windows head needs the fork-built Accessibility.dll ($(WpfBin)Accessibility/Release/net10.0/). Build the fork; do NOT substitute the WindowsDesktop framework copy." />
+    <!-- Sdk.props/Sdk.targets must be WELL-FORMED XML, and the way they stop being so is a double
+         hyphen inside a comment: legal-looking prose, illegal XML. MSBuild does not report it. It
+         skips the entire file, and the consuming project then fails at evaluation with an
+         unrelated-looking MSB4022 about $(MicrosoftNETBuildTasksAssembly) — pointing at the .NET SDK,
+         not at us. XmlPeek parses the file properly, so a malformed comment fails HERE, at the point
+         of packing, instead of in somebody's app. -->
+    <XmlPeek XmlInputPath="Sdk/Sdk.props" Query="/Project" />
+    <XmlPeek XmlInputPath="Sdk/Sdk.targets" Query="/Project" />
+    <Error Condition="!Exists('$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll')"
+           Text="Nothing to pack: the fork is not built ($(WpfBin)PresentationFramework/Release/net10.0/). Run eng/build-sdk.cmd (or .sh), which builds every project this packs and then packs it." />
+
+    <!-- Each assembly named in @(_WpfShared) has to actually exist. They are packed by transform, and
+         a transform over a missing file packs NOTHING and says nothing — which is how a package ends
+         up without, say, PresentationFramework.Luna, and an app dies at runtime looking for a theme. -->
+    <ItemGroup>
+      <_MissingShared Include="@(_WpfShared)" Condition="!Exists('$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" />
+    </ItemGroup>
+    <Error Condition="'@(_MissingShared)' != ''"
+           Text="The managed payload is incomplete — not built under $(WpfBin): @(_MissingShared->'%(Identity)', ', '). Run eng/build-sdk.cmd; every one of these is in its project list." />
+
     <!-- The three WebView2 assemblies move together or not at all: they share an identity and a
          version, and a package carrying only some of them resolves half an application's references
          to ours and half to the real (Windows-only) package, which fails at run time off Windows in
          a way that points nowhere near this SDK. -->
-    <Error Condition="'$(_HasForkNet10)' == 'true' and
-                      Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
+    <Error Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
                       !Exists('$(WpfBin)Microsoft.Web.WebView2.Wpf/Release/net10.0/Microsoft.Web.WebView2.Wpf.dll')"
            Text="Microsoft.Web.WebView2.Core was built but Microsoft.Web.WebView2.Wpf was not. Build src/Microsoft.DotNet.Wpf/src/WebView2/Microsoft.Web.WebView2.Wpf (and .WinForms); shipping one without the other resolves half an app's references to the real Windows-only package." />
+    <Error Condition="Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
+                      !Exists('$(WebView2PackageDir)runtimes/win-arm64/native/WebView2Loader.dll')"
+           Text="The package carries the WebView2 assemblies but no WebView2Loader.dll ($(WebView2PackageDir)runtimes/&lt;rid&gt;/native/). Restore the Microsoft.Web.WebView2 package or set WebView2PackageDir. Without it every web view on Windows fails at startup with DllNotFoundException, exactly as a missing wgpu_native.dll does." />
 
-    <Error Condition="'$(_HasWinRuntime)' == 'true' and
-                      Exists('$(WpfBin)Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll') and
-                      !Exists('$(WebView2LoaderDir)WebView2Loader.dll')"
-           Text="The windows head packs the WebView2 assemblies but has no WebView2Loader.dll under $(WebView2LoaderDir). Restore the Microsoft.Web.WebView2 package or set WebView2LoaderDir. Without it every web view on Windows fails at startup with DllNotFoundException, exactly as a missing wgpu_native.dll does." />
+    <!-- The native backend, for every head, checked by RID. -->
+    <ItemGroup>
+      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
+      <_WgpuMissing Include="@(_WgpuExpected)" Condition="!Exists('$(WgpuNativeDir)%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_WgpuMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' != 'true'"
+           Text="No WebGPU backend for: @(_WgpuMissing->'%(Identity)', ', ') under $(WgpuNativeDir). Every head's native ships in this one package, so a missing RID is an app that builds clean and dies at startup with DllNotFoundException on someone else's machine. Stage them with src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1, or pass -p:WpfWebGpuAllowPartialNative=true to pack a deliberately partial SDK." />
+    <Warning Condition="'@(_WgpuMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' == 'true'"
+             Text="Packing a PARTIAL SDK: no WebGPU backend for @(_WgpuMissing->'%(Identity)', ', '). Apps built against it for those RIDs will fail at startup with DllNotFoundException." />
 
-    <Error Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)wgpu_native.dll')"
-           Text="The windows head has no WebGPU backend: no wgpu_native.dll under $(WgpuWinNativeDir). Build samples/wpf-webgpu-gallery (which stages wgpu-native + ANGLE) or set WgpuWinNativeDir. Packing without it produces an SDK whose apps all fail at startup with DllNotFoundException." />
-    <Warning Condition="'$(_HasWinRuntime)' == 'true' and !Exists('$(WgpuWinNativeDir)libEGL.dll')"
-             Text="No ANGLE runtime under $(WgpuWinNativeDir) — the windows head will have no OpenGL backend, which is the only one available on some machines (e.g. a VM with a virtualized GPU)." />
+    <!-- ANGLE, checked the same way and for the same reason. It is fetched by the same script now, so
+         a head without it is a staging mistake rather than a fact of life — and on Windows it is the
+         backend that a virtualized GPU falls back to, i.e. the difference between an app that renders
+         in a VM and one that does not. Only the desktop RIDs: Android has a system GLES driver and
+         iOS is Metal-only (see the map in fetch-wgpu.ps1). -->
+    <ItemGroup>
+      <_AngleExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
+      <_AngleMissing Include="@(_AngleExpected)" Condition="!Exists('$(WgpuNativeDir)%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_AngleMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' != 'true'"
+           Text="No ANGLE for: @(_AngleMissing->'%(Identity)', ', ') under $(WgpuNativeDir). Stage it with src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -All, or pass -p:WpfWebGpuAllowPartialNative=true. Without it a head has no OpenGL backend, which on a virtualized GPU is the only backend there is." />
+    <Warning Condition="'@(_AngleMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' == 'true'"
+             Text="Packing a PARTIAL SDK: no ANGLE for @(_AngleMissing->'%(Identity)', ', ')." />
+    <Warning Condition="!Exists('$(WgpuInteropDir)Ios/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')"
+             Text="The iOS renderer is not built ($(WgpuInteropDir)Ios/bin/Release/net10.0/) — packing WITHOUT the iOS head's managed interop. Needs the ios workload; see eng/build-sdk.proj." />
+    <Warning Condition="!Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')"
+             Text="The browser renderer is not built ($(WgpuInteropDir)Browser/bin/Release/net10.0/) — packing WITHOUT the WebAssembly head. Needs the wasm-tools workload; see eng/build-sdk.proj." />
+
     <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
            Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
-    <Warning Condition="'$(_HasForkNet10)' != 'true'"
-             Text="net10.0 fork build absent — packing WITHOUT the unix/macOS + browser heads (windows head only)." />
-    <Warning Condition="'$(_HasWinRuntime)' != 'true'"
-             Text="win-arm64 runtime absent ($(WpfWinRuntimeDir)) — packing WITHOUT the windows head." />
   </Target>
 
 </Project>

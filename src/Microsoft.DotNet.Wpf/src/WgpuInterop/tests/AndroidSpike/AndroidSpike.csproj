@@ -38,7 +38,7 @@
        Liberation/DejaVu additionally keep text metrics identical to the other heads.
        Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
   <ItemGroup>
-    <AndroidAsset Include="../../../../../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <AndroidAsset Include="../../../../../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- The DESKTOP flavour of the binding: on Android a DllImport("wgpu_native") resolves through

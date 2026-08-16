@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pack WpfWebGpu.Sdk + WpfWebGpuWasm.Sdk into the local feed (artifacts/local-feed).
+# Pack WpfWebGpu.Sdk + WpfWebGpu.Fonts into the local feed (artifacts/local-feed).
 # All layout logic lives in the pack csprojs (files are packed directly from the
 # repo's build outputs), so this is just `dotnet pack` twice — see assemble.cmd
 # for the Windows equivalent. Rerun after rebuilding the fork.
@@ -78,9 +78,9 @@ done
 # is skipped, so the feed keeps serving the previous binaries -- silently, with a successful exit code.
 # That cost two debugging rounds here: a WindowsBase fix and a Process shim fix were each built,
 # "packed", published and tested while the old assemblies were still shipping.
-rm -f "$FEED"/WpfWebGpu.Sdk.*.nupkg "$FEED"/WpfWebGpuWasm.Sdk.*.nupkg
+rm -f "$FEED"/WpfWebGpu.Sdk.*.nupkg "$FEED"/WpfWebGpu.Fonts.*.nupkg
 
-for proj in "$HERE/WpfWebGpu.Sdk.csproj" "$HERE/../WpfWebGpuWasm.Sdk/WpfWebGpuWasm.Sdk.csproj"; do
+for proj in "$HERE/WpfWebGpu.Sdk.csproj" "$HERE/../WpfWebGpu.Fonts/WpfWebGpu.Fonts.csproj"; do
   "$DOTNET" pack "$proj" -c Release -o "$FEED" \
     -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false \
     --nologo -v:m

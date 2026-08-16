@@ -1,4 +1,4 @@
-﻿<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk / WpfWebGpuWasm.Sdk
+﻿<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk + WpfWebGpu.Fonts
      NuGet packages under artifacts/local-feed. One implementation for macOS, Linux and
      Windows; build-sdk.sh / build-sdk.cmd are thin wrappers that just locate dotnet.
 
@@ -28,10 +28,14 @@
      What differs per head is only the renderer: WgpuInterop (desktop, and Android uses it
      too), WgpuInterop.Ios, WgpuInterop.Browser. All three are built below.
 
-     NOTE (Windows head): WpfWinRuntimeDir in sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj still
-     lets the lib/wpf-windows payload come from a staged runtime instead. That predates the
-     port being fully managed and is now only an override — the assemblies this builds are
-     the same ones, so prefer them; a staged directory is easy to leave behind stale.
+     The SDK package carries the WebGPU backend for EVERY head, not just the ones staged on
+     the machine that packed it, so the preflight below refuses to pack without them. Stage
+     them once per clone:
+
+         pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -All
+
+     (native/ is gitignored; a fresh clone has none of it. Pass -p:AllowPartialNative=true
+     to pack a deliberately partial SDK for local iteration.)
 
      Deliberately NOT an Sdk-style project: with no Sdk attribute MSBuild does not import
      Microsoft.Common.props, so the repo's Arcade Directory.Build.props stays out of this
@@ -120,32 +124,39 @@
          project unbuilt shipped a package with no WindowsFormsHost in it and no error anywhere. -->
     <_Proj Include="$(_Src)WinFormsInterop/integration/WindowsFormsIntegration.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
 
-    <!-- Packed last, from everything above. -->
+    <!-- Packed last, from everything above.
+
+         TWO packages, not three. WpfWebGpuWasm.Sdk is gone: it was a separate MSBuild-SDK package id
+         whose entire content was <WpfPlatform>browser</WpfPlatform>, and the browser head is selected
+         with -p:WpfPlatform=browser on the one Sdk id now. WpfWebGpu.Fonts is the new one, and it is
+         a genuine split rather than an extra moving part: 27 MB of fonts that only the non-Windows
+         heads read, which every Windows app used to download with the SDK. -->
     <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj" />
-    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpuWasm.Sdk/WpfWebGpuWasm.Sdk.csproj" />
+    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Fonts/WpfWebGpu.Fonts.csproj" />
   </ItemGroup>
 
   <Target Name="Build" DependsOnTargets="Preflight;BuildProjects;Pack;Stamp;EvictCache" />
 
-  <!-- wgpu-native is a prebuilt binary drop, gitignored (see WgpuInterop/.gitignore), so a
-       fresh clone does not have it and nothing else in the build will complain: the SDK
-       csproj packs the dylib under a Condition="Exists(...)" and the gallery then fails at
-       runtime with a DllNotFoundException. Say so up front instead. -->
+  <!-- wgpu-native is a prebuilt binary drop, gitignored (see WgpuInterop/.gitignore), so a fresh
+       clone has none of it and nothing else in the build will complain: the SDK csproj packs each
+       library under a Condition="Exists(...)" and the app then fails at runtime with a
+       DllNotFoundException. Say so up front instead.
+
+       This used to check only the head matching the machine it ran on, which was right while the
+       package carried only that head. The package now carries EVERY head's backend, so what has to
+       be on disk is every RID, whatever machine is packing. -->
   <Target Name="Preflight">
-    <PropertyGroup>
-      <_WgpuMac>$(_Src)WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib</_WgpuMac>
-      <_WgpuMissing Condition="'$([MSBuild]::IsOSPlatform(OSX))' == 'true' and !Exists('$(_WgpuMac)')">true</_WgpuMissing>
-      <!-- Same check for the Linux head. The RID is derived from the process architecture rather
-           than assumed, because arm64 (a VM on Apple silicon) is as common here as x64. -->
-      <_WgpuLinuxRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">linux-arm64</_WgpuLinuxRid>
-      <_WgpuLinuxRid Condition="'$(_WgpuLinuxRid)' == ''">linux-x64</_WgpuLinuxRid>
-      <_WgpuLinux>$(_Src)WgpuInterop/native/$(_WgpuLinuxRid)/lib/libwgpu_native.so</_WgpuLinux>
-      <_WgpuLinuxMissing Condition="'$([MSBuild]::IsOSPlatform(Linux))' == 'true' and !Exists('$(_WgpuLinux)')">true</_WgpuLinuxMissing>
-    </PropertyGroup>
-    <Warning Condition="'$(_WgpuMissing)' == 'true'"
-             Text="wgpu-native is missing: $(_WgpuMac). The macOS head will pack WITHOUT libwgpu_native.dylib and the app will fail at startup with DllNotFoundException. Drop the wgpu-native release for osx-arm64 there, or copy it from an existing build output, then rerun." />
-    <Warning Condition="'$(_WgpuLinuxMissing)' == 'true'"
-             Text="wgpu-native is missing: $(_WgpuLinux). The Linux head will pack WITHOUT libwgpu_native.so and the app will fail at startup with DllNotFoundException. Run: pwsh $(_Src)WgpuInterop/eng/fetch-wgpu.ps1 -Rid $(_WgpuLinuxRid)" />
+    <ItemGroup>
+      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
+      <!-- ANGLE, staged into the same folders by the same script. Desktop RIDs only: Android has a
+           system GLES driver and iOS is Metal-only. -->
+      <_WgpuExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
+      <_WgpuMissing Include="@(_WgpuExpected)" Condition="!Exists('$(_Src)WgpuInterop/native/%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_WgpuMissing)' != '' and '$(AllowPartialNative)' != 'true' and '$(SkipPack)' != 'true'"
+           Text="The native GPU payload is missing: @(_WgpuMissing->'%(Identity)', ', '). The SDK package ships every head's backend, so stage them all first:%0A    pwsh $(_Src)WgpuInterop/eng/fetch-wgpu.ps1 -All%0A(or pass -p:AllowPartialNative=true to pack a deliberately partial SDK)." />
+    <Warning Condition="'@(_WgpuMissing)' != '' and '$(AllowPartialNative)' == 'true'"
+             Text="Packing a PARTIAL SDK: missing @(_WgpuMissing->'%(Identity)', ', ')." />
     <Message Importance="high" Text="==&gt; building the WPF-on-WebGPU fork ($(Configuration))" />
   </Target>
 
@@ -160,8 +171,17 @@
   <!-- The pack projects read straight out of artifacts/bin, so they must not inherit the
        repo's Arcade props/targets — same flags assemble.sh/assemble.cmd use. -->
   <Target Name="Pack" Condition="'$(SkipPack)' != 'true'">
+    <!-- Delete the previous .nupkg first. `dotnet pack` decides it is up to date by comparing the
+         package against the PROJECT, not against the hundreds of build outputs the nuspec pulls in
+         from artifacts/bin — so rebuilding one of those and repacking is silently a no-op, and the
+         feed keeps serving the previous binaries with a successful exit code. -->
+    <ItemGroup>
+      <_StalePackage Include="$(_Feed)/WpfWebGpu.Sdk.*.nupkg;$(_Feed)/WpfWebGpu.Fonts.*.nupkg;$(_Feed)/WpfWebGpuWasm.Sdk.*.nupkg" />
+    </ItemGroup>
+    <Delete Files="@(_StalePackage)" ContinueOnError="WarnAndContinue" />
+
     <Message Importance="high" Text="==&gt; packing %(_PackProj.Filename) -&gt; artifacts/local-feed" />
-    <Exec Command="&quot;$(DotNetTool)&quot; pack &quot;%(_PackProj.Identity)&quot; -c $(Configuration) -o &quot;$(_Feed)&quot; -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false --nologo -v:m"
+    <Exec Command="&quot;$(DotNetTool)&quot; pack &quot;%(_PackProj.Identity)&quot; -c $(Configuration) -o &quot;$(_Feed)&quot; -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false -p:WpfWebGpuAllowPartialNative=$(AllowPartialNative) --nologo -v:m"
           WorkingDirectory="$(RepoRoot)" />
   </Target>
 
@@ -189,7 +209,10 @@
       <_NuGetHome Condition="'$(_NuGetHome)' == '' and '$(UserProfile)' != ''">$(UserProfile)/.nuget/packages</_NuGetHome>
       <_NuGetHome Condition="'$(_NuGetHome)' == ''">$(HOME)/.nuget/packages</_NuGetHome>
     </PropertyGroup>
-    <RemoveDir Directories="$(_NuGetHome)/wpfwebgpu.sdk;$(_NuGetHome)/wpfwebgpuwasm.sdk"
+    <!-- wpfwebgpuwasm.sdk is evicted although it is no longer produced: a machine that built this
+         repo before the browser head folded into the one Sdk id still has the old package extracted,
+         and an SDK package id resolves out of that cache without ever consulting the feed. -->
+    <RemoveDir Directories="$(_NuGetHome)/wpfwebgpu.sdk;$(_NuGetHome)/wpfwebgpu.fonts;$(_NuGetHome)/wpfwebgpuwasm.sdk"
                ContinueOnError="WarnAndContinue" />
     <Message Importance="high" Text="==&gt; evicted the extracted SDK packages from $(_NuGetHome)" />
     <Message Importance="high" Text="==&gt; DONE. Feed: $(_Feed)" />

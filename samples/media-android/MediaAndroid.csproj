@@ -65,8 +65,8 @@
   <!-- The same fonts the other heads bundle; without Symbols.ttf every glyph icon is a box.
        Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
   <ItemGroup>
-    <AndroidAsset Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
-    <AndroidAsset Include="../../sdk/WpfWebGpu.Sdk/web/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
