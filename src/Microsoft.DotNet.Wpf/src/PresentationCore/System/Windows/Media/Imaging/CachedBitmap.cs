@@ -371,14 +371,14 @@ namespace System.Windows.Media.Imaging
 
             // Off-Windows there is no WIC. Back the bitmap with an in-memory managed pixel buffer
             // instead of a native WICBitmap; CopyPixels reads from it and the managed composition
-            // path forwards those bytes to the WebGPU backend. Palettized formats are not supported
-            // on this path (they require WIC palette expansion).
+            // path forwards those bytes to the WebGPU backend.
+            //
+            // Palettized formats are kept in their PACKED form -- an Indexed4 row really is two
+            // pixels to the byte -- exactly as CopyPixels must hand them back. The palette is
+            // remembered alongside so ManagedPixelConverter can resolve the indices when something
+            // asks for actual colours.
             {
-                if (pixelFormat.Palettized)
-                {
-                    throw new PlatformNotSupportedException("Palettized bitmap formats are not supported without WIC.");
-                }
-
+                _palette = palette;
                 _managedPixels = new byte[bufferSize];
                 Marshal.Copy(buffer, _managedPixels, 0, bufferSize);
                 _managedStride = stride;

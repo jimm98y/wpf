@@ -106,11 +106,9 @@ namespace System.Windows.Media.Imaging
             // (managed MILCopyPixelBuffer), and it marshals to the compositor as a plain bitmap
             // source (_actLikeSimpleBitmap).
             {
-                if (pixelFormat.Palettized)
-                {
-                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC.");
-                }
-
+                // Palettized formats are held in their PACKED form and resolved through the palette
+                // when something asks for colours (ManagedPixelConverter), the same as CachedBitmap.
+                _palette = palette;
                 _format = pixelFormat;
                 _pixelWidth = pixelWidth;
                 _pixelHeight = pixelHeight;
@@ -799,11 +797,7 @@ namespace System.Windows.Media.Imaging
             // Off-Windows: copy the source into a fresh managed back buffer (the source itself
             // is managed-backed on this platform, so CriticalCopyPixels reads it directly).
             {
-                if (source.Format.Palettized)
-                {
-                    throw new PlatformNotSupportedException("Palettized WriteableBitmap formats are not supported without WIC.");
-                }
-
+                _palette = source.Palette;
                 _format = source.Format;
                 _pixelWidth = source.PixelWidth;
                 _pixelHeight = source.PixelHeight;

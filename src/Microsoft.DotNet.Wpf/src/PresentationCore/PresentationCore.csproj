@@ -1218,6 +1218,7 @@
     <Compile Include="System\Windows\Media\Imaging\BitmapMetadataBlob.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapMetadataEnumerator.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapPalette.cs" />
+    <Compile Include="System\Windows\Media\Imaging\ManagedPixelConverter.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapPalettes.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapSizeOptions.cs" />
     <Compile Include="System\Windows\Media\Imaging\BitmapSource.cs" />
