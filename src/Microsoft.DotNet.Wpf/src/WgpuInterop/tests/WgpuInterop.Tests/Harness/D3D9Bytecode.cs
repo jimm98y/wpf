@@ -87,6 +87,9 @@ namespace WgpuInterop.Tests.Harness
         // them in the assembler AND the translator at once is a mistake that has already been made
         // here. Named constants rather than literals so the two cannot drift silently.
         public const int MOV = 1, ADD = 2, MUL = 5, LRP = 18, DEF = 81, TEX = 66, IF = 40;
+        // Flow control, counted off d3d9types.h (the same enum that settled DEF = 81, IF = 40).
+        public const int REP = 38, ENDREP = 39, IFC = 41, ELSE = 42, ENDIF = 43;
+        public const int BREAK = 44, BREAKC = 45, DEFB = 47, DEFI = 48;
 
         private readonly List<uint> _t = new();
         private bool _versioned;
@@ -119,6 +122,90 @@ namespace WgpuInterop.Tests.Harness
             _t.Add(BitConverter.SingleToUInt32Bits(c));
             _t.Add(BitConverter.SingleToUInt32Bits(e));
             return this;
+        }
+
+        /// <summary>defb b#, true|false -- the only way ps_2_0 gets a boolean.</summary>
+        public Ps DefB(int reg, bool value)
+        {
+            EnsureVersion();
+            _t.Add((uint)(DEFB | (2 << 24)));
+            _t.Add(RegToken(RegConstBool, reg, destination: true));
+            _t.Add(value ? 1u : 0u);
+            return this;
+        }
+
+        /// <summary>defi i#, x, y, z, w -- where a rep count comes from.</summary>
+        public Ps DefI(int reg, int x, int y, int z, int w)
+        {
+            EnsureVersion();
+            _t.Add((uint)(DEFI | (5 << 24)));
+            _t.Add(RegToken(RegConstInt, reg, destination: true));
+            _t.Add(unchecked((uint)x)); _t.Add(unchecked((uint)y));
+            _t.Add(unchecked((uint)z)); _t.Add(unchecked((uint)w));
+            return this;
+        }
+
+        /// <summary>if b# (or if !b# when negated).</summary>
+        public Ps If(int boolReg, bool negated = false)
+        {
+            EnsureVersion();
+            _t.Add((uint)(IF | (1 << 24)));
+            uint token = RegToken(RegConstBool, boolReg, destination: false);
+            if (negated) token |= 1u << 24;                  // source modifier NOT
+            _t.Add(token);
+            return this;
+        }
+
+        /// <summary>if_comp src0, src1 -- the comparison goes in the opcode-specific control bits.</summary>
+        public Ps Ifc(int comparison, Src left, Src right)
+        {
+            EnsureVersion();
+            _t.Add((uint)(IFC | (comparison << 16) | (2 << 24)));
+            _t.Add(left.Token);
+            _t.Add(right.Token);
+            return this;
+        }
+
+        public Ps Else() { EnsureVersion(); _t.Add((uint)ELSE); return this; }
+
+        public Ps EndIf() { EnsureVersion(); _t.Add((uint)ENDIF); return this; }
+
+        /// <summary>rep i#.</summary>
+        public Ps Rep(int intReg)
+        {
+            EnsureVersion();
+            _t.Add((uint)(REP | (1 << 24)));
+            _t.Add(RegToken(RegConstInt, intReg, destination: false));
+            return this;
+        }
+
+        public Ps EndRep() { EnsureVersion(); _t.Add((uint)ENDREP); return this; }
+
+        public Ps Break() { EnsureVersion(); _t.Add((uint)BREAK); return this; }
+
+        public Ps BreakC(int comparison, Src left, Src right)
+        {
+            EnsureVersion();
+            _t.Add((uint)(BREAKC | (comparison << 16) | (2 << 24)));
+            _t.Add(left.Token);
+            _t.Add(right.Token);
+            return this;
+        }
+
+        private const int RegConstInt = 4, RegConstBool = 6;
+
+        /// <summary>
+        /// A register token of an arbitrary type. The type is split across bits [30:28] and [12:11]
+        /// -- D3D9 ran out of contiguous room when the register file grew -- which is the detail
+        /// most easily got wrong by hand, so it is written once here.
+        /// </summary>
+        private static uint RegToken(int type, int reg, bool destination)
+        {
+            uint token = 0x80000000u | (uint)(reg & 0x7FF);
+            token |= (uint)((type & 0x7) << 28);
+            token |= (uint)(((type >> 3) & 0x3) << 11);
+            token |= destination ? 0xF0000u : 0xE4u << 16;   // full write mask / .xyzw swizzle
+            return token;
         }
 
         /// <summary>An arbitrary opcode with filler parameters, for the rejection cases.</summary>

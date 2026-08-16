@@ -65,6 +65,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public readonly Dictionary<int, string> Consts = new();
             public readonly SortedSet<int> Temps = new();
             public int MaxConstReg = -1;
+
+            /// <summary>defb b# -- a compile-time boolean, the only kind ps_2_0 static branching has.</summary>
+            public readonly Dictionary<int, bool> Bools = new();
+
+            /// <summary>defi i# -- the four integers a rep count comes from.</summary>
+            public readonly Dictionary<int, int[]> Ints = new();
+
+            /// <summary>
+            /// Open flow-control blocks, innermost last, so an ELSE or ENDIF can be checked against
+            /// what it is actually closing. D3D9 flow control nests properly and WGSL's does too, so
+            /// the translation is a matter of matching them up rather than restructuring anything.
+            /// </summary>
+            public readonly List<string> Blocks = new();
+
+            /// <summary>How many rep loops deep, so each gets its own counter variable.</summary>
+            public int RepDepth;
+
+            /// <summary>Body indent, one level per open block, so the WGSL reads as it nests.</summary>
+            public string Indent => new string(' ', 4 + Blocks.Count * 4);
             public string? Reason;
             public void Reject(string why) => Reason ??= why;
             public bool Failed => Reason is not null;
@@ -77,11 +96,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private const int OpSlt = 12, OpSge = 13, OpExp = 14, OpLog = 15, OpLrp = 18, OpFrc = 19;
         private const int OpPow = 32, OpCrs = 33, OpAbs = 35, OpNrm = 36, OpSinCos = 37;
         private const int OpDcl = 31, OpDef = 81, OpTex = 66, OpCmp = 88, OpDp2Add = 90;
+
+        // Structured flow control. Values counted off d3d9types.h's enum, the same source that
+        // settled DEF (81, not 40 -- 40 is IF, which is why these two were once confused).
+        private const int OpRep = 38, OpEndRep = 39, OpIf = 40, OpIfc = 41, OpElse = 42, OpEndIf = 43;
+        private const int OpBreak = 44, OpBreakc = 45, OpDefB = 47, OpDefI = 48;
         private const int OpPhase = 0xFFFD, OpComment = 0xFFFE, OpEnd = 0xFFFF;
 
         // D3DSHADER_PARAM_REGISTER_TYPE
         private const int RegTemp = 0, RegInput = 1, RegConst = 2, RegTexture = 3;
         private const int RegColorOut = 8, RegSampler = 10;
+        private const int RegConstInt = 4, RegConstBool = 6;
+
+        // D3DSHADER_COMPARISON, in the opcode-specific control bits [23:16].
+        private static readonly string[] Comparisons = { "", ">", "==", ">=", "<", "!=", "<=", "" };
 
         /// <summary>
         /// Translates <paramref name="bytecode"/> to a WGSL fragment shader body.
@@ -161,6 +189,145 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         break;
                     }
 
+                    // ---- structured flow control ----
+                    //
+                    // D3D9 flow control is already structured -- if/else/endif and rep/endrep nest
+                    // properly and never jump into a block -- and so is WGSL's, so this is a matter
+                    // of matching openers to closers and indenting, not of restructuring anything.
+
+                    case OpDefB:
+                    {
+                        // defb b#, true|false
+                        if (len < 2) { reason = "defb with too few parameters"; return false; }
+                        ctx.Bools[(int)(tok[a] & 0x7FF)] = tok[a + 1] != 0;
+                        break;
+                    }
+
+                    case OpDefI:
+                    {
+                        // defi i#, x, y, z, w -- a rep count and (for loop) step/bias, as integers.
+                        if (len < 5) { reason = "defi with too few parameters"; return false; }
+                        ctx.Ints[(int)(tok[a] & 0x7FF)] = new[]
+                        {
+                            unchecked((int)tok[a + 1]), unchecked((int)tok[a + 2]),
+                            unchecked((int)tok[a + 3]), unchecked((int)tok[a + 4]),
+                        };
+                        break;
+                    }
+
+                    case OpIf:
+                    {
+                        // if b# -- static branching on a boolean constant.
+                        if (len < 1) { reason = "if with no predicate"; return false; }
+                        if (!BoolValue(tok[a], ctx, out string cond, out string whyBool))
+                        {
+                            reason = whyBool;
+                            return false;
+                        }
+                        body.Append(ctx.Indent).Append("if (").Append(cond).Append(") {\n");
+                        ctx.Blocks.Add("if");
+                        break;
+                    }
+
+                    case OpIfc:
+                    {
+                        // if_comp src0, src1 -- dynamic branching on a scalar comparison.
+                        if (len < 2) { reason = "ifc with too few parameters"; return false; }
+                        string comparison = Comparisons[(int)((t >> 16) & 0x7)];
+                        if (comparison.Length == 0) { reason = "ifc with a reserved comparison mode"; return false; }
+                        string left = Src(tok[a], ctx), right = Src(tok[a + 1], ctx);
+                        body.Append(ctx.Indent).Append("if ((").Append(left).Append(").x ")
+                            .Append(comparison).Append(" (").Append(right).Append(").x) {\n");
+                        ctx.Blocks.Add("if");
+                        break;
+                    }
+
+                    case OpElse:
+                    {
+                        if (ctx.Blocks.Count == 0 || ctx.Blocks[^1] != "if")
+                        {
+                            reason = "else without a matching if";
+                            return false;
+                        }
+                        // Closed and reopened at the OUTER indent, which is what the brace belongs to.
+                        ctx.Blocks.RemoveAt(ctx.Blocks.Count - 1);
+                        body.Append(ctx.Indent).Append("} else {\n");
+                        ctx.Blocks.Add("if");
+                        break;
+                    }
+
+                    case OpEndIf:
+                    {
+                        if (ctx.Blocks.Count == 0 || ctx.Blocks[^1] != "if")
+                        {
+                            reason = "endif without a matching if";
+                            return false;
+                        }
+                        ctx.Blocks.RemoveAt(ctx.Blocks.Count - 1);
+                        body.Append(ctx.Indent).Append("}\n");
+                        break;
+                    }
+
+                    case OpRep:
+                    {
+                        // rep i# -- repeat a fixed number of times. The count is the x component of
+                        // an integer constant, which ps_2_0 can only get from a defi, so it is known
+                        // here and the loop can be emitted with a literal bound.
+                        if (len < 1) { reason = "rep with no count"; return false; }
+                        if (RegType(tok[a]) != RegConstInt) { reason = "rep count is not an integer constant"; return false; }
+                        int ireg = (int)(tok[a] & 0x7FF);
+                        if (!ctx.Ints.TryGetValue(ireg, out int[]? counts))
+                        {
+                            reason = $"rep i{ireg} was never defined by a defi";
+                            return false;
+                        }
+                        int count = counts[0];
+                        if (count < 0 || count > MaxRepCount)
+                        {
+                            reason = $"rep count {count} is outside the supported range 0..{MaxRepCount}";
+                            return false;
+                        }
+                        string counter = $"rep{ctx.RepDepth}";
+                        body.Append(ctx.Indent).Append("for (var ").Append(counter)
+                            .Append(" : i32 = 0; ").Append(counter).Append(" < ").Append(count)
+                            .Append("; ").Append(counter).Append(" = ").Append(counter).Append(" + 1) {\n");
+                        ctx.Blocks.Add("rep");
+                        ctx.RepDepth++;
+                        break;
+                    }
+
+                    case OpEndRep:
+                    {
+                        if (ctx.Blocks.Count == 0 || ctx.Blocks[^1] != "rep")
+                        {
+                            reason = "endrep without a matching rep";
+                            return false;
+                        }
+                        ctx.Blocks.RemoveAt(ctx.Blocks.Count - 1);
+                        ctx.RepDepth--;
+                        body.Append(ctx.Indent).Append("}\n");
+                        break;
+                    }
+
+                    case OpBreak:
+                    {
+                        if (!ctx.Blocks.Contains("rep")) { reason = "break outside a loop"; return false; }
+                        body.Append(ctx.Indent).Append("break;\n");
+                        break;
+                    }
+
+                    case OpBreakc:
+                    {
+                        if (len < 2) { reason = "breakc with too few parameters"; return false; }
+                        if (!ctx.Blocks.Contains("rep")) { reason = "breakc outside a loop"; return false; }
+                        string comparison = Comparisons[(int)((t >> 16) & 0x7)];
+                        if (comparison.Length == 0) { reason = "breakc with a reserved comparison mode"; return false; }
+                        string left = Src(tok[a], ctx), right = Src(tok[a + 1], ctx);
+                        body.Append(ctx.Indent).Append("if ((").Append(left).Append(").x ")
+                            .Append(comparison).Append(" (").Append(right).Append(").x) { break; }\n");
+                        break;
+                    }
+
                     case OpTex:
                     {
                         // texld dst, coord, sampler
@@ -189,6 +356,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
                 if (ctx.Failed) { reason = ctx.Reason!; return false; }
                 p += 1 + len;
+            }
+
+            if (ctx.Blocks.Count > 0)
+            {
+                // An if or rep the stream never closed. Emitting it would produce WGSL that does not
+                // parse, and a shader that fails to compile at draw time is far harder to trace back
+                // here than one rejected with a reason.
+                reason = $"{ctx.Blocks.Count} unclosed flow-control block(s) at the end of the shader";
+                return false;
             }
 
             if (!wroteOutput)
@@ -253,6 +429,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Writes `expr` into the destination register, honouring the write mask and the
         // saturate result modifier.
+        /// <summary>
+        /// The largest rep count translated. A rep is a literal bound, so a big one unrolls into a
+        /// correspondingly long-running loop; D3D9 itself caps nesting and iteration far below this,
+        /// and refusing an absurd count is better than emitting a shader that hangs the GPU.
+        /// </summary>
+        private const int MaxRepCount = 4096;
+
+        /// <summary>
+        /// The condition for `if b#`. ps_2_0 has no way to set a boolean register at run time -- the
+        /// public ShaderEffect surface carries float constants only -- so the value comes from a defb
+        /// in the bytecode and is known here. Emitted as the literal it is, which lets naga fold the
+        /// branch away entirely.
+        /// </summary>
+        private static bool BoolValue(uint token, Ctx ctx, out string condition, out string why)
+        {
+            condition = "";
+            why = "";
+            if (RegType(token) != RegConstBool)
+            {
+                why = "if predicate is not a boolean constant register";
+                return false;
+            }
+
+            int reg = (int)(token & 0x7FF);
+            if (!ctx.Bools.TryGetValue(reg, out bool value))
+            {
+                why = $"if b{reg} was never defined by a defb";
+                return false;
+            }
+
+            // Source modifier bit 24 is NOT for a boolean operand.
+            bool negated = ((token >> 24) & 0xF) == 1;
+            condition = (value ^ negated) ? "true" : "false";
+            return true;
+        }
+
         private static void Emit(StringBuilder body, uint dst, string expr, Ctx ctx, ref bool wroteOutput)
         {
             int type = RegType(dst);
@@ -268,7 +480,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             if (mask is 0 or 0xF)
             {
-                body.Append("    ").Append(target).Append(" = ").Append(value).Append(";\n");
+                body.Append(ctx.Indent).Append(target).Append(" = ").Append(value).Append(";\n");
                 return;
             }
             // Partial write mask. WGSL has NO swizzle assignment ("v.xy = ..." is rejected
