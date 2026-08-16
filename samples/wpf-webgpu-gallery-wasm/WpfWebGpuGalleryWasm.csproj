@@ -13,14 +13,25 @@
     <!-- The JSExport source generator (AotProfiling.Stop, the profiler write-at trigger) emits unsafe marshaling. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <StartupObject>WasmBoot</StartupObject>
-    <!-- DEFAULT = INTERPRETER (renders + interactive, ~10fps). AOT is OPT-IN via -p:UseAot=true.
-         WHY: the WPF-in-wasm AOT build fatally asserts at interp.c:3420 — a KNOWN, WON'T-FIX mono
-         limitation, dotnet/runtime#80994 ("AOT to interpreter transitions don't work for certain
-         generic methods"): an AOT->interp gsharedvt_in wrapper that mono-aot-cross can't pre-generate
-         and wasm can't JIT. Reproduced on mono-aot-cross 10.0.8/9/10 AND 11.0-preview.6. All four
-         remedies failed (AOT profile = partial AOT; source hunt-kill = whack-a-mole; WasmDedup =
-         appdomain.c:188 init crash; newer toolchain = identical crash). The full AOT config below is
-         preserved (gated) so it can be re-tried if the upstream bug is ever fixed. -->
+    <!-- DEFAULT = INTERPRETER (renders + interactive, ~10fps), because it builds in seconds. AOT is
+         the opposite trade and is OPT-IN here via -p:UseAot=true.
+
+         AOT WORKS. This comment used to say it did not: that the WPF-in-wasm AOT build hit a fatal
+         interp.c:3420 assert which was a known, won't-fix mono limitation (dotnet/runtime#80994,
+         "AOT to interpreter transitions don't work for certain generic methods"), and that four
+         separate remedies had failed against it. That diagnosis was WRONG. The assert was ours: the
+         bundle contained DUPLICATE ASSEMBLIES, and the AOT compiler fell over on them. With the
+         duplicates gone, WPF AOT-compiles and runs in the browser: the HexEditor IDE does exactly
+         that today.
+
+         Which is also why WpfWebGpu.Sdk carries _WpfWebGpuBrowserDropNestedPayloads: a wasm bundle
+         is flat, so an assembly published into a subfolder collides with its own copy at the top,
+         and the same class of duplicate takes the build down in ManagedToNativeGenerator with "the
+         assembly X has already been loaded into this MetadataLoadContext". If an AOT build here ever
+         asserts again, look for two copies of something before blaming the runtime. -->
+    <!-- Everything below (profiles, dedup, the force-interpret set) survives from the period when
+         that misdiagnosis stood, so its own notes still argue against a bug that was not there.
+         The knobs work; the reasoning attached to them does not. -->
     <UseAot Condition="'$(UseAot)' == ''">false</UseAot>
     <!-- CollectAotProfile=true builds a NON-AOT, AOT-profiler-instrumented build
          (<WasmProfilers>aot). Running it and invoking AotProfiling.WpfAotProfileFlush (see main.js /
@@ -33,8 +44,10 @@
     <!-- OPT-IN (-p:UseAotProfile=true). The MonoAOTCompiler task reads the AotProfilePath ITEM,
          populated from $(WasmAotProfilePath) (NOT the documented $(AOTProfilePath) property, which
          maps to a dead task param). NOTE: a profile here triggers profile-guided *partial* AOT
-         (only profiled methods are AOT'd — native wasm drops ~79MB->14MB), which does NOT fix the
-         missing-interp-wrapper crash; kept off by default so the build stays full-AOT. -->
+         (only profiled methods are AOT'd — native wasm drops ~79MB->14MB); kept off by default so
+         the build stays full-AOT. (It was originally introduced as a candidate fix for the
+         "missing interp wrapper" crash, which was really duplicate assemblies — see the top of this
+         file — so judge it purely on size versus speed now.) -->
     <WasmAotProfilePath Condition="'$(UseAotProfile)' == 'true' and '$(CollectAotProfile)' != 'true' and Exists('$(MSBuildProjectDirectory)/gallery.aotprofile')">$(MSBuildProjectDirectory)/gallery.aotprofile</WasmAotProfilePath>
     <AOTProfilePath Condition="'$(WasmAotProfilePath)' != ''">$(WasmAotProfilePath)</AOTProfilePath>
     <WasmEmitSymbolMap>true</WasmEmitSymbolMap>
@@ -107,11 +120,16 @@
        Win32 code paths are dead in wasm, so the AOT'd callers never invoke them — exactly as in the
        (working) non-AOT build, where these assemblies were never bundled either. -->
   <PropertyGroup>
-    <!-- Dedup MUST stay off: it asserts at appdomain.c:188 during runtime init (creating the corlib
-         OutOfMemoryException singleton fails) — the dedup image is incompatible with our required
-         force-interpret assemblies (dedup assumes uniform full-AOT). The dedup module IS registered
-         in driver-gen.c and there are no AOT compile failures, so it's a deep mono-runtime dedup bug,
-         not a config/bundling issue. Re-verified 2026-07-19. -->
+    <!-- Dedup stays off: it asserts at appdomain.c:188 during runtime init (creating the corlib
+         OutOfMemoryException singleton fails), last seen 2026-07-19.
+
+         That note used to conclude "a deep mono-runtime dedup bug, not a config/bundling issue".
+         Treat that as unproven: the sibling conclusion in this file, that interp.c:3420 was a
+         runtime bug, turned out to be duplicate assemblies in the bundle (see the top of this file),
+         and dedup is precisely the feature that cares about assemblies appearing more than once. It
+         has not been retried since the duplicates were removed. -->
+    <!-- Dedup was also wanted as a way around interp.c:3420, which no longer exists as a problem, so
+         there is now no reason to turn it on unless the bundle-size win is worth chasing. -->
     <WasmDedup>false</WasmDedup>
     <!-- Keep IL after AOT: some methods fall back to the interpreter at runtime, but the strip removes the
          IL of methods it believes are fully AOT'd, so the interp finds nothing ("should not be reached").
@@ -124,10 +142,12 @@
          should not be) in the browser bundle (System.Windows.Forms, Accessibility,
          print pipeline), which the AOT compiler cannot resolve — and none of them
          are on the rendering/layout hot path. -->
-    <!-- -p:AotInterpretNonHot=false AOTs these too. Point: interp.c:3420 (dotnet/runtime#80994) only
-         fires on an AOT->interp transition whose gsharedvt_in_sig wrapper was not pregenerated, so a
-         build with NOTHING interpreted cannot hit it. They were interpreted because mono-aot-cross
-         could not resolve their refs; the vendored lib/ search path may now cover that. -->
+    <!-- -p:AotInterpretNonHot=false AOTs these too. The surviving reason to keep them interpreted is
+         the resolution one above: mono-aot-cross could not resolve their refs, though the vendored
+         lib/ search path may now cover that. (The rest of what this note used to argue, that
+         keeping the interpreted set EMPTY was a way to dodge interp.c:3420 / dotnet/runtime#80994,
+         rested on the misdiagnosis described at the top of this file. There was no such bug to
+         dodge.) -->
     <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
     <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
     <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" Condition="'$(AotInterpretNonHot)' != 'false'" />
