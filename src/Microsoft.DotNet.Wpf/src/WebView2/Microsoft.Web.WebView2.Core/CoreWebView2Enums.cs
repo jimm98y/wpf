@@ -37,6 +37,13 @@ namespace Microsoft.Web.WebView2.Core
         ValidProxyAuthenticationRequired = 18,
     }
 
+    /// <summary>The image format CapturePreviewAsync writes.</summary>
+    public enum CoreWebView2CapturePreviewImageFormat
+    {
+        Png = 0,
+        Jpeg = 1,
+    }
+
     /// <summary>Which of the browser's processes died.</summary>
     public enum CoreWebView2ProcessFailedKind
     {

@@ -111,6 +111,7 @@ namespace Wpf.Input.Tests
             using var probe = InputWindow.Show();
             bool inertiaStarting = false;
             bool deltaDuringInertia = false;
+            bool manipulationCompleted = false;
 
             UiThread.Invoke(() =>
             {
@@ -118,21 +119,38 @@ namespace Wpf.Input.Tests
                 probe.Surface.ManipulationInertiaStarting += (s, e) =>
                 {
                     inertiaStarting = true;
-                    e.TranslationBehavior.DesiredDeceleration = 0.001;
+
+                    // Decelerate as slowly as the processor will accept, so inertia runs for a long
+                    // time. The test is about whether inertial deltas happen AT ALL, not about how
+                    // briskly they arrive, and a long glide means a loaded machine still sees one.
+                    e.TranslationBehavior.DesiredDeceleration = 0.0001;
                 };
                 probe.Surface.ManipulationDelta += (s, e) =>
                 {
                     if (e.IsInertial) deltaDuringInertia = true;
                 };
+                probe.Surface.ManipulationCompleted += (s, e) => manipulationCompleted = true;
             });
 
             // Fast and short-settled: velocity at lift is what decides whether inertia is worth
             // starting, so the steps are deliberately barely pumped.
             Drag(injector, probe, fromX: 60, toX: 380, y: 150, steps: 8, settleMs: 12);
-            probe.PumpUntil(() => deltaDuringInertia, TimeSpan.FromSeconds(2));
+
+            // Waits for an OUTCOME, not for a deadline: either an inertial delta arrived, or the
+            // manipulation finished without one. Both answer the question, and only a machine that
+            // produces neither hits the timeout -- which is why it can afford to be generous.
+            //
+            // The previous form waited two seconds for the delta alone and asserted afterwards, so a
+            // busy machine that was merely SLOW failed the same way as one that was broken. This
+            // suite injects real OS contacts and the inertia processor is timer-driven, so "slow"
+            // is a thing that happens.
+            probe.PumpUntil(() => deltaDuringInertia || manipulationCompleted, TimeSpan.FromSeconds(20));
 
             Assert.True(inertiaStarting, "flicking a finger across the element never raised ManipulationInertiaStarting");
-            Assert.True(deltaDuringInertia, "inertia was announced but no inertial ManipulationDelta ever followed");
+            Assert.True(deltaDuringInertia,
+                manipulationCompleted
+                    ? "inertia was announced and the manipulation completed, but no inertial ManipulationDelta was ever raised"
+                    : "inertia was announced but no inertial ManipulationDelta followed, and the manipulation never completed either");
         }
 
         /// <summary>

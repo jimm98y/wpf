@@ -409,6 +409,42 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// android.webkit.WebView draws itself into a Canvas over a Bitmap, which the payload then
+        /// compresses -- all Java calls, so like everything else here it is asked for rather than
+        /// done. A payload that does not answer the command fails loudly, as any unknown command
+        /// does.
+        /// </summary>
+        /// <remarks>
+        /// One caveat the payload cannot hide and callers should know: a WebView rendering through a
+        /// hardware layer can draw BLANK into a software Canvas. Android's own guidance is to force
+        /// software layering around the capture, which is the payload's decision to make because
+        /// only it can see the view.
+        /// </remarks>
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            AndroidWebViewRegistration.Invoke(
+                AndroidWebViewCommands.CapturePreview, _id, png,
+                (Action<byte[]>)(bytes =>
+                {
+                    if (bytes is null || bytes.Length == 0)
+                    {
+                        tcs.TrySetException(new InvalidOperationException(
+                            "The Android head could not capture the web view."));
+                    }
+                    else
+                    {
+                        tcs.TrySetResult(bytes);
+                    }
+                }));
+
+            return tcs.Task;
+        }
+
         public Task ClearBrowsingDataAsync()
         {
             RequireAttached();

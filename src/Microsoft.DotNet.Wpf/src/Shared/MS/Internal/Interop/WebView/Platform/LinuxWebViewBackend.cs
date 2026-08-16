@@ -498,6 +498,29 @@ namespace MS.Internal.Interop.WebView
         /// more of the GObject surface than this binding carries. Refused rather than reported as
         /// done -- a caller clearing cookies is usually doing it for a reason.
         /// </summary>
+        /// <summary>
+        /// The cheapest capture of any head: WPE exports every frame as a buffer anyway, and the
+        /// Wayland layer is already holding the last one it attached, so this only asks it to encode
+        /// pixels it has. Nothing is asked of the engine.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png)
+        {
+            RequireAttached();
+
+            object captured = LinuxWebViewRegistration.Invoke(
+                LinuxWebViewCommands.CaptureFrame, _subsurface, png);
+
+            if (captured is byte[] bytes && bytes.Length > 0)
+            {
+                return Task.FromResult(bytes);
+            }
+
+            // No frame has been attached yet -- the page has not painted once. That is a real state,
+            // not a failure of the capture, and saying so beats handing back a blank image.
+            return Task.FromException<byte[]>(new InvalidOperationException(
+                "The web view has not produced a frame yet, so there is nothing to capture."));
+        }
+
         public Task ClearBrowsingDataAsync() =>
             throw new NotSupportedException(
                 "Clearing browsing data is not implemented on this head yet.");

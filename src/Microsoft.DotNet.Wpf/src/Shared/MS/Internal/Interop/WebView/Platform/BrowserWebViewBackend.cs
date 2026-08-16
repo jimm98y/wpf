@@ -365,6 +365,16 @@ namespace MS.Internal.Interop.WebView
             }
         }
 
+        /// <summary>
+        /// Impossible on this head, and not for want of trying: an iframe's pixels cannot be read
+        /// back into a canvas at any price, same-origin or not. Throwing is the only honest answer --
+        /// a blank image would be indistinguishable from a page that really is blank.
+        /// </summary>
+        public Task<byte[]> CapturePreviewAsync(bool png) =>
+            Task.FromException<byte[]>(new NotSupportedException(
+                "The browser does not let an embedder read an iframe's pixels, so a web view " +
+                "cannot be captured on this head."));
+
         public Task ClearBrowsingDataAsync()
         {
             RequireAttached();

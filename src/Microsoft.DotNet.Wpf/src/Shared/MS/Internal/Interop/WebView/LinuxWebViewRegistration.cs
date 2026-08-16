@@ -56,6 +56,16 @@ namespace MS.Internal.Interop.WebView
 
         /// <summary>() -> IntPtr. The process's wl_display*, which WPE's FDO backend needs.</summary>
         internal const string GetDisplay = "getDisplay";
+
+        /// <summary>
+        /// (id, bool png) -> byte[], or null when no frame has been attached yet.
+        /// </summary>
+        /// <remarks>
+        /// Synchronous, unlike Android's, and that is not an inconsistency: the Wayland layer is
+        /// already holding the buffer it last attached to this subsurface, so the pixels are in hand
+        /// and only need encoding. Nothing has to be asked of the engine at all.
+        /// </remarks>
+        internal const string CaptureFrame = "captureFrame";
     }
 
     /// <summary>

@@ -140,6 +140,29 @@ namespace Microsoft.Web.WebView2.Core
         /// </summary>
         public Task ClearBrowsingDataAsync() => _backend.ClearBrowsingDataAsync();
 
+        /// <summary>
+        /// Write an image of what the view is showing into <paramref name="imageStream"/>.
+        /// </summary>
+        /// <remarks>
+        /// A still, and only a still: an overlay contributes no pixels to the surrounding scene, so
+        /// this is the one way its content can become part of a drawing -- which is what makes a web
+        /// view printable, and what puts one on 3D geometry. It is not a way to composite a live
+        /// view.
+        /// </remarks>
+        public async Task CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat imageFormat,
+                                              System.IO.Stream imageStream)
+        {
+            if (imageStream is null)
+            {
+                throw new ArgumentNullException(nameof(imageStream));
+            }
+
+            byte[] bytes = await _backend.CapturePreviewAsync(
+                imageFormat == CoreWebView2CapturePreviewImageFormat.Png).ConfigureAwait(true);
+
+            await imageStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(true);
+        }
+
         // ---- deliberately unimplemented ------------------------------------------------------------
         //
         // Present so existing code compiles and binds, and throwing rather than no-opping so an

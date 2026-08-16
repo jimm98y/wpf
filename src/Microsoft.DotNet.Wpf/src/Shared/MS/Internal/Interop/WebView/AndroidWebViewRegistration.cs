@@ -111,6 +111,14 @@ namespace MS.Internal.Interop.WebView
         internal const string ClearData = "clearData";
 
         /// <summary>
+        /// (id, bool png, Action&lt;byte[]&gt; completed) -> null. The payload draws the view into a
+        /// Bitmap and compresses it, then calls <c>completed</c> with the bytes (or null on failure).
+        /// Asynchronous like ExecuteScript because Bitmap.compress is not something to run on the UI
+        /// thread for a large view.
+        /// </summary>
+        internal const string CapturePreview = "capturePreview";
+
+        /// <summary>
         /// (id, Action&lt;string, string&gt; sink) -> null. The payload raises (kind, payload) for
         /// the events named in <see cref="AndroidWebViewEvents"/>.
         /// </summary>
