@@ -80,6 +80,32 @@ compiled by the fork's own markup compiler, so `.xaml` files need no changes at 
 `WPF-Samples`' WPFGallery — a real app with themes, behaviours, JSON data files and a hundred XAML
 pages — is converted by exactly those four steps and nothing else.
 
+## One output for Windows, Linux and macOS
+
+```
+dotnet publish -p:WpfWebGpuPortable=true
+dotnet YourApp.dll          # on any of them
+```
+
+The managed half was always portable — `lib/wpf` is AnyCPU and BAML has no platform in it. What
+this switch changes is everything that was previously decided at build time:
+
+- **The GPU backend** goes to `runtimes/<rid>/native/` instead of one flat copy beside the app,
+  because win-x64, win-x86 and win-arm64 are all called `wgpu_native.dll` and a flat folder holds
+  one of them. The interop picks by the RID the process is actually running as, and preloads ANGLE
+  out of the same folder (wgpu asks the OS loader for it by name, and the OS looks beside the app,
+  not there).
+- **The fonts** always ship, since the output may land on Linux or macOS.
+- **The platform shims** ship instead of the Windows-only runtime packages. `Microsoft.Win32.Registry`
+  and `Microsoft.Win32.SystemEvents` exist in two flavours that share one assembly identity, so a
+  single output can carry only one — and the shims are now the ones that work everywhere: the real
+  registry through advapi32 on Windows, an in-memory tree elsewhere; a hidden top-level window
+  pumping `WM_SETTINGCHANGE` and friends on Windows, accepted-but-never-raised elsewhere.
+
+What you do not get is a launcher for other platforms. The `.exe` beside the app only runs where it
+was built; an executable apphost is per-RID by definition, so other platforms start the app with
+`dotnet YourApp.dll`.
+
 ## The other heads, from the same project
 
 ```

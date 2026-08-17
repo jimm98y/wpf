@@ -1,7 +1,21 @@
-// In-memory Microsoft.Win32.Registry shim (off-Windows). Provides non-null predefined keys and
-// no-op/in-memory read-write so unmodified apps that persist settings to the registry run on macOS.
+// Microsoft.Win32.Registry stand-in, with TWO implementations behind one public surface:
+//
+//   Windows      the real registry, through advapi32 (see Win32Registry.cs)
+//   elsewhere    an in-memory tree, so unmodified apps that persist settings to the registry run
+//                on macOS/Linux/wasm instead of NRE-ing on a null hive
+//
+// It used to be the in-memory half only, because the choice was made at BUILD time: the Windows
+// head referenced the real runtime package and never loaded this assembly at all. A portable
+// publish (-p:WpfWebGpuPortable=true) has no build-time choice to make -- one output runs on all
+// three desktop systems and the two flavours share an assembly identity, so whichever ships has to
+// be correct everywhere.
+//
+// The Windows path matters more than "writes now persist": WPF reads the registry to decide light
+// versus dark (AppsUseLightTheme) and to read a number of system parameters, so an in-memory
+// registry on Windows does not fail, it just answers "nothing is there" and the app renders wrong.
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace Microsoft.Win32
 {
@@ -13,17 +27,72 @@ namespace Microsoft.Win32
 
     public sealed class RegistryKey : IDisposable
     {
-        private readonly Dictionary<string, RegistryKey> _subKeys = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, object> _values = new(StringComparer.OrdinalIgnoreCase);
+        internal static readonly bool OnWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        // In-memory path (everywhere but Windows).
+        private readonly Dictionary<string, RegistryKey> _subKeys;
+        private readonly Dictionary<string, object> _values;
+
+        // Windows path: a real HKEY. Predefined hives are pseudo-handles and must never be closed.
+        private IntPtr _hKey;
+        private readonly bool _predefined;
+        private bool _closed;
+
         public string Name { get; }
-        public Microsoft.Win32.SafeHandles.SafeRegistryHandle Handle => new Microsoft.Win32.SafeHandles.SafeRegistryHandle();
-        internal RegistryKey(string name) { Name = name; }
+
+        public Microsoft.Win32.SafeHandles.SafeRegistryHandle Handle =>
+            new Microsoft.Win32.SafeHandles.SafeRegistryHandle(_hKey, ownsHandle: false);
+
+        internal RegistryKey(string name)
+        {
+            Name = name;
+            _subKeys = new Dictionary<string, RegistryKey>(StringComparer.OrdinalIgnoreCase);
+            _values = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        internal RegistryKey(string name, IntPtr hKey, bool predefined)
+        {
+            Name = name;
+            _hKey = hKey;
+            _predefined = predefined;
+        }
+
+        private bool Native => OnWindows && _hKey != IntPtr.Zero && !_closed;
+
+        // ---- opening and creating ----------------------------------------------------------
+        //
+        // On Windows OpenSubKey returns NULL for a key that does not exist, exactly as the real API
+        // does. That is not a detail: the whole point of reading e.g. Personalization\AppsUseLightTheme
+        // is to distinguish "absent" from "present", and the in-memory version's habit of conjuring
+        // the key would answer every probe with "yes, empty".
 
         public RegistryKey OpenSubKey(string name) => OpenSubKey(name, false);
-        public RegistryKey OpenSubKey(string name, bool writable) => CreateSubKey(name);
-        public RegistryKey OpenSubKey(string name, RegistryKeyPermissionCheck c) => CreateSubKey(name);
-        public RegistryKey CreateSubKey(string name)
+
+        public RegistryKey OpenSubKey(string name, bool writable)
         {
+            if (Native)
+            {
+                IntPtr h = Win32Registry.Open(_hKey, name ?? string.Empty,
+                                              writable ? Win32Registry.KEY_ALL : Win32Registry.KEY_READ);
+                return h == IntPtr.Zero ? null : new RegistryKey(Name + "\\" + name, h, predefined: false);
+            }
+            return CreateSubKey(name);
+        }
+
+        public RegistryKey OpenSubKey(string name, RegistryKeyPermissionCheck c) =>
+            OpenSubKey(name, c == RegistryKeyPermissionCheck.ReadWriteSubTree);
+
+        public RegistryKey CreateSubKey(string name) => CreateSubKey(name, RegistryOptions.None);
+
+        public RegistryKey CreateSubKey(string name, RegistryOptions options)
+        {
+            if (Native)
+            {
+                IntPtr h = Win32Registry.Create(_hKey, name ?? string.Empty, Win32Registry.KEY_ALL,
+                                                (options & RegistryOptions.Volatile) != 0);
+                return h == IntPtr.Zero ? null : new RegistryKey(Name + "\\" + name, h, predefined: false);
+            }
+
             RegistryKey k = this;
             foreach (var part in (name ?? string.Empty).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
             {
@@ -32,44 +101,145 @@ namespace Microsoft.Win32
             }
             return k;
         }
+
         public RegistryKey CreateSubKey(string name, bool w) => CreateSubKey(name);
         public RegistryKey CreateSubKey(string name, RegistryKeyPermissionCheck c) => CreateSubKey(name);
+
+        // ---- values -------------------------------------------------------------------------
+
         public object GetValue(string name) => GetValue(name, null);
-        public object GetValue(string name, object defaultValue) => _values.TryGetValue(name ?? string.Empty, out var v) ? v : defaultValue;
-        public object GetValue(string name, object defaultValue, object options) => GetValue(name, defaultValue);
-        public void SetValue(string name, object value) { _values[name ?? string.Empty] = value; }
-        public void SetValue(string name, object value, RegistryValueKind kind) { _values[name ?? string.Empty] = value; }
-        public void DeleteValue(string name) { _values.Remove(name ?? string.Empty); }
-        public void DeleteValue(string name, bool throwOnMissing) { _values.Remove(name ?? string.Empty); }
-        public void DeleteSubKey(string name) { _subKeys.Remove(name ?? string.Empty); }
-        public void DeleteSubKey(string name, bool t) { _subKeys.Remove(name ?? string.Empty); }
-        public void DeleteSubKeyTree(string name) { _subKeys.Remove(name ?? string.Empty); }
-        public void DeleteSubKeyTree(string name, bool t) { _subKeys.Remove(name ?? string.Empty); }
-        public string[] GetValueNames() { var a = new string[_values.Count]; _values.Keys.CopyTo(a, 0); return a; }
-        public string[] GetSubKeyNames() { var a = new string[_subKeys.Count]; _subKeys.Keys.CopyTo(a, 0); return a; }
-        public RegistryValueKind GetValueKind(string name) => RegistryValueKind.String;
-        public int SubKeyCount => _subKeys.Count;
-        public int ValueCount => _values.Count;
-        public void Flush() { }
-        public void Close() { }
-        public void Dispose() { }
+
+        public object GetValue(string name, object defaultValue)
+        {
+            if (Native)
+            {
+                return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand: true, out object v, out _)
+                    ? v : defaultValue;
+            }
+            return _values.TryGetValue(name ?? string.Empty, out var value) ? value : defaultValue;
+        }
+
+        public object GetValue(string name, object defaultValue, object options)
+        {
+            if (Native)
+            {
+                // RegistryValueOptions.DoNotExpandEnvironmentNames == 1, passed as the real enum by
+                // callers compiled against the real assembly; taken as `object` here because this
+                // assembly does not declare that type.
+                bool expand = Convert.ToInt32(options ?? 0) == 0;
+                return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand, out object v, out _)
+                    ? v : defaultValue;
+            }
+            return GetValue(name, defaultValue);
+        }
+
+        public void SetValue(string name, object value) => SetValue(name, value, RegistryValueKind.Unknown);
+
+        public void SetValue(string name, object value, RegistryValueKind kind)
+        {
+            if (Native) { Win32Registry.SetValue(_hKey, name ?? string.Empty, value, kind); return; }
+            _values[name ?? string.Empty] = value;
+        }
+
+        public void DeleteValue(string name)
+        {
+            if (Native) { Win32Registry.DeleteValue(_hKey, name ?? string.Empty); return; }
+            _values.Remove(name ?? string.Empty);
+        }
+
+        public void DeleteValue(string name, bool throwOnMissing) => DeleteValue(name);
+
+        public RegistryValueKind GetValueKind(string name)
+        {
+            if (Native)
+            {
+                return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand: false, out _, out RegistryValueKind k)
+                    ? k : RegistryValueKind.Unknown;
+            }
+            return RegistryValueKind.String;
+        }
+
+        // ---- subkeys ------------------------------------------------------------------------
+
+        public void DeleteSubKey(string name)
+        {
+            if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: false); return; }
+            _subKeys.Remove(name ?? string.Empty);
+        }
+
+        public void DeleteSubKey(string name, bool t) => DeleteSubKey(name);
+
+        public void DeleteSubKeyTree(string name)
+        {
+            if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: true); return; }
+            _subKeys.Remove(name ?? string.Empty);
+        }
+
+        public void DeleteSubKeyTree(string name, bool t) => DeleteSubKeyTree(name);
+
+        public string[] GetValueNames()
+        {
+            if (Native) return Win32Registry.ValueNames(_hKey);
+            var a = new string[_values.Count]; _values.Keys.CopyTo(a, 0); return a;
+        }
+
+        public string[] GetSubKeyNames()
+        {
+            if (Native) return Win32Registry.SubKeyNames(_hKey);
+            var a = new string[_subKeys.Count]; _subKeys.Keys.CopyTo(a, 0); return a;
+        }
+
+        public int SubKeyCount
+        {
+            get { if (Native) { Win32Registry.Counts(_hKey, out int s, out _); return s; } return _subKeys.Count; }
+        }
+
+        public int ValueCount
+        {
+            get { if (Native) { Win32Registry.Counts(_hKey, out _, out int v); return v; } return _values.Count; }
+        }
+
+        // ---- lifetime -----------------------------------------------------------------------
+
+        public void Flush() { if (Native) Win32Registry.Flush(_hKey); }
+
+        public void Close() => Dispose();
+
+        public void Dispose()
+        {
+            // A predefined hive is a pseudo-handle (HKEY_CURRENT_USER and friends are constants, not
+            // allocations); closing one is meaningless and the real API ignores it too.
+            if (Native && !_predefined)
+            {
+                Win32Registry.Close(_hKey);
+                _hKey = IntPtr.Zero;
+            }
+            _closed = true;
+        }
+
         public override string ToString() => Name;
     }
 
     public static class Registry
     {
-        // Straight allocations, no lookup table: the hives are distinct by construction, so the
-        // dictionary this used to dedupe through bought nothing. (Simplified while chasing a mono
-        // wasm "NIY encountered in method .cctor" assertion; that turned out to be the INTERPRETER
-        // -only build -- -p:WpfWebGpuAot=false -- not this IL, so treat it as a tidy-up, not a fix.)
         // These stay FIELDS, not properties: apps are compiled against the real assembly's
         // static readonly fields and emit ldsfld.
-        public static readonly RegistryKey ClassesRoot = new RegistryKey("HKEY_CLASSES_ROOT");
-        public static readonly RegistryKey CurrentUser = new RegistryKey("HKEY_CURRENT_USER");
-        public static readonly RegistryKey LocalMachine = new RegistryKey("HKEY_LOCAL_MACHINE");
-        public static readonly RegistryKey Users = new RegistryKey("HKEY_USERS");
-        public static readonly RegistryKey PerformanceData = new RegistryKey("HKEY_PERFORMANCE_DATA");
-        public static readonly RegistryKey CurrentConfig = new RegistryKey("HKEY_CURRENT_CONFIG");
+        //
+        // On Windows they wrap the predefined HKEY pseudo-handles; elsewhere they are the roots of
+        // the in-memory tree. (Simplified from a lookup table while chasing a mono wasm "NIY
+        // encountered in method .cctor" assertion; that turned out to be the INTERPRETER-only build,
+        // not this IL, so treat it as a tidy-up rather than a fix.)
+        public static readonly RegistryKey ClassesRoot = Root("HKEY_CLASSES_ROOT", 0x80000000);
+        public static readonly RegistryKey CurrentUser = Root("HKEY_CURRENT_USER", 0x80000001);
+        public static readonly RegistryKey LocalMachine = Root("HKEY_LOCAL_MACHINE", 0x80000002);
+        public static readonly RegistryKey Users = Root("HKEY_USERS", 0x80000003);
+        public static readonly RegistryKey PerformanceData = Root("HKEY_PERFORMANCE_DATA", 0x80000004);
+        public static readonly RegistryKey CurrentConfig = Root("HKEY_CURRENT_CONFIG", 0x80000005);
+
+        private static RegistryKey Root(string name, uint hive) =>
+            RegistryKey.OnWindows
+                ? new RegistryKey(name, unchecked((IntPtr)(int)hive), predefined: true)
+                : new RegistryKey(name);
 
         private static RegistryKey FromPath(string keyName, out string rest)
         {
@@ -89,17 +259,29 @@ namespace Microsoft.Win32
                 default: return CurrentUser;
             }
         }
+
         public static object GetValue(string keyName, string valueName, object defaultValue)
         {
-            var h = FromPath(keyName, out var rest); if (h == null) return defaultValue;
-            var k = string.IsNullOrEmpty(rest) ? h : h.OpenSubKey(rest); return k == null ? defaultValue : k.GetValue(valueName, defaultValue);
+            var h = FromPath(keyName, out var rest);
+            if (h == null) return defaultValue;
+            var k = string.IsNullOrEmpty(rest) ? h : h.OpenSubKey(rest);
+            if (k == null) return defaultValue;
+            try { return k.GetValue(valueName, defaultValue); }
+            finally { if (!ReferenceEquals(k, h)) k.Dispose(); }
         }
-        public static void SetValue(string keyName, string valueName, object value)
+
+        public static void SetValue(string keyName, string valueName, object value) =>
+            SetValue(keyName, valueName, value, RegistryValueKind.Unknown);
+
+        public static void SetValue(string keyName, string valueName, object value, RegistryValueKind valueKind)
         {
-            var h = FromPath(keyName, out var rest); if (h == null) return;
-            (string.IsNullOrEmpty(rest) ? h : h.CreateSubKey(rest)).SetValue(valueName, value);
+            var h = FromPath(keyName, out var rest);
+            if (h == null) return;
+            var k = string.IsNullOrEmpty(rest) ? h : h.CreateSubKey(rest);
+            if (k == null) return;
+            try { k.SetValue(valueName, value, valueKind); }
+            finally { if (!ReferenceEquals(k, h)) k.Dispose(); }
         }
-        public static void SetValue(string keyName, string valueName, object value, RegistryValueKind valueKind) => SetValue(keyName, valueName, value);
     }
 }
 
@@ -117,16 +299,27 @@ namespace Microsoft.Win32.SafeHandles
     ///  Deliberately NOT derived from SafeHandle, which was the first attempt: SafeHandle is a critical
     ///  finalizer type, and merely having one in this assembly made the interpreter refuse the class
     ///  ("NIY encountered in method Microsoft.Win32.Registry:.cctor", then a fatal assertion) — so the
-    ///  fix for the AOT build broke the interpreter build instead. Only the type's NAME is ever needed:
-    ///  nothing off Windows calls these methods, and no instance is ever created by the runtime.
+    ///  fix for the AOT build broke the interpreter build instead.
+    ///
+    ///  It now CARRIES the handle, because on Windows there is a real one to carry and a caller that
+    ///  P/Invokes through DangerousGetHandle would otherwise be handed zero. Off Windows it is still
+    ///  an empty shell, as it was.
     /// </remarks>
     public sealed class SafeRegistryHandle : System.IDisposable
     {
+        private readonly System.IntPtr _handle;
+        private readonly bool _ownsHandle;
+
         public SafeRegistryHandle() { }
-        public SafeRegistryHandle(System.IntPtr preexistingHandle, bool ownsHandle) { }
-        public bool IsInvalid => true;
-        public bool IsClosed => true;
-        public System.IntPtr DangerousGetHandle() => System.IntPtr.Zero;
+        public SafeRegistryHandle(System.IntPtr preexistingHandle, bool ownsHandle)
+        {
+            _handle = preexistingHandle;
+            _ownsHandle = ownsHandle;
+        }
+
+        public bool IsInvalid => _handle == System.IntPtr.Zero;
+        public bool IsClosed => false;
+        public System.IntPtr DangerousGetHandle() => _handle;
         public void Dispose() { }
     }
 }

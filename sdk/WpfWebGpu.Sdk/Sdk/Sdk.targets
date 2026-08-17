@@ -35,8 +35,10 @@
 
     <!-- Which heads have no system fonts this renderer can use (see WpfWebGpu.Fonts). Windows has
          Segoe UI, Segoe Fluent Icons, Cascadia and a system emoji font of its own. (Gated on WPF
-         being in play at each use site — $(_WpfWebGpuUseWpf) is not captured until below.) -->
-    <_WpfWebGpuNeedsFonts Condition="'$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuNeedsFonts>
+         being in play at each use site — $(_WpfWebGpuUseWpf) is not captured until below.)
+         A PORTABLE build always carries them, whatever it was built on: the output may be run on a
+         Linux or macOS box, and the cost of being wrong is boxes instead of text. -->
+    <_WpfWebGpuNeedsFonts Condition="'$(_WpfWebGpuWin)' != 'true' or '$(WpfWebGpuPortable)' == 'true'">true</_WpfWebGpuNeedsFonts>
 
     <!-- Cross-building the windows head from a non-Windows dev machine. -->
     <EnableWindowsTargeting Condition="'$(EnableWindowsTargeting)' == '' and '$(_WpfWebGpuWin)' == 'true' and $(TargetFramework.Contains('-windows')) and '$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
@@ -93,12 +95,18 @@
   <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/*.dll" Private="true" />
 
-    <!-- The renderer. Windows names the one assembly it wants rather than globbing the folder,
-         because lib/wpf-desktop also carries the SystemEvents/Registry shims and Windows must bind
-         the real ones. -->
+    <!-- The renderer. A per-RID Windows build names the one assembly it wants rather than globbing
+         the folder, because lib/wpf-desktop also carries the SystemEvents/Registry shims and Windows
+         binds the real runtime packages instead.
+
+         A PORTABLE build takes the whole folder on Windows too. It has to: one output serves three
+         operating systems, the shims and the real packages share an assembly identity, so exactly
+         one of them can ship — and the shims are the ones that work everywhere, now that they do the
+         real thing on Windows (a hidden top-level window pumping the OS broadcasts, and advapi32 for
+         the registry) instead of no-opping. -->
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-desktop/*.dll" Private="true"
-               Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true' and '$(_WpfWebGpuWin)' != 'true'" />
-    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="'$(_WpfWebGpuWin)' == 'true'">
+               Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true' and ('$(_WpfWebGpuWin)' != 'true' or '$(WpfWebGpuPortable)' == 'true')" />
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="'$(_WpfWebGpuWin)' == 'true' and '$(WpfWebGpuPortable)' != 'true'">
       <HintPath>$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
       <Private>true</Private>
     </Reference>
@@ -259,8 +267,10 @@
     -v:diag ever says "was not imported". The pack now runs XmlPeek over this file and Sdk.props
     (see WpfWebGpuValidateInputs) so that a malformed comment fails there instead of in an app.
   -->
+  <!-- Not in a portable build: the output has to be able to land on Windows, where the loader is
+       required, and it sits under runtimes/win-*/native/ where it confuses nothing. -->
   <Target Name="_WpfWebGpuDropWebView2LoaderOffWindows" AfterTargets="Build;Publish"
-          Condition="'$(_WpfWebGpuWin)' != 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuWin)' != 'true' and '$(WpfWebGpuPortable)' != 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <_WpfWebGpuStrayLoader Include="$(OutDir)WebView2Loader.dll" Condition="'$(OutDir)' != ''" />
       <_WpfWebGpuStrayLoader Include="$(PublishDir)WebView2Loader.dll" Condition="'$(PublishDir)' != ''" />
@@ -313,10 +323,67 @@
   </PropertyGroup>
 
   <!-- Desktop heads (Windows, macOS, Linux): deployed beside the app. -->
-  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and Exists('$(_WpfWebGpuNativePath)')">
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' != 'true' and Exists('$(_WpfWebGpuNativePath)')">
     <None Include="$(_WpfWebGpuNativeDir)*" CopyToOutputDirectory="PreserveNewest"
           Link="%(Filename)%(Extension)" Visible="false" />
   </ItemGroup>
+
+  <!--
+    PORTABLE desktop output (-p:WpfWebGpuPortable=true): ONE published folder that runs on Windows,
+    Linux and macOS, on x64 and arm64.
+
+    The managed half is already portable — lib/wpf is AnyCPU net10.0 and BAML has no platform in it —
+    so what has to change is the native half. Beside the app will not do: win-x64 and win-arm64 are
+    both called wgpu_native.dll, so a flat folder can hold at most one architecture per OS. They go
+    into runtimes/<rid>/native/ instead, the layout the platform distinguishes them by, and
+    NativeLoad in the interop picks by the RID the process is actually running as. (The framework
+    resolves that layout from deps.json, but only for libraries that arrived as NuGet package assets;
+    these are laid out by these targets, so the resolver does it.)
+
+    Everything else follows from "one folder, three operating systems":
+      - the fonts ship unconditionally, since the output may land on Linux or macOS, where nothing
+        supplies Segoe UI, the Fluent icon face, CJK or a drawable emoji font;
+      - WebView2Loader.dll is kept rather than stripped off-Windows (see the target below);
+      - there is no native apphost. A portable app is App.dll, started with `dotnet App.dll`; an
+        .exe/Mach-O/ELF launcher is per-RID by definition.
+
+    NOT yet portable: Microsoft.Win32.SystemEvents and Microsoft.Win32.Registry. Two assemblies share
+    one identity — our cross-platform stand-in and the real Windows package — and one output can
+    carry only one of them, so a portable build still takes whichever the BUILD MACHINE's head
+    picked. See _WpfWebGpuPortableShimWarning below.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' == 'true'">
+    <_WpfWebGpuPortableRid Include="win-x64;win-arm64;win-x86;linux-x64;linux-arm64;osx-x64;osx-arm64" />
+  </ItemGroup>
+
+  <Target Name="_WpfWebGpuPortableNative"
+          BeforeTargets="AssignTargetPaths"
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' == 'true'">
+    <ItemGroup>
+      <!-- One item per RID, batched: the destination has to carry the RID, and %(Rid) can only be
+           dereferenced like this inside a target. -->
+      <_WpfWebGpuPortableNativeFile Include="$(WpfWebGpuSdkRoot)native/%(_WpfWebGpuPortableRid.Identity)/*">
+        <Rid>%(_WpfWebGpuPortableRid.Identity)</Rid>
+      </_WpfWebGpuPortableNativeFile>
+      <None Include="@(_WpfWebGpuPortableNativeFile)"
+            CopyToOutputDirectory="PreserveNewest"
+            Link="runtimes/%(_WpfWebGpuPortableNativeFile.Rid)/native/%(Filename)%(Extension)"
+            Visible="false" />
+    </ItemGroup>
+    <Message Importance="normal"
+             Text="WpfWebGpu: portable output — staged @(_WpfWebGpuPortableNativeFile->Count()) native files under runtimes/&lt;rid&gt;/native/ for @(_WpfWebGpuPortableRid->'%(Identity)', ', ')." />
+    <Warning Condition="'@(_WpfWebGpuPortableNativeFile)' == ''"
+             Text="WpfWebGpuPortable=true but the SDK carries no native/&lt;rid&gt;/ payload at all. The published app will fail at startup on every platform." />
+  </Target>
+
+  <!-- What a portable output does NOT carry, said once at build time rather than discovered on the
+       target machine. The shims used to be on this list; they are not any more, because they now do
+       the real thing on Windows as well. -->
+  <Target Name="_WpfWebGpuPortableNotes" BeforeTargets="Build"
+          Condition="'$(WpfWebGpuPortable)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true'">
+    <Message Importance="high"
+             Text="WpfWebGpu: portable output. One folder for Windows, Linux and macOS on x64/arm64 (plus win-x86); start it with 'dotnet $(AssemblyName).dll'. The apphost beside it ($(AssemblyName)$(_NativeExecutableExtension)) only runs on the platform this was built on — an executable launcher is per-RID by definition." />
+  </Target>
 
   <!-- Android: packed into the APK under lib/<abi>/, where the loader finds it for the binding's
        ordinary DllImport("wgpu_native"). -->
@@ -410,9 +477,9 @@
     <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf" Condition="Exists('$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf')" />
   </ItemGroup>
 
-  <!-- macOS/Linux desktop: beside the app, in fonts/, which is where SystemFontCatalog's app-local
-       probe looks. -->
-  <ItemGroup Condition="'$(_WpfWebGpuUnix)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+  <!-- macOS/Linux desktop (and any portable build, which may be run there): beside the app, in
+       fonts/, which is where SystemFontCatalog's app-local probe looks. -->
+  <ItemGroup Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true'">
     <None Include="@(_WpfWebGpuAppFont)" CopyToOutputDirectory="PreserveNewest"
           Link="fonts/%(Filename)%(Extension)" Visible="false" />
   </ItemGroup>
@@ -438,7 +505,7 @@
        load binds the shim). These are the shims the windows head deliberately does NOT use. -->
   <Target Name="_WpfWebGpuOverlaySystemEventsShim"
           AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
-          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true'">
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />

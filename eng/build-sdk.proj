@@ -159,10 +159,10 @@
        be on disk is every RID, whatever machine is packing. -->
   <Target Name="Preflight">
     <ItemGroup>
-      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
+      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;win-x86/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
       <!-- ANGLE, staged into the same folders by the same script. Desktop RIDs only: Android has a
            system GLES driver and iOS is Metal-only. -->
-      <_WgpuExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
+      <_WgpuExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;win-x86/lib/libEGL.dll;win-x86/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
       <_WgpuMissing Include="@(_WgpuExpected)" Condition="!Exists('$(_Src)WgpuInterop/native/%(Identity)')" />
     </ItemGroup>
     <Error Condition="'@(_WgpuMissing)' != '' and '$(AllowPartialNative)' != 'true' and '$(SkipPack)' != 'true'"

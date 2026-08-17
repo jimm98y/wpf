@@ -75,7 +75,7 @@ $AssetMap = @{
 # The set the SDK package ships. Keep in lock-step with the native/ pack list and the
 # WpfWebGpuValidateInputs check in sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj.
 $ShippedRids = @(
-    'win-x64', 'win-arm64',
+    'win-x64', 'win-arm64', 'win-x86',
     'linux-x64', 'linux-arm64',
     'osx-x64', 'osx-arm64',
     'android-arm64', 'android-x64',

@@ -184,6 +184,7 @@
          the one RID where the .a IS the payload. -->
     <None Include="$(WgpuNativeDir)win-x64/lib/*.dll"             Pack="true" PackagePath="native/win-x64/" />
     <None Include="$(WgpuNativeDir)win-arm64/lib/*.dll"           Pack="true" PackagePath="native/win-arm64/" />
+    <None Include="$(WgpuNativeDir)win-x86/lib/*.dll"             Pack="true" PackagePath="native/win-x86/" />
     <None Include="$(WgpuNativeDir)linux-x64/lib/*.so"            Pack="true" PackagePath="native/linux-x64/" />
     <None Include="$(WgpuNativeDir)linux-arm64/lib/*.so"          Pack="true" PackagePath="native/linux-arm64/" />
     <None Include="$(WgpuNativeDir)osx-x64/lib/*.dylib"           Pack="true" PackagePath="native/osx-x64/" />
@@ -200,6 +201,7 @@
          restored package so the two Windows RIDs cannot end up with one architecture's copy. -->
     <None Include="$(WebView2PackageDir)runtimes/win-x64/native/WebView2Loader.dll"   Pack="true" PackagePath="native/win-x64/"   Condition="Exists('$(WebView2PackageDir)runtimes/win-x64/native/WebView2Loader.dll')" />
     <None Include="$(WebView2PackageDir)runtimes/win-arm64/native/WebView2Loader.dll" Pack="true" PackagePath="native/win-arm64/" Condition="Exists('$(WebView2PackageDir)runtimes/win-arm64/native/WebView2Loader.dll')" />
+    <None Include="$(WebView2PackageDir)runtimes/win-x86/native/WebView2Loader.dll"   Pack="true" PackagePath="native/win-x86/"   Condition="Exists('$(WebView2PackageDir)runtimes/win-x86/native/WebView2Loader.dll')" />
   </ItemGroup>
 
   <!-- Fail early with a readable message instead of packing a broken SDK. -->
@@ -237,7 +239,7 @@
 
     <!-- The native backend, for every head, checked by RID. -->
     <ItemGroup>
-      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
+      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;win-x86/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
       <_WgpuMissing Include="@(_WgpuExpected)" Condition="!Exists('$(WgpuNativeDir)%(Identity)')" />
     </ItemGroup>
     <Error Condition="'@(_WgpuMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' != 'true'"
@@ -251,7 +253,7 @@
          in a VM and one that does not. Only the desktop RIDs: Android has a system GLES driver and
          iOS is Metal-only (see the map in fetch-wgpu.ps1). -->
     <ItemGroup>
-      <_AngleExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
+      <_AngleExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;win-x86/lib/libEGL.dll;win-x86/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
       <_AngleMissing Include="@(_AngleExpected)" Condition="!Exists('$(WgpuNativeDir)%(Identity)')" />
     </ItemGroup>
     <Error Condition="'@(_AngleMissing)' != '' and '$(WpfWebGpuAllowPartialNative)' != 'true'"
