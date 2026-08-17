@@ -1,8 +1,9 @@
 // Microsoft.Win32.Registry stand-in, with TWO implementations behind one public surface:
 //
 //   Windows      the real registry, through advapi32 (see Win32Registry.cs)
-//   elsewhere    an in-memory tree, so unmodified apps that persist settings to the registry run
-//                on macOS/Linux/wasm instead of NRE-ing on a null hive
+//   elsewhere    a tree backed by a per-user file, one per hive (see FileRegistryStore.cs), so
+//                that apps which keep their settings in the registry both RUN and REMEMBER off
+//                Windows instead of NRE-ing on a null hive or starting fresh every launch
 //
 // It used to be the in-memory half only, because the choice was made at BUILD time: the Windows
 // head referenced the real runtime package and never loaded this assembly at all. A portable
@@ -27,11 +28,23 @@ namespace Microsoft.Win32
 
     public sealed class RegistryKey : IDisposable
     {
-        internal static readonly bool OnWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        // WPFWEBGPU_REGISTRY_FILE=1 forces the file-backed path even on Windows. It exists because
+        // the machines this is developed and built on are Windows ones, and without it the entire
+        // off-Windows implementation is code that can only be exercised somewhere else -- which is
+        // how the in-memory version kept its "OpenSubKey conjures the key" behaviour for so long.
+        internal static readonly bool OnWindows =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+            Environment.GetEnvironmentVariable("WPFWEBGPU_REGISTRY_FILE") != "1";
 
-        // In-memory path (everywhere but Windows).
+        // Off-Windows path: an in-memory tree that is loaded from, and written back to, a file.
         private readonly Dictionary<string, RegistryKey> _subKeys;
         private readonly Dictionary<string, object> _values;
+
+        // The hive this key belongs to (itself, for a hive) and the file behind that hive. Every
+        // mutation rewrites the hive through the root, which is why each key needs to know it.
+        private readonly RegistryKey _hive;
+        private FileRegistryStore _store;
+        private bool _loaded;
 
         // Windows path: a real HKEY. Predefined hives are pseudo-handles and must never be closed.
         private IntPtr _hKey;
@@ -43,12 +56,45 @@ namespace Microsoft.Win32
         public Microsoft.Win32.SafeHandles.SafeRegistryHandle Handle =>
             new Microsoft.Win32.SafeHandles.SafeRegistryHandle(_hKey, ownsHandle: false);
 
-        internal RegistryKey(string name)
+        internal RegistryKey(string name) : this(name, null) { }
+
+        private RegistryKey(string name, RegistryKey hive)
         {
             Name = name;
             _subKeys = new Dictionary<string, RegistryKey>(StringComparer.OrdinalIgnoreCase);
             _values = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            _hive = hive ?? this;
         }
+
+        /// <summary>
+        /// Attaches the file behind a hive. Loading is DEFERRED to the first read or write: the six
+        /// hives are created by a static initializer, and doing file I/O there would put it on the
+        /// first touch of anything registry-shaped, including in processes that never read a value.
+        /// </summary>
+        internal void AttachStore(string hiveFileName)
+        {
+            _store = new FileRegistryStore(hiveFileName);
+        }
+
+        private void EnsureLoaded()
+        {
+            if (_hive._loaded || _hive._store == null) return;
+            _hive._loaded = true;                 // set first: Load() calls back in through CreateSubKey
+            _hive._store.Load(_hive);
+        }
+
+        private void Persist()
+        {
+            if (_hive._store != null && _hive._loaded) _hive._store.Save(_hive);
+        }
+
+        // Used by FileRegistryStore while loading and saving, so that reading the file does not
+        // recurse into EnsureLoaded and writing it does not go back through the public API.
+        internal void SetValueLoaded(string name, object value) => _values[name ?? string.Empty] = value;
+        internal object GetLoadedValue(string name) => _values.TryGetValue(name ?? string.Empty, out var v) ? v : null;
+        internal string[] LoadedValueNames() { var a = new string[_values.Count]; _values.Keys.CopyTo(a, 0); return a; }
+        internal string[] LoadedSubKeyNames() { var a = new string[_subKeys.Count]; _subKeys.Keys.CopyTo(a, 0); return a; }
+        internal RegistryKey GetLoadedSubKey(string name) => _subKeys.TryGetValue(name ?? string.Empty, out var k) ? k : null;
 
         internal RegistryKey(string name, IntPtr hKey, bool predefined)
         {
@@ -76,7 +122,17 @@ namespace Microsoft.Win32
                                               writable ? Win32Registry.KEY_ALL : Win32Registry.KEY_READ);
                 return h == IntPtr.Zero ? null : new RegistryKey(Name + "\\" + name, h, predefined: false);
             }
-            return CreateSubKey(name);
+
+            // Off Windows this used to CREATE the key it was asked to open, so every probe for an
+            // absent setting answered "here it is, empty". Now it reports absence, like the real API.
+            EnsureLoaded();
+            RegistryKey k = this;
+            foreach (var part in (name ?? string.Empty).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!k._subKeys.TryGetValue(part, out RegistryKey sub)) return null;
+                k = sub;
+            }
+            return k;
         }
 
         public RegistryKey OpenSubKey(string name, RegistryKeyPermissionCheck c) =>
@@ -93,10 +149,15 @@ namespace Microsoft.Win32
                 return h == IntPtr.Zero ? null : new RegistryKey(Name + "\\" + name, h, predefined: false);
             }
 
+            EnsureLoaded();
             RegistryKey k = this;
             foreach (var part in (name ?? string.Empty).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                if (!k._subKeys.TryGetValue(part, out var sub)) { sub = new RegistryKey(k.Name + "\\" + part); k._subKeys[part] = sub; }
+                if (!k._subKeys.TryGetValue(part, out var sub))
+                {
+                    sub = new RegistryKey(k.Name + "\\" + part, _hive);
+                    k._subKeys[part] = sub;
+                }
                 k = sub;
             }
             return k;
@@ -116,6 +177,7 @@ namespace Microsoft.Win32
                 return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand: true, out object v, out _)
                     ? v : defaultValue;
             }
+            EnsureLoaded();
             return _values.TryGetValue(name ?? string.Empty, out var value) ? value : defaultValue;
         }
 
@@ -138,13 +200,16 @@ namespace Microsoft.Win32
         public void SetValue(string name, object value, RegistryValueKind kind)
         {
             if (Native) { Win32Registry.SetValue(_hKey, name ?? string.Empty, value, kind); return; }
+            EnsureLoaded();
             _values[name ?? string.Empty] = value;
+            Persist();
         }
 
         public void DeleteValue(string name)
         {
             if (Native) { Win32Registry.DeleteValue(_hKey, name ?? string.Empty); return; }
-            _values.Remove(name ?? string.Empty);
+            EnsureLoaded();
+            if (_values.Remove(name ?? string.Empty)) Persist();
         }
 
         public void DeleteValue(string name, bool throwOnMissing) => DeleteValue(name);
@@ -156,7 +221,21 @@ namespace Microsoft.Win32
                 return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand: false, out _, out RegistryValueKind k)
                     ? k : RegistryValueKind.Unknown;
             }
-            return RegistryValueKind.String;
+
+            // Off Windows this answered String for everything, including a DWord, which is wrong in
+            // the way that matters: apps branch on the kind to decide how to read a value. The kind
+            // is recoverable from what was stored, and the file format keeps it across restarts.
+            EnsureLoaded();
+            if (!_values.TryGetValue(name ?? string.Empty, out object value)) return RegistryValueKind.Unknown;
+            return value switch
+            {
+                int => RegistryValueKind.DWord,
+                long => RegistryValueKind.QWord,
+                byte[] => RegistryValueKind.Binary,
+                string[] => RegistryValueKind.MultiString,
+                null => RegistryValueKind.None,
+                _ => RegistryValueKind.String,
+            };
         }
 
         // ---- subkeys ------------------------------------------------------------------------
@@ -164,7 +243,8 @@ namespace Microsoft.Win32
         public void DeleteSubKey(string name)
         {
             if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: false); return; }
-            _subKeys.Remove(name ?? string.Empty);
+            EnsureLoaded();
+            if (RemoveSubKeyPath(name)) Persist();
         }
 
         public void DeleteSubKey(string name, bool t) => DeleteSubKey(name);
@@ -172,7 +252,27 @@ namespace Microsoft.Win32
         public void DeleteSubKeyTree(string name)
         {
             if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: true); return; }
-            _subKeys.Remove(name ?? string.Empty);
+            EnsureLoaded();
+            if (RemoveSubKeyPath(name)) Persist();
+        }
+
+        /// <summary>
+        /// Removes a subkey named by a PATH, not just a single segment. The in-memory version only
+        /// ever removed a direct child, so DeleteSubKeyTree(@"Software\Vendor\App") silently did
+        /// nothing -- which reads as "delete failed to take" only much later.
+        /// </summary>
+        private bool RemoveSubKeyPath(string name)
+        {
+            string[] parts = (name ?? string.Empty).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return false;
+
+            RegistryKey k = this;
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                if (!k._subKeys.TryGetValue(parts[i], out RegistryKey next)) return false;
+                k = next;
+            }
+            return k._subKeys.Remove(parts[parts.Length - 1]);
         }
 
         public void DeleteSubKeyTree(string name, bool t) => DeleteSubKeyTree(name);
@@ -180,28 +280,34 @@ namespace Microsoft.Win32
         public string[] GetValueNames()
         {
             if (Native) return Win32Registry.ValueNames(_hKey);
+            EnsureLoaded();
             var a = new string[_values.Count]; _values.Keys.CopyTo(a, 0); return a;
         }
 
         public string[] GetSubKeyNames()
         {
             if (Native) return Win32Registry.SubKeyNames(_hKey);
+            EnsureLoaded();
             var a = new string[_subKeys.Count]; _subKeys.Keys.CopyTo(a, 0); return a;
         }
 
         public int SubKeyCount
         {
-            get { if (Native) { Win32Registry.Counts(_hKey, out int s, out _); return s; } return _subKeys.Count; }
+            get { if (Native) { Win32Registry.Counts(_hKey, out int s, out _); return s; } EnsureLoaded(); return _subKeys.Count; }
         }
 
         public int ValueCount
         {
-            get { if (Native) { Win32Registry.Counts(_hKey, out _, out int v); return v; } return _values.Count; }
+            get { if (Native) { Win32Registry.Counts(_hKey, out _, out int v); return v; } EnsureLoaded(); return _values.Count; }
         }
 
         // ---- lifetime -----------------------------------------------------------------------
 
-        public void Flush() { if (Native) Win32Registry.Flush(_hKey); }
+        public void Flush()
+        {
+            if (Native) { Win32Registry.Flush(_hKey); return; }
+            Persist();
+        }
 
         public void Close() => Dispose();
 
@@ -236,10 +342,14 @@ namespace Microsoft.Win32
         public static readonly RegistryKey PerformanceData = Root("HKEY_PERFORMANCE_DATA", 0x80000004);
         public static readonly RegistryKey CurrentConfig = Root("HKEY_CURRENT_CONFIG", 0x80000005);
 
-        private static RegistryKey Root(string name, uint hive) =>
-            RegistryKey.OnWindows
-                ? new RegistryKey(name, unchecked((IntPtr)(int)hive), predefined: true)
-                : new RegistryKey(name);
+        private static RegistryKey Root(string name, uint hive)
+        {
+            if (RegistryKey.OnWindows) return new RegistryKey(name, unchecked((IntPtr)(int)hive), predefined: true);
+
+            var key = new RegistryKey(name);
+            key.AttachStore(name);          // one file per hive; loaded on first use, not here
+            return key;
+        }
 
         private static RegistryKey FromPath(string keyName, out string rest)
         {
