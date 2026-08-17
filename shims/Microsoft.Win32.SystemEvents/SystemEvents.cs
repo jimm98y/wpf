@@ -104,6 +104,24 @@ namespace Microsoft.Win32
             return e.Cancel;
         }
 
+        /// <summary>
+        /// Called by PresentationFramework when the DESKTOP's light/dark preference changes on a
+        /// platform that has no WM_SETTINGCHANGE: macOS (NSAppearance) and Linux (the
+        /// xdg-desktop-portal colour-scheme signal). Both detections already exist in the platform
+        /// layer, with their fallbacks and their watchers; this is only the notification crossing
+        /// over, so that an app subscribing to UserPreferenceChanged hears about a theme switch
+        /// everywhere rather than on Windows alone.
+        ///
+        /// Category.Color, because that is what Windows reports for the same user action: toggling
+        /// Dark/Light broadcasts WM_SETTINGCHANGE with "ImmersiveColorSet", which maps to Color.
+        /// (VisualStyle is a different action there -- changing the visual style itself.)
+        /// </summary>
+        internal static void NotifySystemAppearanceChanged()
+        {
+            if (s_onWindows) return;      // the message pump already reports this, and would duplicate it
+            RaiseUserPreference(UserPreferenceCategory.Color);
+        }
+
         // ---- the events thread ---------------------------------------------------------------
         //
         // On Windows these are the real thing: a WM_TIMER on the message window, and a post to that

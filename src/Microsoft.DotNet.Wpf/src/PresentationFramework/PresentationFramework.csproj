@@ -1413,6 +1413,29 @@
     <PackageReference Include="System.Formats.Nrbf" Version="$(SystemFormatsNrbfVersion)" />
   </ItemGroup>
 
+  <!-- The cross-platform Microsoft.Win32.SystemEvents stand-in, referenced by PATH rather than as a
+       package so that ThemeManager can call its internal NotifySystemAppearanceChanged (the shim
+       grants us access with an InternalsVisibleTo). That is how a Dark/Light switch on macOS and
+       Linux reaches an app's UserPreferenceChanged handler: the detection stays in the platform
+       layer, where it already lives with its fallbacks and its watcher, and only the notification
+       crosses over.
+
+       Exists()-gated ON PURPOSE. shims/ is built outside the Arcade graph, so a build of this
+       project alone, or one that runs before the shims, must still compile; ThemeManager is
+       compiled against the same condition and simply does not make the call when the shim was not
+       present. Without the gate, the ordinary `build.cmd` of this repo would fail on a clean
+       enlistment. -->
+  <PropertyGroup>
+    <_WpfSystemEventsShim>$(RepoRoot)artifacts\bin\Microsoft.Win32.SystemEvents\$(Configuration)\net10.0\Microsoft.Win32.SystemEvents.dll</_WpfSystemEventsShim>
+    <DefineConstants Condition="Exists('$(_WpfSystemEventsShim)')">$(DefineConstants);WPF_SYSTEMEVENTS_SHIM</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(_WpfSystemEventsShim)')">
+    <Reference Include="Microsoft.Win32.SystemEvents">
+      <HintPath>$(_WpfSystemEventsShim)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
     <!-- The managed DirectWriteForwarder stub is used on ALL platforms (the WebGPU port has no

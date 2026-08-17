@@ -48,6 +48,19 @@ internal static class ThemeManager
         {
             ThemeMode mode = Application.Current?.ThemeMode ?? ThemeMode.System;
             OnApplicationThemeChanged(mode, mode);
+
+            // Tell the APP, not just WPF. On Windows the same user action arrives as
+            // WM_SETTINGCHANGE/"ImmersiveColorSet" and reaches app code through
+            // SystemEvents.UserPreferenceChanged, which is what apps actually subscribe to in order
+            // to restyle their own chrome. Off Windows nothing raised it, so an app that reacted to
+            // light/dark on Windows silently stopped doing so everywhere else -- while WPF's own
+            // theme switched around it, which looks like a bug in the app.
+            //
+            // The detection is not repeated here: it stays in CocoaWindow/LinuxDesktopSettings, and
+            // only the notification crosses into the shim (whose InternalsVisibleTo names us).
+#if WPF_SYSTEMEVENTS_SHIM
+            Microsoft.Win32.SystemEvents.NotifySystemAppearanceChanged();
+#endif
         }));
     }
 

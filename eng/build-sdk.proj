@@ -64,6 +64,16 @@
          PresentationCore, WindowsBase, System.Xaml, ReachFramework, UIAutomation*,
          System.Windows.Primitives, System.Windows.Input.Manipulations, the System.Printing
          cycle-breaking projects, DirectWriteForwarderStub and WgpuInterop. -->
+    <!-- Cross-platform stand-ins for the Windows-only assemblies. BEFORE PresentationFramework,
+         not after: PresentationFramework compiles against the SystemEvents stand-in (it calls the
+         internal NotifySystemAppearanceChanged, which is how a macOS/Linux Dark-Light switch reaches
+         an app's UserPreferenceChanged handler), and that reference is Exists()-gated so a clean
+         enlistment still builds. Built in the old order the gate would simply be false on the first
+         build of a fresh clone, and the notification would go missing with nothing to say so. -->
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
+
     <_Proj Include="$(_Src)PresentationFramework/PresentationFramework.csproj" />
 
     <!-- The real managed System.Printing. Built AFTER PresentationFramework because it references
@@ -96,11 +106,6 @@
     <_Proj Include="$(_Src)System.Windows.Controls.Ribbon/System.Windows.Controls.Ribbon.csproj" />
     <_Proj Include="$(_Src)System.Windows.Presentation/System.Windows.Presentation.csproj" />
     <_Proj Include="$(_Src)WindowsFormsIntegration/WindowsFormsIntegration.csproj" />
-
-    <!-- Cross-platform stand-ins for the Windows-only assemblies. -->
-    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
-    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
-    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
 
     <!-- The desktop renderer. Built transitively above, but named explicitly so a failure
          here is attributed to the renderer rather than to PresentationFramework. -->
