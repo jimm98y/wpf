@@ -430,6 +430,20 @@ namespace MS.Internal.Interop
             => !s_byHandle.TryGetValue(handle, out AndroidWindow w) || !w.IsBorderless;
 
         /// <summary>
+        /// Whether this window is a popup (a borderless sibling view), which on this head means its
+        /// scene belongs in its OWNER's surface rather than one of its own.
+        /// </summary>
+        /// <remarks>
+        /// The compositor used to work that out from MilTarget.IsLayered, which is a Windows
+        /// per-pixel-alpha flag and is false for every popup here -- so popups took the own-surface
+        /// path that NativePlatform.PopupsShareOwnerSurface exists to avoid, and simply did not
+        /// appear. Measured on the emulator: the popup opened, the process stayed up and the rest of
+        /// the app kept rendering, and none of the popup's pixels ever reached the screen.
+        /// </remarks>
+        public static bool IsPopupWindow(IntPtr handle)
+            => s_byHandle.TryGetValue(handle, out AndroidWindow w) && w.IsBorderless;
+
+        /// <summary>
         /// Hand <see cref="GetNativeWindow"/> to the WebGPU engine. Loaded reflectively for the same
         /// reason DUCE loads the whole engine reflectively (Common/Graphics/exports.cs): WPF must keep
         /// no compile-time dependency on the graphics backend, in either direction. Failing silently
@@ -447,6 +461,7 @@ namespace MS.Internal.Interop
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
                 seam?.GetProperty("NativeWindowResolver", PublicStatic)?.SetValue(null, (Func<IntPtr, IntPtr>)GetNativeWindow);
                 seam?.GetProperty("WindowOpaqueQuery", PublicStatic)?.SetValue(null, (Func<IntPtr, bool>)IsWindowOpaque);
+                seam?.GetProperty("PopupWindowQuery", PublicStatic)?.SetValue(null, (Func<IntPtr, bool>)IsPopupWindow);
 
                 // WindowOriginCallback is declared by the engine (it has out parameters, so no Func
                 // shape fits); bind to it by the property's own delegate type.

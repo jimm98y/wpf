@@ -54,6 +54,17 @@ namespace Microsoft.Wpf.Interop.WebGpu
             set => Composition.Platform.AndroidInterop.OriginQuery = value;
         }
 
+        /// <summary>
+        /// Reports whether a WPF window handle names a POPUP, whose scene is drawn into its owner's
+        /// surface rather than one of its own (see NativePlatform.PopupsShareOwnerSurface). Null means
+        /// "no popups here", which leaves every window presenting itself.
+        /// </summary>
+        public static Func<IntPtr, bool>? PopupWindowQuery
+        {
+            get => Composition.Platform.AndroidInterop.PopupQuery;
+            set => Composition.Platform.AndroidInterop.PopupQuery = value;
+        }
+
         public static Func<IntPtr, bool>? WindowOpaqueQuery
         {
             get => Composition.Platform.AndroidInterop.OpaqueQuery;

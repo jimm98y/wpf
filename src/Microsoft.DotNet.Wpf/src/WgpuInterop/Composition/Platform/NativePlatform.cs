@@ -156,6 +156,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             => Current != PlatformKind.IOS || IosInterop.CanPresentTo(nativeWindow);
 
         /// <summary>
+        /// Whether this window is a popup, on a head that draws popups into their owner's surface.
+        /// False everywhere else, including where popups are real windows of their own.
+        /// </summary>
+        /// <remarks>
+        /// Android needs asking, because there a popup DOES have a presentable Surface of its own --
+        /// so CanPresentToWindow says yes and cannot distinguish it. The reason to composite there is
+        /// alpha, not capability: a GLES popup surface cannot be transparent (see
+        /// PopupsShareOwnerSurface), which is why one must never be given its own swap chain.
+        /// </remarks>
+        public static bool IsPopupWindow(IntPtr windowHandle)
+            => Current == PlatformKind.Android && AndroidInterop.PopupQuery?.Invoke(windowHandle) == true;
+
+        /// <summary>
         /// Where a window sits inside its owner, in device pixels. Only meaningful where popups are
         /// child views of one host window (see <see cref="PopupsShareOwnerSurface"/>); elsewhere a
         /// popup is its own OS window and presents itself, so this is never asked for.

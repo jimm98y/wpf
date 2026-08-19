@@ -51,6 +51,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static AndroidPlatform.WindowOriginCallback? OriginQuery { get; set; }
 
+        /// <summary>
+        /// Whether a window handle names a popup, i.e. one whose scene belongs in its owner's surface
+        /// (see NativePlatform.PopupsShareOwnerSurface). Installed by the windowing backend; null
+        /// leaves every window presenting through a surface of its own.
+        /// </summary>
+        public static Func<IntPtr, bool>? PopupQuery { get; set; }
+
         /// <summary>See <see cref="OriginQuery"/>.</summary>
         public static void GetWindowOrigin(IntPtr handle, out int x, out int y)
         {

@@ -474,7 +474,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// heads where a popup is a real transparent window that simply cannot present itself.
         /// </remarks>
         private static bool IsCompositedIntoOwner(MilTarget t)
-            => t.IsLayered || !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd);
+            => t.IsLayered
+               || !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd)
+               || Platform.NativePlatform.IsPopupWindow((IntPtr)t.Hwnd);
 
         private List<SceneVisual>? CollectPopupOverlays()
         {
