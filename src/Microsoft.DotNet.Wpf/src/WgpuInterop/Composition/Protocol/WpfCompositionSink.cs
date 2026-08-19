@@ -594,6 +594,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             ts.NullAcquires = 0;
             AcquiredFrames++;
+            if (s_tracePresent)
+                Console.WriteLine($"PRESENTTRACE: acquire hwnd=0x{t.Hwnd:x} {t.Width}x{t.Height} status={surfaceTexture.status}");
 
             // Render through a view in RenderFormat. Usually identical to the swapchain format (default
             // view), but on the OpenGL gamma path it's the UNORM view over the sRGB swapchain so
@@ -644,6 +646,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
             WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
             _perfPresentTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tp;
+            if (s_tracePresent)
+                Console.WriteLine($"PRESENTTRACE: present hwnd=0x{t.Hwnd:x} status={pres}");
             if (pres == WGPUStatus.Success)
             {
                 PresentedFrames++;
