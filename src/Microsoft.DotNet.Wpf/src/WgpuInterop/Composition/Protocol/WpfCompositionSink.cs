@@ -388,7 +388,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (root is null) continue;
 
                 // Already drawn into its owner above; it has no surface of its own to present to.
-                if (popupOverlays != null && t.IsLayered) continue;
+                if (popupOverlays != null && IsCompositedIntoOwner(t)) continue;
 
                 // This window is hosted INSIDE a non-WPF app (a WinForms ElementHost): hand its scene
                 // to that host, which composites it into its own frame at the hosting control's rect.
@@ -459,6 +459,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// on GLES). Returns null rather than an empty list when there is nothing to composite, so the
         /// owner's scene is passed through untouched and no wrapper visual is allocated.
         /// </summary>
+        /// <summary>
+        /// Whether this target is drawn into the surface of the window it belongs to rather than one
+        /// of its own.
+        /// </summary>
+        /// <remarks>
+        /// IsLayered alone was the test, and it is a WINDOWS notion (per-pixel alpha, WS_EX_LAYERED),
+        /// false for every popup on the heads that composite. On iOS that meant the head created a
+        /// popup a touch-only view with a plain CALayer while the compositor tried to build a Metal
+        /// swap chain on it -- after which nothing presented at all, main window included. So ask the
+        /// platform whether the window can be presented to, and keep IsLayered for the heads where a
+        /// popup is a real transparent window that simply cannot present itself.
+        /// </remarks>
+        private static bool IsCompositedIntoOwner(MilTarget t)
+            => t.IsLayered || !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd);
+
         private List<SceneVisual>? CollectPopupOverlays()
         {
             if (!Platform.NativePlatform.PopupsShareOwnerSurface)
@@ -468,7 +483,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
             {
                 MilTarget t = kv.Value;
-                if (!t.IsLayered || t.IsBitmap || t.Hwnd == 0 || t.RootHandle == 0) continue;
+                if (!IsCompositedIntoOwner(t) || t.IsBitmap || t.Hwnd == 0 || t.RootHandle == 0) continue;
                 if (t.Width <= 0 || t.Height <= 0) continue;
 
                 SceneVisual? root = _engine.VisualByHandle(t.RootHandle);

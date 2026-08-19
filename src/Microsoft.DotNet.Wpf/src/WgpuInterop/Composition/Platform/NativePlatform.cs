@@ -142,6 +142,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         public static bool SupportsLayeredWindows => Current == PlatformKind.Windows;
 
         /// <summary>
+        /// Whether this window can be presented to through a swap chain of its own, or must instead
+        /// be drawn into the surface of the window it belongs to.
+        /// </summary>
+        /// <remarks>
+        /// Only iOS answers false, and only for a popup, whose view the head deliberately creates
+        /// WITHOUT a Metal layer because it expects the popup to be composited into its owner. The
+        /// compositor used to infer that from MilTarget.IsLayered, which is a Windows per-pixel-alpha
+        /// flag and is false for every popup off Windows -- so it built a Metal swap chain on a plain
+        /// CALayer and all presentation stopped. Asking the platform is the honest question.
+        /// </remarks>
+        public static bool CanPresentToWindow(IntPtr nativeWindow)
+            => Current != PlatformKind.IOS || IosInterop.CanPresentTo(nativeWindow);
+
+        /// <summary>
         /// Where a window sits inside its owner, in device pixels. Only meaningful where popups are
         /// child views of one host window (see <see cref="PopupsShareOwnerSurface"/>); elsewhere a
         /// popup is its own OS window and presents itself, so this is never asked for.

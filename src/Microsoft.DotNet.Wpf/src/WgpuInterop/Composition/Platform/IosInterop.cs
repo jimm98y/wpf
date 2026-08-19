@@ -94,6 +94,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (cls != IntPtr.Zero) Send(cls, Sel("flush"));
         }
 
+        /// <summary>
+        /// Whether this view can be presented to at all -- i.e. whether its backing layer really is a
+        /// CAMetalLayer.
+        /// </summary>
+        /// <remarks>
+        /// The head builds two kinds of view: a Metal-backed one for a real window, and a TOUCH-ONLY
+        /// one for a popup, which deliberately has no Metal layer because a popup is drawn into its
+        /// owner's surface instead (UIKitWindow.Create, NativePlatform.PopupsShareOwnerSurface).
+        ///
+        /// The compositor decided which was which from MilTarget.IsLayered, and that is a WINDOWS
+        /// notion -- it is Transparency != 0, set from WS_EX_LAYERED per-pixel opacity, and it is
+        /// false for every popup on this head. So the two halves disagreed: the head made a plain
+        /// CALayer and the compositor asked wgpu to build a Metal swap chain on it. Measured, opening
+        /// one popup (target 900x420 layered=False) stopped ALL presentation -- the main window's
+        /// included -- and the whole screen went blank until the app was restarted.
+        ///
+        /// Asking the layer what it is settles it without a protocol flag that means something else.
+        /// </remarks>
+        public static bool CanPresentTo(IntPtr uiView)
+        {
+            if (uiView == IntPtr.Zero) return false;
+
+            IntPtr layer = Send(uiView, Sel("layer"));
+            if (layer == IntPtr.Zero) return false;
+
+            IntPtr metalClass = objc_getClass("CAMetalLayer");
+            return metalClass != IntPtr.Zero && SendBoolPtr(layer, Sel("isKindOfClass:"), metalClass);
+        }
+
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the screen scale.</summary>
         public static void SetContentsScale(IntPtr uiView, double scale)
         {
@@ -202,6 +231,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBoolPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRectRectPtr(IntPtr receiver, IntPtr selector, CGRect r, IntPtr view);
 
