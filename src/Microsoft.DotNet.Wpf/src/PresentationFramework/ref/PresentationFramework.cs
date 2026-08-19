@@ -974,6 +974,18 @@ namespace System.Windows
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
     }
     public enum MessageBoxButton
     {
