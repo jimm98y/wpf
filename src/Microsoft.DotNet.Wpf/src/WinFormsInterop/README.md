@@ -15,6 +15,8 @@ CAMetalLayer surface). Windows and WebAssembly reuse the same present path (see 
 | Path | What |
 |------|------|
 | `System.Windows.Forms.WebGpu.csproj` | Builds Mono's managed `System.Windows.Forms.dll` on net10 with our driver, from the vendored `swf/`. |
+| `System.Design.WebGpu.csproj` | Builds Mono's managed `System.Design.dll` on net10 from the vendored `swfdesign/` — the WinForms **designer host** (`DesignSurface`, `DesignerHost`, CodeDom serializers, `UndoEngine`, `ControlDesigner`). |
+| `swfdesign/` | **Vendored** Mono `System.Design` source (WinForms-relevant namespaces only). Pruned at vendoring time, so the csproj globs with no excludes. Edits vs upstream in `mono-patches/mono-system-design.patch`. |
 | `swf/` | **Vendored** Mono `System.Windows.Forms` source (self-contained — no external mono checkout). Managed control/theme/layout subtrees + `swf/resources/` (embedded cursors/icons) + `swf/common/` (two Mono helper files). Our edits vs upstream are applied here (see `mono-patches/`). |
 | `gen/XplatUIWebGpu.Core.cs` | Hand-written driver core: windows = `Hwnd` + a `System.Drawing.Bitmap` backing; managed message queue; `PaintEventStart` → `Graphics.FromImage(backing)`; mouse/keyboard/caret injection; screen metrics; `GetPresentWindows`/`GetWindowBackBuffer` present hooks. |
 | `gen/XplatUIWebGpu.cs` | Auto-generated default overrides for the ~78 non-core `XplatUIDriver` members. Regenerate from `gen/gen-driver.txt` (the raw `XplatUIDriver` member dump) when the driver contract changes; a CORE set is implemented in `.Core.cs`. |
@@ -45,6 +47,43 @@ applied** to the vendored `swf/` copy; it's kept only as provenance/documentatio
 
 These are already applied in `swf/`; the patch is kept only to document the delta from upstream Mono
 (e.g. to re-apply if `swf/` is ever refreshed from a newer mono checkout).
+
+## The designer host (`swfdesign/`)
+
+Mono's WinForms was written expecting a companion `System.Design`: its controls carry **570
+`[Designer]` attributes, 55 of them naming `System.Windows.Forms.Design`**. Vendoring the WinForms
+half alone left every one of those pointing at nothing, so no design-time host could run on this
+stack.
+
+Microsoft's `System.Design` cannot stand in. It is a type-forwarding facade over
+`System.Windows.Forms.Design.dll`, which references the **private** WinForms substrate —
+`System.Private.Windows.Core`, `System.Windows.Forms.Primitives`, `System.Private.Windows.GdiPlus` —
+plus `System.Drawing.Common`. Those are implementation assemblies, not contracts; shimming them
+would mean reimplementing Microsoft's WinForms internals.
+
+Only the WinForms-relevant namespaces are vendored (`System.ComponentModel.Design`,
+`.Design.Serialization`, `System.Windows.Forms.Design`, `.Design.Behavior`). The ASP.NET, Data,
+Messaging, ServiceProcess and `System.Resources.Tools` trees are not.
+
+**Pruned at vendoring time** (so the csproj needs no excludes):
+
+- 20 `UITypeEditor`-derived property editors and their dependents. `UITypeEditor` is declared by
+  *both* `shims/DrawingDesignShim.cs` (compiled into our WinForms) and `Mono.System.Drawing`, so
+  anything deriving from it is ambiguous (CS0433). Collapsing those two providers into one would
+  let this whole set back in — see the note at the top of `DrawingDesignShim.cs`.
+- `AxImporter.cs` — the ActiveX importer, on `TYPELIBATTR`/`UCOMITypeLib` (COM interop types that
+  modern .NET dropped).
+
+**What works and what does not.** The load/serialize/undo core is complete — `DesignSurface`,
+`DesignerHost`, `CodeDomSerializer`, `CodeDomDesignerLoader`, `UndoEngine` and `DocumentDesigner`
+carry no `NotImplementedException` at all. The gaps are concentrated in the *interactive* layer:
+`ControlDesigner` (25), `BehaviorService`/`Behavior`/`Adorner` (53), `ComponentDocumentDesigner`
+(17). In practice that means **loading a form, rendering it and editing through the property grid
+is implemented; drag-drop, resize grips and selection adorners are where Mono stopped.**
+
+`CodeDomComponentSerializationService` uses `BinaryFormatter` for the component-state snapshot that
+backs undo. `SYSLIB0011` is silenced so the assembly compiles; that does **not** make it work — .NET
+9+ removed `BinaryFormatter`, so that path throws at runtime and needs a real replacement serializer.
 
 ### System.Drawing off Windows
 Modern **System.Drawing.Common 10 is Windows-only**. This uses **6.0.0** (the last version with Unix

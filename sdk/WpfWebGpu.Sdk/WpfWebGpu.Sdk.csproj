@@ -139,6 +139,11 @@
          our WinForms — see the Exists() guard, which is what silently produced a package with no
          ElementHost/WindowsFormsHost in it while that project had never been built. -->
     <None Include="$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll')" />
+    <!-- The designer host. Mono's WinForms declares 570 [Designer] attributes, 55 of them naming
+         System.Windows.Forms.Design, so without this assembly any design-time host on this stack
+         has nothing to instantiate. Ships beside WinForms on every head for the same reason the
+         others do: Microsoft.WindowsDesktop.App is never an option here. -->
+    <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Design.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Design.dll')" />
 
     <!-- WebView2, for BOTH UI stacks and on EVERY head.
 

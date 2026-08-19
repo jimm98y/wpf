@@ -129,6 +129,14 @@
          project unbuilt shipped a package with no WindowsFormsHost in it and no error anywhere. -->
     <_Proj Include="$(_Src)WinFormsInterop/integration/WindowsFormsIntegration.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
 
+    <!-- The WinForms DESIGNER HOST (Mono's System.Design, vendored under WinFormsInterop/swfdesign).
+         Built after the two projects above because it compiles against them. Microsoft's
+         System.Design cannot stand in: it is welded to the private WinForms substrate
+         (System.Private.Windows.Core/.Primitives/.GdiPlus) and to System.Drawing.Common. Packed
+         Exists()-guarded like its siblings, so leaving it unbuilt would ship a package whose
+         WinForms carries 55 [Designer] attributes pointing at an assembly that is not there. -->
+    <_Proj Include="$(_Src)WinFormsInterop/System.Design.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
     <!-- The cross-platform WebView2 stand-ins, carrying the real package's strong-name identity so
          an app that references Microsoft.Web.WebView2 binds to these instead. Sdk.targets references
          them from lib/wpf-webview2 for every desktop head, and the SDK packs them Exists()-guarded,
