@@ -24,28 +24,19 @@
 // two -- the window, the buttons, the icon, the keyboard handling, what a dismissal answers -- is
 // built once, by Build, so the two cannot drift apart.
 //
-// KNOWN, and NOT this file's bug: on iOS the prompt usually does not reach the screen. Everything
-// above the compositor is demonstrably fine -- the window loads at 240x105, ContentRendered fires,
-// its target is composed every frame with 32 drawables, its surface is created and configured
-// (1206x2622, Fifo) and nothing reports an error -- and yet the display goes blank the moment the
-// second window exists. It showed correctly on one launch out of eight; the rest were a flat white
-// or black screen showing NEITHER window, the main one included.
+// Verified on the iPad simulator: ShowAsync puts up a centred card over a scrim, with working Yes
+// and No buttons, and the app behind it is untouched.
 //
-// It is the iOS head's second-window presentation path, and the measurements say so rather than
-// implying it. Forcing the prompt's own background to red produced ZERO red pixels on screen while
-// its target was still being composed, so the surface is not what is being displayed. Two distinct
-// UIViews with two distinct CAMetalLayers exist, both full-screen, both in the hierarchy, neither
-// hidden. Ruled out along the way: the unchanged-frame skip (identical with
-// WPF_WEBGPU_SKIP_UNCHANGED=0), layout, and slow arrival (three screenshots through one run were
-// identical to the pixel).
+// That is worth writing down because it looked broken for a long time, and the reason was the
+// TESTBED rather than the code. An iOS simulator renders the FIRST launch after a boot and shows a
+// flat black or white screen for every launch after that -- measured with no dialog and no popup
+// involved at all: 636 distinct colours on the first launch, 20 on the second launch of the same
+// binary. Any check here needs a control from the same boot, and preferably needs to be the first
+// launch of it, or it measures the simulator.
 //
-// Whoever picks that up gets one more find for free: SystemParameters.PrimaryScreenWidth/Height are
-// a desktop stub on this head, reporting 1920x1080 on an iPhone whose screen is 402x874, so anything
-// sized or centred from them lands hundreds of DIPs off the display.
-//
-// Shipping the refusal anyway is deliberate. Show cannot work on these heads whatever happens here,
-// and what it did instead was answer for the user -- so a loud refusal naming ShowAsync beats a
-// silent Yes even while ShowAsync's own presentation is broken on one of the three.
+// One real find from that hunt, for whoever needs a screen size on this head:
+// SystemParameters.PrimaryScreenWidth/Height are a desktop stub, reporting 1920x1080 on an iPhone
+// whose screen is 402x874. The owner window is the honest ruler, which is what Build uses.
 //
 
 using System.Collections.Generic;
@@ -153,19 +144,83 @@ namespace System.Windows
             //
             // So on those heads centre the prompt INSIDE the screen-sized window and put a scrim
             // behind it, which is what a modal looks like on a phone regardless.
-            var window = new Window
+            Window owner = SafeOwner();
+
+            // Two layouts, because the heads disagree about what a window IS.
+            //
+            // On a desktop a window is a rectangle the app asks for, so SizeToContent plus
+            // CenterOwner gives the small centred box everyone expects. On iOS, Android and the
+            // browser a window IS the screen: the head snaps every one of them to the root view, so
+            // a content-sized dialog still gets a FULL-SCREEN opaque surface. Verified on the iPad
+            // simulator -- the prompt was legible and its buttons worked, in the top-left corner, on
+            // an otherwise black screen, because the rest of that surface is nothing but clear
+            // colour.
+            //
+            // So there, fill the window and centre the prompt inside it, over a scrim. That is what
+            // a modal looks like on a phone anyway.
+            bool screenSizedWindow = MessageBox.CannotBlock
+                                     && owner != null
+                                     && owner.ActualWidth >= 1
+                                     && owner.ActualHeight >= 1;
+
+            Window window;
+            if (screenSizedWindow)
             {
-                Title = caption ?? string.Empty,
-                Content = panel,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ShowInTaskbar = false,
-            };
+                var card = new Border
+                {
+                    Background = SystemColors.WindowBrush,
+                    BorderBrush = SystemColors.ActiveBorderBrush,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(14),
+                    MaxWidth = 460,
+                    Margin = new Thickness(24),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = panel,
+                };
+
+                // The size comes from the OWNER, and SizeToContent stays. Both are load-bearing.
+                //
+                // The owner is the right ruler because a window here IS the screen. It is also the
+                // only correct one to hand: SystemParameters.PrimaryScreenWidth/Height are a desktop
+                // stub on this head -- measured, they report 1920x1080 on an iPhone whose screen is
+                // 402x874, which centres the card most of a thousand DIPs off the display.
+                //
+                // And SizeToContent has to stay, because a window here is never told a size (its
+                // platform size never changes from the one it was created with, so no resize
+                // arrives): drop it and the content measures to zero and only the background paints.
+                var root = new Grid
+                {
+                    Width = owner.ActualWidth,
+                    Height = owner.ActualHeight,
+                    Background = new SolidColorBrush(Color.FromArgb(0x99, 0, 0, 0)),
+                };
+                root.Children.Add(card);
+
+                window = new Window
+                {
+                    Title = caption ?? string.Empty,
+                    Content = root,
+                    SizeToContent = SizeToContent.WidthAndHeight,
+                    ResizeMode = ResizeMode.NoResize,
+                    ShowInTaskbar = false,
+                };
+            }
+            else
+            {
+                window = new Window
+                {
+                    Title = caption ?? string.Empty,
+                    Content = panel,
+                    SizeToContent = SizeToContent.WidthAndHeight,
+                    ResizeMode = ResizeMode.NoResize,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    ShowInTaskbar = false,
+                };
+            }
 
             // The owner keeps the dialog above the window it belongs to and lets the compositor
             // treat it as a child. Guard against adopting the dialog as its own owner.
-            Window owner = SafeOwner();
             if (owner != null && !ReferenceEquals(owner, window))
             {
                 window.Owner = owner;
