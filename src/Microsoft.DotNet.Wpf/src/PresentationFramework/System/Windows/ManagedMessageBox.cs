@@ -27,12 +27,11 @@
 // Verified on the iPad simulator: ShowAsync puts up a centred card over a scrim, with working Yes
 // and No buttons, and the app behind it is untouched.
 //
-// That is worth writing down because it looked broken for a long time, and the reason was the
-// TESTBED rather than the code. An iOS simulator renders the FIRST launch after a boot and shows a
-// flat black or white screen for every launch after that -- measured with no dialog and no popup
-// involved at all: 636 distinct colours on the first launch, 20 on the second launch of the same
-// binary. Any check here needs a control from the same boot, and preferably needs to be the first
-// launch of it, or it measures the simulator.
+// That is worth writing down because it looked broken for a long time, and the reason was how it
+// was being LOOKED AT. An iOS app renders nothing for several seconds after launch, so a screenshot
+// taken on a fixed delay is solid black and indistinguishable from a rendering fault. Sampling one
+// relaunch every few seconds: 188 distinct colours, then 24, 15, 20, 20, then 636, 636, 636, with
+// nothing changing but the clock. Poll until the screen settles; never trust one early frame.
 //
 // One real find from that hunt, for whoever needs a screen size on this head:
 // SystemParameters.PrimaryScreenWidth/Height are a desktop stub, reporting 1920x1080 on an iPhone
