@@ -154,19 +154,24 @@ namespace Wpf.Platform.Tests
 
             if (OperatingSystem.IsMacOS())
             {
-                // AppKit only builds windows on the process's main thread, and a test runner has no
-                // main thread to offer: xunit dispatches every test onto the thread pool, and the
-                // real main thread is inside the runner with no run loop to marshal onto. Creating
-                // one anyway used to abort the whole assembly (an Objective-C exception through
-                // managed frames), so nothing in this project reported at all on macOS.
-                Assert.SkipUnless(PlatformThread.IsMainThread,
-                    "AppKit windows require the process main thread, which the test runner does not provide");
+                // AppKit only builds windows on the process's main thread, and xunit dispatches every
+                // test onto a worker. Program.cs keeps the main thread pumping a Dispatcher precisely
+                // so there is somewhere to marshal to; creating a window without one used to abort
+                // the whole assembly (an Objective-C exception through managed frames), so nothing in
+                // this project reported at all on macOS.
+                Assert.SkipUnless(PlatformThread.CanReachMainThread,
+                    "AppKit windows require the process main thread, which this test host does not provide");
 
-                var owner = new CocoaWindow();
-                owner.Create("Wpf.Platform.Tests owner", 0, 0, OwnerW, OwnerH);
-                var popup = new CocoaWindow();
-                popup.Create("Wpf.Platform.Tests popup", 20, 20, 120, 80, borderless: true);
-                return (owner, popup);
+                // The PAIR is created in one hop rather than two, so the popup is built while its
+                // owner is the frontmost window -- the same order an application opens a menu in.
+                return PlatformThread.InvokeOnMain(() =>
+                {
+                    var owner = new CocoaWindow();
+                    owner.Create("Wpf.Platform.Tests owner", 0, 0, OwnerW, OwnerH);
+                    var popup = new CocoaWindow();
+                    popup.Create("Wpf.Platform.Tests popup", 20, 20, 120, 80, borderless: true);
+                    return (MainThreadWindow.Wrap(owner), MainThreadWindow.Wrap(popup));
+                });
             }
 
             Assert.Skip($"no windowing head is wired into this test for {Environment.OSVersion.Platform}");

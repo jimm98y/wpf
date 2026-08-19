@@ -81,18 +81,25 @@ namespace Wpf.Platform.Tests
                 }
                 else if (OperatingSystem.IsMacOS())
                 {
-                    // See PlatformThread: AppKit windows belong to the main thread, which a test
-                    // runner does not have to give. CocoaWindow.Create says so with an exception the
-                    // catch below turns into a skip reason, but saying it here names the cause.
-                    if (!PlatformThread.IsMainThread)
+                    // See PlatformThread: AppKit windows belong to the process main thread, which
+                    // xunit does not run tests on. Program.cs keeps that thread pumping a Dispatcher
+                    // so there is one to marshal onto; a host that did not (the generated entry point)
+                    // leaves nothing to reach and the suite says so rather than aborting the process.
+                    if (!PlatformThread.CanReachMainThread)
                     {
-                        Unavailable = "AppKit windows require the process main thread, which the test runner does not provide";
+                        Unavailable = "AppKit windows require the process main thread, which this test host does not provide";
                         return;
                     }
 
-                    var w = new CocoaWindow();
-                    w.Create("Wpf.Platform.Tests", 0, 0, WidthDips, HeightDips);
-                    Window = w;
+                    // Built AND used on the main thread from here on -- reading a window's scale or
+                    // frame off-thread is undefined in the same way creating one is. See
+                    // MainThreadWindow.
+                    Window = MainThreadWindow.Wrap(PlatformThread.InvokeOnMain<IPlatformWindow>(() =>
+                    {
+                        var w = new CocoaWindow();
+                        w.Create("Wpf.Platform.Tests", 0, 0, WidthDips, HeightDips);
+                        return w;
+                    }));
                 }
                 else
                 {
