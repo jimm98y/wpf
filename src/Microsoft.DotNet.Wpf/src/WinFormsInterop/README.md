@@ -21,7 +21,6 @@ CAMetalLayer surface). Windows and WebAssembly reuse the same present path (see 
 | `gen/XplatUIWebGpu.Core.cs` | Hand-written driver core: windows = `Hwnd` + a `System.Drawing.Bitmap` backing; managed message queue; `PaintEventStart` → `Graphics.FromImage(backing)`; mouse/keyboard/caret injection; screen metrics; `GetPresentWindows`/`GetWindowBackBuffer` present hooks. |
 | `gen/XplatUIWebGpu.cs` | Auto-generated default overrides for the ~78 non-core `XplatUIDriver` members. Regenerate from `gen/gen-driver.txt` (the raw `XplatUIDriver` member dump) when the driver contract changes; a CORE set is implemented in `.Core.cs`. |
 | `gen/Consts.cs`, `gen/Resources.targets` | Generated Mono `Consts.cs`; embeds the 58 Mono S.W.F resources (cursors/icons) by manifest name. |
-| `shims/DrawingDesignShim.cs` | `UITypeEditor` et al. (Mono type-forwards these; the shim avoids dragging in the real WinForms ref). |
 | `shims/X11Stubs.cs` | `XEventQueue` stub (referenced by an X11 field in `Hwnd.cs`). |
 | `host/` | On-screen host: `CocoaHost.cs` (NSWindow + event pump), `WgpuPresenter.cs` (platform-neutral WebGPU present), `Host.cs` (a demo form). |
 | `mono-patches/mono-swf.patch` | The four Mono source edits needed (see below). |
@@ -67,10 +66,13 @@ Messaging, ServiceProcess and `System.Resources.Tools` trees are not.
 
 **Pruned at vendoring time** (so the csproj needs no excludes):
 
-- 20 `UITypeEditor`-derived property editors and their dependents. `UITypeEditor` is declared by
-  *both* `shims/DrawingDesignShim.cs` (compiled into our WinForms) and `Mono.System.Drawing`, so
-  anything deriving from it is ambiguous (CS0433). Collapsing those two providers into one would
-  let this whole set back in — see the note at the top of `DrawingDesignShim.cs`.
+- 20 `UITypeEditor`-derived property editors and their dependents, pruned while `UITypeEditor`
+  had two providers. `shims/DrawingDesignShim.cs` used to declare `UITypeEditor`,
+  `UITypeEditorEditStyle` and `PaintValueEventArgs` inside System.Windows.Forms while
+  `Mono.System.Drawing` declared them too, so anything deriving from one was ambiguous (CS0433) —
+  which bit a real consumer, WpfDesigner's `DropDownEditor`. **That shim has now been deleted**:
+  every type it declared is already in `Mono.System.Drawing`, which this project references, so it
+  was pure duplication. These editors can now be un-pruned; that is a follow-up, not a blocker.
 - `AxImporter.cs` — the ActiveX importer, on `TYPELIBATTR`/`UCOMITypeLib` (COM interop types that
   modern .NET dropped).
 
