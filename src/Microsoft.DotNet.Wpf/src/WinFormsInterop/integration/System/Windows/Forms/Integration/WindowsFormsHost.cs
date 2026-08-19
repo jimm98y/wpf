@@ -1,4 +1,4 @@
-// System.Windows.Forms.Integration.WindowsFormsHost, for the cross-platform (WebGPU) stack. The
+﻿// System.Windows.Forms.Integration.WindowsFormsHost, for the cross-platform (WebGPU) stack. The
 // mirror of ElementHost next door: that embeds a WPF element tree in a WinForms app, this embeds a
 // WinForms control tree in a WPF app. Same namespace, same type name and the same core API as the
 // Windows-only original, so existing app code -- `<WindowsFormsHost x:Name="host"/>` plus
@@ -386,6 +386,29 @@ namespace System.Windows.Forms.Integration
         };
 
         // ---- the shared frame tick ---------------------------------------------------------------
+
+        /// <summary>
+        /// Prepares the process for hosting Windows Forms content in a WPF application.
+        /// </summary>
+        /// <remarks>
+        /// The original enables WPF's message loop to pump the hosted controls: it hosts a child
+        /// HWND, so WinForms messages have to be filtered into WPF's dispatcher for a hosted control
+        /// to work at all. Applications call it once at startup, before any host exists.
+        ///
+        /// That bridging is inherent here — the WinForms side is driven by XplatUIWebGpu and
+        /// composited into the same WebGPU pass as WPF, so there is no second loop to join. What
+        /// remains worth doing eagerly is the process-wide setup a host would otherwise perform
+        /// lazily when the first one is created: bring the driver up, and lend it the clipboard
+        /// bridge it needs to reach the system clipboard (its assembly cannot see WPF's Clipboard).
+        ///
+        /// Idempotent, and safe to call before any WindowsFormsHost or WPF window exists — which is
+        /// where applications do call it.
+        /// </remarks>
+        public static void EnableWindowsFormsInterop()
+        {
+            XplatUIWebGpu.GetInstance();
+            XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+        }
 
         private void Attach()
         {

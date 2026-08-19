@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -178,6 +178,21 @@ namespace System.Windows.Forms
         {
             get => _bridge.EvalString(_path + ".outerText");
             set => _bridge.Eval(_path + ".outerText = " + WebViewScript.ToJson(value));
+        }
+
+        /// <summary>
+        /// The element's inline style, as the CSS text of its style attribute.
+        /// </summary>
+        /// <remarks>
+        /// The original reads and writes style.cssText, so assigning REPLACES the whole inline
+        /// style rather than merging - which is what callers expect ("visibility:hidden;display:none"
+        /// clears whatever was there). Reading an element with no style attribute yields an empty
+        /// string, not null, matching the original.
+        /// </remarks>
+        public string Style
+        {
+            get => _bridge.EvalString(_path + ".style.cssText");
+            set => _bridge.Eval(_path + ".style.cssText = " + WebViewScript.ToJson(value ?? string.Empty));
         }
 
         public bool Enabled

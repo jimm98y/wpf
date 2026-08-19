@@ -1,4 +1,4 @@
-//
+﻿//
 // SerializedFromResXHandler.cs : Handles a resource that was stored in a
 // resx file by means of serialization.
 // 
@@ -34,7 +34,6 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.IO;
 using System.Text;
-using System.Runtime.Serialization.Formatters.Soap;
 
 namespace System.Resources {
 	internal class SerializedFromResXHandler : ResXDataNodeHandler, IWritableHandler {
@@ -98,16 +97,16 @@ namespace System.Resources {
 		{
 			try {
 				if (mime_type == ResXResourceWriter.SoapSerializedObjectMimeType) {
-					//FIXME: theres a test in the suite to check that a type converter converts from invariant string
-					//do i need to take the string culture into consideration here?
-					SoapFormatter soapF = new SoapFormatter ();
-					if (binder == null)
-						binder = new CustomBinder (typeResolver);
-					soapF.Binder = binder;
-					byte [] data = Convert.FromBase64String (dataString);
-					using (MemoryStream s = new MemoryStream (data)) {
-						return soapF.Deserialize (s);
-					}
+					// SoapFormatter (System.Runtime.Serialization.Formatters.Soap) does not exist on
+					// modern .NET and has no replacement - it was removed outright, not deprecated.
+					//
+					// Only a .resx written by .NET Framework 1.x/2.0 tooling carries this mime type;
+					// every writer since uses the binary one handled below. Throwing names the entry
+					// rather than returning null, which would surface later as a mystifying null
+					// resource with nothing pointing back here.
+					throw new NotSupportedException (
+						"This .resx contains a SOAP-serialized resource, which .NET no longer supports. " +
+						"Re-save the file with current tooling to convert it.");
 				} else if (mime_type == ResXResourceWriter.BinSerializedObjectMimeType) {
 					BinaryFormatter binF = new BinaryFormatter ();
 					if (binder == null)

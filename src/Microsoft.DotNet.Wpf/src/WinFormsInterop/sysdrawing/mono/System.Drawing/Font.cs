@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.Fonts.cs
 //
 // Authors:
@@ -684,18 +684,31 @@ namespace System.Drawing
 					CharSetOffset = (int) Marshal.OffsetOf (lf, "lfCharSet");
 				}
 
-				// note: Marshal.WriteByte(object,*) methods are unimplemented on Mono
-				GCHandle gch = GCHandle.Alloc (logFont, GCHandleType.Pinned);
+				// Round-trip through unmanaged memory to patch lfCharSet.
+				//
+				// This used to pin `logFont` and poke the byte in place, with a note that
+				// Marshal.WriteByte(object, ...) was unimplemented on Mono. Pinning cannot work
+				// here on .NET: LOGFONT carries lfFaceName, so the type contains references and
+				// GCHandle.Alloc(..., Pinned) throws
+				//     ArgumentException: Object contains references. (Parameter 'value')
+				// Every TextRenderer.MeasureText call reaches this method, so the whole of WinForms
+				// text measurement failed on it - MessageBox and TextBox included.
+				//
+				// Marshalling out, patching, and marshalling back is the same edit without pinning,
+				// and it is what the backup copy above already does in the failure path.
+				IntPtr patch = Marshal.AllocHGlobal (size);
 				try {
-					IntPtr ptr = gch.AddrOfPinnedObject ();
+					Marshal.StructureToPtr (logFont, patch, false);
 					// if GDI+ lfCharSet is 0, then we return (S.D.) 1, otherwise the value is unchanged
-					if (Marshal.ReadByte (ptr, CharSetOffset) == 0) {
-						// set lfCharSet to 1 
-						Marshal.WriteByte (ptr, CharSetOffset, 1);
+					if (Marshal.ReadByte (patch, CharSetOffset) == 0) {
+						// set lfCharSet to 1
+						Marshal.WriteByte (patch, CharSetOffset, 1);
+						Marshal.PtrToStructure (patch, logFont);
 					}
 				}
 				finally {
-					gch.Free ();
+					Marshal.DestroyStructure (patch, st);
+					Marshal.FreeHGlobal (patch);
 				}
 
 				// now we can throw, if required

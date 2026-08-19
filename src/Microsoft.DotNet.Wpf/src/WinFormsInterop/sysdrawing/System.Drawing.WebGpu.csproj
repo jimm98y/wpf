@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     Builds Mono's managed System.Drawing (VENDORED here: mono/ = Mono's own source, corefx/ = the
@@ -56,5 +56,24 @@
   <!-- System.Security.Permissions is no longer referenced: NO_CAS removed every use of
        PermissionSet / CodeAccessPermission / IUnrestrictedPermission. -->
 
+
+  <!--
+    The six icons SystemIcons hands out. Mono embeds them with the bare filename as the logical
+    name (see its Makefile: -resource:Assembly/Mono.ico,Mono.ico) and Icon's internal resource
+    constructor looks them up that way.
+
+    Without these the SystemIcons static constructor throws FileNotFoundException on the FIRST
+    icon, so every member is dead - including SystemIcons.Error, which WinForms' own
+    ThreadExceptionDialog paints. That turns any unhandled exception into a
+    TypeInitializationException that hides the original one.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="mono/Assembly/Mono.ico" LogicalName="Mono.ico" />
+    <EmbeddedResource Include="mono/Assembly/Information.ico" LogicalName="Information.ico" />
+    <EmbeddedResource Include="mono/Assembly/Error.ico" LogicalName="Error.ico" />
+    <EmbeddedResource Include="mono/Assembly/Warning.ico" LogicalName="Warning.ico" />
+    <EmbeddedResource Include="mono/Assembly/Question.ico" LogicalName="Question.ico" />
+    <EmbeddedResource Include="mono/Assembly/Shield.ico" LogicalName="Shield.ico" />
+  </ItemGroup>
 
 </Project>

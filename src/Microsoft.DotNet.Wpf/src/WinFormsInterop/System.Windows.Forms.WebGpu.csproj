@@ -18,7 +18,7 @@
          auto-including them (Resources.targets includes them explicitly with the right LogicalName). -->
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <DefineConstants>MONO;SECURITY_DEP;NET_4_5</DefineConstants>
-    <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0114;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661</NoWarn>
+    <NoWarn>$(NoWarn);SYSLIB0011;CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0114;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661</NoWarn>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <!--
       Public-signed with the ECMA key, which is what makes this assembly's identity
@@ -58,6 +58,14 @@
     <Compile Include="swf/System.Windows.Forms.RTF/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.Theming/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.WebBrowserDialogs/**/*.cs" />
+    <!-- ResXResourceReader/Writer, ResXDataNode and their handlers. Pruned with the rest of
+         the non-managed tree when swf/ was vendored, but they are pure managed XML handling
+         and consumers do use them (SharpDevelop's ResXConverter does not compile without). -->
+    <Compile Include="swf/System.Resources/**/*.cs" />
+    <!-- ResXResourceSet derives from ResourceSet and drives its protected Reader/Table
+         members, which modern .NET no longer exposes. Nothing needs the set type - consumers
+         use the reader and writer directly - so it is left out rather than rewritten. -->
+    <Compile Remove="swf/System.Resources/ResXResourceSet.cs" />
     <Compile Include="swf/Assembly/**/*.cs" />
 
     <!-- Two Mono commons that lived outside the S.W.F tree (vendored into swf/common/), plus our

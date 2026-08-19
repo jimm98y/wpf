@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -61,6 +61,23 @@ namespace System.Resources
 		public static readonly string Version				= "2.0";
 		#endregion	// Static Fields
 
+		Func<Type, string> typeNameConverter;
+
+		/// <summary>
+		/// The name to write for <paramref name="type"/>: whatever the caller's converter returns,
+		/// or the assembly-qualified name when there is none.
+		/// </summary>
+		string TypeName (Type type)
+		{
+			if (typeNameConverter != null) {
+				string converted = typeNameConverter (type);
+				if (!string.IsNullOrEmpty (converted))
+					return converted;
+			}
+
+			return type.AssemblyQualifiedName;
+		}
+
 		#region Constructors & Destructor
 		public ResXResourceWriter (Stream stream)
 		{
@@ -89,6 +106,30 @@ namespace System.Resources
 			this.filename = fileName;
 		}
 
+		//
+		// The typeNameConverter overloads. Present on .NET's ResXResourceWriter and missing from
+		// Mono's, and not decoration: the converter is how a caller rewrites the assembly-qualified
+		// names written into the .resx - retargeting a project rewrites the framework version that
+		// way, which is exactly what SharpDevelop's ResXConverter does.
+		//
+		public ResXResourceWriter (Stream stream, Func<Type, string> typeNameConverter)
+			: this (stream)
+		{
+			this.typeNameConverter = typeNameConverter;
+		}
+
+		public ResXResourceWriter (TextWriter textWriter, Func<Type, string> typeNameConverter)
+			: this (textWriter)
+		{
+			this.typeNameConverter = typeNameConverter;
+		}
+
+		public ResXResourceWriter (string fileName, Func<Type, string> typeNameConverter)
+			: this (fileName)
+		{
+			this.typeNameConverter = typeNameConverter;
+		}
+
 		~ResXResourceWriter() {
 			Dispose(false);
 		}
@@ -108,8 +149,8 @@ namespace System.Resources
 			writer.WriteRaw (schema);
 			WriteHeader ("resmimetype", "text/microsoft-resx");
 			WriteHeader ("version", "1.3");
-			WriteHeader ("reader", typeof (ResXResourceReader).AssemblyQualifiedName);
-			WriteHeader ("writer", typeof (ResXResourceWriter).AssemblyQualifiedName);
+			WriteHeader ("reader", TypeName (typeof (ResXResourceReader)));
+			WriteHeader ("writer", TypeName (typeof (ResXResourceWriter)));
 		}
 
 		void WriteHeader (string name, string value)
@@ -154,7 +195,7 @@ namespace System.Resources
 			writer.WriteAttributeString ("name", name);
 
 			if (type != null) {
-				writer.WriteAttributeString ("type", type.AssemblyQualifiedName);
+				writer.WriteAttributeString ("type", TypeName (type));
 				// byte[] should never get a mimetype, otherwise MS.NET won't be able
 				// to parse the data.
 				if (type != typeof (byte[]))
@@ -196,7 +237,7 @@ namespace System.Resources
 			writer.WriteStartElement ("data");
 			writer.WriteAttributeString ("name", name);
 			if (type != null)
-				writer.WriteAttributeString ("type", type.AssemblyQualifiedName);
+				writer.WriteAttributeString ("type", TypeName (type));
 			writer.WriteStartElement ("value");
 			writer.WriteString (value);
 			writer.WriteEndElement ();
@@ -330,12 +371,22 @@ namespace System.Resources
 			if (writer == null)
 				InitWriter ();
 
+			// A node may carry its own converter (ResXDataNode(name, value, typeNameConverter));
+			// it wins over the writer's for that node, then the writer's is restored.
+			Func<Type, string> saved = typeNameConverter;
+			if (node.TypeNameConverter != null)
+				typeNameConverter = node.TypeNameConverter;
+
+			try {
 			if (node.IsWritable)
 				WriteWritableNode (node);
 			else if (node.FileRef != null)
 				AddResource (node.Name, node.FileRef, node.Comment);
 			else 
 				AddResource (node.Name, node.GetValue ((AssemblyName []) null), node.Comment);
+			} finally {
+				typeNameConverter = saved;
+			}
 		}
 
 		ResXFileRef ProcessFileRefBasePath (ResXFileRef fileRef)
@@ -488,7 +539,7 @@ namespace System.Resources
 			writer.WriteStartElement ("metadata");
 			writer.WriteAttributeString ("name", name);
 
-			writer.WriteAttributeString ("type", value.GetType ().AssemblyQualifiedName);
+			writer.WriteAttributeString ("type", TypeName (value.GetType ()));
 			
 			writer.WriteStartElement ("value");
 			WriteNiceBase64 (value, 0, value.Length);
@@ -532,7 +583,7 @@ namespace System.Resources
 				writer.WriteStartElement ("metadata");
 				writer.WriteAttributeString ("name", name);
 				if (type != null)
-					writer.WriteAttributeString ("type", type.AssemblyQualifiedName);
+					writer.WriteAttributeString ("type", TypeName (type));
 				writer.WriteStartElement ("value");
 				writer.WriteString (str);
 				writer.WriteEndElement ();
@@ -547,7 +598,7 @@ namespace System.Resources
 				writer.WriteAttributeString ("name", name);
 
 				if (type != null) {
-					writer.WriteAttributeString ("type", type.AssemblyQualifiedName);
+					writer.WriteAttributeString ("type", TypeName (type));
 					writer.WriteAttributeString ("mimetype", ByteArraySerializedObjectMimeType);
 					writer.WriteStartElement ("value");
 					WriteNiceBase64 (b, 0, b.Length);
@@ -576,7 +627,7 @@ namespace System.Resources
 			writer.WriteAttributeString ("name", name);
 
 			if (type != null) {
-				writer.WriteAttributeString ("type", type.AssemblyQualifiedName);
+				writer.WriteAttributeString ("type", TypeName (type));
 				writer.WriteAttributeString ("mimetype", ByteArraySerializedObjectMimeType);
 				writer.WriteStartElement ("value");
 				WriteNiceBase64 (ms.GetBuffer (), 0, ms.GetBuffer ().Length);

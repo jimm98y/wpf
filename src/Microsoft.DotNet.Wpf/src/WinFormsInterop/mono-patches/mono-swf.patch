@@ -105,13 +105,20 @@ index ad899c0..65bfe72 100644
 # this hands the sink to it. The finalizer no longer throws either - it did unconditionally,
 # including for cookies whose constructor had already thrown, which aborts the process on GC.
 
-@@ -1,4 +1,4 @@
--// Permission is hereby granted, free of charge, to any person obtaining
-+﻿// Permission is hereby granted, free of charge, to any person obtaining
- // a copy of this software and associated documentation files (the
- // "Software"), to deal in the Software without restriction, including
- // without limitation the rights to use, copy, modify, merge, publish,
-@@ -82,19 +82,36 @@
+
+--- AxHost.cs (fifth edit) ------------------------------------------------------------
+# ConnectionPointCookie delegates to a managed connection point (web/ManagedConnectionPoint.cs)
+# instead of throwing. Hosts sink DWebBrowserEvents2 through this type to get the URL that
+# NewWindow never carried; there is no ActiveX here, so WebBrowser.ActiveXInstance offers a
+# managed connection point and this hands the sink to it. The finalizer no longer throws
+# either - it did unconditionally, including for cookies whose constructor had already
+# thrown, which aborts the process on GC.
+
+diff --git a/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs b/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
+index 2a917e23e..53602977f 100644
+--- a/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
++++ b/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
+@@ -82,19 +82,36 @@ public string Value {
  		
  		#region AxHost.ConnectionPointCookie
  		public class ConnectionPointCookie {

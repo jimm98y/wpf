@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -93,6 +93,31 @@ namespace System.Resources
 
 		public ResXDataNode (string name, object value) : this (name, value, Point.Empty)
 		{
+		}
+
+		//
+		// The typeNameConverter overloads. Present on .NET's ResXDataNode and missing from Mono's.
+		// The converter decides how this node's value type is NAMED when the node is written, which
+		// is how a caller retargets the assembly-qualified names in a .resx - see the matching
+		// overloads on ResXResourceWriter, which consults TypeNameConverter for nodes that carry one.
+		//
+		public ResXDataNode (string name, object value, Func<Type, string> typeNameConverter)
+			: this (name, value, Point.Empty)
+		{
+			this.typeNameConverter = typeNameConverter;
+		}
+
+		public ResXDataNode (string name, ResXFileRef fileRef, Func<Type, string> typeNameConverter)
+			: this (name, fileRef)
+		{
+			this.typeNameConverter = typeNameConverter;
+		}
+
+		Func<Type, string> typeNameConverter;
+
+		/// <summary>The caller's type-name converter, or null. Consulted by ResXResourceWriter.</summary>
+		internal Func<Type, string> TypeNameConverter {
+			get { return typeNameConverter; }
 		}
 
 		public ResXDataNode (string name, ResXFileRef fileRef)

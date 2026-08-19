@@ -80,6 +80,42 @@ compiled by the fork's own markup compiler, so `.xaml` files need no changes at 
 `WPF-Samples`' WPFGallery — a real app with themes, behaviours, JSON data files and a hundred XAML
 pages — is converted by exactly those four steps and nothing else.
 
+## Do not turn off `deps.json`
+
+The one build setting that is not optional: the app must generate a `deps.json`
+(`GenerateDependencyFile`, which is on by default — just do not set it to `false`).
+
+`Microsoft.NETCore.App` ships its **own `WindowsBase`** — a 16KB type-forwarding facade,
+`Version=4.0.0.0`, `PublicKeyToken=31bf3856ad364e35`. It is not WPF; it exists to forward a handful
+of types that moved. The fork's real `WindowsBase` is 1.4MB and `Version=10.0.0.0`, and carries
+`DispatcherObject` and the rest of the WPF core.
+
+Both are called `WindowsBase`, and **a framework assembly beats an app-local one whenever the app
+has no `deps.json` to say otherwise**. So without one, the facade wins and the app dies at the first
+touch of WPF:
+
+```
+System.IO.FileNotFoundException: Could not load file or assembly
+'WindowsBase, Version=10.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'
+```
+
+With a `deps.json` the app's list is authoritative, the usual version comparison applies, 10.0.0.0
+beats 4.0.0.0, and the fork's `WindowsBase` loads from the app directory.
+
+Two things worth knowing about the shape of this bug:
+
+- **`WindowsBase` is the only name that collides.** `PresentationCore`, `PresentationFramework`,
+  `System.Xaml` and the rest load from the app directory quite happily either way, because the base
+  framework has no copy of them. That makes the failure look arbitrary — most of WPF loads, one
+  assembly does not.
+- **Lowering our version to 4.0.0.0 would make it worse, not better.** Ties go to the framework, so
+  matching the facade's version hands it the win. The identity is already correct; the manifest is
+  what was missing.
+
+This is the same rule that keeps `Microsoft.WindowsDesktop.App` out of the picture entirely (see the
+WinForms note in `src/Microsoft.DotNet.Wpf/src/WinFormsInterop/README.md`) — a framework assembly
+always wins. It just bites one layer further down than expected.
+
 ## One output for Windows, Linux and macOS
 
 ```
