@@ -34,6 +34,7 @@ namespace MS.Internal.Interop
         public void GetWindowPixelSize(out int width, out int height) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static void GetWindowOrigin(System.IntPtr handle, out int x, out int y) { throw null; }
+        public static bool IsPopupWindow(System.IntPtr handle) { throw null; }
         public static bool IsWindowOpaque(System.IntPtr handle) { throw null; }
         public static void NotifyCommitText(string text, int cursorPosition) { }
         public static void NotifyComposingText(string text, int cursorPosition) { }
