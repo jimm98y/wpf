@@ -99,7 +99,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static void CommitPresent()
         {
-            if (Current == PlatformKind.MacOS)
+            // iOS BEFORE macOS: iOS reports as macOS to OperatingSystem, and the two need the same
+            // thing for the same reason -- both present through a CAMetalLayer, whose drawable
+            // reaches the render server only when a Core Animation transaction commits. iOS was
+            // missing from here entirely, which is a plain omission: everything the macOS comment
+            // below describes applies to it unchanged.
+            //
+            // Found while chasing a second window failing to appear on iOS, and it did NOT fix that
+            // -- so it is here on its own merits, not as that fix. See ManagedMessageBox's header
+            // for what that investigation did establish.
+            if (Current == PlatformKind.IOS)
+                IosInterop.FlushTransaction();
+            else if (Current == PlatformKind.MacOS)
                 MacInterop.FlushTransaction();
             // Wayland's analogue: a just-presented frame sits in the connection's outgoing buffer
             // until something flushes it, so an app that then goes idle shows the PREVIOUS frame

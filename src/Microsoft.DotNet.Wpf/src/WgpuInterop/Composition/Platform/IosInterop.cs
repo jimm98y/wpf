@@ -61,7 +61,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 layer = (void*)metalLayer,
             };
             var desc = new Wgpu.WGPUSurfaceDescriptor { nextInChain = (Wgpu.WGPUChainedStruct*)&metalSource };
-            return Wgpu.wgpuInstanceCreateSurface(instance, &desc);
+            IntPtr surface = Wgpu.wgpuInstanceCreateSurface(instance, &desc);
+
+            // Commit the view's arrival in the layer tree before anything is presented into it, for
+            // the same reason MacInterop does after addSublayer: the addSubview that put this view
+            // on screen has only changed our in-process layer tree so far, and a window that renders
+            // one frame and then goes quiet never produces the commit that would publish it.
+            FlushTransaction();
+            return surface;
+        }
+
+        /// <summary>
+        /// Commit the current implicit Core Animation transaction, so a just-presented drawable
+        /// reaches the render server now rather than whenever UIKit next happens to commit one.
+        /// </summary>
+        /// <remarks>
+        /// The iOS counterpart of MacInterop.FlushTransaction, and needed for the same reason: a
+        /// CAMetalLayer's presented drawable is part of the layer tree, and layer-tree changes reach
+        /// the render server on a transaction commit, not on present. UIKit commits one whenever it
+        /// is doing anything at all, so an app that is being touched or animated never notices; one
+        /// that renders and then goes quiet shows nothing.
+        ///
+        /// Note what this does NOT fix, so nobody credits it with more than it earns: a second window
+        /// on this head still fails to appear, with both windows composing every frame (measured:
+        /// 2144 and 32 drawables, two surfaces created and configured, no errors) and neither
+        /// reaching the screen. Adding the flush changed nothing there. It is here because iOS was
+        /// simply absent from NativePlatform.CommitPresent while needing exactly what macOS needs.
+        /// </remarks>
+        public static void FlushTransaction()
+        {
+            IntPtr cls = objc_getClass("CATransaction");
+            if (cls != IntPtr.Zero) Send(cls, Sel("flush"));
         }
 
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the screen scale.</summary>
