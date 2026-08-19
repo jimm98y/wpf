@@ -176,28 +176,99 @@ namespace System.Windows.Media
             uint copyWidthInBits
             )
         {
+            // A row is a BIT stream, most-significant bit first -- the packing every sub-byte WPF
+            // format uses (BlackWhite, Indexed1/2/4, Gray2/4), and the same order ManagedPixelConverter
+            // reads and writes. Offsets and width are in bits because a rectangle of an Indexed4 image
+            // starts and ends mid-byte whenever its X or Width is odd.
+            //
+            // The last byte a row touches is the one holding its last bit, so the extent to validate
+            // depends on the offset as well as the width. With both offsets zero and a whole-byte
+            // width this reduces to the plain row length, which is what the aligned path below copies.
+            uint inputRowBytes = (inputBufferOffsetInBits + copyWidthInBits + 7) >> 3;
+            uint outputRowBytes = (outputBufferOffsetInBits + copyWidthInBits + 7) >> 3;
+
+            if (height > 0 &&
+                ((ulong)(height - 1) * outputBufferStride + outputRowBytes > outputBufferSize ||
+                 (ulong)(height - 1) * inputBufferStride + inputRowBytes > inputBufferSize))
             {
-                // Managed row-copy for whole-byte pixels (every format this port produces).
-                // Sub-byte offsets/widths (1bpp/4bpp) would need the native bit-blitter.
-                if (outputBufferOffsetInBits != 0 || inputBufferOffsetInBits != 0 || (copyWidthInBits & 7) != 0)
-                {
-                    throw new PlatformNotSupportedException("Sub-byte pixel copies require native milcore.");
-                }
+                throw new ArgumentException("The pixel copy does not fit within the supplied buffers.");
+            }
 
+            // Whole bytes on both sides: every format above 8bpp, and any sub-byte copy that happens
+            // to land on byte boundaries. Worth keeping separate -- it is the overwhelmingly common
+            // case and a row of it is one memmove rather than a loop over bytes.
+            if (outputBufferOffsetInBits == 0 && inputBufferOffsetInBits == 0 && (copyWidthInBits & 7) == 0)
+            {
                 uint rowBytes = copyWidthInBits >> 3;
-                if (height > 0 &&
-                    ((ulong)(height - 1) * outputBufferStride + rowBytes > outputBufferSize ||
-                     (ulong)(height - 1) * inputBufferStride + rowBytes > inputBufferSize))
-                {
-                    throw new ArgumentException("The pixel copy does not fit within the supplied buffers.");
-                }
-
                 for (uint y = 0; y < height; y++)
                 {
                     new ReadOnlySpan<byte>(pInputBuffer + y * inputBufferStride, (int)rowBytes)
                         .CopyTo(new Span<byte>(pOutputBuffer + y * outputBufferStride, (int)rowBytes));
                 }
+                return;
             }
+
+            for (uint y = 0; y < height; y++)
+            {
+                CopyBits(pOutputBuffer + y * outputBufferStride, outputBufferOffsetInBits,
+                         pInputBuffer + y * inputBufferStride, inputBufferOffsetInBits,
+                         copyWidthInBits);
+            }
+        }
+
+        /// <summary>
+        /// Copy <paramref name="count"/> bits, MSB first, leaving every bit outside that range in the
+        /// destination untouched -- which is the whole point: a 4bpp copy starting at an odd X shares
+        /// its first byte with a pixel the caller did not ask to overwrite.
+        /// </summary>
+        /// <remarks>
+        /// Moves up to eight bits per step, so it costs roughly one iteration per byte. A same-phase
+        /// copy (source and destination misaligned by the same amount) could memmove its middle and
+        /// only fiddle the two ends, but sub-byte formats are small and rare -- the aligned path above
+        /// already takes every ordinary bitmap -- and a second algorithm here would be more code to be
+        /// wrong in than the case justifies.
+        /// </remarks>
+        private static unsafe void CopyBits(byte* dst, uint dstBit, byte* src, uint srcBit, uint count)
+        {
+            dst += dstBit >> 3; dstBit &= 7;
+            src += srcBit >> 3; srcBit &= 7;
+
+            while (count > 0)
+            {
+                // Never cross a destination byte: one masked read-modify-write per byte touched.
+                uint chunk = Math.Min(8 - dstBit, count);
+
+                uint bits = ReadBits(src, srcBit, chunk);
+                WriteBits(dst, dstBit, chunk, bits);
+
+                dstBit += chunk;
+                dst += dstBit >> 3; dstBit &= 7;
+
+                srcBit += chunk;
+                src += srcBit >> 3; srcBit &= 7;
+
+                count -= chunk;
+            }
+        }
+
+        /// <summary>Read <paramref name="count"/> (1..8) bits at a bit offset of 0..7, right-aligned.</summary>
+        private static unsafe uint ReadBits(byte* p, uint bitOffset, uint count)
+        {
+            // The window can straddle two bytes; the second is only read when it is really needed, so
+            // this never touches a byte past the end of the copied range.
+            uint window = (uint)p[0] << 8;
+            if (bitOffset + count > 8) window |= p[1];
+
+            int shift = 16 - (int)bitOffset - (int)count;
+            return (window >> shift) & ((1u << (int)count) - 1);
+        }
+
+        /// <summary>Write <paramref name="count"/> (1..8) right-aligned bits into one byte at a bit offset.</summary>
+        private static unsafe void WriteBits(byte* p, uint bitOffset, uint count, uint bits)
+        {
+            int shift = 8 - (int)bitOffset - (int)count;
+            uint mask = ((1u << (int)count) - 1) << shift;
+            p[0] = (byte)((p[0] & ~mask) | ((bits << shift) & mask));
         }
 
         internal static Rect ProjectBounds(

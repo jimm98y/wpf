@@ -503,6 +503,79 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(4, wb.Palette.Colors.Count);
         }
 
+        // ---- writing a sub-byte rectangle that does not start on a byte -------------------
+        //
+        // WritePixels turns its rectangle into a bit offset and a bit count (X * bitsPerPixel), and
+        // for a 4bpp or 1bpp format an odd X or an odd Width lands mid-byte. That used to throw
+        // PlatformNotSupportedException("Sub-byte pixel copies require native milcore.") -- so a
+        // WriteableBitmap of one of these formats could be created and read, but only written in
+        // whole bytes. The byte a copy starts or ends in is shared with pixels the caller did not
+        // ask to touch, which is what makes these assertions worth stating exactly: the neighbours
+        // must come back unchanged, not merely approximately right.
+
+        private static BitmapPalette SixteenColours()
+        {
+            var colours = new Color[16];
+            for (int i = 0; i < colours.Length; i++) colours[i] = Color.FromRgb((byte)(i * 17), 0, 0);
+            return new BitmapPalette(colours);
+        }
+
+        /// <summary>Two 4bpp pixels written at an odd X: the copy starts mid-byte and crosses into the next.</summary>
+        [Fact]
+        public void WritingIndexed4AtAnOddXLeavesTheNeighbouringPixelsAlone()
+        {
+            var wb = new WriteableBitmap(4, 1, 96, 96, PixelFormats.Indexed4, SixteenColours());
+
+            // Pixels 1,2,3,4 -- two per byte, high nibble first.
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, 4, 1), new byte[] { 0x12, 0x34 }, 2, 0);
+
+            // Overwrite the middle two with A,B, starting at X=1 (bit offset 4).
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, 2, 1), new byte[] { 0xAB }, 1,
+                           destinationX: 1, destinationY: 0);
+
+            var read = new byte[2];
+            wb.CopyPixels(read, 2, 0);
+            Assert.Equal(new byte[] { 0x1A, 0xB4 }, read);
+        }
+
+        /// <summary>
+        /// Three 1bpp pixels read from an odd X and written to a different odd X -- source and
+        /// destination misaligned by different amounts, and a width that is not a whole byte.
+        /// </summary>
+        [Fact]
+        public void WritingBlackWhiteAcrossDifferentBitOffsetsMovesOnlyTheRequestedBits()
+        {
+            var wb = new WriteableBitmap(8, 1, 96, 96, PixelFormats.BlackWhite, null);
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, 8, 1), new byte[] { 0xAA }, 1, 0);
+
+            // Source 0b0001_1100: bits 3,4,5 are set. Take those three, put them at bit 2.
+            wb.WritePixels(new System.Windows.Int32Rect(3, 0, 3, 1), new byte[] { 0x1C }, 1,
+                           destinationX: 2, destinationY: 0);
+
+            var read = new byte[1];
+            wb.CopyPixels(read, 1, 0);
+
+            // 0b1010_1010 with bits 2,3,4 set -> 0b1011_1010.
+            Assert.Equal(new byte[] { 0xBA }, read);
+        }
+
+        /// <summary>The same misaligned write over several rows, so each row is offset independently.</summary>
+        [Fact]
+        public void AMisalignedSubByteWriteAppliesToEveryRow()
+        {
+            var wb = new WriteableBitmap(4, 3, 96, 96, PixelFormats.Indexed4, SixteenColours());
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, 4, 3),
+                           new byte[] { 0x12, 0x34, 0x12, 0x34, 0x12, 0x34 }, 2, 0);
+
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, 2, 3),
+                           new byte[] { 0xAB, 0xCD, 0xEF }, 1,
+                           destinationX: 1, destinationY: 0);
+
+            var read = new byte[6];
+            wb.CopyPixels(read, 2, 0);
+            Assert.Equal(new byte[] { 0x1A, 0xB4, 0x1C, 0xD4, 0x1E, 0xF4 }, read);
+        }
+
         // ---- the byte-wide formats, which are broken the same way ------------------------
 
         [Fact]
