@@ -17,9 +17,8 @@
 //
 // What is asserted here is the CLASSIFICATION -- which SW_* values show, and which of those take
 // focus -- because that is what was wrong, and because it is the one part of the shim that can be
-// checked without a window server. Whether the platforms then honour the state is the heads' own
-// business, and asserting it needs a real window on the process main thread, which a test runner
-// does not have (see ScreenAndPopupTests, which skips on macOS for exactly that reason).
+// checked without a window server. Whether the heads then HONOUR the state needs a real window on
+// the process main thread; the host provides one now, so that half lives in WindowStateHeadTests.
 //
 
 using MS.Win32;
