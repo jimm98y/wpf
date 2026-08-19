@@ -106,9 +106,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// The compositor decided which was which from MilTarget.IsLayered, and that is a WINDOWS
         /// notion -- it is Transparency != 0, set from WS_EX_LAYERED per-pixel opacity, and it is
         /// false for every popup on this head. So the two halves disagreed: the head made a plain
-        /// CALayer and the compositor asked wgpu to build a Metal swap chain on it. Measured, opening
-        /// one popup (target 900x420 layered=False) stopped ALL presentation -- the main window's
-        /// included -- and the whole screen went blank until the app was restarted.
+        /// CALayer and the compositor asked wgpu to build a Metal swap chain on it.
+        ///
+        /// wgpu checks, and the check is an assert in a function that cannot unwind, so opening any
+        /// WPF popup on iOS KILLED THE PROCESS:
+        ///
+        ///     thread panicked at wgpu-hal-29.0.3/src/metal/surface.rs:27:9:
+        ///     assertion failed: layer.isKindOfClass(CAMetalLayer::class())
+        ///     panic in a function that cannot unwind
+        ///
+        /// Which is also why it looked like a rendering bug from outside: the screen kept showing
+        /// whatever was on it, because there was no longer a process drawing to it.
         ///
         /// Asking the layer what it is settles it without a protocol flag that means something else.
         /// </remarks>

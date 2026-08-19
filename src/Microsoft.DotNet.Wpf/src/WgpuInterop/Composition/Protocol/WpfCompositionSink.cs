@@ -465,11 +465,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         /// <remarks>
         /// IsLayered alone was the test, and it is a WINDOWS notion (per-pixel alpha, WS_EX_LAYERED),
-        /// false for every popup on the heads that composite. On iOS that meant the head created a
-        /// popup a touch-only view with a plain CALayer while the compositor tried to build a Metal
-        /// swap chain on it -- after which nothing presented at all, main window included. So ask the
-        /// platform whether the window can be presented to, and keep IsLayered for the heads where a
-        /// popup is a real transparent window that simply cannot present itself.
+        /// false for every popup on the heads that composite. On iOS that meant the head gave a popup
+        /// a touch-only view with a plain CALayer while the compositor tried to build a Metal swap
+        /// chain on it -- which wgpu asserts against, in a function that cannot unwind, so opening
+        /// any popup aborted the process (see IosInterop.CanPresentTo for the panic).
+        ///
+        /// So ask the platform whether the window can be presented to, and keep IsLayered for the
+        /// heads where a popup is a real transparent window that simply cannot present itself.
         /// </remarks>
         private static bool IsCompositedIntoOwner(MilTarget t)
             => t.IsLayered || !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd);
