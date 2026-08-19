@@ -69,6 +69,17 @@ namespace Microsoft.Wpf.Interop.WebGpu
         /// wgpuSurfaceGetCurrentTexture block until it comes back -- on the UI thread. See
         /// NativePlatform.IsWindowVisible.
         /// </summary>
+        /// <summary>
+        /// Reports whether a WPF window handle names a POPUP, whose scene is drawn into its owner's
+        /// surface rather than one of its own (see NativePlatform.PopupsShareOwnerSurface). Null
+        /// means "no popups here", which leaves every window presenting itself.
+        /// </summary>
+        public static Func<IntPtr, bool>? PopupWindowQuery
+        {
+            get => Composition.Platform.LinuxInterop.PopupQuery;
+            set => Composition.Platform.LinuxInterop.PopupQuery = value;
+        }
+
         public static Func<IntPtr, bool>? WindowVisibleQuery
         {
             get => Composition.Platform.LinuxInterop.VisibleQuery;

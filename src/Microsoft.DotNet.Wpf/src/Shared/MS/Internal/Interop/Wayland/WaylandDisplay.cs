@@ -87,6 +87,10 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>Reports whether a window is opaque; forwarded to the engine (see InstallCompositorSeam).</summary>
         public static Func<IntPtr, bool>? WindowOpaqueQuery;
 
+        /// <summary>Reports whether a window is a POPUP, whose scene is drawn into its owner's
+        /// surface rather than one of its own; forwarded to the engine (see InstallCompositorSeam).</summary>
+        public static Func<IntPtr, bool>? PopupWindowQuery;
+
         /// <summary>A window's origin within its owner, in device pixels. Needed once popups are
         /// composited into the owner's surface, which on Linux they are (NativePlatform).</summary>
         public delegate void WindowOriginCallback(IntPtr handle, out int x, out int y);
@@ -221,6 +225,8 @@ namespace MS.Internal.Interop.Wayland
 
                 if (WindowOpaqueQuery is not null)
                     t.GetProperty("WindowOpaqueQuery")?.SetValue(null, WindowOpaqueQuery);
+                if (PopupWindowQuery is not null)
+                    t.GetProperty("PopupWindowQuery")?.SetValue(null, PopupWindowQuery);
                 if (WindowVisibleQuery is not null)
                     t.GetProperty("WindowVisibleQuery")?.SetValue(null, WindowVisibleQuery);
 

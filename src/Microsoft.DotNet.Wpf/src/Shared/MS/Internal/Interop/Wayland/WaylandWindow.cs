@@ -133,6 +133,14 @@ namespace MS.Internal.Interop.Wayland
             // A borderless window (popup, menu, tooltip) is not opaque: its rounded chrome and drop
             // shadow have to composite over whatever is behind them.
             WaylandDisplay.WindowOpaqueQuery ??= static s => !(FromHandle(s)?.IsBorderless ?? false);
+
+            // The same bit, asked as its own question. The compositor needs to know a popup is a
+            // popup, and it used to infer that from MilTarget.IsLayered -- a Windows per-pixel-alpha
+            // flag that is false for every popup here, so popups were never composited into their
+            // owner and took the own-surface path that PopupsShareOwnerSurface exists to prevent.
+            // Not inferred from opacity: a main window turned non-opaque for a translucent backdrop
+            // is not a popup, and treating it as one would draw it into an owner it does not have.
+            WaylandDisplay.PopupWindowQuery ??= static s => FromHandle(s)?.IsBorderless ?? false;
             WaylandDisplay.WindowOriginQuery ??= GetOriginWithinOwner;
             WaylandDisplay.SurfaceScreenOriginQuery ??= static (IntPtr s, out int x, out int y) =>
             {

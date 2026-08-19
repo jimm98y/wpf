@@ -33,6 +33,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// <summary>Reports whether a window is currently visible; see NativePlatform.IsWindowVisible.</summary>
         internal static Func<IntPtr, bool>? VisibleQuery;
 
+        /// <summary>
+        /// Whether a window handle names a popup, i.e. one whose scene belongs in its owner's surface
+        /// (see NativePlatform.PopupsShareOwnerSurface). Installed by the windowing backend; null
+        /// leaves every window presenting through a surface of its own.
+        /// </summary>
+        internal static Func<IntPtr, bool>? PopupQuery;
+
         public static IntPtr CreateSurface(IntPtr instance, IntPtr windowHandle)
         {
             if (windowHandle == IntPtr.Zero) return IntPtr.Zero;

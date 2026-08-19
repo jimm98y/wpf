@@ -165,8 +165,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// alpha, not capability: a GLES popup surface cannot be transparent (see
         /// PopupsShareOwnerSurface), which is why one must never be given its own swap chain.
         /// </remarks>
-        public static bool IsPopupWindow(IntPtr windowHandle)
-            => Current == PlatformKind.Android && AndroidInterop.PopupQuery?.Invoke(windowHandle) == true;
+        public static bool IsPopupWindow(IntPtr windowHandle) => Current switch
+        {
+            PlatformKind.Android => AndroidInterop.PopupQuery?.Invoke(windowHandle) == true,
+
+            // Linux is here for the Android reason exactly -- under GLES a popup surface cannot be
+            // transparent, so a popup given its own swap chain scans out solid BLACK around its
+            // rounded chrome and shadow, which is what PopupsShareOwnerSurface exists to avoid. It is
+            // gated on that property, so WPF_LINUX_COMPOSITE_POPUPS=0 still opts a real-Vulkan box
+            // out of compositing entirely.
+            //
+            // NOT verified on a Wayland session -- there is none on the machine this was written on.
+            // What is verified is the same mis-routing on the two heads that could be run: on iOS it
+            // aborted the process, on Android it made popups invisible.
+            PlatformKind.Linux => PopupsShareOwnerSurface
+                                  && LinuxInterop.PopupQuery?.Invoke(windowHandle) == true,
+
+            _ => false,
+        };
 
         /// <summary>
         /// Where a window sits inside its owner, in device pixels. Only meaningful where popups are
