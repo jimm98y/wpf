@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -82,19 +82,36 @@ namespace System.Windows.Forms {
 		
 		#region AxHost.ConnectionPointCookie
 		public class ConnectionPointCookie {
+			// Connected source, when the object offered a MANAGED connection point (see
+			// ManagedConnectionPoint). There is no ActiveX on this stack, but hosts still sink
+			// dispinterfaces through this type - WebBrowser.ActiveXInstance is the case that
+			// matters - so the managed path is tried before giving up.
+			private IConnectionPointSource connected;
+			private object connectedSink;
+
 			public ConnectionPointCookie (object source, object sink, Type eventInterface)
 			{
-				throw new NotImplementedException("COM/ActiveX support is not implemented");
+				connected = ManagedConnectionPoint.TryConnect (source, sink, eventInterface);
+				if (connected == null)
+					throw new NotImplementedException("COM/ActiveX support is not implemented");
+				connectedSink = sink;
 			}
 
 			public void Disconnect ()
 			{
-				throw new NotImplementedException("COM/ActiveX support is not implemented");
+				if (connected != null) {
+					connected.Disconnect (connectedSink);
+					connected = null;
+					connectedSink = null;
+				}
 			}
 
 			~ConnectionPointCookie ()
 			{
-				throw new NotImplementedException("COM/ActiveX support is not implemented");
+				// Deliberately does NOT throw. A finalizer that throws takes the process down,
+				// and this one ran for every cookie ever created - including the ones whose
+				// constructor had already thrown.
+				Disconnect ();
 			}
 		}
 		#endregion	// AxHost.ConnectionPointCookie

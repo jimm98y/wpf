@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -111,6 +111,9 @@ namespace System.Windows.Forms
             _backend.NavigationStarting += OnBackendNavigationStarting;
             _backend.SourceChanged += OnBackendSourceChanged;
             _backend.NavigationCompleted += OnBackendNavigationCompleted;
+            _backend.DocumentTitleChanged += OnBackendDocumentTitleChanged;
+            _backend.WebMessageReceived += OnBackendWebMessageReceived;
+            _backend.NewWindowRequested += OnBackendNewWindowRequested;
 
             _readyState = WebBrowserReadyState.Loading;
 
@@ -143,6 +146,11 @@ namespace System.Windows.Forms
                 }
 
                 UpdateEngineBounds();
+
+                // The host attaches its event sink here, as it would once the ActiveX control had
+                // been created - before any pending navigation runs, so a sink set up in CreateSink
+                // sees the first document.
+                EnsureSinkCreated();
 
                 Action pending = _pending;
                 _pending = null;
@@ -473,6 +481,16 @@ namespace System.Windows.Forms
                 InstallScriptingBridge();
             }
 
+            // Per document, like the scripting bridge: a new document does not inherit either, and
+            // reinstalling is what resets StatusText across a navigation.
+            InstallStatusTextTracking();
+
+            if (_statusText.Length != 0)
+            {
+                _statusText = string.Empty;
+                OnStatusTextChanged(EventArgs.Empty);
+            }
+
             Uri uri = Uri.TryCreate(_backend.Source, UriKind.Absolute, out Uri parsed) ? parsed : _url;
             OnDocumentCompleted(new WebBrowserDocumentCompletedEventArgs(uri));
         }
@@ -500,9 +518,206 @@ namespace System.Windows.Forms
         protected virtual void OnDocumentCompleted(WebBrowserDocumentCompletedEventArgs e) =>
             DocumentCompleted?.Invoke(this, e);
 
+        protected virtual void OnDocumentTitleChanged(EventArgs e) =>
+            DocumentTitleChanged?.Invoke(this, e);
+
+        protected virtual void OnStatusTextChanged(EventArgs e) =>
+            StatusTextChanged?.Invoke(this, e);
+
         public event WebBrowserNavigatingEventHandler Navigating;
         public event WebBrowserNavigatedEventHandler Navigated;
         public event WebBrowserDocumentCompletedEventHandler DocumentCompleted;
+
+        /// <summary>Raised when <see cref="DocumentTitle"/> changes.</summary>
+        public event EventHandler DocumentTitleChanged;
+
+        /// <summary>Raised when <see cref="StatusText"/> changes.</summary>
+        public event EventHandler StatusTextChanged;
+
+        // ---- new windows ------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Raised when the page asks for a new window (window.open, target=_blank). Cancelling
+        /// suppresses it. This is the original WinForms event, and like the original it does not say
+        /// where the new window was going — see <see cref="NewWindowRequested"/>, which does.
+        /// </summary>
+        public event CancelEventHandler NewWindow;
+
+        /// <summary>
+        /// Raised alongside <see cref="NewWindow"/>, carrying the target URL.
+        /// </summary>
+        /// <remarks>
+        /// Not part of the original WinForms surface, and deliberately added: the original exposed
+        /// only a bare CancelEventArgs, so a host that wanted the URL had to reach past the control
+        /// and sink DWebBrowserEvents2.NewWindow3 on the Internet Explorer ActiveX object
+        /// (AxHost.ConnectionPointCookie over WebBrowser.ActiveXInstance). There is no ActiveX here
+        /// and no such escape hatch, but the engine reports the URL through
+        /// IWebViewBackend.NewWindowRequested, so the control can simply hand it over.
+        ///
+        /// Setting <see cref="WebBrowserNewWindowRequestedEventArgs.Cancel"/> suppresses the new
+        /// window, which is what a host that opens the URL in its own tab wants.
+        /// </remarks>
+        public event EventHandler<WebBrowserNewWindowRequestedEventArgs> NewWindowRequested;
+
+        protected virtual void OnNewWindow(CancelEventArgs e) => NewWindow?.Invoke(this, e);
+
+        protected virtual void OnNewWindowRequested(WebBrowserNewWindowRequestedEventArgs e) =>
+            NewWindowRequested?.Invoke(this, e);
+
+        private void OnBackendNewWindowRequested(object sender, WebViewNewWindowRequestedEventArgs e)
+        {
+            var args = new WebBrowserNewWindowRequestedEventArgs(e.Uri, e.IsUserInitiated);
+
+            OnNewWindow(args);
+            OnNewWindowRequested(args);
+
+            // DWebBrowserEvents2.NewWindow3, for hosts that sink the dispinterface rather than
+            // handle the events above. Raised by name and shape, so the host's own interface
+            // declaration is all that is needed - see ManagedConnectionPoint.
+            //
+            //   void NewWindow3(object pDisp, ref bool cancel, ref object flags,
+            //                   ref string urlContext, ref string url)
+            object[] sinkArgs = { null, args.Cancel, (object)0, Url?.ToString() ?? string.Empty, e.Uri };
+            _eventSource.Raise("NewWindow3", sinkArgs);
+
+            if (sinkArgs[1] is bool sinkCancelled && sinkCancelled)
+            {
+                args.Cancel = true;
+            }
+
+            // Handled tells the engine the host dealt with it, so it must not open a window itself.
+            if (args.Cancel)
+            {
+                e.Handled = true;
+            }
+        }
+
+        // ---- ActiveX-shaped compatibility -------------------------------------------------------------
+
+        private readonly ManagedConnectionPoint _eventSource = new ManagedConnectionPoint();
+        private bool _sinkCreated;
+
+        /// <summary>
+        /// The object a host sinks events on, as the original control's ActiveX instance was.
+        /// </summary>
+        /// <remarks>
+        /// Not an ActiveX object - there is none here - but it plays the one role hosts actually
+        /// used it for: the source handed to AxHost.ConnectionPointCookie. Events reach the sink by
+        /// name, which is how a dispinterface behaves anyway.
+        /// </remarks>
+        protected object ActiveXInstance => _eventSource;
+
+        /// <summary>
+        /// Called once the browser is ready for a host to attach its event sink. Override to
+        /// connect; call base first.
+        /// </summary>
+        protected virtual void CreateSink()
+        {
+        }
+
+        /// <summary>
+        /// Called when the browser is going away and the host should drop its sink. Override to
+        /// disconnect; call base last.
+        /// </summary>
+        protected virtual void DetachSink()
+        {
+        }
+
+        private void EnsureSinkCreated()
+        {
+            if (_sinkCreated)
+            {
+                return;
+            }
+
+            _sinkCreated = true;
+            CreateSink();
+        }
+
+        private void OnBackendDocumentTitleChanged(object sender, EventArgs e) =>
+            OnDocumentTitleChanged(EventArgs.Empty);
+
+        // ---- status text ------------------------------------------------------------------------------
+
+        private string _statusText = string.Empty;
+
+        /// <summary>
+        /// The text a browser shows in its status bar: the target of the link under the pointer, or
+        /// whatever the page last assigned to window.status.
+        /// </summary>
+        /// <remarks>
+        /// IWebViewBackend has no status-text concept, and neither does WebView2 — the original came
+        /// from the Internet Explorer ActiveX control, which is not what any engine here is. It is
+        /// reconstructed in the page instead, over the same message channel window.external uses:
+        /// StatusTextScript watches pointer moves for an enclosing anchor and hooks window.status,
+        /// and posts a "__wfStatus:" message whenever the value changes. Nothing is polled, and a
+        /// page that never hovers a link never posts.
+        ///
+        /// The script is installed per document (documents do not inherit it), so navigation resets
+        /// the status the way it should.
+        /// </remarks>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public string StatusText => _statusText;
+
+        private const string StatusMessagePrefix = "__wfStatus:";
+
+        private void OnBackendWebMessageReceived(object sender, WebViewMessageReceivedEventArgs e)
+        {
+            string message = e?.WebMessageAsString;
+            if (message is null || !message.StartsWith(StatusMessagePrefix, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            string text = message.Substring(StatusMessagePrefix.Length);
+            if (string.Equals(text, _statusText, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _statusText = text;
+            OnStatusTextChanged(EventArgs.Empty);
+        }
+
+        private void InstallStatusTextTracking()
+        {
+            if (_backend is null || !_backend.IsAttached)
+            {
+                return;
+            }
+
+            _ = _backend.ExecuteScriptAsync(StatusTextScript);
+        }
+
+        private const string StatusTextScript = @"
+(function () {
+    if (window.__wfStatus) { return; }
+    window.__wfStatus = true;
+    var last = null;
+    function post(v) {
+        v = v || '';
+        if (v === last) { return; }
+        last = v;
+        window.chrome.webview.postMessage('__wfStatus:' + v);
+    }
+    document.addEventListener('mouseover', function (e) {
+        var n = e.target;
+        while (n && n.nodeType === 1 && n.tagName !== 'A') { n = n.parentNode; }
+        post(n && n.nodeType === 1 ? n.href : '');
+    }, true);
+    document.addEventListener('mouseout', function (e) {
+        if (!e.relatedTarget) { post(''); }
+    }, true);
+    // window.status is a plain property on the real thing; make assignment observable.
+    try {
+        var s = '';
+        Object.defineProperty(window, 'status', {
+            get: function () { return s; },
+            set: function (v) { s = String(v); post(s); }
+        });
+    } catch (ex) { }
+})();";
 
         // ---- window.external ------------------------------------------------------------------------------
 
@@ -556,6 +771,12 @@ namespace System.Windows.Forms
             {
                 _disposed = true;
                 EmbeddedScenes.HostWindowReady -= OnHostWindowReady;
+
+                if (_sinkCreated)
+                {
+                    _sinkCreated = false;
+                    DetachSink();
+                }
 
                 _backend?.Dispose();
                 _backend = null;

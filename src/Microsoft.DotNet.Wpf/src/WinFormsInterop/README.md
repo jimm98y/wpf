@@ -23,7 +23,10 @@ CAMetalLayer surface). Windows and WebAssembly reuse the same present path (see 
 | `gen/Consts.cs`, `gen/Resources.targets` | Generated Mono `Consts.cs`; embeds the 58 Mono S.W.F resources (cursors/icons) by manifest name. |
 | `shims/X11Stubs.cs` | `XEventQueue` stub (referenced by an X11 field in `Hwnd.cs`). |
 | `host/` | On-screen host: `CocoaHost.cs` (NSWindow + event pump), `WgpuPresenter.cs` (platform-neutral WebGPU present), `Host.cs` (a demo form). |
-| `mono-patches/mono-swf.patch` | The four Mono source edits needed (see below). |
+| `web/WebBrowser.cs` | `System.Windows.Forms.WebBrowser` on the engine seam, including the ActiveX-shaped compatibility surface (`ActiveXInstance`, `CreateSink`/`DetachSink`) hosts still use. |
+| `web/ManagedConnectionPoint.cs` | A managed stand-in for a COM connection point, so `AxHost.ConnectionPointCookie` works without ActiveX. |
+| `swf/System.Resources/` | **Vendored** Mono `ResXResourceReader`/`Writer`/`ResXDataNode` etc. The originals were pruned with the rest of the non-managed tree, but they are pure managed XML handling and consumers do use them. |
+| `mono-patches/mono-swf.patch` | The five Mono source edits needed (see below). |
 
 ## The vendored Mono System.Windows.Forms source
 
@@ -43,6 +46,9 @@ applied** to the vendored `swf/` copy; it's kept only as provenance/documentatio
   throws on modern macOS — it uses dead Carbon/QuickDraw; our driver draws over the backing bitmap).
 - **Win32DnD.cs** — `AppDomain.DefineDynamicAssembly` → `AssemblyBuilder.DefineDynamicAssembly`
   (API moved in .NET Core).
+- **AxHost.cs** — `ConnectionPointCookie` delegates to a managed connection point rather than
+  throwing, and its finalizer no longer throws (it did unconditionally, which aborts the
+  process on GC).
 
 These are already applied in `swf/`; the patch is kept only to document the delta from upstream Mono
 (e.g. to re-apply if `swf/` is ever refreshed from a newer mono checkout).
@@ -66,13 +72,12 @@ Messaging, ServiceProcess and `System.Resources.Tools` trees are not.
 
 **Pruned at vendoring time** (so the csproj needs no excludes):
 
-- 20 `UITypeEditor`-derived property editors and their dependents, pruned while `UITypeEditor`
-  had two providers. `shims/DrawingDesignShim.cs` used to declare `UITypeEditor`,
-  `UITypeEditorEditStyle` and `PaintValueEventArgs` inside System.Windows.Forms while
-  `Mono.System.Drawing` declared them too, so anything deriving from one was ambiguous (CS0433) —
-  which bit a real consumer, WpfDesigner's `DropDownEditor`. **That shim has now been deleted**:
-  every type it declared is already in `Mono.System.Drawing`, which this project references, so it
-  was pure duplication. These editors can now be un-pruned; that is a follow-up, not a blocker.
+- Nothing, any more. The 21 `UITypeEditor`-derived property editors were pruned for one release
+  while `UITypeEditor` had two providers — `shims/DrawingDesignShim.cs` declared it inside
+  System.Windows.Forms and `Mono.System.Drawing` declared it too, so anything deriving from one
+  was ambiguous (CS0433), which bit WpfDesigner's `DropDownEditor` and SharpDevelop's
+  `TypeResolutionService` (the latter needs `System.Windows.Forms.Design.AnchorEditor` by name).
+  Deleting that redundant shim collapsed the two providers into one, and all 21 are back.
 - `AxImporter.cs` — the ActiveX importer, on `TYPELIBATTR`/`UCOMITypeLib` (COM interop types that
   modern .NET dropped).
 
