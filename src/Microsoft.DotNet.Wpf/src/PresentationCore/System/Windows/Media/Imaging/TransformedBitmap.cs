@@ -155,17 +155,33 @@ namespace System.Windows.Media.Imaging
         // Managed WIC-free scale + flip/rotate of a Bgra32 source (off-Windows). Returns false if the
         // source has no managed pixel backing (falls back to the native path, which will throw).
         private static bool ManagedTransform(BitmapSource source, double scaleX, double scaleY,
-            WICBitmapTransformOptions options, out byte[] result, out int outW, out int outH)
+            WICBitmapTransformOptions options, out byte[] result, out int outW, out int outH, out int bpp)
         {
-            result = null; outW = 0; outH = 0;
+            result = null; outW = 0; outH = 0; bpp = 0;
             byte[] src = source?._managedPixels;
             if (src == null) return false;
             int sw = source.PixelWidth, sh = source.PixelHeight, sstride = source._managedStride;
+            if (sw <= 0 || sh <= 0 || sstride <= 0) return false;
+
+            // The managed backing is NOT necessarily Bgra32 -- it holds whatever the decoder
+            // produced, and an icon or a palettised PNG decodes to 24bpp or to an indexed format.
+            // Assuming four bytes per pixel read past the end of the very first row:
+            //
+            //   System.ArgumentException: Source array was not long enough. (Parameter 'sourceArray')
+            //      at System.Windows.Media.Imaging.TransformedBitmap.ManagedTransform(...)
+            //
+            // and because this runs from BitmapImage.FinalizeCreation, inside a template, WPF turned
+            // it into a XamlParseException on EVERY layout pass -- thousands of them, which wedged
+            // the application rather than losing one image. Work in the source's own pixel size and
+            // hand the result back in the source's own format.
+            int bitsPerPixel = source.Format.BitsPerPixel;
+            if (bitsPerPixel <= 0 || bitsPerPixel % 8 != 0) return false;   // sub-byte: leave it to WIC
+            bpp = bitsPerPixel / 8;
 
             // 1) nearest-neighbour scale
             int cw = Math.Max(1, (int)(scaleX * sw + 0.5));
             int ch = Math.Max(1, (int)(scaleY * sh + 0.5));
-            int cstride = cw * 4;
+            int cstride = cw * bpp;
             byte[] scaled = new byte[cstride * ch];
             for (int y = 0; y < ch; y++)
             {
@@ -173,7 +189,11 @@ namespace System.Windows.Media.Imaging
                 for (int x = 0; x < cw; x++)
                 {
                     int sx = (int)((long)x * sw / cw);
-                    Array.Copy(src, sy * sstride + sx * 4, scaled, y * cstride + x * 4, 4);
+                    long si = (long)sy * sstride + (long)sx * bpp;
+                    // A short or differently strided buffer must not throw here: leave those pixels
+                    // zero rather than take the whole render pass down.
+                    if (si < 0 || si + bpp > src.LongLength) continue;
+                    Array.Copy(src, (int)si, scaled, y * cstride + x * bpp, bpp);
                 }
             }
 
@@ -183,7 +203,8 @@ namespace System.Windows.Media.Imaging
             bool flipV = ((int)options & (int)WICBitmapTransformOptions.WICBitmapTransformFlipVertical) != 0;
             int rw = (rot == 1 || rot == 3) ? ch : cw;
             int rh = (rot == 1 || rot == 3) ? cw : ch;
-            byte[] rotated = new byte[rw * 4 * rh];
+            int rstride = rw * bpp;
+            byte[] rotated = new byte[rstride * rh];
             for (int dy = 0; dy < rh; dy++)
             {
                 for (int dx = 0; dx < rw; dx++)
@@ -196,19 +217,19 @@ namespace System.Windows.Media.Imaging
                         case 3: sx = cw - 1 - dy; sy = dx;          break;  // 270 CW
                         default: sx = dx;         sy = dy;          break;  // 0
                     }
-                    Array.Copy(scaled, sy * cstride + sx * 4, rotated, dy * rw * 4 + dx * 4, 4);
+                    Array.Copy(scaled, sy * cstride + sx * bpp, rotated, dy * rstride + dx * bpp, bpp);
                 }
             }
 
             if (flipH || flipV)
             {
-                byte[] flipped = new byte[rw * 4 * rh];
+                byte[] flipped = new byte[rstride * rh];
                 for (int y = 0; y < rh; y++)
                     for (int x = 0; x < rw; x++)
                     {
                         int sx = flipH ? rw - 1 - x : x;
                         int sy = flipV ? rh - 1 - y : y;
-                        Array.Copy(rotated, sy * rw * 4 + sx * 4, flipped, y * rw * 4 + x * 4, 4);
+                        Array.Copy(rotated, sy * rstride + sx * bpp, flipped, y * rstride + x * bpp, bpp);
                     }
                 rotated = flipped;
             }
@@ -229,11 +250,14 @@ namespace System.Windows.Media.Imaging
 
             // Off-Windows there is no native WIC to scale/rotate/flip. Do it on the source's managed
             // (Bgra32) pixel backing instead, and publish the result as this bitmap's managed backing.
-            if (ManagedTransform(_source, scaleX, scaleY, options, out byte[] mpx, out int mw, out int mh))
+            if (ManagedTransform(_source, scaleX, scaleY, options, out byte[] mpx, out int mw, out int mh, out int mbpp))
             {
                 _managedPixels = mpx;
-                _managedStride = mw * 4;
-                _format = PixelFormats.Bgra32;
+                _managedStride = mw * mbpp;
+                // The transform moves pixels around; it does not convert them. Publishing Bgra32
+                // regardless made every non-32bpp source render as garbage.
+                _format = _source.Format;
+                _palette = _source.Palette;
                 _pixelWidth = mw;
                 _pixelHeight = mh;
                 _isSourceCached = _source.IsSourceCached;
