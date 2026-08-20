@@ -86,6 +86,7 @@ namespace MS.Win32
                     // real window: it could never take keyboard input, and would look frozen. So this
                     // is passed separately, and the backend keeps the window titled-but-chromeless.
                     const int WS_CAPTION = 0x00C00000;
+                    const int WS_MINIMIZEBOX = 0x00020000, WS_THICKFRAME = 0x00040000;
                     bool chromeless = !borderless && (style & WS_CAPTION) == 0;
 
                     // ACTIVATABLE is the third, orthogonal question: may this window take keyboard
@@ -197,6 +198,11 @@ namespace MS.Win32
                         // off focus (a docking tab's selection border, for one) never lights up.
                         cocoa.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = cocoa;
+
+                        // ResizeMode reaches the head from the same style word borderless and
+                        // chromeless come from, and used to be dropped: every window was fully
+                        // resizable however the application had asked to be shown.
+                        cocoa.SetResizeMode((style & WS_THICKFRAME) != 0, (style & WS_MINIMIZEBOX) != 0);
                         _handle = cocoa.ContentView;
                     }
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)

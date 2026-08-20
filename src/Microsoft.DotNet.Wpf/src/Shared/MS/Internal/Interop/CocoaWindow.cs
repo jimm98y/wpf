@@ -1108,6 +1108,27 @@ namespace MS.Internal.Interop
             SendVoidNInt(_window, Sel("setLevel:"), topmost ? NSFloatingWindowLevel : NSNormalWindowLevel);
         }
 
+        /// <inheritdoc/>
+        public void SetResizeMode(bool canResize, bool canMinimize)
+        {
+            if (_window == IntPtr.Zero || _borderless) return;
+
+            nuint mask = GetStyleMask();
+            mask = canResize ? mask | (nuint)NSWindowStyleMaskResizable : mask & ~(nuint)NSWindowStyleMaskResizable;
+            mask = canMinimize ? mask | (nuint)NSWindowStyleMaskMiniaturizable : mask & ~(nuint)NSWindowStyleMaskMiniaturizable;
+            SendVoidNUInt(_window, Sel("setStyleMask:"), mask);
+
+            // The zoom button follows the resizable bit on its own, but a window that may be
+            // minimized and not resized still shows an ENABLED zoom button until it is told
+            // otherwise -- and clicking it would zoom a window WPF believes cannot be maximized.
+            const nuint NSWindowZoomButton = 2;
+            IntPtr zoom = SendPtrNUInt(_window, Sel("standardWindowButton:"), NSWindowZoomButton);
+            if (zoom != IntPtr.Zero) SendVoidBool(zoom, Sel("setEnabled:"), canResize);
+        }
+
+        /// <summary>The NSWindow's style mask. For tests: chrome is not observable any other way.</summary>
+        internal nuint GetStyleMask() => _window == IntPtr.Zero ? 0 : (nuint)(nint)Send(_window, Sel("styleMask"));
+
         /// <summary>The NSWindow's level. For tests: stacking is not observable any other way.</summary>
         internal nint GetWindowLevel() => _window == IntPtr.Zero ? 0 : SendNInt(_window, Sel("level"));
 

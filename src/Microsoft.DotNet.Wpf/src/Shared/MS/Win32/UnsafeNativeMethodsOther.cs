@@ -369,6 +369,23 @@ namespace MS.Win32
         internal static IntPtr SetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
             // No Win32 window styles to set off-Windows (see GetWindowLong); no-op.
+            //
+            // NOT a place to apply a style change, however tempting -- ResizeMode arrives here on a
+            // live window and it does not work. WPF's style writes are READ-MODIFY-WRITE:
+            // HwndStyleManager.StartManaging reads the current style through GetWindowLong, ORs the
+            // change into it and flushes the whole word back. GetWindowLong off Windows reports only
+            // the two STATE bits it can answer for, so the word that comes back has lost
+            // WS_THICKFRAME, WS_CAPTION and everything else -- and acting on it takes the chrome off
+            // windows that never asked. Tried, and it failed six tests that had been passing.
+            //
+            // Making this work means answering GetWindowLong with a faithful style word first, which
+            // is a larger piece of Win32 emulation than the one property needs. ResizeMode is applied
+            // at creation instead (HwndWrapper), which is where it is set in practice.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
+
             if (!System.OperatingSystem.IsWindows())
             {
                 return IntPtr.Zero;
@@ -393,7 +410,8 @@ namespace MS.Win32
 
         internal static IntPtr CriticalSetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
-            // No Win32 window styles to apply off-Windows (AppKit owns the NSWindow's style).
+            // AppKit owns the NSWindow's style; see SetWindowLong for why this stays a no-op even
+            // though it is the entry point HwndStyleManager.Flush uses.
             if (!System.OperatingSystem.IsWindows())
             {
                 return IntPtr.Zero;
