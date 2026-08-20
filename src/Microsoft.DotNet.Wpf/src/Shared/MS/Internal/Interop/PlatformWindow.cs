@@ -10,6 +10,7 @@
 //
 
 using System;
+using System.Collections.Generic;
 
 namespace MS.Internal.Interop
 {
@@ -315,7 +316,67 @@ namespace MS.Internal.Interop
 
         /// <summary>Primary screen bounds and work area in top-left device pixels.</summary>
         /// <summary>How many displays are attached. One, for a head whose window IS the screen.</summary>
-        public static int GetMonitorCount() => OperatingSystem.IsMacOS() ? CocoaWindow.GetMonitorCount() : 1;
+        public static int GetMonitorCount()
+        {
+            if (OperatingSystem.IsWindows()) return WindowsMonitors().Count;
+            return OperatingSystem.IsMacOS() ? CocoaWindow.GetMonitorCount() : 1;
+        }
+
+        // ---- Windows ------------------------------------------------------------------
+        //
+        // Forwarded to user32 rather than answered with a single display. Windows has had the real
+        // answer all along -- the Win32 shims pass MonitorFromWindow and GetMonitorInfo straight
+        // through there -- but the facade above them did not, so anything asking THROUGH it (this
+        // repo's tests included) was told there was one display on a machine with several.
+        //
+        // The primary is moved to index 0 so "index 0 is the primary" holds on every platform.
+        // EnumDisplayMonitors makes no promise about order, and the macOS head takes that ordering
+        // from NSScreen.screens, where the primary is first by definition.
+
+        [ThreadStatic] private static List<IntPtr> t_monitors;
+
+        private static List<IntPtr> WindowsMonitors()
+        {
+            var found = new List<IntPtr>();
+            t_monitors = found;
+            try
+            {
+                MS.Win32.UnsafeNativeMethods.EnumDisplayMonitors(
+                    IntPtr.Zero, IntPtr.Zero, CollectMonitor, IntPtr.Zero);
+            }
+            finally
+            {
+                t_monitors = null;
+            }
+
+            // Primary first. MONITORINFOF_PRIMARY is the only way to tell, and it is worth one extra
+            // GetMonitorInfo per display: every caller of this facade indexes from the primary.
+            for (int i = 0; i < found.Count; i++)
+            {
+                if (!IsPrimaryMonitor(found[i])) continue;
+                if (i != 0) (found[0], found[i]) = (found[i], found[0]);
+                break;
+            }
+
+            return found;
+        }
+
+        private static bool CollectMonitor(IntPtr hMonitor, IntPtr hdc, ref MS.Win32.NativeMethods.RECT rect, IntPtr data)
+        {
+            t_monitors?.Add(hMonitor);
+            return true;   // keep enumerating
+        }
+
+        private static bool IsPrimaryMonitor(IntPtr hMonitor)
+        {
+            var info = new MS.Win32.NativeMethods.MONITORINFOEX
+            {
+                cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(MS.Win32.NativeMethods.MONITORINFOEX)),
+            };
+            MS.Win32.SafeNativeMethods.GetMonitorInfo(
+                new System.Runtime.InteropServices.HandleRef(null, hMonitor), info);
+            return (info.dwFlags & 1) != 0;   // MONITORINFOF_PRIMARY
+        }
 
         /// <summary>
         /// One display's full and working bounds in device pixels, top-left origin. Index 0 is the
@@ -328,6 +389,30 @@ namespace MS.Internal.Interop
             out int workLeft, out int workTop, out int workRight, out int workBottom,
             out bool isPrimary)
         {
+            if (OperatingSystem.IsWindows())
+            {
+                monLeft = monTop = monRight = monBottom = 0;
+                workLeft = workTop = workRight = workBottom = 0;
+                isPrimary = false;
+
+                List<IntPtr> monitors = WindowsMonitors();
+                if (index < 0 || index >= monitors.Count) return false;
+
+                var info = new MS.Win32.NativeMethods.MONITORINFOEX
+                {
+                    cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(MS.Win32.NativeMethods.MONITORINFOEX)),
+                };
+                MS.Win32.SafeNativeMethods.GetMonitorInfo(
+                    new System.Runtime.InteropServices.HandleRef(null, monitors[index]), info);
+
+                monLeft = info.rcMonitor.left; monTop = info.rcMonitor.top;
+                monRight = info.rcMonitor.right; monBottom = info.rcMonitor.bottom;
+                workLeft = info.rcWork.left; workTop = info.rcWork.top;
+                workRight = info.rcWork.right; workBottom = info.rcWork.bottom;
+                isPrimary = (info.dwFlags & 1) != 0;
+                return monRight > monLeft && monBottom > monTop;
+            }
+
             if (OperatingSystem.IsMacOS())
             {
                 return CocoaWindow.GetMonitorPixels(index,
@@ -343,11 +428,37 @@ namespace MS.Internal.Interop
 
         /// <summary>The display a window is on, as an index; 0 when the head has only one.</summary>
         public static int MonitorIndexFromWindow(IntPtr handle)
-            => FromHandle(handle) is CocoaWindow cocoa ? cocoa.GetMonitorIndex() : 0;
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+                return IndexOfWindowsMonitor(MS.Win32.SafeNativeMethods.MonitorFromWindow(
+                    new System.Runtime.InteropServices.HandleRef(null, handle), MONITOR_DEFAULTTONEAREST));
+            }
+
+            return FromHandle(handle) is CocoaWindow cocoa ? cocoa.GetMonitorIndex() : 0;
+        }
 
         /// <summary>The display containing a point in device pixels, or the nearest one.</summary>
         public static int MonitorIndexFromPointPixels(int x, int y)
-            => OperatingSystem.IsMacOS() ? CocoaWindow.MonitorIndexFromPointPixels(x, y) : 0;
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+                var point = new MS.Win32.NativeMethods.POINT(x, y);
+                return IndexOfWindowsMonitor(
+                    MS.Win32.SafeNativeMethods.MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST));
+            }
+
+            return OperatingSystem.IsMacOS() ? CocoaWindow.MonitorIndexFromPointPixels(x, y) : 0;
+        }
+
+        private static int IndexOfWindowsMonitor(IntPtr hMonitor)
+        {
+            List<IntPtr> monitors = WindowsMonitors();
+            int index = monitors.IndexOf(hMonitor);
+            return index < 0 ? 0 : index;
+        }
 
         public static bool GetPrimaryScreenPixels(
             out int monLeft, out int monTop, out int monRight, out int monBottom,

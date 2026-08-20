@@ -48,6 +48,14 @@ namespace Wpf.Platform.Tests
             }
 
             Assert.True(primaries == 1, $"{primaries} of {count} displays claim to be the primary; exactly one may");
+
+            // And it is index 0. Callers index from the primary, so this is part of the contract
+            // rather than an accident of enumeration order: NSScreen.screens puts it first by
+            // definition, EnumDisplayMonitors promises nothing, and the Windows path reorders for it.
+            Assert.True(PlatformWindow.GetMonitorPixels(0, out _, out _, out _, out _,
+                                                        out _, out _, out _, out _, out bool firstIsPrimary)
+                        && firstIsPrimary,
+                "display 0 is not the primary; every caller of this facade indexes from it");
         }
 
         /// <summary>
