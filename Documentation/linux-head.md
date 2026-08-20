@@ -817,6 +817,44 @@ mask this, and masking it would end the investigation with the cause still unkno
 > takes a `bool gamma` and applies only the one curve. Not visible under VirGL, which forces CPU
 > rasterization, but it will show on real GL/Vulkan hardware.
 
+## Window properties, and the shims that used to answer for them
+
+`Window`'s own properties reach a head through the Win32 shims in `MS/Win32`, and several of those
+shims used to answer with a **constant** rather than ask. A constant is a plausible answer, so
+nothing threw, nothing logged, and the properties simply did not work:
+
+| Property | What happened | Where it was |
+|---|---|---|
+| `WindowState` | maximizing was invisible to WPF: `StateChanged` never fired, `WindowChrome` never padded | the synthesised `WM_SIZE` carried a hardcoded `SIZE_RESTORED` |
+| `WindowState = Normal` | the window stayed maximized for ever | `GetWindowLong` returned 0, so the restore branch's `style & WS_MAXIMIZE` never matched |
+| `RestoreBounds` | wrong rect for every window, the maximized rect for a maximized one | `GetWindowPlacement` reported the current content size at the origin |
+| `Left` / `Top` | the window did not move, before or after `Show` | `GetWindowRect` reported origin (0,0), so `SetWindowPos` ignored the moves as junk |
+| `Topmost` | did nothing at all | `SetWindowPos` never read `hWndInsertAfter` |
+| `ResizeMode` | every window fully resizable | `WS_THICKFRAME` / `WS_MINIMIZEBOX` never read from the style word |
+
+Two of those held each other up, which is the part worth remembering: `GetWindowRect` said (0,0), so
+the `SetWindowPos` WPF issues while showing a window *asked for* (0,0), so `SetWindowPos` learned to
+ignore moves — and fixing the ignore alone would have put every window in the corner. A read that
+lies and a write that compensates look locally reasonable and are jointly wrong.
+
+`IPlatformWindow` grew the questions the shims needed to ask: `GetWindowState`,
+`GetWindowScreenOriginPixels`, `GetRestoreBoundsPixels`, `SetTopmost`, `SetResizeMode`. A head that
+cannot answer keeps a default that is true for it — Wayland reports no minimized state because
+xdg-shell has none, and cannot be told to stay on top because the compositor decides stacking.
+
+**Still not done: changing a style on a LIVE window.** `ResizeMode` after `Show` goes through
+`HwndStyleManager.Flush` → `CriticalSetWindowLong`, which is a no-op, and wiring it up is not enough
+on its own. WPF's style writes are read-modify-write: it reads through `GetWindowLong`, ORs its
+change in and flushes the whole word back. `GetWindowLong` off Windows can only answer with the state
+bits it knows, so the word coming back has lost `WS_THICKFRAME`, `WS_CAPTION` and the rest, and
+acting on it strips the chrome from windows that never asked (measured: six passing tests broke).
+Answering `GetWindowLong` with a faithful style word is the way in.
+
+These are asserted by `tests/CrossPlatform/Wpf.Window.Tests`, which exists for exactly this seam:
+`Wpf.Platform.Tests` drives the heads directly and everything else is headless, so nothing else could
+ask what the FRAMEWORK concluded from what the head reported — which is where every one of these
+lived.
+
 ## Mica and window backdrops
 
 Not implemented, and not planned. `WindowBackdropManager.IsSupported` declines material backdrops off
