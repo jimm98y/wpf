@@ -1,4 +1,4 @@
-// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
+﻿// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
 // with a System.Drawing.Bitmap backing store; painting hands out a Graphics over that bitmap
 // (the theme draws into it). A managed message queue drives Application.Run: Invalidate posts
 // WM_PAINT, DispatchMessage routes to NativeWindow.WndProc, PaintEventStart gives the paint DC.
@@ -71,6 +71,39 @@ namespace System.Windows.Forms
 				if (!af) { int c = Root(a).ToInt64().CompareTo(Root(b).ToInt64()); if (c != 0) return c; }
 				return Depth(a).CompareTo(Depth(b));                    // parents before children
 			});
+			var outl = new List<long>(vis.Count * 3);
+			foreach (IntPtr k in vis)
+			{
+				Point p = ScreenLocation(Hwnd.ObjectFromHandle(k));
+				outl.Add(k.ToInt64()); outl.Add(p.X); outl.Add(p.Y);
+			}
+			return outl.ToArray();
+		}
+
+		/// <summary>
+		/// The visible windows belonging to <paramref name="root"/>'s subtree only, parents before
+		/// children, as {handle, screenX, screenY} triples.
+		/// </summary>
+		/// <remarks>
+		/// GetPresentWindows returns EVERY visible window and merely sorts the requested subtree
+		/// first, which is fine when one host owns the whole WinForms world. It is wrong as soon as
+		/// there are several: each host would publish every other host's windows too, positioned
+		/// against its own origin. A host that owns one subtree should ask for exactly that.
+		/// </remarks>
+		internal long[] GetSubtreeWindows(IntPtr root)
+		{
+			IntPtr Root(IntPtr k) { Hwnd h = Hwnd.ObjectFromHandle(k); while (h?.parent != null) h = h.parent; return h?.Handle ?? k; }
+			int Depth(IntPtr k) { int d = 0; Hwnd h = Hwnd.ObjectFromHandle(k); while (h != null) { d++; h = h.parent; } return d; }
+
+			var vis = new List<IntPtr>();
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(k);
+				if (h != null && h.visible && Root(k) == root) vis.Add(k);
+			}
+
+			vis.Sort((a, b) => Depth(a).CompareTo(Depth(b)));           // parents before children
+
 			var outl = new List<long>(vis.Count * 3);
 			foreach (IntPtr k in vis)
 			{

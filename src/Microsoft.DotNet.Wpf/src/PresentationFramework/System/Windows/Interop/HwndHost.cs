@@ -65,7 +65,9 @@ namespace System.Windows.Interop
         {
             get
             {
-                if (_hwnd.Handle != IntPtr.Zero)
+                // A foreign handle is never a window, so the IsWindow probe below would discard
+                // it on the first read and take the host's content with it.
+                if (_hwnd.Handle != IntPtr.Zero && !_isForeignChild)
                 {
                     if (!UnsafeNativeMethods.IsWindow(_hwnd))
                     {
@@ -368,7 +370,14 @@ namespace System.Windows.Interop
                 // will be left behind. Developer can workaround by hide the hwnd first using pinvoke. 
                 // After the RenderTransform is applied to the HwndHost, call UpdateWindowPos to sync up
                 // the hwnd's location, size and visibility with WPF.
-                UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOW);
+                if (_isForeignChild)
+                {
+                    HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, true);
+                }
+                else
+                {
+                    UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOW);
+                }
             }
             else
             {
@@ -377,7 +386,14 @@ namespace System.Windows.Interop
                 // or we are marked as not being visible.
                 //
                 // Just hide the window to get it out of the way.
-                UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_HIDE);
+                if (_isForeignChild)
+                {
+                    HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, false);
+                }
+                else
+                {
+                    UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_HIDE);
+                }
             }
         }
 
@@ -650,6 +666,16 @@ namespace System.Windows.Interop
                 return;
             }
 
+            if (_isForeignChild)
+            {
+                // The claimant places the content itself; the rect is in the same device-pixel
+                // space the Win32 path would have used.
+                HwndHostForeignContent.SetBounds?.Invoke(this, _hwnd.Handle,
+                                                         (int)rcBoundingBox.X, (int)rcBoundingBox.Y,
+                                                         (int)rcBoundingBox.Width, (int)rcBoundingBox.Height);
+                return;
+            }
+
             UnsafeNativeMethods.SetWindowPos(_hwnd,
                                            new HandleRef(null, IntPtr.Zero),
                                            (int)rcBoundingBox.X,
@@ -873,6 +899,11 @@ namespace System.Windows.Interop
             }
 
             bool boolNewValue = (bool)e.NewValue;
+            if (_isForeignChild)
+            {
+                return;     // no Win32 window to enable; the claimant owns interaction
+            }
+
             UnsafeNativeMethods.EnableWindow(_hwnd, boolNewValue);
         }
 
@@ -891,7 +922,11 @@ namespace System.Windows.Interop
             // There was recollection from Dwayne that ShowWindow sync might cause rereentrancy issues.
             // So change here to show async to be consistent with everywhere else (instead of changing everywhere else
             // to show window sync).            
-            if(vis)
+            if (_isForeignChild)
+            {
+                HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, vis);
+            }
+            else if(vis)
                 UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOWNA);
             else
                 UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_HIDE);
@@ -1008,6 +1043,17 @@ namespace System.Windows.Interop
 
             if(_hwnd.Handle == IntPtr.Zero || !UnsafeNativeMethods.IsWindow(_hwnd))
             {
+                // Not a window. On this stack that is expected rather than exceptional: the
+                // XplatUIWebGpu driver mints managed handles and composites through WebGPU, so a
+                // derived host handing back a WinForms control's Handle produces something IsWindow
+                // rejects. Offer it to whatever understands such content before failing - see
+                // HwndHostForeignContent.
+                if (HwndHostForeignContent.TryAttach(this, _hwnd.Handle))
+                {
+                    _isForeignChild = true;
+                    return;
+                }
+
                 throw new InvalidOperationException(SR.ChildWindowNotCreated);
             }
 
@@ -1087,6 +1133,12 @@ namespace System.Windows.Interop
                 return;
             }
 
+            if (_isForeignChild)
+            {
+                HwndHostForeignContent.Detach?.Invoke(this, _hwnd.Handle);
+                _isForeignChild = false;
+            }
+
             HandleRef hwnd = _hwnd;
             _hwnd = new HandleRef(null, IntPtr.Zero);
 
@@ -1147,6 +1199,10 @@ namespace System.Windows.Interop
         private bool _isBuildingWindow = false;
 
         private bool _isDisposed = false;
+
+        // Set when BuildWindowCore returned something that is not an HWND and a claimant took it.
+        // Every Win32 operation on _hwnd is skipped from then on - see HwndHostForeignContent.
+        private bool _isForeignChild;
 
         private class WeakEventDispatcherShutdown: WeakReference
         {
