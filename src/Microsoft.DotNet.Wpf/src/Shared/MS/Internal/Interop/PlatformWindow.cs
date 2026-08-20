@@ -176,6 +176,23 @@ namespace MS.Internal.Interop
         /// </remarks>
         void SetTopmost(bool topmost) { }
 
+        /// <summary>
+        /// Whether the user may resize this window, and whether it may be minimized -- WPF's
+        /// ResizeMode, which is carried as WS_THICKFRAME and WS_MINIMIZEBOX (Window.CreateResizibility).
+        /// </summary>
+        /// <remarks>
+        /// The head was never told. It receives only "borderless" and "chromeless", both derived from
+        /// other bits of the same style word, so every window came out fully resizable whatever
+        /// ResizeMode said: a NoResize dialog could be dragged bigger by its edge and zoomed by its
+        /// green button, on every head, at creation and for ever after.
+        ///
+        /// Two booleans rather than the enum, because that is all a head can act on: macOS has no
+        /// separate "maximize" permission -- the zoom button follows resizability -- so
+        /// CanResize and CanResizeWithGrip are the same window here, which is also true of the grip
+        /// itself (WPF draws that, not the platform).
+        /// </remarks>
+        void SetResizeMode(bool canResize, bool canMinimize) { }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>
