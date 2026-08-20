@@ -1089,6 +1089,28 @@ namespace MS.Internal.Interop
             CurrentOuterRectPixels(out x, out y, out width, out height);
         }
 
+        // NSNormalWindowLevel and NSFloatingWindowLevel. Floating is what AppKit means by "above the
+        // ordinary windows but below the system's own": it is the level a palette or an inspector
+        // uses, and the closest thing macOS has to WS_EX_TOPMOST.
+        private const nint NSNormalWindowLevel = 0;
+        private const nint NSFloatingWindowLevel = 3;
+
+        /// <inheritdoc/>
+        public void SetTopmost(bool topmost)
+        {
+            if (_window == IntPtr.Zero) return;
+
+            // A popup is ALREADY floating and was put there when it was created, so that a menu shows
+            // above the window that opened it. Letting Topmost drive the level here would let an
+            // ordinary Topmost=false on the owner drag its menus back down among the normal windows.
+            if (_borderless) return;
+
+            SendVoidNInt(_window, Sel("setLevel:"), topmost ? NSFloatingWindowLevel : NSNormalWindowLevel);
+        }
+
+        /// <summary>The NSWindow's level. For tests: stacking is not observable any other way.</summary>
+        internal nint GetWindowLevel() => _window == IntPtr.Zero ? 0 : SendNInt(_window, Sel("level"));
+
         /// <inheritdoc/>
         public void GetWindowScreenOriginPixels(out int x, out int y)
         {

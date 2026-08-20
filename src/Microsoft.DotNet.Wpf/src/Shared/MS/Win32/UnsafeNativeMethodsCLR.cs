@@ -115,6 +115,18 @@ namespace MS.Win32
                     cocoa.SetFrameOrigin(x, y);
                 }
 
+                // Topmost arrives here and nowhere else: Window.OnTopmostChanged calls SetWindowPos
+                // with hWndInsertAfter set to HWND_TOPMOST (-1) or HWND_NOTOPMOST (-2) and every
+                // other instruction suppressed. Dropping the argument -- which is what "z-order is
+                // owned by AppKit" amounted to -- made Window.Topmost do nothing whatsoever.
+                const int SWP_NOZORDER = 0x0004;
+                if ((flags & SWP_NOZORDER) == 0)
+                {
+                    nint insertAfter = hWndInsertAfter.Handle;
+                    if (insertAfter == -1) cocoa.SetTopmost(true);
+                    else if (insertAfter == -2) cocoa.SetTopmost(false);
+                }
+
                 // SetWindowPos is ALSO how WPF shows and hides a window, not just how it moves one, and
                 // ignoring these two flags left those windows stuck in whatever state they were last in.
                 // Window.ShowHelper routes a TOPMOST window's show through SWP_SHOWWINDOW rather than

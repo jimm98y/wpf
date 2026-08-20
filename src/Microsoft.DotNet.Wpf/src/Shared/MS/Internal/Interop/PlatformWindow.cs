@@ -161,6 +161,21 @@ namespace MS.Internal.Interop
         /// </remarks>
         void GetWindowScreenOriginPixels(out int x, out int y) => GetClientScreenOriginPixels(out x, out y);
 
+        /// <summary>
+        /// Keep this window above ordinary windows, or stop doing so -- WPF's Window.Topmost.
+        /// </summary>
+        /// <remarks>
+        /// Topmost travels as a Z-ORDER argument: Window.OnTopmostChanged calls SetWindowPos with
+        /// hWndInsertAfter set to HWND_TOPMOST or HWND_NOTOPMOST and no other instruction. Off Windows
+        /// that argument was dropped on the floor -- "position/z-order are owned by AppKit" -- so the
+        /// property did nothing at all, silently, on every head.
+        ///
+        /// A head with no say over stacking does nothing, which is the honest answer for Wayland: an
+        /// xdg-shell client cannot ask to be kept on top, because the compositor decides stacking and
+        /// offers no protocol for it.
+        /// </remarks>
+        void SetTopmost(bool topmost) { }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>
