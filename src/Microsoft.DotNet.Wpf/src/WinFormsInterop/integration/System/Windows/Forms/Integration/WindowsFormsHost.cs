@@ -69,6 +69,47 @@ namespace System.Windows.Forms.Integration
         private static readonly List<WindowsFormsHost> s_hosts = new List<WindowsFormsHost>();
         private static readonly object s_lock = new object();
         private static bool s_ticking;
+
+        // Content that is composited the same way but is not a WindowsFormsHost - today, the
+        // HwndHost-derived hosts claimed through HwndHostForeignContent. EmbeddedContent.Set
+        // REPLACES the whole hosted set, so there can only ever be one publisher; everything that
+        // wants to be on screen has to come through this tick.
+        private static readonly List<IEmbeddedContentSource> s_extraSources = new List<IEmbeddedContentSource>();
+
+        internal static void AddSource(IEmbeddedContentSource source)
+        {
+            lock (s_lock)
+            {
+                if (s_extraSources.Contains(source)) return;
+                s_extraSources.Add(source);
+                if (!s_ticking)
+                {
+                    s_ticking = true;
+                    CompositionTarget.Rendering += OnRendering;
+                }
+            }
+        }
+
+        internal static void RemoveSource(IEmbeddedContentSource source)
+        {
+            bool last;
+            lock (s_lock)
+            {
+                s_extraSources.Remove(source);
+                last = s_hosts.Count == 0 && s_extraSources.Count == 0;
+                if (last && s_ticking)
+                {
+                    s_ticking = false;
+                    CompositionTarget.Rendering -= OnRendering;
+                }
+            }
+
+            if (last)
+            {
+                EmbeddedContent.Set(null);
+                EmbeddedContent.SetCaret(0, 0, 0, 0, false);
+            }
+        }
         private static int s_lastPaintVersion = -1;
 
         private readonly SWF.Form _container;      // the hosted surface; registered with the driver, never shown as an OS window
@@ -408,6 +449,11 @@ namespace System.Windows.Forms.Integration
         {
             XplatUIWebGpu.GetInstance();
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+
+            // An application that hosts WinForms through its OWN HwndHost subclass never
+            // constructs a WindowsFormsHost, so this is the only place the claim handlers would
+            // otherwise be installed from.
+            ForeignHwndHostContent.Install();
         }
 
         private void Attach()
@@ -425,6 +471,7 @@ namespace System.Windows.Forms.Integration
             }
 
             _driver = XplatUIWebGpu.GetInstance();
+            ForeignHwndHostContent.Install();
 
             // Drag and drop crosses here in both directions. AllowDrop on the HOST is what makes WPF
             // route drags to this element at all, and a hosted control asking to be a drop target is
@@ -450,7 +497,7 @@ namespace System.Windows.Forms.Integration
             lock (s_lock)
             {
                 s_hosts.Remove(this);
-                last = s_hosts.Count == 0;
+                last = s_hosts.Count == 0 && s_extraSources.Count == 0;
                 if (last && s_ticking)
                 {
                     s_ticking = false;
@@ -469,8 +516,13 @@ namespace System.Windows.Forms.Integration
         private static void OnRendering(object sender, EventArgs e)
         {
             WindowsFormsHost[] hosts;
-            lock (s_lock) hosts = s_hosts.Count == 0 ? null : s_hosts.ToArray();
-            if (hosts == null) return;
+            IEmbeddedContentSource[] extras;
+            lock (s_lock)
+            {
+                hosts = s_hosts.ToArray();
+                extras = s_extraSources.ToArray();
+            }
+            if (hosts.Length == 0 && extras.Length == 0) return;
 
             // One pump for the whole process: this is what advances WinForms layout, paints,
             // timers and the caret blink.
@@ -487,17 +539,24 @@ namespace System.Windows.Forms.Integration
                 // identifies the right one -- with a single host, it is that host by elimination.
                 if (h.IsKeyboardFocusWithin || (hosts.Length == 1 && caretHost == null)) caretHost = h;
             }
+            foreach (IEmbeddedContentSource src in extras)
+            {
+                if (src.Collect(items)) moved = true;
+            }
             EmbeddedContent.Set(items);
             caretHost?.PublishCaret();
 
             // Present-on-change: a WPF frame is only worth forcing when the hosted pixels actually
             // changed (a control repainted) or a host moved under them (a scroll or a splitter drag).
             // Unconditional invalidation here would pin the whole app at full frame rate forever.
-            int version = hosts[0]._driver?.GetPaintVersion() ?? 0;
+            // The driver is process-wide; take it from whichever source exists.
+            XplatUIWebGpu driver = hosts.Length > 0 ? hosts[0]._driver : XplatUIWebGpu.GetInstance();
+            int version = driver?.GetPaintVersion() ?? 0;
             if (version != s_lastPaintVersion || moved)
             {
                 s_lastPaintVersion = version;
                 foreach (WindowsFormsHost h in hosts) h.InvalidateVisual();
+                foreach (IEmbeddedContentSource src in extras) src.Invalidate();
             }
         }
 

@@ -81,6 +81,18 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>
+		/// Whether <paramref name="handle"/> is one of this driver's windows.
+		/// </summary>
+		/// <remarks>
+		/// Used to tell a driver-minted handle from a real HWND. HwndHost offers every handle its
+		/// subclass returns to whoever might own it, and only ours may be claimed.
+		/// </remarks>
+		internal bool KnowsWindow(IntPtr handle)
+		{
+			return handle != IntPtr.Zero && Hwnd.ObjectFromHandle(handle) != null;
+		}
+
+		/// <summary>
 		/// The visible windows belonging to <paramref name="root"/>'s subtree only, parents before
 		/// children, as {handle, screenX, screenY} triples.
 		/// </summary>

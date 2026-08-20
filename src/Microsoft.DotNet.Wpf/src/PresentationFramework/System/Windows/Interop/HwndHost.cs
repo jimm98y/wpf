@@ -299,6 +299,13 @@ namespace System.Windows.Interop
         /// </summary>
         protected virtual bool HasFocusWithinCore()
         {
+            if (_isForeignChild)
+            {
+                // GetFocus/IsChild walk the Win32 focus chain, which a driver-minted handle is not
+                // part of. WPF's own notion of focus for this element is what there is to report.
+                return IsKeyboardFocusWithin;
+            }
+
             HandleRef hwndFocus = new HandleRef(this, UnsafeNativeMethods.GetFocus());
             if (Handle != IntPtr.Zero && (hwndFocus.Handle == _hwnd.Handle || UnsafeNativeMethods.IsChild(_hwnd, hwndFocus)))
             {
@@ -406,7 +413,17 @@ namespace System.Windows.Interop
             Rect rectRoot = PointUtil.ElementToRoot(rectElement, this, source);
             Rect rectClient = PointUtil.RootToClient(rectRoot, source);
 
-            // Adjust for Right-To-Left oriented windows
+            // Adjust for Right-To-Left oriented windows.
+            //
+            // A foreign child has no Win32 parent to ask - GetParent raises "Invalid window handle"
+            // on it - and no RTL or cross-DPI adjustment to make: the claimant places the content
+            // from this element's own transform, which already carries both. The client rect is
+            // returned as computed.
+            if (_isForeignChild)
+            {
+                return PointUtil.FromRect(rectClient);
+            }
+
             IntPtr hwndParent = UnsafeNativeMethods.GetParent(_hwnd);
             NativeMethods.RECT rcClient = PointUtil.FromRect(rectClient);
             NativeMethods.RECT rcClientRTLAdjusted = PointUtil.AdjustForRightToLeft(rcClient, new HandleRef(null, hwndParent));
@@ -428,7 +445,7 @@ namespace System.Windows.Interop
         {
             get
             {
-                if (!_hasDpiAwarenessContextTransition) return 1;
+                if (!_hasDpiAwarenessContextTransition || _isForeignChild) return 1;
                 DpiScale2 dpi = DpiUtil.GetWindowDpi(Handle, fallbackToNearestMonitorHeuristic: false);
                 DpiScale2 dpiParent = DpiUtil.GetWindowDpi(UnsafeNativeMethods.GetParent(_hwnd), fallbackToNearestMonitorHeuristic: false);
 
@@ -747,7 +764,12 @@ namespace System.Windows.Interop
         {
             DrawingGroup drawingGroup = null;
 
-            if(Handle != IntPtr.Zero)
+            // The whole helper is Win32 screen-scraping - GetWindowRect, a screen DC, PrintWindow
+            // or WM_PRINT - to snapshot the hosted window for printing and for RenderTargetBitmap.
+            // None of it applies to a foreign child: it has no HWND to scrape, and its pixels are
+            // in the WebGPU scene the claimant publishes. Returning null yields an empty drawing,
+            // which is the same thing this returns for a host that has no window yet.
+            if(Handle != IntPtr.Zero && !_isForeignChild)
             {
                 NativeMethods.RECT rc = new NativeMethods.RECT();
                 SafeNativeMethods.GetWindowRect(_hwnd, ref rc);
