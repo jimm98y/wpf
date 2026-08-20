@@ -483,7 +483,7 @@ namespace System.Windows.Forms.Integration
             {
                 Interval = TimeSpan.FromMilliseconds(16),   // ~60Hz, the rate the hosts present at
             };
-            s_topLevelPump.Tick += (s, e) => SWF.PresentationHost.Tick();
+            s_topLevelPump.Tick += (s, e) => SWF.PresentationHost.TickExternal();
             s_topLevelPump.Start();
         }
 

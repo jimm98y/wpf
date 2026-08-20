@@ -45,7 +45,8 @@ namespace System.Windows.Forms {
 		internal override void DestroyCursor(IntPtr cursor) {  }
 		internal override void GetCursorInfo(IntPtr cursor, out int width, out int height, out int hotspot_x, out int hotspot_y) { width = default(int); height = default(int); hotspot_x = default(int); hotspot_y = default(int); }
 		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea) { hwnd = default(IntPtr); GrabConfined = default(bool); GrabArea = default(Rectangle); }
-		internal override void SendAsyncMethod(AsyncMethodData method) {  }
+		// SendAsyncMethod is implemented in the CORE driver (XplatUIWebGpu.Core.cs): as a no-op
+		// here, Control.BeginInvoke accepted a delegate and silently never ran it.
 		// Timers are implemented in the CORE driver (XplatUIWebGpu.Core.cs): System.Windows.Forms.Timer
 		// is how ordinary WinForms code does anything periodic, and with these left as the generated
 		// no-ops Timer.Tick never fired -- an Application.Run app whose only work is on a timer simply

@@ -81,6 +81,21 @@ namespace System.Windows.Forms
             s_forms.Remove(host);
         }
 
+        /// <summary>Drive one frame from OUTSIDE a WinForms message loop -- a WPF app, whose thread
+        /// belongs to the dispatcher. The loop is what normally fires WinForms timers and drains
+        /// posted callbacks, so both have to happen here or neither ever does: a modeless dialog
+        /// would never animate, and Control.BeginInvoke would never run. SharpDevelop disposes its
+        /// splash screen through exactly such a BeginInvoke -- so the splash sat on screen, blank,
+        /// for the life of the process.</summary>
+        internal static bool TickExternal()
+        {
+            if (!s_enabled) return false;
+            XplatUIWebGpu driver = XplatUIWebGpu.GetInstance();
+            if (driver != null) driver.TickTimers();
+            Application.DoEvents();
+            return Tick();
+        }
+
         /// <summary>Drive one frame: present the current UI, then route OS input back into the driver's
         /// queue. False means "no on-screen host" (headless) or "every window closed" -- either way the
         /// message loop should end.</summary>

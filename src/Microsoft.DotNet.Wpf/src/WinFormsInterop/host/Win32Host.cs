@@ -22,8 +22,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree;
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
     private readonly Stopwatch _blink = Stopwatch.StartNew();
-    private readonly WndProcDelegate _wndProc;  // rooted for the window's lifetime
-    private IntPtr _hwnd, _hinstance, _classNamePtr;
+    private IntPtr _hwnd, _hinstance;
     private WgpuPresenter _wgpu;
     private float _scale = 1f;
     private bool _quit, _savedGpu;
@@ -33,7 +32,6 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     internal Win32Host(Form form)
     {
         _form = form;
-        _wndProc = WindowProc;
         var xplat = typeof(Control).Assembly.GetType("System.Windows.Forms.XplatUI");
         _driver = xplat.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
         Type dt = _driver.GetType();
@@ -48,30 +46,65 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         PresentationHost.Attach(this, form);
     }
 
-    public void Show()
+    // A window class is process-wide, so registering one per host failed the second time with
+    // ERROR_CLASS_ALREADY_EXISTS (0x582) -- which is what happened the moment an app opened a second
+    // window, message box included. Register once, and route the shared WndProc back to the host
+    // that owns each window.
+    private static readonly WndProcDelegate s_wndProc = StaticWindowProc;   // rooted for the process
+    private static readonly System.Collections.Generic.Dictionary<IntPtr, Win32Host> s_byHwnd
+        = new System.Collections.Generic.Dictionary<IntPtr, Win32Host>();
+    private static Win32Host s_creating;
+    private static IntPtr s_classNamePtr;
+    private static bool s_classRegistered;
+
+    private static void EnsureWindowClass(IntPtr hinstance)
     {
-        SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
-        _hinstance = GetModuleHandleW(null);
-        _classNamePtr = Marshal.StringToHGlobalUni("WinFormsWebGpuHost");
+        if (s_classRegistered) return;
+        s_classNamePtr = Marshal.StringToHGlobalUni("WinFormsWebGpuHost");
         var wc = new WNDCLASSEXW
         {
             cbSize = (uint)sizeof(WNDCLASSEXW),
             style = 0x0003,  // CS_HREDRAW | CS_VREDRAW
-            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
-            hInstance = _hinstance,
+            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(s_wndProc),
+            hInstance = hinstance,
             hCursor = LoadCursorW(IntPtr.Zero, 32512),  // IDC_ARROW
-            lpszClassName = _classNamePtr,
+            lpszClassName = s_classNamePtr,
         };
         if (RegisterClassExW(ref wc) == 0)
             throw new InvalidOperationException($"RegisterClassExW failed (0x{Marshal.GetLastWin32Error():x})");
+        s_classRegistered = true;
+    }
+
+    private static IntPtr StaticWindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        Win32Host host;
+        if (!s_byHwnd.TryGetValue(hwnd, out host))
+        {
+            host = s_creating;
+            if (host != null) s_byHwnd[hwnd] = host;
+        }
+        if (host == null) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (msg == 0x0002) s_byHwnd.Remove(hwnd);       // WM_DESTROY: the handle is about to die
+        return host.WindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    public void Show()
+    {
+        SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
+        _hinstance = GetModuleHandleW(null);
+        EnsureWindowClass(_hinstance);
 
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
         {
-            _hwnd = CreateWindowExW(0, _classNamePtr, title, 0x00CF0000 | 0x10000000, // WS_OVERLAPPEDWINDOW|WS_VISIBLE
+            // Claim the window being created, so the shared WndProc can route its very first
+            // messages -- they arrive from inside CreateWindowExW, before it has returned a handle.
+            s_creating = this;
+            _hwnd = CreateWindowExW(0, s_classNamePtr, title, 0x00CF0000 | 0x10000000, // WS_OVERLAPPEDWINDOW|WS_VISIBLE
                 100, 100, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
+            if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
         }
-        finally { Marshal.FreeHGlobal(title); }
+        finally { s_creating = null; Marshal.FreeHGlobal(title); }
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowExW failed (0x{Marshal.GetLastWin32Error():x})");
 
@@ -174,12 +207,14 @@ internal sealed unsafe class Win32Host : IWinFormsHost
                 _form.Close();
                 if (!_form.Visible) DestroyWindow(hwnd);
                 return IntPtr.Zero;
-            // WM_DESTROY: end the message loop only when this was the last window. A dialog closing
-            // must not post a thread quit -- that would take the whole application down with it.
+            // WM_DESTROY: retire this host and let the loop end on its own once no window is left
+            // (Tick returns false when there are no hosts). Deliberately NO PostQuitMessage: a
+            // thread quit is not this window's to post. A dialog closing would take the whole
+            // application with it, and in a WPF app -- where the dispatcher owns the thread queue --
+            // so would the splash screen: SharpDevelop shut down the moment its splash closed.
             case 0x0002:
                 _quit = true;
                 PresentationHost.Detach(this);
-                if (PresentationHost.HostCount == 0) PostQuitMessage(0);
                 return IntPtr.Zero;
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
         }

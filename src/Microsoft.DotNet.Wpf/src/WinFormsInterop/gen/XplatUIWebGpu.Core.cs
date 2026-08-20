@@ -1,4 +1,4 @@
-﻿// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
+// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
 // with a System.Drawing.Bitmap backing store; painting hands out a Graphics over that bitmap
 // (the theme draws into it). A managed message queue drives Application.Run: Invalidate posts
 // WM_PAINT, DispatchMessage routes to NativeWindow.WndProc, PaintEventStart gives the paint DC.
@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace System.Windows.Forms
@@ -502,7 +503,7 @@ namespace System.Windows.Forms
 		/// <summary>Fire every timer whose deadline has passed, and return the shortest wait until the
 		/// next one is due (or -1 when none are). Ticks run OUTSIDE the lock: a handler is arbitrary
 		/// app code and routinely starts or stops timers.</summary>
-		private int TickTimers()
+		internal int TickTimers()
 		{
 			Timer[] due = null;
 			int count = 0;
@@ -577,6 +578,13 @@ namespace System.Windows.Forms
 		internal override IntPtr DispatchMessage(ref MSG msg)
 		{
 			T($"Dispatch {msg.message} h=0x{msg.hwnd.ToInt64():x}");
+			// A posted Control.BeginInvoke is not a window message any WndProc knows: run the
+			// delegate here, the way XplatUIWin32 runs it out of its GetMessage.
+			if (msg.message == Msg.WM_ASYNC_MESSAGE)
+			{
+				XplatUIDriverSupport.ExecuteClientMessage((GCHandle)msg.lParam);
+				return IntPtr.Zero;
+			}
 			return NativeWindow.WndProc(msg.hwnd, msg.message, msg.wParam, msg.lParam);
 		}
 
@@ -607,6 +615,24 @@ namespace System.Windows.Forms
 		{
 			queue.Enqueue(new MSG { hwnd = hwnd, message = message, wParam = wParam, lParam = lParam });
 			return true;
+		}
+
+		/// <summary>Where Control.BeginInvoke (and Invoke from another thread) lands: queue the call
+		/// and run it when the message is dispatched, exactly as XplatUIWin32 does.</summary>
+		/// <remarks>
+		/// The generated stub for this was an empty method, so a posted callback was accepted and
+		/// then silently dropped -- the delegate never ran and the IAsyncResult never completed.
+		/// SharpDevelop takes its splash screen down through one of these, so the splash stayed on
+		/// screen, blank, for the life of the process.
+		/// </remarks>
+		internal override void SendAsyncMethod(AsyncMethodData method)
+		{
+			queue.Enqueue(new MSG
+			{
+				hwnd = method.Handle,
+				message = Msg.WM_ASYNC_MESSAGE,
+				lParam = (IntPtr)GCHandle.Alloc(method),
+			});
 		}
 
 		internal override IntPtr DefWndProc(ref Message msg) => IntPtr.Zero;
