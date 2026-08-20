@@ -102,7 +102,15 @@ namespace MS.Win32
 
                 // Move only popups (borderless windows) to their requested screen position; normal
                 // top-level windows are placed by AppKit (and their x/y here are CW_USEDEFAULT-ish).
-                if ((flags & SWP_NOMOVE) == 0 && cocoa.IsBorderless)
+                // Move whatever WPF asks to move. This used to be popups only, on the grounds that a
+                // top-level window's x/y "are CW_USEDEFAULT-ish" -- and they were, but only because
+                // GetWindowRect answered (0,0) for every window, so WPF's idea of where the window
+                // was came back as the corner and it asked for the corner. With the real origin
+                // reported, the position WPF sends while showing a window is the position the window
+                // is already at (a no-op move), and the position it sends afterwards is the one the
+                // application asked for. Restricting this to popups is what made Window.Left and
+                // Window.Top silently do nothing.
+                if ((flags & SWP_NOMOVE) == 0)
                 {
                     cocoa.SetFrameOrigin(x, y);
                 }

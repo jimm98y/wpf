@@ -180,16 +180,31 @@ namespace MS.Win32
 
         internal static void GetWindowRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
-            // Off-Windows the handle is a Cocoa NSView*; report the OUTER window (frame) size in device
-            // pixels (= content view + non-client caption) as the window rect (origin (0,0)). This is
-            // larger than GetClientRect (the content view) by the title-bar caption, so WPF computes a
-            // non-zero non-client frame and Window.Width/Height behave as the outer window size like
-            // Win32 (client = Width x Height minus the caption) instead of the whole size being client.
+            // Off-Windows the handle is a Cocoa NSView*; report the OUTER window (frame) rect in
+            // device pixels (= content view + non-client caption). It is larger than GetClientRect
+            // (the content view) by the title-bar caption, so WPF computes a non-zero non-client
+            // frame and Window.Width/Height behave as the outer window size like Win32 (client =
+            // Width x Height minus the caption) instead of the whole size being client.
+            //
+            // The ORIGIN used to be hardcoded to (0,0), and everything downstream followed from a
+            // window WPF believed was in the top-left corner. Window.Left and Window.Top read 0
+            // wherever the window really was; the SetWindowPos WPF issues while showing a window
+            // carried that same (0,0), which looked like a request to move the window into the
+            // corner; and SetWindowPos defended against that by ignoring moves for anything that was
+            // not a popup -- which is why setting Window.Left did nothing at all.
             if (!System.OperatingSystem.IsWindows())
             {
-                int w = 0, h = 0;
-                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetWindowPixelSize(out w, out h);
-                rect = new NativeMethods.RECT(0, 0, w, h);
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    rect = new NativeMethods.RECT(0, 0, 0, 0);
+                    return;
+                }
+
+                window.GetWindowScreenOriginPixels(out int x, out int y);
+                window.GetWindowPixelSize(out int w, out int h);
+                rect = new NativeMethods.RECT(x, y, x + w, y + h);
                 return;
             }
 

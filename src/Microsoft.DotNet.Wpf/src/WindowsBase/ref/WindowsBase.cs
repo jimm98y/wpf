@@ -175,6 +175,7 @@ namespace MS.Internal.Interop
         public void SetWindowState(int state) { }
         public int GetWindowState() { throw null; }
         public void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height) { throw null; }
+        public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -333,6 +334,7 @@ namespace MS.Internal.Interop
         void SetWindowState(int state) { }
         int GetWindowState() { throw null; }
         void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height) { throw null; }
+        void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();
@@ -467,6 +469,7 @@ namespace MS.Internal.Interop.Wayland
         public void SetWindowState(int state) { }
         public int GetWindowState() { throw null; }
         public void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height) { throw null; }
+        public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }

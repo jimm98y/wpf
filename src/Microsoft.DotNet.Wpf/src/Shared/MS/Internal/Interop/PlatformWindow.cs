@@ -140,9 +140,26 @@ namespace MS.Internal.Interop
         /// </remarks>
         void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height)
         {
-            GetClientScreenOriginPixels(out x, out y);
+            GetWindowScreenOriginPixels(out x, out y);
             GetWindowPixelSize(out width, out height);
         }
+
+        /// <summary>
+        /// The OUTER window's top-left corner in screen device pixels -- what Win32's GetWindowRect
+        /// reports, and the origin WPF's Window.Left and Window.Top are read from.
+        /// </summary>
+        /// <remarks>
+        /// Off Windows this was not reported at all: GetWindowRect answered with the right size at a
+        /// hardcoded origin of (0,0). Everything downstream then followed from a window WPF believed
+        /// was in the top-left corner. Window.Left and Window.Top read 0 wherever the window actually
+        /// was; the SetWindowPos that WPF issues while showing a window carried that same (0,0), so it
+        /// looked like a request to move the window to the corner; and the shim defended against that
+        /// by ignoring moves for anything that was not a popup -- which is why setting Window.Left did
+        /// nothing at all. Reporting the real origin removes the reason for all three.
+        ///
+        /// Defaults to the CLIENT origin, which is what a head with no separate window frame has.
+        /// </remarks>
+        void GetWindowScreenOriginPixels(out int x, out int y) => GetClientScreenOriginPixels(out x, out y);
 
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
