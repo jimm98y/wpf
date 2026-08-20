@@ -704,17 +704,40 @@ namespace MS.Win32
         // note:  this method exists in UnsafeNativeMethodsCLR.cs, but that method does not have the if/throw implemntation
         internal static void GetWindowPlacement(HandleRef hWnd, ref NativeMethods.WINDOWPLACEMENT placement)
         {
-            // Off-Windows report a normal (non-min/maximized) placement whose normal position is the
-            // Cocoa content rect. Window state (min/max) is managed by AppKit, not this struct.
+            // Off Windows this used to answer with a fiction: showCmd was always SW_NORMAL and
+            // rcNormalPosition was the CURRENT content size at the origin. Window.RestoreBounds is
+            // built from exactly these fields, so a window at (120,90) sized 420x320 reported
+            // 0;30;410;282 -- and while maximized it reported the MAXIMIZED size, which is the one
+            // case RestoreBounds exists to get right. Applications persist that value to reopen where
+            // the user left them.
             if (!System.OperatingSystem.IsWindows())
             {
-                int w = 0, h = 0;
-                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetContentSize(out w, out h);
-                placement.showCmd = 1; // SW_NORMAL
-                placement.rcNormalPosition_left = 0;
-                placement.rcNormalPosition_top = 0;
-                placement.rcNormalPosition_right = w;
-                placement.rcNormalPosition_bottom = h;
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    return;
+                }
+
+                window.GetRestoreBoundsPixels(out int x, out int y, out int w, out int h);
+                placement.showCmd = window.GetWindowState();
+
+                // rcNormalPosition is in WORKSPACE coordinates for a window without WS_EX_TOOLWINDOW,
+                // and Window.GetNormalRectDeviceUnits converts back by adding the work area's offset
+                // WITHIN its monitor. So subtract that same offset here; anything else lands the
+                // window a menu-bar's height out every time the value is round-tripped.
+                if (MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                        out int monLeft, out int monTop, out _, out _,
+                        out int workLeft, out int workTop, out _, out _))
+                {
+                    x -= workLeft - monLeft;
+                    y -= workTop - monTop;
+                }
+
+                placement.rcNormalPosition_left = x;
+                placement.rcNormalPosition_top = y;
+                placement.rcNormalPosition_right = x + w;
+                placement.rcNormalPosition_bottom = y + h;
                 return;
             }
 
