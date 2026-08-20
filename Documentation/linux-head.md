@@ -85,6 +85,13 @@ a popup with its own surface cannot be transparent and its rounded corners and s
 black. `NativePlatform.PopupsShareOwnerSurface` therefore includes Linux, drawing popups into the
 owner's surface — the route Android and iOS already use. `WPF_LINUX_COMPOSITE_POPUPS=0` opts out.
 
+That route is verified end-to-end on Android, with a real control rather than a synthetic overlay:
+the gallery's ComboBox page (Basic Input → ComboBox) opens its dropdown into the owner's surface,
+the items hit-test, and picking one dismisses the popup and updates the box. Worth stating because
+the two halves fail separately — a popup that composites but does not hit-test looks completely
+correct in a screenshot, which is all the earlier red-rectangle check could see. The Linux half is
+still unverified: it needs a Wayland session.
+
 ## Media
 
 `MediaElement`/`MediaPlayer` run on GStreamer, via `PresentationCore/System/Windows/Media/Platform/`
