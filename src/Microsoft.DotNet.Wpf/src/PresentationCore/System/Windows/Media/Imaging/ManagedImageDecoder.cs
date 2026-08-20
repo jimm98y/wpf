@@ -561,10 +561,13 @@ namespace System.Windows.Media.Imaging
             int bitCount = data[p + 14] | (data[p + 15] << 8);
             int compression = ReadU32LE(data, p + 16);
             int clrUsed = ReadU32LE(data, p + 32);
-            if (compression != 0)
+            if (compression != BiRgb && compression != BiBitFields && compression != BiAlphaBitFields)
             {
-                throw new PlatformNotSupportedException("Only uncompressed ICO DIB entries are supported without native WIC.");
+                throw new PlatformNotSupportedException(
+                    "Only uncompressed or bitfield ICO DIB entries are supported without native WIC.");
             }
+
+            DibChannels channels = DibChannels.Read(data, p, hdrSize, compression, bitCount);
 
             width = biWidth;
             height = biHeight / 2;   // biHeight covers colour rows + AND-mask rows
@@ -573,7 +576,18 @@ namespace System.Windows.Media.Imaging
                 throw new InvalidDataException("Invalid ICO DIB dimensions.");
             }
 
-            int palOff = p + hdrSize;
+            // A BMP says where its pixels start; an ICO does not -- they simply follow the header and
+            // the colour table. So the bitfield masks, which sit BETWEEN the two when the header is a
+            // plain BITMAPINFOHEADER, have to be stepped over here. (A V4-or-later header carries them
+            // inside itself, and hdrSize already covers them.) Miss this and the decoder reads the
+            // masks as the first pixels: the colours still look plausible and the AND mask, one row
+            // further out than it should be, turns the whole icon transparent.
+            int maskBytes = hdrSize >= 108 ? 0
+                          : compression == BiAlphaBitFields ? 16
+                          : compression == BiBitFields ? 12
+                          : 0;
+
+            int palOff = p + hdrSize + maskBytes;
             int palCount = bitCount <= 8 ? (clrUsed != 0 ? clrUsed : 1 << bitCount) : 0;
             int xorOff = palOff + palCount * 4;
 
@@ -594,14 +608,17 @@ namespace System.Windows.Media.Imaging
                     byte r, g, b, a = 255;
                     if (bitCount == 32)
                     {
-                        int s = colorRow + x * 4;
-                        b = data[s]; g = data[s + 1]; r = data[s + 2]; a = data[s + 3];
+                        channels.Extract(ReadDibPixel(data, colorRow + x * 4, 32), out b, out g, out r, out a);
                         if (a != 0) { anyAlpha = true; }
                     }
                     else if (bitCount == 24)
                     {
                         int s = colorRow + x * 3;
                         b = data[s]; g = data[s + 1]; r = data[s + 2];
+                    }
+                    else if (bitCount == 16)
+                    {
+                        channels.Extract(ReadDibPixel(data, colorRow + x * 2, 16), out b, out g, out r, out _);
                     }
                     else
                     {
@@ -661,6 +678,128 @@ namespace System.Windows.Media.Imaging
         private static int ReadU32LE(byte[] data, int pos) =>
             data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24);
 
+        // ---- DIB channel layout --------------------------------------------------------
+        //
+        // Shared by BMP and by an ICO's DIB entries, which are the same structure minus the file
+        // header -- and which had drifted apart: BMP took BI_BITFIELDS and then read BGRA as though
+        // the masks said BGRA, while ICO refused BI_BITFIELDS outright. One of those is a wrong
+        // picture and the other is no picture, from the same bytes.
+
+        private const int BiRgb = 0;
+        private const int BiBitFields = 3;
+        private const int BiAlphaBitFields = 6;
+
+        /// <summary>
+        /// Where each channel lives inside a 16- or 32-bit DIB pixel.
+        /// </summary>
+        /// <remarks>
+        /// BI_BITFIELDS exists because a DIB pixel is a WORD or a DWORD whose bits mean whatever the
+        /// masks say -- RGB565 and RGB555 are both 16-bit, and a 32-bit DIB may be BGRA or RGBA. The
+        /// masks are not decoration: reading them as a fixed layout gives a picture with its red and
+        /// blue swapped, which looks like a colour-management problem rather than a decoder that
+        /// skipped four DWORDs of the header.
+        /// </remarks>
+        private readonly struct DibChannels
+        {
+            private readonly uint _r, _g, _b, _a;
+            private readonly int _rShift, _gShift, _bShift, _aShift;
+            private readonly int _rMax, _gMax, _bMax, _aMax;
+
+            private DibChannels(uint r, uint g, uint b, uint a)
+            {
+                _r = r; _g = g; _b = b; _a = a;
+                (_rShift, _rMax) = Describe(r);
+                (_gShift, _gMax) = Describe(g);
+                (_bShift, _bMax) = Describe(b);
+                (_aShift, _aMax) = Describe(a);
+            }
+
+            /// <summary>What BI_RGB means at each depth: 555 at 16 bits, BGRA at 32.</summary>
+            internal static DibChannels Default(int bpp) => bpp == 16
+                ? new DibChannels(0x7C00, 0x03E0, 0x001F, 0)
+                : new DibChannels(0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+
+            /// <summary>
+            /// The masks a DIB header carries, or the defaults when it carries none.
+            /// </summary>
+            /// <remarks>
+            /// They sit at the same three offsets either way. BI_BITFIELDS with a plain 40-byte
+            /// BITMAPINFOHEADER stores them immediately AFTER the header; BITMAPV4HEADER and later
+            /// store them INSIDE it -- and V4 opens with a verbatim BITMAPINFOHEADER, so "inside at
+            /// offset 40" and "just after the 40 bytes" are the same address. A fourth, alpha, mask
+            /// follows only for BI_ALPHABITFIELDS or a V4-or-later header.
+            /// </remarks>
+            internal static DibChannels Read(byte[] data, int headerStart, int headerSize, int compression, int bpp)
+            {
+                if (compression != BiBitFields && compression != BiAlphaBitFields)
+                {
+                    return Default(bpp);
+                }
+
+                int masks = headerStart + 40;
+                if (masks + 12 > data.Length)
+                {
+                    return Default(bpp);   // truncated header; the defaults are the best guess left
+                }
+
+                uint r = (uint)ReadU32LE(data, masks);
+                uint g = (uint)ReadU32LE(data, masks + 4);
+                uint b = (uint)ReadU32LE(data, masks + 8);
+
+                // All-zero masks are meaningless and appear in files that set BI_BITFIELDS without
+                // filling them in; the default layout is what such a file is actually holding.
+                if ((r | g | b) == 0)
+                {
+                    return Default(bpp);
+                }
+
+                uint a = 0;
+                bool hasAlpha = compression == BiAlphaBitFields || headerSize >= 108;
+                if (hasAlpha && masks + 16 <= data.Length)
+                {
+                    a = (uint)ReadU32LE(data, masks + 12);
+                }
+
+                return new DibChannels(r, g, b, a);
+            }
+
+            /// <summary>A mask's low bit position and the largest value its field can hold.</summary>
+            private static (int Shift, int Max) Describe(uint mask)
+            {
+                if (mask == 0) return (0, 0);
+
+                int shift = 0;
+                while ((mask & 1) == 0) { mask >>= 1; shift++; }
+                return (shift, (int)mask);
+            }
+
+            internal void Extract(uint pixel, out byte b, out byte g, out byte r, out byte a)
+            {
+                r = Channel(pixel, _r, _rShift, _rMax);
+                g = Channel(pixel, _g, _gShift, _gMax);
+                b = Channel(pixel, _b, _bShift, _bMax);
+                // No alpha mask means no alpha channel, which is opaque -- not transparent.
+                a = _a == 0 ? (byte)255 : Channel(pixel, _a, _aShift, _aMax);
+            }
+
+            /// <summary>
+            /// One field, widened to eight bits. The rounding matters at 5 bits: a plain shift left
+            /// leaves the maximum at 248 rather than 255, so a white RGB555 image comes out grey.
+            /// </summary>
+            private static byte Channel(uint pixel, uint mask, int shift, int max)
+            {
+                if (max <= 0) return 0;
+                int value = (int)((pixel & mask) >> shift);
+                return max == 255 ? (byte)value : (byte)((value * 255 + max / 2) / max);
+            }
+        }
+
+        /// <summary>Reads one 16- or 32-bit DIB pixel.</summary>
+        private static uint ReadDibPixel(byte[] data, int offset, int bpp) =>
+            bpp == 16
+                ? (uint)(data[offset] | (data[offset + 1] << 8))
+                : (uint)ReadU32LE(data, offset);
+
         // ---- BMP -----------------------------------------------------------------------
 
         private static byte[] DecodeBmp(byte[] data, out int width, out int height,
@@ -679,11 +818,11 @@ namespace System.Windows.Media.Imaging
             bool topDown = rawHeight < 0;
             height = Math.Abs(rawHeight);
             bool palettized = bpp == 1 || bpp == 4 || bpp == 8;
-            if (width <= 0 || height == 0 || (bpp != 24 && bpp != 32 && !palettized) ||
-                (compression != 0 && compression != 3))
+            if (width <= 0 || height == 0 || (bpp != 16 && bpp != 24 && bpp != 32 && !palettized) ||
+                (compression != BiRgb && compression != BiBitFields && compression != BiAlphaBitFields))
             {
                 throw new PlatformNotSupportedException(
-                    "Only uncompressed 1/4/8/24/32-bit BMP is supported without native WIC.");
+                    "Only uncompressed or bitfield 1/4/8/16/24/32-bit BMP is supported without native WIC.");
             }
 
             int srcStride = ((width * bpp + 7) / 8 + 3) & ~3;
@@ -731,6 +870,10 @@ namespace System.Windows.Media.Imaging
                 return packed;
             }
 
+            // 24-bit is plain BGR triples and has no bitfield form to interpret; 16- and 32-bit are
+            // whatever the masks say (see DibChannels).
+            DibChannels channels = DibChannels.Read(data, 14, BitConverter.ToInt32(data, 14), compression, bpp);
+
             var bgra = new byte[width * height * 4];
             for (int y = 0; y < height; y++)
             {
@@ -739,10 +882,18 @@ namespace System.Windows.Media.Imaging
                 {
                     int s = srcRow + x * bpp / 8;
                     int o = (y * width + x) * 4;
-                    bgra[o] = data[s];
-                    bgra[o + 1] = data[s + 1];
-                    bgra[o + 2] = data[s + 2];
-                    bgra[o + 3] = bpp == 32 ? data[s + 3] : (byte)255;
+
+                    if (bpp == 24)
+                    {
+                        bgra[o] = data[s];
+                        bgra[o + 1] = data[s + 1];
+                        bgra[o + 2] = data[s + 2];
+                        bgra[o + 3] = 255;
+                        continue;
+                    }
+
+                    channels.Extract(ReadDibPixel(data, s, bpp), out byte b, out byte g, out byte r, out byte a);
+                    bgra[o] = b; bgra[o + 1] = g; bgra[o + 2] = r; bgra[o + 3] = a;
                 }
             }
             return bgra;

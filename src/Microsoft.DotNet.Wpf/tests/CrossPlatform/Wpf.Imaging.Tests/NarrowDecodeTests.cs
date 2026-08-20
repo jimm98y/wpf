@@ -647,5 +647,219 @@ namespace Wpf.Imaging.Tests
             Assert.Equal(0, bgra[0]); Assert.Equal(0, bgra[1]); Assert.Equal(0, bgra[2]);
             Assert.Equal(0x56, bgra[4]); Assert.Equal(0x34, bgra[5]); Assert.Equal(0x12, bgra[6]);
         }
+
+        // ---- BI_BITFIELDS ------------------------------------------------------------------
+        //
+        // A DIB pixel is a WORD or a DWORD whose bits mean whatever the header's masks say. The
+        // decoder used to ACCEPT BI_BITFIELDS and then read BGRA as though the masks had said BGRA,
+        // which is right for the common case and silently wrong for every other -- a picture with
+        // its red and blue exchanged reads as a colour-management problem, not as a decoder that
+        // skipped three DWORDs. 16-bit was rejected outright, so RGB565 and RGB555 did not load.
+
+        /// <summary>
+        /// A BMP whose channel layout is stated by masks rather than assumed. <paramref name="rows"/>
+        /// is top-down, one 16- or 32-bit little-endian word per pixel.
+        /// </summary>
+        private static byte[] BuildBitfieldBmp(int width, int height, int bpp,
+                                               uint redMask, uint greenMask, uint blueMask, uint alphaMask,
+                                               uint[] rows)
+        {
+            bool bitfields = (redMask | greenMask | blueMask | alphaMask) != 0;
+
+            // BI_BITFIELDS stores the masks immediately after the 40-byte header, and biSizeImage's
+            // neighbours stay where they are -- so the pixels simply start three (or four) DWORDs
+            // further on. An alpha mask needs BI_ALPHABITFIELDS to be legal at all.
+            int maskBytes = !bitfields ? 0 : alphaMask != 0 ? 16 : 12;
+            int compression = !bitfields ? 0 : alphaMask != 0 ? 6 : 3;
+
+            int srcStride = ((width * bpp + 7) / 8 + 3) & ~3;
+            int pixelOffset = 14 + 40 + maskBytes;
+            var bmp = new byte[pixelOffset + srcStride * height];
+
+            bmp[0] = (byte)'B'; bmp[1] = (byte)'M';
+            BitConverter.GetBytes(bmp.Length).CopyTo(bmp, 2);
+            BitConverter.GetBytes(pixelOffset).CopyTo(bmp, 10);
+            BitConverter.GetBytes(40).CopyTo(bmp, 14);
+            BitConverter.GetBytes(width).CopyTo(bmp, 18);
+            BitConverter.GetBytes(height).CopyTo(bmp, 22);       // positive: bottom-up
+            BitConverter.GetBytes((short)1).CopyTo(bmp, 26);
+            BitConverter.GetBytes((short)bpp).CopyTo(bmp, 28);
+            BitConverter.GetBytes(compression).CopyTo(bmp, 30);
+
+            if (bitfields)
+            {
+                BitConverter.GetBytes(redMask).CopyTo(bmp, 54);
+                BitConverter.GetBytes(greenMask).CopyTo(bmp, 58);
+                BitConverter.GetBytes(blueMask).CopyTo(bmp, 62);
+                if (alphaMask != 0) BitConverter.GetBytes(alphaMask).CopyTo(bmp, 66);
+            }
+
+            for (int y = 0; y < height; y++)
+            {
+                int row = pixelOffset + (height - 1 - y) * srcStride;
+                for (int x = 0; x < width; x++)
+                {
+                    uint pixel = rows[y * width + x];
+                    if (bpp == 16)
+                    {
+                        bmp[row + x * 2] = (byte)pixel;
+                        bmp[row + x * 2 + 1] = (byte)(pixel >> 8);
+                    }
+                    else
+                    {
+                        BitConverter.GetBytes(pixel).CopyTo(bmp, row + x * 4);
+                    }
+                }
+            }
+            return bmp;
+        }
+
+        private static byte[] BgraOf(BitmapSource source)
+        {
+            var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+            var pixels = new byte[source.PixelWidth * source.PixelHeight * 4];
+            converted.CopyPixels(pixels, source.PixelWidth * 4, 0);
+            return pixels;
+        }
+
+        /// <summary>
+        /// The case that was silently wrong. These masks say RGBA -- red in the LOW byte -- which is
+        /// the exact opposite of the BGRA the decoder assumed, so every colour came back with its red
+        /// and blue exchanged and nothing failed.
+        /// </summary>
+        [Fact]
+        public void ABitfieldBmpWithRgbaMasksIsNotReadAsBgra()
+        {
+            // One pixel, R=0x11 G=0x22 B=0x33 A=0x44, laid out little-endian as A B G R.
+            uint pixel = 0x44u << 24 | 0x33u << 16 | 0x22u << 8 | 0x11u;
+
+            byte[] bgra = BgraOf(Decode(BuildBitfieldBmp(1, 1, 32,
+                redMask: 0x000000FF, greenMask: 0x0000FF00, blueMask: 0x00FF0000, alphaMask: 0xFF000000,
+                new[] { pixel })));
+
+            Assert.Equal(0x33, bgra[0]);
+            Assert.Equal(0x22, bgra[1]);
+            Assert.Equal(0x11, bgra[2]);
+            Assert.Equal(0x44, bgra[3]);
+        }
+
+        /// <summary>The ordinary 32-bit masks still mean what they always did.</summary>
+        [Fact]
+        public void ABitfieldBmpWithTheUsualBgraMasksIsUnchanged()
+        {
+            uint pixel = 0x44u << 24 | 0x11u << 16 | 0x22u << 8 | 0x33u;   // A R G B
+
+            byte[] bgra = BgraOf(Decode(BuildBitfieldBmp(1, 1, 32,
+                redMask: 0x00FF0000, greenMask: 0x0000FF00, blueMask: 0x000000FF, alphaMask: 0xFF000000,
+                new[] { pixel })));
+
+            Assert.Equal(0x33, bgra[0]);
+            Assert.Equal(0x22, bgra[1]);
+            Assert.Equal(0x11, bgra[2]);
+            Assert.Equal(0x44, bgra[3]);
+        }
+
+        /// <summary>
+        /// RGB565, which did not load at all before: 16-bit was rejected whatever its masks said.
+        /// Green gets six bits and the other two get five, so the three do not scale alike.
+        /// </summary>
+        [Fact]
+        public void ASixteenBitBitfieldBmpDecodesRgb565()
+        {
+            // Pure red, pure green, pure blue.
+            uint[] rows = { 0xF800, 0x07E0, 0x001F };
+
+            byte[] bgra = BgraOf(Decode(BuildBitfieldBmp(3, 1, 16,
+                redMask: 0xF800, greenMask: 0x07E0, blueMask: 0x001F, alphaMask: 0, rows)));
+
+            Assert.Equal(new byte[] { 0, 0, 255, 255 }, bgra[0..4]);
+            Assert.Equal(new byte[] { 0, 255, 0, 255 }, bgra[4..8]);
+            Assert.Equal(new byte[] { 255, 0, 0, 255 }, bgra[8..12]);
+        }
+
+        /// <summary>
+        /// A 16-bit BI_RGB BMP is RGB555, not RGB565 -- the depth alone does not say which, and
+        /// BI_RGB at 16 bits means 555 by definition.
+        ///
+        /// White is the assertion that matters. Five bits widen to eight by SCALING, not by shifting:
+        /// 31 shifted left three is 248, so a decoder that shifts renders white as light grey and
+        /// every bright colour slightly dark. It is a plausible-looking picture, which is why it
+        /// needs a test rather than an eye.
+        /// </summary>
+        [Fact]
+        public void ASixteenBitBiRgbBmpIsRgb555AndWhiteIsWhite()
+        {
+            uint[] rows = { 0x7FFF, 0x7C00 };   // white, pure red
+
+            byte[] bgra = BgraOf(Decode(BuildBitfieldBmp(2, 1, 16,
+                redMask: 0, greenMask: 0, blueMask: 0, alphaMask: 0, rows)));
+
+            Assert.Equal(new byte[] { 255, 255, 255, 255 }, bgra[0..4]);
+            Assert.Equal(new byte[] { 0, 0, 255, 255 }, bgra[4..8]);
+        }
+
+        /// <summary>
+        /// An ICO entry is a DIB too, and the two paths had drifted: BMP took 16-bit and bitfields
+        /// while ICO refused both, from the same bytes. This one is 16-bit BI_BITFIELDS in 565, with
+        /// the second pixel knocked out by the AND mask -- which is the other half of an ICO and the
+        /// reason its entries cannot simply be handed to the BMP reader.
+        /// </summary>
+        [Fact]
+        public void ASixteenBitBitfieldIcoDecodesWithItsAndMask()
+        {
+            byte[] ico = BuildBitfieldIco(redMask: 0xF800, greenMask: 0x07E0, blueMask: 0x001F,
+                                          pixels: new uint[] { 0xF800, 0x001F }, transparent: 1);
+
+            byte[] bgra = BgraOf(Decode(ico));
+
+            Assert.Equal(new byte[] { 0, 0, 255, 255 }, bgra[0..4]);   // red, opaque
+            Assert.Equal(0, bgra[7]);                                  // masked out
+        }
+
+        /// <summary>
+        /// A 2x1 ICO holding one 16-bit DIB entry: icon directory, BITMAPINFOHEADER with the three
+        /// masks, the colour rows, then the 1bpp AND mask. Both are stored bottom-up and padded to
+        /// four bytes, and biHeight covers the colour rows AND the mask rows -- so it is twice the
+        /// icon's height, which is the detail every hand-built ICO gets wrong once.
+        /// </summary>
+        private static byte[] BuildBitfieldIco(uint redMask, uint greenMask, uint blueMask,
+                                               uint[] pixels, int transparent)
+        {
+            const int W = 2, H = 1, Bpp = 16;
+            int colorStride = ((W * Bpp + 31) / 32) * 4;
+            int maskStride = ((W + 31) / 32) * 4;
+            int dib = 6 + 16;
+            int masks = dib + 40;
+            int pixelStart = masks + 12;
+            var ico = new byte[pixelStart + colorStride * H + maskStride * H];
+
+            ico[2] = 1;                                          // type 1 = icon
+            ico[4] = 1;                                          // one entry
+            ico[6] = W; ico[7] = H;
+            BitConverter.GetBytes((short)Bpp).CopyTo(ico, 6 + 6);
+            BitConverter.GetBytes(ico.Length - dib).CopyTo(ico, 6 + 8);
+            BitConverter.GetBytes(dib).CopyTo(ico, 6 + 12);
+
+            BitConverter.GetBytes(40).CopyTo(ico, dib);
+            BitConverter.GetBytes(W).CopyTo(ico, dib + 4);
+            BitConverter.GetBytes(H * 2).CopyTo(ico, dib + 8);    // colour rows + mask rows
+            BitConverter.GetBytes((short)1).CopyTo(ico, dib + 12);
+            BitConverter.GetBytes((short)Bpp).CopyTo(ico, dib + 14);
+            BitConverter.GetBytes(3).CopyTo(ico, dib + 16);       // BI_BITFIELDS
+            BitConverter.GetBytes(redMask).CopyTo(ico, masks);
+            BitConverter.GetBytes(greenMask).CopyTo(ico, masks + 4);
+            BitConverter.GetBytes(blueMask).CopyTo(ico, masks + 8);
+
+            for (int x = 0; x < W; x++)
+            {
+                ico[pixelStart + x * 2] = (byte)pixels[x];
+                ico[pixelStart + x * 2 + 1] = (byte)(pixels[x] >> 8);
+            }
+
+            // AND mask: a set bit is TRANSPARENT.
+            int maskStart = pixelStart + colorStride * H;
+            ico[maskStart] = (byte)(0x80 >> transparent);
+            return ico;
+        }
     }
 }

@@ -341,7 +341,7 @@ so a file this process wrote was one it could not read back. `ManagedGifDecoder`
 | JPEG | baseline and progressive |
 | GIF | GIF87a/89a, every frame composed onto the logical screen, interlace, transparency, disposal methods |
 | TIFF | baseline; II and MM; none/LZW/PackBits/Deflate; 1, 4, 8 and 16 bits; grey, RGB, palette; the horizontal predictor; strips and tiles; every page |
-| ICO, BMP | as before (uncompressed BMP) |
+| ICO, BMP | 1/4/8-bit palettised, 16, 24 and 32-bit; `BI_RGB` and `BI_BITFIELDS`; ICO entries as DIB or PNG |
 
 TIFF **encoding** now writes every page as well, rather than silently keeping `Frames[0]`.
 
