@@ -92,6 +92,63 @@ namespace Wpf.Window.Tests
         }
 
         /// <summary>
+        /// RestoreBounds is where the window goes back to, so maximizing must not change it. That is
+        /// the entire point of the property -- an application persists it to reopen where the user
+        /// left them -- and off Windows it was fabricated: GetWindowPlacement reported the CURRENT
+        /// size at the origin, so a maximized window said its restore rect was the whole screen.
+        /// </summary>
+        [Fact]
+        public void RestoreBoundsSurvivesMaximizing()
+        {
+            Assert.SkipUnless(DisplayAvailable, "requires a display server");
+
+            System.Windows.Window? window = null;
+            try
+            {
+                window = UiThread.Invoke(() =>
+                {
+                    var w = new System.Windows.Window
+                    {
+                        Title = "Wpf.Window.Tests restore bounds",
+                        Width = 420,
+                        Height = 320,
+                    };
+                    w.Show();
+                    return w;
+                });
+
+                // The head samples its restore rect while the window is sitting still, so let it.
+                UiThread.WaitUntil(() => false, 500);
+
+                Rect normal = UiThread.Invoke(() => window!.RestoreBounds);
+
+                // The SIZE has to be the window's own, not its client area: RestoreBounds used to come
+                // back 410x282 for this window because it was built from the content size.
+                Assert.Equal(420, normal.Width, 2);
+                Assert.Equal(320, normal.Height, 2);
+
+                UiThread.Invoke(() => window!.WindowState = WindowState.Maximized);
+                Assert.True(UiThread.WaitUntil(() => window!.WindowState == WindowState.Maximized),
+                    "the window never reported itself maximized");
+                UiThread.WaitUntil(() => false, 400);
+
+                Rect maximized = UiThread.Invoke(() => window!.RestoreBounds);
+
+                Assert.True(maximized == normal,
+                    $"RestoreBounds changed when the window was maximized: {normal} became {maximized}. " +
+                    "It is meant to be the rect the window will return to, which is the one it had " +
+                    "before -- reporting the maximized rect makes it useless for the one job it has.");
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    UiThread.Invoke(() => { try { window.Close(); } catch { } });
+                }
+            }
+        }
+
+        /// <summary>
         /// A window that OPENS maximized must report itself maximized once it is up.
         /// </summary>
         /// <remarks>

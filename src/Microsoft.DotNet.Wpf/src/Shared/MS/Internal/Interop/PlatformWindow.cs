@@ -121,6 +121,29 @@ namespace MS.Internal.Interop
         /// </remarks>
         int GetWindowState() => 1;   // SW_NORMAL
 
+        /// <summary>
+        /// Where this window will be when it is restored: its outer rect in SCREEN device pixels,
+        /// top-left origin, as it was the last time the window was in the normal state.
+        /// </summary>
+        /// <remarks>
+        /// This is what Window.RestoreBounds reports, through GetWindowPlacement's rcNormalPosition,
+        /// and it is the value an application persists to reopen where the user left it. The point of
+        /// it is that a MAXIMIZED window still answers with its unmaximized rect -- so a head has to
+        /// remember, because a maximized window no longer knows.
+        ///
+        /// Off Windows this used to be fabricated: the origin was always (0,0) and the size was
+        /// whatever the window measured NOW, so RestoreBounds was wrong for every window and reported
+        /// the full-screen size for a maximized one, which is the single case it exists to get right.
+        ///
+        /// The default answers with the window as it stands, which is correct whenever the window is
+        /// not maximized and is the best a head that does not track this can do.
+        /// </remarks>
+        void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height)
+        {
+            GetClientScreenOriginPixels(out x, out y);
+            GetWindowPixelSize(out width, out height);
+        }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>

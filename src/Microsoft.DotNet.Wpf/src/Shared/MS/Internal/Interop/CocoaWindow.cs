@@ -1071,6 +1071,44 @@ namespace MS.Internal.Interop
             return SendBool(_window, Sel("isZoomed")) ? SwShowMaximized : SwNormal;
         }
 
+        // The outer rect the window had when it was last NOT maximized, in top-left screen device
+        // pixels. Remembered rather than asked for, because AppKit does not expose the frame -zoom
+        // will restore to: a zoomed window's -frame IS the zoomed one.
+        private int _restoreX, _restoreY, _restoreW, _restoreH;
+        private bool _haveRestoreBounds;
+
+        /// <inheritdoc/>
+        public void GetRestoreBoundsPixels(out int x, out int y, out int width, out int height)
+        {
+            if (_haveRestoreBounds)
+            {
+                x = _restoreX; y = _restoreY; width = _restoreW; height = _restoreH;
+                return;
+            }
+
+            CurrentOuterRectPixels(out x, out y, out width, out height);
+        }
+
+        /// <summary>The window's outer rect right now, in top-left screen device pixels.</summary>
+        private void CurrentOuterRectPixels(out int x, out int y, out int width, out int height)
+        {
+            x = 0; y = 0; width = 0; height = 0;
+            if (_window == IntPtr.Zero) return;
+
+            NSRect frame = SendRect(_window, Sel("frame"));   // screen points, BOTTOM-left origin
+            double scale = GetBackingScale();
+            double screenH = PrimaryScreenHeightPoints();
+
+            x = (int)Math.Round(frame.x * scale);
+            y = (int)Math.Round((screenH - frame.y - frame.height) * scale);
+
+            // The SIZE comes from GetWindowPixelSize, not from the frame: that is the outer size WPF
+            // was given (it includes the side frame this head fabricates so a client width matches
+            // Win32), and RestoreBounds has to agree with Window.Width or round-tripping it moves the
+            // window a little every time.
+            GetWindowPixelSize(out width, out height);
+        }
+
         public double GetRefreshRateHz()
         {
             IntPtr screen = _window != IntPtr.Zero ? Send(_window, Sel("screen")) : IntPtr.Zero;
@@ -1844,6 +1882,22 @@ namespace MS.Internal.Interop
             int state = GetWindowState();
             bool stateChanged = state != _lastReportedState;
             _lastReportedState = state;
+
+            // While the window is normal AND SITTING STILL, its rect IS its restore rect -- so keep a
+            // copy for once it is not.
+            //
+            // "Sitting still" is the load-bearing half. A zoom ANIMATES, and -isZoomed does not become
+            // true until the animation ends, so a poll that records whenever the state reads normal
+            // spends the whole animation overwriting the restore rect with ever-larger intermediate
+            // frames: RestoreBounds came out as 3835x1084, all but the maximized size, having been
+            // captured one frame before the state flipped. Requiring an unchanged size skips every
+            // one of those, and leaves the last rect the window actually rested at.
+            const int SwNormalState = 1;
+            if (state == SwNormalState && w == _lastReportedW && h == _lastReportedH)
+            {
+                CurrentOuterRectPixels(out _restoreX, out _restoreY, out _restoreW, out _restoreH);
+                _haveRestoreBounds = true;
+            }
 
             if (w != _lastReportedW || h != _lastReportedH || stateChanged)
             {
