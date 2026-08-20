@@ -37,13 +37,37 @@ PROJECTS=(
   "$REPO/src/Microsoft.DotNet.Wpf/src/WgpuInterop/tests/WgpuInterop.Tests/WgpuInterop.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Platform.Tests/Wpf.Platform.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Accessibility.Tests/Wpf.Accessibility.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Dialog.Tests/Wpf.Dialog.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Document.Tests/Wpf.Document.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Geometry.Tests/Wpf.Geometry.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Imaging.Tests/Wpf.Imaging.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Input.Tests/Wpf.Input.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Printing.Tests/Wpf.Printing.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Text.Tests/Wpf.Text.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.WebView.Tests/Wpf.WebView.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.WinFormsInterop.Tests/Wpf.WinFormsInterop.Tests.csproj"
 )
+
+# Keeping the list complete by ASKING rather than by remembering. The comment above has said "keep
+# this list complete" since the printing suite went missing, and three more suites (dialog, imaging,
+# WinForms interop) had gone missing again by the time anyone looked -- so a suite written, reviewed
+# and committed never ran here, which is indistinguishable from a suite that passes.
+#
+# Anything under tests/CrossPlatform is a suite this script owes a run. WgpuInterop.Tests lives
+# elsewhere and is listed by hand, so it is not swept up here.
+_missing=""
+for _found in "$REPO"/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/*/*.csproj; do
+  case " ${PROJECTS[*]} " in
+    *" $_found "*) ;;
+    *) _missing="$_missing
+  $(basename "$_found")" ;;
+  esac
+done
+if [ -n "$_missing" ]; then
+  echo "error: these test projects exist but this script does not run them:$_missing" >&2
+  echo "       Add them to PROJECTS in $(basename "${BASH_SOURCE[0]}")." >&2
+  exit 1
+fi
 
 FILTER=()
 PLATFORM_ARGS=()
