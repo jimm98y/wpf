@@ -314,6 +314,41 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>Primary screen bounds and work area in top-left device pixels.</summary>
+        /// <summary>How many displays are attached. One, for a head whose window IS the screen.</summary>
+        public static int GetMonitorCount() => OperatingSystem.IsMacOS() ? CocoaWindow.GetMonitorCount() : 1;
+
+        /// <summary>
+        /// One display's full and working bounds in device pixels, top-left origin. Index 0 is the
+        /// primary. Heads with a single display answer for it whatever index is asked for, which is
+        /// what they did when there was only one answer to give.
+        /// </summary>
+        public static bool GetMonitorPixels(
+            int index,
+            out int monLeft, out int monTop, out int monRight, out int monBottom,
+            out int workLeft, out int workTop, out int workRight, out int workBottom,
+            out bool isPrimary)
+        {
+            if (OperatingSystem.IsMacOS())
+            {
+                return CocoaWindow.GetMonitorPixels(index,
+                    out monLeft, out monTop, out monRight, out monBottom,
+                    out workLeft, out workTop, out workRight, out workBottom, out isPrimary);
+            }
+
+            isPrimary = true;
+            return GetPrimaryScreenPixels(
+                out monLeft, out monTop, out monRight, out monBottom,
+                out workLeft, out workTop, out workRight, out workBottom);
+        }
+
+        /// <summary>The display a window is on, as an index; 0 when the head has only one.</summary>
+        public static int MonitorIndexFromWindow(IntPtr handle)
+            => FromHandle(handle) is CocoaWindow cocoa ? cocoa.GetMonitorIndex() : 0;
+
+        /// <summary>The display containing a point in device pixels, or the nearest one.</summary>
+        public static int MonitorIndexFromPointPixels(int x, int y)
+            => OperatingSystem.IsMacOS() ? CocoaWindow.MonitorIndexFromPointPixels(x, y) : 0;
+
         public static bool GetPrimaryScreenPixels(
             out int monLeft, out int monTop, out int monRight, out int monBottom,
             out int workLeft, out int workTop, out int workRight, out int workBottom)

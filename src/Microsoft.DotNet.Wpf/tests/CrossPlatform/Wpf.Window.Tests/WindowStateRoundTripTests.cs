@@ -141,11 +141,25 @@ namespace Wpf.Window.Tests
                 UiThread.WaitUntil(() => false, 500);
                 Point after = UiThread.Invoke(() => content.PointToScreen(new Point(0, 0)));
 
-                Assert.True(Math.Abs((after.X - before.X) - 100) <= 2 && Math.Abs((after.Y - before.Y) - 100) <= 2,
-                    $"moving the window 100 by 100 moved its content from {before} to {after}, "
-                    + $"a delta of ({after.X - before.X},{after.Y - before.Y}). Left and Top report "
-                    + "the values that were written to them either way, so only the content's screen "
-                    + "position says whether the window moved.");
+                // PointToScreen answers in DEVICE PIXELS while Left and Top are DIPs, so the expected
+                // delta is 100 scaled by whatever this display is -- read from the window rather than
+                // assumed, or the test passes only on the machine it was written on.
+                double scale = UiThread.Invoke(() =>
+                {
+                    IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window!).Handle;
+                    double s = MS.Internal.Interop.PlatformWindow.FromHandle(handle).GetBackingScale();
+                    return s > 0 ? s : 1.0;
+                });
+                double expected = 100 * scale;
+                double tolerance = Math.Max(2, scale);
+
+                Assert.True(Math.Abs((after.X - before.X) - expected) <= tolerance
+                         && Math.Abs((after.Y - before.Y) - expected) <= tolerance,
+                    $"moving the window 100 by 100 DIPs should move its content {expected} device "
+                    + $"pixels at scale {scale}, but it went from {before} to {after}, a delta of "
+                    + $"({after.X - before.X},{after.Y - before.Y}). Left and Top report the values "
+                    + "written to them either way, so only the content's screen position says whether "
+                    + "the window moved.");
             }
             finally
             {

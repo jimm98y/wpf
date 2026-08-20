@@ -954,6 +954,144 @@ namespace MS.Internal.Interop
             return primary == IntPtr.Zero ? 1 : SendDouble(primary, Sel("backingScaleFactor"));
         }
 
+        // ---- displays ---------------------------------------------------------------
+        //
+        // Everything above this point describes ONE screen, because that is all the shims ever asked
+        // for: MonitorFromWindow handed back a fixed fake handle and GetMonitorInfo filled the struct
+        // from the primary screen whatever handle it was given. A window on a second display was
+        // therefore told it was on the primary -- wrong bounds, wrong work area, wrong DPI -- which
+        // reaches CenterScreen, the RestoreBounds conversion, popup clamping and maximize sizing.
+        //
+        // COORDINATES. Screens are reported in the same space GetClientScreenOriginPixels puts a
+        // window in: global POINTS with the primary screen's top-left as the origin and y growing
+        // down, scaled to device pixels by the scale of the screen being described. A window and the
+        // screen it is on therefore always agree, which is what every consumer of these numbers
+        // needs; two screens of different DPI do not share one pixel grid, and Windows does not give
+        // them one either.
+
+        /// <summary>How many displays are attached.</summary>
+        public static int GetMonitorCount()
+        {
+            EnsureApplication();
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            return screens == IntPtr.Zero ? 0 : (int)SendNUInt(screens, Sel("count"));
+        }
+
+        /// <summary>
+        /// One display's full and working bounds, in the global pixel space described above.
+        /// Index 0 is the primary; false when there is no such display.
+        /// </summary>
+        public static bool GetMonitorPixels(
+            int index,
+            out int monLeft, out int monTop, out int monRight, out int monBottom,
+            out int workLeft, out int workTop, out int workRight, out int workBottom,
+            out bool isPrimary)
+        {
+            monLeft = monTop = monRight = monBottom = 0;
+            workLeft = workTop = workRight = workBottom = 0;
+            isPrimary = false;
+
+            IntPtr screen = ScreenAt(index);
+            if (screen == IntPtr.Zero) return false;
+
+            double scale = SendDouble(screen, Sel("backingScaleFactor"));
+            if (scale <= 0) scale = 1.0;
+
+            double primaryHeight = PrimaryScreenHeightPoints();
+            NSRect frame = SendRect(screen, Sel("frame"));         // global points, bottom-left
+            NSRect vis = SendRect(screen, Sel("visibleFrame"));    // work area, same space
+
+            // Flip each rect's BOTTOM edge into a top-left origin against the primary's height.
+            double monTopPt = primaryHeight - (frame.y + frame.height);
+            double workTopPt = primaryHeight - (vis.y + vis.height);
+
+            monLeft = (int)Math.Round(frame.x * scale);
+            monTop = (int)Math.Round(monTopPt * scale);
+            monRight = (int)Math.Round((frame.x + frame.width) * scale);
+            monBottom = (int)Math.Round((monTopPt + frame.height) * scale);
+
+            workLeft = (int)Math.Round(vis.x * scale);
+            workTop = (int)Math.Round(workTopPt * scale);
+            workRight = (int)Math.Round((vis.x + vis.width) * scale);
+            workBottom = (int)Math.Round((workTopPt + vis.height) * scale);
+
+            isPrimary = index == 0;
+            return true;
+        }
+
+        /// <summary>The display this window is on, as an index into the screen list.</summary>
+        /// <remarks>
+        /// -[NSWindow screen] is nil for a window that is off-screen or not yet placed, which is not
+        /// an error: the primary is the same answer the shims gave before and the right one for a
+        /// window that is nowhere in particular.
+        /// </remarks>
+        public int GetMonitorIndex()
+        {
+            if (_window == IntPtr.Zero) return 0;
+            return IndexOfScreen(Send(_window, Sel("screen")));
+        }
+
+        /// <summary>
+        /// The display containing a point given in the global pixel space, or the nearest one.
+        /// </summary>
+        /// <remarks>
+        /// Nearest rather than none, because MonitorFromRect's callers pass rectangles that may be
+        /// off every screen -- a window being restored onto a display that has since been unplugged
+        /// is the everyday case -- and Win32's MONITOR_DEFAULTTONEAREST is what they ask for.
+        /// </remarks>
+        public static int MonitorIndexFromPointPixels(int x, int y)
+        {
+            int count = GetMonitorCount();
+            int nearest = 0;
+            long nearestDistance = long.MaxValue;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!GetMonitorPixels(i, out int l, out int t, out int r, out int b,
+                                      out _, out _, out _, out _, out _))
+                {
+                    continue;
+                }
+
+                if (x >= l && x < r && y >= t && y < b) return i;
+
+                long dx = x < l ? l - x : x >= r ? x - r + 1 : 0;
+                long dy = y < t ? t - y : y >= b ? y - b + 1 : 0;
+                long distance = dx * dx + dy * dy;
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = i;
+                }
+            }
+
+            return nearest;
+        }
+
+        private static IntPtr ScreenAt(int index)
+        {
+            EnsureApplication();
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            if (screens == IntPtr.Zero) return IntPtr.Zero;
+            return index >= 0 && index < (int)SendNUInt(screens, Sel("count"))
+                ? SendPtrNUInt(screens, Sel("objectAtIndex:"), (nuint)index)
+                : IntPtr.Zero;
+        }
+
+        private static int IndexOfScreen(IntPtr screen)
+        {
+            if (screen == IntPtr.Zero) return 0;
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            if (screens == IntPtr.Zero) return 0;
+
+            int count = (int)SendNUInt(screens, Sel("count"));
+            for (int i = 0; i < count; i++)
+            {
+                if (SendPtrNUInt(screens, Sel("objectAtIndex:"), (nuint)i) == screen) return i;
+            }
+            return 0;
+        }
+
         private static double PrimaryScreenHeightPoints()
         {
             // Win32 screen coordinates are anchored to the primary monitor's top-left; Cocoa's global

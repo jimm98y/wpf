@@ -51,21 +51,39 @@ namespace MS.Win32
 
         // Off-Windows there is no HMONITOR; the MonitorFrom* guards below hand back this non-null
         // sentinel so callers proceed to GetMonitorInfo (whose guard fills the real Cocoa screen rect).
-        private static readonly IntPtr s_macMonitor = (IntPtr)1;
+        // A monitor HANDLE off Windows is the display's index plus one, so that zero stays "no
+        // monitor" as Win32 means it. It used to be a single fixed value for every window and every
+        // rect, which is what made a second display invisible to WPF: MonitorFromWindow could not
+        // distinguish one, and GetMonitorInfo had nothing to look up.
+        private static IntPtr MonitorHandle(int index) => (IntPtr)(index + 1);
+
+        private static int MonitorIndex(IntPtr handle)
+        {
+            int index = (int)handle - 1;
+            return index < 0 ? 0 : index;
+        }
 
         internal static void GetMonitorInfo(HandleRef hmonitor, [In, Out] NativeMethods.MONITORINFOEX info)
         {
-            // user32 GetMonitorInfo is Windows-only; off-Windows populate the struct from the primary
-            // Cocoa screen (device pixels, top-left origin) so Window.CenterScreen / work-area clamping
-            // work instead of P/Invoking a missing user32.dll (which FailFasts the app).
+            // user32 GetMonitorInfo is Windows-only. Off Windows this answered from the PRIMARY
+            // screen whatever handle it was given, and flagged every monitor as the primary one -- so
+            // a window on a second display was told it had the primary's bounds, work area and DPI.
             if (!System.OperatingSystem.IsWindows())
             {
-                int ml = 0, mt = 0, mr = 1920, mb = 1080, wl = 0, wt = 0, wr = 1920, wb = 1080;
-                MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
-                    out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
+                if (!MS.Internal.Interop.PlatformWindow.GetMonitorPixels(MonitorIndex(hmonitor.Handle),
+                        out int ml, out int mt, out int mr, out int mb,
+                        out int wl, out int wt, out int wr, out int wb, out bool isPrimary))
+                {
+                    // An unplugged display: answer for the primary rather than leave the struct
+                    // empty, which would centre windows on a zero-sized screen.
+                    MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                        out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
+                    isPrimary = true;
+                }
+
                 info.rcMonitor = new NativeMethods.RECT(ml, mt, mr, mb);
                 info.rcWork = new NativeMethods.RECT(wl, wt, wr, wb);
-                info.dwFlags = 1; // MONITORINFOF_PRIMARY
+                info.dwFlags = isPrimary ? 1 : 0;   // MONITORINFOF_PRIMARY
                 return;
             }
 
@@ -78,21 +96,39 @@ namespace MS.Win32
 
         public static IntPtr MonitorFromPoint(NativeMethods.POINT pt, int flags)
         {
-            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MonitorHandle(
+                    MS.Internal.Interop.PlatformWindow.MonitorIndexFromPointPixels(pt.x, pt.y));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromPoint(pt, flags);
         }
 
 
         public static IntPtr MonitorFromRect(ref NativeMethods.RECT rect, int flags)
         {
-            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
+            if (!System.OperatingSystem.IsWindows())
+            {
+                // The rect's CENTRE decides, which is what Win32 does for a rect straddling two
+                // displays and matters for a window dragged half-way across the join.
+                return MonitorHandle(MS.Internal.Interop.PlatformWindow.MonitorIndexFromPointPixels(
+                    rect.left + (rect.right - rect.left) / 2,
+                    rect.top + (rect.bottom - rect.top) / 2));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromRect(ref rect, flags);
         }
 
 
         public static IntPtr MonitorFromWindow(HandleRef handle, int flags)
         {
-            if (!System.OperatingSystem.IsWindows()) return s_macMonitor;
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MonitorHandle(
+                    MS.Internal.Interop.PlatformWindow.MonitorIndexFromWindow(handle.Handle));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromWindow(handle, flags);
         }
 

@@ -183,6 +183,10 @@ namespace MS.Internal.Interop
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public static int GetMonitorCount() { throw null; }
+        public static bool GetMonitorPixels(int index, out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom, out bool isPrimary) { throw null; }
+        public int GetMonitorIndex() { throw null; }
+        public static int MonitorIndexFromPointPixels(int x, int y) { throw null; }
         public void GetWindowPixelSize(out int width, out int height) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static bool IsSystemDarkTheme() { throw null; }
@@ -391,6 +395,10 @@ namespace MS.Internal.Interop
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static MS.Internal.Interop.IPlatformWindow FromHandle(System.IntPtr handle) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public static int GetMonitorCount() { throw null; }
+        public static bool GetMonitorPixels(int index, out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom, out bool isPrimary) { throw null; }
+        public static int MonitorIndexFromWindow(System.IntPtr handle) { throw null; }
+        public static int MonitorIndexFromPointPixels(int x, int y) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static void SetTitle(System.IntPtr handle, string title) { }
     }
