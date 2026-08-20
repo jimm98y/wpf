@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Windows.Media.Composition;
@@ -235,7 +235,24 @@ namespace System.Windows.Media.Imaging
                     // update the local palette
                     if (_format.Palettized)
                     {
-                        _palette = Imaging.BitmapPalette.CreateFromBitmapSource(this);
+                        // CreateFromBitmapSource reads the palette off the native
+                        // IWICBitmapSource, and a managed-backed source has none -- consumers key
+                        // off a null handle (see WicSourceHandle). Asking anyway handed a null
+                        // SafeHandle to the P/Invoke:
+                        //
+                        //   System.ArgumentNullException: SafeHandle cannot be null. (Parameter 'pHandle')
+                        //      at BitmapPalette.CreateFromBitmapSource(BitmapSource source)
+                        //      at BitmapSource.get_Palette()
+                        //      at FormatConvertedBitmap.FinalizeCreation()
+                        //
+                        // thrown from inside the render pass, which left the window black. A
+                        // managed source carries whatever palette it was given; there is nothing
+                        // to discover natively.
+                        BitmapSourceSafeMILHandle wicSource = WicSourceHandle;
+                        if (wicSource != null && !wicSource.IsInvalid)
+                        {
+                            _palette = Imaging.BitmapPalette.CreateFromBitmapSource(this);
+                        }
                     }
                 }
 

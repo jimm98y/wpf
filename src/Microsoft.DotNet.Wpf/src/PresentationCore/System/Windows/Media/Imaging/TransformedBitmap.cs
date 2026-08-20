@@ -154,29 +154,97 @@ namespace System.Windows.Media.Imaging
         ///
         // Managed WIC-free scale + flip/rotate of a Bgra32 source (off-Windows). Returns false if the
         // source has no managed pixel backing (falls back to the native path, which will throw).
+        /// <summary>
+        /// The source's pixels as a tightly packed buffer, with the bytes per pixel to read them
+        /// by. Whole-byte formats are returned as they are; a sub-byte format (1/2/4bpp indexed or
+        /// grey) is expanded to Bgra32 through its palette, because the scale and rotate below
+        /// address whole pixels and cannot index into a packed byte.
+        /// </summary>
+        private static bool ReadSourcePixels(BitmapSource source, int sw, int sh,
+            out byte[] pixels, out int stride, out int bytesPerPixel)
+        {
+            pixels = null; stride = 0; bytesPerPixel = 0;
+
+            int bits = source.Format.BitsPerPixel;
+            if (bits <= 0) return false;
+
+            var rect = new Int32Rect(0, 0, sw, sh);
+            int packedStride = (sw * bits + 7) / 8;
+            byte[] packed = new byte[checked(packedStride * sh)];
+            try
+            {
+                source.CopyPixels(rect, packed, packedStride, 0);
+            }
+            catch (Exception)
+            {
+                return false;       // unreadable source: let the caller fall back
+            }
+
+            if (bits % 8 == 0)
+            {
+                pixels = packed;
+                stride = packedStride;
+                bytesPerPixel = bits / 8;
+                return true;
+            }
+
+            // Sub-byte: expand through the palette (or a grey ramp when there is none).
+            System.Collections.Generic.IList<Color> colors = null;
+            BitmapPalette palette = source.Palette;
+            if (palette != null) colors = palette.Colors;
+
+            int mask = (1 << bits) - 1;
+            int perByte = 8 / bits;
+            stride = sw * 4;
+            pixels = new byte[checked(stride * sh)];
+            for (int y = 0; y < sh; y++)
+            {
+                int rowStart = y * packedStride;
+                for (int x = 0; x < sw; x++)
+                {
+                    int bitPos = x * bits;
+                    int byteIndex = rowStart + (bitPos >> 3);
+                    if (byteIndex >= packed.Length) continue;
+                    int shift = 8 - bits - (bitPos & 7);
+                    int index = (packed[byteIndex] >> shift) & mask;
+
+                    byte b, g, r, a;
+                    if (colors != null && index < colors.Count)
+                    {
+                        Color c = colors[index];
+                        b = c.B; g = c.G; r = c.R; a = c.A;
+                    }
+                    else
+                    {
+                        byte level = (byte)(mask == 0 ? 0 : index * 255 / mask);
+                        b = g = r = level; a = 255;
+                    }
+
+                    int d = y * stride + x * 4;
+                    pixels[d] = b; pixels[d + 1] = g; pixels[d + 2] = r; pixels[d + 3] = a;
+                }
+            }
+            bytesPerPixel = 4;
+            return true;
+        }
+
         private static bool ManagedTransform(BitmapSource source, double scaleX, double scaleY,
             WICBitmapTransformOptions options, out byte[] result, out int outW, out int outH, out int bpp)
         {
             result = null; outW = 0; outH = 0; bpp = 0;
-            byte[] src = source?._managedPixels;
-            if (src == null) return false;
-            int sw = source.PixelWidth, sh = source.PixelHeight, sstride = source._managedStride;
-            if (sw <= 0 || sh <= 0 || sstride <= 0) return false;
+            if (source == null) return false;
+            int sw = source.PixelWidth, sh = source.PixelHeight;
+            if (sw <= 0 || sh <= 0) return false;
 
-            // The managed backing is NOT necessarily Bgra32 -- it holds whatever the decoder
-            // produced, and an icon or a palettised PNG decodes to 24bpp or to an indexed format.
-            // Assuming four bytes per pixel read past the end of the very first row:
-            //
-            //   System.ArgumentException: Source array was not long enough. (Parameter 'sourceArray')
-            //      at System.Windows.Media.Imaging.TransformedBitmap.ManagedTransform(...)
-            //
-            // and because this runs from BitmapImage.FinalizeCreation, inside a template, WPF turned
-            // it into a XamlParseException on EVERY layout pass -- thousands of them, which wedged
-            // the application rather than losing one image. Work in the source's own pixel size and
-            // hand the result back in the source's own format.
-            int bitsPerPixel = source.Format.BitsPerPixel;
-            if (bitsPerPixel <= 0 || bitsPerPixel % 8 != 0) return false;   // sub-byte: leave it to WIC
-            bpp = bitsPerPixel / 8;
+            // Read through CopyPixels rather than reaching into _managedPixels: it is the accessor
+            // that knows how the source stores its pixels, including the bit-shifting a sub-byte
+            // format needs. Going straight to the field meant a source without a managed backing
+            // fell through to the WIC path below, and a managed-only source has no native handle
+            // there -- "SafeHandle cannot be null (pHandle)", thrown out of FinalizeCreation on
+            // every layout pass.
+            byte[] src;
+            int sstride;
+            if (!ReadSourcePixels(source, sw, sh, out src, out sstride, out bpp)) return false;
 
             // 1) nearest-neighbour scale
             int cw = Math.Max(1, (int)(scaleX * sw + 0.5));
@@ -254,10 +322,13 @@ namespace System.Windows.Media.Imaging
             {
                 _managedPixels = mpx;
                 _managedStride = mw * mbpp;
-                // The transform moves pixels around; it does not convert them. Publishing Bgra32
-                // regardless made every non-32bpp source render as garbage.
-                _format = _source.Format;
-                _palette = _source.Palette;
+                // The transform moves pixels around; it does not convert them, so the result keeps
+                // the source's format -- publishing Bgra32 regardless made every non-32bpp source
+                // render as garbage. The one exception is a sub-byte source, which ReadSourcePixels
+                // has already expanded through its palette to reach whole pixels.
+                bool expanded = _source.Format.BitsPerPixel != mbpp * 8;
+                _format = expanded ? PixelFormats.Bgra32 : _source.Format;
+                _palette = expanded ? null : _source.Palette;
                 _pixelWidth = mw;
                 _pixelHeight = mh;
                 _isSourceCached = _source.IsSourceCached;
