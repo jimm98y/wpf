@@ -1394,20 +1394,32 @@ namespace System.Drawing
 				// the run and offsetting within the layout rectangle. MeasureString uses libgdiplus for
 				// MEASUREMENT only — the glyphs are still rasterized by WGSL at present time.
 				float emPx = font.SizeInPoints * 96f / 72f;
-				float tx = layoutRectangle.X, ty = layoutRectangle.Y;
-				if (format != null && (layoutRectangle.Width > 0 || layoutRectangle.Height > 0)) {
-					// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
-					WebGpuBackend.GpuRaster.MeasureText (s, emPx, out float mw, out float mh);
-					if (layoutRectangle.Width > 0) {
+				int argb = ArgbOf (brush);
+
+				// Multi-line strings arrive here whole -- a message box's text, a multi-line Label.
+				// The recorder draws ONE run, so every newline became a glyph and the whole message
+				// one very long line: an exception message came out about 15000px wide, past the
+				// GPU's maximum texture dimension, and the window presented nothing at all. Draw a
+				// run per line, and align each line within the layout rectangle on its own.
+				string[] lines = s.Split ('\n');
+				float ty = layoutRectangle.Y;
+				if (format != null && layoutRectangle.Height > 0) {
+					float totalH = emPx * lines.Length;
+					if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - totalH) / 2f;
+					else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - totalH;
+				}
+				for (int i = 0; i < lines.Length; i++) {
+					string line = lines[i].TrimEnd ('\r');
+					if (line.Length == 0) continue;
+					float tx = layoutRectangle.X;
+					if (format != null && layoutRectangle.Width > 0) {
+						// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
+						WebGpuBackend.GpuRaster.MeasureText (line, emPx, out float mw, out float mh);
 						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
 						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
 					}
-					if (layoutRectangle.Height > 0) {
-						if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - mh) / 2f;
-						else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - mh;
-					}
+					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb);
 				}
-				GpuRecorder.DrawText (s, tx, ty, emPx, ArgbOf (brush));
 				return;
 			}
 

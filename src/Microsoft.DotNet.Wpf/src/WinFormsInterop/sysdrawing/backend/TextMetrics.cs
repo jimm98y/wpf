@@ -21,12 +21,26 @@ namespace System.Drawing.WebGpuBackend
             height = emPx;
             width = 0f;
             if (string.IsNullOrEmpty(text)) return;
-            lock (Buf)
+
+            // Multi-line text arrives here as one string. Shaping it whole turned each newline into
+            // a glyph and made the width the sum of EVERY line: a 24-line exception message measured
+            // about 15000px wide, past the GPU's maximum texture dimension, and the window it was in
+            // presented nothing at all. Measure line by line -- widest line, one line height each.
+            string[] lines = text.Split('\n');
+            height = emPx * lines.Length;
+            foreach (string raw in lines)
             {
-                Shaper.Shape((IShapingFont)Font, text, Buf);
-                float baseWidth = 0f;
-                foreach (ShapedGlyph g in Buf) baseWidth += g.Advance;
-                width = baseWidth * emPx / Font.PixelsPerEm;
+                string line = raw.TrimEnd('\r');
+                if (line.Length == 0) continue;
+                float lineWidth;
+                lock (Buf)
+                {
+                    Shaper.Shape((IShapingFont)Font, line, Buf);
+                    float baseWidth = 0f;
+                    foreach (ShapedGlyph g in Buf) baseWidth += g.Advance;
+                    lineWidth = baseWidth * emPx / Font.PixelsPerEm;
+                }
+                if (lineWidth > width) width = lineWidth;
             }
         }
 
