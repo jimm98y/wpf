@@ -90,10 +90,33 @@ namespace System.Windows.Forms
         internal static bool TickExternal()
         {
             if (!s_enabled) return false;
-            XplatUIWebGpu driver = XplatUIWebGpu.GetInstance();
-            if (driver != null) driver.TickTimers();
-            Application.DoEvents();
-            return Tick();
+            try
+            {
+                XplatUIWebGpu driver = XplatUIWebGpu.GetInstance();
+                if (driver != null) driver.TickTimers();
+                Application.DoEvents();
+                return Tick();
+            }
+            catch (Exception ex)
+            {
+                // This runs on the WPF dispatcher, so anything that escapes is reported to the
+                // application as an "unhandled WPF exception" -- a baffling label for what is
+                // really a WinForms paint, layout or timer failure, and one that fires again on
+                // every tick. WinForms' own message loop hands these to Application.ThreadException;
+                // do the same, and report each distinct failure once.
+                ReportTickFailure(ex);
+                return false;
+            }
+        }
+
+        private static readonly HashSet<string> s_reported = new HashSet<string>();
+
+        private static void ReportTickFailure(Exception ex)
+        {
+            string key = ex.GetType().FullName + "|" + ex.StackTrace;
+            if (!s_reported.Add(key)) return;      // same failure every frame: say it once
+            Console.Error.WriteLine("WinForms host tick failed: " + ex);
+            try { Application.OnThreadException(ex); } catch { }
         }
 
         /// <summary>Drive one frame: present the current UI, then route OS input back into the driver's

@@ -187,7 +187,14 @@ namespace System.Windows.Forms
 			static internal Control ControlFromHandle(IntPtr hWnd) {
 				ControlNativeWindow	window;
 
-				window = (ControlNativeWindow)NativeWindow.FromHandle (hWnd);
+				// A handle can belong to a NativeWindow that is not a control's: an application
+				// may subclass NativeWindow for a window of its own, and on this stack the WPF
+				// side does exactly that (SharpDevelop's HwndHost has a HostNativeWindow). Real
+				// WinForms answers null for those; the hard cast here threw InvalidCastException
+				// instead, out of Control.FromHandle -- which is on the path of Form.ShowDialog
+				// (owner), Form.Show (owner) and Screen.FromHandle, so EVERY dialog the app
+				// opened over its main window died, the error dialog reporting it included.
+				window = NativeWindow.FromHandle (hWnd) as ControlNativeWindow;
 				if (window != null) {
 					return window.owner;
 				}
@@ -199,7 +206,7 @@ namespace System.Windows.Forms
 				ControlNativeWindow	window;
 
 				while (handle != IntPtr.Zero) {
-					window = (ControlNativeWindow)NativeWindow.FromHandle (handle);
+					window = NativeWindow.FromHandle (handle) as ControlNativeWindow;   // may be an app's own NativeWindow
 					if (window != null) {
 						return window.owner;
 					}
