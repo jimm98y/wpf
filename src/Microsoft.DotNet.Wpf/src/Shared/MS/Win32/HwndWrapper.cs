@@ -518,8 +518,30 @@ namespace MS.Win32
         {
             if (_handle == IntPtr.Zero) return;
             const int WM_SIZE = 0x0005;
-            IntPtr wParam = IntPtr.Zero;    // SIZE_RESTORED
             IntPtr lParam = (IntPtr)(((height & 0xFFFF) << 16) | (width & 0xFFFF));
+
+            // The wParam is not decoration: it is the ONLY thing that tells WPF a window was
+            // maximized or minimized rather than merely resized (Window.WmSizeChanged switches on
+            // it, and WindowChromeWorker watches it to pad a custom-chromed window away from the
+            // screen edge). This used to be a hardcoded SIZE_RESTORED, so maximizing was invisible
+            // to the framework on every non-Windows head: WindowState stayed Normal after the user
+            // hit the zoom button, and StateChanged never fired at all.
+            //
+            // Both numberings are small and similar -- SW_SHOWMINIMIZED is 2 and so is
+            // SIZE_MAXIMIZED -- so the mapping is spelled out rather than arithmetic.
+            const int SW_NORMAL = 1, SW_SHOWMINIMIZED = 2, SW_SHOWMAXIMIZED = 3, SW_MINIMIZE = 6, SW_SHOWMINNOACTIVE = 7;
+            const int SIZE_RESTORED = 0, SIZE_MINIMIZED = 1, SIZE_MAXIMIZED = 2;
+
+            int state = SW_NORMAL;
+            try { state = _platformWindow?.GetWindowState() ?? SW_NORMAL; }
+            catch { /* a head that cannot answer is treated as normal, as it was before */ }
+
+            IntPtr wParam = (IntPtr)(state switch
+            {
+                SW_SHOWMAXIMIZED => SIZE_MAXIMIZED,
+                SW_SHOWMINIMIZED or SW_MINIMIZE or SW_SHOWMINNOACTIVE => SIZE_MINIMIZED,
+                _ => SIZE_RESTORED,
+            });
             bool handled = false;
             // A callback exception must not break the Cocoa event pump that raised the resize.
             try { WndProc(_handle, WM_SIZE, wParam, lParam, ref handled); }

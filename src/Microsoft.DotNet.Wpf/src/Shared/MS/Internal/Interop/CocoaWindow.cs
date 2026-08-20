@@ -1059,6 +1059,18 @@ namespace MS.Internal.Interop
             }
         }
 
+        /// <summary>
+        /// What AppKit says the window is now, in SW_* terms. Miniaturized wins over zoomed: a window
+        /// can be both, and Win32 reports such a window as minimized.
+        /// </summary>
+        public int GetWindowState()
+        {
+            const int SwNormal = 1, SwShowMinimized = 2, SwShowMaximized = 3;
+            if (_window == IntPtr.Zero) return SwNormal;
+            if (SendBool(_window, Sel("isMiniaturized"))) return SwShowMinimized;
+            return SendBool(_window, Sel("isZoomed")) ? SwShowMaximized : SwNormal;
+        }
+
         public double GetRefreshRateHz()
         {
             IntPtr screen = _window != IntPtr.Zero ? Send(_window, Sel("screen")) : IntPtr.Zero;
@@ -1823,13 +1835,27 @@ namespace MS.Internal.Interop
 
             GetContentSize(out int w, out int h);
             if (w <= 0 || h <= 0) return;
-            if (w != _lastReportedW || h != _lastReportedH)
+
+            // The STATE is reported the same way the size is, because that is how Win32 reports it:
+            // minimizing or maximizing a window sends WM_SIZE, and the wParam is what tells WPF which
+            // happened (see IPlatformWindow.GetWindowState). Raising on a state change with an
+            // unchanged size is therefore not a spurious resize -- it is the notification Windows
+            // sends when a window is miniaturized, which does not change its content size either.
+            int state = GetWindowState();
+            bool stateChanged = state != _lastReportedState;
+            _lastReportedState = state;
+
+            if (w != _lastReportedW || h != _lastReportedH || stateChanged)
             {
                 _lastReportedW = w;
                 _lastReportedH = h;
                 Resized?.Invoke(w, h);
             }
         }
+
+        // Seeded with SW_NORMAL, which is what a freshly created window is: a window that opens
+        // maximized then reports a change on its first poll, which is the notification WPF wants.
+        private int _lastReportedState = 1;
 
         private static void DetectResizes()
         {

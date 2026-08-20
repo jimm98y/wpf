@@ -222,6 +222,39 @@ namespace Wpf.Platform.Tests
             }
         }
 
+        /// <summary>
+        /// The head has to be able to SAY what state it is in, not just be put into one. WPF learns a
+        /// window's state from the WM_SIZE wParam, which off Windows is synthesised from this -- so a
+        /// head that always answers SW_NORMAL makes maximizing invisible to the framework:
+        /// Window.WindowState stays Normal after the user hits the zoom button and StateChanged never
+        /// fires for any transition. See IPlatformWindow.GetWindowState.
+        /// </summary>
+        [Fact]
+        public void TheHeadReportsTheStateItWasPutInto()
+        {
+            IPlatformWindow w = Window;
+            Normalize(w);
+
+            Assert.Equal(NativeMethods.SW_NORMAL, w.GetWindowState());
+
+            w.SetWindowState(NativeMethods.SW_SHOWMAXIMIZED);
+            SettleUntil(w, (_, _) => w.GetWindowState() == NativeMethods.SW_SHOWMAXIMIZED,
+                "the head still did not report itself maximized after SW_SHOWMAXIMIZED");
+
+            try
+            {
+                Assert.Equal(NativeMethods.SW_SHOWMAXIMIZED, w.GetWindowState());
+            }
+            finally
+            {
+                w.SetWindowState(NativeMethods.SW_RESTORE);
+            }
+
+            SettleUntil(w, (_, _) => w.GetWindowState() == NativeMethods.SW_NORMAL,
+                "the head still reported itself maximized after SW_RESTORE");
+            Assert.Equal(NativeMethods.SW_NORMAL, w.GetWindowState());
+        }
+
         // ---- helpers ----------------------------------------------------------------------------
 
         private const int SettleTimeoutMs = 5000;

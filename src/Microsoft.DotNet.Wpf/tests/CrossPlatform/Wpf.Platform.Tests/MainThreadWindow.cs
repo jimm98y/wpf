@@ -98,6 +98,12 @@ namespace Wpf.Platform.Tests
         public void SetWindowState(int state)
             => PlatformThread.InvokeOnMain(() => _inner.SetWindowState(state));
 
+        // Forwarded rather than inherited. IPlatformWindow gives GetWindowState a default body, so a
+        // wrapper that does not override it answers SW_NORMAL on its own behalf and never asks the
+        // window it wraps -- which would make the state test pass for the wrong reason on a head that
+        // reports nothing, and fail on one that does.
+        public int GetWindowState() => PlatformThread.InvokeOnMain(() => _inner.GetWindowState());
+
         public void BeginMoveDrag() => PlatformThread.InvokeOnMain(() => _inner.BeginMoveDrag());
 
         public void Destroy() => PlatformThread.InvokeOnMain(() => _inner.Destroy());

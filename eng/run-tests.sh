@@ -45,6 +45,7 @@ PROJECTS=(
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Printing.Tests/Wpf.Printing.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Text.Tests/Wpf.Text.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.WebView.Tests/Wpf.WebView.Tests.csproj"
+  "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.Window.Tests/Wpf.Window.Tests.csproj"
   "$REPO/src/Microsoft.DotNet.Wpf/tests/CrossPlatform/Wpf.WinFormsInterop.Tests/Wpf.WinFormsInterop.Tests.csproj"
 )
 

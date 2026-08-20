@@ -1015,6 +1015,22 @@ namespace MS.Internal.Interop.Wayland
         public static bool IsMaximized(IntPtr handle)
             => (FromHandle(handle)?._windowState & LibdecorWindowState.Maximized) != 0;
 
+        /// <summary>
+        /// The compositor's own answer, in SW_* terms -- see IPlatformWindow.GetWindowState for why
+        /// the framework needs it.
+        /// </summary>
+        /// <remarks>
+        /// Maximized or normal, never minimized: xdg-shell has no minimized STATE. A client can ask
+        /// to be minimized (xdg_toplevel.set_minimized) and the compositor never reports back that it
+        /// happened, because from the protocol's point of view a minimized window is simply one the
+        /// compositor has stopped sending frame callbacks to.
+        /// </remarks>
+        public int GetWindowState()
+        {
+            const int SwNormal = 1, SwShowMaximized = 3;
+            return (_windowState & LibdecorWindowState.Maximized) != 0 ? SwShowMaximized : SwNormal;
+        }
+
         // ---- The pump --------------------------------------------------------------------------
 
         /// <summary>

@@ -476,13 +476,46 @@ namespace MS.Win32
             return result;
         }
 
+        /// <summary>SW_NORMAL: the state a head reports when it is neither maximized nor minimized.</summary>
+        private const int SwNormalState = 1;
+
         internal static int GetWindowLong(HandleRef hWnd, int nIndex)
         {
-            // Window styles/exstyles are a Win32 concept. Off-Windows a WPF top-level Cocoa window
-            // is opaque, non-child, non-layered and LTR, i.e. no style bits the callers care about.
+            // Window styles/exstyles are a Win32 concept, and off Windows a top-level window is
+            // opaque, non-child, non-layered and LTR -- none of the bits the callers care about.
+            //
+            // Except two. WS_MAXIMIZE and WS_MINIMIZE are not style bits an app SETS; Windows keeps
+            // them as the window's current state, and WPF reads them back as exactly that:
+            // Window.OnWindowStateChanged restores a window only `if ((style & WS_MAXIMIZE) ==
+            // WS_MAXIMIZE)`. Answering a flat zero therefore made restoring a no-op off Windows --
+            // WindowState went to Normal, the window stayed maximized, and nothing reported an error
+            // because from WPF's side the window had never been maximized in the first place.
+            //
+            // It failed in one direction only, which is why it survived: the maximize branch tests
+            // the SAME bit the other way round (`!= WS_MAXIMIZE`), so maximizing worked and only
+            // coming back did not.
             if (!System.OperatingSystem.IsWindows())
             {
-                return 0;
+                if (nIndex != NativeMethods.GWL_STYLE)
+                {
+                    return 0;
+                }
+
+                const int SwShowMinimized = 2, SwShowMaximized = 3, SwMinimize = 6, SwShowMinNoActive = 7;
+                int state = SwNormalState;
+                try
+                {
+                    state = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetWindowState()
+                            ?? SwNormalState;
+                }
+                catch { /* a head that cannot answer is a window in no particular state */ }
+
+                return state switch
+                {
+                    SwShowMaximized => NativeMethods.WS_MAXIMIZE,
+                    SwShowMinimized or SwMinimize or SwShowMinNoActive => NativeMethods.WS_MINIMIZE,
+                    _ => 0,
+                };
             }
 
             int iResult = 0;

@@ -173,6 +173,7 @@ namespace MS.Internal.Interop
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
         public void SetWindowState(int state) { }
+        public int GetWindowState() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
@@ -329,6 +330,7 @@ namespace MS.Internal.Interop
         void Activate() { }
         double GetRefreshRateHz() { throw null; }
         void SetWindowState(int state) { }
+        int GetWindowState() { throw null; }
         void BeginMoveDrag();
         void Destroy();
         double GetBackingScale();
@@ -461,6 +463,7 @@ namespace MS.Internal.Interop.Wayland
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
         public void SetWindowState(int state) { }
+        public int GetWindowState() { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }

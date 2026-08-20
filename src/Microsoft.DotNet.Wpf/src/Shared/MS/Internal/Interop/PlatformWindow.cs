@@ -101,6 +101,26 @@ namespace MS.Internal.Interop
         /// </remarks>
         void SetWindowState(int state) { }
 
+        /// <summary>
+        /// The state the window is in NOW, as the SW_* value <see cref="SetWindowState"/> takes:
+        /// SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, or SW_NORMAL for everything else.
+        /// </summary>
+        /// <remarks>
+        /// Setting a state was only ever half of it. WPF learns a window's state from the WM_SIZE it
+        /// gets when the state changes -- the wParam says SIZE_MAXIMIZED, SIZE_MINIMIZED or
+        /// SIZE_RESTORED -- and off Windows that message is synthesised from the head's resize
+        /// notification, which had nothing to put in the wParam and always said SIZE_RESTORED.
+        ///
+        /// So maximizing was invisible to the framework. Window.WindowState stayed Normal when the
+        /// user hit the zoom button, StateChanged never fired for any transition, and WindowChrome --
+        /// which watches for SIZE_MAXIMIZED to add the padding that keeps a custom-chromed window's
+        /// content off the screen edge -- never adjusted. See Window.WmSizeChanged.
+        ///
+        /// A head that cannot tell says SW_NORMAL, which is what the synthesised message said before
+        /// and is the truth for the heads whose window IS the screen.
+        /// </remarks>
+        int GetWindowState() => 1;   // SW_NORMAL
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>
