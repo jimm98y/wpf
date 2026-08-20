@@ -48,6 +48,10 @@ namespace System.Drawing {
 		private StringTrimming _trimming;
 		private HotkeyPrefix _hotkey;
 
+		// GDI+ has no getter for the measurable character ranges, and the GPU-raster path in
+		// Graphics.MeasureCharacterRanges has to lay the ranges out itself, so keep a managed copy.
+		private CharacterRange [] _measurableRanges;
+
 		public StringFormat() : this (0, GDIPlus.LANG_NEUTRAL)
 		{
 		}
@@ -95,6 +99,8 @@ namespace System.Drawing {
 			this.language = format.language;
 			_align = format._align; _lineAlign = format._lineAlign;
 			_flags = format._flags; _trimming = format._trimming; _hotkey = format._hotkey;
+			_measurableRanges = (format._measurableRanges == null)
+				? null : (CharacterRange []) format._measurableRanges.Clone ();
 			if (GDIPlus.Initialized) {
 				Status status = GDIPlus.GdipCloneStringFormat (format.NativeObject, out nativeStrFmt);
 				GDIPlus.CheckStatus (status);
@@ -259,6 +265,7 @@ namespace System.Drawing {
 
       		public void SetMeasurableCharacterRanges (CharacterRange [] ranges)
 		{
+			_measurableRanges = (ranges == null) ? null : (CharacterRange []) ranges.Clone ();
 			if (!GDIPlus.Initialized) return;
 			Status status = GDIPlus.GdipSetStringFormatMeasurableCharacterRanges (nativeStrFmt,
 				ranges.Length,	ranges);
@@ -266,9 +273,15 @@ namespace System.Drawing {
 			GDIPlus.CheckStatus (status);
 		}
 
+		/// <summary>The ranges last passed to <see cref="SetMeasurableCharacterRanges"/>, or null.</summary>
+		internal CharacterRange [] MeasurableCharacterRanges {
+			get { return _measurableRanges; }
+		}
+
 		internal int GetMeasurableCharacterRangeCount ()
 		{
-			if (!GDIPlus.Initialized) return 0;
+			if (!GDIPlus.Initialized)
+				return (_measurableRanges == null) ? 0 : _measurableRanges.Length;
 			int cnt;
 			Status status = GDIPlus.GdipGetStringFormatMeasurableCharacterRangeCount (nativeStrFmt, out cnt);
 
@@ -284,7 +297,10 @@ namespace System.Drawing {
 			Status status = GDIPlus.GdipCloneStringFormat (nativeStrFmt, out native);
 			GDIPlus.CheckStatus (status);
 
-			return new StringFormat (native);
+			StringFormat clone = new StringFormat (native);
+			clone._measurableRanges = (_measurableRanges == null)
+				? null : (CharacterRange []) _measurableRanges.Clone ();
+			return clone;
 		}
 
 		public override string ToString()

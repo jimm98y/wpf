@@ -8,6 +8,7 @@ internal interface IWinFormsHost
     void Show();                              // create the native window + wgpu surface
     void Present();                           // reflect current UI state (present-on-change)
     bool Pump();                              // drain OS events -> driver input; false when closing
+    void Close();                             // destroy the native window (the form closed itself)
     void InjectClickScreen(int x, int y);     // inject a click (self-test)
     void SaveFrame(string path);              // save the current frame to a PNG (verification)
 }

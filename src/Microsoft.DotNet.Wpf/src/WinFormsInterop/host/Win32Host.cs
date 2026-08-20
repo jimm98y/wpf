@@ -19,7 +19,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret;
+    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree;
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
     private readonly Stopwatch _blink = Stopwatch.StartNew();
     private readonly WndProcDelegate _wndProc;  // rooted for the window's lifetime
@@ -42,9 +42,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
-        // Claim the app's on-screen host slot, so the driver's message loop drives THIS window
-        // rather than creating a second one of its own.
-        PresentationHost.Attach(this);
+        _getSubtree = M("GetSubtreeWindows");
+        // Register as the on-screen host for THIS form, so the driver's message loop drives this
+        // window rather than creating a second one of its own.
+        PresentationHost.Attach(this, form);
     }
 
     public void Show()
@@ -123,6 +124,17 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         }
     }
 
+    /// <summary>Take the window down because the form closed itself (an OK button rather than the
+    /// window close box). Idempotent.</summary>
+    public void Close()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        IntPtr hwnd = _hwnd;
+        _hwnd = IntPtr.Zero;
+        _quit = true;
+        DestroyWindow(hwnd);
+    }
+
     public bool Pump()
     {
         while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
@@ -155,8 +167,20 @@ internal sealed unsafe class Win32Host : IWinFormsHost
                 { _keyDown.Invoke(_driver, new object[] { vk }); Frame(); }
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
-            case 0x0010: DestroyWindow(hwnd); return IntPtr.Zero;                // WM_CLOSE
-            case 0x0002: PostQuitMessage(0); return IntPtr.Zero;                 // WM_DESTROY
+            // WM_CLOSE: close the FORM, not just its window. Destroying the window on its own left
+            // a dialog's modal loop running with nothing on screen, and the form still visible --
+            // so the next tick promptly gave it a new window. Honour a cancelled OnClosing too.
+            case 0x0010:
+                _form.Close();
+                if (!_form.Visible) DestroyWindow(hwnd);
+                return IntPtr.Zero;
+            // WM_DESTROY: end the message loop only when this was the last window. A dialog closing
+            // must not post a thread quit -- that would take the whole application down with it.
+            case 0x0002:
+                _quit = true;
+                PresentationHost.Detach(this);
+                if (PresentationHost.HostCount == 0) PostQuitMessage(0);
+                return IntPtr.Zero;
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
     }
@@ -241,7 +265,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 
     private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy)
     {
-        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        long[] wins = PresentWindows();
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
         var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
@@ -254,6 +278,41 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         var embedded = EmbeddedScenes.Get(ox, oy);
         if (embedded != null) list.AddRange(embedded);
         return list;
+    }
+
+    // Which of the driver's windows this host puts on screen, as {handle, screenX, screenY} triples.
+    //
+    // With a single host the answer is "all of them": GetPresentWindows returns every visible
+    // window sorted with this form's subtree first, and menus, combo drop-downs and tooltips -- all
+    // top-level windows of their own, in no form's subtree -- come along for free.
+    //
+    // That is wrong the moment a dialog opens a second window: each host would draw the other's
+    // content, positioned against its own origin. So each host takes its own subtree, and the
+    // newest host additionally claims everything no other host owns, which is where the popups of
+    // whichever window the user is working in live.
+    private long[] PresentWindows()
+    {
+        if (PresentationHost.HostCount <= 1 || _getSubtree == null)
+            return (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+
+        long[] mine = (long[])_getSubtree.Invoke(_driver, new object[] { _form.Handle });
+        if (!PresentationHost.IsTopHost(this)) return mine;
+
+        var claimed = new System.Collections.Generic.HashSet<long>();
+        for (int i = 0; i + 2 < mine.Length; i += 3) claimed.Add(mine[i]);
+        foreach (Form other in PresentationHost.OtherHostedForms(this))
+        {
+            if (other == null || other.IsDisposed || !other.IsHandleCreated) continue;
+            long[] theirs = (long[])_getSubtree.Invoke(_driver, new object[] { other.Handle });
+            for (int i = 0; i + 2 < theirs.Length; i += 3) claimed.Add(theirs[i]);
+        }
+
+        long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        var outl = new System.Collections.Generic.List<long>(mine.Length + 12);
+        outl.AddRange(mine);
+        for (int i = 0; i + 2 < all.Length; i += 3)
+            if (!claimed.Contains(all[i])) { outl.Add(all[i]); outl.Add(all[i + 1]); outl.Add(all[i + 2]); }
+        return outl.ToArray();
     }
 
     private Rectangle? GetCaretRect(int ox, int oy)

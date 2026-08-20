@@ -1,4 +1,4 @@
-﻿// System.Windows.Forms.Integration.WindowsFormsHost, for the cross-platform (WebGPU) stack. The
+// System.Windows.Forms.Integration.WindowsFormsHost, for the cross-platform (WebGPU) stack. The
 // mirror of ElementHost next door: that embeds a WPF element tree in a WinForms app, this embeds a
 // WinForms control tree in a WPF app. Same namespace, same type name and the same core API as the
 // Windows-only original, so existing app code -- `<WindowsFormsHost x:Name="host"/>` plus
@@ -31,6 +31,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
 using SD = System.Drawing;
 using SWF = System.Windows.Forms;
@@ -132,6 +133,12 @@ namespace System.Windows.Forms.Integration
                 StartPosition = SWF.FormStartPosition.Manual,
                 MinimumSize = SD.Size.Empty,
             };
+
+            // Never let this one reach the screen. It is a visible top-level Form, so without this
+            // the on-screen host would put an empty borderless window up for it -- and, before
+            // there could be more than one host, would ALSO leave the dialog the app had actually
+            // opened with no window at all.
+            SWF.PresentationHost.Suppress(_container);
 
             Focusable = true;                      // or typed text can never reach the hosted controls
             Loaded += (s, e) => Attach();
@@ -449,11 +456,35 @@ namespace System.Windows.Forms.Integration
         {
             XplatUIWebGpu.GetInstance();
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+            StartTopLevelPump();
 
             // An application that hosts WinForms through its OWN HwndHost subclass never
             // constructs a WindowsFormsHost, so this is the only place the claim handlers would
             // otherwise be installed from.
             ForeignHwndHostContent.Install();
+        }
+
+
+        // A top-level WinForms window in a WPF app has nothing driving it. PresentationHost.Tick is
+        // reached from XplatUIWebGpu.GetMessage -- i.e. from a WinForms message loop -- and a WPF
+        // app runs the WPF dispatcher instead. Form.ShowDialog happened to work, because a modal
+        // dialog runs a WinForms loop of its own; Form.Show did not, and a modeless dialog reported
+        // Visible == true while never appearing on screen. Drive the same tick from the dispatcher.
+        //
+        // The tick is cheap when there is nothing to do: it walks Application.OpenForms, finds no
+        // form that wants a window, and returns. It is only started from EnableWindowsFormsInterop,
+        // so a pure WinForms app (which drives Tick from its own loop) never gets a second driver.
+        private static DispatcherTimer s_topLevelPump;
+
+        private static void StartTopLevelPump()
+        {
+            if (s_topLevelPump != null) return;
+            s_topLevelPump = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(16),   // ~60Hz, the rate the hosts present at
+            };
+            s_topLevelPump.Tick += (s, e) => SWF.PresentationHost.Tick();
+            s_topLevelPump.Start();
         }
 
         private void Attach()

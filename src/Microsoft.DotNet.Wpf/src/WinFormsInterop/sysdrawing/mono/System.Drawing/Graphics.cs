@@ -2179,6 +2179,9 @@ namespace System.Drawing
 			if (regcount == 0)
 				return new Region[0];
 
+			if (s_gpuRasterMode)
+				return MeasureCharacterRangesManaged (text, font, layoutRect, stringFormat, regcount);
+
 			IntPtr[] native_regions = new IntPtr [regcount];
 			Region[] regions = new Region [regcount];
 			
@@ -2192,6 +2195,40 @@ namespace System.Drawing
 			GDIPlus.CheckStatus (status);				
 
 			return regions;							
+		}
+
+		// Managed character-range measurement for GPU-raster mode. The Font carries no native GDI+
+		// handle there (see Font.s_gpuRasterMode), so GdipMeasureCharacterRanges would fail with
+		// InvalidParameter. Lay the text out on a single line - the in-tree callers (TabControl tab
+		// sizing, LinkLabel link hit-testing) all measure with NoWrap - and turn each requested
+		// range into its bounding rectangle, using the same metrics the WGSL renderer draws with.
+		private Region[] MeasureCharacterRangesManaged (string text, Font font, RectangleF layoutRect,
+			StringFormat stringFormat, int regcount)
+		{
+			CharacterRange[] ranges = stringFormat.MeasurableCharacterRanges;
+			Region[] regions = new Region [regcount];
+			float em = font.SizeInPoints * 96f / 72f;
+
+			for (int i = 0; i < regcount; i++) {
+				CharacterRange range = (ranges != null && i < ranges.Length)
+					? ranges [i] : new CharacterRange (0, text.Length);
+
+				int first = Math.Max (0, Math.Min (range.First, text.Length));
+				int length = Math.Max (0, Math.Min (range.Length, text.Length - first));
+
+				float x = 0f, unused;
+				if (first > 0)
+					WebGpuBackend.GpuRaster.MeasureText (text.Substring (0, first), em, out x, out unused);
+
+				float w = 0f, h;
+				WebGpuBackend.GpuRaster.MeasureText (length > 0 ? text.Substring (first, length) : "I", em, out w, out h);
+				if (length == 0)
+					w = 0f;
+
+				regions [i] = new Region (new RectangleF (layoutRect.X + x, layoutRect.Y, w, h));
+			}
+
+			return regions;
 		}
 
 		private unsafe SizeF GdipMeasureString (IntPtr graphics, string text, Font font, ref RectangleF layoutRect,

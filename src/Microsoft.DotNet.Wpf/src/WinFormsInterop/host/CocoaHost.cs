@@ -44,7 +44,7 @@ internal sealed class CocoaHost : IWinFormsHost
         _getVersion = dt.GetMethod("GetPaintVersion", BindingFlags.NonPublic | BindingFlags.Instance);
         // Claim the app's on-screen host slot, so the driver's message loop drives THIS window
         // rather than creating a second one of its own.
-        PresentationHost.Attach(this);
+        PresentationHost.Attach(this, form);
     }
 
     // ---- composite the WinForms window tree into one bitmap ----------------------
@@ -308,6 +308,16 @@ internal sealed class CocoaHost : IWinFormsHost
 
     // Drain pending NSEvents; route mouse messages to the driver as SEPARATE down/up/move so
     // WinForms' pressed/hover repaints happen between frames. Non-blocking (nil-date poll).
+    /// <summary>Take the window down because the form closed itself (an OK button rather than the
+    /// window close box). Idempotent.</summary>
+    public void Close()
+    {
+        if (_window == IntPtr.Zero) return;
+        IntPtr win = _window;
+        _window = IntPtr.Zero;
+        Send(win, Sel("close"));
+    }
+
     public bool Pump()
     {
         while (true)
