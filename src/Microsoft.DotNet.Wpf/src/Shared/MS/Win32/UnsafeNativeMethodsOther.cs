@@ -366,23 +366,35 @@ namespace MS.Win32
 #endif // BASE_NATIVEMETHODS
 
 
+        /// <summary>
+        /// The part of a style write that means something off Windows: the resize chrome.
+        /// </summary>
+        /// <remarks>
+        /// Both entry points go through here, which is the point of it: HwndStyleManager.Flush uses
+        /// CriticalSetWindowLong and everything else uses SetWindowLong, so teaching one alone leaves
+        /// ResizeMode working at creation and inert afterwards. Safe only because GetWindowLong now
+        /// answers with these same bits -- see the note there.
+        /// </remarks>
+        private static void ApplyStyleOffWindows(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            if (nIndex != NativeMethods.GWL_STYLE)
+            {
+                return;
+            }
+
+            const int WS_MINIMIZEBOX = 0x00020000, WS_THICKFRAME = 0x00040000;
+            long style = dwNewLong.ToInt64();
+            MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)
+                ?.SetResizeMode((style & WS_THICKFRAME) != 0, (style & WS_MINIMIZEBOX) != 0);
+        }
+
         internal static IntPtr SetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
-            // No Win32 window styles to set off-Windows (see GetWindowLong); no-op.
-            //
-            // NOT a place to apply a style change, however tempting -- ResizeMode arrives here on a
-            // live window and it does not work. WPF's style writes are READ-MODIFY-WRITE:
-            // HwndStyleManager.StartManaging reads the current style through GetWindowLong, ORs the
-            // change into it and flushes the whole word back. GetWindowLong off Windows reports only
-            // the two STATE bits it can answer for, so the word that comes back has lost
-            // WS_THICKFRAME, WS_CAPTION and everything else -- and acting on it takes the chrome off
-            // windows that never asked. Tried, and it failed six tests that had been passing.
-            //
-            // Making this work means answering GetWindowLong with a faithful style word first, which
-            // is a larger piece of Win32 emulation than the one property needs. ResizeMode is applied
-            // at creation instead (HwndWrapper), which is where it is set in practice.
+            // Almost nothing to set off-Windows -- see GetWindowLong -- but ResizeMode is a style
+            // change, and this is the only route it has to a LIVE window.
             if (!System.OperatingSystem.IsWindows())
             {
+                ApplyStyleOffWindows(hWnd, nIndex, dwNewLong);
                 return IntPtr.Zero;
             }
 
@@ -410,10 +422,12 @@ namespace MS.Win32
 
         internal static IntPtr CriticalSetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
-            // AppKit owns the NSWindow's style; see SetWindowLong for why this stays a no-op even
-            // though it is the entry point HwndStyleManager.Flush uses.
+            // AppKit owns the NSWindow's style, apart from what ApplyStyleOffWindows handles. This is
+            // the entry point HwndStyleManager.Flush uses, so it is the one a live ResizeMode change
+            // arrives through -- the other exists for completeness.
             if (!System.OperatingSystem.IsWindows())
             {
+                ApplyStyleOffWindows(hWnd, nIndex, dwNewLong);
                 return IntPtr.Zero;
             }
 
@@ -519,21 +533,40 @@ namespace MS.Win32
                     return 0;
                 }
 
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    return 0;
+                }
+
                 const int SwShowMinimized = 2, SwShowMaximized = 3, SwMinimize = 6, SwShowMinNoActive = 7;
                 int state = SwNormalState;
+                bool canResize = true, canMinimize = true;
                 try
                 {
-                    state = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetWindowState()
-                            ?? SwNormalState;
+                    state = window.GetWindowState();
+                    window.GetResizeMode(out canResize, out canMinimize);
                 }
                 catch { /* a head that cannot answer is a window in no particular state */ }
 
-                return state switch
+                int style = state switch
                 {
                     SwShowMaximized => NativeMethods.WS_MAXIMIZE,
                     SwShowMinimized or SwMinimize or SwShowMinNoActive => NativeMethods.WS_MINIMIZE,
                     _ => 0,
                 };
+
+                // The RESIZE bits as well, and for a reason beyond reporting them accurately: WPF
+                // reads this word, ORs a change into it and flushes the whole thing back through
+                // CriticalSetWindowLong. Leaving WS_THICKFRAME out of the answer means the flush
+                // takes resizability off every window it touches. This is the read that makes that
+                // write safe -- and the two have to land together.
+                const int WS_MAXIMIZEBOX = 0x00010000, WS_MINIMIZEBOX = 0x00020000, WS_THICKFRAME = 0x00040000;
+                if (canResize) style |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+                if (canMinimize) style |= WS_MINIMIZEBOX;
+
+                return style;
             }
 
             int iResult = 0;

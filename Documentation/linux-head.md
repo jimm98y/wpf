@@ -842,13 +842,18 @@ lies and a write that compensates look locally reasonable and are jointly wrong.
 cannot answer keeps a default that is true for it — Wayland reports no minimized state because
 xdg-shell has none, and cannot be told to stay on top because the compositor decides stacking.
 
-**Still not done: changing a style on a LIVE window.** `ResizeMode` after `Show` goes through
-`HwndStyleManager.Flush` → `CriticalSetWindowLong`, which is a no-op, and wiring it up is not enough
-on its own. WPF's style writes are read-modify-write: it reads through `GetWindowLong`, ORs its
-change in and flushes the whole word back. `GetWindowLong` off Windows can only answer with the state
-bits it knows, so the word coming back has lost `WS_THICKFRAME`, `WS_CAPTION` and the rest, and
-acting on it strips the chrome from windows that never asked (measured: six passing tests broke).
-Answering `GetWindowLong` with a faithful style word is the way in.
+**Changing a style on a LIVE window** needed the read and the write to land together, and is the
+clearest example of the pattern. `ResizeMode` after `Show` goes through `HwndStyleManager.Flush` →
+`CriticalSetWindowLong`; wiring that up alone breaks six passing tests, because WPF's style writes are
+read-modify-write — it reads through `GetWindowLong`, ORs its change in, and flushes the whole word
+back, so a read that cannot answer for `WS_THICKFRAME` makes the flush strip resizability off every
+window it touches. `GetWindowLong` reports the resize bits (from `IPlatformWindow.GetResizeMode`)
+for exactly that reason, and the write is safe only beside it. Removing the bits from the read while
+leaving the write in place reproduces those six failures on demand, which is how it is tested.
+
+Only the resize and state bits are reported, not a full style word: they are what the write side acts
+on, and what a head can answer for honestly. `WS_CAPTION`, `WS_VISIBLE` and the rest stay absent, as
+they were when this returned a flat zero.
 
 These are asserted by `tests/CrossPlatform/Wpf.Window.Tests`, which exists for exactly this seam:
 `Wpf.Platform.Tests` drives the heads directly and everything else is headless, so nothing else could

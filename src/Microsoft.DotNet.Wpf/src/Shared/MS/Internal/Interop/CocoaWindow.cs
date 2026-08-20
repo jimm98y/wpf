@@ -1126,6 +1126,14 @@ namespace MS.Internal.Interop
             if (zoom != IntPtr.Zero) SendVoidBool(zoom, Sel("setEnabled:"), canResize);
         }
 
+        /// <inheritdoc/>
+        public void GetResizeMode(out bool canResize, out bool canMinimize)
+        {
+            nuint mask = GetStyleMask();
+            canResize = (mask & (nuint)NSWindowStyleMaskResizable) != 0;
+            canMinimize = (mask & (nuint)NSWindowStyleMaskMiniaturizable) != 0;
+        }
+
         /// <summary>The NSWindow's style mask. For tests: chrome is not observable any other way.</summary>
         internal nuint GetStyleMask() => _window == IntPtr.Zero ? 0 : (nuint)(nint)Send(_window, Sel("styleMask"));
 

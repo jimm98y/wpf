@@ -193,6 +193,22 @@ namespace MS.Internal.Interop
         /// </remarks>
         void SetResizeMode(bool canResize, bool canMinimize) { }
 
+        /// <summary>
+        /// The chrome this window HAS, the counterpart of <see cref="SetResizeMode"/>.
+        /// </summary>
+        /// <remarks>
+        /// Needed because WPF's style writes are READ-MODIFY-WRITE: HwndStyleManager reads the
+        /// current style through GetWindowLong, ORs its change into it, and flushes the whole word
+        /// back. A read that cannot answer for WS_THICKFRAME makes the flush strip resizability off
+        /// a window that never asked -- which is why applying style changes at all had to wait for
+        /// this. Defaults to "fully resizable", which is what every head did before it was asked.
+        /// </remarks>
+        void GetResizeMode(out bool canResize, out bool canMinimize)
+        {
+            canResize = true;
+            canMinimize = true;
+        }
+
         /// <summary>Begin an interactive window move, for WPF's caption drag (Window.DragMove and
         /// WindowChrome's caption area) — the window follows the mouse until the button is released.
         /// </summary>

@@ -70,15 +70,59 @@ namespace Wpf.Window.Tests
             }
         }
 
-        // Changing ResizeMode on a LIVE window is NOT covered, because it does not work.
-        //
-        // That change travels through HwndStyleManager.Flush -> CriticalSetWindowLong, which is a
-        // no-op off Windows, and wiring it up is not enough on its own: WPF's style writes are
-        // read-modify-write, and GetWindowLong off Windows can only answer with the two state bits
-        // it knows. The word flushed back has lost WS_THICKFRAME, WS_CAPTION and the rest, so acting
-        // on it strips the chrome from windows that never asked -- measured, as six tests that had
-        // been passing. Answering GetWindowLong with a faithful style word first is the way in, and
-        // is a larger piece of Win32 emulation than this one property justifies.
+        /// <summary>
+        /// And changing it on a LIVE window works too, which needed the READ to be fixed before the
+        /// write could be turned on at all.
+        /// </summary>
+        /// <remarks>
+        /// The change travels through HwndStyleManager.Flush to CriticalSetWindowLong, and WPF's
+        /// style writes are read-modify-write: it reads the current style through GetWindowLong, ORs
+        /// its change in, and flushes the whole word back. While GetWindowLong could only answer with
+        /// the state bits, that flush stripped WS_THICKFRAME off every window it touched -- applying
+        /// it broke six tests that had been passing, this suite's own maximize and move among them.
+        /// Now that the read reports the resize bits, the flush writes back what was already there.
+        /// </remarks>
+        [Fact]
+        public void ChangingResizeModeAfterShowingChangesTheChrome()
+        {
+            Assert.SkipUnless(OperatingSystem.IsMacOS(),
+                "the style mask is the macOS head's expression of ResizeMode");
+
+            System.Windows.Window? window = null;
+            try
+            {
+                window = UiThread.Invoke(() =>
+                {
+                    var w = new System.Windows.Window
+                    {
+                        Title = "Wpf.Window.Tests resize mode change",
+                        Width = 360,
+                        Height = 260,
+                        ResizeMode = ResizeMode.CanResize,
+                    };
+                    w.Show();
+                    return w;
+                });
+
+                UiThread.WaitUntil(() => false, 400);
+                Assert.True((MaskOf(window!) & Resizable) != 0, "the window did not start resizable");
+
+                UiThread.Invoke(() => window!.ResizeMode = ResizeMode.NoResize);
+                Assert.True(UiThread.WaitUntil(() => (MaskOf(window!) & Resizable) == 0),
+                    $"ResizeMode=NoResize left the window resizable, mask 0x{MaskOf(window!):x}");
+
+                UiThread.Invoke(() => window!.ResizeMode = ResizeMode.CanResize);
+                Assert.True(UiThread.WaitUntil(() => (MaskOf(window!) & Resizable) != 0),
+                    $"ResizeMode=CanResize did not make the window resizable again, mask 0x{MaskOf(window!):x}");
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    UiThread.Invoke(() => { try { window.Close(); } catch { } });
+                }
+            }
+        }
 
         private static nuint MaskOf(System.Windows.Window window) => UiThread.Invoke(() =>
         {
