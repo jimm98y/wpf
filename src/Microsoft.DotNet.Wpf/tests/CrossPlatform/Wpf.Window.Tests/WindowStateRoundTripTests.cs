@@ -21,6 +21,8 @@
 using System;
 using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using Xunit;
 
 namespace Wpf.Window.Tests
@@ -81,6 +83,69 @@ namespace Wpf.Window.Tests
                     "StateChanged never reported the restore back to Normal.");
 
                 Assert.Equal(WindowState.Normal, UiThread.Invoke(() => window!.WindowState));
+            }
+            finally
+            {
+                if (window is not null)
+                {
+                    UiThread.Invoke(() => { try { window.Close(); } catch { } });
+                }
+            }
+        }
+
+        /// <summary>
+        /// Setting Window.Left and Window.Top has to MOVE the window.
+        /// </summary>
+        /// <remarks>
+        /// It did nothing off Windows, and the two halves of the reason held each other up. GetWindowRect
+        /// reported every window at (0,0), so WPF believed every window was in the corner and the
+        /// SetWindowPos it issues while showing one asked for the corner; SetWindowPos in turn ignored
+        /// moves for anything that was not a popup, precisely because those coordinates were junk. Fix
+        /// either alone and it is still broken, or worse -- honouring the move without the real origin
+        /// puts every window in the top-left corner.
+        ///
+        /// Asserted by where the CONTENT actually is rather than by reading Left back, because Left is
+        /// a dependency property: it reads back whatever was written to it whether or not any window
+        /// moved, which is exactly how this went unnoticed.
+        /// </remarks>
+        [Fact]
+        public void SettingLeftAndTopMovesTheWindow()
+        {
+            Assert.SkipUnless(DisplayAvailable, "requires a display server");
+
+            System.Windows.Window? window = null;
+            try
+            {
+                Border content = null!;
+                window = UiThread.Invoke(() =>
+                {
+                    content = new Border { Background = Brushes.LightGray };
+                    var w = new System.Windows.Window
+                    {
+                        Title = "Wpf.Window.Tests move",
+                        Width = 420,
+                        Height = 320,
+                        WindowStartupLocation = WindowStartupLocation.Manual,
+                        Left = 220,
+                        Top = 160,
+                        Content = content,
+                    };
+                    w.Show();
+                    return w;
+                });
+
+                UiThread.WaitUntil(() => false, 500);
+                Point before = UiThread.Invoke(() => content.PointToScreen(new Point(0, 0)));
+
+                UiThread.Invoke(() => { window!.Left = 320; window.Top = 260; });
+                UiThread.WaitUntil(() => false, 500);
+                Point after = UiThread.Invoke(() => content.PointToScreen(new Point(0, 0)));
+
+                Assert.True(Math.Abs((after.X - before.X) - 100) <= 2 && Math.Abs((after.Y - before.Y) - 100) <= 2,
+                    $"moving the window 100 by 100 moved its content from {before} to {after}, "
+                    + $"a delta of ({after.X - before.X},{after.Y - before.Y}). Left and Top report "
+                    + "the values that were written to them either way, so only the content's screen "
+                    + "position says whether the window moved.");
             }
             finally
             {

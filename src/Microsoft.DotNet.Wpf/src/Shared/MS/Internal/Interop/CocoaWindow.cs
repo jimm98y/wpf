@@ -1089,10 +1089,10 @@ namespace MS.Internal.Interop
             CurrentOuterRectPixels(out x, out y, out width, out height);
         }
 
-        /// <summary>The window's outer rect right now, in top-left screen device pixels.</summary>
-        private void CurrentOuterRectPixels(out int x, out int y, out int width, out int height)
+        /// <inheritdoc/>
+        public void GetWindowScreenOriginPixels(out int x, out int y)
         {
-            x = 0; y = 0; width = 0; height = 0;
+            x = 0; y = 0;
             if (_window == IntPtr.Zero) return;
 
             NSRect frame = SendRect(_window, Sel("frame"));   // screen points, BOTTOM-left origin
@@ -1101,6 +1101,14 @@ namespace MS.Internal.Interop
 
             x = (int)Math.Round(frame.x * scale);
             y = (int)Math.Round((screenH - frame.y - frame.height) * scale);
+        }
+
+        /// <summary>The window's outer rect right now, in top-left screen device pixels.</summary>
+        private void CurrentOuterRectPixels(out int x, out int y, out int width, out int height)
+        {
+            GetWindowScreenOriginPixels(out x, out y);
+            width = 0; height = 0;
+            if (_window == IntPtr.Zero) return;
 
             // The SIZE comes from GetWindowPixelSize, not from the frame: that is the outer size WPF
             // was given (it includes the side frame this head fabricates so a client width matches
