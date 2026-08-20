@@ -144,6 +144,98 @@ namespace Wpf.Imaging.Tests
         }
 
         /// <summary>
+        ///  A tiled TIFF holds the same picture as the strip file it was made from, so the two decode
+        ///  to identical pixels. Asserting it that way rather than against a table means the expected
+        ///  values come from a file libtiff wrote, and no copy of the generator's colour formula has
+        ///  to be kept in step here.
+        /// </summary>
+        /// <remarks>
+        ///  The fixture is 40x24 with 16x16 tiles, and neither dimension is a multiple of the tile
+        ///  size on purpose: every tile in the right-hand column and the bottom row is stored FULL
+        ///  SIZE with padding the decoder has to drop. Reading the row stride from the image width
+        ///  instead of the tile width shifts every row after the first tile column, which is the
+        ///  failure this exists to catch -- and which produces a picture that still looks like a
+        ///  picture.
+        /// </remarks>
+        [Theory]
+        [InlineData("tiff-tiled.tif")]
+        [InlineData("tiff-tiled-lzw.tif")]
+        public void TiledTiffDecodesLikeItsStripTwin(string fixture)
+        {
+            int tileWidth = AssertIsTiled(fixture);
+
+            BitmapFrame tiled = LoadFirstFrame(fixture);
+            BitmapFrame strips = LoadFirstFrame("tiff-tiled-reference.tif");
+
+            Assert.Equal(strips.PixelWidth, tiled.PixelWidth);
+            Assert.Equal(strips.PixelHeight, tiled.PixelHeight);
+            Assert.True(strips.PixelWidth % tileWidth != 0,
+                $"{fixture} is {strips.PixelWidth}px wide in {tileWidth}px tiles, which divides exactly -- " +
+                "the fixture no longer exercises the padded edge tile it was chosen for");
+
+            byte[] actual = ToBgra(tiled);
+            byte[] expected = ToBgra(strips);
+
+            // A pair of blank images would compare equal and prove nothing.
+            Assert.True(Array.FindIndex(expected, p => p != expected[0]) >= 0,
+                "the strip reference decoded to a single flat colour, so comparing against it says nothing");
+
+            for (int i = 0; i < expected.Length; i += 4)
+            {
+                if (actual[i] == expected[i] && actual[i + 1] == expected[i + 1]
+                    && actual[i + 2] == expected[i + 2] && actual[i + 3] == expected[i + 3])
+                {
+                    continue;
+                }
+
+                int pixel = i / 4;
+                int x = pixel % strips.PixelWidth, y = pixel / strips.PixelWidth;
+                Assert.Fail(
+                    $"{fixture}: pixel ({x},{y}) is BGRA({actual[i]},{actual[i + 1]},{actual[i + 2]},{actual[i + 3]}), "
+                    + $"but the strip twin has BGRA({expected[i]},{expected[i + 1]},{expected[i + 2]},{expected[i + 3]}). "
+                    + $"It sits in the tile at column {x / tileWidth}.");
+            }
+        }
+
+        /// <summary>
+        ///  The fixture really is tiled; returns its tile width.
+        ///
+        ///  Without this the test goes quietly vacuous the moment somebody regenerates the fixtures
+        ///  on a machine with no tiffcp: make_fixtures.py warns and leaves the strip file in place,
+        ///  a strip file compares equal to a strip file, and the tile path is never entered at all.
+        /// </summary>
+        private static int AssertIsTiled(string fixture)
+        {
+            byte[] data = File.ReadAllBytes(FixturePath(fixture));
+            const ushort TagTileWidth = 322;
+
+            bool bigEndian = data[0] == (byte)'M';
+            uint ifd = ReadU32(data, 4, bigEndian);
+            int count = ReadU16(data, (int)ifd, bigEndian);
+
+            for (int i = 0; i < count; i++)
+            {
+                int entry = (int)ifd + 2 + i * 12;
+                if (ReadU16(data, entry, bigEndian) == TagTileWidth)
+                {
+                    // A SHORT that fits inline sits in the FIRST two bytes of the value field.
+                    return ReadU16(data, entry + 8, bigEndian);
+                }
+            }
+
+            Assert.Fail($"{fixture} carries no TileWidth tag, so it is not a tiled TIFF");
+            return 0;
+        }
+
+        private static int ReadU16(byte[] data, int offset, bool bigEndian) =>
+            bigEndian ? data[offset] << 8 | data[offset + 1] : data[offset] | data[offset + 1] << 8;
+
+        private static uint ReadU32(byte[] data, int offset, bool bigEndian) =>
+            bigEndian
+                ? (uint)(data[offset] << 24 | data[offset + 1] << 16 | data[offset + 2] << 8 | data[offset + 3])
+                : (uint)(data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24);
+
+        /// <summary>
         ///  An animated GIF's later frames are stored as deltas over a canvas. Every frame here is a
         ///  full-size solid colour, so a decoder that returned raw sub-images rather than composed
         ///  ones would still pass -- what this catches is dropping the frames entirely, which is

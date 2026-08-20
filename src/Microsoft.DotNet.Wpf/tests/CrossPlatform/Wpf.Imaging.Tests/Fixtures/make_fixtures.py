@@ -3,6 +3,8 @@
 somebody else's encoder rather than only against our own."""
 
 import os
+import shutil
+import subprocess
 import sys
 from PIL import Image
 
@@ -64,6 +66,44 @@ red.save(f"{OUT}/tiff-multipage.tif", save_all=True, append_images=[green, blue]
 
 # LZW with the horizontal predictor, the flavour Photoshop writes.
 base.save(f"{OUT}/tiff-lzw-predictor.tif", compression="tiff_lzw", tiffinfo={317: 2})
+
+# ---- tiled TIFF --------------------------------------------------------------
+#
+# PIL cannot WRITE tiles -- it accepts TileWidth/TileLength in tiffinfo and then writes strips
+# anyway -- so these go through libtiff's own tiffcp, which is as foreign an encoder as it gets.
+#
+# 40x24 with 16x16 tiles on purpose: 3 tiles across and 2 down, neither dimension a multiple of the
+# tile size. Every tile in the right column and the bottom row is therefore PADDED -- the file holds
+# a full 16x16 tile and the decoder has to throw the overhang away. A decoder that forgets shifts
+# every row after the first tile column, which is the whole failure mode worth a fixture.
+#
+# The pattern makes any such shift visible: both channels vary along both axes, so a misplaced tile
+# cannot land on a matching colour.
+TILE_W, TILE_H = 40, 24
+
+
+def tiled_source():
+    im = Image.new("RGB", (TILE_W, TILE_H))
+    px = im.load()
+    for y in range(TILE_H):
+        for x in range(TILE_W):
+            px[x, y] = ((x * 6) % 256, (y * 10) % 256, ((x + y) * 5) % 256)
+    return im
+
+
+tiled_base = tiled_source()
+
+# The strip twin, kept as the reference: the tests assert the two decode to the SAME pixels, so the
+# expected values live in a file somebody else wrote rather than in a table copied into the test.
+tiled_base.save(f"{OUT}/tiff-tiled-reference.tif", compression=None)
+
+if shutil.which("tiffcp"):
+    for name, args in (("tiff-tiled.tif", ["-c", "none"]),
+                       ("tiff-tiled-lzw.tif", ["-c", "lzw"])):
+        subprocess.run(["tiffcp", "-t", "-w", "16", "-l", "16", *args,
+                        f"{OUT}/tiff-tiled-reference.tif", f"{OUT}/{name}"], check=True)
+else:
+    print("warning: tiffcp not found, the tiled TIFF fixtures were NOT regenerated", file=sys.stderr)
 
 # ---- GIF flavours ------------------------------------------------------------
 base.save(f"{OUT}/gif-plain.gif")

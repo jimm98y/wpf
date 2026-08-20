@@ -17,12 +17,19 @@
 //   bit depth       1, 4, 8 and 16 bits per sample
 //   samples         1 (grey/palette), 3 (RGB), 4 (RGB + alpha), extra samples beyond that ignored
 //   predictor       1 none, 2 horizontal differencing
-//   layout          strips, chunky
+//   layout          strips and TILES, chunky
 //   pages           every IFD in the chain
 //
-// Rejected with a clear message rather than a wrong picture: TILED images and PlanarConfiguration 2
-// (separate planes). Both are legal and both are rare; guessing at them would produce a plausible
-// but scrambled bitmap, which is worse than a NotSupportedException naming the reason.
+// Rejected with a clear message rather than a wrong picture: PlanarConfiguration 2 (separate
+// planes). It is legal and it is rare; guessing at it would produce a plausible but scrambled
+// bitmap, which is worse than a NotSupportedException naming the reason.
+//
+// Tiles are the same idea as strips in two dimensions, with one trap. A tile is always stored FULL
+// SIZE: an image whose width is not a multiple of the tile width still ends each row of tiles with
+// a complete tile, and the overhang is padding the decoder has to drop. So the row stride inside a
+// tile comes from the TILE width and never from the image width -- read it from the image width and
+// every row after the first tile column is shifted, which looks like a smeared or sheared picture
+// rather than like a decoder bug.
 //
 // Two details are worth knowing before reading the code, because both are silent-corruption traps:
 //
@@ -82,6 +89,9 @@ namespace System.Windows.Media.Imaging
         private const ushort TagPredictor = 317;
         private const ushort TagColorMap = 320;
         private const ushort TagTileWidth = 322;
+        private const ushort TagTileLength = 323;
+        private const ushort TagTileOffsets = 324;
+        private const ushort TagTileByteCounts = 325;
         private const ushort TagExtraSamples = 338;
         private const ushort TagSampleFormat = 339;
 
@@ -171,11 +181,6 @@ namespace System.Windows.Media.Imaging
             int afterEntries = entryBase + count * 12;
             nextIfd = afterEntries + 4 <= data.Length ? ReadU32(data, afterEntries, bigEndian) : 0;
 
-            if (entries.ContainsKey(TagTileWidth))
-            {
-                throw new NotSupportedException("tiled TIFF is not supported; only strip layout is.");
-            }
-
             int planar = (int)GetScalar(data, entries, TagPlanarConfiguration, bigEndian, 1);
             if (planar != 1)
             {
@@ -242,6 +247,76 @@ namespace System.Windows.Media.Imaging
                 dpiY = 0;
             }
 
+            var bgra = new byte[width * height * 4];
+
+            // Strips and tiles differ only in the GEOMETRY of the block: how big it is, where it
+            // lands, and how long a row inside it is. Everything after that -- the bounds check, the
+            // decompression, the predictor, the pixel expansion -- is identical, so it is written
+            // once here and the two layouts below only work out the numbers.
+            bool DecodeBlock(int offset, int byteCount, int blockBytesPerRow, int blockRows,
+                             int blockPixelWidth, int firstRow, int rowCount,
+                             int firstColumn, int columnCount)
+            {
+                if (offset < 0 || byteCount < 0 || (long)offset + byteCount > data.Length)
+                {
+                    return false;   // a truncated file keeps the blocks that were whole
+                }
+
+                byte[] raw = Decompress(data, offset, byteCount, compression, blockBytesPerRow * blockRows);
+
+                if (predictor == 2)
+                {
+                    ApplyHorizontalPredictor(raw, blockBytesPerRow, rowCount, blockPixelWidth, samplesPerPixel, bits);
+                }
+
+                EmitBlock(raw, bgra, width, blockBytesPerRow, firstRow, rowCount, firstColumn, columnCount,
+                          samplesPerPixel, bits, photometric, palette, premultiplied);
+                return true;
+            }
+
+            if (entries.ContainsKey(TagTileWidth))
+            {
+                int tileWidth = (int)GetScalar(data, entries, TagTileWidth, bigEndian, 0);
+                int tileHeight = (int)GetScalar(data, entries, TagTileLength, bigEndian, 0);
+                if (tileWidth <= 0 || tileHeight <= 0)
+                {
+                    throw new InvalidDataException($"the TIFF page declares a {tileWidth}x{tileHeight} tile.");
+                }
+
+                uint[] tileOffsets = GetArray(data, entries, TagTileOffsets, bigEndian);
+                uint[] tileByteCounts = GetArray(data, entries, TagTileByteCounts, bigEndian);
+                if (tileOffsets.Length == 0)
+                {
+                    throw new InvalidDataException("the TIFF page is tiled but has no tile offsets.");
+                }
+
+                // From the TILE width, not the image width -- see the header. A stored tile is always
+                // whole, so the padding on a right-hand or bottom edge tile is part of the data and
+                // has to be stepped over rather than assumed away.
+                int tileBytesPerRow = (tileWidth * samplesPerPixel * bits + 7) / 8;
+                int tilesAcross = (width + tileWidth - 1) / tileWidth;
+
+                for (int tile = 0; tile < tileOffsets.Length; tile++)
+                {
+                    int firstColumn = tile % tilesAcross * tileWidth;
+                    int firstRow = tile / tilesAcross * tileHeight;
+                    if (firstRow >= height) break;
+
+                    int byteCount = tile < tileByteCounts.Length
+                        ? (int)tileByteCounts[tile]
+                        : tileBytesPerRow * tileHeight;
+
+                    if (!DecodeBlock((int)tileOffsets[tile], byteCount, tileBytesPerRow, tileHeight,
+                                     tileWidth, firstRow, Math.Min(tileHeight, height - firstRow),
+                                     firstColumn, Math.Min(tileWidth, width - firstColumn)))
+                    {
+                        break;
+                    }
+                }
+
+                return new ManagedTiffPage(bgra, width, height, dpiX, dpiY);
+            }
+
             uint[] stripOffsets = GetArray(data, entries, TagStripOffsets, bigEndian);
             uint[] stripByteCounts = GetArray(data, entries, TagStripByteCounts, bigEndian);
             if (stripOffsets.Length == 0)
@@ -257,8 +332,6 @@ namespace System.Windows.Media.Imaging
             // Rows are padded to a byte boundary; sub-byte depths make that padding visible.
             int bytesPerRow = (width * samplesPerPixel * bits + 7) / 8;
 
-            var bgra = new byte[width * height * 4];
-
             for (int strip = 0; strip < stripOffsets.Length; strip++)
             {
                 int firstRow = strip * rowsPerStrip;
@@ -266,48 +339,43 @@ namespace System.Windows.Media.Imaging
 
                 int rowsInStrip = Math.Min(rowsPerStrip, height - firstRow);
 
-                int offset = (int)stripOffsets[strip];
                 int byteCount = strip < stripByteCounts.Length
                     ? (int)stripByteCounts[strip]
                     : bytesPerRow * rowsInStrip;
 
-                if (offset < 0 || byteCount < 0 || offset + byteCount > data.Length)
+                if (!DecodeBlock((int)stripOffsets[strip], byteCount, bytesPerRow, rowsInStrip,
+                                 width, firstRow, rowsInStrip, 0, width))
                 {
-                    break;   // a truncated file keeps the strips that were whole
+                    break;
                 }
-
-                byte[] raw = Decompress(data, offset, byteCount, compression, bytesPerRow * rowsInStrip);
-
-                if (predictor == 2)
-                {
-                    ApplyHorizontalPredictor(raw, bytesPerRow, rowsInStrip, width, samplesPerPixel, bits);
-                }
-
-                EmitRows(raw, bgra, width, bytesPerRow, firstRow, rowsInStrip,
-                         samplesPerPixel, bits, photometric, palette, premultiplied);
             }
 
             return new ManagedTiffPage(bgra, width, height, dpiX, dpiY);
         }
 
-        /// <summary>Expands one strip's rows into the BGRA canvas.</summary>
-        private static void EmitRows(byte[] raw, byte[] bgra, int width, int bytesPerRow,
-                                     int firstRow, int rowsInStrip, int samplesPerPixel, int bits,
-                                     int photometric, uint[] palette, bool premultiplied)
+        /// <summary>
+        /// Expands one block -- a strip, or a tile -- into the BGRA canvas.
+        /// <paramref name="bytesPerRow"/> is the stride WITHIN the block, which for a tile is wider
+        /// than <paramref name="columnCount"/> whenever the tile hangs over an edge of the image.
+        /// </summary>
+        private static void EmitBlock(byte[] raw, byte[] bgra, int width, int bytesPerRow,
+                                      int firstRow, int rowCount, int firstColumn, int columnCount,
+                                      int samplesPerPixel, int bits,
+                                      int photometric, uint[] palette, bool premultiplied)
         {
             int paletteEntries = palette.Length / 3;
             int maxValue = (1 << bits) - 1;
 
-            for (int row = 0; row < rowsInStrip; row++)
+            for (int row = 0; row < rowCount; row++)
             {
                 int rowStart = row * bytesPerRow;
                 if (rowStart + bytesPerRow > raw.Length) break;
 
                 int destinationRow = (firstRow + row) * width * 4;
 
-                for (int x = 0; x < width; x++)
+                for (int x = 0; x < columnCount; x++)
                 {
-                    int destination = destinationRow + x * 4;
+                    int destination = destinationRow + (firstColumn + x) * 4;
                     int sampleBase = x * samplesPerPixel;
 
                     byte r, g, b;

@@ -333,14 +333,21 @@ so a file this process wrote was one it could not read back. `ManagedGifDecoder`
 | PNG | all standard bit depths and colour types, `tRNS`, Adam7 interlace |
 | JPEG | baseline and progressive |
 | GIF | GIF87a/89a, every frame composed onto the logical screen, interlace, transparency, disposal methods |
-| TIFF | baseline; II and MM; none/LZW/PackBits/Deflate; 1, 4, 8 and 16 bits; grey, RGB, palette; the horizontal predictor; every page |
+| TIFF | baseline; II and MM; none/LZW/PackBits/Deflate; 1, 4, 8 and 16 bits; grey, RGB, palette; the horizontal predictor; strips and tiles; every page |
 | ICO, BMP | as before (uncompressed BMP) |
 
 TIFF **encoding** now writes every page as well, rather than silently keeping `Frames[0]`.
 
-Not supported, and rejected with a clear message rather than a wrong picture: tiled TIFF, and
-`PlanarConfiguration = 2`. Both are legal and both are rare; guessing would produce a plausible but
+Not supported, and rejected with a clear message rather than a wrong picture:
+`PlanarConfiguration = 2`. It is legal and it is rare; guessing would produce a plausible but
 scrambled bitmap.
+
+Tiled TIFF *is* read. The trap there is that a tile is stored FULL SIZE, so an image whose width is
+not a multiple of the tile width still ends each row of tiles with a complete tile and the overhang
+is padding to drop: the row stride inside a tile comes from the tile width, never from the image
+width. Get that wrong and every row after the first tile column is shifted, which looks like a
+smeared picture rather than like a decoder bug. The fixtures are written by libtiff's `tiffcp` at
+40x24 in 16x16 tiles, so neither dimension divides and the padded edge tiles are always exercised.
 
 The check that keeps this honest is `tests/CrossPlatform/Wpf.Imaging.Tests`, which round-trips every
 encoder through its decoder AND decodes fixtures written by PIL/libtiff — because two halves written
