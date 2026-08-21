@@ -39,30 +39,40 @@ namespace System.ComponentModel.Design.Serialization
 {
 	public sealed class CodeDomLocalizationProvider : IDisposable, IDesignerSerializationProvider
 	{
-		[MonoTODO]
 		public CodeDomLocalizationProvider (IServiceProvider provider, CodeDomLocalizationModel model)
+			: this (provider, model, null)
 		{
-			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
-		public CodeDomLocalizationProvider (IServiceProvider provider, CodeDomLocalizationModel model, CultureInfo [] supportedCultures)
+		public CodeDomLocalizationProvider (IServiceProvider provider, CodeDomLocalizationModel model,
+						   CultureInfo [] supportedCultures)
 		{
-			throw new NotImplementedException ();
+			if (provider == null)
+				throw new ArgumentNullException ("provider");
+
+			Model = model;
+			SupportedCultures = supportedCultures;
 		}
 
-		[MonoTODO]
+		internal CodeDomLocalizationModel Model { get; private set; }
+
+		internal CultureInfo [] SupportedCultures { get; private set; }
+
 		public void Dispose ()
 		{
 		}
 
-		[MonoTODO]
-		object IDesignerSerializationProvider.GetSerializer (IDesignerSerializationManager manager, 
+		// No opinion: whatever serializer the manager already resolved stays in place. Returning a
+		// localizing serializer -- one that writes property values into a .resx and emits
+		// resources.ApplyResources calls instead of inline assignments -- is not implemented yet, so
+		// forms serialize the ordinary way and the designer's localization feature is simply absent.
+		// Throwing from the CONSTRUCTOR, as this class used to, took the whole designer down with it:
+		// a host builds one of these before it loads anything.
+		object IDesignerSerializationProvider.GetSerializer (IDesignerSerializationManager manager,
 								     object currentSerializer, Type objectType,
 								     Type serializerType)
 		{
-			throw new NotImplementedException ();
+			return null;
 		}
 	}
 }
-

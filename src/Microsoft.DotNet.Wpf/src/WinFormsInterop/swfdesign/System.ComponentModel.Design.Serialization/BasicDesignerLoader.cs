@@ -69,8 +69,20 @@ namespace System.ComponentModel.Design.Serialization
 			_dependenciesCount = 0;
 		}
 		
-		protected virtual void Initialize ()
+		private bool _servicesInitialized;
+
+		// These services have to exist BEFORE Initialize runs, not as a result of it. A derived
+		// loader's Initialize is where a host installs its own serialization providers, and it reaches
+		// the manager through GetService (IDesignerSerializationManager) -- then calls base.Initialize
+		// last, by convention. Registering from inside Initialize therefore published the service
+		// after the only code that needed it had already looked: SharpDevelop's forms designer got
+		// null back and died with a NullReferenceException before it could load a single form.
+		private void EnsureServices ()
 		{
+			if (_servicesInitialized)
+				return;
+			_servicesInitialized = true;
+
 			_serializationMananger = new DesignerSerializationManager (_host);
 
 			DesignSurfaceServiceContainer serviceContainer = _host.GetService (typeof (IServiceContainer)) as DesignSurfaceServiceContainer;
@@ -78,6 +90,13 @@ namespace System.ComponentModel.Design.Serialization
 				serviceContainer.AddService (typeof (IDesignerLoaderService), (IDesignerLoaderService) this);
 				serviceContainer.AddNonReplaceableService (typeof (IDesignerSerializationManager), _serializationMananger);
 			}
+		}
+
+		// Idempotent, so a derived override calling base.Initialize () -- the usual shape -- still
+		// works whether or not BeginLoad got here first.
+		protected virtual void Initialize ()
+		{
+			EnsureServices ();
 		}
 		
 		public override void BeginLoad (IDesignerLoaderHost host)
@@ -91,6 +110,7 @@ namespace System.ComponentModel.Design.Serialization
 
 			if (_host == null) { // beingload is called on reload - no need to initialize twice.
 				_host = host;
+				EnsureServices ();
 				Initialize ();
 			}
 			IDisposable session = _serializationMananger.CreateSession ();
