@@ -257,7 +257,7 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(this));
-            _driver.InjectMouseMove(x, y, _leftDown);
+            _driver.InjectMouseMoveIn(_container.Handle, x, y, _leftDown);
         }
 
         protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -267,8 +267,8 @@ namespace System.Windows.Forms.Integration
             CaptureMouse();
             var (x, y) = ToDriver(e.GetPosition(this));
             _leftDown = true;
-            _driver.InjectMouseMove(x, y, false);
-            _driver.InjectMouseDown(x, y);
+            _driver.InjectMouseMoveIn(_container.Handle, x, y, false);
+            _driver.InjectMouseDownIn(_container.Handle, x, y);
             e.Handled = true;
         }
 
@@ -277,7 +277,7 @@ namespace System.Windows.Forms.Integration
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(this));
             _leftDown = false;
-            _driver.InjectMouseUp(x, y);
+            _driver.InjectMouseUpIn(_container.Handle, x, y);
             ReleaseMouseCapture();
             e.Handled = true;
         }
@@ -286,7 +286,7 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(this));
-            _driver.InjectWheel(x, y, e.Delta > 0 ? 120 : -120);
+            _driver.InjectWheelIn(_container.Handle, x, y, e.Delta > 0 ? 120 : -120);
             e.Handled = true;
         }
 

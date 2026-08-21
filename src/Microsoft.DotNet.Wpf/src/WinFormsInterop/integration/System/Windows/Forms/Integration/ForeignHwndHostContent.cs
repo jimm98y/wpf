@@ -160,7 +160,7 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
-            _driver.InjectMouseMove(x, y, _leftDown);
+            _driver.InjectMouseMoveIn(_root, x, y, _leftDown);
         }
 
         private void OnHostMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -169,9 +169,17 @@ namespace System.Windows.Forms.Integration
             _host.Focus();
             _host.CaptureMouse();
             var (x, y) = ToDriver(e.GetPosition(_host));
+            if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
+            {
+                IntPtr hit = _driver.WindowAtPointIn(_root, x, y);
+                SWF.Control c = SWF.Control.FromHandle(hit);
+                Console.Error.WriteLine($"foreign click: wpf={e.GetPosition(_host)} origin=({_ox},{_oy}) " +
+                    $"driver=({x},{y}) root=0x{_root.ToInt64():x} hit=0x{hit.ToInt64():x} " +
+                    $"control={(c == null ? "<none>" : c.GetType().Name)}");
+            }
             _leftDown = true;
-            _driver.InjectMouseMove(x, y, false);
-            _driver.InjectMouseDown(x, y);
+            _driver.InjectMouseMoveIn(_root, x, y, false);
+            _driver.InjectMouseDownIn(_root, x, y);
             e.Handled = true;
         }
 
@@ -180,7 +188,7 @@ namespace System.Windows.Forms.Integration
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
             _leftDown = false;
-            _driver.InjectMouseUp(x, y);
+            _driver.InjectMouseUpIn(_root, x, y);
             _host.ReleaseMouseCapture();
             e.Handled = true;
         }
@@ -189,7 +197,7 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
-            _driver.InjectWheel(x, y, e.Delta > 0 ? 120 : -120);
+            _driver.InjectWheelIn(_root, x, y, e.Delta > 0 ? 120 : -120);
             e.Handled = true;
         }
 

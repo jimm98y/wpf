@@ -157,15 +157,74 @@ namespace System.Windows.Forms
 			return IntPtr.Zero;
 		}
 
+		/// <summary>
+		/// The window under a point WITHIN one host's subtree, topmost first.
+		/// </summary>
+		/// <remarks>
+		/// Every hosted container is a top-level window of this driver at (0,0) -- where its pixels
+		/// end up on screen is decided by the WPF element that composites them, not by the driver.
+		/// So a point translated into driver space falls inside EVERY host's container at once, and
+		/// the global WindowAtPoint answers with whichever happens to be topmost. Clicking
+		/// SharpDevelop's project tree landed in the Properties pad on the far side of the window.
+		/// A host must ask about its own subtree.
+		/// </remarks>
+		internal IntPtr WindowAtPointIn(IntPtr root, int screenX, int screenY)
+		{
+			var ordered = new List<IntPtr>();
+			Hwnd rootHwnd = Hwnd.ObjectFromHandle(root);
+			if (rootHwnd == null || !EffectivelyVisible(rootHwnd)) return IntPtr.Zero;
+			CollectSubtree(root, ordered);
+
+			for (int i = ordered.Count - 1; i >= 0; i--)
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(ordered[i]);
+				if (h == null) continue;
+				Point p = ScreenLocation(h);
+				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
+				return ordered[i];
+			}
+			return IntPtr.Zero;
+		}
+
+		internal void InjectMouseMoveIn(IntPtr root, int x, int y, bool leftDown)
+			=> InjectMouseIn(root, x, y, Msg.WM_MOUSEMOVE, leftDown ? MK_LBUTTON : 0);
+
+		internal void InjectMouseDownIn(IntPtr root, int x, int y)
+			=> InjectMouseIn(root, x, y, Msg.WM_LBUTTONDOWN, MK_LBUTTON);
+
+		internal void InjectMouseUpIn(IntPtr root, int x, int y)
+			=> InjectMouseIn(root, x, y, Msg.WM_LBUTTONUP, 0);
+
+		internal void InjectWheelIn(IntPtr root, int screenX, int screenY, int delta)
+		{
+			IntPtr target = WindowAtPointIn(root, screenX, screenY);
+			if (target == IntPtr.Zero) return;
+			IntPtr wParam = (IntPtr)((delta << 16) & unchecked((int)0xFFFF0000));
+			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+			SendMessage(target, Msg.WM_MOUSEWHEEL, wParam, lp);
+		}
+
 		private IntPtr _grabHandle;   // mouse-capture target (WinForms grabs on button-down)
 		private const int MK_LBUTTON = 0x0001;
 
 		/// <summary>Route one mouse message from a SCREEN point. While a window has captured the
 		/// mouse (button held), messages go to it (with coords relative to it) even off its rect —
 		/// standard Win32 capture, needed so a button's release/drag tracks correctly.</summary>
+		private void InjectMouseIn(IntPtr root, int screenX, int screenY, Msg message, int wParam)
+		{
+			IntPtr target = _grabHandle != IntPtr.Zero ? _grabHandle : WindowAtPointIn(root, screenX, screenY);
+			DispatchMouse(target, screenX, screenY, message, wParam);
+		}
+
 		private void InjectMouse(int screenX, int screenY, Msg message, int wParam)
 		{
 			IntPtr target = _grabHandle != IntPtr.Zero ? _grabHandle : WindowAtPoint(screenX, screenY);
+			DispatchMouse(target, screenX, screenY, message, wParam);
+		}
+
+		/// <summary>Deliver one mouse message to <paramref name="target"/>, in its client coords.</summary>
+		private void DispatchMouse(IntPtr target, int screenX, int screenY, Msg message, int wParam)
+		{
 			if (target == IntPtr.Zero) return;
 			Hwnd h = Hwnd.ObjectFromHandle(target);
 			if (h == null) return;
