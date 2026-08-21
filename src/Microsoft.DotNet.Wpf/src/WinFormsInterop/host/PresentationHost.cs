@@ -41,6 +41,10 @@ namespace System.Windows.Forms
         // of forms created on it: a form's handle belongs to its own thread.
         private static readonly object s_lock = new object();
 
+        /// <summary>Whether windows are put on screen at all. False is the headless mode
+        /// (WF_WEBGPU=0) the render tests use, where there is never a host to wait for.</summary>
+        internal static bool Enabled => s_enabled;
+
         /// <summary>The newest live host, if any -- the one popups and other unclaimed windows
         /// belong to. Hosts add themselves through <see cref="Attach"/>: either from here, or by a
         /// host an app created itself (the browser head, or a sample driving its own loop).</summary>

@@ -434,6 +434,25 @@ namespace System.Windows.Forms
 		// detaches the (empty) window-DC recorder instead of overwriting the stored scene.
 		private readonly HashSet<IntPtr> _paintedViaOffscreen = new HashSet<IntPtr>();
 
+		/// <summary>
+		/// Confine a recorded scene to its window's own bounds.
+		/// </summary>
+		/// <remarks>
+		/// A control paints inside its client area and the OS clips it there; nothing clipped these
+		/// scenes, so anything a control drew past its own edge was composited anyway. A list view
+		/// item wider than its column spilled its text out of the list, out of the tab page and out
+		/// of the tab control -- across the dialog. Clipping here rather than in a host means every
+		/// present path gets it: the Win32 and Cocoa windows, and embedded content alike.
+		/// </remarks>
+		private static object ClipToWindow(object scene, IntPtr handle)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (scene is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv && hwnd != null)
+				sv.Clip = new Microsoft.Wpf.Interop.WebGpu.Composition.Rect(
+					0, 0, Math.Max(0, hwnd.width), Math.Max(0, hwnd.height));
+			return scene;
+		}
+
 		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
 		internal object GetWindowScene(IntPtr handle) => _scenes.TryGetValue(handle, out object s) ? s : null;
 
@@ -450,7 +469,7 @@ namespace System.Windows.Forms
 				if (_paintedViaOffscreen.Remove(handle))
 					System.Drawing.WebGpuBackend.GpuRaster.Cancel(pevent.Graphics);       // scene captured by the blit
 				else
-					_scenes[handle] = System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics);
+					_scenes[handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics), handle);
 				_paintVersion++;   // content changed
 			}
 			pevent.Graphics?.Dispose();
@@ -487,7 +506,7 @@ namespace System.Windows.Forms
 		{
 			if (s_gpuRaster && System.Drawing.WebGpuBackend.GpuRaster.IsActive(offscreen_dc))
 			{
-				_scenes[dest_handle] = System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc);
+				_scenes[dest_handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc), dest_handle);
 				_paintedViaOffscreen.Add(dest_handle);
 				return;
 			}
@@ -601,8 +620,15 @@ namespace System.Windows.Forms
 				// idle ends the pump, which is what this driver originally did unconditionally.
 				if (!PresentationHost.Tick())
 				{
-					// No on-screen host. A timer still pending is the one reason the loop is not
-					// finished: a headless app can legitimately be waiting on nothing else.
+					// No on-screen host. When windows are expected, that means every one of them has
+					// gone and this loop is finished -- a pending timer must NOT keep it alive. A
+					// modal dialog's timers run until the form is disposed, and Dispose only happens
+					// after ShowDialog returns, so the loop and the dialog waited on each other:
+					// closing SharpDevelop's About box (whose scrolling picture runs a timer) hung
+					// the application, because this loop never returned to the WPF dispatcher.
+					if (PresentationHost.Enabled) return false;
+
+					// Headless: there is never a host, so a pending timer is the one reason to stay.
 					if (nextTimer < 0) return false;
 					PresentationHost.Idle(nextTimer);
 					continue;
