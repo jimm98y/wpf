@@ -202,6 +202,24 @@ namespace System.Windows.Forms
 		internal void InjectRightUpIn(IntPtr root, int x, int y)
 			=> InjectMouseIn(root, x, y, Msg.WM_RBUTTONUP, 0);
 
+		// Deliver to a window the caller has already chosen. A hosted control's menus and drop-downs
+		// are top-level windows of the driver rather than part of any host's subtree, so the host
+		// resolves them itself and then says where the message must go.
+		internal void InjectMouseMoveAt(IntPtr target, int x, int y, bool leftDown)
+			=> DispatchMouse(target, x, y, Msg.WM_MOUSEMOVE, leftDown ? MK_LBUTTON : 0);
+
+		internal void InjectMouseDownAt(IntPtr target, int x, int y)
+			=> DispatchMouse(target, x, y, Msg.WM_LBUTTONDOWN, MK_LBUTTON);
+
+		internal void InjectMouseUpAt(IntPtr target, int x, int y)
+			=> DispatchMouse(target, x, y, Msg.WM_LBUTTONUP, 0);
+
+		internal void InjectRightDownAt(IntPtr target, int x, int y)
+			=> DispatchMouse(target, x, y, Msg.WM_RBUTTONDOWN, MK_RBUTTON);
+
+		internal void InjectRightUpAt(IntPtr target, int x, int y)
+			=> DispatchMouse(target, x, y, Msg.WM_RBUTTONUP, 0);
+
 		internal void InjectWheelIn(IntPtr root, int screenX, int screenY, int delta)
 		{
 			IntPtr target = WindowAtPointIn(root, screenX, screenY);

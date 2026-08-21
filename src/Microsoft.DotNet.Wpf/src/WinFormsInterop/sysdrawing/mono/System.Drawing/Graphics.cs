@@ -305,6 +305,16 @@ namespace System.Drawing
 		public void Clear (Color color)
 		{
 			Status status;
+			if (GpuRecorder != null) {
+				// Clear fills the ENTIRE surface. A recorder has no surface of its own, but a
+				// window's scene is clipped to that window, so a rectangle large enough to cover
+				// anything comes out as exactly the window. Skipping it left every control that
+				// clears its background transparent -- a ToolStripDropDown paints itself that way,
+				// so a context menu came up with its items floating over whatever was behind it.
+				const float Big = 1 << 20;
+				GpuRecorder.FillRect (-Big, -Big, Big * 2, Big * 2, color.ToArgb ());
+				return;
+			}
  			if (nativeObject == IntPtr.Zero) return;
  			status = GDIPlus.GdipGraphicsClear (nativeObject, color.ToArgb ());
  			CheckDrawStatus (status);

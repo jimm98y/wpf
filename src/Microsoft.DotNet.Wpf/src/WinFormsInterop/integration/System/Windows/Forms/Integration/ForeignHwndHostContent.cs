@@ -214,7 +214,7 @@ namespace System.Windows.Forms.Integration
         // came out as white text on a white row -- the selection simply vanished.
         private void FocusAt(int x, int y)
         {
-            IntPtr hit = _driver.WindowAtPointIn(_root, x, y);
+            IntPtr hit = TargetAt(x, y);
             if (hit != IntPtr.Zero) _driver.SetFocus(hit);
         }
 
@@ -224,13 +224,65 @@ namespace System.Windows.Forms.Integration
         // whichever host the user last interacted with, which is the one that opened them.
         private static ForeignHwndHostContent s_lastInput;
 
+
+        /// <summary>The windows that belong to some claimed host -- everything else on screen is a
+        /// menu or drop-down one of them opened.</summary>
+        private HashSet<long> OwnedWindows()
+        {
+            var owned = new HashSet<long>();
+            lock (s_lock)
+            {
+                foreach (ForeignHwndHostContent claim in s_claimed.Values)
+                {
+                    long[] mine = _driver.GetSubtreeWindows(claim._root);
+                    if (mine == null) continue;
+                    for (int i = 0; i + 2 < mine.Length; i += 3) owned.Add(mine[i]);
+                }
+            }
+            return owned;
+        }
+
+        /// <summary>
+        /// The window a point belongs to: a popup if one is under it, else this host's own content.
+        /// </summary>
+        /// <remarks>
+        /// Popups are drawn on top and must be clickable, or a menu can neither be used nor
+        /// dismissed -- it just stayed on screen while every further right-click opened another one
+        /// behind it. They are top-level windows, so the driver's global hit-test finds them; the
+        /// only thing that has to be excluded is other hosts' content, which overlaps this host's
+        /// because every hosted container sits at the driver's origin.
+        /// </remarks>
+        private IntPtr TargetAt(int x, int y)
+        {
+            // Look for a popup explicitly rather than trusting the driver's global hit-test. Its
+            // answer is ordered by paint order, and a popup has no parent to take a z-order from,
+            // so it sorts to the BOTTOM and a hosted container -- every one of which sits at the
+            // driver's origin and therefore covers the point -- wins instead. Newest popup first:
+            // that is the menu on top.
+            long[] all = _driver.GetPresentWindows(_root);
+            if (all != null)
+            {
+                HashSet<long> owned = OwnedWindows();
+                for (int i = all.Length - 3; i >= 0; i -= 3)
+                {
+                    if (owned.Contains(all[i])) continue;
+                    long packed = _driver.GetWindowSizePacked((IntPtr)all[i]);
+                    int w = (int)(packed >> 32), h = (int)(packed & 0xFFFFFFFF);
+                    int px = (int)all[i + 1], py = (int)all[i + 2];
+                    if (x >= px && y >= py && x < px + w && y < py + h) return (IntPtr)all[i];
+                }
+            }
+
+            return _driver.WindowAtPointIn(_root, x, y);
+        }
+
         private (int X, int Y) ToDriver(Point p) => (_ox + (int)Math.Round(p.X), _oy + (int)Math.Round(p.Y));
 
         private void OnHostMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
-            _driver.InjectMouseMoveIn(_root, x, y, _leftDown);
+            _driver.InjectMouseMoveAt(TargetAt(x, y), x, y, _leftDown);
         }
 
         private void OnHostMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -253,8 +305,17 @@ namespace System.Windows.Forms.Integration
                     $"control={(c == null ? "<none>" : c.GetType().Name)}{state}");
             }
             _leftDown = true;
-            _driver.InjectMouseMoveIn(_root, x, y, false);
-            _driver.InjectMouseDownIn(_root, x, y);
+            IntPtr target = TargetAt(x, y);
+            _driver.InjectMouseMoveAt(target, x, y, false);
+            _driver.InjectMouseDownAt(target, x, y);
+            if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
+            {
+                SWF.Control after = SWF.Control.FromHandle(target);
+                string st = after is SWF.TreeView tv2
+                    ? $" focused={tv2.Focused} selected='{tv2.SelectedNode?.Text}'" : "";
+                Console.Error.WriteLine($"  after down: target=0x{target.ToInt64():x} " +
+                    $"{(after == null ? "<none>" : after.GetType().Name)}{st}");
+            }
             e.Handled = true;
         }
 
@@ -263,7 +324,7 @@ namespace System.Windows.Forms.Integration
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
             _leftDown = false;
-            _driver.InjectMouseUpIn(_root, x, y);
+            _driver.InjectMouseUpAt(TargetAt(x, y), x, y);
             _host.ReleaseMouseCapture();
             e.Handled = true;
         }
@@ -277,8 +338,9 @@ namespace System.Windows.Forms.Integration
             s_lastInput = this;
             var (x, y) = ToDriver(e.GetPosition(_host));
             FocusAt(x, y);
-            _driver.InjectMouseMoveIn(_root, x, y, false);
-            _driver.InjectRightDownIn(_root, x, y);
+            IntPtr rtarget = TargetAt(x, y);
+            _driver.InjectMouseMoveAt(rtarget, x, y, false);
+            _driver.InjectRightDownAt(rtarget, x, y);
             e.Handled = true;
         }
 
@@ -286,7 +348,7 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             var (x, y) = ToDriver(e.GetPosition(_host));
-            _driver.InjectRightUpIn(_root, x, y);
+            _driver.InjectRightUpAt(TargetAt(x, y), x, y);
             e.Handled = true;
         }
 

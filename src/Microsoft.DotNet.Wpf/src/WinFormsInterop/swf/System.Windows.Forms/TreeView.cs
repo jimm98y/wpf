@@ -1715,7 +1715,17 @@ namespace System.Windows.Forms {
 			}
 
 			if (draw_mode != TreeViewDrawMode.Normal) {
-				dc.FillRectangle (BackColorBrush, node.Bounds);
+				// Owner draw means the application draws the node's TEXT; the control still owns the
+				// background, selection highlight included. Filling with BackColor unconditionally
+				// erased the highlight drawn just above for a full-row select, and drew none at all
+				// otherwise -- so a selected node ended up with its HighlightText (white) drawn on
+				// the plain window background and disappeared. SharpDevelop's project tree is an
+				// owner-drawn TreeView, and every selected node in it was invisible.
+				if (full_row_select && !show_lines) {
+					// already painted above, selection and all
+				} else {
+					DrawSelectionAndFocus (node, dc, node.Bounds);
+				}
 
 				var tree_node_state = TreeNodeStates.Default;;
 				if (node.IsSelected)
