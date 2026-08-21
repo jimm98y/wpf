@@ -57,6 +57,9 @@ namespace System.Drawing
 		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
 			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
 
+		// WF_TRACE_TEXT=1: every text run the recorder is given, with where it lands.
+		static readonly bool s_traceText = Environment.GetEnvironmentVariable ("WF_TRACE_TEXT") == "1";
+
 		static int ArgbOf (Brush b)
 		{
 			if (b is SolidBrush sb) return sb.Color.ToArgb ();
@@ -1417,6 +1420,15 @@ namespace System.Drawing
 				// one very long line: an exception message came out about 15000px wide, past the
 				// GPU's maximum texture dimension, and the window presented nothing at all. Draw a
 				// run per line, and align each line within the layout rectangle on its own.
+				// GDI+ confines a string to its layout rectangle; the recorder draws a run wherever it
+				// is told. WinForms leans on that: a ListView hands each subitem its column bounds as
+				// the layout rect and expects the text to stop there. Unclipped, a value wider than
+				// its column painted straight over the next ones -- one long assembly name covered
+				// every other column of the version list.
+				bool clipToLayout = layoutRectangle.Width > 0 && layoutRectangle.Height > 0;
+				if (clipToLayout)
+					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
+						layoutRectangle.Width, layoutRectangle.Height, false);
 				string[] lines = s.Split ('\n');
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
@@ -1434,8 +1446,12 @@ namespace System.Drawing
 						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
 						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
 					}
+					if (s_traceText)
+						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
 					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb);
 				}
+
+				if (clipToLayout) GpuRecorder.ClearClip ();
 				return;
 			}
 

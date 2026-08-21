@@ -56,22 +56,7 @@ namespace System.Windows.Forms
 
 		internal long[] GetPresentWindows(IntPtr form)
 		{
-			IntPtr Root(IntPtr k) { Hwnd h = Hwnd.ObjectFromHandle(k); while (h?.parent != null) h = h.parent; return h?.Handle ?? k; }
-			int Depth(IntPtr k) { int d = 0; Hwnd h = Hwnd.ObjectFromHandle(k); while (h != null) { d++; h = h.parent; } return d; }
-
-			var vis = new List<IntPtr>();
-			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
-			{
-				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && EffectivelyVisible(h)) vis.Add(k);
-			}
-			vis.Sort((a, b) =>
-			{
-				bool af = Root(a) == form, bf = Root(b) == form;
-				if (af != bf) return af ? -1 : 1;                       // form subtree first
-				if (!af) { int c = Root(a).ToInt64().CompareTo(Root(b).ToInt64()); if (c != 0) return c; }
-				return Depth(a).CompareTo(Depth(b));                    // parents before children
-			});
+			List<IntPtr> vis = CollectAll(form);
 			var outl = new List<long>(vis.Count * 3);
 			foreach (IntPtr k in vis)
 			{
@@ -105,17 +90,8 @@ namespace System.Windows.Forms
 		/// </remarks>
 		internal long[] GetSubtreeWindows(IntPtr root)
 		{
-			IntPtr Root(IntPtr k) { Hwnd h = Hwnd.ObjectFromHandle(k); while (h?.parent != null) h = h.parent; return h?.Handle ?? k; }
-			int Depth(IntPtr k) { int d = 0; Hwnd h = Hwnd.ObjectFromHandle(k); while (h != null) { d++; h = h.parent; } return d; }
-
 			var vis = new List<IntPtr>();
-			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
-			{
-				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && EffectivelyVisible(h) && Root(k) == root) vis.Add(k);
-			}
-
-			vis.Sort((a, b) => Depth(a).CompareTo(Depth(b)));           // parents before children
+			if (EffectivelyVisible(Hwnd.ObjectFromHandle(root))) CollectSubtree(root, vis);
 
 			var outl = new List<long>(vis.Count * 3);
 			foreach (IntPtr k in vis)
@@ -166,18 +142,19 @@ namespace System.Windows.Forms
 
 		internal IntPtr WindowAtPoint(int screenX, int screenY)
 		{
-			IntPtr best = IntPtr.Zero;
-			int bestDepth = -1;
-			foreach (IntPtr handle in new List<IntPtr>(backing.Keys))
+			// Paint order decides: whatever is drawn last is what the user is pointing at, so scan
+			// the same list backwards. Depth alone could not separate two siblings that overlap --
+			// a ListView's column header sits on top of its item pane, both filling the control.
+			List<IntPtr> ordered = CollectAll(IntPtr.Zero);
+			for (int i = ordered.Count - 1; i >= 0; i--)
 			{
-				Hwnd h = Hwnd.ObjectFromHandle(handle);
-				if (h == null || !EffectivelyVisible(h)) continue;
+				Hwnd h = Hwnd.ObjectFromHandle(ordered[i]);
+				if (h == null) continue;
 				Point p = ScreenLocation(h);
 				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
-				int depth = 0; for (Hwnd d = h; d != null; d = d.parent) depth++;
-				if (depth > bestDepth) { bestDepth = depth; best = handle; }
+				return ordered[i];
 			}
-			return best;
+			return IntPtr.Zero;
 		}
 
 		private IntPtr _grabHandle;   // mouse-capture target (WinForms grabs on button-down)
@@ -447,6 +424,12 @@ namespace System.Windows.Forms
 		private static object ClipToWindow(object scene, IntPtr handle)
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (Environment.GetEnvironmentVariable("WF_TRACE_TEXT") == "1" && hwnd != null)
+			{
+				Control c = Control.FromHandle(handle);
+				Console.Error.WriteLine($"clip 0x{handle.ToInt64():x} {c?.GetType().Name} hwnd={hwnd.width}x{hwnd.height}" +
+					$" control={(c == null ? "-" : c.Bounds.ToString())}");
+			}
 			if (scene is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv && hwnd != null)
 				sv.Clip = new Microsoft.Wpf.Interop.WebGpu.Composition.Rect(
 					0, 0, Math.Max(0, hwnd.width), Math.Max(0, hwnd.height));
@@ -799,7 +782,88 @@ namespace System.Windows.Forms
 		{
 			if (_focusHandle != IntPtr.Zero) SendMessage(_focusHandle, Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 		}
-		internal override bool SetZOrder(IntPtr hWnd, IntPtr AfterhWnd, bool Top, bool Bottom) => true;
+		// Sibling paint order, front (topmost) first -- Win32 keeps one of these per parent and
+		// WinForms drives it through Control.UpdateZOrder. The generated stub threw it away, so
+		// siblings were composited in whatever order the backing dictionary happened to enumerate.
+		// A ListView deliberately gives its item pane the WHOLE client and draws the column header
+		// as a sibling ON TOP of it (Mono puts both at 0,0), so the wrong order hid the headers
+		// completely -- and a click on a header went to the item pane underneath.
+		private readonly List<IntPtr> _zOrder = new List<IntPtr>();
+
+		internal override bool SetZOrder(IntPtr hWnd, IntPtr AfterhWnd, bool Top, bool Bottom)
+		{
+			_zOrder.Remove(hWnd);
+			if (Bottom)
+				_zOrder.Add(hWnd);
+			else if (Top || AfterhWnd == IntPtr.Zero)
+				_zOrder.Insert(0, hWnd);
+			else
+			{
+				int i = _zOrder.IndexOf(AfterhWnd);              // placed BEHIND that window
+				_zOrder.Insert(i < 0 ? 0 : i + 1, hWnd);
+			}
+			_paintVersion++;
+			return true;
+		}
+
+		/// <summary>Sort key for paint order among siblings: larger paints later, i.e. on top.</summary>
+		/// <remarks>
+		/// WinForms keeps the z-order in the parent's control collection, where index 0 is the
+		/// TOPMOST child -- that is what Control.UpdateZOrderOfChild mirrors out to the driver. Read
+		/// it straight from there rather than depending on those calls having been made: a
+		/// ListView's header and item pane are implicit children that never generated any, and the
+		/// item pane -- which covers the whole control -- was painting over the column headers.
+		/// </remarks>
+		private int PaintKey(IntPtr h)
+		{
+			Control c = Control.FromHandle(h);
+			Control parent = c?.Parent;
+			if (parent != null)
+			{
+				Control[] siblings = parent.Controls.GetAllControls();
+				int i = Array.IndexOf(siblings, c);
+				if (i >= 0) return -i;
+			}
+			int z = _zOrder.IndexOf(h);
+			return z < 0 ? int.MinValue : -z;
+		}
+
+		/// <summary>The visible windows of <paramref name="root"/>'s subtree in paint order: the
+		/// window itself, then its children back-to-front, depth first.</summary>
+		private void CollectSubtree(IntPtr root, List<IntPtr> into)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(root);
+			if (h == null || !h.visible) return;                 // a hidden window hides its children
+			into.Add(root);
+
+			var kids = new List<IntPtr>();
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				Hwnd c = Hwnd.ObjectFromHandle(k);
+				if (c != null && c != h && c.parent == h) kids.Add(k);
+			}
+			kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
+			foreach (IntPtr k in kids) CollectSubtree(k, into);
+		}
+
+		/// <summary>Every visible window, in paint order, roots ordered by z.</summary>
+		private List<IntPtr> CollectAll(IntPtr firstRoot)
+		{
+			var roots = new List<IntPtr>();
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(k);
+				if (h != null && h.parent == null && !roots.Contains(k)) roots.Add(k);
+			}
+			roots.Sort((a, b) =>
+			{
+				if (a == firstRoot != (b == firstRoot)) return a == firstRoot ? -1 : 1;
+				return PaintKey(a).CompareTo(PaintKey(b));
+			});
+			var outl = new List<IntPtr>();
+			foreach (IntPtr r in roots) CollectSubtree(r, outl);
+			return outl;
+		}
 		internal override bool SetTopmost(IntPtr hWnd, bool Enabled) => true;
 		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd) { _grabHandle = hwnd; }
