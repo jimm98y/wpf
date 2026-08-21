@@ -29,13 +29,6 @@ namespace System.Windows.Forms.Integration
         private static readonly Dictionary<HwndHost, ForeignHwndHostContent> s_claimed
             = new Dictionary<HwndHost, ForeignHwndHostContent>();
 
-        // Every window a WPF element has EVER hosted. A claim comes and goes -- a docking library
-        // tears the HwndHost down when its tab is deselected and builds a new one when the tab comes
-        // back -- but the window itself survives that, visible and holding its last scene. Between
-        // the two it looked like nobody's top-level window, which is this file's definition of a
-        // popup. Driver handles are minted monotonically and never reused, so remembering them is
-        // safe: a handle in here is that element's content for good.
-        private static readonly HashSet<IntPtr> s_hosted = new HashSet<IntPtr>();
 
         private readonly HwndHost _host;
         private readonly IntPtr _root;
@@ -98,7 +91,6 @@ namespace System.Windows.Forms.Integration
             var claim = new ForeignHwndHostContent(host, handle);
             lock (s_lock)
             {
-                s_hosted.Add(handle);
                 if (s_claimed.ContainsKey(host)) return true;
                 s_claimed[host] = claim;
             }
@@ -482,30 +474,41 @@ namespace System.Windows.Forms.Integration
         }
 
 
+        // WF_TRACE_POPUP=1: every window this host considered drawing as a popup, and the verdict.
+        // Once per handle, so an idle app does not spew. If something still appears over a pad that
+        // should not, this says exactly what it is and how it was created.
+        private static readonly bool s_tracePopups
+            = Environment.GetEnvironmentVariable("WF_TRACE_POPUP") == "1";
+        private static readonly HashSet<IntPtr> s_tracedPopups = new HashSet<IntPtr>();
+
+        private void TracePopup(IntPtr h, bool published)
+        {
+            if (!s_tracePopups) return;
+            lock (s_lock) { if (!s_tracedPopups.Add(h)) return; }
+            SWF.Control c = SWF.Control.FromHandle(h);
+            SWF.Control top = c?.TopLevelControl;
+            Console.Error.WriteLine(
+                $"popup? 0x{h.ToInt64():x} published={published} popupStyle={_driver.IsPopupWindow(h)} " +
+                $"control={c?.GetType().Name ?? "-"} top={top?.GetType().Name ?? "-"} " +
+                $"parent={c?.Parent?.GetType().Name ?? "-"} bounds={(c == null ? "-" : c.Bounds.ToString())}");
+        }
+
         private void CollectPopups(List<EmbeddedItem> into, float hostDevX, float hostDevY,
             int ox, int oy, double dpi, PresentationSource src)
         {
             long[] all = _driver.GetPresentWindows(_root);
             if (all is null) return;
 
-            // Anything inside a host's subtree is somebody's own content, not a popup -- and that
-            // stays true while the host is between claims. Without the s_hosted half, deselecting
-            // SharpDevelop's Tools pad turned its window into a popup: clicking in the forms
-            // designer made this the input target, and a strip of the pad was then drawn, unclipped,
-            // over the top left of the design surface until clicking Tools claimed it back.
-            var roots = new List<IntPtr>();
+            // Anything inside a claimed host is somebody's own content, not a popup.
+            var owned = new HashSet<long>();
             lock (s_lock)
             {
-                foreach (ForeignHwndHostContent claim in s_claimed.Values) roots.Add(claim._root);
-                foreach (IntPtr hosted in s_hosted) roots.Add(hosted);
-            }
-
-            var owned = new HashSet<long>();
-            foreach (IntPtr root in roots)
-            {
-                long[] mine = _driver.GetSubtreeWindows(root);
-                if (mine == null) continue;
-                for (int i = 0; i + 2 < mine.Length; i += 3) owned.Add(mine[i]);
+                foreach (ForeignHwndHostContent claim in s_claimed.Values)
+                {
+                    long[] mine = _driver.GetSubtreeWindows(claim._root);
+                    if (mine == null) continue;
+                    for (int i = 0; i + 2 < mine.Length; i += 3) owned.Add(mine[i]);
+                }
             }
 
             for (int i = 0; i + 2 < all.Length; i += 3)
@@ -513,6 +516,15 @@ namespace System.Windows.Forms.Integration
                 if (owned.Contains(all[i])) continue;
                 var h = (IntPtr)all[i];
                 if (IsOwnWindow(h)) continue;          // a Form; PresentationHost gives it a real window
+
+                // Ask what the window IS, rather than inferring it from what nothing claims. A pad
+                // whose tab has not been selected this session has no HwndHost yet, so nothing
+                // claims it either -- and it was drawn here as a floating panel at this host's
+                // origin. SharpDevelop's Tools pad appeared over the top left of the forms designer
+                // the moment the designer took input, and only clicking Tools, which finally built
+                // the pad's HwndHost, made it stop.
+                if (!_driver.IsPopupWindow(h)) { TracePopup(h, false); continue; }
+                TracePopup(h, true);
                 object scene = _driver.GetWindowScene(h);
                 if (scene is null) continue;
 

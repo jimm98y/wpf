@@ -67,6 +67,26 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>
+		/// Whether the window was created as a popup surface -- a menu, a combo drop-down, a tooltip,
+		/// an in-place editor -- rather than as an ordinary child control.
+		/// </summary>
+		/// <remarks>
+		/// A compositor has to tell the two apart, and "a top-level window nobody claims" is not the
+		/// test: a hosted pad whose tab has never been selected is exactly that too, and got drawn as
+		/// a floating panel over whatever had the input. Every popup surface in this stack asks for
+		/// WS_POPUP (ToolStripDropDown, MenuAPI, ComboBox's list, ToolTip, MonthCalendar,
+		/// PropertyGridView's drop-down, TextBox's auto-complete); Control's own CreateParams asks for
+		/// WS_CHILD. This driver never restyles a window after creation, so the style it was created
+		/// with is the answer.
+		/// </remarks>
+		internal bool IsPopupWindow(IntPtr handle)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			if (h == null) return false;
+			return (h.initial_style & WindowStyles.WS_POPUP) != 0;
+		}
+
+		/// <summary>
 		/// Whether <paramref name="handle"/> is one of this driver's windows.
 		/// </summary>
 		/// <remarks>
