@@ -337,6 +337,16 @@ namespace System.Windows.Forms
 			{
 				hwnd.visible = true;
 				hwnd.Mapped = true;
+
+				// Win32 queues a WM_PAINT for a window created visible. This driver paints only what
+				// has been invalidated, and a control created into a parent that is ALREADY showing
+				// never passes through SetVisible -- which is the only other place that invalidates a
+				// newly revealed subtree. So it had no recorded scene and simply was not on screen
+				// until something unrelated forced a repaint. The forms designer builds the controls
+				// of the form it is designing exactly this way: the design surface came up as an
+				// empty window, and the button on it appeared only once the surface was clicked.
+				Invalidate(handle, new Rectangle(0, 0, w, h), false);
+				_paintVersion++;
 			}
 
 			Text(handle, cp.Caption);
