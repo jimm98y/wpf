@@ -19,7 +19,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers;
+    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
@@ -43,6 +43,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
+        _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _getSubtree = M("GetSubtreeWindows");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -236,8 +237,27 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             // Take the keyboard back on a click in the WinForms area. Without this, a hosted child
             // window that grabbed focus (an ElementHost's WPF tree) would keep it forever and the
             // WinForms text box would stop receiving typed characters.
-            case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
-            case 0x0202: Trace("WM_LBUTTONUP", lParam); MouseAt(lParam, _up); Frame(); return IntPtr.Zero;  // WM_LBUTTONUP
+            // Capture the mouse for the duration of a drag, exactly as a Win32 app does. Without it
+            // the OS stops delivering moves the moment the pointer leaves this window, so a drag
+            // that goes outside simply stopped being reported: dragging a ListView column edge past
+            // the dialog's edge could not widen the column beyond the dialog.
+            case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); SetCapture(hwnd);
+                MouseAt(lParam, _down); Frame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
+            case 0x0202: Trace("WM_LBUTTONUP", lParam); ReleaseCapture();
+                MouseAt(lParam, _up); Frame(); return IntPtr.Zero;                  // WM_LBUTTONUP
+            // WM_MOUSEWHEEL carries SCREEN coordinates and the notch count in the wParam high word.
+            // Nothing forwarded it, so the wheel did nothing anywhere -- no list, grid or text box
+            // scrolled.
+            case 0x020A:
+                if (_wheel != null)
+                {
+                    int delta = (short)((long)wParam >> 16);
+                    var pt = new POINT { x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF) };
+                    ScreenToClient(hwnd, ref pt);
+                    _wheel.Invoke(_driver, new object[] { _ox + (int)(pt.x / _scale), _oy + (int)(pt.y / _scale), delta });
+                    Frame();
+                }
+                return IntPtr.Zero;
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
             case 0x0102:                                                          // WM_CHAR
                 char typed = (char)(int)wParam;
@@ -294,7 +314,16 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 
     private void PublishModifiers() => _setModifiers?.Invoke(_driver, new object[] { ModifierState() });
 
-    private void Frame() { Application.DoEvents(); Present(); }
+    // One frame's worth of work in response to input. Timers tick here as well as in the message
+    // loop: while the pointer is moving there is always another message waiting, so the loop never
+    // reaches its idle path and WinForms timers were starved for as long as the interaction lasted
+    // -- any animation stuttered exactly while the user was doing something.
+    private void Frame()
+    {
+        _tickTimers?.Invoke(_driver, null);
+        Application.DoEvents();
+        Present();
+    }
 
     private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
     private void Trace(string what, IntPtr lParam)
@@ -545,6 +574,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     [DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr h);
     [DllImport("user32")] private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32")] private static extern short GetKeyState(int vk);
+    [DllImport("user32")] private static extern IntPtr SetCapture(IntPtr hwnd);
+    [DllImport("user32")] private static extern bool ReleaseCapture();
+    [DllImport("user32")] private static extern bool ScreenToClient(IntPtr hwnd, ref POINT pt);
+    private struct POINT { public int x, y; }
     [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
 
     [StructLayout(LayoutKind.Sequential)]
