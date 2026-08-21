@@ -20,6 +20,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     private readonly Form _form;
     private readonly object _driver;
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
+    private readonly MethodInfo _isPopup;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
@@ -46,7 +47,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
-        _getSubtree = M("GetSubtreeWindows");
+        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
         PresentationHost.Attach(this, form);
@@ -511,7 +512,16 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         var outl = new System.Collections.Generic.List<long>(mine.Length + 12);
         outl.AddRange(mine);
         for (int i = 0; i + 2 < all.Length; i += 3)
-            if (!claimed.Contains(all[i])) { outl.Add(all[i]); outl.Add(all[i + 1]); outl.Add(all[i + 2]); }
+        {
+            if (claimed.Contains(all[i])) continue;
+            // ...and only if it is actually a popup. "Unclaimed" also describes a hosted pad whose
+            // WPF element has not built its HwndHost yet: SharpDevelop's Tools sidebar sits at the
+            // driver's origin and so was drawn into the top-left corner of every dialog this host
+            // put on screen, including the unhandled-exception box.
+            if (_isPopup != null && !(bool)_isPopup.Invoke(_driver, new object[] { (IntPtr)all[i] }))
+                continue;
+            outl.Add(all[i]); outl.Add(all[i + 1]); outl.Add(all[i + 2]);
+        }
 
         if (s_tracePresent) TracePresent(mine, outl);
         return outl.ToArray();
