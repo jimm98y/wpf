@@ -2068,8 +2068,18 @@ namespace System.Windows.Forms
 			
 			DirComboBoxItem dcbi = Items [e.Index] as DirComboBoxItem;
 			
-			Bitmap bmp = new Bitmap (e.Bounds.Width, e.Bounds.Height, e.Graphics);
-			Graphics gr = Graphics.FromImage (bmp);
+			// Classic path: compose the item into an offscreen bitmap and blit it, to avoid flicker.
+			// On the GPU-raster stack e.Graphics is a scene recorder with no GDI+ surface behind it, so
+			// GdipCreateBitmapFromGraphics has no device to copy a resolution from: it failed with
+			// InvalidParameter and took the whole file dialog down on its first paint. A recorded scene
+			// cannot flicker, so there we draw straight into the item's bounds instead.
+			bool recorded = XplatUI.RunningWebGpuDriver;
+			int width = e.Bounds.Width;
+			int height = e.Bounds.Height;
+			Bitmap bmp = recorded ? null : new Bitmap (width, height, e.Graphics);
+			Graphics gr = recorded ? e.Graphics : Graphics.FromImage (bmp);
+			int ox = recorded ? e.Bounds.X : 0;
+			int oy = recorded ? e.Bounds.Y : 0;
 			
 			Color backColor = e.BackColor;
 			Color foreColor = e.ForeColor;
@@ -2080,7 +2090,7 @@ namespace System.Windows.Forms
 				xPos = 0;
 
 			gr.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (backColor),
-					new Rectangle (0, 0, bmp.Width, bmp.Height));
+					new Rectangle (ox, oy, width, height));
 			
 			if ((e.State & DrawItemState.Selected) == DrawItemState.Selected &&
 					(!DroppedDown || (e.State & DrawItemState.ComboBoxEdit) != DrawItemState.ComboBoxEdit)) {
@@ -2089,19 +2099,21 @@ namespace System.Windows.Forms
 				int w = (int) gr.MeasureString (dcbi.Name, e.Font).Width;
 
 				gr.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorHighlight),
-						new Rectangle (xPos + 23, 1, w + 3, e.Bounds.Height - 2));
+						new Rectangle (ox + xPos + 23, oy + 1, w + 3, height - 2));
 				if ((e.State & DrawItemState.Focus) == DrawItemState.Focus) {
-					ControlPaint.DrawFocusRectangle (gr, new Rectangle (xPos + 22, 0, w + 5,
-							e.Bounds.Height), foreColor, ThemeEngine.Current.ColorHighlight);
+					ControlPaint.DrawFocusRectangle (gr, new Rectangle (ox + xPos + 22, oy, w + 5,
+							height), foreColor, ThemeEngine.Current.ColorHighlight);
 				}
 			}
 
-			gr.DrawString (dcbi.Name, e.Font , ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new Point (24 + xPos, (bmp.Height - e.Font.Height) / 2));
-			gr.DrawImage (dcbi.ImageList.Images [dcbi.ImageIndex], new Rectangle (new Point (xPos + 2, 0), new Size (16, 16)));
+			gr.DrawString (dcbi.Name, e.Font , ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new Point (ox + 24 + xPos, oy + (height - e.Font.Height) / 2));
+			gr.DrawImage (dcbi.ImageList.Images [dcbi.ImageIndex], new Rectangle (new Point (ox + xPos + 2, oy), new Size (16, 16)));
 			
-			e.Graphics.DrawImage (bmp, e.Bounds.X, e.Bounds.Y);
-			gr.Dispose ();
-			bmp.Dispose ();
+			if (!recorded) {
+				e.Graphics.DrawImage (bmp, e.Bounds.X, e.Bounds.Y);
+				gr.Dispose ();
+				bmp.Dispose ();
+			}
 		}
 		
 		protected override void OnSelectedIndexChanged (EventArgs e)
