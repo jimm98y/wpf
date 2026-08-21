@@ -715,6 +715,13 @@ namespace System.Windows.Forms
 						continue;
 					}
 
+					// Nor a form belonging to another thread: this loop is one thread's, and
+					// reading another thread's handle is a cross-thread access. See the same
+					// guard in Form.ShowDialog.
+					if (f.InvokeRequired) {
+						continue;
+					}
+
 					// Don't disable any children of the main form.
 					// These do not have to be MDI children.
 					Control current = f;

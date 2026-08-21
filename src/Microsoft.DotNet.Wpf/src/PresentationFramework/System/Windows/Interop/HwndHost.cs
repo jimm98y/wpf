@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Windows.Automation.Peers;
@@ -1013,6 +1013,14 @@ namespace System.Windows.Interop
                         this.IsEnabledChanged += _handlerEnabledChanged;
                         this.IsVisibleChanged += _handlerVisibleChanged;
                     }
+                    else if(_isForeignChild)
+                    {
+                        // Nothing to reparent: the handle is not a Win32 window, it is a
+                        // driver-minted one that the claimant composites (see BuildWindow). Asking
+                        // the OS about it fails outright -- GetParent on it threw
+                        // "Win32Exception (1400): Invalid window handle" out of the layout pass,
+                        // which is as far as the application got.
+                    }
                     else if(hwndParent != UnsafeNativeMethods.GetParent(_hwnd))
                     {
                         // We have a different parent window.  Just reparent the
@@ -1020,7 +1028,7 @@ namespace System.Windows.Interop
                         UnsafeNativeMethods.SetParent(_hwnd, new HandleRef(null,hwndParent));
                     }
                 }
-                else if (Handle != IntPtr.Zero)
+                else if (!_isForeignChild && Handle != IntPtr.Zero)
                 {
                     // Reparent the window to notification-only window provided by SystemResources
                     // This keeps the child window around, but it is not visible.  We can reparent the 

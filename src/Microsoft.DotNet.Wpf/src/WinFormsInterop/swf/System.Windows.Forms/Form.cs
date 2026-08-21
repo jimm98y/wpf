@@ -1695,7 +1695,13 @@ namespace System.Windows.Forms {
 
 			var disable = new List<Form> ();
 			foreach (Form form in Application.OpenForms)
-				if (form.Enabled)
+				// A modal loop belongs to ONE thread: real WinForms only disables the top-level
+				// windows of the thread running it. Reaching a form created on another thread
+				// touches its handle from the wrong one, which is precisely what
+				// CheckForIllegalCrossThreadCalls exists to catch -- and an application that turns
+				// that on and shows a dialog from a private STA thread (SharpDevelop does exactly
+				// this for its assertion dialog) was killed by the dialog instead of seeing it.
+				if (form.Enabled && !form.InvokeRequired)
 					disable.Add (form);
 			foreach (Form form in disable){
 				disabled_by_showdialog.Add (form);

@@ -35,6 +35,12 @@ namespace System.Windows.Forms
         // appeared at all.
         private static readonly HashSet<Form> s_suppressed = new HashSet<Form>();
 
+        // An application may run a second UI thread -- SharpDevelop shows its assertion dialog from
+        // a private STA thread -- and each thread drives this independently. The registry is shared,
+        // so it has to be guarded, and each thread only ever adopts, presents and pumps the windows
+        // of forms created on it: a form's handle belongs to its own thread.
+        private static readonly object s_lock = new object();
+
         /// <summary>The newest live host, if any -- the one popups and other unclaimed windows
         /// belong to. Hosts add themselves through <see cref="Attach"/>: either from here, or by a
         /// host an app created itself (the browser head, or a sample driving its own loop).</summary>
@@ -55,42 +61,54 @@ namespace System.Windows.Forms
         /// dialog.</summary>
         internal static Form[] SuppressedForms()
         {
-            var list = new List<Form>(s_suppressed.Count);
-            foreach (Form f in s_suppressed)
-                if (f != null && !f.IsDisposed) list.Add(f);
-            return list.ToArray();
+            lock (s_lock)
+            {
+                var list = new List<Form>(s_suppressed.Count);
+                foreach (Form f in s_suppressed)
+                    if (f != null && !f.IsDisposed) list.Add(f);
+                return list.ToArray();
+            }
         }
 
         /// <summary>The forms owned by every host except <paramref name="host"/>.</summary>
         internal static Form[] OtherHostedForms(IWinFormsHost host)
         {
-            var list = new List<Form>(s_hosts.Count);
-            foreach (IWinFormsHost h in s_hosts)
+            lock (s_lock)
             {
-                Form f;
-                if (!ReferenceEquals(h, host) && s_forms.TryGetValue(h, out f) && f != null) list.Add(f);
+                var list = new List<Form>(s_hosts.Count);
+                foreach (IWinFormsHost h in s_hosts)
+                {
+                    Form f;
+                    if (!ReferenceEquals(h, host) && s_forms.TryGetValue(h, out f) && f != null) list.Add(f);
+                }
+                return list.ToArray();
             }
-            return list.ToArray();
         }
 
         /// <summary>Keep <paramref name="form"/> off the screen for good: it is a compositing
         /// surface, not a window. See <see cref="s_suppressed"/>.</summary>
-        internal static void Suppress(Form form) { if (form != null) s_suppressed.Add(form); }
+        internal static void Suppress(Form form) { if (form != null) lock (s_lock) s_suppressed.Add(form); }
 
-        internal static void Unsuppress(Form form) { if (form != null) s_suppressed.Remove(form); }
+        internal static void Unsuppress(Form form) { if (form != null) lock (s_lock) s_suppressed.Remove(form); }
 
         internal static void Attach(IWinFormsHost host, Form form)
         {
             if (host == null) return;
-            if (!s_hosts.Contains(host)) s_hosts.Add(host);
-            if (form != null) s_forms[host] = form;
+            lock (s_lock)
+            {
+                if (!s_hosts.Contains(host)) s_hosts.Add(host);
+                if (form != null) s_forms[host] = form;
+            }
         }
 
         internal static void Detach(IWinFormsHost host)
         {
             if (host == null) return;
-            s_hosts.Remove(host);
-            s_forms.Remove(host);
+            lock (s_lock)
+            {
+                s_hosts.Remove(host);
+                s_forms.Remove(host);
+            }
         }
 
         /// <summary>Drive one frame from OUTSIDE a WinForms message loop -- a WPF app, whose thread
@@ -145,12 +163,15 @@ namespace System.Windows.Forms
 
             // Newest first: a dialog window is the one the user is looking at. Walk a copy, so a
             // host that goes away mid-frame cannot disturb the iteration.
-            IWinFormsHost[] hosts = s_hosts.ToArray();
+            IWinFormsHost[] hosts;
+            lock (s_lock) hosts = s_hosts.ToArray();
             for (int i = hosts.Length - 1; i >= 0; i--)
             {
                 IWinFormsHost host = hosts[i];
                 Form form;
-                if (!s_forms.TryGetValue(host, out form) || form == null || form.IsDisposed || !form.Visible)
+                lock (s_lock) s_forms.TryGetValue(host, out form);
+                if (form != null && form.InvokeRequired) continue;   // another thread drives this one
+                if (form == null || form.IsDisposed || !form.Visible)
                 {
                     // The form closed itself (an OK button, not the window close box): take its
                     // window down with it, or a dead dialog would stay on screen for ever.
@@ -175,8 +196,12 @@ namespace System.Windows.Forms
             {
                 Form form = open[i];
                 if (form == null || form.IsDisposed || !form.Visible) continue;
-                if (s_suppressed.Contains(form)) continue;
-                if (s_forms.ContainsValue(form)) continue;
+                if (form.InvokeRequired) continue;      // belongs to another UI thread
+                lock (s_lock)
+                {
+                    if (s_suppressed.Contains(form)) continue;
+                    if (s_forms.ContainsValue(form)) continue;
+                }
 
                 // The driver paints only what has been invalidated, and until now nothing has been:
                 // it renders into backing stores, so becoming visible is not by itself a reason to
