@@ -17,8 +17,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public object Scene { get; set; }              // boxed SceneVisual (the hosted control's scene)
         public float DeviceX { get; set; }             // top-left of the host, in the WPF target's device pixels
         public float DeviceY { get; set; }
-        public float DeviceW { get; set; }             // host size in device pixels (clip bounds)
+        public float DeviceW { get; set; }             // clip size in device pixels
         public float DeviceH { get; set; }
+
+        /// <summary>Top-left of the clip, in device pixels RELATIVE to <see cref="DeviceX"/>/
+        /// <see cref="DeviceY"/>. Non-zero when the host cuts into the content: a hosted control
+        /// that reaches past its host's edge must stop there, and the part that survives may start
+        /// partway into the window.</summary>
+        public float ClipX { get; set; }
+        public float ClipY { get; set; }
         public float Scale { get; set; } = 1f;         // hosted-unit -> device-pixel scale (typically DPI)
 
         /// <summary>The window this content belongs to (its HwndSource handle). The registry is
@@ -83,7 +90,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     var placed = new SceneVisual
                     {
                         Offset = new Vector2(it.DeviceX, it.DeviceY),
-                        Clip = new Rect(0, 0, it.DeviceW / s, it.DeviceH / s),
+                        Clip = new Rect(it.ClipX / s, it.ClipY / s, it.DeviceW / s, it.DeviceH / s),
                         Transform = Matrix3x2.CreateScale(s),
                     };
                     placed.Children.Add(sv);

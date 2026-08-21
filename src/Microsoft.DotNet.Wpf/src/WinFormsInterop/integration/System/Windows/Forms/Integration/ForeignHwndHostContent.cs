@@ -201,6 +201,33 @@ namespace System.Windows.Forms.Integration
             return false;
         }
 
+
+        /// <summary>
+        /// Confine one window's item to the host's rectangle.
+        /// </summary>
+        /// <remarks>
+        /// Each window was clipped to its OWN bounds, and nothing clipped to the host's, so a
+        /// hosted control reaching past the host's edge was drawn in full and spilled across
+        /// whatever sat beside it -- the XPath Query pad's combo box ran out of the pad and over
+        /// the pane next to it. WPF clips its own content by every ancestor; hosted content has to
+        /// be clipped to its host here, because the compositor draws it on top of the WPF scene
+        /// rather than inside that visual tree.
+        /// </remarks>
+        private static bool ClipToHost(EmbeddedItem item, float hostX, float hostY, float hostW, float hostH)
+        {
+            float left = Math.Max(item.DeviceX, hostX);
+            float top = Math.Max(item.DeviceY, hostY);
+            float right = Math.Min(item.DeviceX + item.DeviceW, hostX + hostW);
+            float bottom = Math.Min(item.DeviceY + item.DeviceH, hostY + hostH);
+            if (right <= left || bottom <= top) return false;      // entirely outside: drop it
+
+            item.ClipX = left - item.DeviceX;
+            item.ClipY = top - item.DeviceY;
+            item.DeviceW = right - left;
+            item.DeviceH = bottom - top;
+            return true;
+        }
+
         public bool Collect(List<EmbeddedItem> into)
         {
             if (_driver is null || !_visible || !_host.IsVisible)
@@ -256,7 +283,7 @@ namespace System.Windows.Forms.Integration
 
                 long packed = _driver.GetWindowSizePacked(h);
                 int w = (int)(packed >> 32), ht = (int)(packed & 0xFFFFFFFF);
-                into.Add(new EmbeddedItem
+                var item = new EmbeddedItem
                 {
                     Scene = scene,
                     DeviceX = hostDevX + ((int)wins[i + 1] - ox) * (float)dpi,
@@ -267,7 +294,10 @@ namespace System.Windows.Forms.Integration
                     // Tag the window: the registry is process-wide, and without this every WPF
                     // window composited every other one's hosted content.
                     Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
-                });
+                };
+                if (ClipToHost(item, hostDevX, hostDevY,
+                        (float)(_host.RenderSize.Width * dpi), (float)(_host.RenderSize.Height * dpi)))
+                    into.Add(item);
             }
 
             bool moved = _lastDevX != hostDevX || _lastDevY != hostDevY

@@ -620,7 +620,7 @@ namespace System.Windows.Forms.Integration
                 if (scene == null) continue;
                 long packed = _driver.GetWindowSizePacked(h);
                 int w = (int)(packed >> 32), ht = (int)(packed & 0xFFFFFFFF);
-                into.Add(new EmbeddedItem
+                var item = new EmbeddedItem
                 {
                     Scene = scene,
                     DeviceX = hostDevX + ((int)wins[i + 1] - ox) * (float)dpi,
@@ -631,7 +631,20 @@ namespace System.Windows.Forms.Integration
                     // Tag the window: the registry is process-wide, and without this every WPF
                     // window composited every other one's hosted content.
                     Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
-                });
+                };
+                // Confine it to this host, the way WPF clips its own content by every ancestor:
+                // a hosted control reaching past the host's edge would otherwise be drawn in full,
+                // over whatever sits beside it. See ForeignHwndHostContent.ClipToHost.
+                float hostW = (float)(RenderSize.Width * dpi), hostH = (float)(RenderSize.Height * dpi);
+                float left = Math.Max(item.DeviceX, hostDevX), top = Math.Max(item.DeviceY, hostDevY);
+                float right = Math.Min(item.DeviceX + item.DeviceW, hostDevX + hostW);
+                float bottom = Math.Min(item.DeviceY + item.DeviceH, hostDevY + hostH);
+                if (right <= left || bottom <= top) continue;
+                item.ClipX = left - item.DeviceX;
+                item.ClipY = top - item.DeviceY;
+                item.DeviceW = right - left;
+                item.DeviceH = bottom - top;
+                into.Add(item);
             }
 
             bool moved = _lastDevX != hostDevX || _lastDevY != hostDevY
