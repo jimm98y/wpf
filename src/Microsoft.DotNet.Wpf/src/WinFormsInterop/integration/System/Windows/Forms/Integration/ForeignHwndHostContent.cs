@@ -422,6 +422,15 @@ namespace System.Windows.Forms.Integration
         /// </remarks>
         private IntPtr TargetAt(int x, int y)
         {
+            // A control that captured the mouse owns every mouse message until it lets go, wherever
+            // the pointer has moved to. Hit-testing afresh on each move instead broke every drag
+            // that leaves the control it began in: pressing a grab handle on the forms designer's
+            // surface panel captured the mouse, the first move crossed onto the designed form, and
+            // the panel -- whose MouseMove is what begins the resize -- never heard another word.
+            // The subtree injectors already honour this; only this path did not.
+            IntPtr grab = _driver.GrabHandle;
+            if (grab != IntPtr.Zero) return grab;
+
             // Look for a popup explicitly rather than trusting the driver's global hit-test. Its
             // answer is ordered by paint order, and a popup has no parent to take a z-order from,
             // so it sorts to the BOTTOM and a hosted container -- every one of which sits at the

@@ -250,6 +250,11 @@ namespace System.Windows.Forms
 		}
 
 		private IntPtr _grabHandle;   // mouse-capture target (WinForms grabs on button-down)
+
+		/// <summary>The window holding the mouse capture, or Zero. While one does, every mouse
+		/// message belongs to it wherever the pointer actually is -- that is what makes a drag keep
+		/// working once it leaves the control it started in.</summary>
+		internal IntPtr GrabHandle => _grabHandle;
 		private const int MK_LBUTTON = 0x0001;
 		private const int MK_RBUTTON = 0x0002;
 
