@@ -247,12 +247,35 @@ namespace System.Windows.Forms
 
 		internal override void DestroyWindow(IntPtr handle)
 		{
+			// Win32 destroys a window's children along with it, and each of them gets its own
+			// WM_DESTROY -- which is what makes WinForms clear Control.Created. Destroying only this
+			// window left every child still marked created, with a parent that no longer existed, so
+			// the next Control.CreateControl on that tree returned immediately ("already created")
+			// and none of them ever got a handle again. A hosted panel rendered the first time it
+			// was shown and was empty every time after, once it had been swapped away and back.
+			foreach (IntPtr child in ChildHandles(handle)) DestroyWindow(child);
+
 			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.Remove(handle); }
 			captions.Remove(handle);
 			_scenes.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
+		}
+
+		/// <summary>The handles whose immediate parent is <paramref name="handle"/>, as a snapshot --
+		/// the caller is about to destroy them, which mutates the registry.</summary>
+		private List<IntPtr> ChildHandles(IntPtr handle)
+		{
+			var kids = new List<IntPtr>();
+			Hwnd parent = Hwnd.ObjectFromHandle(handle);
+			if (parent == null) return kids;
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				Hwnd c = Hwnd.ObjectFromHandle(k);
+				if (c != null && c != parent && c.parent == parent) kids.Add(k);
+			}
+			return kids;
 		}
 
 		internal override bool SetVisible(IntPtr handle, bool visible, bool activate)

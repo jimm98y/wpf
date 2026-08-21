@@ -4318,6 +4318,19 @@ namespace System.Windows.Forms
 					XplatUI.SetParent(window.Handle, parent.Handle);
 				}
 
+				// ...and adopt any child that already had one. A control added to us BEFORE we had
+				// a handle could not be parented at the time -- ChangeParent only re-parents to an
+				// EXISTING handle, so it passed Zero and left the child top-level -- and nothing
+				// else would ever reunite them. That is the usual order when a host assigns its
+				// child in an object initialiser and is put into the tree afterwards: the panel
+				// rendered the first time, when it had no handle yet and was created underneath us,
+				// and was empty every time it was moved to a fresh container after that.
+				foreach (Control child in Controls.GetAllControls()) {
+					if (child.IsHandleCreated) {
+						XplatUI.SetParent(child.Handle, window.Handle);
+					}
+				}
+
 				UpdateStyles();
 				XplatUI.SetAllowDrop (window.Handle, allow_drop);
 
