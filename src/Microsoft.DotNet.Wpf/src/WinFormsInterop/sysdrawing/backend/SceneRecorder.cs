@@ -162,6 +162,30 @@ namespace System.Drawing.WebGpuBackend
             }
         }
 
+        // A dashed line has to stay a STROKE: the scene's stroke style carries a dash array that the
+        // renderer honours, whereas the solid path above collapses a line to a filled 1px rect and
+        // would lose the pattern entirely. The forms designer draws its 8x8 dot grid as horizontal
+        // lines dashed {1, 7}, so losing it turned the design surface into solid stripes.
+        public void DrawDashedLine(float x1, float y1, float x2, float y2, int argb, float width, float[] dashPattern)
+        {
+            if (dashPattern == null || dashPattern.Length == 0)
+            {
+                DrawLine(x1, y1, x2, y2, argb);
+                return;
+            }
+
+            float w = width <= 0 ? 1f : width;
+            var dashes = new double[dashPattern.Length];
+            for (int i = 0; i < dashPattern.Length; i++)
+                dashes[i] = dashPattern[i];      // stroke dashes are in multiples of thickness, as in GDI+
+
+            var fig = new PathFigure(new Vector2(x1, y1)) { Closed = false };
+            fig.Segments.Add(new LineSegment(new Vector2(x2, y2)));
+            var geo = new PathGeometry(FillRule.NonZero, new List<PathFigure> { fig });
+            Add(new GeometryStroke(geo, Rgba(argb),
+                new StrokeStyle(w, LineCap.Butt, LineJoin.Miter, 10.0, dashes)));
+        }
+
         // Arc as a stroked path sampled along the ellipse (handles the full-circle radio/checkbox
         // ring at 0..359 as well as partial arcs).
         public void DrawArc(float x, float y, float w, float h, float startDeg, float sweepDeg, int argb, float thickness)

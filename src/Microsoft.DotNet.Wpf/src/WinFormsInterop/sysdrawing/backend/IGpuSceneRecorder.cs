@@ -32,6 +32,10 @@ namespace System.Drawing
                        byte[] tileRgba, int tileW, int tileH, float tileSize);
         void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
         void DrawLine(float x1, float y1, float x2, float y2, int argb);
+
+        /// <summary>A line stroked with a dash pattern. <paramref name="dashPattern"/> is in
+        /// GDI+ units -- multiples of the pen width -- alternating on/off.</summary>
+        void DrawDashedLine(float x1, float y1, float x2, float y2, int argb, float width, float[] dashPattern);
         void DrawArc(float x, float y, float w, float h, float startDeg, float sweepDeg, int argb, float thickness);
         void DrawText(string text, float x, float y, float emPx, int argb);
         void DrawImage(byte[] rgba, int pw, int ph, float dx, float dy, float dw, float dh);

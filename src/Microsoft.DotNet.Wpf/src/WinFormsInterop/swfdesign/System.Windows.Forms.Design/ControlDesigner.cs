@@ -254,7 +254,12 @@ namespace System.Windows.Forms.Design
 					//
 					this.DefWndProc (ref m);
 
-					Graphics gfx = Graphics.FromHwnd (m.HWnd);
+					// Not Graphics.FromHwnd: that asks GDI+ for a device context for a real window
+					// handle, and a driver whose handles are not OS windows cannot give it one -- it
+					// failed with GDI+ OutOfMemory the instant the designer first painted. CreateGraphics
+					// asks the driver instead, which is the same thing on every backend and works on all
+					// of them.
+					Graphics gfx = this.Control.CreateGraphics ();
 					PaintEventArgs args = new PaintEventArgs (gfx, this.Control.Bounds);
 					OnPaintAdornments (args);
 					gfx.Dispose ();

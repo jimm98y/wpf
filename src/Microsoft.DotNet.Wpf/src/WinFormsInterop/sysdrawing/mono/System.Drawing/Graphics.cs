@@ -76,6 +76,31 @@ namespace System.Drawing
 			if (p.Brush is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
 			return p.Color.ToArgb ();
 		}
+		// A pen's dash pattern, in GDI+ units (multiples of the pen width), or null when solid.
+		// The built-in styles have fixed patterns; only a custom one has to be read back from the pen.
+		static float [] DashOf (Pen p)
+		{
+			if (p == null)
+				return null;
+			switch (p.DashStyle) {
+			case Drawing2D.DashStyle.Solid:      return null;
+			case Drawing2D.DashStyle.Dash:       return new float [] { 3f, 1f };
+			case Drawing2D.DashStyle.Dot:        return new float [] { 1f, 1f };
+			case Drawing2D.DashStyle.DashDot:    return new float [] { 3f, 1f, 1f, 1f };
+			case Drawing2D.DashStyle.DashDotDot: return new float [] { 3f, 1f, 1f, 1f, 1f, 1f };
+			default:
+				try { return p.DashPattern; } catch { return null; }
+			}
+		}
+
+		// True when this pen draws a dashed line, which the recorder has to keep as a stroke: the
+		// solid path collapses a line to a filled 1px rect and the pattern would be lost.
+		static bool RecordDash (Pen p, out float [] pattern)
+		{
+			pattern = DashOf (p);
+			return pattern != null && pattern.Length > 0;
+		}
+
 		static int Blend (Color a, Color b) =>
 			Color.FromArgb ((a.A + b.A) / 2, (a.R + b.R) / 2, (a.G + b.G) / 2, (a.B + b.B) / 2).ToArgb ();
 		/// <summary>
@@ -450,8 +475,23 @@ namespace System.Drawing
 			GDIPlus.XFree (vPtr);
 		}
 
+		/// <summary>Called once when this Graphics is disposed, before the recorder is detached.
+		/// The GPU-raster driver uses it to fold what was drawn through CreateGraphics into the
+		/// window's scene -- otherwise that drawing has nowhere to go.</summary>
+		internal Action<Graphics> DisposeHook;
+
+		private void RunDisposeHook ()
+		{
+			Action<Graphics> hook = DisposeHook;
+			if (hook == null)
+				return;
+			DisposeHook = null;      // once only, even if Dispose is called twice
+			hook (this);
+		}
+
 		public void Dispose ()
 		{
+			RunDisposeHook ();
 			// Recording-only Graphics (GPU-raster, no libgdiplus backing): nothing native to free.
 			if (nativeObject == IntPtr.Zero) { disposed = true; GpuRecorder = null; return; }
 			Status status;
@@ -1187,7 +1227,13 @@ namespace System.Drawing
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
-			if (RecordPen (pen)) { GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen)); return; }
+			if (RecordPen (pen)) {
+				if (RecordDash (pen, out float [] dash))
+					GpuRecorder.DrawDashedLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen), pen.Width, dash);
+				else
+					GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen));
+				return;
+			}
                         Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen,
 		                                pt1.X, pt1.Y, pt2.X, pt2.Y);
 			CheckDrawStatus (status);
@@ -1197,7 +1243,13 @@ namespace System.Drawing
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
-			if (RecordPen (pen)) { GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen)); return; }
+			if (RecordPen (pen)) {
+				if (RecordDash (pen, out float [] dash))
+					GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
+				else
+					GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen));
+				return;
+			}
 			Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen, x1, y1, x2, y2);
 			CheckDrawStatus (status);
 		}
@@ -1208,7 +1260,13 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (!float.IsNaN(x1) && !float.IsNaN(y1) &&
 			    !float.IsNaN(x2) && !float.IsNaN(y2)) {
-				if (RecordPen (pen)) { GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen)); return; }
+				if (RecordPen (pen)) {
+					if (RecordDash (pen, out float [] dash))
+						GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
+					else
+						GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen));
+					return;
+				}
 				Status status = GDIPlus.GdipDrawLine (nativeObject, pen.NativePen, x1, y1, x2, y2);
 				CheckDrawStatus (status);
 			}
@@ -1338,6 +1396,13 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
 				int c = ArgbOf (pen);
+				if (RecordDash (pen, out float [] dash)) {
+					GpuRecorder.DrawDashedLine (x, y, x + width, y, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x, y + height, x + width, y + height, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x, y, x, y + height, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x + width, y, x + width, y + height, c, pen.Width, dash);
+					return;
+				}
 				GpuRecorder.DrawLine (x, y, x + width, y, c);
 				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c);
 				GpuRecorder.DrawLine (x, y, x, y + height, c);
@@ -1354,6 +1419,13 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
 				int c = ArgbOf (pen);
+				if (RecordDash (pen, out float [] dash)) {
+					GpuRecorder.DrawDashedLine (x, y, x + width, y, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x, y + height, x + width, y + height, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x, y, x, y + height, c, pen.Width, dash);
+					GpuRecorder.DrawDashedLine (x + width, y, x + width, y + height, c, pen.Width, dash);
+					return;
+				}
 				GpuRecorder.DrawLine (x, y, x + width, y, c);
 				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c);
 				GpuRecorder.DrawLine (x, y, x, y + height, c);

@@ -25,6 +25,17 @@ namespace System.Drawing.WebGpuBackend
             return g;
         }
 
+        /// <summary>A recording Graphics that calls <paramref name="onDisposed"/> when it is
+        /// disposed, before the recorder is detached -- the hook's chance to do something with what
+        /// was drawn. Without it a caller who draws outside a paint cycle (CreateGraphics) records
+        /// into a scene that is simply thrown away.</summary>
+        public static Graphics NewRecording(Action<Graphics> onDisposed)
+        {
+            var g = NewRecording();
+            g.DisposeHook = onDisposed;
+            return g;
+        }
+
         /// <summary>Detach the recorder and return the scene it recorded (a WgpuInterop SceneVisual,
         /// boxed as object). Null if Begin wasn't called.</summary>
         public static object EndScene(Graphics g)

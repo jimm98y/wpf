@@ -544,6 +544,27 @@ namespace System.Windows.Forms
 			return scene;
 		}
 
+		/// <summary>Append what was drawn through <see cref="GetHwndGraphics"/> to the window's
+		/// scene, so drawing done outside a paint cycle actually reaches the screen. The next
+		/// WM_PAINT replaces the scene wholesale, which is the behaviour you want: whoever drew
+		/// this gets to draw it again.</summary>
+		private void MergeIntoWindowScene(IntPtr handle, Graphics g)
+		{
+			var drawn = System.Drawing.WebGpuBackend.GpuRaster.EndScene(g)
+				as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual;
+			if (drawn == null || (drawn.Content.Count == 0 && drawn.Children.Count == 0)) return;
+
+			if (!(GetWindowScene(handle) is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual window))
+			{
+				_scenes[handle] = ClipToWindow(drawn, handle);
+			}
+			else
+			{
+				window.Children.Add(drawn);
+			}
+			_paintVersion++;
+		}
+
 		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
 		internal object GetWindowScene(IntPtr handle) => _scenes.TryGetValue(handle, out object s) ? s : null;
 
@@ -623,7 +644,15 @@ namespace System.Windows.Forms
 			// GPU-raster: a recording-only Graphics (measurement is managed; any draw records/no-ops)
 			// — no libgdiplus. Otherwise draw over the window's backing bitmap.
 			if (s_gpuRaster)
-				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording();
+			{
+				// CreateGraphics means "draw on this window now", outside any paint cycle. A bare
+				// recording would be thrown away when it was disposed, so fold it into the window's
+				// scene instead -- the nearest thing this stack has to drawing straight at the
+				// screen, and it survives until the window next repaints. The forms designer paints
+				// its grid and selection handles exactly this way, on top of the control's own paint.
+				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording(
+					g => MergeIntoWindowScene(handle, g));
+			}
 			if (!backing.TryGetValue(handle, out Bitmap b))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(handle);
