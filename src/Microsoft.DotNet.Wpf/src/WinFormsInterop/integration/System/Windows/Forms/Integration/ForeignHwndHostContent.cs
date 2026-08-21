@@ -287,9 +287,21 @@ namespace System.Windows.Forms.Integration
 
         /// <summary>The windows that belong to some claimed host -- everything else on screen is a
         /// menu or drop-down one of them opened.</summary>
-        /// <summary>Whether a top-level driver window is a Form, which PresentationHost puts on
-        /// screen as a real window of its own. Only menus and drop-downs belong to a host.</summary>
-        private static bool IsOwnWindow(IntPtr handle) => SWF.Control.FromHandle(handle) is SWF.Form;
+        /// <summary>
+        /// Whether a window belongs to a Form, which PresentationHost puts on screen as a real
+        /// window of its own. Only menus and drop-downs belong to a host.
+        /// </summary>
+        /// <remarks>
+        /// The whole tree has to be tested, not just the root: a dialog's CHILD controls are
+        /// windows of the driver too, and none of them is a Form, so checking only the window
+        /// itself published every control of an open dialog into the pad -- the Open With dialog
+        /// appeared a second time, in the corner of the workbench.
+        /// </remarks>
+        private static bool IsOwnWindow(IntPtr handle)
+        {
+            SWF.Control c = SWF.Control.FromHandle(handle);
+            return c != null && c.TopLevelControl is SWF.Form;
+        }
 
         private HashSet<long> OwnedWindows()
         {
