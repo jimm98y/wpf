@@ -98,7 +98,10 @@ namespace System.Windows.Forms
 			selected_objects = new object[0];
 			property_tabs = new PropertyTabCollection(this);
 
-			line_color = SystemColors.ScrollBar;
+			// InactiveBorder, as modern WinForms defaults to, rather than ScrollBar. This colour is
+			// both the grid lines AND the fill behind a category row, and ScrollBar (#C8C8C8) made
+			// those category bands markedly darker than the same grid in a stock build.
+			line_color = SystemColors.InactiveBorder;
 			category_fore_color = SystemColors.ControlText;
 			commands_visible = false;
 			commands_visible_if_available = false;

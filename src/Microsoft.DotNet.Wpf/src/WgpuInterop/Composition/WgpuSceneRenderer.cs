@@ -3647,6 +3647,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     break;
                 }
+                case ImageBrush img when img.PixelsRgba.Length > 0 && img.PixelWidth > 0 && img.PixelHeight > 0:
+                {
+                    // A VisualBrush or DrawingBrush, already rasterized to pixels by
+                    // RealizeContentBrushes. WPF masks with these routinely -- GroupBox's default
+                    // template gaps its border around the header with exactly this, a VisualBrush
+                    // from BorderGapMaskConverter -- and falling through to "fully opaque" below
+                    // drew the border straight through the header text.
+                    if (!Matrix3x2.Invert(world, out Matrix3x2 inv))
+                    {
+                        Array.Fill(bytes, (byte)255);
+                        break;
+                    }
+
+                    // The brush paints one tile across TileWidth x TileHeight of its own space,
+                    // which the bitmap covers; go from device space back to that.
+                    float tw = img.TileWidth > 0f ? img.TileWidth : img.PixelWidth;
+                    float th = img.TileHeight > 0f ? img.TileHeight : img.PixelHeight;
+
+                    for (int y = 0; y < height; y++)
+                        for (int x = 0; x < width; x++)
+                        {
+                            Vector2 p = Vector2.Transform(new Vector2(originX + x + 0.5f, originY + y + 0.5f), inv);
+                            float u = tw > 0f ? p.X / tw : 0f;
+                            float v = th > 0f ? p.Y / th : 0f;
+
+                            float a;
+                            if (img.TileMode == TileMode.None && (u < 0f || u >= 1f || v < 0f || v >= 1f))
+                            {
+                                a = 0f;      // outside the brush: nothing painted there, so nothing shows
+                            }
+                            else
+                            {
+                                u -= MathF.Floor(u);
+                                v -= MathF.Floor(v);
+                                int sx = Math.Clamp((int)(u * img.PixelWidth), 0, img.PixelWidth - 1);
+                                int sy = Math.Clamp((int)(v * img.PixelHeight), 0, img.PixelHeight - 1);
+                                a = img.PixelsRgba[(sy * img.PixelWidth + sx) * 4 + 3] / 255f;
+                            }
+
+                            bytes[y * width + x] = ToByte(a * img.Opacity);
+                        }
+                    break;
+                }
                 default:
                     Array.Fill(bytes, (byte)255); // unsupported mask brush: fully opaque
                     break;

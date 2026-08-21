@@ -62,6 +62,26 @@ namespace System.Windows.Forms
 		public override Color MenuItemPressedGradientBegin => Selected;
 		public override Color MenuItemPressedGradientMiddle => Selected;
 		public override Color MenuItemPressedGradientEnd => Selected;
+
+		// Flat, not graduated. Windows stopped shading tool strips with a vertical gradient at the
+		// same time it stopped bevelling them; leaving the Office 2003 gradient in place was the
+		// remaining thing that made a tool bar look shaded next to a stock one.
+		private static Color Surface => SystemColors.Control;
+
+		public override Color ToolStripGradientBegin => Surface;
+		public override Color ToolStripGradientMiddle => Surface;
+		public override Color ToolStripGradientEnd => Surface;
+		public override Color ToolStripPanelGradientBegin => Surface;
+		public override Color ToolStripPanelGradientEnd => Surface;
+		public override Color ToolStripContentPanelGradientBegin => Surface;
+		public override Color ToolStripContentPanelGradientEnd => Surface;
+		public override Color MenuStripGradientBegin => Surface;
+		public override Color MenuStripGradientEnd => Surface;
+		public override Color StatusStripGradientBegin => Surface;
+		public override Color StatusStripGradientEnd => Surface;
+		public override Color ImageMarginGradientBegin => Surface;
+		public override Color ImageMarginGradientMiddle => Surface;
+		public override Color ImageMarginGradientEnd => Surface;
 	}
 
 	internal class ThemeWin11 : ThemeWin32Classic
@@ -107,6 +127,38 @@ namespace System.Windows.Forms
 				border.Height -= 1;
 				g.DrawRectangle (ResPool.GetPen (InputBorder), border);
 			}
+		}
+
+		/// <summary>
+		/// Just the arrow. The classic drop-down button is a raised 3D button in its own right, and
+		/// that chrome around the arrow is not something Windows has drawn on a combo box for a very
+		/// long time -- it now blends into the field and only the glyph shows.
+		/// </summary>
+		public override void CPDrawComboButton (Graphics graphics, Rectangle rectangle, ButtonState state)
+		{
+			if ((state & ButtonState.Inactive) != 0) {
+				DrawComboArrow (graphics, rectangle, SystemColors.GrayText);
+				return;
+			}
+
+			// Pressed gets the same light-blue wash a pressed tool bar button gets, so the two agree.
+			if ((state & (ButtonState.Pushed | ButtonState.Checked)) != 0)
+				graphics.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), rectangle);
+
+			DrawComboArrow (graphics, rectangle, SystemColors.ControlText);
+		}
+
+		private void DrawComboArrow (Graphics graphics, Rectangle rectangle, Color color)
+		{
+			// A 7x4 triangle, centred: the proportions Windows uses.
+			int cx = rectangle.X + rectangle.Width / 2;
+			int cy = rectangle.Y + rectangle.Height / 2;
+			var arrow = new Point [] {
+				new Point (cx - 3, cy - 2),
+				new Point (cx + 4, cy - 2),
+				new Point (cx, cy + 2),
+			};
+			graphics.FillPolygon (ResPool.GetSolidBrush (color), arrow);
 		}
 
 		/// <summary>
