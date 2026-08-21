@@ -61,12 +61,27 @@ namespace System.Windows.Forms.Integration
 
         private static bool OnAttach(HwndHost host, IntPtr handle)
         {
+            if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1")
+                Console.Error.WriteLine($"foreign claim: host={host?.GetType().Name} handle=0x{handle.ToInt64():x} " +
+                    $"known={XplatUIWebGpu.GetInstance()?.KnowsWindow(handle)}");
+
             // Only OUR handles. Anything the driver does not know is a real HWND, or someone else's,
             // and declining lets HwndHost report ChildWindowNotCreated as it always would.
             if (host is null || XplatUIWebGpu.GetInstance()?.KnowsWindow(handle) != true)
             {
                 return false;
             }
+
+            // Give the hosted tree its handles. WinForms creates a child's handle lazily -- adding a
+            // control to a parent only RE-parents a handle that already exists (Control.ChangeParent),
+            // it never makes one -- and Control.CreateControl is what walks a tree creating them. An
+            // HwndHost whose BuildWindowCore simply takes its container's Handle creates that one
+            // window and no other, so every child stayed handle-less, the driver had no window to
+            // paint for any of them, and the host showed just the container's background: a plain
+            // Control-coloured rectangle. SharpDevelop hosts all of its WinForms option panels and
+            // pads this way.
+            SWF.Control hostedRoot = SWF.Control.FromHandle(handle);
+            if (hostedRoot != null) hostedRoot.CreateControl();
 
             var claim = new ForeignHwndHostContent(host, handle);
             lock (s_lock)
@@ -105,12 +120,26 @@ namespace System.Windows.Forms.Integration
             // rect would not survive. The handler exists so HwndHost has somewhere to send it.
         }
 
+        // WF_TRACE_WINDOWS=1: what this host actually publishes, once.
+        private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1";
+        private int _traced = -1;
+
+        private string _lastExit;
+
+        private bool TraceExit(string why)
+        {
+            if (s_trace && _lastExit != why) { _lastExit = why; Console.Error.WriteLine($"foreign host skip: {why}"); }
+            return false;
+        }
+
         public bool Collect(List<EmbeddedItem> into)
         {
-            if (_driver is null || !_visible || !_host.IsVisible) return false;
+            if (_driver is null || !_visible || !_host.IsVisible)
+                return TraceExit($"driver={_driver != null} visible={_visible} hostVisible={_host?.IsVisible}");
 
             PresentationSource src = PresentationSource.FromVisual(_host);
-            if (src?.CompositionTarget is null || src.RootVisual is null) return false;
+            if (src?.CompositionTarget is null || src.RootVisual is null)
+                return TraceExit("no presentation source");
 
             double dpi = src.CompositionTarget.TransformToDevice.M11;
             Point origin;
@@ -122,9 +151,33 @@ namespace System.Windows.Forms.Integration
             // Only this host's subtree: with several hosts, GetPresentWindows would hand each of
             // them every other host's windows as well.
             long[] wins = _driver.GetSubtreeWindows(_root);
-            if (wins is null || wins.Length < 3) return false;
+            if (wins is null || wins.Length < 3)
+                return TraceExit($"empty subtree for root 0x{_root.ToInt64():x} " +
+                    $"({(SWF.Control.FromHandle(_root)?.GetType().Name ?? "<none>")})");
 
             int ox = (int)wins[1], oy = (int)wins[2];
+            if (s_trace && _traced != wins.Length)
+            {
+                _traced = wins.Length;
+                Console.Error.WriteLine($"foreign host root=0x{_root.ToInt64():x} windows={wins.Length / 3}");
+                SWF.Control rootControl = SWF.Control.FromHandle(_root);
+                if (rootControl != null)
+                {
+                    Console.Error.WriteLine($"   winforms children of {rootControl.GetType().Name}: {rootControl.Controls.Count}");
+                    foreach (SWF.Control kid in rootControl.Controls)
+                        Console.Error.WriteLine($"     {kid.GetType().Name} '{kid.Name}' {kid.Bounds} " +
+                            $"visible={kid.Visible} handleCreated={kid.IsHandleCreated} " +
+                            $"handle=0x{(kid.IsHandleCreated ? kid.Handle.ToInt64() : 0):x} children={kid.Controls.Count}");
+                }
+                for (int j = 0; j + 2 < wins.Length; j += 3)
+                {
+                    var wh = (IntPtr)wins[j];
+                    SWF.Control wc = SWF.Control.FromHandle(wh);
+                    Console.Error.WriteLine($"   0x{wins[j]:x} at ({wins[j + 1]},{wins[j + 2]}) " +
+                        $"{(wc == null ? "<none>" : wc.GetType().Name + " '" + wc.Name + "' " + wc.Bounds + " visible=" + wc.Visible)} " +
+                        $"scene={(_driver.GetWindowScene(wh) == null ? "null" : "ok")}");
+                }
+            }
             for (int i = 0; i + 2 < wins.Length; i += 3)
             {
                 IntPtr h = (IntPtr)wins[i];

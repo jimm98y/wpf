@@ -1000,6 +1000,12 @@ namespace System.Windows.Interop
                 }
             }
 
+            if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1")
+            {
+                Console.Error.WriteLine($"hwndhost build: {GetType().Name} parent=0x{hwndParent.ToInt64():x} " +
+                    $"hwnd=0x{_hwnd.Handle.ToInt64():x} foreign={_isForeignChild} source={(source == null ? "<null>" : source.GetType().Name)}");
+            }
+
             try
             {
                 if(hwndParent != IntPtr.Zero)
