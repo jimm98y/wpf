@@ -618,7 +618,21 @@ namespace System.Drawing
 
 		public float GetHeight ()
 		{
-			return GetHeight (Graphics.systemDpiY);
+			return GetHeight (MetricsDpi (Graphics.systemDpiY));
+		}
+
+		/// <summary>The DPI font metrics are taken at.</summary>
+		/// <remarks>
+		/// This stack is a VIRTUAL 96-DPI screen: the host scales the whole composed frame to device
+		/// pixels when it presents, so WinForms lays out in 96-DPI units throughout (see
+		/// TextRenderer.GetDpi). Asking GDI+ at the monitor's real DPI made Font.Height 25px for an
+		/// 8.25pt font instead of 13 -- and a single-line TextBox forces its height from that, so
+		/// the About page's version and build boxes came out 32 tall where the code asked for 20 and
+		/// covered the line beneath them.
+		/// </remarks>
+		static float MetricsDpi (float actual)
+		{
+			return s_gpuRasterMode ? 96f : actual;
 		}
 
 		public static Font FromLogFont (object lf)
@@ -736,7 +750,10 @@ namespace System.Drawing
 			if (graphics == null)
 				throw new ArgumentNullException ("graphics");
 			if (fontObject == IntPtr.Zero)
-				return GetHeight (graphics.DpiY);   // managed (recording-only font)
+				return GetHeight (MetricsDpi (graphics.DpiY));   // managed (recording-only font)
+
+			if (s_gpuRasterMode)
+				return GetHeight (96f);                          // virtual 96-DPI screen; see MetricsDpi
 
 			float size;
 			Status status = GDIPlus.GdipGetFontHeight (fontObject, graphics.NativeObject, out size);

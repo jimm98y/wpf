@@ -1450,7 +1450,11 @@ namespace System.Drawing
 				if (prefix != Text.HotkeyPrefix.None)
 					text = StripHotkeyPrefix (s, out mnemonic);
 
-				bool clipToLayout = layoutRectangle.Width > 0 && layoutRectangle.Height > 0;
+				// NoClip means the caller accepts overhang; otherwise GDI+ confines the string to its
+				// layout rectangle, and WinForms leans on that: a ListView hands each subitem its
+				// column bounds and expects the text to stop there.
+				bool clipToLayout = layoutRectangle.Width > 0 && layoutRectangle.Height > 0
+					&& (format == null || (format.FormatFlags & StringFormatFlags.NoClip) == 0);
 				if (clipToLayout)
 					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
 						layoutRectangle.Width, layoutRectangle.Height, false);
