@@ -141,6 +141,9 @@ namespace System.Windows.Forms.Integration
                     DeviceW = w * (float)dpi,
                     DeviceH = ht * (float)dpi,
                     Scale = (float)dpi,
+                    // Tag the window: the registry is process-wide, and without this every WPF
+                    // window composited every other one's hosted content.
+                    Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
                 });
             }
 

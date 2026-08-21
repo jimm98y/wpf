@@ -630,7 +630,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             RgbaColor clear = ts.Transparent ? new RgbaColor(0, 0, 0, 0) : t.ClearColor;
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
@@ -645,7 +645,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // is occluded/off-screen (present never succeeds in a detached/headless run). Env-gated by
             // WPF_WEBGPU_SINK_DUMP; fires once around frame 90 so animation has settled.
             if (s_dumpPath != null && AcquiredFrames == 40)
-                VerifyOffscreen(EmbeddedContent.Compose(root), t, AcquiredFrames);
+                VerifyOffscreen(EmbeddedContent.Compose(root, ts.Hwnd), t, AcquiredFrames);
 
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
             WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
@@ -688,7 +688,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Log(_engine.DumpOps());
                 }
                 if (s_logPath != null && (PresentedFrames == 30 || PresentedFrames == 90 || PresentedFrames == 150))
-                    VerifyOffscreen(EmbeddedContent.Compose(root), t, PresentedFrames);
+                    VerifyOffscreen(EmbeddedContent.Compose(root, (IntPtr)t.Hwnd), t, PresentedFrames);
             }
 
             wgpuTextureViewRelease(view);

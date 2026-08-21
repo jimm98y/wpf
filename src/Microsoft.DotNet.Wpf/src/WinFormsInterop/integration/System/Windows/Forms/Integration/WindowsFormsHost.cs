@@ -30,6 +30,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
@@ -627,6 +628,9 @@ namespace System.Windows.Forms.Integration
                     DeviceW = w * (float)dpi,
                     DeviceH = ht * (float)dpi,
                     Scale = (float)dpi,
+                    // Tag the window: the registry is process-wide, and without this every WPF
+                    // window composited every other one's hosted content.
+                    Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
                 });
             }
 

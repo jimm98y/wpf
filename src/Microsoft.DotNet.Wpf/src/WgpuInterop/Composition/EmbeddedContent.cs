@@ -4,6 +4,7 @@
 // Both WPF (MilcoreEngine) and WinForms emit Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual into
 // the same WgpuSceneRenderer, so a hosted control's scene is just another child of the WPF root.
 
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -19,6 +20,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float DeviceW { get; set; }             // host size in device pixels (clip bounds)
         public float DeviceH { get; set; }
         public float Scale { get; set; } = 1f;         // hosted-unit -> device-pixel scale (typically DPI)
+
+        /// <summary>The window this content belongs to (its HwndSource handle). The registry is
+        /// process-wide but a scene belongs to exactly one window: without this every WPF window
+        /// composited every other window's hosted content, at those coordinates. Opening a second
+        /// window over an application that hosts WinForms -- SharpDevelop's Options dialog over its
+        /// workbench -- drew the workbench's panes across the dialog. Zero means "no window
+        /// recorded", which composites everywhere, as before.</summary>
+        public IntPtr Window { get; set; }
     }
 
     /// <summary>Registry of hosted (non-WPF) scenes the WPF compositor should overlay. Populated by the
@@ -52,7 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Return a render root that composites the hosted scenes ON TOP of the WPF root (each
         /// translated to its device position, scaled to device pixels, and clipped to the host rect).
         /// Returns <paramref name="wpfRoot"/> unchanged when nothing is hosted.</summary>
-        internal static SceneVisual Compose(SceneVisual wpfRoot)
+        internal static SceneVisual Compose(SceneVisual wpfRoot, IntPtr window)
         {
             lock (s_lock)
             {
@@ -62,6 +71,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 foreach (EmbeddedItem it in s_items)
                 {
                     if (it?.Scene is not SceneVisual sv) continue;
+                    if (it.Window != IntPtr.Zero && window != IntPtr.Zero && it.Window != window)
+                        continue;                       // belongs to a different window
                     if (!s_logged && System.Environment.GetEnvironmentVariable("WF_DIAG_EMBED") == "1")
                     { s_logged = true; System.Console.Error.WriteLine($"COMPOSE item dev=({it.DeviceX},{it.DeviceY}) size=({it.DeviceW}x{it.DeviceH}) scale={it.Scale}"); }
                     // Clip is evaluated in this node's LOCAL space (CollectVisual transforms it by the
