@@ -208,6 +208,22 @@ namespace System.Windows.Forms.Integration
             }
         }
 
+        // Give the clicked control WinForms focus. Nothing else does it for composited content, and
+        // controls draw themselves differently without it: a TreeView paints its selected node with
+        // the plain control colour and its own fore colour rather than the highlight pair, which
+        // came out as white text on a white row -- the selection simply vanished.
+        private void FocusAt(int x, int y)
+        {
+            IntPtr hit = _driver.WindowAtPointIn(_root, x, y);
+            if (hit != IntPtr.Zero) _driver.SetFocus(hit);
+        }
+
+        // The claim that last received input. A menu or drop-down is a top-level window of the
+        // driver, not part of any host's subtree, so no host would publish it and it never appeared
+        // -- a right-click opened a context menu that could not be seen. Give those windows to
+        // whichever host the user last interacted with, which is the one that opened them.
+        private static ForeignHwndHostContent s_lastInput;
+
         private (int X, int Y) ToDriver(Point p) => (_ox + (int)Math.Round(p.X), _oy + (int)Math.Round(p.Y));
 
         private void OnHostMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
@@ -222,7 +238,9 @@ namespace System.Windows.Forms.Integration
             if (_driver == null) return;
             _host.Focus();
             _host.CaptureMouse();
+            s_lastInput = this;
             var (x, y) = ToDriver(e.GetPosition(_host));
+            FocusAt(x, y);
             if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
             {
                 IntPtr hit = _driver.WindowAtPointIn(_root, x, y);
@@ -256,7 +274,9 @@ namespace System.Windows.Forms.Integration
         {
             if (_driver == null) return;
             _host.Focus();
+            s_lastInput = this;
             var (x, y) = ToDriver(e.GetPosition(_host));
+            FocusAt(x, y);
             _driver.InjectMouseMoveIn(_root, x, y, false);
             _driver.InjectRightDownIn(_root, x, y);
             e.Handled = true;
@@ -311,6 +331,49 @@ namespace System.Windows.Forms.Integration
             item.DeviceW = right - left;
             item.DeviceH = bottom - top;
             return true;
+        }
+
+
+        private void CollectPopups(List<EmbeddedItem> into, float hostDevX, float hostDevY,
+            int ox, int oy, double dpi, PresentationSource src)
+        {
+            long[] all = _driver.GetPresentWindows(_root);
+            if (all is null) return;
+
+            // Anything inside a claimed host is somebody's own content, not a popup.
+            var owned = new HashSet<long>();
+            lock (s_lock)
+            {
+                foreach (ForeignHwndHostContent claim in s_claimed.Values)
+                {
+                    long[] mine = _driver.GetSubtreeWindows(claim._root);
+                    if (mine == null) continue;
+                    for (int i = 0; i + 2 < mine.Length; i += 3) owned.Add(mine[i]);
+                }
+            }
+
+            for (int i = 0; i + 2 < all.Length; i += 3)
+            {
+                if (owned.Contains(all[i])) continue;
+                var h = (IntPtr)all[i];
+                object scene = _driver.GetWindowScene(h);
+                if (scene is null) continue;
+
+                long packed = _driver.GetWindowSizePacked(h);
+                int w = (int)(packed >> 32), ht = (int)(packed & 0xFFFFFFFF);
+                if (w <= 0 || ht <= 0) continue;
+
+                into.Add(new EmbeddedItem
+                {
+                    Scene = scene,
+                    DeviceX = hostDevX + ((int)all[i + 1] - ox) * (float)dpi,
+                    DeviceY = hostDevY + ((int)all[i + 2] - oy) * (float)dpi,
+                    DeviceW = w * (float)dpi,
+                    DeviceH = ht * (float)dpi,
+                    Scale = (float)dpi,
+                    Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
+                });
+            }
         }
 
         public bool Collect(List<EmbeddedItem> into)
@@ -384,6 +447,12 @@ namespace System.Windows.Forms.Integration
                         (float)(_host.RenderSize.Width * dpi), (float)(_host.RenderSize.Height * dpi)))
                     into.Add(item);
             }
+
+            // Menus and drop-downs: top-level windows of the driver that belong to no host's subtree.
+            // Publish them from whichever host the user last touched, unclipped -- a menu is meant to
+            // escape the control that opened it -- and after the host's own content so they sit on
+            // top.
+            if (ReferenceEquals(s_lastInput, this)) CollectPopups(into, hostDevX, hostDevY, ox, oy, dpi, src);
 
             bool moved = _lastDevX != hostDevX || _lastDevY != hostDevY
                       || _lastDevW != _host.RenderSize.Width || _lastDevH != _host.RenderSize.Height;

@@ -484,7 +484,19 @@ namespace System.Windows.Forms.Integration
             {
                 Interval = TimeSpan.FromMilliseconds(16),   // ~60Hz, the rate the hosts present at
             };
-            s_topLevelPump.Tick += (s, e) => SWF.PresentationHost.TickExternal();
+            s_topLevelPump.Tick += (s, e) =>
+            {
+                SWF.PresentationHost.TickExternal();
+
+                // ...and refresh the hosted scenes. The composition tick only runs when WPF renders
+                // a frame, and WPF renders when its OWN content changes -- a hosted control
+                // repainting is invisible to it. So the WinForms side would repaint (a tree redrawing
+                // its selection, say) and the new scene simply never reached the screen: the project
+                // tree changed its selected node on every click and went on showing the first frame
+                // it had ever drawn. Collect publishes only when the driver's paint version moves,
+                // so a quiet frame costs almost nothing.
+                OnRendering(null, EventArgs.Empty);
+            };
             s_topLevelPump.Start();
         }
 
