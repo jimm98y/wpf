@@ -725,6 +725,15 @@ namespace System.Windows.Forms
 					continue;
 				}
 				PresentationHost.Idle(nextTimer);
+
+				// Hand the loop a heartbeat rather than going straight round again. A message loop only
+				// re-checks whether its form wants to close AFTER it has processed a message -- but on
+				// this stack the host delivers input by calling WndProc directly from inside the tick
+				// above, so no message ever passes through the loop and that check never ran. A modal
+				// dialog therefore set DialogResult, marked itself closing, and stayed on screen for
+				// ever: every Cancel button in every dialog did nothing.
+				msg = new MSG { hwnd = IntPtr.Zero, message = Msg.WM_NULL };
+				return true;
 			}
 		}
 

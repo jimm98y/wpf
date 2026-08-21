@@ -918,6 +918,11 @@ namespace System.Windows.Forms
 					}
 					goto default;
 
+				case Msg.WM_NULL:
+					// An idle heartbeat: nothing to dispatch, but fall through to the exit check below
+					// so a form that closed itself outside the message stream is still noticed.
+					break;
+
 				case Msg.WM_QUIT:
 					quit = true; // make sure we exit
 					break;
