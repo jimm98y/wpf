@@ -326,6 +326,11 @@ namespace System.Windows.Media.Imaging
                 _managedPixels = decoded._managedPixels;
                 _managedStride = decoded._managedStride;
                 _format = decoded.Format;
+                // An indexed format's pixels are indices; the palette is the other half of the
+                // image. Dropping it left every palettised source with nothing to colour itself
+                // from -- the flags in SharpDevelop's UI Language page came up blank, while the
+                // Bgra32 ones beside them, which need no palette, were fine.
+                _palette = decoded.Palette;
                 _pixelWidth = decoded.PixelWidth;
                 _pixelHeight = decoded.PixelHeight;
                 _dpiX = decoded.DpiX;
