@@ -37,58 +37,62 @@ namespace System.Windows.Forms.Design
 {
 	public class DesignerOptions
 	{
+		// The designer's own defaults, as documented for this class: everything on except snap
+		// lines, on an 8x8 grid. A host overwrites whichever of these it has an opinion about --
+		// SharpDevelop sets all eight from its own settings the moment its option service is
+		// constructed, which is why these have to be settable and not just readable.
+		private bool enable_in_situ_editing = true;
+		private Size grid_size = new Size (8, 8);
+		private bool object_bound_smart_tag_auto_show = true;
+		private bool show_grid = true;
+		private bool snap_to_grid = true;
+		private bool use_optimized_code_generation = true;
+		private bool use_smart_tags = true;
+		private bool use_snap_lines = false;
+
 		public DesignerOptions ()
 		{
 		}
 
-		[MonoTODO]
 		[Browsable (false)]
 		public virtual bool EnableInSituEditing {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return enable_in_situ_editing; }
+			set { enable_in_situ_editing = value; }
 		}
 
-		[MonoTODO]
 		public virtual Size GridSize {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return grid_size; }
+			set { grid_size = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool ObjectBoundSmartTagAutoShow {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return object_bound_smart_tag_auto_show; }
+			set { object_bound_smart_tag_auto_show = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool ShowGrid {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return show_grid; }
+			set { show_grid = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool SnapToGrid {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return snap_to_grid; }
+			set { snap_to_grid = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool UseOptimizedCodeGeneration {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return use_optimized_code_generation; }
+			set { use_optimized_code_generation = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool UseSmartTags {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return use_smart_tags; }
+			set { use_smart_tags = value; }
 		}
 
-		[MonoTODO]
 		public virtual bool UseSnapLines {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get { return use_snap_lines; }
+			set { use_snap_lines = value; }
 		}
 	}
 }
-

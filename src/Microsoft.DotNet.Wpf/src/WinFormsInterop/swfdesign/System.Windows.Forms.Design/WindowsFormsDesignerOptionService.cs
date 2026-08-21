@@ -36,19 +36,32 @@ namespace System.Windows.Forms.Design
 {
 	public class WindowsFormsDesignerOptionService : DesignerOptionService
 	{
+		private DesignerOptions compatibility_options;
+
 		public WindowsFormsDesignerOptionService ()
 		{
 		}
 
 		public virtual DesignerOptions CompatibilityOptions {
-			get { throw new NotImplementedException (); }
+			get {
+				if (compatibility_options == null)
+					compatibility_options = new DesignerOptions ();
+				return compatibility_options;
+			}
 		}
 
-		[MonoTODO]
+		// The shape every Windows Forms designer host expects to find:
+		//   (root) -> "WindowsFormsDesigner" -> "General", backed by CompatibilityOptions.
+		// Options.Properties walks to that leaf, so leaving this unimplemented threw
+		// NotImplementedException out of the option service's constructor and the designer
+		// reported it as "Failed to load designer. Check the source code for syntax errors".
 		protected override void PopulateOptionCollection (DesignerOptionService.DesignerOptionCollection options)
 		{
-			throw new NotImplementedException ();
+			if (options.Parent != null)
+				return;
+
+			DesignerOptionCollection designer = CreateOptionCollection (options, "WindowsFormsDesigner", null);
+			CreateOptionCollection (designer, "General", CompatibilityOptions);
 		}
 	}
 }
-
