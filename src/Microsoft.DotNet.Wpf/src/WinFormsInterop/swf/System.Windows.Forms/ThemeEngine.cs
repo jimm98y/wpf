@@ -35,10 +35,18 @@ namespace System.Windows.Forms
 		
 		static ThemeEngine ()
 		{
-			if (Application.VisualStylesEnabled) {
+			// The modern Windows look is the default, as it is on Windows 11 itself. The classic
+			// theme is still here and still selectable -- an application that wants the pre-visual-
+			// styles look, or one whose custom drawing assumes those two-pixel bevels, sets
+			// WF_THEME=classic and gets exactly what it got before.
+			string requested = Environment.GetEnvironmentVariable ("WF_THEME");
+
+			if (string.Equals (requested, "classic", StringComparison.OrdinalIgnoreCase)) {
+				theme = new ThemeWin32Classic ();
+			} else if (Application.VisualStylesEnabled) {
 				theme = new ThemeVisualStyles ();
 			} else {
-				theme = new ThemeWin32Classic ();
+				theme = new ThemeWin11 ();
 			}
 		}
 		

@@ -299,6 +299,18 @@ namespace System.Windows.Forms
 			set { SetSystemColors (KnownColor.HighlightText, value); }
 		}
 
+		/// <summary>The tool strip and menu colours this theme wants the professional renderer to
+		/// use. Classic keeps the Office 2003 table it has always used; a modern theme returns its
+		/// own, so the renderer follows the theme instead of being fixed at construction.</summary>
+		public virtual ProfessionalColorTable ColorTable {
+			get {
+				if (color_table == null)
+					color_table = new ProfessionalColorTable ();
+				return color_table;
+			}
+		}
+		private ProfessionalColorTable color_table;
+
 		public virtual Color ColorControl {
 			get { return SystemColors.Control;}
 			set { SetSystemColors (KnownColor.Control, value); }
