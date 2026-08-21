@@ -1648,7 +1648,12 @@ namespace System.Windows.Forms {
 			if (Focused && focused_node == node && !full_row_select) {
 				ControlPaint.DrawFocusRectangle (dc, r, ForeColor, BackColor);
 			}
-			if (draw_mode != TreeViewDrawMode.Normal)
+			// OwnerDrawText means the application draws the node's TEXT and nothing else: the control
+			// still owns the node background, selection highlight included. Bailing out for every
+			// owner-draw mode left a selected node with no highlight at all, and an application that
+			// draws selected text in HighlightText white -- SharpDevelop's project tree does, and sets
+			// OwnerDrawText -- ended up with white text on the plain window background.
+			if (draw_mode == TreeViewDrawMode.OwnerDrawAll)
 				return;
 
 			r.Inflate (-1, -1);
