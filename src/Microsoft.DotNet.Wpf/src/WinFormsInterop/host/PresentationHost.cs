@@ -228,6 +228,14 @@ namespace System.Windows.Forms
                 Form form = open[i];
                 if (form == null || form.IsDisposed || !form.Visible) continue;
                 if (form.InvokeRequired) continue;      // belongs to another UI thread
+
+                // A Form with a parent is not a top-level window and must never get one: the forms
+                // designer parents the form being designed into its design surface, so this adopted
+                // it, gave it a window of its own next to the IDE, and -- being a host with no
+                // subtree of its own to draw -- filled that window with whatever unclaimed driver
+                // windows it could find. The user saw the designed form twice, the second copy full
+                // of other pads' controls.
+                if (form.Parent != null || !form.TopLevel) continue;
                 lock (s_lock)
                 {
                     if (s_suppressed.Contains(form)) continue;
