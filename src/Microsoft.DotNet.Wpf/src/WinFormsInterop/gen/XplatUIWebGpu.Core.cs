@@ -195,6 +195,13 @@ namespace System.Windows.Forms
 		internal void InjectMouseUpIn(IntPtr root, int x, int y)
 			=> InjectMouseIn(root, x, y, Msg.WM_LBUTTONUP, 0);
 
+		// The right button was never forwarded at all, so nothing hosted could raise a context menu.
+		internal void InjectRightDownIn(IntPtr root, int x, int y)
+			=> InjectMouseIn(root, x, y, Msg.WM_RBUTTONDOWN, MK_RBUTTON);
+
+		internal void InjectRightUpIn(IntPtr root, int x, int y)
+			=> InjectMouseIn(root, x, y, Msg.WM_RBUTTONUP, 0);
+
 		internal void InjectWheelIn(IntPtr root, int screenX, int screenY, int delta)
 		{
 			IntPtr target = WindowAtPointIn(root, screenX, screenY);
@@ -206,6 +213,7 @@ namespace System.Windows.Forms
 
 		private IntPtr _grabHandle;   // mouse-capture target (WinForms grabs on button-down)
 		private const int MK_LBUTTON = 0x0001;
+		private const int MK_RBUTTON = 0x0002;
 
 		/// <summary>Route one mouse message from a SCREEN point. While a window has captured the
 		/// mouse (button held), messages go to it (with coords relative to it) even off its rect —

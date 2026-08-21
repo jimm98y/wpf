@@ -140,10 +140,17 @@ namespace System.Windows.Forms.Integration
         // hosted controls. (HwndHost.OnRender gives WPF the hit-test geometry to route to.)
         private void HookInput()
         {
+            // ...and it has to be able to hold keyboard focus, or typed keys never reach it.
+            _host.Focusable = true;
+
             _host.MouseMove += OnHostMouseMove;
             _host.MouseLeftButtonDown += OnHostMouseDown;
             _host.MouseLeftButtonUp += OnHostMouseUp;
             _host.MouseWheel += OnHostMouseWheel;
+            _host.MouseRightButtonDown += OnHostRightDown;
+            _host.MouseRightButtonUp += OnHostRightUp;
+            _host.TextInput += OnHostTextInput;
+            _host.KeyDown += OnHostKeyDown;
         }
 
         private void UnhookInput()
@@ -152,6 +159,53 @@ namespace System.Windows.Forms.Integration
             _host.MouseLeftButtonDown -= OnHostMouseDown;
             _host.MouseLeftButtonUp -= OnHostMouseUp;
             _host.MouseWheel -= OnHostMouseWheel;
+            _host.MouseRightButtonDown -= OnHostRightDown;
+            _host.MouseRightButtonUp -= OnHostRightUp;
+            _host.TextInput -= OnHostTextInput;
+            _host.KeyDown -= OnHostKeyDown;
+        }
+
+        // Keyboard, for the same reason as the mouse: a composited child receives no OS input, so
+        // arrow keys, typing and Delete did nothing anywhere in a hosted control.
+        private void OnHostTextInput(object sender, System.Windows.Input.TextCompositionEventArgs e)
+        {
+            if (_driver == null) return;
+            foreach (char ch in e.Text) _driver.InjectChar(ch);
+            e.Handled = true;
+        }
+
+        private void OnHostKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (_driver == null) return;
+            int vk = VirtualKey(e.Key);
+            if (vk == 0) return;
+            _driver.InjectKeyDown(vk);
+            e.Handled = true;
+        }
+
+        // WPF Key -> Win32 virtual-key, for the non-text keys a control acts on. Character input
+        // arrives through TextInput instead, already composed by the keyboard layout.
+        private static int VirtualKey(System.Windows.Input.Key k)
+        {
+            switch (k)
+            {
+                case System.Windows.Input.Key.Back: return 0x08;
+                case System.Windows.Input.Key.Tab: return 0x09;
+                case System.Windows.Input.Key.Enter: return 0x0D;
+                case System.Windows.Input.Key.Escape: return 0x1B;
+                case System.Windows.Input.Key.Space: return 0x20;
+                case System.Windows.Input.Key.PageUp: return 0x21;
+                case System.Windows.Input.Key.PageDown: return 0x22;
+                case System.Windows.Input.Key.End: return 0x23;
+                case System.Windows.Input.Key.Home: return 0x24;
+                case System.Windows.Input.Key.Left: return 0x25;
+                case System.Windows.Input.Key.Up: return 0x26;
+                case System.Windows.Input.Key.Right: return 0x27;
+                case System.Windows.Input.Key.Down: return 0x28;
+                case System.Windows.Input.Key.Delete: return 0x2E;
+                case System.Windows.Input.Key.F2: return 0x71;
+                default: return 0;
+            }
         }
 
         private (int X, int Y) ToDriver(Point p) => (_ox + (int)Math.Round(p.X), _oy + (int)Math.Round(p.Y));
@@ -173,9 +227,12 @@ namespace System.Windows.Forms.Integration
             {
                 IntPtr hit = _driver.WindowAtPointIn(_root, x, y);
                 SWF.Control c = SWF.Control.FromHandle(hit);
+                string state = "";
+                if (c is SWF.TreeView tv)
+                    state = $" focused={tv.Focused} selected='{tv.SelectedNode?.Text}' hideSelection={tv.HideSelection}";
                 Console.Error.WriteLine($"foreign click: wpf={e.GetPosition(_host)} origin=({_ox},{_oy}) " +
                     $"driver=({x},{y}) root=0x{_root.ToInt64():x} hit=0x{hit.ToInt64():x} " +
-                    $"control={(c == null ? "<none>" : c.GetType().Name)}");
+                    $"control={(c == null ? "<none>" : c.GetType().Name)}{state}");
             }
             _leftDown = true;
             _driver.InjectMouseMoveIn(_root, x, y, false);
@@ -190,6 +247,26 @@ namespace System.Windows.Forms.Integration
             _leftDown = false;
             _driver.InjectMouseUpIn(_root, x, y);
             _host.ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        // A context menu needs the right button, which nothing forwarded: right-clicking anywhere in
+        // a hosted control did nothing at all.
+        private void OnHostRightDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            _host.Focus();
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _driver.InjectMouseMoveIn(_root, x, y, false);
+            _driver.InjectRightDownIn(_root, x, y);
+            e.Handled = true;
+        }
+
+        private void OnHostRightUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _driver.InjectRightUpIn(_root, x, y);
             e.Handled = true;
         }
 
