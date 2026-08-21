@@ -104,7 +104,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             // Claim the window being created, so the shared WndProc can route its very first
             // messages -- they arrive from inside CreateWindowExW, before it has returned a handle.
             s_creating = this;
-            _hwnd = CreateWindowExW(0, s_classNamePtr, title, 0x00CF0000 | 0x10000000, // WS_OVERLAPPEDWINDOW|WS_VISIBLE
+            (uint style, uint exStyle) = WindowStyles();
+            _hwnd = CreateWindowExW(exStyle, s_classNamePtr, title, style,
                 100, 100, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
         }
@@ -134,6 +135,49 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         // scale now that both exist. Inert when nothing is embedded.
         EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
         Present();
+    }
+
+    // The OS frame has to say what the form says. Every window used to be created
+    // WS_OVERLAPPEDWINDOW, so a FixedDialog came up with a sizing border and a maximise box -- and
+    // dragging that border resized the window while the form inside kept its fixed layout, which
+    // looks exactly like "resizing does not resize the content". WinForms would not have let you
+    // drag it at all.
+    private (uint, uint) WindowStyles()
+    {
+        const uint WS_CAPTION = 0x00C00000, WS_SYSMENU = 0x00080000, WS_THICKFRAME = 0x00040000;
+        const uint WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000;
+        const uint WS_POPUP = 0x80000000, WS_VISIBLE = 0x10000000;
+        const uint WS_EX_TOOLWINDOW = 0x00000080;
+
+        uint style = WS_VISIBLE, exStyle = 0;
+        switch (_form.FormBorderStyle)
+        {
+            case FormBorderStyle.None:
+                style |= WS_POPUP;
+                return (style, exStyle);
+
+            case FormBorderStyle.FixedToolWindow:
+                style |= WS_CAPTION | WS_SYSMENU;
+                exStyle |= WS_EX_TOOLWINDOW;
+                return (style, exStyle);
+
+            case FormBorderStyle.SizableToolWindow:
+                style |= WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
+                exStyle |= WS_EX_TOOLWINDOW;
+                return (style, exStyle);
+
+            case FormBorderStyle.Sizable:
+                style |= WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
+                break;
+
+            default:        // FixedSingle, Fixed3D, FixedDialog: caption, no sizing border
+                style |= WS_CAPTION | WS_SYSMENU;
+                break;
+        }
+
+        if (_form.MinimizeBox) style |= WS_MINIMIZEBOX;
+        if (_form.MaximizeBox && _form.FormBorderStyle == FormBorderStyle.Sizable) style |= WS_MAXIMIZEBOX;
+        return (style, exStyle);
     }
 
     public void Present()

@@ -1600,8 +1600,14 @@ namespace System.Windows.Forms {
 		{
 			if (owner == null)
 				this.Owner = null;
-			else
-				this.Owner = Control.FromHandle (owner.Handle).TopLevelControl as Form;
+			else {
+				// The owner need not be a WinForms control. Any IWin32Window will do, and on this
+				// stack it is typically the application's WPF window -- for which Control.FromHandle
+				// correctly answers null. ShowDialog has always allowed for that; Show dereferenced
+				// it and threw NullReferenceException instead of opening the dialog.
+				Control ownerControl = Control.FromHandle (owner.Handle);
+				this.Owner = ownerControl == null ? null : ownerControl.TopLevelControl as Form;
+			}
 
 			if (owner == this)
 				throw new InvalidOperationException ("The 'owner' cannot be the form being shown.");

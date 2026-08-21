@@ -63,7 +63,7 @@ namespace System.Windows.Forms
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && h.visible) vis.Add(k);
+				if (h != null && EffectivelyVisible(h)) vis.Add(k);
 			}
 			vis.Sort((a, b) =>
 			{
@@ -112,7 +112,7 @@ namespace System.Windows.Forms
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && h.visible && Root(k) == root) vis.Add(k);
+				if (h != null && EffectivelyVisible(h) && Root(k) == root) vis.Add(k);
 			}
 
 			vis.Sort((a, b) => Depth(a).CompareTo(Depth(b)));           // parents before children
@@ -147,6 +147,23 @@ namespace System.Windows.Forms
 
 		/// <summary>Input hook: the deepest visible window whose absolute rect contains the screen
 		/// point, searched child-first (top-most child wins), or IntPtr.Zero.</summary>
+		/// <summary>
+		/// Whether a window is really on screen: itself visible, and every ancestor with it.
+		/// </summary>
+		/// <remarks>
+		/// Hiding a parent hides its children without touching their own visible flags -- that is
+		/// how Win32 behaves and what Control.SetVisibleCore relies on. Testing only the window's
+		/// own flag therefore kept painting the children of a hidden parent: switching a TabControl
+		/// page left the OLD page's list view, header and scrollbar in the presented set, drawn over
+		/// the new page and spilling outside the tab, and hit-testing still found them.
+		/// </remarks>
+		private static bool EffectivelyVisible(Hwnd h)
+		{
+			for (Hwnd w = h; w != null; w = w.parent)
+				if (!w.visible) return false;
+			return true;
+		}
+
 		internal IntPtr WindowAtPoint(int screenX, int screenY)
 		{
 			IntPtr best = IntPtr.Zero;
@@ -154,7 +171,7 @@ namespace System.Windows.Forms
 			foreach (IntPtr handle in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(handle);
-				if (h == null || !h.visible) continue;
+				if (h == null || !EffectivelyVisible(h)) continue;
 				Point p = ScreenLocation(h);
 				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
 				int depth = 0; for (Hwnd d = h; d != null; d = d.parent) depth++;
@@ -272,6 +289,24 @@ namespace System.Windows.Forms
 			{
 				SendMessage(handle, Msg.WM_SHOWWINDOW, (IntPtr)1, IntPtr.Zero);
 				Invalidate(handle, new Rectangle(0, 0, hwnd.width, hwnd.height), false);
+
+				// Showing a window reveals everything beneath it, whose own visible flags never
+				// changed -- so nothing else would invalidate them, and this driver paints only what
+				// has been invalidated. A control that has never painted has no recorded scene at
+				// all: selecting a TabControl page for the first time showed an empty page, and
+				// coming back to a page left it as it was rather than repainting it.
+				foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+				{
+					Hwnd c = Hwnd.ObjectFromHandle(k);
+					if (c == null || c == hwnd) continue;
+					for (Hwnd a = c.parent; a != null; a = a.parent)
+					{
+						if (a != hwnd) continue;
+						if (EffectivelyVisible(c))
+							Invalidate(k, new Rectangle(0, 0, c.width, c.height), false);
+						break;
+					}
+				}
 			}
 			return true;
 		}
