@@ -29,6 +29,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     private float _scale = 1f;
     private bool _quit, _savedGpu;
     private int _lastVer = -1;
+    private int _ox, _oy;               // this form's origin in the driver's screen space
     private bool _lastCaretOn, _lastPresentOk;
 
     internal Win32Host(Form form)
@@ -313,7 +314,13 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     {
         int lp = (int)lParam;
         int px = (short)(lp & 0xFFFF), py = (short)((lp >> 16) & 0xFFFF);   // client PIXELS
-        return ((int)(px / _scale), (int)(py / _scale));                    // -> DIPs
+        // The driver addresses windows in ITS OWN screen space, and this form sits at some origin
+        // in it -- which Present subtracts when it composites the scenes into this window. Input has
+        // to add it back. Without it a click was delivered to whatever happened to be at the same
+        // offset from the driver's origin, so a dialog centred at (1072,471) sent every click to the
+        // windows behind it and none of its own controls ever responded. A form at (0,0) -- an
+        // application's main window, which is all there was to test -- worked by accident.
+        return (_ox + (int)(px / _scale), _oy + (int)(py / _scale));        // -> driver DIPs
     }
 
     public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
@@ -332,6 +339,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         long[] wins = PresentWindows();
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
+        _ox = ox; _oy = oy;                 // input maps through the same origin; see ClientDip
         var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
