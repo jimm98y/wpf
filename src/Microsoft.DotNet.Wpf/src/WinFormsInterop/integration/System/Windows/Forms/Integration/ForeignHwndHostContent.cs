@@ -84,6 +84,9 @@ namespace System.Windows.Forms.Integration
             SWF.Control hostedRoot = SWF.Control.FromHandle(handle);
             if (hostedRoot != null) hostedRoot.CreateControl();
 
+            // Tell the window hosts that this subtree is composited by WPF, so none of them draws it.
+            SWF.PresentationHost.SuppressWindow(handle);
+
             var claim = new ForeignHwndHostContent(host, handle);
             lock (s_lock)
             {
@@ -103,6 +106,7 @@ namespace System.Windows.Forms.Integration
                 if (s_claimed.TryGetValue(host, out claim)) s_claimed.Remove(host);
             }
 
+            SWF.PresentationHost.UnsuppressWindow(handle);
             if (claim != null)
             {
                 claim.UnhookInput();
@@ -143,6 +147,13 @@ namespace System.Windows.Forms.Integration
             // ...and it has to be able to hold keyboard focus, or typed keys never reach it.
             _host.Focusable = true;
 
+            // A menu is dismissed by clicking ANYWHERE else, including outside this host, where WPF
+            // routes the click to some other element and the menu never hears about it. Watch the
+            // whole window: on this stack there is no OS-level mouse hook to do it for us, so a
+            // context menu stayed on screen for good and every further right-click added another.
+            _host.Loaded += OnHostLoaded;
+            if (_host.IsLoaded) HookWindow();
+
             _host.MouseMove += OnHostMouseMove;
             _host.MouseLeftButtonDown += OnHostMouseDown;
             _host.MouseLeftButtonUp += OnHostMouseUp;
@@ -153,8 +164,57 @@ namespace System.Windows.Forms.Integration
             _host.KeyDown += OnHostKeyDown;
         }
 
+        private void OnHostLoaded(object sender, RoutedEventArgs e) => HookWindow();
+
+        private System.Windows.Window _window;
+
+        private void HookWindow()
+        {
+            System.Windows.Window w = System.Windows.Window.GetWindow(_host);
+            if (w == null || ReferenceEquals(w, _window)) return;
+            if (_window != null) _window.PreviewMouseDown -= OnWindowMouseDown;
+            _window = w;
+            _window.PreviewMouseDown += OnWindowMouseDown;
+        }
+
+        private void OnWindowMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+
+            // Only the host that owns the open popups closes them, and only for a click that is not
+            // inside one -- a click on a menu item must reach the item, not dismiss the menu first.
+            if (!ReferenceEquals(s_lastInput, this)) return;
+
+            Point p = e.GetPosition(_host);
+            var (x, y) = ToDriver(p);
+            HashSet<long> owned = OwnedWindows();
+            long[] all = _driver.GetPresentWindows(_root);
+            if (all == null) return;
+
+            bool insidePopup = false;
+            var popups = new List<IntPtr>();
+            for (int i = 0; i + 2 < all.Length; i += 3)
+            {
+                if (owned.Contains(all[i])) continue;
+                popups.Add((IntPtr)all[i]);
+                long packed = _driver.GetWindowSizePacked((IntPtr)all[i]);
+                int w = (int)(packed >> 32), h = (int)(packed & 0xFFFFFFFF);
+                int px = (int)all[i + 1], py = (int)all[i + 2];
+                if (x >= px && y >= py && x < px + w && y < py + h) insidePopup = true;
+            }
+            if (insidePopup || popups.Count == 0) return;
+
+            foreach (IntPtr popup in popups)
+            {
+                if (SWF.Control.FromHandle(popup) is SWF.ToolStripDropDown drop) drop.Close();
+            }
+        }
+
         private void UnhookInput()
         {
+            _host.Loaded -= OnHostLoaded;
+            if (_window != null) { _window.PreviewMouseDown -= OnWindowMouseDown; _window = null; }
+
             _host.MouseMove -= OnHostMouseMove;
             _host.MouseLeftButtonDown -= OnHostMouseDown;
             _host.MouseLeftButtonUp -= OnHostMouseUp;
@@ -227,6 +287,10 @@ namespace System.Windows.Forms.Integration
 
         /// <summary>The windows that belong to some claimed host -- everything else on screen is a
         /// menu or drop-down one of them opened.</summary>
+        /// <summary>Whether a top-level driver window is a Form, which PresentationHost puts on
+        /// screen as a real window of its own. Only menus and drop-downs belong to a host.</summary>
+        private static bool IsOwnWindow(IntPtr handle) => SWF.Control.FromHandle(handle) is SWF.Form;
+
         private HashSet<long> OwnedWindows()
         {
             var owned = new HashSet<long>();
@@ -266,6 +330,7 @@ namespace System.Windows.Forms.Integration
                 for (int i = all.Length - 3; i >= 0; i -= 3)
                 {
                     if (owned.Contains(all[i])) continue;
+                    if (IsOwnWindow((IntPtr)all[i])) continue;
                     long packed = _driver.GetWindowSizePacked((IntPtr)all[i]);
                     int w = (int)(packed >> 32), h = (int)(packed & 0xFFFFFFFF);
                     int px = (int)all[i + 1], py = (int)all[i + 2];
@@ -418,6 +483,7 @@ namespace System.Windows.Forms.Integration
             {
                 if (owned.Contains(all[i])) continue;
                 var h = (IntPtr)all[i];
+                if (IsOwnWindow(h)) continue;          // a Form; PresentationHost gives it a real window
                 object scene = _driver.GetWindowScene(h);
                 if (scene is null) continue;
 

@@ -68,6 +68,8 @@ namespace System.Windows.Forms {
 		private ImageList state_image_list;
 		private TreeNode tooltip_currently_showing;
 		private ToolTip tooltip_window;
+		// WF_TRACE_INPUT=1: what the tree decides to draw behind a selected node.
+		static readonly bool s_traceSelection = Environment.GetEnvironmentVariable ("WF_TRACE_INPUT") == "1";
 		private bool full_row_select;
 		private bool hot_tracking;
 		private int indent = 19;
@@ -1651,10 +1653,17 @@ namespace System.Windows.Forms {
 
 			r.Inflate (-1, -1);
 
+			if (s_traceSelection && (node == highlighted_node || node == selected_node))
+				Console.Error.WriteLine($"treeview draw '{node.Text}' focused={Focused} " +
+					$"highlighted={(node == highlighted_node)} selected={(node == selected_node)} " +
+					$"drawMode={draw_mode} fullRow={full_row_select} showLines={show_lines} " +
+					$"hideSel={hide_selection} nodeBack={node.BackColor} r={r}");
+
 			if (Focused && node == highlighted_node) {
 				// Use the node's BackColor if is not empty, and is not actually the selected one (yet)
 				Color back_color = node != selected_node && node.BackColor != Color.Empty ? node.BackColor :
 					ThemeEngine.Current.ColorHighlight;
+				if (s_traceSelection) Console.Error.WriteLine($"  -> highlight fill {back_color} at {r}");
 				dc.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (back_color), r);
 
 			} else if (!hide_selection && node == highlighted_node) {

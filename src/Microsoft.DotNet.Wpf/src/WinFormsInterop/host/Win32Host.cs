@@ -501,6 +501,11 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         AddSubtree(claimed, mine);
         foreach (Form other in PresentationHost.OtherHostedForms(this)) ClaimForm(claimed, other);
         foreach (Form container in PresentationHost.SuppressedForms()) ClaimForm(claimed, container);
+        // ...and everything a WPF element composites. Those windows belong to a hosted pad or panel
+        // and are positioned by that element, not by the driver, so drawing them here put the
+        // workbench's pads inside an unrelated dialog.
+        foreach (IntPtr composited in PresentationHost.CompositedWindows())
+            AddSubtree(claimed, (long[])_getSubtree.Invoke(_driver, new object[] { composited }));
 
         long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
         var outl = new System.Collections.Generic.List<long>(mine.Length + 12);

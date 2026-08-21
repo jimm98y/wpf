@@ -89,6 +89,33 @@ namespace System.Windows.Forms
             }
         }
 
+        // Driver windows that a WPF element composites: the container an HwndHost claims. A window
+        // host must not draw these -- they are somebody else's pixels, positioned by a WPF element
+        // rather than by the driver, and drawing them put a pad's contents inside an unrelated
+        // dialog.
+        private static readonly HashSet<IntPtr> s_composited = new HashSet<IntPtr>();
+
+        internal static void SuppressWindow(IntPtr handle)
+        {
+            if (handle != IntPtr.Zero) lock (s_lock) s_composited.Add(handle);
+        }
+
+        internal static void UnsuppressWindow(IntPtr handle)
+        {
+            if (handle != IntPtr.Zero) lock (s_lock) s_composited.Remove(handle);
+        }
+
+        /// <summary>The driver windows a WPF element composites; a host skips their subtrees.</summary>
+        internal static IntPtr[] CompositedWindows()
+        {
+            lock (s_lock)
+            {
+                var copy = new IntPtr[s_composited.Count];
+                s_composited.CopyTo(copy);
+                return copy;
+            }
+        }
+
         /// <summary>Keep <paramref name="form"/> off the screen for good: it is a compositing
         /// surface, not a window. See <see cref="s_suppressed"/>.</summary>
         internal static void Suppress(Form form) { if (form != null) lock (s_lock) s_suppressed.Add(form); }
