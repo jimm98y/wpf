@@ -908,6 +908,27 @@ namespace System.Windows.Interop
             BuildOrReparentWindow();
         }
 
+        /// <summary>
+        /// Give WPF something to hit-test when the hosted content has no window of its own.
+        /// </summary>
+        /// <remarks>
+        /// Normally an HwndHost's child HWND receives input straight from the OS and this element
+        /// never needs to be hit-testable. A claimed foreign child has no HWND -- it is composited
+        /// -- so input has to arrive as WPF input, and WPF routes only to elements with hit-test
+        /// geometry. Without this every click passed straight through and nothing inside a hosted
+        /// control could be clicked at all. WindowsFormsHost does the same for the same reason.
+        /// </remarks>
+        protected override void OnRender(System.Windows.Media.DrawingContext drawingContext)
+        {
+            base.OnRender(drawingContext);
+
+            if (_isForeignChild)
+            {
+                drawingContext.DrawRectangle(System.Windows.Media.Brushes.Transparent, null,
+                    new Rect(RenderSize));
+            }
+        }
+
         private void OnLayoutUpdated(object sender, EventArgs e)
         {
             UpdateWindowPos();

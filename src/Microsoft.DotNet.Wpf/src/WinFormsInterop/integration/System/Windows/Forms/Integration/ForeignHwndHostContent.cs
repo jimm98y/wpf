@@ -40,6 +40,7 @@ namespace System.Windows.Forms.Integration
             _host = host;
             _root = root;
             _driver = XplatUIWebGpu.GetInstance();
+            HookInput();
         }
 
         /// <summary>
@@ -102,7 +103,11 @@ namespace System.Windows.Forms.Integration
                 if (s_claimed.TryGetValue(host, out claim)) s_claimed.Remove(host);
             }
 
-            if (claim != null) WindowsFormsHost.RemoveSource(claim);
+            if (claim != null)
+            {
+                claim.UnhookInput();
+                WindowsFormsHost.RemoveSource(claim);
+            }
         }
 
         private static void OnSetVisible(HwndHost host, IntPtr handle, bool visible)
@@ -123,6 +128,70 @@ namespace System.Windows.Forms.Integration
         // WF_TRACE_WINDOWS=1: what this host actually publishes, once.
         private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1";
         private int _traced = -1;
+
+        private int _ox, _oy;               // the hosted root's origin in the driver's screen space
+        private bool _leftDown;
+
+        // ---- input: WPF over the host -> the WinForms driver ------------------------------------
+        //
+        // A claimed foreign child has no window of its own, so nothing delivers OS input to it: the
+        // content was displayed but completely dead -- no click, no tab, no scroll anywhere in a
+        // hosted pad. Route WPF's input to the driver the way WindowsFormsHost does for its own
+        // hosted controls. (HwndHost.OnRender gives WPF the hit-test geometry to route to.)
+        private void HookInput()
+        {
+            _host.MouseMove += OnHostMouseMove;
+            _host.MouseLeftButtonDown += OnHostMouseDown;
+            _host.MouseLeftButtonUp += OnHostMouseUp;
+            _host.MouseWheel += OnHostMouseWheel;
+        }
+
+        private void UnhookInput()
+        {
+            _host.MouseMove -= OnHostMouseMove;
+            _host.MouseLeftButtonDown -= OnHostMouseDown;
+            _host.MouseLeftButtonUp -= OnHostMouseUp;
+            _host.MouseWheel -= OnHostMouseWheel;
+        }
+
+        private (int X, int Y) ToDriver(Point p) => (_ox + (int)Math.Round(p.X), _oy + (int)Math.Round(p.Y));
+
+        private void OnHostMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _driver.InjectMouseMove(x, y, _leftDown);
+        }
+
+        private void OnHostMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            _host.Focus();
+            _host.CaptureMouse();
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _leftDown = true;
+            _driver.InjectMouseMove(x, y, false);
+            _driver.InjectMouseDown(x, y);
+            e.Handled = true;
+        }
+
+        private void OnHostMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _leftDown = false;
+            _driver.InjectMouseUp(x, y);
+            _host.ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        private void OnHostMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            _driver.InjectWheel(x, y, e.Delta > 0 ? 120 : -120);
+            e.Handled = true;
+        }
 
         private string _lastExit;
 
@@ -156,6 +225,7 @@ namespace System.Windows.Forms.Integration
                     $"({(SWF.Control.FromHandle(_root)?.GetType().Name ?? "<none>")})");
 
             int ox = (int)wins[1], oy = (int)wins[2];
+            _ox = ox; _oy = oy;                 // input maps through the same origin; see OnHostMouseDown
             if (s_trace && _traced != wins.Length)
             {
                 _traced = wins.Length;
