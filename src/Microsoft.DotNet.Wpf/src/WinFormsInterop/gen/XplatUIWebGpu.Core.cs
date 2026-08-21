@@ -863,6 +863,9 @@ namespace System.Windows.Forms
 
 		private IntPtr _focusHandle;   // window with keyboard focus (WM_CHAR/KEYDOWN target)
 
+		/// <summary>The window that currently has keyboard focus, for GetFocus.</summary>
+		internal IntPtr FocusHandle => _focusHandle;
+
 		internal override void SetFocus(IntPtr handle)
 		{
 			if (handle == _focusHandle) return;

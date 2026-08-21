@@ -51,7 +51,13 @@ namespace System.Windows.Forms {
 		// is how ordinary WinForms code does anything periodic, and with these left as the generated
 		// no-ops Timer.Tick never fired -- an Application.Run app whose only work is on a timer simply
 		// hung. See TickTimers, driven from the message loop's idle path.
-		internal override IntPtr GetFocus() { return IntPtr.Zero; }
+		// Answer with the window SetFocus last gave focus to. Returning Zero here meant
+		// Control.InternalContainsFocus was false for EVERY control, and that is what
+		// ContainerControl.ActiveControl consults before it actually hands a clicked control the
+		// focus -- so clicking selected an item but never focused it. Every visual conditioned on
+		// focus then stayed off: a selected ListView row or TreeView node kept its HighlightText
+		// (white) text but lost the blue highlight behind it, and so became invisible.
+		internal override IntPtr GetFocus() { return FocusHandle; }
 		internal override IntPtr GetActive() { return IntPtr.Zero; }
 		internal override IntPtr GetPreviousWindow(IntPtr hwnd) { return IntPtr.Zero; }
 		internal override bool GetFontMetrics(Graphics g, Font font, out int ascent, out int descent) { ascent = default(int); descent = default(int); return false; }
