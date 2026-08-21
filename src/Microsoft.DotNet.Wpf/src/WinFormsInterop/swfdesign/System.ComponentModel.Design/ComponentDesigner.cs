@@ -189,6 +189,15 @@ namespace System.ComponentModel.Design
 				throw new ArgumentNullException ("component");
 								
 			_component = component;
+
+			// Tie the component to its designer for TypeDescriptor. A designer shadows properties by
+			// republishing them against its OWN type -- PreFilterProperties does
+			// TypeDescriptor.CreateProperty (typeof (ControlDesigner), ...) -- so when the property
+			// grid later calls GetValue (theButton), the descriptor has to find the designer that
+			// stands in for it. That lookup is TypeDescriptor.GetAssociation, and without this
+			// association it just handed the button back: "Object type ControlDesigner does not match
+			// target type Button", thrown while the property grid painted.
+			TypeDescriptor.CreateAssociation (component, this);
 		}
 
 		[Obsolete ("This method has been deprecated. Use InitializeExistingComponent instead.")]
@@ -425,8 +434,13 @@ namespace System.ComponentModel.Design
 
 		protected virtual void Dispose (bool disposing)
 		{
-			if (disposing)
+			if (disposing) {
+				// Drop the association too, or the next designer for this component fights a dead one
+				// -- which is what closing and reopening the designer does.
+				if (_component != null)
+					TypeDescriptor.RemoveAssociation (_component, this);
 				_component = null;
+			}
 		}
 
 		~ComponentDesigner ()
