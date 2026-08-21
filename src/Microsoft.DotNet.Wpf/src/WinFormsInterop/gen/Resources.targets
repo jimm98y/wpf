@@ -57,6 +57,9 @@
     <EmbeddedResource Include="swf/resources/EventsTab.bmp"><LogicalName>System.Windows.Forms.Design.EventsTab.bmp</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/PropertiesTab.bmp"><LogicalName>System.Windows.Forms.PropertyGridInternal.PropertiesTab.bmp</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/mono.ico"><LogicalName>mono.ico</LogicalName></EmbeddedResource>
+    <!-- The default icon every Form gets in its title bar. Was mono.ico, which put the Mono
+         logo on every dialog in a hosting application; this is the one stock WinForms uses. -->
+    <EmbeddedResource Include="swf/resources/defaultform.ico"><LogicalName>defaultform.ico</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/errorProvider.ico"><LogicalName>errorProvider.ico</LogicalName></EmbeddedResource>
   </ItemGroup>
 </Project>

@@ -34,31 +34,31 @@ namespace System.Drawing {
 		// FindColorMatch relies on the index + 1 == KnowColor match
 		static internal uint[] ArgbValues = new uint[] {
 			0x00000000,	/* 000 - Empty */
-			0xFFD4D0C8,	/* 001 - ActiveBorder */
-			0xFF0054E3,	/* 002 - ActiveCaption */
-			0xFFFFFFFF,	/* 003 - ActiveCaptionText */
-			0xFF808080,	/* 004 - AppWorkspace */
-			0xFFECE9D8,	/* 005 - Control */
-			0xFFACA899,	/* 006 - ControlDark */
-			0xFF716F64,	/* 007 - ControlDarkDark */
-			0xFFF1EFE2,	/* 008 - ControlLight */
+			0xFFB4B4B4,	/* 001 - ActiveBorder */
+			0xFF99B4D1,	/* 002 - ActiveCaption */
+			0xFF000000,	/* 003 - ActiveCaptionText */
+			0xFFABABAB,	/* 004 - AppWorkspace */
+			0xFFF0F0F0,	/* 005 - Control */
+			0xFFA0A0A0,	/* 006 - ControlDark */
+			0xFF696969,	/* 007 - ControlDarkDark */
+			0xFFE3E3E3,	/* 008 - ControlLight */
 			0xFFFFFFFF,	/* 009 - ControlLightLight */
 			0xFF000000,	/* 010 - ControlText */
-			0xFF004E98,	/* 011 - Desktop */
-			0xFFACA899,	/* 012 - GrayText */
-			0xFF316AC5,	/* 013 - Highlight */
+			0xFF000000,	/* 011 - Desktop */
+			0xFF6D6D6D,	/* 012 - GrayText */
+			0xFF0078D7,	/* 013 - Highlight */
 			0xFFFFFFFF,	/* 014 - HighlightText */
-			0xFF000080,	/* 015 - HotTrack */
-			0xFFD4D0C8,	/* 016 - InactiveBorder */
-			0xFF7A96DF,	/* 017 - InactiveCaption */
-			0xFFD8E4F8,	/* 018 - InactiveCaptionText */
+			0xFF0066CC,	/* 015 - HotTrack */
+			0xFFF4F7FC,	/* 016 - InactiveBorder */
+			0xFFBFCDDB,	/* 017 - InactiveCaption */
+			0xFF434E54,	/* 018 - InactiveCaptionText */
 			0xFFFFFFE1,	/* 019 - Info */
 			0xFF000000,	/* 020 - InfoText */
-			0xFFFFFFFF,	/* 021 - Menu */
+			0xFFF0F0F0,	/* 021 - Menu */
 			0xFF000000,	/* 022 - MenuText */
-			0xFFD4D0C8,	/* 023 - ScrollBar */
+			0xFFC8C8C8,	/* 023 - ScrollBar */
 			0xFFFFFFFF,	/* 024 - Window */
-			0xFF000000,	/* 025 - WindowFrame */
+			0xFF646464,	/* 025 - WindowFrame */
 			0xFF000000,	/* 026 - WindowText */
 			0x00FFFFFF,	/* 027 - Transparent */
 			0xFFF0F8FF,	/* 028 - AliceBlue */
@@ -201,13 +201,13 @@ namespace System.Drawing {
 			0xFFF5F5F5,	/* 165 - WhiteSmoke */
 			0xFFFFFF00,	/* 166 - Yellow */
 			0xFF9ACD32,	/* 167 - YellowGreen */
-			0xFFECE9D8,	/* 168 - ButtonFace */
+			0xFFF0F0F0,	/* 168 - ButtonFace */
 			0xFFFFFFFF,	/* 169 - ButtonHighlight */
-			0xFFACA899,	/* 170 - ButtonShadow */
-			0xFF3D95FF,	/* 171 - GradientActiveCaption */
-			0xFF9DB9EB,	/* 172 - GradientInactiveCaption */
-			0xFFECE9D8,	/* 173 - MenuBar */
-			0xFF316AC5,	/* 174 - MenuHighlight */
+			0xFFA0A0A0,	/* 170 - ButtonShadow */
+			0xFFB9D1EA,	/* 171 - GradientActiveCaption */
+			0xFFD7E4F2,	/* 172 - GradientInactiveCaption */
+			0xFFF0F0F0,	/* 173 - MenuBar */
+			0xFF3399FF,	/* 174 - MenuHighlight */
 		};
 
 #if !MONOTOUCH && !XAMMAC && !XAMMAC_4_5 && SUPPORTS_WINDOWS_COLORS

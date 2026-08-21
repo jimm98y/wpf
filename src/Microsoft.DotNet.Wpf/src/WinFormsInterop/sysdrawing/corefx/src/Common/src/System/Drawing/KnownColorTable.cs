@@ -485,39 +485,42 @@ namespace System.Drawing
             colorTable[(int)KnownColor.WindowFrame] = SystemColorToArgb((int)Interop.User32.Win32SystemColors.WindowFrame);
             colorTable[(int)KnownColor.WindowText] = SystemColorToArgb((int)Interop.User32.Win32SystemColors.WindowText);
 #else
-            // Hard-coded constants, based on default Windows settings.
-            colorTable[(int)KnownColor.ActiveBorder] = unchecked((int)0xFFD4D0C8);
-            colorTable[(int)KnownColor.ActiveCaption] = unchecked((int)0xFF0054E3);
-            colorTable[(int)KnownColor.ActiveCaptionText] = unchecked((int)0xFFFFFFFF);
-            colorTable[(int)KnownColor.AppWorkspace] = unchecked((int)0xFF808080);
+            // Hard-coded constants, the defaults of a Windows 11 light theme.
+            // These were the Windows XP "Luna" palette, which is what the shell actually
+            // rendered with: a beige #ECE9D8 Control against the #F0F0F0 every other control
+            // used, and XP's #316AC5 selection blue rather than the modern #0078D7.
+            colorTable[(int)KnownColor.ActiveBorder] = unchecked((int)0xFFB4B4B4);
+            colorTable[(int)KnownColor.ActiveCaption] = unchecked((int)0xFF99B4D1);
+            colorTable[(int)KnownColor.ActiveCaptionText] = unchecked((int)0xFF000000);
+            colorTable[(int)KnownColor.AppWorkspace] = unchecked((int)0xFFABABAB);
             colorTable[(int)KnownColor.ButtonFace] = unchecked((int)0xFFF0F0F0);
             colorTable[(int)KnownColor.ButtonHighlight] = unchecked((int)0xFFFFFFFF);
             colorTable[(int)KnownColor.ButtonShadow] = unchecked((int)0xFFA0A0A0);
-            colorTable[(int)KnownColor.Control] = unchecked((int)0xFFECE9D8);
-            colorTable[(int)KnownColor.ControlDark] = unchecked((int)0xFFACA899);
-            colorTable[(int)KnownColor.ControlDarkDark] = unchecked((int)0xFF716F64);
-            colorTable[(int)KnownColor.ControlLight] = unchecked((int)0xFFF1EFE2);
+            colorTable[(int)KnownColor.Control] = unchecked((int)0xFFF0F0F0);
+            colorTable[(int)KnownColor.ControlDark] = unchecked((int)0xFFA0A0A0);
+            colorTable[(int)KnownColor.ControlDarkDark] = unchecked((int)0xFF696969);
+            colorTable[(int)KnownColor.ControlLight] = unchecked((int)0xFFE3E3E3);
             colorTable[(int)KnownColor.ControlLightLight] = unchecked((int)0xFFFFFFFF);
             colorTable[(int)KnownColor.ControlText] = unchecked((int)0xFF000000);
-            colorTable[(int)KnownColor.Desktop] = unchecked((int)0xFF004E98);
+            colorTable[(int)KnownColor.Desktop] = unchecked((int)0xFF000000);
             colorTable[(int)KnownColor.GradientActiveCaption] = unchecked((int)0xFFB9D1EA);
             colorTable[(int)KnownColor.GradientInactiveCaption] = unchecked((int)0xFFD7E4F2);
-            colorTable[(int)KnownColor.GrayText] = unchecked((int)0xFFACA899);
-            colorTable[(int)KnownColor.Highlight] = unchecked((int)0xFF316AC5);
+            colorTable[(int)KnownColor.GrayText] = unchecked((int)0xFF6D6D6D);
+            colorTable[(int)KnownColor.Highlight] = unchecked((int)0xFF0078D7);
             colorTable[(int)KnownColor.HighlightText] = unchecked((int)0xFFFFFFFF);
-            colorTable[(int)KnownColor.HotTrack] = unchecked((int)0xFF000080);
-            colorTable[(int)KnownColor.InactiveBorder] = unchecked((int)0xFFD4D0C8);
-            colorTable[(int)KnownColor.InactiveCaption] = unchecked((int)0xFF7A96DF);
-            colorTable[(int)KnownColor.InactiveCaptionText] = unchecked((int)0xFFD8E4F8);
+            colorTable[(int)KnownColor.HotTrack] = unchecked((int)0xFF0066CC);
+            colorTable[(int)KnownColor.InactiveBorder] = unchecked((int)0xFFF4F7FC);
+            colorTable[(int)KnownColor.InactiveCaption] = unchecked((int)0xFFBFCDDB);
+            colorTable[(int)KnownColor.InactiveCaptionText] = unchecked((int)0xFF434E54);
             colorTable[(int)KnownColor.Info] = unchecked((int)0xFFFFFFE1);
             colorTable[(int)KnownColor.InfoText] = unchecked((int)0xFF000000);
-            colorTable[(int)KnownColor.Menu] = unchecked((int)0xFFFFFFFF);
+            colorTable[(int)KnownColor.Menu] = unchecked((int)0xFFF0F0F0);
             colorTable[(int)KnownColor.MenuBar] = unchecked((int)0xFFF0F0F0);
             colorTable[(int)KnownColor.MenuHighlight] = unchecked((int)0xFF3399FF);
             colorTable[(int)KnownColor.MenuText] = unchecked((int)0xFF000000);
-            colorTable[(int)KnownColor.ScrollBar] = unchecked((int)0xFFD4D0C8);
+            colorTable[(int)KnownColor.ScrollBar] = unchecked((int)0xFFC8C8C8);
             colorTable[(int)KnownColor.Window] = unchecked((int)0xFFFFFFFF);
-            colorTable[(int)KnownColor.WindowFrame] = unchecked((int)0xFF000000);
+            colorTable[(int)KnownColor.WindowFrame] = unchecked((int)0xFF646464);
             colorTable[(int)KnownColor.WindowText] = unchecked((int)0xFF000000);
 #endif
         }

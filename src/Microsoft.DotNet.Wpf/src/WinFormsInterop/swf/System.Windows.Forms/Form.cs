@@ -108,7 +108,10 @@ namespace System.Windows.Forms {
 		#region Private & Internal Methods
 		static Form ()
 		{
-			default_icon = ResourceImageLoader.GetIcon ("mono.ico");
+			// The icon every Form shows in its title bar unless the application sets one. This
+			// was mono.ico, which stamped the Mono logo on every dialog of a hosting app; use
+			// the same default stock WinForms uses so hosted dialogs look like the platform's.
+			default_icon = ResourceImageLoader.GetIcon ("defaultform.ico");
 		}
 
 		internal bool IsLoaded {
