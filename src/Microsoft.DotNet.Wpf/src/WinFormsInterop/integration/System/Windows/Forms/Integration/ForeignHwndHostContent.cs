@@ -163,6 +163,17 @@ namespace System.Windows.Forms.Integration
             _host.MouseRightButtonUp += OnHostRightUp;
             _host.TextInput += OnHostTextInput;
             _host.KeyDown += OnHostKeyDown;
+
+            // Drag and drop, both directions. Only WindowsFormsHost used to wire this, so in a
+            // foreign host Control.DoDragDrop found no way to reach the platform and returned None
+            // straight away -- and the forms designer MOVES a control by starting a real drag, so a
+            // button on the design surface could not be dragged anywhere, silently.
+            _host.AllowDrop = true;
+            _host.DragEnter += OnHostDragEnter;
+            _host.DragOver += OnHostDragOver;
+            _host.DragLeave += OnHostDragLeave;
+            _host.Drop += OnHostDrop;
+            _driver?.RegisterDragSource(_root, OnHostedControlStartedDrag);
         }
 
         private void OnHostLoaded(object sender, RoutedEventArgs e) => HookWindow();
@@ -224,6 +235,86 @@ namespace System.Windows.Forms.Integration
             _host.MouseRightButtonUp -= OnHostRightUp;
             _host.TextInput -= OnHostTextInput;
             _host.KeyDown -= OnHostKeyDown;
+
+            _host.DragEnter -= OnHostDragEnter;
+            _host.DragOver -= OnHostDragOver;
+            _host.DragLeave -= OnHostDragLeave;
+            _host.Drop -= OnHostDrop;
+            _driver?.UnregisterDragSource(_root);
+        }
+
+        // The host element stands exactly where the hosted controls are drawn, so a drag over it is
+        // a drag over them: hand each event to the driver, which finds the control under the point
+        // and raises the WinForms event on it -- the same routing an injected click takes. The
+        // effect the control chooses becomes the WPF answer, which is what shows the right cursor.
+
+        private void OnHostDragEnter(object sender, System.Windows.DragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            e.Effects = ToWpfEffects(_driver.InjectDragEnterIn(_root, x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        private void OnHostDragOver(object sender, System.Windows.DragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            e.Effects = ToWpfEffects(_driver.InjectDragOverIn(_root, x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        private void OnHostDragLeave(object sender, System.Windows.DragEventArgs e)
+        {
+            _driver?.InjectDragLeave();
+            e.Handled = true;
+        }
+
+        private void OnHostDrop(object sender, System.Windows.DragEventArgs e)
+        {
+            if (_driver == null) return;
+            var (x, y) = ToDriver(e.GetPosition(_host));
+            e.Effects = ToWpfEffects(_driver.InjectDragDropIn(_root, x, y,
+                DragDropData.ToWinForms(e.Data), ToWinFormsEffects(e.AllowedEffects), KeyState(e)));
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// A hosted control called DoDragDrop. The drag has to be started by WPF from a WPF element,
+        /// so start it here on the control's behalf and hand back what the drop decided.
+        /// </summary>
+        private SWF.DragDropEffects OnHostedControlStartedDrag(object data, SWF.DragDropEffects allowed)
+        {
+            System.Windows.IDataObject payload = DragDropData.ToWpf(data);
+            if (payload == null) return SWF.DragDropEffects.None;
+
+            System.Windows.DragDropEffects performed = System.Windows.DragDrop.DoDragDrop(
+                _host, payload, ToWpfEffects(allowed));
+            return ToWinFormsEffects(performed);
+        }
+
+        // Both DragDropEffects enums carry the same Win32 DROPEFFECT bits, but they are different
+        // types, so the cast has to be written down.
+        private static SWF.DragDropEffects ToWinFormsEffects(System.Windows.DragDropEffects e)
+            => (SWF.DragDropEffects)(int)e;
+
+        private static System.Windows.DragDropEffects ToWpfEffects(SWF.DragDropEffects e)
+            => (System.Windows.DragDropEffects)(int)e;
+
+        /// <summary>The modifier and button state WinForms drag handlers read, in the Win32 MK_*
+        /// bits their KeyState is defined in terms of.</summary>
+        private static int KeyState(System.Windows.DragEventArgs e)
+        {
+            int state = 0;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.LeftMouseButton) != 0) state |= 0x0001;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.RightMouseButton) != 0) state |= 0x0002;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.ShiftKey) != 0) state |= 0x0004;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.ControlKey) != 0) state |= 0x0008;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.MiddleMouseButton) != 0) state |= 0x0010;
+            if ((e.KeyStates & System.Windows.DragDropKeyStates.AltKey) != 0) state |= 0x0020;
+            return state;
         }
 
         // Keyboard, for the same reason as the mouse: a composited child receives no OS input, so

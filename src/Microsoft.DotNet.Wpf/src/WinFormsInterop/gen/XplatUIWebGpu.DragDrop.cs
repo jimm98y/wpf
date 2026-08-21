@@ -52,9 +52,35 @@ namespace System.Windows.Forms
             }
         }
 
+        // A drag can only be started by the WPF element that is showing the control, and an app can
+        // have several such elements: a WindowsFormsHost here, a claimed foreign HwndHost there.
+        // Register one per hosted root and pick the one whose subtree the dragging control belongs
+        // to, so the drag starts from the element the user is actually dragging in.
+        private readonly Dictionary<IntPtr, Func<object, DragDropEffects, DragDropEffects>> _dragSources
+            = new Dictionary<IntPtr, Func<object, DragDropEffects, DragDropEffects>>();
+
+        internal void RegisterDragSource(IntPtr root, Func<object, DragDropEffects, DragDropEffects> start)
+        {
+            if (root != IntPtr.Zero && start != null) _dragSources[root] = start;
+        }
+
+        internal void UnregisterDragSource(IntPtr root)
+        {
+            if (root != IntPtr.Zero) _dragSources.Remove(root);
+        }
+
+        private Func<object, DragDropEffects, DragDropEffects> FindDragSource(IntPtr handle)
+        {
+            if (_dragSources.Count == 0) return null;
+            for (Hwnd h = Hwnd.ObjectFromHandle(handle); h != null; h = h.parent)
+                if (_dragSources.TryGetValue(h.Handle, out Func<object, DragDropEffects, DragDropEffects> start))
+                    return start;
+            return null;
+        }
+
         internal override DragDropEffects StartDrag(IntPtr handle, object data, DragDropEffects allowedEffects)
         {
-            Func<object, DragDropEffects, DragDropEffects> start = StartDragRequested;
+            Func<object, DragDropEffects, DragDropEffects> start = FindDragSource(handle) ?? StartDragRequested;
             return start == null ? DragDropEffects.None : start(data, allowedEffects);
         }
 
@@ -87,11 +113,48 @@ namespace System.Windows.Forms
         /// that pairing: a control that never saw an enter will not have set up whatever its
         /// DragOver handler reads.
         /// </summary>
+        // Subtree-scoped drag delivery, for a host that owns one hosted subtree rather than the whole
+        // WinForms world. Every hosted container sits at driver (0,0), so a GLOBAL hit test picks
+        // whichever host comes first at that point -- the same trap that once made clicks in one pad
+        // land in another, and it would put a dragged control into the wrong pad entirely.
+
+        internal DragDropEffects InjectDragEnterIn(IntPtr root, int screenX, int screenY,
+            IDataObject data, DragDropEffects allowed, int keyState)
+            => DeliverDragTo(DropTargetIn(root, screenX, screenY), screenX, screenY, data, allowed,
+                keyState, DragPhase.Over);
+
+        internal DragDropEffects InjectDragOverIn(IntPtr root, int screenX, int screenY,
+            IDataObject data, DragDropEffects allowed, int keyState)
+            => DeliverDragTo(DropTargetIn(root, screenX, screenY), screenX, screenY, data, allowed,
+                keyState, DragPhase.Over);
+
+        internal DragDropEffects InjectDragDropIn(IntPtr root, int screenX, int screenY,
+            IDataObject data, DragDropEffects allowed, int keyState)
+            => DeliverDragTo(DropTargetIn(root, screenX, screenY), screenX, screenY, data, allowed,
+                keyState, DragPhase.Drop);
+
+        /// <summary>The drop-registered control at a point, searching only <paramref name="root"/>'s
+        /// subtree. See <see cref="DropTargetAt"/> for why it walks up to an ancestor.</summary>
+        private Control DropTargetIn(IntPtr root, int screenX, int screenY)
+        {
+            IntPtr handle = WindowAtPointIn(root, screenX, screenY);
+            for (Control c = handle == IntPtr.Zero ? null : Control.FromHandle(handle); c != null; c = c.Parent)
+            {
+                if (c.IsHandleCreated && _dropTargets.Contains(c.Handle))
+                {
+                    return c;
+                }
+            }
+            return null;
+        }
+
         private DragDropEffects DeliverDrag(int screenX, int screenY, IDataObject data,
             DragDropEffects allowed, int keyState, DragPhase phase)
-        {
-            Control target = DropTargetAt(screenX, screenY);
+            => DeliverDragTo(DropTargetAt(screenX, screenY), screenX, screenY, data, allowed, keyState, phase);
 
+        private DragDropEffects DeliverDragTo(Control target, int screenX, int screenY, IDataObject data,
+            DragDropEffects allowed, int keyState, DragPhase phase)
+        {
             if (!ReferenceEquals(target, _dragOverControl))
             {
                 _dragOverControl?.DndLeave(EventArgs.Empty);
