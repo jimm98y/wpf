@@ -49,6 +49,18 @@ namespace System.Windows.Forms
         /// own that no form subtree contains.</summary>
         internal static bool IsTopHost(IWinFormsHost host) => ReferenceEquals(Current, host);
 
+        /// <summary>The forms that must never appear on screen -- the compositing containers.
+        /// A host has to know them: their windows are real windows of the driver, and a host that
+        /// drew every window it could see would paint the whole hosted workbench into its own
+        /// dialog.</summary>
+        internal static Form[] SuppressedForms()
+        {
+            var list = new List<Form>(s_suppressed.Count);
+            foreach (Form f in s_suppressed)
+                if (f != null && !f.IsDisposed) list.Add(f);
+            return list.ToArray();
+        }
+
         /// <summary>The forms owned by every host except <paramref name="host"/>.</summary>
         internal static Form[] OtherHostedForms(IWinFormsHost host)
         {

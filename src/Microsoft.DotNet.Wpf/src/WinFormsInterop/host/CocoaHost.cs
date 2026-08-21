@@ -19,7 +19,9 @@ internal sealed class CocoaHost : IWinFormsHost
     private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion;
     private IntPtr _window, _imageView;
     private WgpuPresenter _wgpu;   // when non-null, present through WebGPU instead of CoreGraphics
-    private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
+    // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
+    private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
+        && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
     // Present-on-change: skip re-rendering when the driver's paint version and caret blink are unchanged.
     private int _lastVer = -1;
     private bool _lastCaretOn, _lastPresentOk;

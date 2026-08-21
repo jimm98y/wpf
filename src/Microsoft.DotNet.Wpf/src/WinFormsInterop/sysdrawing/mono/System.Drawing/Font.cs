@@ -1,4 +1,4 @@
-﻿//
+//
 // System.Drawing.Fonts.cs
 //
 // Authors:
@@ -56,12 +56,27 @@ namespace System.Drawing
 		// WebGPU GPU-raster: build a managed-only Font (no native FontFamily, no GdipCreateFont) — the
 		// last libgdiplus dependency in the paint path. Rendering uses the recorder's font and
 		// measurement is managed, so the native font/family are never needed. fontObject stays Zero.
-		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+		// On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
+		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
+			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
+
+		// Skip the native font only where there is no GDI+ to make one with (the browser). GPU raster
+		// alone is not a reason: the recorder path never needs it, but a Graphics WITHOUT a recorder
+		// -- one over a plain Bitmap, which is how an app draws its own splash screen -- still goes to
+		// GdipDrawString, and handing that a null font failed the whole call:
+		//
+		//   System.ArgumentException: A null reference or invalid value was found
+		//   [GDI+ status: InvalidParameter]   at System.Drawing.Graphics.DrawString(...)
+		//
+		// Measurement stays managed either way, so text still matches what the WGSL renderer draws.
+		static bool ManagedOnlyFont {
+			get { return s_gpuRasterMode && !GDIPlus.Initialized; }
+		}
 
 		private void CreateFont (string familyName, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
 			originalFontName = familyName;
-			if (s_gpuRasterMode) {
+			if (ManagedOnlyFont) {
 				SetPropertiesManaged (familyName, emSize, style, unit, charSet, isVertical);
 				return;   // no native font
 			}
@@ -326,7 +341,7 @@ namespace System.Drawing
 		{
 			// no null checks, MS throws a NullReferenceException if original is null
 			setProperties (prototype.FontFamily, prototype.Size, newStyle, prototype.Unit, prototype.GdiCharSet, prototype.GdiVerticalFont);
-			if (s_gpuRasterMode) return;   // managed-only: no native font (libgdiplus-free)
+			if (ManagedOnlyFont) return;   // managed-only: no native font (libgdiplus-free)
 
 			Status status = GDIPlus.GdipCreateFont (_fontFamily.NativeFamily, Size, Style, Unit, out fontObject);
 			GDIPlus.CheckStatus (status);
@@ -370,7 +385,7 @@ namespace System.Drawing
 
 			Status status;
 			setProperties (family, emSize, style, unit, gdiCharSet,  gdiVerticalFont );
-			if (s_gpuRasterMode) return;   // managed-only: no native font (libgdiplus-free)
+			if (ManagedOnlyFont) return;   // managed-only: no native font (libgdiplus-free)
 			status = GDIPlus.GdipCreateFont (family.NativeFamily, emSize,  style,   unit,  out fontObject);
 			GDIPlus.CheckStatus (status);
 		}

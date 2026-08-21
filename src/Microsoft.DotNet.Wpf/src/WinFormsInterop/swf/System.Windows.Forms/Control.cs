@@ -136,7 +136,9 @@ namespace System.Windows.Forms
 		// WebGPU GPU-raster mode forces GDI+ (Graphics.DrawString) text so the scene recorder captures
 		// it — even if the app opted into the GDI TextRenderer path (SetCompatibleTextRenderingDefault
 		// (false), as the VS WinForms template does). Set from the driver's env; no host-side setup.
-		private static readonly bool webgpu_gpu_raster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+		// On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
+		private static readonly bool webgpu_gpu_raster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
+			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
 
 		//accessibility
 		string accessible_name;

@@ -19,8 +19,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree;
-    private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
+    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers;
+    // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
+    private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
+        && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
     private readonly Stopwatch _blink = Stopwatch.StartNew();
     private IntPtr _hwnd, _hinstance;
     private WgpuPresenter _wgpu;
@@ -39,6 +41,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _injectClick = M("InjectClick"); _down = M("InjectMouseDown"); _up = M("InjectMouseUp");
         _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
+        _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _getSubtree = M("GetSubtreeWindows");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -191,13 +194,26 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
             case 0x0202: MouseAt(lParam, _up); Frame(); return IntPtr.Zero;     // WM_LBUTTONUP
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
-            case 0x0102: _char.Invoke(_driver, new object[] { (char)(int)wParam }); Frame(); return IntPtr.Zero; // WM_CHAR
+            case 0x0102:                                                          // WM_CHAR
+                char typed = (char)(int)wParam;
+                // A control combination (Ctrl+C is 0x03) arrives here as a control code as well as
+                // a key-down. The key-down is the one a control acts on; inserting the code too put
+                // a stray character in the text box.
+                if (typed < ' ' && (ModifierState() & Keys.Control) != 0) return IntPtr.Zero;
+                _char.Invoke(_driver, new object[] { typed }); Frame(); return IntPtr.Zero;
             case 0x0100:                                                          // WM_KEYDOWN
                 int vk = (int)wParam;
-                // Win32 VK == WinForms Keys for nav keys: PageUp33 PageDn34 End35 Home36 Left37 Up38
-                // Right39 Down40 Delete46.
-                if (vk is 33 or 34 or 35 or 36 or 37 or 38 or 39 or 40 or 46)
+                PublishModifiers();
+                // Win32 VK == WinForms Keys, so keys pass straight through. Backspace(8) Tab(9)
+                // Return(13) and Escape(27) are the exception: the driver synthesises their WM_CHAR
+                // from the key-down, and TranslateMessage sends one as well, so forwarding those
+                // here would act on them twice.
+                if (vk != 8 && vk != 9 && vk != 13 && vk != 27)
                 { _keyDown.Invoke(_driver, new object[] { vk }); Frame(); }
+                return IntPtr.Zero;
+            case 0x0101:                                                          // WM_KEYUP
+                PublishModifiers();
+                _keyUp?.Invoke(_driver, new object[] { (int)wParam });
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             // WM_CLOSE: close the FORM, not just its window. Destroying the window on its own left
@@ -219,6 +235,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
     }
+
+    // The driver has no keyboard: read the real modifier state and push it in, so Control.ModifierKeys
+    // answers truthfully and shortcuts like Ctrl+C resolve.
+    private static Keys ModifierState()
+    {
+        Keys mods = Keys.None;
+        if ((GetKeyState(0x11) & 0x8000) != 0) mods |= Keys.Control;   // VK_CONTROL
+        if ((GetKeyState(0x10) & 0x8000) != 0) mods |= Keys.Shift;     // VK_SHIFT
+        if ((GetKeyState(0x12) & 0x8000) != 0) mods |= Keys.Alt;       // VK_MENU
+        return mods;
+    }
+
+    private void PublishModifiers() => _setModifiers?.Invoke(_driver, new object[] { ModifierState() });
 
     private void Frame() { Application.DoEvents(); Present(); }
 
@@ -327,27 +356,59 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     // whichever window the user is working in live.
     private long[] PresentWindows()
     {
-        if (PresentationHost.HostCount <= 1 || _getSubtree == null)
+        if (_getSubtree == null)
             return (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
 
         long[] mine = (long[])_getSubtree.Invoke(_driver, new object[] { _form.Handle });
         if (!PresentationHost.IsTopHost(this)) return mine;
 
+        // Everything another host owns, or that is a compositing container belonging to a WPF
+        // element, is somebody else's to draw. For a plain WinForms app there are neither, so this
+        // still comes out as "every window" -- the behaviour that path has always had.
         var claimed = new System.Collections.Generic.HashSet<long>();
-        for (int i = 0; i + 2 < mine.Length; i += 3) claimed.Add(mine[i]);
-        foreach (Form other in PresentationHost.OtherHostedForms(this))
-        {
-            if (other == null || other.IsDisposed || !other.IsHandleCreated) continue;
-            long[] theirs = (long[])_getSubtree.Invoke(_driver, new object[] { other.Handle });
-            for (int i = 0; i + 2 < theirs.Length; i += 3) claimed.Add(theirs[i]);
-        }
+        AddSubtree(claimed, mine);
+        foreach (Form other in PresentationHost.OtherHostedForms(this)) ClaimForm(claimed, other);
+        foreach (Form container in PresentationHost.SuppressedForms()) ClaimForm(claimed, container);
 
         long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
         var outl = new System.Collections.Generic.List<long>(mine.Length + 12);
         outl.AddRange(mine);
         for (int i = 0; i + 2 < all.Length; i += 3)
             if (!claimed.Contains(all[i])) { outl.Add(all[i]); outl.Add(all[i + 1]); outl.Add(all[i + 2]); }
+
+        if (s_tracePresent) TracePresent(mine, outl);
         return outl.ToArray();
+    }
+
+    private static void AddSubtree(System.Collections.Generic.HashSet<long> into, long[] triples)
+    {
+        for (int i = 0; i + 2 < triples.Length; i += 3) into.Add(triples[i]);
+    }
+
+    private void ClaimForm(System.Collections.Generic.HashSet<long> into, Form form)
+    {
+        if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
+        AddSubtree(into, (long[])_getSubtree.Invoke(_driver, new object[] { form.Handle }));
+    }
+
+    // WF_TRACE_WINDOWS=1 prints, once per host, what this window actually composites: the windows
+    // of its own form, then anything unclaimed it picked up. Enough to tell "the scene is empty"
+    // from "something else was drawn over it".
+    private static readonly bool s_tracePresent = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1";
+    private bool _tracedPresent;
+
+    private void TracePresent(long[] mine, System.Collections.Generic.List<long> all)
+    {
+        if (_tracedPresent) return;
+        _tracedPresent = true;
+        Console.Error.WriteLine($"present[{_form.Text}] form=0x{_form.Handle.ToInt64():x} " +
+                                $"{_form.Width}x{_form.Height}: own={mine.Length / 3} total={all.Count / 3}");
+        for (int i = 0; i + 2 < all.Count; i += 3)
+        {
+            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)all[i] });
+            Console.Error.WriteLine($"   win 0x{all[i]:x} at ({all[i + 1]},{all[i + 2]}) " +
+                                    $"{(i < mine.Length ? "own" : "extra")} scene={(scene == null ? "null" : "ok")}");
+        }
     }
 
     private Rectangle? GetCaretRect(int ox, int oy)

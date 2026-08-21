@@ -53,7 +53,9 @@ namespace System.Drawing
 		// GPU-raster mode: route ALL text measurement to the managed metrics (no libgdiplus) — for
 		// both layout (control sizing) and paint. Correct because we render every run with the same
 		// font, so controls are sized to fit what's actually drawn. A browser prerequisite.
-		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+		// On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
+		static readonly bool s_gpuRasterMode = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
+			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
 
 		static int ArgbOf (Brush b)
 		{
@@ -73,6 +75,20 @@ namespace System.Drawing
 		}
 		static int Blend (Color a, Color b) =>
 			Color.FromArgb ((a.A + b.A) / 2, (a.R + b.R) / 2, (a.G + b.G) / 2, (a.B + b.B) / 2).ToArgb ();
+		/// <summary>
+		/// CheckStatus for a drawing primitive. A recording-only Graphics (GPU-raster paint) has no
+		/// native surface: anything the recorder does not know how to record -- a TextureBrush fill,
+		/// say -- still reaches GDI+, which rejects the null handle with InvalidParameter. There is
+		/// nothing to draw on, so that is "not drawn", not an error. Throwing turned a missing
+		/// background into an ArgumentException on every single paint.
+		/// </summary>
+		void CheckDrawStatus (Status status)
+		{
+			if (nativeObject == IntPtr.Zero && status == Status.InvalidParameter)
+				return;
+			GDIPlus.CheckStatus (status);
+		}
+
 		bool RecordSolid (Brush b) => GpuRecorder != null && b is SolidBrush;
 
 		// A HatchBrush rendered as a real repeating tile (fore/back pattern), recorded as a tiling
@@ -255,7 +271,7 @@ namespace System.Drawing
 			uint state;
 			Status status;
 			status = GDIPlus.GdipBeginContainer2 (nativeObject, out state);
-        		GDIPlus.CheckStatus (status);
+        		CheckDrawStatus (status);
 
                         return new GraphicsContainer(state);
 		}
@@ -266,7 +282,7 @@ namespace System.Drawing
 			uint state;
 			Status status;
 			status = GDIPlus.GdipBeginContainerI (nativeObject, ref dstrect, ref srcrect, unit, out state);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
 			return new GraphicsContainer (state);
 		}
@@ -277,7 +293,7 @@ namespace System.Drawing
 			uint state;
 			Status status;
 			status = GDIPlus.GdipBeginContainer (nativeObject, ref dstrect, ref srcrect, unit, out state);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
 			return new GraphicsContainer (state);
 		}
@@ -288,7 +304,7 @@ namespace System.Drawing
 			Status status;
  			if (nativeObject == IntPtr.Zero) return;
  			status = GDIPlus.GdipGraphicsClear (nativeObject, color.ToArgb ());
- 			GDIPlus.CheckStatus (status);
+ 			CheckDrawStatus (status);
 		}
 		[MonoLimitation ("Works on Win32 and on X11 (but not on Cocoa and Quartz)")]
 		public void CopyFromScreen (Point upperLeftSource, Point upperLeftDestination, Size blockRegionSize)
@@ -438,7 +454,7 @@ namespace System.Drawing
 
 				status = GDIPlus.GdipDeleteGraphics (nativeObject);
 				nativeObject = IntPtr.Zero;
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 
 				if (_metafileHolder != null)
 				{
@@ -474,7 +490,7 @@ namespace System.Drawing
 			if (RecordPen (pen)) { GpuRecorder.DrawArc (x, y, width, height, startAngle, sweepAngle, ArgbOf (pen), pen.Width); return; }
 			status = GDIPlus.GdipDrawArc (nativeObject, pen.NativePen,
                                         x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		// Microsoft documentation states that the signature for this member should be
@@ -488,7 +504,7 @@ namespace System.Drawing
 			if (RecordPen (pen)) { GpuRecorder.DrawArc (x, y, width, height, startAngle, sweepAngle, ArgbOf (pen), pen.Width); return; }
 			status = GDIPlus.GdipDrawArcI (nativeObject, pen.NativePen,
 						x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawBezier (Pen pen, PointF pt1, PointF pt2, PointF pt3, PointF pt4)
@@ -499,7 +515,7 @@ namespace System.Drawing
 			status = GDIPlus.GdipDrawBezier (nativeObject, pen.NativePen,
 							pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X,
 							pt3.Y, pt4.X, pt4.Y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawBezier (Pen pen, Point pt1, Point pt2, Point pt3, Point pt4)
@@ -510,7 +526,7 @@ namespace System.Drawing
 			status = GDIPlus.GdipDrawBezierI (nativeObject, pen.NativePen,
 							pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X,
 							pt3.Y, pt4.X, pt4.Y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawBezier (Pen pen, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
@@ -520,7 +536,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			status = GDIPlus.GdipDrawBezier (nativeObject, pen.NativePen, x1,
 							y1, x2, y2, x3, y3, x4, y4);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawBeziers (Pen pen, Point [] points)
@@ -546,7 +562,7 @@ namespace System.Drawing
 							pen.NativePen,
                                                         p1.X, p1.Y, p2.X, p2.Y, 
                                                         p3.X, p3.Y, p4.X, p4.Y);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                         }
 		}
 
@@ -573,7 +589,7 @@ namespace System.Drawing
 							pen.NativePen,
                                                         p1.X, p1.Y, p2.X, p2.Y, 
                                                         p3.X, p3.Y, p4.X, p4.Y);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                         }
 		}
 
@@ -587,7 +603,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawClosedCurve (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawClosedCurve (Pen pen, Point [] points)
@@ -599,7 +615,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawClosedCurveI (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
  			
 		// according to MSDN fillmode "is required but ignored" which makes _some_ sense since the unmanaged 
@@ -613,7 +629,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawClosedCurve2I (nativeObject, pen.NativePen, points, points.Length, tension);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		// according to MSDN fillmode "is required but ignored" which makes _some_ sense since the unmanaged 
@@ -627,7 +643,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawClosedCurve2 (nativeObject, pen.NativePen, points, points.Length, tension);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawCurve (Pen pen, Point [] points)
@@ -639,7 +655,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawCurveI (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawCurve (Pen pen, PointF [] points)
@@ -651,7 +667,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawCurve (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawCurve (Pen pen, PointF [] points, float tension)
@@ -663,7 +679,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawCurve2 (nativeObject, pen.NativePen, points, points.Length, tension);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawCurve (Pen pen, Point [] points, float tension)
@@ -675,7 +691,7 @@ namespace System.Drawing
 			
 			Status status;
 			status = GDIPlus.GdipDrawCurve2I (nativeObject, pen.NativePen, points, points.Length, tension);		
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments)
@@ -689,7 +705,7 @@ namespace System.Drawing
 			status = GDIPlus.GdipDrawCurve3 (nativeObject, pen.NativePen,
 							points, points.Length, offset,
 							numberOfSegments, 0.5f);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawCurve (Pen pen, Point [] points, int offset, int numberOfSegments, float tension)
@@ -703,7 +719,7 @@ namespace System.Drawing
 			status = GDIPlus.GdipDrawCurve3I (nativeObject, pen.NativePen,
 							points, points.Length, offset,
 							numberOfSegments, tension);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments, float tension)
@@ -717,7 +733,7 @@ namespace System.Drawing
 			status = GDIPlus.GdipDrawCurve3 (nativeObject, pen.NativePen,
 							points, points.Length, offset,
 							numberOfSegments, tension);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawEllipse (Pen pen, Rectangle rect)
@@ -741,7 +757,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			Status status;
 			status = GDIPlus.GdipDrawEllipseI (nativeObject, pen.NativePen, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawEllipse (Pen pen, float x, float y, float width, float height)
@@ -749,7 +765,7 @@ namespace System.Drawing
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			Status status = GDIPlus.GdipDrawEllipse (nativeObject, pen.NativePen, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawIcon (Icon icon, Rectangle targetRect)
@@ -782,7 +798,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, rect.X, rect.Y, rect.Width, rect.Height)) return;
 			Status status = GDIPlus.GdipDrawImageRect(nativeObject, image.NativeObject, rect.X, rect.Y, rect.Width, rect.Height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, PointF point)
@@ -791,7 +807,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, point.X, point.Y, image.Width, image.Height)) return;
 			Status status = GDIPlus.GdipDrawImage (nativeObject, image.NativeObject, point.X, point.Y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point [] destPoints)
@@ -802,7 +818,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("destPoints");
 			
 			Status status = GDIPlus.GdipDrawImagePointsI (nativeObject, image.NativeObject, destPoints, destPoints.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point point)
@@ -826,7 +842,7 @@ namespace System.Drawing
 			if (destPoints == null)
 				throw new ArgumentNullException ("destPoints");
 			Status status = GDIPlus.GdipDrawImagePoints (nativeObject, image.NativeObject, destPoints, destPoints.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, int x, int y)
@@ -835,7 +851,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, image.Width, image.Height)) return;
 			Status status = GDIPlus.GdipDrawImageI (nativeObject, image.NativeObject, x, y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, float x, float y)
@@ -844,7 +860,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, image.Width, image.Height)) return;
 			Status status = GDIPlus.GdipDrawImage (nativeObject, image.NativeObject, x, y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit)
@@ -855,7 +871,7 @@ namespace System.Drawing
 				destRect.X, destRect.Y, destRect.Width, destRect.Height,
 				srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height,
 				srcUnit, IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit)
@@ -866,7 +882,7 @@ namespace System.Drawing
 				destRect.X, destRect.Y, destRect.Width, destRect.Height,
 				srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height,
 				srcUnit, IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit)
@@ -880,7 +896,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y, 
 				srcRect.Width, srcRect.Height, srcUnit, IntPtr.Zero, 
 				null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit)
@@ -894,7 +910,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y, 
 				srcRect.Width, srcRect.Height, srcUnit, IntPtr.Zero, 
 				null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, 
@@ -908,7 +924,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit,
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, float x, float y, float width, float height)
@@ -918,7 +934,7 @@ namespace System.Drawing
 			if (RecordImage (image, x, y, width, height)) return;
 			Status status = GDIPlus.GdipDrawImageRect(nativeObject, image.NativeObject, x, y,
                            width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, 
@@ -932,7 +948,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit, 
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, int x, int y, Rectangle srcRect, GraphicsUnit srcUnit)
@@ -940,7 +956,7 @@ namespace System.Drawing
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImagePointRectI(nativeObject, image.NativeObject, x, y, srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, srcUnit);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, int x, int y, int width, int height)
@@ -949,7 +965,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, width, height)) return;
 			Status status = GDIPlus.GdipDrawImageRectI (nativeObject, image.nativeObject, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, float x, float y, RectangleF srcRect, GraphicsUnit srcUnit)
@@ -957,7 +973,7 @@ namespace System.Drawing
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImagePointRect (nativeObject, image.nativeObject, x, y, srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, srcUnit);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
@@ -970,7 +986,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit, 
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, callback, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
@@ -984,7 +1000,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit, 
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, callback, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
@@ -998,7 +1014,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y, 
 				srcRect.Width, srcRect.Height, srcUnit, 
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, callback, (IntPtr) callbackData);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit)
@@ -1009,7 +1025,7 @@ namespace System.Drawing
                                 destRect.X, destRect.Y, destRect.Width, destRect.Height,
                        		srcX, srcY, srcWidth, srcHeight, srcUnit, IntPtr.Zero, 
                        		null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
@@ -1018,7 +1034,7 @@ namespace System.Drawing
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit, 
 				imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, callback, (IntPtr) callbackData);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit)
@@ -1029,7 +1045,7 @@ namespace System.Drawing
                                 destRect.X, destRect.Y, destRect.Width, destRect.Height,
                        		srcX, srcY, srcWidth, srcHeight, srcUnit, IntPtr.Zero, 
                        		null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs)
@@ -1040,7 +1056,7 @@ namespace System.Drawing
                                 destRect.X, destRect.Y, destRect.Width, destRect.Height,
                        		srcX, srcY, srcWidth, srcHeight, srcUnit,
 				imageAttrs != null ? imageAttrs.nativeImageAttributes : IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr)
@@ -1051,7 +1067,7 @@ namespace System.Drawing
                                         destRect.X, destRect.Y, destRect.Width, 
 					destRect.Height, srcX, srcY, srcWidth, srcHeight,
 					srcUnit, imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, null, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
@@ -1063,7 +1079,7 @@ namespace System.Drawing
 					destRect.Height, srcX, srcY, srcWidth, srcHeight,
 					srcUnit, imageAttr != null ? imageAttr.nativeImageAttributes : IntPtr.Zero, callback,
 					IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback)
@@ -1075,7 +1091,7 @@ namespace System.Drawing
 					destRect.Height, srcX, srcY, srcWidth, srcHeight,
 					srcUnit, imageAttrs != null ? imageAttrs.nativeImageAttributes : IntPtr.Zero, 
 					callback, IntPtr.Zero);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
@@ -1086,7 +1102,7 @@ namespace System.Drawing
 				destRect.X, destRect.Y, destRect.Width, destRect.Height,
 				srcX, srcY, srcWidth, srcHeight, srcUnit, 
 				imageAttrs != null ? imageAttrs.nativeImageAttributes : IntPtr.Zero, callback, callbackData);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
@@ -1097,7 +1113,7 @@ namespace System.Drawing
                        		destRect.X, destRect.Y, destRect.Width, destRect.Height,
 				srcX, srcY, srcWidth, srcHeight, srcUnit,
 				imageAttrs != null ? imageAttrs.nativeImageAttributes : IntPtr.Zero, callback, callbackData);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}		
 		
 		public void DrawImageUnscaled (Image image, Point point)
@@ -1151,7 +1167,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
                         Status status = GDIPlus.GdipDrawLine (nativeObject, pen.NativePen,
 		                                pt1.X, pt1.Y, pt2.X, pt2.Y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawLine (Pen pen, Point pt1, Point pt2)
@@ -1161,7 +1177,7 @@ namespace System.Drawing
 			if (RecordPen (pen)) { GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen)); return; }
                         Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen,
 		                                pt1.X, pt1.Y, pt2.X, pt2.Y);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
@@ -1170,7 +1186,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) { GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen)); return; }
 			Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen, x1, y1, x2, y2);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
@@ -1181,7 +1197,7 @@ namespace System.Drawing
 			    !float.IsNaN(x2) && !float.IsNaN(y2)) {
 				if (RecordPen (pen)) { GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen)); return; }
 				Status status = GDIPlus.GdipDrawLine (nativeObject, pen.NativePen, x1, y1, x2, y2);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -1198,7 +1214,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawLines (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawLines (Pen pen, Point [] points)
@@ -1214,7 +1230,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawLinesI (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawPath (Pen pen, GraphicsPath path)
@@ -1224,7 +1240,7 @@ namespace System.Drawing
 			if (path == null)
 				throw new ArgumentNullException ("path");
 			Status status = GDIPlus.GdipDrawPath (nativeObject, pen.NativePen, path.nativePath);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void DrawPie (Pen pen, Rectangle rect, float startAngle, float sweepAngle)
@@ -1246,7 +1262,7 @@ namespace System.Drawing
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			Status status = GDIPlus.GdipDrawPie (nativeObject, pen.NativePen, x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		// Microsoft documentation states that the signature for this member should be
@@ -1257,7 +1273,7 @@ namespace System.Drawing
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			Status status = GDIPlus.GdipDrawPieI (nativeObject, pen.NativePen, x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawPolygon (Pen pen, Point [] points)
@@ -1275,7 +1291,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawPolygonI (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawPolygon (Pen pen, PointF [] points)
@@ -1293,7 +1309,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawPolygon (nativeObject, pen.NativePen, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawRectangle (Pen pen, Rectangle rect)
@@ -1316,7 +1332,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawRectangle (nativeObject, pen.NativePen, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawRectangle (Pen pen, int x, int y, int width, int height)
@@ -1332,7 +1348,7 @@ namespace System.Drawing
 				return;
 			}
 			Status status = GDIPlus.GdipDrawRectangleI (nativeObject, pen.NativePen, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawRectangles (Pen pen, RectangleF [] rects)
@@ -1342,7 +1358,7 @@ namespace System.Drawing
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
 			Status status = GDIPlus.GdipDrawRectangles (nativeObject, pen.NativePen, rects, rects.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawRectangles (Pen pen, Rectangle [] rects)
@@ -1352,7 +1368,7 @@ namespace System.Drawing
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
 			Status status = GDIPlus.GdipDrawRectanglesI (nativeObject, pen.NativePen, rects, rects.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle)
@@ -1424,7 +1440,7 @@ namespace System.Drawing
 			}
 
 			Status status = GDIPlus.GdipDrawString (nativeObject, s, s.Length, font.NativeObject, ref layoutRectangle, format != null ? format.NativeObject : IntPtr.Zero, brush.NativeBrush);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void EndContainer (GraphicsContainer container)
@@ -1432,7 +1448,7 @@ namespace System.Drawing
 			if (container == null)
 				throw new ArgumentNullException ("container");
 			Status status = GDIPlus.GdipEndContainer(nativeObject, container.NativeObject);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		private const string MetafileEnumeration = "Metafiles enumeration, for both WMF and EMF formats, isn't supported.";
@@ -1657,7 +1673,7 @@ namespace System.Drawing
 		{
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Exclude);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void ExcludeClip (Region region)
@@ -1666,7 +1682,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("region");
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Exclude);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -1677,7 +1693,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			Status status = GDIPlus.GdipFillClosedCurve (nativeObject, brush.NativeBrush, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void FillClosedCurve (Brush brush, Point [] points)
@@ -1687,7 +1703,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			Status status = GDIPlus.GdipFillClosedCurveI (nativeObject, brush.NativeBrush, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -1716,7 +1732,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			Status status = GDIPlus.GdipFillClosedCurve2 (nativeObject, brush.NativeBrush, points, points.Length, tension, fillmode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillClosedCurve (Brush brush, Point [] points, FillMode fillmode, float tension)
@@ -1726,7 +1742,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			Status status = GDIPlus.GdipFillClosedCurve2I (nativeObject, brush.NativeBrush, points, points.Length, tension, fillmode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillEllipse (Brush brush, Rectangle rect)
@@ -1751,7 +1767,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
                         Status status = GDIPlus.GdipFillEllipse (nativeObject, brush.NativeBrush, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillEllipse (Brush brush, int x, int y, int width, int height)
@@ -1762,7 +1778,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillEllipseI (nativeObject, brush.NativeBrush, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPath (Brush brush, GraphicsPath path)
@@ -1772,7 +1788,7 @@ namespace System.Drawing
 			if (path == null)
 				throw new ArgumentNullException ("path");
 			Status status = GDIPlus.GdipFillPath (nativeObject, brush.NativeBrush,  path.nativePath);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPie (Brush brush, Rectangle rect, float startAngle, float sweepAngle)
@@ -1780,7 +1796,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPie (Brush brush, int x, int y, int width, int height, int startAngle, int sweepAngle)
@@ -1792,7 +1808,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPieI (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPie (Brush brush, float x, float y, float width, float height, float startAngle, float sweepAngle)
@@ -1803,7 +1819,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPolygon (Brush brush, PointF [] points)
@@ -1816,7 +1832,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2 (nativeObject, brush.NativeBrush, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPolygon (Brush brush, Point [] points)
@@ -1829,7 +1845,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2I (nativeObject, brush.NativeBrush, points, points.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPolygon (Brush brush, Point [] points, FillMode fillMode)
@@ -1842,7 +1858,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygonI (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillPolygon (Brush brush, PointF [] points, FillMode fillMode)
@@ -1855,7 +1871,7 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillRectangle (Brush brush, RectangleF rect)
@@ -1884,7 +1900,7 @@ namespace System.Drawing
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangleI (nativeObject, brush.NativeBrush, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillRectangle (Brush brush, float x, float y, float width, float height)
@@ -1896,7 +1912,7 @@ namespace System.Drawing
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangle (nativeObject, brush.NativeBrush, x, y, width, height);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillRectangles (Brush brush, Rectangle [] rects)
@@ -1907,7 +1923,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("rects");
 
 			Status status = GDIPlus.GdipFillRectanglesI (nativeObject, brush.NativeBrush, rects, rects.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void FillRectangles (Brush brush, RectangleF [] rects)
@@ -1918,7 +1934,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("rects");
 
 			Status status = GDIPlus.GdipFillRectangles (nativeObject, brush.NativeBrush, rects, rects.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -1947,7 +1963,7 @@ namespace System.Drawing
 			}
 
 			Status status = GDIPlus.GdipFlush (nativeObject, intention);
-                        GDIPlus.CheckStatus (status);                    
+                        CheckDrawStatus (status);                    
 
 			if (maccontext != null)
 				maccontext.Synchronize ();
@@ -2083,7 +2099,7 @@ namespace System.Drawing
 			int argb;
 			
 			Status status = GDIPlus.GdipGetNearestColor (nativeObject, out argb);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
 			return Color.FromArgb (argb);
 		}
@@ -2095,7 +2111,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("region");
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Intersect);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void IntersectClip (RectangleF rect)
@@ -2103,14 +2119,14 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Intersect);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void IntersectClip (Rectangle rect)
 		{			
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Intersect);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public bool IsVisible (Point point)
@@ -2118,7 +2134,7 @@ namespace System.Drawing
 			bool isVisible = false;
 
 			Status status = GDIPlus.GdipIsVisiblePointI (nativeObject, point.X, point.Y, out isVisible);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
                         return isVisible;
 		}
@@ -2129,7 +2145,7 @@ namespace System.Drawing
 			bool isVisible = false;
 
 			Status status = GDIPlus.GdipIsVisibleRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, out isVisible);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
                         return isVisible;
 		}
@@ -2139,7 +2155,7 @@ namespace System.Drawing
 			bool isVisible = false;
 
 			Status status = GDIPlus.GdipIsVisiblePoint (nativeObject, point.X, point.Y, out isVisible);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
                         return isVisible;
 		}
@@ -2149,7 +2165,7 @@ namespace System.Drawing
 			bool isVisible = false;
 
 			Status status = GDIPlus.GdipIsVisibleRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, out isVisible);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
                         return isVisible;
 		}
@@ -2204,7 +2220,7 @@ namespace System.Drawing
 			
 			Status status = GDIPlus.GdipMeasureCharacterRanges (nativeObject, text, text.Length,
 				font.NativeObject, ref layoutRect, stringFormat.NativeObject, regcount, out native_regions[0]); 
-			GDIPlus.CheckStatus (status);				
+			CheckDrawStatus (status);				
 
 			return regions;							
 		}
@@ -2262,7 +2278,7 @@ namespace System.Drawing
 
 			Status status = GDIPlus.GdipMeasureString (nativeObject, text, text.Length, font.NativeObject,
 				ref layoutRect, stringFormat, out boundingBox, null, null);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
 			return new SizeF (boundingBox.Width, boundingBox.Height);
 		}
@@ -2326,7 +2342,7 @@ namespace System.Drawing
 				fixed (int* pc = &charactersFitted, pl = &linesFilled) {
 					Status status = GDIPlus.GdipMeasureString (nativeObject, text, text.Length, 
 					font.NativeObject, ref rect, format, out boundingBox, pc, pl);
-					GDIPlus.CheckStatus (status);
+					CheckDrawStatus (status);
 				}
 			}
 			return new SizeF (boundingBox.Width, boundingBox.Height);
@@ -2344,7 +2360,7 @@ namespace System.Drawing
 
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipMultiplyWorldTransform (nativeObject, matrix.nativeMatrix, order);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
@@ -2367,7 +2383,7 @@ namespace System.Drawing
 				status = GDIPlus.GdipReleaseDC (nativeObject, deviceContextHdc);
 				deviceContextHdc = IntPtr.Zero;
 			}
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 		
 		public void ResetClip ()
@@ -2375,21 +2391,21 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetClip (nativeObject);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void ResetTransform ()
 		{
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetWorldTransform (nativeObject);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void Restore (GraphicsState gstate)
 		{			
 			// the possible NRE thrown by gstate.nativeState match MS behaviour
 			Status status = GDIPlus.GdipRestoreGraphics (nativeObject, (uint)gstate.nativeState);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void RotateTransform (float angle)
@@ -2401,14 +2417,14 @@ namespace System.Drawing
 		{
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipRotateWorldTransform (nativeObject, angle, order);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public GraphicsState Save ()
 		{						
 			uint saveState;
 			Status status = GDIPlus.GdipSaveGraphics (nativeObject, out saveState);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 
 			GraphicsState state = new GraphicsState ((int)saveState);
 			return state;
@@ -2423,7 +2439,7 @@ namespace System.Drawing
 		{
                         if (nativeObject == IntPtr.Zero) return;
                         Status status = GDIPlus.GdipScaleWorldTransform (nativeObject, sx, sy, order);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2459,7 +2475,7 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipGraphics (nativeObject, g.NativeObject, combineMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2468,7 +2484,7 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2477,7 +2493,7 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2488,7 +2504,7 @@ namespace System.Drawing
 			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status =   GDIPlus.GdipSetClipRegion(nativeObject,  region.NativeObject, combineMode); 
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2497,7 +2513,7 @@ namespace System.Drawing
 			if (path == null)
 				throw new ArgumentNullException ("path");
 			Status status = GDIPlus.GdipSetClipPath (nativeObject, path.nativePath, combineMode);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
@@ -2509,7 +2525,7 @@ namespace System.Drawing
 			IntPtr ptrPt =  GDIPlus.FromPointToUnManagedMemory (pts);
             
                         Status status = GDIPlus.GdipTransformPoints (nativeObject, destSpace, srcSpace,  ptrPt, pts.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 			
 			GDIPlus.FromUnManagedMemoryToPoint (ptrPt, pts);
 		}
@@ -2522,7 +2538,7 @@ namespace System.Drawing
                         IntPtr ptrPt =  GDIPlus.FromPointToUnManagedMemoryI (pts);
             
                         Status status = GDIPlus.GdipTransformPointsI (nativeObject, destSpace, srcSpace, ptrPt, pts.Length);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 			
 			GDIPlus.FromUnManagedMemoryToPointI (ptrPt, pts);
 		}
@@ -2531,14 +2547,14 @@ namespace System.Drawing
 		public void TranslateClip (int dx, int dy)
 		{
 			Status status = GDIPlus.GdipTranslateClipI (nativeObject, dx, dy);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		
 		public void TranslateClip (float dx, float dy)
 		{
 			Status status = GDIPlus.GdipTranslateClip (nativeObject, dx, dy);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public void TranslateTransform (float dx, float dy)
@@ -2551,7 +2567,7 @@ namespace System.Drawing
 		{			
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipTranslateWorldTransform (nativeObject, dx, dy, order);
-			GDIPlus.CheckStatus (status);
+			CheckDrawStatus (status);
 		}
 
 		public Region Clip {
@@ -2559,7 +2575,7 @@ namespace System.Drawing
 				Region reg = new Region();
 				if (nativeObject == IntPtr.Zero) return reg;   // recording-only: infinite clip
 				Status status = GDIPlus.GdipGetClip (nativeObject, reg.NativeObject);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 				return reg;
 			}
 			set {
@@ -2572,7 +2588,7 @@ namespace System.Drawing
                                 if (nativeObject == IntPtr.Zero) return new RectangleF (0, 0, 1 << 20, 1 << 20);
                                 RectangleF rect = new RectangleF ();
                                 Status status = GDIPlus.GdipGetClipBounds (nativeObject, out rect);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 				return rect;
 			}
 		}
@@ -2589,7 +2605,7 @@ namespace System.Drawing
                                         return _compositingMode;
                                 CompositingMode mode;
                                 Status status = GDIPlus.GdipGetCompositingMode (nativeObject, out mode);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 
 				return mode;
 			}
@@ -2598,7 +2614,7 @@ namespace System.Drawing
                                 GpuRecorder?.SetCompositingMode (value == CompositingMode.SourceCopy);
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetCompositingMode (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 
 		}
@@ -2608,13 +2624,13 @@ namespace System.Drawing
                                 CompositingQuality quality;
 
                                 Status status = GDIPlus.GdipGetCompositingQuality (nativeObject, out quality);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return quality;
 			}
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetCompositingQuality (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2624,7 +2640,7 @@ namespace System.Drawing
                                 float x;
 
        				Status status = GDIPlus.GdipGetDpiX (nativeObject, out x);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return x;
 			}
 		}
@@ -2635,7 +2651,7 @@ namespace System.Drawing
                                 float y;
 
        				Status status = GDIPlus.GdipGetDpiY (nativeObject, out y);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return y;
 			}
 		}
@@ -2644,13 +2660,13 @@ namespace System.Drawing
 			get {				
                                 InterpolationMode imode = InterpolationMode.Invalid;
         			Status status = GDIPlus.GdipGetInterpolationMode (nativeObject, out imode);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return imode;
 			}
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetInterpolationMode (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2659,7 +2675,7 @@ namespace System.Drawing
                                 bool isEmpty = false;
 
         			Status status = GDIPlus.GdipIsClipEmpty (nativeObject, out isEmpty);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return isEmpty;
 			}
 		}
@@ -2669,7 +2685,7 @@ namespace System.Drawing
                                 bool isEmpty = false;
 
         			Status status = GDIPlus.GdipIsVisibleClipEmpty (nativeObject, out isEmpty);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return isEmpty;
 			}
 		}
@@ -2679,13 +2695,13 @@ namespace System.Drawing
                                 float scale;
 
         			Status status = GDIPlus.GdipGetPageScale (nativeObject, out scale);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return scale;
 			}
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPageScale (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2694,13 +2710,13 @@ namespace System.Drawing
                                 GraphicsUnit unit;
                                 
                                 Status status = GDIPlus.GdipGetPageUnit (nativeObject, out unit);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return unit;
 			}
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPageUnit (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2710,13 +2726,13 @@ namespace System.Drawing
 			        PixelOffsetMode pixelOffset = PixelOffsetMode.Invalid;
                                 
                                 Status status = GDIPlus.GdipGetPixelOffsetMode (nativeObject, out pixelOffset);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
         			return pixelOffset;
 			}
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetPixelOffsetMode (nativeObject, value); 
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2724,14 +2740,14 @@ namespace System.Drawing
 			get {
                                 int x, y;
 				Status status = GDIPlus.GdipGetRenderingOrigin (nativeObject, out x, out y);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return new Point (x, y);
 			}
 
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetRenderingOrigin (nativeObject, value.X, value.Y);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2740,14 +2756,14 @@ namespace System.Drawing
                                 SmoothingMode mode = SmoothingMode.Invalid;
 
 				Status status = GDIPlus.GdipGetSmoothingMode (nativeObject, out mode);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return mode;
 			}
 
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetSmoothingMode (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2757,14 +2773,14 @@ namespace System.Drawing
                                 int contrast;
 					
                                 Status status = GDIPlus.GdipGetTextContrast (nativeObject, out contrast);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return contrast;
 			}
 
                         set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetTextContrast (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2773,14 +2789,14 @@ namespace System.Drawing
                                 TextRenderingHint hint;
 
                                 Status status = GDIPlus.GdipGetTextRenderingHint (nativeObject, out hint);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return hint;        
 			}
 
 			set {
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetTextRenderingHint (nativeObject, value);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2789,7 +2805,7 @@ namespace System.Drawing
                                 Matrix matrix = new Matrix ();
                                 if (nativeObject == IntPtr.Zero) return matrix;   // recording-only: identity
                                 Status status = GDIPlus.GdipGetWorldTransform (nativeObject, matrix.nativeMatrix);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return matrix;
 			}
 			set {
@@ -2798,7 +2814,7 @@ namespace System.Drawing
 				
                                 if (nativeObject == IntPtr.Zero) return;
                                 Status status = GDIPlus.GdipSetWorldTransform (nativeObject, value.nativeMatrix);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
 			}
 		}
 
@@ -2808,7 +2824,7 @@ namespace System.Drawing
                                 RectangleF rect;
 					
                                 Status status = GDIPlus.GdipGetVisibleClipBounds (nativeObject, out rect);
-				GDIPlus.CheckStatus (status);
+				CheckDrawStatus (status);
                                 return rect;
 			}
 		}

@@ -112,7 +112,8 @@ namespace System.Windows.Forms {
 
 		// GPU-raster paint mode (the XplatUIWebGpu driver's WF_GPU_RASTER switch, read here so the
 		// vendored Mono sources need no reference to the driver). Read once: the driver reads it once too.
-		static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") == "1";
+		static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
+			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
 
 		public static bool RunningOnUnix {
 			get {

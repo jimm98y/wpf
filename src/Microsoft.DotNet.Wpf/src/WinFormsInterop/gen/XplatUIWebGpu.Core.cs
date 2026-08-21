@@ -379,7 +379,19 @@ namespace System.Windows.Forms
 			return pe;
 		}
 
-		private static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") == "1";
+		// GPU raster is what this stack IS: the driver records a scene per window and the host
+		// presents it. It is on unless explicitly switched off, and off entirely when the WebGPU
+		// path is (WF_WEBGPU=0 -- the headless render tests, which read backing-store bitmaps).
+		//
+		// It must NOT be opt-in. Every consumer captures it into a static readonly field when its
+		// type initializes, and WindowsFormsHost's static constructor -- which used to set
+		// WF_GPU_RASTER=1 -- only runs when the app reaches WinForms THROUGH that class. An app that
+		// touches WinForms first captured false: SharpDevelop shows a WinForms splash screen long
+		// before its workbench starts, so the driver recorded no scenes for the rest of the process
+		// while the host, whose flag is an instance field read much later, set up the WebGPU present
+		// path and found every scene null. Its splash and every dialog came up blank.
+		private static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
+            && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
 		// Per-window recorded WebGPU scene (boxed SceneVisual). The present path renders these directly
 		// — no per-control GPU readback, no re-upload, one device. GetWindowScene exposes them.
 		private readonly Dictionary<IntPtr, object> _scenes = new Dictionary<IntPtr, object>();
@@ -684,6 +696,16 @@ namespace System.Windows.Forms
 		/// <summary>Input hooks: deliver keyboard to the focused window. WM_KEYDOWN carries the
 		/// virtual-key (special keys: backspace/enter/arrows/delete), WM_CHAR the typed character
 		/// (what TextBox inserts). Order per Win32: KEYDOWN, then CHAR for printable input.</summary>
+		// The driver has no keyboard of its own: the host reads the real modifier state at each key
+		// event and pushes it here. Without this ModifierKeys was always Keys.None, so every
+		// shortcut a control resolves through it -- Ctrl+C and Ctrl+V in a text box, most of all --
+		// simply did not exist.
+		private Keys _modifierKeys;
+
+		internal override Keys ModifierKeys { get { return _modifierKeys; } }
+
+		internal void SetModifierKeys(Keys keys) { _modifierKeys = keys; }
+
 		internal void InjectKeyDown(int vkey)
 		{
 			IntPtr target = _focusHandle;
