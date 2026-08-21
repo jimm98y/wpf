@@ -4149,10 +4149,21 @@ namespace System.Windows.Forms
 						fsEntry.DeviceShort = drive.Name;
 						fsEntry.Attributes = FileAttributes.Directory;
 						fsEntry.MainTopNode = GetMyComputerFSEntry ();
-						if (String.IsNullOrEmpty(drive.VolumeLabel) || drive.VolumeLabel == drive.Name) {
+						// An empty optical or card-reader slot is a drive Windows lists but cannot answer
+						// for: VolumeLabel throws "the device is not ready". That escaped through
+						// OpenFileDialog's constructor, so Browse... died before the dialog existed. A drive
+						// that will not name itself is still worth listing, under its letter.
+						string volume_label = null;
+						try {
+							if (drive.IsReady)
+								volume_label = drive.VolumeLabel;
+						} catch (IOException) {
+						} catch (UnauthorizedAccessException) {
+						}
+						if (String.IsNullOrEmpty(volume_label) || volume_label == drive.Name) {
 							fsEntry.Name = drive.Name;
 						} else {
-							fsEntry.Name = drive.VolumeLabel + " (" + fsEntry.Name + ")";
+							fsEntry.Name = volume_label + " (" + fsEntry.Name + ")";
 						}
 						if (drive.DriveType == DriveType.Removable) {
 							fsEntry.FileType = FSEntry.FSEntryType.RemovableDevice;
