@@ -70,6 +70,14 @@ namespace System.Windows.Forms
 
 		public override ProfessionalColorTable ColorTable => color_table;
 
+		/// <summary>Always the professional renderer with this theme's colours. The system renderer
+		/// a "flat" tool bar would otherwise get draws the pre-visual-styles look, which is what put
+		/// carved 3D frames on the property grid's toggled buttons instead of a blue fill.</summary>
+		public override ToolStripRenderer CreateToolBarRenderer (ToolBarAppearance appearance)
+		{
+			return new ToolStripProfessionalRenderer (color_table);
+		}
+
 		// Windows draws a single hairline around an input, not a carved bevel. These are the two
 		// greys it uses: #7A7A7A around something you type in, #ADADAD around something you press.
 		private static readonly Color InputBorder = Color.FromArgb (122, 122, 122);

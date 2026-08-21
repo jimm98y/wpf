@@ -1696,15 +1696,17 @@ namespace System.Windows.Forms
 					if (value == Appearance)
 						return;
 						
+					// Ask the theme rather than picking a renderer here: a flat tool bar means the
+					// SYSTEM renderer, which draws the pre-visual-styles look, and that is what left
+					// this toolbar's checked buttons in carved 3D frames while everything else had
+					// moved on. The classic theme still answers exactly as this did.
 					switch (value) {
 					case ToolBarAppearance.Flat:
-						Renderer = new ToolStripSystemRenderer ();
+						Renderer = ThemeEngine.Current.CreateToolBarRenderer (ToolBarAppearance.Flat);
 						appearance = ToolBarAppearance.Flat;
 						break;
 					case ToolBarAppearance.Normal:
-						ProfessionalColorTable table = new ProfessionalColorTable ();
-						table.UseSystemColors = true;
-						Renderer = new ToolStripProfessionalRenderer (table);
+						Renderer = ThemeEngine.Current.CreateToolBarRenderer (ToolBarAppearance.Normal);
 						appearance = ToolBarAppearance.Normal;
 						break;
 					}

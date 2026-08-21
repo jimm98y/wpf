@@ -299,6 +299,19 @@ namespace System.Windows.Forms
 			set { SetSystemColors (KnownColor.HighlightText, value); }
 		}
 
+		/// <summary>The renderer a tool bar of the given appearance should draw itself with.
+		/// Controls that build their own tool bar -- the property grid does -- ask here rather than
+		/// hard-coding one, so the answer follows the theme.</summary>
+		public virtual ToolStripRenderer CreateToolBarRenderer (ToolBarAppearance appearance)
+		{
+			if (appearance == ToolBarAppearance.Flat)
+				return new ToolStripSystemRenderer ();
+
+			ProfessionalColorTable table = new ProfessionalColorTable ();
+			table.UseSystemColors = true;
+			return new ToolStripProfessionalRenderer (table);
+		}
+
 		/// <summary>The tool strip and menu colours this theme wants the professional renderer to
 		/// use. Classic keeps the Office 2003 table it has always used; a modern theme returns its
 		/// own, so the renderer follows the theme instead of being fixed at construction.</summary>
