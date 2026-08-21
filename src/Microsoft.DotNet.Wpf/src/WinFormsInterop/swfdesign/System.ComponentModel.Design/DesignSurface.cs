@@ -246,8 +246,20 @@ namespace System.ComponentModel.Design
 		}
 
 
+		private bool _disposed;
+
 		protected virtual void Dispose (bool disposing)
 		{
+			// This surface is a service in its own container (see the AddService above), so disposing
+			// that container disposes the surface -- straight back into here. Left unguarded, the
+			// second pass ran against half-torn-down state, and DesignSurfaceManager, which listens
+			// for Disposed, then asked a surface whose container was already gone for a service:
+			// NullReferenceException while UNLOADING the designer, which is exactly what closing and
+			// reopening it does.
+			if (_disposed)
+				return;
+			_disposed = true;
+
 			if (_designerLoader != null) {
 				_designerLoader.Dispose ();
 				_designerLoader = null;
@@ -393,10 +405,13 @@ namespace System.ComponentModel.Design
 
 		public object GetService (Type serviceType)
 		{
+			// Read once: disposal clears the field, and a Disposed handler is entitled to ask.
+			// Answering "no such service" is the truth once the container has gone.
+			DesignSurfaceServiceContainer container = _serviceContainer;
 			if (typeof (IServiceContainer) == serviceType)
-				return _serviceContainer;
-			
-			return _serviceContainer.GetService (serviceType);
+				return container;
+
+			return container == null ? null : container.GetService (serviceType);
 		}
 
 #endregion
