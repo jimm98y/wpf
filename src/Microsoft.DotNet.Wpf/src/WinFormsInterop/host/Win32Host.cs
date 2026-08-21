@@ -193,7 +193,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             // window that grabbed focus (an ElementHost's WPF tree) would keep it forever and the
             // WinForms text box would stop receiving typed characters.
             case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); MouseAt(lParam, _down); Frame(); return IntPtr.Zero;   // WM_LBUTTONDOWN
-            case 0x0202: MouseAt(lParam, _up); Frame(); return IntPtr.Zero;     // WM_LBUTTONUP
+            case 0x0202: Trace("WM_LBUTTONUP", lParam); MouseAt(lParam, _up); Frame(); return IntPtr.Zero;  // WM_LBUTTONUP
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
             case 0x0102:                                                          // WM_CHAR
                 char typed = (char)(int)wParam;
@@ -257,7 +257,46 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     {
         if (!s_trace) return;
         (int x, int y) = ClientDip(lParam);
-        Console.WriteLine($"win32host: {what} client dip ({x},{y})");
+        // Where the click lands in the driver's space, which window it resolves to, and what
+        // control that is -- the three things needed to tell "the point is wrong" from "the point
+        // is right but the wrong window owns it".
+        string who = "?";
+        try
+        {
+            var at = _driver.GetType().GetMethod("WindowAtPoint",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            IntPtr h = (IntPtr)at.Invoke(_driver, new object[] { x, y });
+            Control c = Control.FromHandle(h);
+            who = $"win=0x{h.ToInt64():x} control={(c == null ? "<none>" : c.GetType().Name + " '" + c.Name + "'")}";
+        }
+        catch (Exception ex) { who = "lookup failed: " + ex.Message; }
+        Console.WriteLine($"win32host: {what} driver ({x},{y}) origin ({_ox},{_oy}) {who}");
+        TraceGeometryOnce();
+    }
+
+    private bool _tracedGeometry;
+
+    // The form's own coordinate space versus the window it is presented into. If a form auto-scales
+    // itself (AutoScaleMode.Dpi) its controls move in ITS units, while the window, the surface and
+    // the incoming clicks are in the host's -- and a click then lands somewhere else entirely.
+    private void TraceGeometryOnce()
+    {
+        if (_tracedGeometry) return;
+        _tracedGeometry = true;
+        GetClientRect(_hwnd, out RECT r);
+        Console.WriteLine($"win32host: form '{_form.Text}' bounds={_form.Bounds} client={_form.ClientSize} " +
+                          $"autoScale={_form.AutoScaleMode} dims={_form.AutoScaleDimensions} " +
+                          $"current={_form.CurrentAutoScaleDimensions} | hwnd client={r.right - r.left}x{r.bottom - r.top} scale={_scale}");
+        DumpTree(_form, 1);
+    }
+
+    private static void DumpTree(Control c, int depth)
+    {
+        foreach (Control child in c.Controls)
+        {
+            Console.WriteLine($"win32host:   {new string(' ', depth * 2)}{child.GetType().Name} '{child.Name}' {child.Bounds}");
+            if (depth < 3) DumpTree(child, depth + 1);
+        }
     }
 
     private string ClientSize()

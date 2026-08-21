@@ -115,6 +115,13 @@ namespace System.Windows.Forms {
 		static readonly bool s_gpuRaster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
 			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
 
+		/// <summary>Whether the WebGPU driver is running this process. It presents a VIRTUAL
+		/// 96-DPI screen: the host scales the whole composed frame to device pixels when it presents
+		/// (see Win32Host._scale), so WinForms itself must stay in 96-DPI units.</summary>
+		internal static bool RunningWebGpuDriver {
+			get { return s_gpuRaster; }
+		}
+
 		public static bool RunningOnUnix {
 			get {
 				// The browser/WebAssembly has no Win32 GDI; treat it as "Unix" so TextRenderer and the

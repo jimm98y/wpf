@@ -391,6 +391,16 @@ namespace System.Windows.Forms
 		
 		internal static SizeF GetDpi ()
 		{
+			// The WebGPU driver is a virtual 96-DPI screen and the host scales the composed frame to
+			// device pixels on the way out. Reporting the monitor's real DPI here made a form with
+			// AutoScaleMode.Dpi scale ITSELF as well, so at 200% the scaling happened twice: the
+			// About dialog laid itself out 832x998 instead of 416x499 and then needed 1664x1996
+			// device pixels, more than its window could be given, so the frame was squeezed to fit.
+			// That squeeze breaks the 1:1 mapping a click relies on -- clicking the tab strip landed
+			// on the picture above it, and no tab could ever be selected.
+			if (XplatUI.RunningWebGpuDriver)
+				return new SizeF (96f, 96f);
+
 			return new SizeF (Hwnd.GraphicsContext.DpiX, Hwnd.GraphicsContext.DpiY);
 		}
 		#endregion
