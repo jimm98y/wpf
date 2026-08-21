@@ -963,10 +963,33 @@ namespace MS.Win32
         {
             switch (nIndex)
             {
-                // Primary/virtual screen size (a default desktop until the windowing backend reports real bounds).
-                case SM.CXSCREEN: case SM.CXFULLSCREEN: case SM.CXVIRTUALSCREEN: case SM.CXMAXIMIZED: return 1920;
-                case SM.CYSCREEN: case SM.CYFULLSCREEN: case SM.CYVIRTUALSCREEN: case SM.CYMAXIMIZED: return 1080;
-                case SM.CMONITORS: return 1;
+                // Screen geometry, from the displays that are actually attached. This used to be a
+                // flat 1920x1080 desktop with one monitor at the origin -- so SystemParameters
+                // .PrimaryScreenWidth, .FullPrimaryScreenWidth, .MaximizedPrimaryScreenWidth and the
+                // whole VirtualScreen family reported a screen nobody had, and an application could
+                // bind to those from XAML through SystemResourceKey and lay itself out to fit it.
+                //
+                // The virtual screen's ORIGIN mattered most: it was zero, which is wrong the moment a
+                // display sits left of or above the primary -- where a second monitor usually goes.
+                case SM.CXSCREEN: return PrimaryMetric(PrimaryAxis.MonitorWidth, 1920);
+                case SM.CYSCREEN: return PrimaryMetric(PrimaryAxis.MonitorHeight, 1080);
+
+                // FULLSCREEN is the client area a full-screen window gets and MAXIMIZED the size of a
+                // maximized one: both the WORK area rather than the whole monitor, which is what makes
+                // them different from CXSCREEN and why they are not lumped in with it.
+                case SM.CXFULLSCREEN: case SM.CXMAXIMIZED: return PrimaryMetric(PrimaryAxis.WorkWidth, 1920);
+                case SM.CYFULLSCREEN: case SM.CYMAXIMIZED: return PrimaryMetric(PrimaryAxis.WorkHeight, 1080);
+
+                case SM.XVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Left, 0);
+                case SM.YVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Top, 0);
+                case SM.CXVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Width, 1920);
+                case SM.CYVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Height, 1080);
+
+                case SM.CMONITORS:
+                {
+                    int monitors = MS.Internal.Interop.PlatformWindow.GetMonitorCount();
+                    return monitors > 0 ? monitors : 1;
+                }
 
                 // Double-click / drag thresholds (Windows defaults).
                 case SM.CXDOUBLECLK: case SM.CYDOUBLECLK: case SM.CXDRAG: case SM.CYDRAG: return 4;
@@ -993,6 +1016,49 @@ namespace MS.Win32
                 // Everything else (IMMENABLED, SWAPBUTTON, REMOTESESSION, TABLETPC, ...) defaults off/zero.
                 default: return 0;
             }
+        }
+
+        private enum PrimaryAxis { MonitorWidth, MonitorHeight, WorkWidth, WorkHeight }
+        private enum VirtualAxis { Left, Top, Width, Height }
+
+        /// <summary>One dimension of the primary display, or <paramref name="fallback"/> if it cannot say.</summary>
+        private static int PrimaryMetric(PrimaryAxis axis, int fallback)
+        {
+            if (!MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                    out int ml, out int mt, out int mr, out int mb,
+                    out int wl, out int wt, out int wr, out int wb))
+            {
+                return fallback;
+            }
+
+            int value = axis switch
+            {
+                PrimaryAxis.MonitorWidth => mr - ml,
+                PrimaryAxis.MonitorHeight => mb - mt,
+                PrimaryAxis.WorkWidth => wr - wl,
+                _ => wb - wt,
+            };
+            return value > 0 ? value : fallback;
+        }
+
+        /// <summary>One dimension of the virtual screen, or <paramref name="fallback"/> if it cannot say.</summary>
+        private static int VirtualMetric(VirtualAxis axis, int fallback)
+        {
+            if (!MS.Internal.Interop.PlatformWindow.GetVirtualScreenPixels(
+                    out int left, out int top, out int width, out int height))
+            {
+                return fallback;
+            }
+
+            // Left and Top are legitimately negative and legitimately zero, so they are returned as
+            // they come; only the sizes fall back when the answer is nonsense.
+            return axis switch
+            {
+                VirtualAxis.Left => left,
+                VirtualAxis.Top => top,
+                VirtualAxis.Width => width > 0 ? width : fallback,
+                _ => height > 0 ? height : fallback,
+            };
         }
 #endif
 

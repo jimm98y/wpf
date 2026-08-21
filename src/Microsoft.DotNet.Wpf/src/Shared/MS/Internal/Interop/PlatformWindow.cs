@@ -426,6 +426,53 @@ namespace MS.Internal.Interop
                 out workLeft, out workTop, out workRight, out workBottom);
         }
 
+        /// <summary>
+        /// The VIRTUAL SCREEN: the bounding box of every display, in device pixels, top-left origin.
+        /// </summary>
+        /// <remarks>
+        /// What SM_XVIRTUALSCREEN and friends report, and therefore what SystemParameters.VirtualScreen*
+        /// is built from -- values an application can bind to straight from XAML through
+        /// SystemResourceKey. Off Windows they were a hardcoded 1920x1080 at the origin, which is not
+        /// merely stale: the ORIGIN is wrong whenever a display sits left of or above the primary,
+        /// which is where a second monitor most often goes.
+        ///
+        /// On a mixed-DPI arrangement this box is not expressible in any single scale, because each
+        /// display is described in its own (see CocoaWindow's note on the coordinate space). The union
+        /// is the best available answer and is the same one every other consumer of these rects works
+        /// in; Windows has the same problem and resolves it the same way.
+        /// </remarks>
+        public static bool GetVirtualScreenPixels(out int left, out int top, out int width, out int height)
+        {
+            left = top = width = height = 0;
+
+            int count = GetMonitorCount();
+            bool any = false;
+            int minLeft = int.MaxValue, minTop = int.MaxValue, maxRight = int.MinValue, maxBottom = int.MinValue;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!GetMonitorPixels(i, out int ml, out int mt, out int mr, out int mb,
+                                      out _, out _, out _, out _, out _))
+                {
+                    continue;
+                }
+
+                if (ml < minLeft) minLeft = ml;
+                if (mt < minTop) minTop = mt;
+                if (mr > maxRight) maxRight = mr;
+                if (mb > maxBottom) maxBottom = mb;
+                any = true;
+            }
+
+            if (!any) return false;
+
+            left = minLeft;
+            top = minTop;
+            width = maxRight - minLeft;
+            height = maxBottom - minTop;
+            return width > 0 && height > 0;
+        }
+
         /// <summary>The display a window is on, as an index; 0 when the head has only one.</summary>
         public static int MonitorIndexFromWindow(IntPtr handle)
         {

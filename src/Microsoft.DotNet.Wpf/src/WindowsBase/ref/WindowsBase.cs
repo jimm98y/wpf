@@ -399,6 +399,7 @@ namespace MS.Internal.Interop
         public static bool GetMonitorPixels(int index, out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom, out bool isPrimary) { throw null; }
         public static int MonitorIndexFromWindow(System.IntPtr handle) { throw null; }
         public static int MonitorIndexFromPointPixels(int x, int y) { throw null; }
+        public static bool GetVirtualScreenPixels(out int left, out int top, out int width, out int height) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static void SetTitle(System.IntPtr handle, string title) { }
     }
