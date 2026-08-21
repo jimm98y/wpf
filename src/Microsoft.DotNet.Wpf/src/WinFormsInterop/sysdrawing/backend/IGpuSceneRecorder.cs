@@ -44,5 +44,11 @@ namespace System.Drawing
         void SetCompositingMode(bool sourceCopy);
         void SetClipRect(float x, float y, float w, float h, bool exclude);
         void ClearClip();
+
+        // Offset subsequent primitives by (dx,dy) until ResetTransform. Graphics.TranslateTransform
+        // is how WinForms draws a composite control's parts: ToolStrip translates to each item's
+        // bounds, draws it at the origin, and resets.
+        void PushTranslate(float dx, float dy);
+        void ResetTransform();
     }
 }

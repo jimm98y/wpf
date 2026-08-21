@@ -2458,6 +2458,7 @@ namespace System.Drawing
 
 		public void ResetTransform ()
 		{
+			GpuRecorder?.ResetTransform ();
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetWorldTransform (nativeObject);
 			CheckDrawStatus (status);
@@ -2627,6 +2628,11 @@ namespace System.Drawing
 		
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{			
+			// WinForms draws a composite control by translating to each part's bounds, drawing it at
+			// the origin and resetting -- ToolStrip does exactly this per item. The recorder ignored
+			// the transform, so every item was drawn at the same place and their labels sat on top of
+			// one another.
+			GpuRecorder?.PushTranslate (dx, dy);
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipTranslateWorldTransform (nativeObject, dx, dy, order);
 			CheckDrawStatus (status);

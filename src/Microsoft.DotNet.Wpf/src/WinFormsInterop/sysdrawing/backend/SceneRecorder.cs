@@ -60,6 +60,29 @@ namespace System.Drawing.WebGpuBackend
 
         public void ClearClip() { if (_stack.Count > 1) _stack.RemoveAt(_stack.Count - 1); }
 
+        // Transform containers are counted separately from clips so ResetTransform unwinds exactly
+        // the ones it pushed. WinForms draws composite controls by translating to a part's bounds,
+        // drawing it at the origin and resetting -- ToolStrip does this per item -- so without it
+        // every part landed on top of the first.
+        private int _translateDepth;
+
+        public void PushTranslate(float dx, float dy)
+        {
+            var container = new SceneVisual { Offset = new Vector2(dx, dy) };
+            Target.Children.Add(container);
+            _stack.Add(container);
+            _translateDepth++;
+        }
+
+        public void ResetTransform()
+        {
+            while (_translateDepth > 0 && _stack.Count > 1)
+            {
+                _stack.RemoveAt(_stack.Count - 1);
+                _translateDepth--;
+            }
+        }
+
         private static PathFigure RectFigure(float x, float y, float w, float h)
         {
             var f = new PathFigure(new Vector2(x, y)) { Closed = true };
