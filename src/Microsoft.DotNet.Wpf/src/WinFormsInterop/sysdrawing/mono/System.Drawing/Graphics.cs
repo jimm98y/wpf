@@ -1399,6 +1399,22 @@ namespace System.Drawing
 			DrawString (s, font, brush, new RectangleF(x, y, 0, 0), format);
 		}
 
+		/// <summary>Remove the hotkey markers from <paramref name="text"/>, reporting where the
+		/// mnemonic character ended up. "&amp;&amp;" is a literal ampersand, as in Win32.</summary>
+		static string StripHotkeyPrefix (string text, out int index)
+		{
+			index = -1;
+			if (text.IndexOf ('&') < 0) return text;
+
+			var sb = new System.Text.StringBuilder (text.Length);
+			for (int i = 0; i < text.Length; i++) {
+				if (text[i] != '&') { sb.Append (text[i]); continue; }
+				if (i + 1 < text.Length && text[i + 1] == '&') { sb.Append ('&'); i++; continue; }
+				if (i + 1 < text.Length && index < 0) index = sb.Length;
+			}
+			return sb.ToString ();
+		}
+
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
 		{
 			if (font == null)
@@ -1425,11 +1441,20 @@ namespace System.Drawing
 				// the layout rect and expects the text to stop there. Unclipped, a value wider than
 				// its column painted straight over the next ones -- one long assembly name covered
 				// every other column of the version list.
+				// "&Copy" means a C with an underline and Alt+C to press it -- StringFormat.HotkeyPrefix
+				// is how WinForms asks for that, and the recorder path ignored it, so buttons and
+				// menu items showed their ampersands raw.
+				string text = s;
+				int mnemonic = -1;
+				Text.HotkeyPrefix prefix = format == null ? Text.HotkeyPrefix.None : format.HotkeyPrefix;
+				if (prefix != Text.HotkeyPrefix.None)
+					text = StripHotkeyPrefix (s, out mnemonic);
+
 				bool clipToLayout = layoutRectangle.Width > 0 && layoutRectangle.Height > 0;
 				if (clipToLayout)
 					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
 						layoutRectangle.Width, layoutRectangle.Height, false);
-				string[] lines = s.Split ('\n');
+				string[] lines = text.Split ('\n');
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
 					float totalH = emPx * lines.Length;
@@ -1446,6 +1471,23 @@ namespace System.Drawing
 						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
 						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
 					}
+					// Underline the mnemonic, if it falls on this line.
+					if (prefix == Text.HotkeyPrefix.Show && mnemonic >= 0)
+					{
+						int lineStart = 0;
+						for (int j = 0; j < i; j++) lineStart += lines[j].Length + 1;
+						int col = mnemonic - lineStart;
+						if (col >= 0 && col < line.Length)
+						{
+							float ux = 0f, uw, unused2;
+							if (col > 0)
+								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, out ux, out unused2);
+							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, out uw, out unused2);
+							float uy = ty + i * emPx + emPx;
+							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw, uy, argb);
+						}
+					}
+
 					if (s_traceText)
 						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
 					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb);

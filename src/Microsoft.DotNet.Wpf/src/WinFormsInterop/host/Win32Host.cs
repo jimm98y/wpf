@@ -19,7 +19,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers;
+    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
@@ -44,6 +44,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
         _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
+        _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _getSubtree = M("GetSubtreeWindows");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -279,6 +280,17 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             case 0x0101:                                                          // WM_KEYUP
                 PublishModifiers();
                 _keyUp?.Invoke(_driver, new object[] { (int)wParam });
+                return IntPtr.Zero;
+            // Alt combinations arrive as the SYS variants and nothing forwarded them, so a mnemonic
+            // (Alt+C for a "&Copy" button) never reached WinForms at all.
+            case 0x0104:                                                          // WM_SYSKEYDOWN
+                PublishModifiers();
+                _sysKeyDown?.Invoke(_driver, new object[] { (int)wParam });
+                Frame();
+                return IntPtr.Zero;
+            case 0x0106:                                                          // WM_SYSCHAR
+                _sysChar?.Invoke(_driver, new object[] { (char)(int)wParam });
+                Frame();
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             // WM_CLOSE: close the FORM, not just its window. Destroying the window on its own left

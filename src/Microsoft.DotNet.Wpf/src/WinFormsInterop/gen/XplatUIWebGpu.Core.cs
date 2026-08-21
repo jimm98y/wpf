@@ -691,7 +691,34 @@ namespace System.Windows.Forms
 			});
 		}
 
-		internal override IntPtr DefWndProc(ref Message msg) => IntPtr.Zero;
+		internal override IntPtr DefWndProc(ref Message msg)
+		{
+			// Win32 hands an unhandled wheel to the parent, and controls rely on it: Mono's ListView
+			// subscribes to MouseWheel on the LIST VIEW, while the window under the pointer is its
+			// item pane. Without this the wheel did nothing over any list or grid.
+			if (msg.Msg == (int)Msg.WM_MOUSEWHEEL)
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(msg.HWnd);
+				if (h?.parent != null)
+					return SendMessage(h.parent.Handle, Msg.WM_MOUSEWHEEL, msg.WParam, msg.LParam);
+			}
+			return IntPtr.Zero;
+		}
+
+		/// <summary>Alt-key input. Posted rather than sent: Application.RunLoop reads these off the
+		/// queue and runs the mnemonic and dialog-key handling on them (ProcessCmdKey and friends),
+		/// which a direct SendMessage to the window would skip entirely.</summary>
+		internal void InjectSysKeyDown(int vkey)
+		{
+			if (_focusHandle != IntPtr.Zero)
+				queue.Enqueue(new MSG { hwnd = _focusHandle, message = Msg.WM_SYSKEYDOWN, wParam = (IntPtr)vkey });
+		}
+
+		internal void InjectSysChar(char ch)
+		{
+			if (_focusHandle != IntPtr.Zero)
+				queue.Enqueue(new MSG { hwnd = _focusHandle, message = Msg.WM_SYSCHAR, wParam = (IntPtr)ch });
+		}
 
 		// ---- text / misc ---------------------------------------------------------
 
