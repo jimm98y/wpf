@@ -80,8 +80,30 @@ namespace System.Windows.Forms
 
         internal override DragDropEffects StartDrag(IntPtr handle, object data, DragDropEffects allowedEffects)
         {
+            // The control that starts a drag grabbed the mouse on button-down and will never see the
+            // button-up that would release it: the drag consumes the rest of the gesture. Left set,
+            // that capture silently swallows every later click, because a captured window owns all
+            // mouse input -- after dragging a button on the design surface, nothing on it could be
+            // selected again.
+            ReleaseCaptureForDrag();
+
             Func<object, DragDropEffects, DragDropEffects> start = FindDragSource(handle) ?? StartDragRequested;
-            return start == null ? DragDropEffects.None : start(data, allowedEffects);
+            DragDropEffects result = start == null ? DragDropEffects.None : start(data, allowedEffects);
+
+            ReleaseCaptureForDrag();     // and again: the drag may have taken it back
+            return result;
+        }
+
+        private void ReleaseCaptureForDrag()
+        {
+            IntPtr grabbed = _grabHandle;
+            if (grabbed == IntPtr.Zero) return;
+
+            // Through the control where there is one, so the managed Capture flag agrees with the
+            // driver's; Control.InternalCapture ungrabs on its way.
+            Control c = Control.FromHandle(grabbed);
+            if (c != null) c.InternalCapture = false;
+            else UngrabWindow(grabbed);
         }
 
         // ---- the drop side, driven by WindowsFormsHost ----------------------------------------

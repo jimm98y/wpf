@@ -434,13 +434,14 @@ namespace System.ComponentModel.Design
 
 		protected virtual void Dispose (bool disposing)
 		{
-			if (disposing) {
-				// Drop the association too, or the next designer for this component fights a dead one
-				// -- which is what closing and reopening the designer does.
-				if (_component != null)
-					TypeDescriptor.RemoveAssociation (_component, this);
+			// Deliberately NOT removing the component/designer association here. The association
+			// table holds both sides weakly and cleans itself up, whereas removing eagerly races a
+			// reload: the new designer is initialized (adding the association) BEFORE the old one is
+			// disposed, so the remove tore down the LIVE association and the property grid then threw
+			// "Object type DocumentDesigner does not match target type Form" the second time the
+			// designer was opened.
+			if (disposing)
 				_component = null;
-			}
 		}
 
 		~ComponentDesigner ()

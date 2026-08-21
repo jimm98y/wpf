@@ -208,6 +208,11 @@ namespace System.Windows.Forms.Integration
             for (int i = 0; i + 2 < all.Length; i += 3)
             {
                 if (owned.Contains(all[i])) continue;
+                // Same test as everywhere else: a window that is not a popup cannot be one of the
+                // popups this click might be inside. The Tools sidebar at the origin counted as one,
+                // so a click anywhere near the top left of the designer looked like a click INSIDE a
+                // popup and dismissed nothing -- which is how several context menus could pile up.
+                if (!_driver.IsPopupWindow((IntPtr)all[i])) continue;
                 popups.Add((IntPtr)all[i]);
                 long packed = _driver.GetWindowSizePacked((IntPtr)all[i]);
                 int w = (int)(packed >> 32), h = (int)(packed & 0xFFFFFFFF);
@@ -444,6 +449,11 @@ namespace System.Windows.Forms.Integration
                 {
                     if (owned.Contains(all[i])) continue;
                     if (IsOwnWindow((IntPtr)all[i])) continue;
+                    // Only a real popup, for the same reason the compositor asks: an unclaimed pad
+                    // is not one. SharpDevelop's Tools sidebar sits at the driver's origin, 150x150,
+                    // so without this every click in the top-left corner of any hosted pad was
+                    // delivered to the sidebar instead of to what was actually there.
+                    if (!_driver.IsPopupWindow((IntPtr)all[i])) continue;
                     long packed = _driver.GetWindowSizePacked((IntPtr)all[i]);
                     int w = (int)(packed >> 32), h = (int)(packed & 0xFFFFFFFF);
                     int px = (int)all[i + 1], py = (int)all[i + 2];
