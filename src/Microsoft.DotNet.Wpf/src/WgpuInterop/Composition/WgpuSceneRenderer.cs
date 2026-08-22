@@ -356,6 +356,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly Dictionary<int, IntPtr> _effectModules = new();
         private readonly Dictionary<(WGPUTextureFormat, int), IntPtr> _effectPipelines = new();
         private readonly Text.IFont _font;
+        private readonly Func<int, Text.IFont?>? _styledFont;
+        private readonly Dictionary<int, Text.IFont> _styledCache = new();
+        // Faces resolved by family and style, e.g. "Consolas|1". A run names the family it wants;
+        // without this every one of them was drawn in the single face loaded at construction.
+        private readonly Dictionary<string, Text.IFont> _familyCache = new();
         private readonly Text.ITextShaper _shaper;
         private readonly Text.GlyphAtlas _glyphAtlas = new();
         private readonly List<Text.ShapedGlyph> _shapeScratch = new();
@@ -620,7 +625,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Number of glyph-atlas texture uploads (caching diagnostic).</summary>
         public int AtlasUploads { get; private set; }
 
-        public WgpuSceneRenderer(WgpuContext ctx, Text.IFont? font = null, Text.ITextShaper? shaper = null)
+        public WgpuSceneRenderer(WgpuContext ctx, Text.IFont? font = null, Text.ITextShaper? shaper = null,
+            Func<int, Text.IFont?>? styledFont = null)
         {
             _ctx = ctx;
 
@@ -656,6 +662,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _font = font ?? new Text.BuiltinBitmapFont();
             _shaper = shaper ?? new Text.SimpleTextShaper();
             _outlineFont = _font as Text.IGlyphOutlineFont;
+            // Bold and italic runs need their own face. The caller supplies them, because it owns
+            // where fonts come from; with no resolver every run draws in the regular face, which is
+            // what happened before a run carried its style at all.
+            _styledFont = styledFont;
             _gpuGlyphs = s_gpuRaster && _outlineFont != null;
         }
 
@@ -3723,30 +3733,87 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // glyph at a time, so a single list serves the whole run.
         private readonly List<Text.GlyphFill> _glyphFills = new();
 
+        /// <summary>The face a run's style asks for, built once and kept. Falls back to the regular
+        /// face when nothing can supply the styled one, which is what happened for every run before
+        /// style was carried at all.</summary>
+        private Text.IFont FontFor(int simulations)
+        {
+            int key = simulations & 3;
+            if (key == 0 || _styledFont == null) return _font;
+
+            if (_styledCache.TryGetValue(key, out Text.IFont? cached)) return cached;
+
+            Text.IFont resolved = _styledFont(key) ?? _font;
+            _styledCache[key] = resolved;
+            return resolved;
+        }
+
+        /// <summary>The face a run asked for. A named family is loaded from the file the platform
+        /// keeps it in; anything unnamed, or a name this machine does not have, falls back to the
+        /// default face in the requested style, which is what happened to every run before.</summary>
+        private Text.IFont FontFor(int simulations, string? family)
+        {
+            if (string.IsNullOrEmpty(family)) return FontFor(simulations);
+
+            int style = simulations & 3;
+            string key = family + "|" + style;
+            if (_familyCache.TryGetValue(key, out Text.IFont? cached)) return cached;
+
+            Text.IFont resolved = LoadFamily(family!, style) ?? FontFor(simulations);
+            _familyCache[key] = resolved;
+            return resolved;
+        }
+
+        private static Text.IFont? LoadFamily(string family, int style)
+        {
+            bool bold = (style & 1) != 0, italic = (style & 2) != 0;
+            string? path = Text.FontFiles.Find(family, bold, italic);
+            if (path == null) return null;
+            try
+            {
+                // A family that ships a real bold or italic file gets that file as it is; one that
+                // does not has the style synthesized from its regular face.
+                bool styled = Text.FontFiles.HasStyledFile(family, bold, italic);
+                return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(path),
+                                             bold && !styled, italic && !styled);
+            }
+            catch (Exception)
+            {
+                return null;      // an unreadable or unsupported font file is not worth a crash
+            }
+        }
+
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
 
+            // The face this run asked for. Style is per-run, so it cannot be resolved once at
+            // construction the way the regular face is.
+            Text.IFont font = FontFor(run.Simulations, run.FontFamily);
+            Text.IGlyphOutlineFont? outline = ReferenceEquals(font, _font)
+                ? _outlineFont
+                : font as Text.IGlyphOutlineFont;
+
             // Shape the run into positioned glyphs (glyph ids + advances/offsets),
             // then lay them out. Advances come from the shaper (so kerning etc.
             // are honoured); the atlas provides each glyph's bitmap and bearings.
-            _shaper.Shape(_font, run.Text, _shapeScratch);
+            _shaper.Shape(font, run.Text, _shapeScratch);
 
-            float scale = run.EmSize / _font.PixelsPerEm;
+            float scale = run.EmSize / font.PixelsPerEm;
 
             // Prefer CRISP outline coverage (the same analytic-AA path WPF's glyph fills take) over the
             // fixed-size glyph atlas: the atlas rasterizes at BaseEmPixels (48) and MINIFIES to the run's
             // em size, so small runs (e.g. embedded WinForms at ~13px) alias/pixelate. Rasterizing each
             // glyph's outline at the exact display size matches WPF's quality. (WPF text arrives as
             // FillPath glyph outlines already; only string runs like WinForms reach here.)
-            if (_outlineFont != null)
+            if (outline != null)
             {
                 // Monochrome glyphs accumulate into ONE fill: they share the run's colour, and a
                 // single path keeps the coverage cache and the text-gamma pass working per run
                 // rather than per glyph. Colour layers cannot join that batch -- they carry their own
                 // colours -- so the batch is flushed first and they are drawn in order on top.
                 var batch = new List<PathFigure>();
-                var colorFont = _font as Text.IColorGlyphFont;
+                var colorFont = font as Text.IColorGlyphFont;
                 float pen = run.Origin.X;
 
                 void FlushBatch()
@@ -3764,7 +3831,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     float gy = run.Origin.Y + g.YOffset * scale;
 
                     _glyphFills.Clear();
-                    Text.GlyphRunPainter.Paint(_outlineFont, colorFont, g.GlyphId, scale, gx, gy, _glyphFills);
+                    Text.GlyphRunPainter.Paint(outline, colorFont, g.GlyphId, scale, gx, gy, _glyphFills);
 
                     foreach (Text.GlyphFill gf in _glyphFills)
                     {

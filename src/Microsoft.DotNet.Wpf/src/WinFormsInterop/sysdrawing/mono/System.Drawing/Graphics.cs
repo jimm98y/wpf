@@ -1573,7 +1573,7 @@ namespace System.Drawing
 		/// it is told and has no idea a rectangle was involved, so a paragraph handed to DrawString
 		/// with a width came out as one very long line -- the scrolling credits in SharpDevelop's
 		/// About box ran off the side of the dialog instead of filling the column.</summary>
-		static string[] WrapLines (string text, float emPx, int sims, float width, StringFormat format)
+		static string[] WrapLines (string text, float emPx, int sims, string family, float width, StringFormat format)
 		{
 			string[] hard = text.Split ('\n');
 			// A rectangle with no width is a point, not a column; NoWrap is the caller saying so
@@ -1587,14 +1587,14 @@ namespace System.Drawing
 				if (line.Length == 0) { outLines.Add (line); continue; }
 
 				float lineWidth;
-				WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, out lineWidth, out float _);
+				WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out lineWidth, out float _);
 				if (lineWidth <= width) { outLines.Add (line); continue; }
 
 				// Break at spaces, and only inside a word when a single word is wider than the
 				// column -- which is what GDI+ does with a long path or identifier.
 				int start = 0;
 				while (start < line.Length) {
-					int fit = FitCount (line, start, emPx, sims, width);
+					int fit = FitCount (line, start, emPx, sims, family, width);
 					int brk = -1;
 					for (int i = start + fit - 1; i > start; i--)
 						if (line[i] == ' ') { brk = i; break; }
@@ -1609,12 +1609,12 @@ namespace System.Drawing
 
 		/// <summary>How many characters from <paramref name="start"/> fit in <paramref name="width"/>,
 		/// at least one so a column narrower than a single glyph still makes progress.</summary>
-		static int FitCount (string line, int start, float emPx, int sims, float width)
+		static int FitCount (string line, int start, float emPx, int sims, string family, float width)
 		{
 			int lo = 1, hi = line.Length - start;
 			while (lo < hi) {
 				int mid = (lo + hi + 1) / 2;
-				WebGpuBackend.GpuRaster.MeasureText (line.Substring (start, mid), emPx, sims, out float w, out float _);
+				WebGpuBackend.GpuRaster.MeasureText (line.Substring (start, mid), emPx, sims, family, out float w, out float _);
 				if (w <= width) lo = mid; else hi = mid - 1;
 			}
 			return lo;
@@ -1640,6 +1640,10 @@ namespace System.Drawing
 				// every hosted control -- a property grid's modified values, a group heading --
 				// came out regular.
 				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+				// The family the caller asked for. A run used to arrive at the renderer with
+				// nothing but a size, a colour and a style, so everything came out in one
+				// hard-coded face -- and a fixed-width font could not be had at all.
+				string family = font.FontFamily?.Name;
 				int argb = ArgbOf (brush);
 
 				// Multi-line strings arrive here whole -- a message box's text, a multi-line Label.
@@ -1669,7 +1673,7 @@ namespace System.Drawing
 				if (clipToLayout)
 					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
 						layoutRectangle.Width, layoutRectangle.Height, false);
-				string[] lines = WrapLines (text, emPx, sims, layoutRectangle.Width, format);
+				string[] lines = WrapLines (text, emPx, sims, family, layoutRectangle.Width, format);
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
 					float totalH = emPx * lines.Length;
@@ -1682,7 +1686,7 @@ namespace System.Drawing
 					float tx = layoutRectangle.X;
 					if (format != null && layoutRectangle.Width > 0) {
 						// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
-						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, out float mw, out float mh);
+						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float mw, out float mh);
 						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
 						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
 					}
@@ -1696,8 +1700,8 @@ namespace System.Drawing
 						{
 							float ux = 0f, uw, unused2;
 							if (col > 0)
-								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, sims, out ux, out unused2);
-							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, sims, out uw, out unused2);
+								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, sims, family, out ux, out unused2);
+							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, sims, family, out uw, out unused2);
 							float uy = ty + i * emPx + emPx;
 							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw, uy, argb);
 						}
@@ -1705,7 +1709,7 @@ namespace System.Drawing
 
 					if (s_traceText)
 						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
-					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb, sims);
+					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb, sims, family);
 				}
 
 				if (clipToLayout) GpuRecorder.ClearClip ();
@@ -2555,16 +2559,19 @@ namespace System.Drawing
 				// how far it has to scroll them.
 				float em = font.SizeInPoints * 96f / 72f;
 				int simulations = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+				// Measured in the family it will be DRAWN in: a run measured with one face and drawn
+				// with another does not fit where the caller was told it would.
+				string measureFamily = font.FontFamily?.Name;
 				if (layoutRect.Width > 0) {
-						string[] wrapped = WrapLines (text, em, simulations, layoutRect.Width, null);
+						string[] wrapped = WrapLines (text, em, simulations, measureFamily, layoutRect.Width, null);
 						float widest = 0f;
 						foreach (string line in wrapped) {
-							WebGpuBackend.GpuRaster.MeasureText (line, em, simulations, out float lw, out float _);
+							WebGpuBackend.GpuRaster.MeasureText (line, em, simulations, measureFamily, out float lw, out float _);
 							if (lw > widest) widest = lw;
 						}
 						return new SizeF (widest, em * Math.Max (1, wrapped.Length));
 				}
-				WebGpuBackend.GpuRaster.MeasureText (text, em, simulations, out float mw, out float mh);
+				WebGpuBackend.GpuRaster.MeasureText (text, em, simulations, measureFamily, out float mw, out float mh);
 				return new SizeF (mw, mh);
 			}
 

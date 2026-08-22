@@ -80,6 +80,11 @@ namespace System.Drawing.WebGpuBackend
         /// <summary>Measure in a style (1 = bold, 2 = italic), so bold text is laid out at bold
         /// widths.</summary>
         public static void MeasureText(string text, float emPx, int simulations, out float width, out float height)
-            => TextMetrics.Measure(text, emPx, simulations, out width, out height);
+            => TextMetrics.Measure(text, emPx, simulations, null, out width, out height);
+
+        /// <summary>Measure in a family and style, so what is measured is what will be drawn.</summary>
+        public static void MeasureText(string text, float emPx, int simulations, string family,
+                                       out float width, out float height)
+            => TextMetrics.Measure(text, emPx, simulations, family, out width, out height);
     }
 }

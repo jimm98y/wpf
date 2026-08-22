@@ -67,36 +67,44 @@ namespace System.Drawing {
 			return null;
 		}
 
+		// Windows has not used Microsoft Sans Serif for its shell since XP: everything from the
+		// window caption to a dialog's body text is Segoe UI at 9 point, which is also what the
+		// WinForms that ships with .NET reports here. Saying otherwise made every control on this
+		// stack a different size and shape from the same control next door. Other platforms keep
+		// the old answer, which is the best guess available there.
+		static string ShellFamily => OperatingSystem.IsWindows () ? "Segoe UI" : "Microsoft Sans Serif";
+		static float ShellSize => OperatingSystem.IsWindows () ? 9f : 8.25f;
+
 		public static Font CaptionFont { 
-			get { return new Font ("Microsoft Sans Serif", 11, "CaptionFont"); }
+			get { return new Font (ShellFamily, ShellSize, "CaptionFont"); }
 		}
 
 		public static Font DefaultFont  { 
-			get { return new Font ("Microsoft Sans Serif", 8.25f, "DefaultFont"); }
+			get { return new Font (ShellFamily, ShellSize, "DefaultFont"); }
 		}
 
 		public static Font DialogFont  { 
-			get { return new Font ("Tahoma", 8, "DialogFont"); }
+			get { return new Font (ShellFamily, ShellSize, "DialogFont"); }
 		}
 
 		public static Font IconTitleFont  { 
-			get { return new Font ("Microsoft Sans Serif", 11, "IconTitleFont"); }
+			get { return new Font (ShellFamily, ShellSize, "IconTitleFont"); }
 		}
 
 		public static Font MenuFont  { 
-			get { return new Font ("Microsoft Sans Serif", 11, "MenuFont"); }
+			get { return new Font (ShellFamily, ShellSize, "MenuFont"); }
 		}
 
 		public static Font MessageBoxFont  { 
-			get { return new Font ("Microsoft Sans Serif", 11, "MessageBoxFont"); }
+			get { return new Font (ShellFamily, ShellSize, "MessageBoxFont"); }
 		}
 
 		public static Font SmallCaptionFont  { 
-			get { return new Font ("Microsoft Sans Serif", 11, "SmallCaptionFont"); }
+			get { return new Font (ShellFamily, ShellSize, "SmallCaptionFont"); }
 		}
 
 		public static Font StatusFont  { 
-			get { return new Font ("Microsoft Sans Serif", 11, "StatusFont"); }
+			get { return new Font (ShellFamily, ShellSize, "StatusFont"); }
 		}	      
 	}
 }

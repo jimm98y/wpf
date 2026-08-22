@@ -211,10 +211,10 @@ namespace System.Drawing.WebGpuBackend
             => Add(new GeometryFill(
                 new RectangleGeometry(new Rect(dx, dy, dw, dh)), new ImageBrush(rgba, pw, ph)));
 
-        public void DrawText(string text, float x, float y, float emPx, int argb, int simulations)
+        public void DrawText(string text, float x, float y, float emPx, int argb, int simulations, string fontFamily)
             // GDI+ top-left origin -> GlyphRunDraw baseline (drop by ~ascent). Glyphs are rasterized
             // at present time by the renderer that owns the font.
-            => Add(new GlyphRunDraw(text, new Vector2(x, y + emPx * 0.8f), emPx, Rgba(argb), simulations));
+            => Add(new GlyphRunDraw(text, new Vector2(x, y + emPx * 0.8f), emPx, Rgba(argb), simulations, fontFamily));
 
         // ARGB int -> RgbaColor, converting colour channels sRGB->LINEAR: the scene renders to an sRGB
         // surface and the renderer treats RgbaColor as linear (the hardware re-encodes to sRGB on

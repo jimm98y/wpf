@@ -38,7 +38,7 @@ namespace System.Drawing
         void DrawDashedLine(float x1, float y1, float x2, float y2, int argb, float width, float[] dashPattern);
         void DrawArc(float x, float y, float w, float h, float startDeg, float sweepDeg, int argb, float thickness);
         /// <summary>simulations: 1 = bold, 2 = italic, as WPF's StyleSimulations counts them.</summary>
-        void DrawText(string text, float x, float y, float emPx, int argb, int simulations);
+        void DrawText(string text, float x, float y, float emPx, int argb, int simulations, string fontFamily);
         void DrawImage(byte[] rgba, int pw, int ph, float dx, float dy, float dw, float dh);
         // Clip subsequent primitives to (or, if exclude, out of) a rect until ClearClip. Exclude is
         // how ThemeWin32Classic gaps the GroupBox border around its title.

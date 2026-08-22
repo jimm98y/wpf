@@ -536,9 +536,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float EmSize { get; }
         public RgbaColor Color { get; }
 
-        public GlyphRunDraw(string text, Vector2 origin, float emSize, RgbaColor color)
+        /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
+        /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
+        /// every run comes out in the regular face however the caller asked for it.</summary>
+        public int Simulations { get; }
+
+        /// <summary>The family the caller asked to draw in, e.g. "Segoe UI" or "Consolas". Null
+        /// means "whatever the renderer's default face is". Without this a run arrived carrying
+        /// only a size, a colour and a style, so every string on the stack was drawn in one
+        /// hard-coded face however the application had asked for it -- and a fixed-width font,
+        /// which is the whole point of a column of version numbers or a code view, was simply not
+        /// obtainable.</summary>
+        public string? FontFamily { get; }
+
+        public GlyphRunDraw(string text, Vector2 origin, float emSize, RgbaColor color, int simulations = 0,
+                            string? fontFamily = null)
         {
-            Text = text; Origin = origin; EmSize = emSize; Color = color;
+            Text = text; Origin = origin; EmSize = emSize; Color = color; Simulations = simulations;
+            FontFamily = fontFamily;
         }
     }
 

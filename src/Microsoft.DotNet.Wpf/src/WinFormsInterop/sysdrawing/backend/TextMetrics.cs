@@ -17,14 +17,22 @@ namespace System.Drawing.WebGpuBackend
         // Width/height of a run at the given pixel em size. Advances are in the font's base pixels
         // (PixelsPerEm), scaled to emPx. Height ~ emPx (a single line).
         public static void Measure(string text, float emPx, out float width, out float height)
-            => Measure(text, emPx, 0, out width, out height);
+            => Measure(text, emPx, 0, null, out width, out height);
+
+        public static void Measure(string text, float emPx, int simulations, out float width, out float height)
+            => Measure(text, emPx, simulations, null, out width, out height);
 
         /// <summary>Measure in a given style. Bold is wider than regular, so measuring everything
         /// with the regular face laid bold text out too tightly and let it overlap what came
         /// next.</summary>
-        public static void Measure(string text, float emPx, int simulations, out float width, out float height)
+        /// <summary>Measure in a given family and style. Measuring everything with one face made
+        /// every layout that depends on text width wrong for every other font: a run measured in a
+        /// proportional face and drawn in a fixed-width one does not fit where it was told to go.
+        /// </summary>
+        public static void Measure(string text, float emPx, int simulations, string family,
+                                   out float width, out float height)
         {
-            IFont font = FontFor(simulations);
+            IFont font = FontFor(simulations, family);
             height = emPx;
             width = 0f;
             if (string.IsNullOrEmpty(text)) return;
@@ -51,14 +59,47 @@ namespace System.Drawing.WebGpuBackend
             }
         }
 
-        // One instance per style, built from the same file: the font stack synthesizes bold and
-        // oblique rather than needing a separate file for each.
-        private static readonly IFont[] Styled = new IFont[4];
+        // One instance per family and style. A family that ships a real bold or italic file gets
+        // that file; one that does not has the style synthesized from its regular face, which is
+        // what the flags on TrueTypeFont do.
+        private static readonly Dictionary<string, IFont> Faces = new Dictionary<string, IFont>();
 
-        private static IFont FontFor(int simulations)
+        internal static IFont FontFor(int simulations, string family)
         {
             int i = simulations & 3;
-            if (i == 0) return Font;
+            bool bold = (i & 1) != 0, italic = (i & 2) != 0;
+            if (string.IsNullOrEmpty(family))
+                return i == 0 ? Font : StyledDefault(i);
+
+            string key = family + "|" + i;
+            lock (Faces)
+            {
+                if (Faces.TryGetValue(key, out IFont cached)) return cached;
+
+                IFont made = null;
+                string path = FontFiles.Find(family, bold, italic);
+                if (path != null)
+                {
+                    bool styledFile = FontFiles.HasStyledFile(family, bold, italic);
+                    try
+                    {
+                        made = new TrueTypeFont(System.IO.File.ReadAllBytes(path),
+                                                bold && !styledFile, italic && !styledFile);
+                    }
+                    catch (Exception)
+                    {
+                        made = null;      // an unreadable or unsupported file is not fatal
+                    }
+                }
+                Faces[key] = made ??= (i == 0 ? Font : StyledDefault(i));
+                return made;
+            }
+        }
+
+        private static readonly IFont[] Styled = new IFont[4];
+
+        private static IFont StyledDefault(int i)
+        {
             lock (Styled)
             {
                 return Styled[i] ??= LoadFont((i & 1) != 0, (i & 2) != 0) ?? Font;

@@ -826,7 +826,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// metrics that do not match what is drawn.
         /// </para>
         /// </summary>
-        private static Text.IFont LoadDefaultFont()
+        private static Text.IFont LoadDefaultFont() => LoadDefaultFont(false, false) ?? new Text.BuiltinBitmapFont();
+
+        /// <summary>The same font in a given style. The stack synthesizes bold and oblique from the
+        /// regular outlines, so one file covers all four combinations.</summary>
+        private static Text.IFont? LoadStyledFont(int simulations)
+            => LoadDefaultFont((simulations & 1) != 0, (simulations & 2) != 0);
+
+        private static Text.IFont? LoadDefaultFont(bool bold, bool oblique)
         {
             string appLocal = System.IO.Path.Combine(AppContext.BaseDirectory, "fonts");
             foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -842,8 +849,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                                          // Browser (wasm): fonts live in the VFS at /fonts (main.js writes them
                                          // before Main).
                                          "/fonts/LiberationSans-Regular.ttf", "/fonts/DejaVuSans.ttf" })
-                if (System.IO.File.Exists(p)) return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(p));
-            return new Text.BuiltinBitmapFont();
+                if (System.IO.File.Exists(p))
+                    return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(p), bold, oblique);
+            return null;
         }
 
         /// <summary>
@@ -896,7 +904,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent —
                 // shape and rasterize with actual glyphs. WPF's own text arrives as pre-shaped
                 // glyph-INDEX runs with per-run fonts, so this default is only used for those string runs.
-                _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.SimpleTextShaper());
+                _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.SimpleTextShaper(), LoadStyledFont);
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
                 // (rendered sRGB for display, then un-premultiplied since the image path re-premultiplies).
