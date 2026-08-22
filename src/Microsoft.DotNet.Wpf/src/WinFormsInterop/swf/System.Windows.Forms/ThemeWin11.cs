@@ -231,7 +231,9 @@ namespace System.Windows.Forms
 				border = button.IsDefault || button.Focused ? ButtonBorderHover : ButtonBorderNormal;
 			}
 
-			Rectangle r = button.ClientRectangle;
+			// Windows insets the button's frame by a pixel all round rather than painting it hard
+			// against the control's bounds -- a 26-pixel button draws a 24-pixel face.
+			Rectangle r = Rectangle.Inflate (button.ClientRectangle, -1, -1);
 			r.Width -= 1;
 			r.Height -= 1;
 			if (r.Width <= 0 || r.Height <= 0)
@@ -309,14 +311,19 @@ namespace System.Windows.Forms
 			if (!ticked)
 				return;
 
+			// The tick, on the box's own scale so it holds at any size. These proportions and the
+			// stroke width are measured off Windows' own glyph: the vertex sits low and left of
+			// centre, the short arm is about half the long one, and the stroke is barely wider than
+			// a pixel. Ours was a full pixel heavier and reached further into the corners, which read
+			// as a different mark rather than the same one drawn a little off.
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.6f)) {
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.2f)) {
 				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
 				g.DrawLines (pen, new PointF [] {
-					new PointF (x + w * 0.22f, y + h * 0.52f),
-					new PointF (x + w * 0.42f, y + h * 0.72f),
-					new PointF (x + w * 0.78f, y + h * 0.28f),
+					new PointF (x + w * 0.23f, y + h * 0.46f),
+					new PointF (x + w * 0.39f, y + h * 0.62f),
+					new PointF (x + w * 0.70f, y + h * 0.31f),
 				});
 			}
 			g.SmoothingMode = old;
@@ -884,6 +891,43 @@ namespace System.Windows.Forms
 				Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
 				dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
 			}
+		}
+
+		// ---- checked list box --------------------------------------------------------
+
+		public override void DrawCheckedListBoxItem (CheckedListBox ctrl, DrawItemEventArgs e)
+		{
+			// The classic layout puts the box two pixels from the edge and starts the text the
+			// instant the box ends, so the tick and the first letter touch. Windows indents the box
+			// and leaves a gap after it.
+			const int Indent = 4;
+			const int Gap = 5;
+
+			Rectangle item = e.Bounds;
+			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+			Color back = selected ? ColorHighlight : e.BackColor;
+			Color fore = selected ? ColorHighlightText : e.ForeColor;
+
+			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back), item);
+
+			int size = Math.Min (13, Math.Max (0, item.Height - 2));
+			var box = new Rectangle (item.X + Indent, item.Y + (item.Height - size) / 2,
+						 Math.Max (size - 1, 0), Math.Max (size - 1, 0));
+			if (box.Width > 0 && box.Height > 0)
+				DrawModernCheck (e.Graphics, box,
+						 (e.State & DrawItemState.Checked) == DrawItemState.Checked, false,
+						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false,
+						 back);
+
+			Rectangle text = item;
+			text.X = box.Right + Gap;
+			text.Width = Math.Max (0, item.Right - text.X);
+			if (text.Width > 0)
+				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+						       ResPool.GetSolidBrush (fore), text, ctrl.StringFormat);
+
+			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
+				CPDrawFocusRectangle (e.Graphics, text, fore, back);
 		}
 	}
 }

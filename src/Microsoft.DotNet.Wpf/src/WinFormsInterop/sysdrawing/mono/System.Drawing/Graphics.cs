@@ -1685,6 +1685,13 @@ namespace System.Drawing
 				// multi-line run tighter than the same text drawn by Windows.
 				float lineHeight = font.GetHeight ();
 				if (lineHeight <= 0) lineHeight = emPx;
+				// Where the glyphs sit INSIDE that line box. The recorder turns the y it is given into
+				// a baseline by dropping 0.8 of the em size -- which is right for a line box exactly one
+				// em tall and wrong for a real one, since a line is taller than its em square by the
+				// descender and the leading. Passing the line's top left every run riding about three
+				// pixels high in its own line: a button's caption sat above centre, and so did every
+				// list item and cell.
+				float baseline = 0.8f * (lineHeight - emPx);
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
 					float totalH = lineHeight * lines.Length;
@@ -1713,14 +1720,14 @@ namespace System.Drawing
 							if (col > 0)
 								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, sims, family, out ux, out unused2);
 							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, sims, family, out uw, out unused2);
-							float uy = ty + i * lineHeight + emPx;
+							float uy = ty + i * lineHeight + baseline + emPx;
 							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw, uy, argb);
 						}
 					}
 
 					if (s_traceText)
 						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
-					GpuRecorder.DrawText (line, tx, ty + i * lineHeight, emPx, argb, sims, family);
+					GpuRecorder.DrawText (line, tx, ty + i * lineHeight + baseline, emPx, argb, sims, family);
 
 					// Underline and strike-out are part of the run for GDI+, but this stack draws a run
 					// as glyphs and nothing else -- the style never travelled with it, so a LinkLabel
@@ -1729,7 +1736,7 @@ namespace System.Drawing
 					if (font.Underline || font.Strikeout) {
 						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float rw, out float _);
 						if (rw > 0f) {
-							float top = ty + i * lineHeight;
+							float top = ty + i * lineHeight + baseline;
 							if (font.Underline)
 								GpuRecorder.DrawLine (tx, top + emPx, tx + rw, top + emPx, argb);
 							if (font.Strikeout)
