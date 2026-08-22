@@ -604,5 +604,47 @@ namespace System.Windows.Forms
 				return false;
 			return UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, UxTheme.HIS_NORMAL, bounds);
 		}
+
+		// ---- scroll bar metrics ------------------------------------------------------
+		//
+		// Windows sizes a scroll bar at 17 pixels; the classic theme says 16, which for its own
+		// drawing was fine. It is not fine for the Windows parts: the thumb is a nine-grid with
+		// eight pixels of non-stretching margin on each side, so a 16-pixel bar has nothing left in
+		// the middle to stretch and the thumb comes out as a one-pixel hairline instead of the two
+		// -pixel bar next door. Ask Windows for its own numbers.
+
+		private static readonly int ScrollBarWidth = UxTheme.SystemMetric (UxTheme.SM_CXVSCROLL, 17);
+		private static readonly int ScrollBarHeight = UxTheme.SystemMetric (UxTheme.SM_CYHSCROLL, 17);
+
+		public override int VerticalScrollBarWidth => ScrollBarWidth;
+		public override int HorizontalScrollBarHeight => ScrollBarHeight;
+		public override int ScrollBarButtonSize => ScrollBarWidth;
+
+		public override void DrawScrollBarCorner (Graphics dc, Rectangle area)
+		{
+			if (area.Width <= 0 || area.Height <= 0)
+				return;
+			// The size box part draws a resize GRIP, which belongs to the bottom-right corner of a
+			// sizable window, not to the gap between two scroll bars inside a control. Windows fills
+			// that gap with the same panel the track is drawn on, so use the track.
+			if (UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_UPPERTRACKVERT, UxTheme.SCRBS_NORMAL, area))
+				return;
+			base.DrawScrollBarCorner (dc, area);
+		}
+
+		// ---- list view headers -------------------------------------------------------
+		//
+		// The same HEADER class the data grid uses. A ListView in Details view is what SharpDevelop's
+		// About box shows its assembly list in, so this is the one that was actually on screen.
+
+		protected override void ListViewDrawColumnHeaderBackground (ListView listView, ColumnHeader columnHeader,
+									    Graphics g, Rectangle area, Rectangle clippingArea)
+		{
+			int state = listView.HeaderStyle == ColumnHeaderStyle.Clickable && columnHeader.Pressed
+				  ? UxTheme.HIS_PRESSED : UxTheme.HIS_NORMAL;
+			if (UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, state, area))
+				return;
+			base.ListViewDrawColumnHeaderBackground (listView, columnHeader, g, area, clippingArea);
+		}
 	}
 }

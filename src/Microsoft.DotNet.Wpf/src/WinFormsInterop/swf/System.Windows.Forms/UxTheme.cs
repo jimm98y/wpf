@@ -53,7 +53,7 @@ namespace System.Windows.Forms
 		internal const int SBP_ARROWBTN = 1, SBP_THUMBBTNHORZ = 2, SBP_THUMBBTNVERT = 3;
 		internal const int SBP_LOWERTRACKHORZ = 4, SBP_UPPERTRACKHORZ = 5;
 		internal const int SBP_LOWERTRACKVERT = 6, SBP_UPPERTRACKVERT = 7;
-		internal const int SBP_GRIPPERHORZ = 8, SBP_GRIPPERVERT = 9;
+		internal const int SBP_GRIPPERHORZ = 8, SBP_GRIPPERVERT = 9, SBP_SIZEBOX = 10;
 		internal const int ABS_UPNORMAL = 1, ABS_DOWNNORMAL = 5, ABS_LEFTNORMAL = 9, ABS_RIGHTNORMAL = 13;
 		internal const int SCRBS_NORMAL = 1, SCRBS_HOT = 2, SCRBS_PRESSED = 3, SCRBS_DISABLED = 4;
 
@@ -140,6 +140,34 @@ namespace System.Windows.Forms
 				return false;
 			color = Color.FromArgb (bgr & 0xFF, (bgr >> 8) & 0xFF, (bgr >> 16) & 0xFF);   // COLORREF
 			return true;
+		}
+
+		// ---- system metrics ------------------------------------------------------
+
+		internal const int SM_CXVSCROLL = 2, SM_CYHSCROLL = 3;
+
+		/// <summary>A Windows system metric at 96 DPI. The parts are asked for at 96 (this stack is a
+		/// virtual 96-DPI screen the host scales), so the metrics that size them have to agree: a
+		/// scroll bar built one pixel narrower than Windows expects is not one pixel wrong, it is
+		/// broken. The Win11 thumb is a nine-grid with eight pixels of margin either side, so at a
+		/// width of 16 there is no stretchable middle left at all and the bar collapses to a
+		/// hairline. At 17 it is the two-pixel bar Windows draws.</summary>
+		internal static int SystemMetric (int index, int fallback)
+		{
+			if (!OperatingSystem.IsWindows ())
+				return fallback;
+			try {
+				int v = GetSystemMetricsForDpi (index, 96);
+				if (v > 0) return v;
+			} catch (EntryPointNotFoundException) {
+			} catch {
+			}
+			try {
+				int v = GetSystemMetrics (index);
+				if (v > 0) return v;
+			} catch {
+			}
+			return fallback;
 		}
 
 		// ---- the part cache ------------------------------------------------------
@@ -383,6 +411,12 @@ namespace System.Windows.Forms
 
 		[StructLayout (LayoutKind.Sequential)]
 		private struct MARGINS { public int Left, Right, Top, Bottom; }
+
+		[DllImport ("user32.dll")]
+		private static extern int GetSystemMetrics (int index);
+
+		[DllImport ("user32.dll")]
+		private static extern int GetSystemMetricsForDpi (int index, int dpi);
 
 		[DllImport ("gdi32.dll")]
 		private static extern IntPtr CreateCompatibleDC (IntPtr hdc);

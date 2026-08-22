@@ -3232,6 +3232,13 @@ namespace System.Windows.Forms
 				return;
 				
 			CalculateScrollBars ();
+
+			// Windows fills the square where the two scroll bars meet. Nothing painted it here, so
+			// it stayed whatever lay underneath -- which on this stack is the item pane's own
+			// pixels, and a cell's text showed through in the corner of the list.
+			if (h_scroll.Visible && v_scroll.Visible)
+				ThemeEngine.Current.DrawScrollBarCorner (pe.Graphics,
+					new Rectangle (v_scroll.Left, h_scroll.Top, v_scroll.Width, h_scroll.Height));
 		}
 
 		void FocusChanged (object o, EventArgs args)

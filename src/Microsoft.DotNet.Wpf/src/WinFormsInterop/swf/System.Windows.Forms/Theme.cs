@@ -957,6 +957,15 @@ namespace System.Windows.Forms
 		public abstract void DrawScrollBar (Graphics dc, Rectangle clip_rectangle, ScrollBar bar);
 
 		// Sizing
+		/// <summary>Fill the square where a horizontal and a vertical scroll bar meet. Windows puts
+		/// a panel there; leaving it unpainted let whatever lay underneath show through, so a cell's
+		/// text appeared in the corner of a list that had both bars.</summary>
+		public virtual void DrawScrollBarCorner (Graphics dc, Rectangle area)
+		{
+			if (area.Width > 0 && area.Height > 0)
+				dc.FillRectangle (ResPool.GetSolidBrush (ColorControl), area);
+		}
+
 		public abstract int ScrollBarButtonSize {get;}		// Size of the scroll button
 
 		public abstract bool ScrollBarHasHotElementStyles { get; }
