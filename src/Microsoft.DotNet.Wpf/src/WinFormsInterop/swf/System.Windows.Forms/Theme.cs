@@ -1107,6 +1107,23 @@ namespace System.Windows.Forms
 			StringFormat format);
 		public abstract void CPDrawStringDisabled (IDeviceContext dc, string s, Font font, Color color, Rectangle layoutRectangle, TextFormatFlags format);
 		public abstract void CPDrawVisualStyleBorder (Graphics graphics, Rectangle bounds);
+		/// <summary>Draw a control's window border -- the frame Windows paints in the non-client
+		/// area for WS_EX_CLIENTEDGE and WS_BORDER. This driver does not model a non-client area
+		/// (a window and its client are the same rectangle), so the border is painted over the
+		/// window's own outer edge once the control has finished drawing; without it a TextBox, a
+		/// ListBox and a TreeView came up with no border at all.</summary>
+		/// <param name="control">The control the window belongs to, for its focused / hovered /
+		/// enabled state; null when it cannot be resolved.</param>
+		/// <param name="sunken">WS_EX_CLIENTEDGE -- an input field. False is a plain WS_BORDER.</param>
+		public virtual void DrawControlBorder (Graphics dc, Rectangle bounds, Control control, bool sunken)
+		{
+			if (sunken)
+				CPDrawBorder3D (dc, bounds, Border3DStyle.Sunken, Border3DSide.All);
+			else
+				dc.DrawRectangle (ResPool.GetPen (ColorControlDark),
+						  bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+		}
+
 		public abstract void CPDrawBorderStyle (Graphics dc, Rectangle area, BorderStyle border_style);
 		#endregion	// ControlPaint Methods
 	}

@@ -17,7 +17,14 @@ namespace System.Drawing.WebGpuBackend
         // Width/height of a run at the given pixel em size. Advances are in the font's base pixels
         // (PixelsPerEm), scaled to emPx. Height ~ emPx (a single line).
         public static void Measure(string text, float emPx, out float width, out float height)
+            => Measure(text, emPx, 0, out width, out height);
+
+        /// <summary>Measure in a given style. Bold is wider than regular, so measuring everything
+        /// with the regular face laid bold text out too tightly and let it overlap what came
+        /// next.</summary>
+        public static void Measure(string text, float emPx, int simulations, out float width, out float height)
         {
+            IFont font = FontFor(simulations);
             height = emPx;
             width = 0f;
             if (string.IsNullOrEmpty(text)) return;
@@ -35,13 +42,38 @@ namespace System.Drawing.WebGpuBackend
                 float lineWidth;
                 lock (Buf)
                 {
-                    Shaper.Shape((IShapingFont)Font, line, Buf);
+                    Shaper.Shape((IShapingFont)font, line, Buf);
                     float baseWidth = 0f;
                     foreach (ShapedGlyph g in Buf) baseWidth += g.Advance;
-                    lineWidth = baseWidth * emPx / Font.PixelsPerEm;
+                    lineWidth = baseWidth * emPx / font.PixelsPerEm;
                 }
                 if (lineWidth > width) width = lineWidth;
             }
+        }
+
+        // One instance per style, built from the same file: the font stack synthesizes bold and
+        // oblique rather than needing a separate file for each.
+        private static readonly IFont[] Styled = new IFont[4];
+
+        private static IFont FontFor(int simulations)
+        {
+            int i = simulations & 3;
+            if (i == 0) return Font;
+            lock (Styled)
+            {
+                return Styled[i] ??= LoadFont((i & 1) != 0, (i & 2) != 0) ?? Font;
+            }
+        }
+
+        private static IFont LoadFont(bool bold, bool oblique)
+        {
+            foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
+                                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                         "C:\\Windows\\Fonts\\arial.ttf",
+                                         "/fonts/Arial.ttf", "/fonts/LiberationSans-Regular.ttf" })
+                if (System.IO.File.Exists(p))
+                    return new TrueTypeFont(System.IO.File.ReadAllBytes(p), bold, oblique);
+            return null;
         }
 
         private static IFont LoadFont()

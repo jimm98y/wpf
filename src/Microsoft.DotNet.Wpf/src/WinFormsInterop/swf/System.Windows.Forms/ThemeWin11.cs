@@ -178,6 +178,12 @@ namespace System.Windows.Forms
 				return;
 			}
 
+			// Windows itself draws this one; see UxTheme. The hand-drawn version below stays as
+			// the fallback for the heads that have no uxtheme (and for WF_UXTHEME=0).
+			if (UxTheme.Draw (dc, "BUTTON", UxTheme.BP_PUSHBUTTON, PushButtonState (button),
+					  button.ClientRectangle))
+				return;
+
 			Color face, border;
 			if (!button.Enabled) {
 				face = ButtonFaceDisabled; border = ButtonBorderDisabled;
@@ -206,12 +212,52 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
+		public override void DrawButtonBackground (Graphics g, Button button, Rectangle clipArea)
+		{
+			// This -- not ButtonBase_DrawButton -- is what a plain Button paints through:
+			// Button.OnPaint calls DrawButton, which calls this. Overriding the other one left
+			// every ordinary button on the classic bevel while check boxes and radio buttons
+			// (which DO come through ButtonBase_DrawButton) had already gone modern.
+			if (button.FlatStyle != FlatStyle.Flat && button.FlatStyle != FlatStyle.Popup &&
+			    UxTheme.Draw (g, "BUTTON", UxTheme.BP_PUSHBUTTON, PushButtonState (button),
+					  button.ClientRectangle))
+				return;
+			base.DrawButtonBackground (g, button, clipArea);
+		}
+
+		/// <summary>A push button's state in uxtheme's numbering. A default button gets its own
+		/// state rather than a border of a different colour.</summary>
+		private static int PushButtonState (ButtonBase button)
+		{
+			if (!button.Enabled) return UxTheme.PBS_DISABLED;
+			if (button.Pressed) return UxTheme.PBS_PRESSED;
+			if (button.Entered) return UxTheme.PBS_HOT;
+			if (button is Button b && b.InternalSelected) return UxTheme.PBS_DEFAULTED;
+			if (button.IsDefault || button.Focused) return UxTheme.PBS_DEFAULTED;
+			return UxTheme.PBS_NORMAL;
+		}
+
+		/// <summary>Check box and radio button states share one numbering: unchecked, checked and
+		/// mixed each run normal / hot / pressed / disabled.</summary>
+		private static int GlyphState (ButtonBase button, int baseState)
+		{
+			int offset = !button.Enabled ? 3 : button.Pressed ? 2 : button.Entered ? 1 : 0;
+			return baseState + offset;
+		}
+
 		public override void DrawCheckBoxGlyph (Graphics g, CheckBox cb, Rectangle glyphArea)
 		{
 			if (cb.Appearance == Appearance.Button || cb.FlatStyle == FlatStyle.Flat) {
 				base.DrawCheckBoxGlyph (g, cb, glyphArea);
 				return;
 			}
+
+			int baseState = cb.CheckState == CheckState.Checked ? UxTheme.CBS_CHECKEDNORMAL
+				      : cb.CheckState == CheckState.Indeterminate ? UxTheme.CBS_MIXEDNORMAL
+				      : UxTheme.CBS_UNCHECKEDNORMAL;
+			if (UxTheme.Draw (g, "BUTTON", UxTheme.BP_CHECKBOX, GlyphState (cb, baseState),
+					  CentredGlyph (glyphArea)))
+				return;
 
 			// Windows draws a 13x13 box; centre it in whatever space the layout gave us.
 			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
@@ -255,12 +301,26 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
+		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
+		/// whatever space the layout gave us.</summary>
+		private static Rectangle CentredGlyph (Rectangle glyphArea)
+		{
+			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
+			return new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
+					      glyphArea.Y + (glyphArea.Height - size) / 2, size, size);
+		}
+
 		public override void DrawRadioButtonGlyph (Graphics g, RadioButton rb, Rectangle glyphArea)
 		{
 			if (rb.Appearance == Appearance.Button || rb.FlatStyle == FlatStyle.Flat) {
 				base.DrawRadioButtonGlyph (g, rb, glyphArea);
 				return;
 			}
+
+			if (UxTheme.Draw (g, "BUTTON", UxTheme.BP_RADIOBUTTON,
+					  GlyphState (rb, rb.Checked ? UxTheme.CBS_CHECKEDNORMAL : UxTheme.CBS_UNCHECKEDNORMAL),
+					  CentredGlyph (glyphArea)))
+				return;
 
 			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
 			var circle = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
@@ -380,6 +440,131 @@ namespace System.Windows.Forms
 				graphics.DrawLine (pen, right, rect.Top, right, bottom);
 			if ((sides & Border3DSide.Bottom) != 0)
 				graphics.DrawLine (pen, rect.Left, bottom, right, bottom);
+		}
+
+		// ---- borders, scroll bars and tabs ------------------------------------------
+		//
+		// All three were reconstructions until now, and all three were wrong in ways no amount of
+		// eyeballing was going to fix: an input had no border at all, the scroll bars were the
+		// hatched 1995 ones, and the tab headers were sunken boxes. Windows draws them.
+
+		public override void DrawControlBorder (Graphics dc, Rectangle bounds, Control control, bool sunken)
+		{
+			if (sunken) {
+				int state = control == null || control.Enabled
+					  ? (control != null && control.Focused ? UxTheme.EPSN_FOCUSED
+					     : control != null && control.Entered ? UxTheme.EPSN_HOT : UxTheme.EPSN_NORMAL)
+					  : UxTheme.EPSN_DISABLED;
+				if (UxTheme.Draw (dc, "EDIT", UxTheme.EP_EDITBORDER_NOSCROLL, state, bounds, true))
+					return;
+			}
+
+			// No uxtheme: one hairline, not the classic carved bevel -- this theme's whole point.
+			dc.DrawRectangle (ResPool.GetPen (sunken ? InputBorder : RaisedBorder),
+					  bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+		}
+
+		public override void DrawScrollBar (Graphics dc, Rectangle clip, ScrollBar bar)
+		{
+			Rectangle thumb = bar.ThumbPos;
+			Rectangle client = bar.ClientRectangle;
+			int buttonSize = bar.vert ? bar.scrollbutton_height : bar.scrollbutton_width;
+
+			Rectangle first = bar.vert ? new Rectangle (0, 0, bar.Width, buttonSize)
+						   : new Rectangle (0, 0, buttonSize, bar.Height);
+			Rectangle second = bar.vert ? new Rectangle (0, client.Height - buttonSize, bar.Width, buttonSize)
+						    : new Rectangle (client.Width - buttonSize, 0, buttonSize, bar.Height);
+			bar.FirstArrowArea = first;
+			bar.SecondArrowArea = second;
+			if (bar.vert) thumb.Width = bar.Width; else thumb.Height = bar.Height;
+			bar.ThumbPos = thumb;
+
+			int trackPart = bar.vert ? UxTheme.SBP_UPPERTRACKVERT : UxTheme.SBP_UPPERTRACKHORZ;
+			int thumbPart = bar.vert ? UxTheme.SBP_THUMBBTNVERT : UxTheme.SBP_THUMBBTNHORZ;
+			int gripPart = bar.vert ? UxTheme.SBP_GRIPPERVERT : UxTheme.SBP_GRIPPERHORZ;
+			int trackState = bar.Enabled ? UxTheme.SCRBS_NORMAL : UxTheme.SCRBS_DISABLED;
+
+			if (!UxTheme.Draw (dc, "SCROLLBAR", trackPart, trackState, client)) {
+				base.DrawScrollBar (dc, clip, bar);
+				return;
+			}
+
+			int firstArrow = bar.vert ? UxTheme.ABS_UPNORMAL : UxTheme.ABS_LEFTNORMAL;
+			int secondArrow = bar.vert ? UxTheme.ABS_DOWNNORMAL : UxTheme.ABS_RIGHTNORMAL;
+			UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_ARROWBTN, firstArrow + ArrowOffset (bar.firstbutton_state, bar.Enabled), first);
+			UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_ARROWBTN, secondArrow + ArrowOffset (bar.secondbutton_state, bar.Enabled), second);
+
+			if (bar.Enabled && thumb.Width > 0 && thumb.Height > 0) {
+				int thumbState = bar.thumb_moving == ScrollBar.ThumbMoving.Forward
+					      || bar.thumb_moving == ScrollBar.ThumbMoving.Backwards
+					       ? UxTheme.SCRBS_PRESSED : UxTheme.SCRBS_NORMAL;
+				UxTheme.Draw (dc, "SCROLLBAR", thumbPart, thumbState, thumb);
+				UxTheme.Draw (dc, "SCROLLBAR", gripPart, thumbState, thumb);
+			}
+		}
+
+		/// <summary>Each arrow direction has its own run of four states, in the usual normal / hot
+		/// / pressed / disabled order.</summary>
+		private static int ArrowOffset (ButtonState state, bool enabled)
+		{
+			if (!enabled) return 3;
+			return (state & ButtonState.Pushed) != 0 ? 2 : 0;
+		}
+
+		public override void DrawTabControl (Graphics dc, Rectangle area, TabControl tab)
+		{
+			if (!UxTheme.Available || tab.Alignment != TabAlignment.Top || tab.Appearance != TabAppearance.Normal) {
+				base.DrawTabControl (dc, area, tab);
+				return;
+			}
+
+			dc.FillRectangle (ResPool.GetSolidBrush (tab.BackColor), area);
+			if (tab.TabCount == 0) {
+				base.DrawTabControl (dc, area, tab);
+				return;
+			}
+
+			// The pane runs under every tab but the selected one, which sits on top of it.
+			Rectangle pane = tab.DisplayRectangle;
+			pane.Inflate (2, 2);
+			if (!UxTheme.Draw (dc, "TAB", UxTheme.TABP_PANE, 1, pane)) {
+				base.DrawTabControl (dc, area, tab);
+				return;
+			}
+
+			for (int i = 0; i < tab.TabCount; i++) {
+				if (i == tab.SelectedIndex) continue;
+				DrawTabItem (dc, tab, i, UxTheme.TIS_NORMAL);
+			}
+			if (tab.SelectedIndex >= 0 && tab.SelectedIndex < tab.TabCount)
+				DrawTabItem (dc, tab, tab.SelectedIndex, UxTheme.TIS_SELECTED);
+		}
+
+		private void DrawTabItem (Graphics dc, TabControl tab, int index, int state)
+		{
+			Rectangle bounds = tab.GetTabRect (index);
+			if (bounds.Width <= 0 || bounds.Height <= 0) return;
+			// The selected tab is drawn a little larger, overlapping the pane edge, which is how
+			// Windows lifts it out of the row.
+			if (state == UxTheme.TIS_SELECTED)
+				bounds.Inflate (2, 0);
+
+			int part = tab.TabCount == 1 ? UxTheme.TABP_TABITEMBOTHEDGE
+				 : index == 0 ? UxTheme.TABP_TABITEMLEFTEDGE
+				 : index == tab.TabCount - 1 ? UxTheme.TABP_TABITEMRIGHTEDGE
+				 : UxTheme.TABP_TABITEM;
+			if (!UxTheme.Draw (dc, "TAB", part, state, bounds))
+				UxTheme.Draw (dc, "TAB", UxTheme.TABP_TABITEM, state, bounds);
+
+			TabPage page = tab.TabPages[index];
+			var format = new StringFormat {
+				Alignment = StringAlignment.Center,
+				LineAlignment = StringAlignment.Center,
+				HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
+				FormatFlags = StringFormatFlags.NoWrap,
+			};
+			Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
+			dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
 		}
 	}
 }

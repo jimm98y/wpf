@@ -132,6 +132,30 @@ namespace System.Windows.Forms
 			return (h.initial_style & WindowStyles.WS_POPUP) != 0;
 		}
 
+		/// <summary>Paint the border a control's window style asks for. Win32 draws this in the
+		/// non-client frame, which this driver does not model -- CalculateWindowRect returns the
+		/// client rectangle unchanged, so a window and its client are one and the same. The style
+		/// was therefore recorded at CreateWindow and never drawn, and every TextBox, ListBox and
+		/// TreeView on this stack came up with no border at all. Draw it over the window's own
+		/// outer edge instead, after the control has finished painting.</summary>
+		private void DrawWindowBorder(IntPtr handle, Graphics dc)
+		{
+			if (dc == null) return;
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			if (h == null || h.width <= 0 || h.height <= 0) return;
+
+			bool sunken = (h.initial_ex_style & WindowExStyles.WS_EX_CLIENTEDGE) != 0;
+			bool plain = (h.initial_style & WindowStyles.WS_BORDER) != 0;
+			if (!sunken && !plain) return;
+
+			// A top-level window's frame belongs to the host, which draws a real one around it.
+			Control c = Control.FromHandle(handle);
+			if (c is Form) return;
+
+			try { ThemeEngine.Current.DrawControlBorder(dc, new Rectangle(0, 0, h.width, h.height), c, sunken); }
+			catch (Exception ex) { T("DrawWindowBorder: " + ex.Message); }
+		}
+
 		/// <summary>
 		/// Whether <paramref name="handle"/> is one of this driver's windows.
 		/// </summary>
@@ -664,8 +688,15 @@ namespace System.Windows.Forms
 				if (_paintedViaOffscreen.Remove(handle))
 					System.Drawing.WebGpuBackend.GpuRaster.Cancel(pevent.Graphics);       // scene captured by the blit
 				else
+				{
+					DrawWindowBorder(handle, pevent.Graphics);
 					_scenes[handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics), handle);
+				}
 				_paintVersion++;   // content changed
+			}
+			else
+			{
+				DrawWindowBorder(handle, pevent.Graphics);
 			}
 			pevent.Graphics?.Dispose();
 			pevent.SetGraphics(null);
@@ -701,6 +732,9 @@ namespace System.Windows.Forms
 		{
 			if (s_gpuRaster && System.Drawing.WebGpuBackend.GpuRaster.IsActive(offscreen_dc))
 			{
+				// The border goes on the scene that becomes the window's, which for a
+				// double-buffered control is the offscreen one -- PaintEventEnd only cancels here.
+				DrawWindowBorder(dest_handle, offscreen_dc);
 				_scenes[dest_handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc), dest_handle);
 				_paintedViaOffscreen.Add(dest_handle);
 				return;
