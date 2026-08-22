@@ -76,8 +76,11 @@ namespace System.Windows.Forms
 		public override Color ToolStripPanelGradientEnd => Surface;
 		public override Color ToolStripContentPanelGradientBegin => Surface;
 		public override Color ToolStripContentPanelGradientEnd => Surface;
-		public override Color MenuStripGradientBegin => Surface;
-		public override Color MenuStripGradientEnd => Surface;
+		// A menu bar is not flat: Windows runs it from #F0F0F0 on the left to nearly white on the
+		// right, measured across a stock one. Reporting the same colour at both ends made it a
+		// plain grey band.
+		public override Color MenuStripGradientBegin => Color.FromArgb (240, 240, 240);
+		public override Color MenuStripGradientEnd => Color.FromArgb (251, 251, 251);
 		public override Color StatusStripGradientBegin => Surface;
 		public override Color StatusStripGradientEnd => Surface;
 		public override Color ImageMarginGradientBegin => Surface;
@@ -407,13 +410,17 @@ namespace System.Windows.Forms
 
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), circle);
+			// A checked radio button is an accent-coloured disc with a light dot punched out of it,
+			// not a light disc with an accent dot on it -- which is what this drew, and read as the
+			// colours being swapped.
+			Color face = !rb.Enabled ? ColorControl
+				   : rb.Checked ? border : ColorWindow;
+			g.FillEllipse (ResPool.GetSolidBrush (face), circle);
 			g.DrawEllipse (ResPool.GetPen (border), circle);
 
 			if (rb.Checked) {
-				// The dot is the accent colour, inset by a third of the circle.
 				var dot = Rectangle.Inflate (circle, -(circle.Width / 3), -(circle.Height / 3));
-				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? border : ButtonBorderDisabled), dot);
+				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), dot);
 			}
 			g.SmoothingMode = old;
 		}
@@ -453,6 +460,11 @@ namespace System.Windows.Forms
 
 		private void DrawComboArrow (Graphics graphics, Rectangle rectangle, Color color)
 		{
+			DrawChevron (graphics, rectangle, color, false);
+		}
+
+		private void DrawChevron (Graphics graphics, Rectangle rectangle, Color color, bool up)
+		{
 			// A thin chevron. Windows stopped drawing the filled triangle a long time ago, and it
 			// is the single most recognisable thing about a modern combo box.
 			int cx = rectangle.X + rectangle.Width / 2;
@@ -462,9 +474,9 @@ namespace System.Windows.Forms
 			graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			using (var pen = new Pen (color, 1.3f))
 				graphics.DrawLines (pen, new Point [] {
-					new Point (cx - reach, cy - reach / 2),
-					new Point (cx, cy + reach - reach / 2),
-					new Point (cx + reach, cy - reach / 2),
+					new Point (cx - reach, up ? cy + reach / 2 : cy - reach / 2),
+					new Point (cx, up ? cy - reach + reach / 2 : cy + reach - reach / 2),
+					new Point (cx + reach, up ? cy + reach / 2 : cy - reach / 2),
 				});
 			graphics.SmoothingMode = old;
 		}
@@ -544,6 +556,49 @@ namespace System.Windows.Forms
 				edge = InputBorder;
 			DrawRoundedOutline (dc, new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1), edge);
 		}
+
+		// The spin buttons came out as the carved 1995 arrows, because the base theme draws them
+		// with ControlPaint.DrawScrollButton. Measured off a stock NumericUpDown, each button is
+		// its own box one pixel in from the control's sides: face #FAFAFA, a hairline #D2D2D2
+		// frame with a darker #BCBCBC bottom edge, and a small solid triangle in #1A1A1A -- a
+		// triangle, not the chevron a combo box gets.
+		public override void UpDownBaseDrawButton (Graphics g, Rectangle bounds, bool top,
+					    VisualStyles.PushButtonState state)
+		{
+			if (bounds.Width <= 4 || bounds.Height <= 4)
+				return;
+
+			var box = new Rectangle (bounds.X + 1, bounds.Y, bounds.Width - 3, bounds.Height - 1);
+
+			Color face = state == VisualStyles.PushButtonState.Pressed ? Color.FromArgb (229, 229, 229)
+				   : state == VisualStyles.PushButtonState.Hot ? Color.FromArgb (240, 240, 240)
+				   : Color.FromArgb (250, 250, 250);
+
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
+			g.FillRectangle (ResPool.GetSolidBrush (face), box.X, box.Y, box.Width + 1, box.Height + 1);
+			DrawRoundedOutline (g, box, Color.FromArgb (210, 210, 210));
+			g.DrawLine (ResPool.GetPen (Color.FromArgb (188, 188, 188)),
+					    box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
+
+			// Three solid rows, one/three/five pixels wide, apex away from the middle. Drawn as
+			// rows rather than a filled path: a path is flattened into unjoined segments here and
+			// would not close into a triangle.
+			Color glyph = state == VisualStyles.PushButtonState.Disabled ? ButtonBorderDisabled
+				    : Color.FromArgb (26, 26, 26);
+			Brush brush = ResPool.GetSolidBrush (glyph);
+			int cx = box.X + box.Width / 2 + 1;
+			int cy = box.Y + box.Height / 2;
+			for (int i = 0; i < 3; i++) {
+				int half = top ? i : 2 - i;
+				g.FillRectangle (brush, cx - half, cy - 1 + i, half * 2 + 1, 1);
+			}
+			g.SmoothingMode = old;
+		}
+
+		// So the buttons light up under the pointer, which is the whole reason a flat button reads
+		// as a button at all.
+				public override bool UpDownBaseHasHotButtonStyle => true;
 
 		public override void DrawScrollBar (Graphics dc, Rectangle clip, ScrollBar bar)
 		{
@@ -704,9 +759,15 @@ namespace System.Windows.Forms
 			// A standalone calendar draws its own "border" in the background colour -- which is to
 			// say none at all -- and relies on the control having one. Windows shows a hairline
 			// around the whole thing, so draw it.
+			//
+			// Not on the control's edge, though: Windows leaves a pixel of the calendar's own
+			// background outside the frame on every side, and the hairline it draws is #979797.
 			Rectangle r = mc.ClientRectangle;
-			if (r.Width > 1 && r.Height > 1)
-				dc.DrawRectangle (ResPool.GetPen (RaisedBorder), r.X, r.Y, r.Width - 1, r.Height - 1);
+			if (r.Width > 3 && r.Height > 3) {
+				r.Inflate (-1, -1);
+				dc.DrawRectangle (ResPool.GetPen (Color.FromArgb (151, 151, 151)),
+						   r.X, r.Y, r.Width - 1, r.Height - 1);
+			}
 		}
 
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
@@ -965,57 +1026,81 @@ namespace System.Windows.Forms
 
 		// ---- date picker -------------------------------------------------------------
 
-		/// <summary>Windows puts a small calendar in a date picker's drop-down, not a chevron -- the
-		/// glyph says what the drop-down contains. The classic theme draws a raised button with an
-		/// arrow on it, which says only that something drops down.</summary>
+		/// <summary>Windows draws a calendar and a chevron in a date picker's drop-down, and the
+		/// glyph is a bitmap in its theme rather than anything derivable from lines and arcs. So it
+		/// is extracted once, as the property grid's icons were, and embedded here: Microsoft's
+		/// artwork, but a file in our tree, so nothing at run time depends on Windows to draw it.
+		/// </summary>
+		private static Bitmap s_calendarGlyph;
+		private static bool s_calendarGlyphTried;
+
+		private static Bitmap CalendarGlyph {
+			get {
+				if (!s_calendarGlyphTried) {
+					s_calendarGlyphTried = true;
+					try { s_calendarGlyph = new Bitmap (typeof (DateTimePicker), "datetimepicker-calendar.png"); }
+					catch (Exception) { s_calendarGlyph = null; }
+				}
+				return s_calendarGlyph;
+			}
+		}
+
+		/// <summary>Wide enough for the glyph. The classic button is one scroll bar wide, which fits
+		/// an arrow and nothing else.</summary>
+		// The base theme reserves a scroll bar's width for the button and no more, so widening the
+		// button for the calendar glyph left the date area overlapping it -- and the date area is
+		// filled after the button is drawn, which painted out all but the last few columns of the
+		// glyph.
+		public override Rectangle DateTimePickerGetDateArea (DateTimePicker dateTimePicker)
+		{
+			Rectangle rect = base.DateTimePickerGetDateArea (dateTimePicker);
+			if (dateTimePicker.ShowUpDown)
+				return rect;
+			Rectangle button = DateTimePickerGetDropDownButtonArea (dateTimePicker);
+			if (button.Width > 0 && rect.Right > button.X)
+				rect.Width = Math.Max (button.X - rect.X, 0);
+			return rect;
+		}
+
+		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
+		{
+			Bitmap glyph = CalendarGlyph;
+			if (glyph == null)
+				return base.DateTimePickerGetDropDownButtonArea (dateTimePicker);
+			Rectangle rect = dateTimePicker.ClientRectangle;
+			int want = glyph.Width + 8;
+			if (rect.Width <= want + 2)
+				return base.DateTimePickerGetDropDownButtonArea (dateTimePicker);
+			rect.X = rect.Right - want - 2;
+			rect.Width = want;
+			rect.Inflate (0, -2);
+			return rect;
+		}
+
 		protected override void DateTimePickerDrawDropDownButton (DateTimePicker dateTimePicker, Graphics g,
-									  Rectangle clippingArea)
+										  Rectangle clippingArea)
 		{
 			Rectangle r = dateTimePicker.drop_down_arrow_rect;
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 
-			// The button belongs to the field, so it takes the field's own background -- no chrome
-			// of its own until it is pressed.
+			// The button belongs to the field, so it takes the field's own background -- no chrome of
+			// its own until it is pressed.
 			g.FillRectangle (ResPool.GetSolidBrush (dateTimePicker.Enabled ? ColorWindow : ColorControl), r);
 			if (dateTimePicker.is_drop_down_visible)
 				g.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), r);
 
-			DrawCalendarGlyph (g, r, dateTimePicker.Enabled ? ColorControlText : ColorGrayText);
-		}
-
-		private void DrawCalendarGlyph (Graphics g, Rectangle area, Color ink)
-		{
-			int size = Math.Min (12, Math.Min (area.Width - 2, area.Height - 2));
-			if (size < 7)
+			Bitmap glyph = CalendarGlyph;
+			if (glyph == null) {
+				CPDrawComboButton (g, r, dateTimePicker.is_drop_down_visible ? ButtonState.Pushed : ButtonState.Normal);
 				return;
-			// A page with a bar across the top and two rings above it, which is the whole of what a
-			// calendar icon is at this size.
-			var page = new Rectangle (area.X + (area.Width - size) / 2,
-						  area.Y + (area.Height - size) / 2 + 1,
-						  size - 1, size - 3);
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.None;
-
-			Pen pen = ResPool.GetPen (ink);
-			g.DrawRectangle (pen, page.X, page.Y, page.Width, page.Height);
-			g.FillRectangle (ResPool.GetSolidBrush (ink), page.X + 1, page.Y + 1, Math.Max (1, page.Width - 1), 2);
-
-			// the two rings, standing above the page
-			g.DrawLine (pen, page.X + 2, page.Y - 2, page.X + 2, page.Y);
-			g.DrawLine (pen, page.Right - 2, page.Y - 2, page.Right - 2, page.Y);
-
-			// a couple of day marks, so it reads as a calendar rather than a note
-			int row = page.Y + 5;
-			if (row + 1 < page.Bottom) {
-				Brush dot = ResPool.GetSolidBrush (ink);
-				for (int x = page.X + 2; x <= page.Right - 2; x += 3)
-					g.FillRectangle (dot, x, row, 1, 1);
-				if (row + 3 < page.Bottom)
-					for (int x = page.X + 2; x <= page.Right - 2; x += 3)
-						g.FillRectangle (dot, x, row + 3, 1, 1);
 			}
-			g.SmoothingMode = old;
+			int x = r.X + (r.Width - glyph.Width) / 2;
+			int y = r.Y + (r.Height - glyph.Height) / 2;
+			if (dateTimePicker.Enabled)
+				g.DrawImage (glyph, x, y);
+			else
+				CPDrawImageDisabled (g, glyph, x, y, ColorControl);
 		}
 	}
 }

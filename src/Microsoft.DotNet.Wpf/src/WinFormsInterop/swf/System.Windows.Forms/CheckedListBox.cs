@@ -160,6 +160,10 @@ namespace System.Windows.Forms
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		[EditorBrowsable (EditorBrowsableState.Never)]
+		// A row holds a check box as well as a line of text; Windows gives it two pixels more
+		// than a plain list's row.
+		internal override int ExtraItemHeight => 2;
+
 		public override int ItemHeight {
 			get { return base.ItemHeight; }
 			set { /* Not an exception, but has no effect. */ }

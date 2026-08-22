@@ -266,6 +266,18 @@ namespace System.Drawing
 			if (nativeRegion == IntPtr.Zero) return new RectangleF (-4194304f, -4194304f, 8388608f, 8388608f);
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			// A Graphics that is recording has no native object to hand GDI+, so ask the region for
+			// its own scans instead -- the same fallback IsEmpty and IsInfinite already take.
+			// Control.Invalidate (Region) goes through here, and threw for every caller of it.
+			if (NoNativeGraphics (g)) {
+				RectangleF[] scans = GetRegionScans (identity);
+				if (scans.Length == 0)
+					return RectangleF.Empty;
+				RectangleF union = scans[0];
+				for (int i = 1; i < scans.Length; i++)
+					union = RectangleF.Union (union, scans[i]);
+				return union;
+			}
 
                         RectangleF rect = new Rectangle();
                         

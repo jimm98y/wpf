@@ -52,6 +52,7 @@
     <EmbeddedResource Include="swf/resources/image-missing.png"><LogicalName>image-missing.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/image-x-generic.png"><LogicalName>image-x-generic.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-alphabetical.png"><LogicalName>System.Windows.Forms.propertygrid-alphabetical.png</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/datetimepicker-calendar.png"><LogicalName>System.Windows.Forms.datetimepicker-calendar.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-categorized.png"><LogicalName>System.Windows.Forms.propertygrid-categorized.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-propertypages.png"><LogicalName>System.Windows.Forms.propertygrid-propertypages.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/EventsTab.bmp"><LogicalName>System.Windows.Forms.Design.EventsTab.bmp</LogicalName></EmbeddedResource>

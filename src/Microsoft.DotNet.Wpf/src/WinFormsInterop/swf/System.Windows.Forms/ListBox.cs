@@ -407,11 +407,17 @@ namespace System.Windows.Forms
 		[DefaultValue (13)]
 		[Localizable (true)]
 		[RefreshProperties(RefreshProperties.Repaint)]
+		/// <summary>Rows are as tall as a line of text plus whatever the derived control needs on
+		/// top. A CheckedListBox needs the difference between a line and its box, or the glyph sits
+		/// hard against the rows either side -- Windows gives those rows two more pixels than a
+		/// plain list's.</summary>
+		internal virtual int ExtraItemHeight => 0;
+
 		public virtual int ItemHeight {
 			get {
 				if (item_height == -1) {
 					SizeF sz = TextRenderer.MeasureString ("The quick brown Fox", Font);
-					item_height = (int) sz.Height;
+					item_height = (int) sz.Height + ExtraItemHeight;
 				}
 				return item_height;
 			}
@@ -963,7 +969,7 @@ namespace System.Windows.Forms
 				base.Refresh ();
 			} else {
 				SizeF sz = TextRenderer.MeasureString ("The quick brown Fox", Font);
-				item_height = (int) sz.Height;
+				item_height = (int) sz.Height + ExtraItemHeight;
 				if (IntegralHeight)
 					UpdateListBoxBounds ();
 				LayoutListBox ();

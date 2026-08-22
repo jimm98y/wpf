@@ -429,6 +429,22 @@ namespace System.Windows.Forms
 			txtView.TabIndex = TabIndex;
 		}
 
+		// This driver models no non-client frame -- CalculateWindowRect hands the window rect back
+		// unchanged -- so a Fixed3D control's border is painted inside its own client area. Children
+		// docked to fill it therefore start on top of that border, and the first character of the
+		// text was sliced in half by it.
+		public override Rectangle DisplayRectangle {
+			get {
+				Rectangle rect = base.DisplayRectangle;
+				if (border_style == BorderStyle.None)
+					return rect;
+				int edge = border_style == BorderStyle.FixedSingle
+						 ? 1 : ThemeEngine.Current.Border3DSize.Width;
+				rect.Inflate (-edge, -edge);
+				return rect;
+			}
+		}
+
 		internal override void OnPaintInternal (PaintEventArgs e)
 		{
 			e.Graphics.FillRectangle(ThemeEngine.Current.ResPool.GetSolidBrush(BackColor), ClientRectangle);
