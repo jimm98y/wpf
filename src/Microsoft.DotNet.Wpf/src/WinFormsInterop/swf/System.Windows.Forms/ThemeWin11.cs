@@ -695,5 +695,68 @@ namespace System.Windows.Forms
 				return;
 			base.CPDrawCheckBox (dc, rectangle, state);
 		}
+
+		// ---- month calendar ----------------------------------------------------------
+		//
+		// The classic calendar is a blue caption bar with raised arrow buttons, day names in that
+		// same blue, and a hand-drawn red ring around today. Windows draws a plain header with the
+		// month in bold, chevrons with no button around them, grey day names, and a light box on
+		// today's cell.
+
+		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
+
+		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
+
+		protected override Color MonthCalendarDayNameColor (MonthCalendar mc) => ColorGrayText;
+
+		protected override void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc,
+								 Size title_size, int x_offset, Size button_size,
+								 bool is_previous)
+		{
+			bool clicked = is_previous ? mc.is_previous_clicked : mc.is_next_clicked;
+			Rectangle button = is_previous
+				? new Rectangle (rectangle.X + 1 + x_offset,
+						 rectangle.Y + 1 + ((title_size.Height - button_size.Height) / 2),
+						 Math.Max (button_size.Width - 1, 0), Math.Max (button_size.Height - 1, 0))
+				: new Rectangle (rectangle.Right - 1 - x_offset - button_size.Width,
+						 rectangle.Y + 1 + ((title_size.Height - button_size.Height) / 2),
+						 Math.Max (button_size.Width - 1, 0), Math.Max (button_size.Height - 1, 0));
+			if (button.Width <= 0 || button.Height <= 0)
+				return;
+
+			// A pressed chevron gets the same light wash a pressed tool bar button gets; an idle one
+			// has no chrome at all, which is what makes the header read as one flat strip.
+			if (clicked)
+				dc.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), button);
+
+			int cx = button.X + button.Width / 2;
+			int cy = button.Y + button.Height / 2;
+			int reach = Math.Max (2, Math.Min (4, button.Height / 4));
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			using (var pen = new Pen (mc.Enabled ? ColorControlText : ColorGrayText, 1.4f)) {
+				int dx = is_previous ? reach : -reach;
+				dc.DrawLines (pen, new Point [] {
+					new Point (cx + dx / 2, cy - reach),
+					new Point (cx - dx / 2, cy),
+					new Point (cx + dx / 2, cy + reach),
+				});
+			}
+			dc.SmoothingMode = old;
+		}
+
+		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
+		{
+			if (rectangle.Width <= 2 || rectangle.Height <= 2)
+				return;
+			// Windows outlines today's cell instead of ringing the number in red.
+			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
+						 Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			using (GraphicsPath path = RoundedRect (box, 2))
+				dc.DrawPath (ResPool.GetPen (ButtonBorderHover), path);
+			dc.SmoothingMode = old;
+		}
 	}
 }

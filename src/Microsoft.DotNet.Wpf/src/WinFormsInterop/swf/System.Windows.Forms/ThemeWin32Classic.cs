@@ -3742,10 +3742,10 @@ namespace System.Windows.Forms
 			DateTime this_month = current_month.AddMonths (row*mc.CalendarDimensions.Width+col);
 			Rectangle title_rect = new Rectangle(rectangle.X, rectangle.Y, title_size.Width, title_size.Height);
 			if (title_rect.IntersectsWith (clip_rectangle)) {
-				dc.FillRectangle (ResPool.GetSolidBrush (mc.TitleBackColor), title_rect);
+				dc.FillRectangle (ResPool.GetSolidBrush (MonthCalendarTitleBackColor (mc)), title_rect);
 				// draw the title				
 				string title_text = this_month.ToString ("MMMM yyyy");
-				dc.DrawString (title_text, mc.bold_font, ResPool.GetSolidBrush (mc.TitleForeColor), title_rect, mc.centered_format);
+				dc.DrawString (title_text, mc.bold_font, ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 
 				if (mc.ShowYearUpDown) {
 					Rectangle year_rect;
@@ -3814,7 +3814,7 @@ namespace System.Windows.Forms
 						day_name_rect.Y,
 						date_cell_size.Width,
 						date_cell_size.Height);
-					dc.DrawString (sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd"), mc.Font, ResPool.GetSolidBrush (mc.TitleBackColor), day_rect, mc.centered_format);
+					dc.DrawString (sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd"), mc.Font, ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), day_rect, mc.centered_format);
 				}
 				
 				// draw the vertical divider
@@ -3919,7 +3919,7 @@ namespace System.Windows.Forms
 		}
 
 		// draws the pervious or next button
-		private void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc, Size title_size, int x_offset, Size button_size, bool is_previous) 
+		protected virtual void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc, Size title_size, int x_offset, Size button_size, bool is_previous) 
 		{
 			const int arrow_width = 4;
 			const int arrow_height = 7;
@@ -4078,7 +4078,19 @@ namespace System.Windows.Forms
 			}
 		}
 
-		private void DrawTodayCircle (Graphics dc, Rectangle rectangle) {
+		/// <summary>The month calendar's title bar fill. The classic theme paints it in the
+		/// control's TitleBackColor, which is the active-caption colour.</summary>
+		protected virtual Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.TitleBackColor;
+
+		/// <summary>The month calendar's title text.</summary>
+		protected virtual Color MonthCalendarTitleForeColor (MonthCalendar mc) => mc.TitleForeColor;
+
+		/// <summary>The Mon/Tue/Wed row. The classic theme draws these in TitleBackColor -- the same
+		/// property that fills the title bar -- so a theme that wants a pale header cannot simply
+		/// change that one colour without making the day names vanish into it.</summary>
+		protected virtual Color MonthCalendarDayNameColor (MonthCalendar mc) => mc.TitleBackColor;
+
+		protected virtual void DrawTodayCircle (Graphics dc, Rectangle rectangle) {
 			Color circle_color = Color.FromArgb (248, 0, 0);
 			// draw the left hand of the circle 
 			Rectangle lhs_circle_rect = new Rectangle (rectangle.X + 1, rectangle.Y + 4, Math.Max(rectangle.Width - 2, 0), Math.Max(rectangle.Height - 5, 0));
