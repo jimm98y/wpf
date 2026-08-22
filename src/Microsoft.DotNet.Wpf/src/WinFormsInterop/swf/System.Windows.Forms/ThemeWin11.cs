@@ -291,6 +291,17 @@ namespace System.Windows.Forms
 		/// light squares where Windows has a smooth arc. A pixel's colour is the fill and the
 		/// surround mixed by how much of it falls inside the corner's quarter circle -- which is what
 		/// antialiasing is, done where we can control it rather than left to the renderer.</summary>
+		// How much of the border colour each pixel of a corner carries, read straight off a stock
+		// Windows check box. The corner is three pixels, not two, and the outermost pixel of it is
+		// left clear -- the arc passes diagonally through the middle of the three. A quarter-circle
+		// coverage model gets both wrong: it puts the ink in the wrong pixels and too little of it,
+		// which is why the corners read as cut off rather than rounded.
+		private static readonly double [,] CornerInk = {
+			{ 0.00, 0.53, 0.94 },
+			{ 0.53, 0.65, 0.16 },
+			{ 0.94, 0.16, 0.00 },
+		};
+
 		private void RoundGlyphCorners (Graphics g, Rectangle box, Color fill, Color surround, int radius)
 		{
 			if (radius < 1 || box.Width < radius * 2 || box.Height < radius * 2)
@@ -300,12 +311,17 @@ namespace System.Windows.Forms
 			float limit = radius - 0.5f;
 			for (int dy = 0; dy < radius; dy++) {
 				for (int dx = 0; dx < radius; dx++) {
-					float ox = limit - dx, oy = limit - dy;
-					double dist = Math.Sqrt (ox * ox + oy * oy);
-					double inside = limit + 0.5 - dist;          // 1 fully in, 0 fully out
-					if (inside >= 1.0)
+					double t;
+					if (radius == CornerInk.GetLength (0)) {
+						t = CornerInk [dy, dx];
+					} else {
+						float ox = limit - dx, oy = limit - dy;
+						double dist = Math.Sqrt (ox * ox + oy * oy);
+						t = limit + 0.5 - dist;                 // 1 fully in, 0 fully out
+					}
+					if (t >= 1.0)
 						continue;
-					double t = Math.Max (0.0, inside);
+					t = Math.Max (0.0, t);
 					Color blend = Color.FromArgb (
 						(int) Math.Round (surround.R + (fill.R - surround.R) * t),
 						(int) Math.Round (surround.G + (fill.G - surround.G) * t),
@@ -332,12 +348,17 @@ namespace System.Windows.Forms
 				fill = GlyphFace; border = hot ? ButtonBorderHover : GlyphBorder;
 			}
 
+			// Explicitly unsmoothed: a one-pixel outline drawn with antialiasing on spreads half its
+			// ink onto the pixel outside the box, which showed up as a pale halo around the corners.
+			SmoothingMode boxMode = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
 			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
 			g.DrawRectangle (ResPool.GetPen (border), box);
 			// The BORDER colour, not the fill: a corner pixel sits on the outline, and blending the
 			// fill there erased the outline where it curved -- on a checked box the two are the same
 			// colour so it went unnoticed, on an unchecked one the box came out with open corners.
-			RoundGlyphCorners (g, box, border, surround, 2);
+			RoundGlyphCorners (g, box, border, surround, CornerInk.GetLength (0));
+			g.SmoothingMode = boxMode;
 
 			if (mixed) {
 				var inner = Rectangle.Inflate (box, -3, -3);
