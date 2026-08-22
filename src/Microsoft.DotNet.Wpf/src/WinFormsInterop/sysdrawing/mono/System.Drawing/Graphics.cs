@@ -2815,11 +2815,40 @@ namespace System.Drawing
 		}
 
 		
+		/// <summary>The bounding box of a region, without needing a Graphics to ask against.
+		/// Region.GetBounds wants one, and the whole point here is that there is not a usable
+		/// one -- a recording Graphics has no GDI+ surface at all.</summary>
+		static RectangleF RegionBounds (Region region)
+		{
+			RectangleF[] scans = region.GetRegionScans (new Drawing2D.Matrix ());
+			if (scans.Length == 0)
+				return RectangleF.Empty;
+			RectangleF bounds = scans[0];
+			for (int i = 1; i < scans.Length; i++)
+				bounds = RectangleF.Union (bounds, scans[i]);
+			return bounds;
+		}
+
 		public void SetClip (Region region, CombineMode combineMode)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
-			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
+			if (GpuRecorder != null) {
+				// Replacing the clip means "from here on, draw inside this instead". It does NOT
+				// mean "go back to drawing where whatever came before went" -- but that is what
+				// clearing the recorder's clip and stopping there did. The recorder nests a
+				// container per clip and renders a container's own content before its children, so
+				// popping out of the container a control had been painting into recorded everything
+				// after it BEFORE that container rather than after it. LinkLabel assigns
+				// Graphics.Clip immediately before drawing its text, so the text was recorded
+				// underneath the control's own background and never appeared at all -- emitted at
+				// the right place, in the right colour, and painted over.
+				GpuRecorder.ClearClip ();
+				RectangleF bounds = RegionBounds (region);
+				if (bounds.Width > 0 && bounds.Height > 0)
+					GpuRecorder.SetClipRect (bounds.X, bounds.Y, bounds.Width, bounds.Height, false);
+				return;
+			}
 			if (nativeObject == IntPtr.Zero) return;
 			Status status =   GDIPlus.GdipSetClipRegion(nativeObject,  region.NativeObject, combineMode); 
 			CheckDrawStatus (status);
