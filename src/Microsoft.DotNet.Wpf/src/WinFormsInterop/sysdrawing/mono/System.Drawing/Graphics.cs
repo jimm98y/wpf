@@ -864,6 +864,11 @@ namespace System.Drawing
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			// An ellipse outline is a full circle of arc, and the recorder has an arc primitive. It
+			// had no path here at all, so the call went to gdiplus with no surface behind it and drew
+			// nothing: a radio button lost its ring and kept only the dot inside it, because the dot
+			// is a FILL and fills were already recorded.
+			if (RecordPen (pen)) { GpuRecorder.DrawArc (x, y, width, height, 0f, 360f, ArgbOf (pen), pen.Width); return; }
 			Status status;
 			status = GDIPlus.GdipDrawEllipseI (nativeObject, pen.NativePen, x, y, width, height);
 			CheckDrawStatus (status);
@@ -873,6 +878,7 @@ namespace System.Drawing
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			if (RecordPen (pen)) { GpuRecorder.DrawArc (x, y, width, height, 0f, 360f, ArgbOf (pen), pen.Width); return; }
 			Status status = GDIPlus.GdipDrawEllipse (nativeObject, pen.NativePen, x, y, width, height);
 			CheckDrawStatus (status);
 		}

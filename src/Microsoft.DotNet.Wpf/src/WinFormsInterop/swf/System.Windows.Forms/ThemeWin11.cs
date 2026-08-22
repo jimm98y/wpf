@@ -123,10 +123,12 @@ namespace System.Windows.Forms
 
 			bool is_flat = style == FlatStyle.Flat || style == FlatStyle.Popup;
 			if (!is_flat && clippingArea.IntersectsWith (comboBox.TextArea)) {
+				// The light hairline Windows puts round an input, with its corner pixel dropped --
+				// not the dark #7A7A7A of the classic sunken field.
 				Rectangle border = comboBox.TextArea;
 				border.Width -= 1;
 				border.Height -= 1;
-				g.DrawRectangle (ResPool.GetPen (InputBorder), border);
+				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover : ButtonBorderNormal);
 			}
 		}
 
@@ -140,32 +142,70 @@ namespace System.Windows.Forms
 		// The classic theme builds these out of light/dark bevels. Windows draws a flat, slightly
 		// rounded face with a hairline border, and fills a ticked box with the accent colour.
 
-		private static readonly Color ButtonFaceNormal = Color.FromArgb (225, 225, 225);
-		private static readonly Color ButtonBorderNormal = Color.FromArgb (173, 173, 173);
-		private static readonly Color ButtonFaceHover = Color.FromArgb (229, 241, 251);
-		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 120, 215);
+		// Read off Windows' own rendering rather than guessed at. A button is very nearly white --
+		// #E1E1E1 was the XP-era face and made every button look pressed beside the real thing --
+		// and the accent is #005FB8, not the #0078D7 of a decade ago.
+		private static readonly Color ButtonFaceNormal = Color.FromArgb (253, 253, 253);
+		private static readonly Color ButtonBorderNormal = Color.FromArgb (209, 209, 209);
+		private static readonly Color ButtonFaceHover = Color.FromArgb (224, 238, 249);
+		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 95, 184);
 		private static readonly Color ButtonFacePressed = Color.FromArgb (204, 228, 247);
-		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 84, 153);
-		private static readonly Color ButtonFaceDisabled = Color.FromArgb (204, 204, 204);
-		private static readonly Color ButtonBorderDisabled = Color.FromArgb (191, 191, 191);
+		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 76, 148);
+		private static readonly Color ButtonFaceDisabled = Color.FromArgb (249, 249, 249);
+		private static readonly Color ButtonBorderDisabled = Color.FromArgb (205, 205, 205);
 		private static readonly Color GlyphBorder = Color.FromArgb (122, 122, 122);
 
 		private const int ButtonCornerRadius = 3;
 
-		private static GraphicsPath RoundedRect (Rectangle r, int radius)
+		/// <summary>Paint a rounded rectangle without a GraphicsPath. The recorder flattens a path
+		/// into unjoined line segments, which at these radii turns the corners inside out -- they
+		/// came out cut on one side and bulging on the other. Deciding per pixel whether it is inside
+		/// the corner's quarter circle is exact, needs no antialiasing, and looks the same every
+		/// time.</summary>
+		/// <param name="surround">What is behind the control, painted back over the corners the
+		/// rounding cuts away.</param>
+		private void PaintRoundedRect (Graphics g, Rectangle r, int radius, Color face, Color border,
+					       Color surround)
 		{
-			var path = new GraphicsPath ();
-			int d = radius * 2;
-			if (d <= 0 || r.Width <= d || r.Height <= d) {
-				path.AddRectangle (r);
-				return path;
+			if (r.Width <= 1 || r.Height <= 1)
+				return;
+			if (radius < 1 || r.Width <= radius * 2 || r.Height <= radius * 2) {
+				g.FillRectangle (ResPool.GetSolidBrush (face), r);
+				g.DrawRectangle (ResPool.GetPen (border), r);
+				return;
 			}
-			path.AddArc (r.X, r.Y, d, d, 180, 90);
-			path.AddArc (r.Right - d, r.Y, d, d, 270, 90);
-			path.AddArc (r.Right - d, r.Bottom - d, d, d, 0, 90);
-			path.AddArc (r.X, r.Bottom - d, d, d, 90, 90);
-			path.CloseFigure ();
-			return path;
+
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
+			g.FillRectangle (ResPool.GetSolidBrush (face), r);
+
+			// The straight runs, each stopping where its corner begins.
+			Pen pen = ResPool.GetPen (border);
+			g.DrawLine (pen, r.X + radius, r.Y, r.Right - radius, r.Y);
+			g.DrawLine (pen, r.X + radius, r.Bottom, r.Right - radius, r.Bottom);
+			g.DrawLine (pen, r.X, r.Y + radius, r.X, r.Bottom - radius);
+			g.DrawLine (pen, r.Right, r.Y + radius, r.Right, r.Bottom - radius);
+
+			// The four corners, a pixel at a time: outside the quarter circle goes back to the
+			// surround, on it takes the border colour, inside keeps the face.
+			Brush outside = ResPool.GetSolidBrush (surround);
+			Brush edge = ResPool.GetSolidBrush (border);
+			float limit = radius - 0.5f;
+			for (int dy = 0; dy < radius; dy++) {
+				for (int dx = 0; dx < radius; dx++) {
+					float ox = limit - dx, oy = limit - dy;
+					double dist = Math.Sqrt (ox * ox + oy * oy);
+					Brush use = dist > limit + 0.5 ? outside
+						  : dist > limit - 0.5 ? edge : null;
+					if (use == null)
+						continue;
+					g.FillRectangle (use, r.X + dx, r.Y + dy, 1, 1);
+					g.FillRectangle (use, r.Right - dx, r.Y + dy, 1, 1);
+					g.FillRectangle (use, r.X + dx, r.Bottom - dy, 1, 1);
+					g.FillRectangle (use, r.Right - dx, r.Bottom - dy, 1, 1);
+				}
+			}
+			g.SmoothingMode = old;
 		}
 
 		protected override void ButtonBase_DrawButton (ButtonBase button, Graphics dc)
@@ -197,13 +237,8 @@ namespace System.Windows.Forms
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			using (GraphicsPath path = RoundedRect (r, ButtonCornerRadius)) {
-				dc.FillPath (ResPool.GetSolidBrush (face), path);
-				dc.DrawPath (ResPool.GetPen (border), path);
-			}
-			dc.SmoothingMode = old;
+			Color behind = button.Parent != null ? button.Parent.BackColor : ColorControl;
+			PaintRoundedRect (dc, r, ButtonCornerRadius, face, border, behind);
 		}
 
 		public override void DrawButtonBackground (Graphics g, Button button, Rectangle clipArea)
@@ -219,8 +254,39 @@ namespace System.Windows.Forms
 		/// CPDrawCheckBox, which is the primitive a CheckedListBox and others reach for -- they
 		/// never come through DrawCheckBoxGlyph, so without this they kept the classic tick.
 		/// </summary>
+		/// <summary>Round a small glyph's corners the way Windows does: put the corner pixel back
+		/// to whatever is behind the glyph. Drawing a curve at this size does not survive the
+		/// recorder -- a flattened path bulges inwards and an arc antialiases outside the shape --
+		/// and at a one-pixel radius the corner pixel IS the rounding.</summary>
+		/// <summary>A one-pixel frame whose corners are rounded by exactly one pixel -- the corner
+		/// pixel is simply not painted. Every input on this theme is outlined with it.</summary>
+		private void DrawRoundedOutline (Graphics g, Rectangle r, Color colour)
+		{
+			if (r.Width <= 1 || r.Height <= 1)
+				return;
+			Pen pen = ResPool.GetPen (colour);
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
+			g.DrawLine (pen, r.X + 1, r.Y, r.Right - 1, r.Y);
+			g.DrawLine (pen, r.X + 1, r.Bottom, r.Right - 1, r.Bottom);
+			g.DrawLine (pen, r.X, r.Y + 1, r.X, r.Bottom - 1);
+			g.DrawLine (pen, r.Right, r.Y + 1, r.Right, r.Bottom - 1);
+			g.SmoothingMode = old;
+		}
+
+		private void RoundGlyphCorners (Graphics g, Rectangle box, Color surround)
+		{
+			if (box.Width < 4 || box.Height < 4)
+				return;
+			Brush brush = ResPool.GetSolidBrush (surround);
+			g.FillRectangle (brush, box.X, box.Y, 1, 1);
+			g.FillRectangle (brush, box.Right, box.Y, 1, 1);
+			g.FillRectangle (brush, box.X, box.Bottom, 1, 1);
+			g.FillRectangle (brush, box.Right, box.Bottom, 1, 1);
+		}
+
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot)
+					      bool enabled, bool hot, Color surround)
 		{
 			Color fill, border;
 			if (!enabled) {
@@ -233,6 +299,7 @@ namespace System.Windows.Forms
 
 			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
 			g.DrawRectangle (ResPool.GetPen (border), box);
+			RoundGlyphCorners (g, box, surround);
 
 			if (mixed) {
 				var inner = Rectangle.Inflate (box, -3, -3);
@@ -262,46 +329,15 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			// Windows draws a 13x13 box; centre it in whatever space the layout gave us.
-			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
-			var box = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
-						 glyphArea.Y + (glyphArea.Height - size) / 2,
-						 size - 1, size - 1);
-
-			bool ticked = cb.CheckState != CheckState.Unchecked;
-			Color fill, border;
-			if (!cb.Enabled) {
-				fill = ticked ? ButtonFaceDisabled : ColorWindow; border = ButtonBorderDisabled;
-			} else if (ticked) {
-				fill = border = cb.Entered ? ButtonBorderPressed : ButtonBorderHover;   // accent
-			} else {
-				fill = ColorWindow; border = cb.Entered ? ButtonBorderHover : GlyphBorder;
-			}
-
-			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
-			g.DrawRectangle (ResPool.GetPen (border), box);
-
-			if (cb.CheckState == CheckState.Indeterminate) {
-				var inner = Rectangle.Inflate (box, -3, -3);
-				g.FillRectangle (ResPool.GetSolidBrush (cb.Enabled ? ColorWindow : ColorControlDark), inner);
+			Rectangle box = CentredGlyph (glyphArea);
+			box.Width = Math.Max (box.Width - 1, 0);
+			box.Height = Math.Max (box.Height - 1, 0);
+			if (box.Width <= 0 || box.Height <= 0)
 				return;
-			}
-
-			if (!ticked)
-				return;
-
-			// A tick, drawn as two strokes on the box's own scale so it stays centred at any size.
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (cb.Enabled ? ColorWindow : ColorControlDark, 1.6f)) {
-				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
-				g.DrawLines (pen, new PointF [] {
-					new PointF (x + w * 0.22f, y + h * 0.52f),
-					new PointF (x + w * 0.42f, y + h * 0.72f),
-					new PointF (x + w * 0.78f, y + h * 0.28f),
-				});
-			}
-			g.SmoothingMode = old;
+			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
+			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered,
+					 cb.Parent != null ? cb.Parent.BackColor : ColorControl);
 		}
 
 		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
@@ -377,15 +413,20 @@ namespace System.Windows.Forms
 
 		private void DrawComboArrow (Graphics graphics, Rectangle rectangle, Color color)
 		{
-			// A 7x4 triangle, centred: the proportions Windows uses.
+			// A thin chevron. Windows stopped drawing the filled triangle a long time ago, and it
+			// is the single most recognisable thing about a modern combo box.
 			int cx = rectangle.X + rectangle.Width / 2;
 			int cy = rectangle.Y + rectangle.Height / 2;
-			var arrow = new Point [] {
-				new Point (cx - 3, cy - 2),
-				new Point (cx + 4, cy - 2),
-				new Point (cx, cy + 2),
-			};
-			graphics.FillPolygon (ResPool.GetSolidBrush (color), arrow);
+			int reach = Math.Max (2, Math.Min (4, rectangle.Height / 5));
+			SmoothingMode old = graphics.SmoothingMode;
+			graphics.SmoothingMode = SmoothingMode.AntiAlias;
+			using (var pen = new Pen (color, 1.3f))
+				graphics.DrawLines (pen, new Point [] {
+					new Point (cx - reach, cy - reach / 2),
+					new Point (cx, cy + reach - reach / 2),
+					new Point (cx + reach, cy - reach / 2),
+				});
+			graphics.SmoothingMode = old;
 		}
 
 		/// <summary>
@@ -460,8 +501,8 @@ namespace System.Windows.Forms
 			else if (control != null && control.Entered)
 				edge = GlyphBorder;
 			else
-				edge = InputBorder;
-			dc.DrawRectangle (ResPool.GetPen (edge), bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+				edge = ButtonBorderNormal;
+			DrawRoundedOutline (dc, new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1), edge);
 		}
 
 		public override void DrawScrollBar (Graphics dc, Rectangle clip, ScrollBar bar)
@@ -585,7 +626,8 @@ namespace System.Windows.Forms
 			if (box.Width <= 0 || box.Height <= 0)
 				return;
 			DrawModernCheck (dc, box, (state & ButtonState.Checked) != 0, false,
-					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0);
+					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0,
+					 ColorWindow);
 		}
 
 		// ---- month calendar ----------------------------------------------------------
