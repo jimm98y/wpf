@@ -58,20 +58,6 @@ namespace System.Drawing.WebGpuBackend
         /// <summary>Whether a recorder is currently attached (GPU-raster mode is active).</summary>
         public static bool IsActive(Graphics g) => g?.GpuRecorder != null;
 
-        /// <summary>Record already-decoded RGBA pixels as an image quad, skipping the Bitmap round
-        /// trip <see cref="Graphics.DrawImage(Image, float, float)"/> would need. The themed control
-        /// parts Windows draws for us arrive as raw pixels and are redrawn every frame, so going
-        /// through a GDI+ Bitmap would mean a LockBits and two copies per part per frame.</summary>
-        /// <returns>False when <paramref name="g"/> is not recording; the caller then has a real
-        /// GDI+ surface and should draw a Bitmap onto it in the ordinary way.</returns>
-        public static bool DrawRgba(Graphics g, byte[] rgba, int pw, int ph,
-                                    float dx, float dy, float dw, float dh)
-        {
-            if (g?.GpuRecorder == null || rgba == null || pw <= 0 || ph <= 0) return false;
-            g.GpuRecorder.DrawImage(rgba, pw, ph, dx, dy, dw, dh);
-            return true;
-        }
-
         /// <summary>Measure a text run (managed, no libgdiplus) with the font the renderer draws with,
         /// so DrawString alignment can centre exactly. emPx = pixel em size.</summary>
         public static void MeasureText(string text, float emPx, out float width, out float height)

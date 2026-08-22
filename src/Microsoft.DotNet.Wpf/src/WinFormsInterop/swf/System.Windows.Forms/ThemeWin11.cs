@@ -178,12 +178,6 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			// Windows itself draws this one; see UxTheme. The hand-drawn version below stays as
-			// the fallback for the heads that have no uxtheme (and for WF_UXTHEME=0).
-			if (UxTheme.Draw (dc, "BUTTON", UxTheme.BP_PUSHBUTTON, PushButtonState (button),
-					  button.ClientRectangle))
-				return;
-
 			Color face, border;
 			if (!button.Enabled) {
 				face = ButtonFaceDisabled; border = ButtonBorderDisabled;
@@ -215,34 +209,50 @@ namespace System.Windows.Forms
 		public override void DrawButtonBackground (Graphics g, Button button, Rectangle clipArea)
 		{
 			// This -- not ButtonBase_DrawButton -- is what a plain Button paints through:
-			// Button.OnPaint calls DrawButton, which calls this. Overriding the other one left
-			// every ordinary button on the classic bevel while check boxes and radio buttons
-			// (which DO come through ButtonBase_DrawButton) had already gone modern.
-			if (button.FlatStyle != FlatStyle.Flat && button.FlatStyle != FlatStyle.Popup &&
-			    UxTheme.Draw (g, "BUTTON", UxTheme.BP_PUSHBUTTON, PushButtonState (button),
-					  button.ClientRectangle))
+			// Button.OnPaint calls DrawButton, which calls this.
+			ButtonBase_DrawButton (button, g);
+		}
+
+
+
+		/// <summary>The modern check box, drawn by hand. Shared by the control and by
+		/// CPDrawCheckBox, which is the primitive a CheckedListBox and others reach for -- they
+		/// never come through DrawCheckBoxGlyph, so without this they kept the classic tick.
+		/// </summary>
+		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
+					      bool enabled, bool hot)
+		{
+			Color fill, border;
+			if (!enabled) {
+				fill = ticked || mixed ? ButtonFaceDisabled : ColorWindow; border = ButtonBorderDisabled;
+			} else if (ticked || mixed) {
+				fill = border = hot ? ButtonBorderPressed : ButtonBorderHover;      // accent
+			} else {
+				fill = ColorWindow; border = hot ? ButtonBorderHover : GlyphBorder;
+			}
+
+			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
+			g.DrawRectangle (ResPool.GetPen (border), box);
+
+			if (mixed) {
+				var inner = Rectangle.Inflate (box, -3, -3);
+				g.FillRectangle (ResPool.GetSolidBrush (enabled ? ColorWindow : ColorControlDark), inner);
 				return;
-			base.DrawButtonBackground (g, button, clipArea);
-		}
+			}
+			if (!ticked)
+				return;
 
-		/// <summary>A push button's state in uxtheme's numbering. A default button gets its own
-		/// state rather than a border of a different colour.</summary>
-		private static int PushButtonState (ButtonBase button)
-		{
-			if (!button.Enabled) return UxTheme.PBS_DISABLED;
-			if (button.Pressed) return UxTheme.PBS_PRESSED;
-			if (button.Entered) return UxTheme.PBS_HOT;
-			if (button is Button b && b.InternalSelected) return UxTheme.PBS_DEFAULTED;
-			if (button.IsDefault || button.Focused) return UxTheme.PBS_DEFAULTED;
-			return UxTheme.PBS_NORMAL;
-		}
-
-		/// <summary>Check box and radio button states share one numbering: unchecked, checked and
-		/// mixed each run normal / hot / pressed / disabled.</summary>
-		private static int GlyphState (ButtonBase button, int baseState)
-		{
-			int offset = !button.Enabled ? 3 : button.Pressed ? 2 : button.Entered ? 1 : 0;
-			return baseState + offset;
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.6f)) {
+				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
+				g.DrawLines (pen, new PointF [] {
+					new PointF (x + w * 0.22f, y + h * 0.52f),
+					new PointF (x + w * 0.42f, y + h * 0.72f),
+					new PointF (x + w * 0.78f, y + h * 0.28f),
+				});
+			}
+			g.SmoothingMode = old;
 		}
 
 		public override void DrawCheckBoxGlyph (Graphics g, CheckBox cb, Rectangle glyphArea)
@@ -251,13 +261,6 @@ namespace System.Windows.Forms
 				base.DrawCheckBoxGlyph (g, cb, glyphArea);
 				return;
 			}
-
-			int baseState = cb.CheckState == CheckState.Checked ? UxTheme.CBS_CHECKEDNORMAL
-				      : cb.CheckState == CheckState.Indeterminate ? UxTheme.CBS_MIXEDNORMAL
-				      : UxTheme.CBS_UNCHECKEDNORMAL;
-			if (UxTheme.Draw (g, "BUTTON", UxTheme.BP_CHECKBOX, GlyphState (cb, baseState),
-					  CentredGlyph (glyphArea)))
-				return;
 
 			// Windows draws a 13x13 box; centre it in whatever space the layout gave us.
 			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
@@ -317,11 +320,6 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			if (UxTheme.Draw (g, "BUTTON", UxTheme.BP_RADIOBUTTON,
-					  GlyphState (rb, rb.Checked ? UxTheme.CBS_CHECKEDNORMAL : UxTheme.CBS_UNCHECKEDNORMAL),
-					  CentredGlyph (glyphArea)))
-				return;
-
 			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
 			var circle = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
 						    glyphArea.Y + (glyphArea.Height - size) / 2,
@@ -367,25 +365,13 @@ namespace System.Windows.Forms
 
 		public override void CPDrawComboButton (Graphics graphics, Rectangle rectangle, ButtonState state)
 		{
-			// Windows draws a thin chevron, not the filled triangle the classic theme uses -- and
-			// it draws it as a part of its own, so ask for that rather than approximating a glyph.
-			int comboState = (state & ButtonState.Inactive) != 0 ? UxTheme.CBB_DISABLED
-				       : (state & (ButtonState.Pushed | ButtonState.Checked)) != 0 ? UxTheme.CBB_PRESSED
-				       : UxTheme.CBB_NORMAL;
-			if (UxTheme.Draw (graphics, "COMBOBOX", UxTheme.CP_DROPDOWNBUTTONRIGHT, comboState, rectangle))
-				return;
-			if (UxTheme.Draw (graphics, "COMBOBOX", UxTheme.CP_DROPDOWNBUTTON, comboState, rectangle))
-				return;
-
 			if ((state & ButtonState.Inactive) != 0) {
 				DrawComboArrow (graphics, rectangle, SystemColors.GrayText);
 				return;
 			}
-
-			// Pressed gets the same light-blue wash a pressed tool bar button gets, so the two agree.
+			// Pressed gets the same light wash a pressed tool bar button gets, so the two agree.
 			if ((state & (ButtonState.Pushed | ButtonState.Checked)) != 0)
 				graphics.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), rectangle);
-
 			DrawComboArrow (graphics, rectangle, SystemColors.ControlText);
 		}
 
@@ -460,18 +446,22 @@ namespace System.Windows.Forms
 
 		public override void DrawControlBorder (Graphics dc, Rectangle bounds, Control control, bool sunken)
 		{
-			if (sunken) {
-				int state = control == null || control.Enabled
-					  ? (control != null && control.Focused ? UxTheme.EPSN_FOCUSED
-					     : control != null && control.Entered ? UxTheme.EPSN_HOT : UxTheme.EPSN_NORMAL)
-					  : UxTheme.EPSN_DISABLED;
-				if (UxTheme.Draw (dc, "EDIT", UxTheme.EP_EDITBORDER_NOSCROLL, state, bounds, true))
-					return;
-			}
-
-			// No uxtheme: one hairline, not the classic carved bevel -- this theme's whole point.
-			dc.DrawRectangle (ResPool.GetPen (sunken ? InputBorder : RaisedBorder),
-					  bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+			if (bounds.Width <= 1 || bounds.Height <= 1)
+				return;
+			// One hairline, not the classic carved bevel -- this theme's whole point. An input picks
+			// up the accent colour when it has the focus, which is what Windows does with it.
+			Color edge;
+			if (!sunken)
+				edge = RaisedBorder;
+			else if (control != null && !control.Enabled)
+				edge = ButtonBorderDisabled;
+			else if (control != null && control.Focused)
+				edge = ButtonBorderHover;
+			else if (control != null && control.Entered)
+				edge = GlyphBorder;
+			else
+				edge = InputBorder;
+			dc.DrawRectangle (ResPool.GetPen (edge), bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
 		}
 
 		public override void DrawScrollBar (Graphics dc, Rectangle clip, ScrollBar bar)
@@ -481,100 +471,25 @@ namespace System.Windows.Forms
 			int buttonSize = bar.vert ? bar.scrollbutton_height : bar.scrollbutton_width;
 
 			Rectangle first = bar.vert ? new Rectangle (0, 0, bar.Width, buttonSize)
-						   : new Rectangle (0, 0, buttonSize, bar.Height);
+						     : new Rectangle (0, 0, buttonSize, bar.Height);
 			Rectangle second = bar.vert ? new Rectangle (0, client.Height - buttonSize, bar.Width, buttonSize)
-						    : new Rectangle (client.Width - buttonSize, 0, buttonSize, bar.Height);
+						      : new Rectangle (client.Width - buttonSize, 0, buttonSize, bar.Height);
 			bar.FirstArrowArea = first;
 			bar.SecondArrowArea = second;
 			if (bar.vert) thumb.Width = bar.Width; else thumb.Height = bar.Height;
 			bar.ThumbPos = thumb;
 
-			int trackPart = bar.vert ? UxTheme.SBP_UPPERTRACKVERT : UxTheme.SBP_UPPERTRACKHORZ;
-			int thumbPart = bar.vert ? UxTheme.SBP_THUMBBTNVERT : UxTheme.SBP_THUMBBTNHORZ;
-			int gripPart = bar.vert ? UxTheme.SBP_GRIPPERVERT : UxTheme.SBP_GRIPPERHORZ;
-			int trackState = bar.Enabled ? UxTheme.SCRBS_NORMAL : UxTheme.SCRBS_DISABLED;
-
-			if (!UxTheme.Draw (dc, "SCROLLBAR", trackPart, trackState, client)) {
-				base.DrawScrollBar (dc, clip, bar);
-				return;
-			}
-
-			int firstArrow = bar.vert ? UxTheme.ABS_UPNORMAL : UxTheme.ABS_LEFTNORMAL;
-			int secondArrow = bar.vert ? UxTheme.ABS_DOWNNORMAL : UxTheme.ABS_RIGHTNORMAL;
-			UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_ARROWBTN, firstArrow + ArrowOffset (bar.firstbutton_state, bar.Enabled), first);
-			UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_ARROWBTN, secondArrow + ArrowOffset (bar.secondbutton_state, bar.Enabled), second);
-
-			if (bar.Enabled && thumb.Width > 0 && thumb.Height > 0) {
-				int thumbState = bar.thumb_moving == ScrollBar.ThumbMoving.Forward
-					      || bar.thumb_moving == ScrollBar.ThumbMoving.Backwards
-					       ? UxTheme.SCRBS_PRESSED : UxTheme.SCRBS_NORMAL;
-				UxTheme.Draw (dc, "SCROLLBAR", thumbPart, thumbState, thumb);
-				UxTheme.Draw (dc, "SCROLLBAR", gripPart, thumbState, thumb);
-			}
+			DrawModernScrollBar (dc, bar, client, first, second, thumb);
 		}
 
-		/// <summary>Each arrow direction has its own run of four states, in the usual normal / hot
-		/// / pressed / disabled order.</summary>
-		private static int ArrowOffset (ButtonState state, bool enabled)
-		{
-			if (!enabled) return 3;
-			return (state & ButtonState.Pushed) != 0 ? 2 : 0;
-		}
 
 		public override void DrawTabControl (Graphics dc, Rectangle area, TabControl tab)
 		{
-			if (!UxTheme.Available || tab.Alignment != TabAlignment.Top || tab.Appearance != TabAppearance.Normal) {
+			if (tab.Alignment != TabAlignment.Top || tab.Appearance != TabAppearance.Normal) {
 				base.DrawTabControl (dc, area, tab);
 				return;
 			}
-
-			dc.FillRectangle (ResPool.GetSolidBrush (tab.BackColor), area);
-			if (tab.TabCount == 0) {
-				base.DrawTabControl (dc, area, tab);
-				return;
-			}
-
-			// The pane runs under every tab but the selected one, which sits on top of it.
-			Rectangle pane = tab.DisplayRectangle;
-			pane.Inflate (2, 2);
-			if (!UxTheme.Draw (dc, "TAB", UxTheme.TABP_PANE, 1, pane)) {
-				base.DrawTabControl (dc, area, tab);
-				return;
-			}
-
-			for (int i = 0; i < tab.TabCount; i++) {
-				if (i == tab.SelectedIndex) continue;
-				DrawTabItem (dc, tab, i, UxTheme.TIS_NORMAL);
-			}
-			if (tab.SelectedIndex >= 0 && tab.SelectedIndex < tab.TabCount)
-				DrawTabItem (dc, tab, tab.SelectedIndex, UxTheme.TIS_SELECTED);
-		}
-
-		private void DrawTabItem (Graphics dc, TabControl tab, int index, int state)
-		{
-			Rectangle bounds = tab.GetTabRect (index);
-			if (bounds.Width <= 0 || bounds.Height <= 0) return;
-			// The selected tab is drawn a little larger, overlapping the pane edge, which is how
-			// Windows lifts it out of the row.
-			if (state == UxTheme.TIS_SELECTED)
-				bounds.Inflate (2, 0);
-
-			int part = tab.TabCount == 1 ? UxTheme.TABP_TABITEMBOTHEDGE
-				 : index == 0 ? UxTheme.TABP_TABITEMLEFTEDGE
-				 : index == tab.TabCount - 1 ? UxTheme.TABP_TABITEMRIGHTEDGE
-				 : UxTheme.TABP_TABITEM;
-			if (!UxTheme.Draw (dc, "TAB", part, state, bounds))
-				UxTheme.Draw (dc, "TAB", UxTheme.TABP_TABITEM, state, bounds);
-
-			TabPage page = tab.TabPages[index];
-			var format = new StringFormat {
-				Alignment = StringAlignment.Center,
-				LineAlignment = StringAlignment.Center,
-				HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
-				FormatFlags = StringFormatFlags.NoWrap,
-			};
-			Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
-			dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
+			DrawModernTabControl (dc, area, tab);
 		}
 
 		// ---- data grid -------------------------------------------------------------
@@ -593,7 +508,7 @@ namespace System.Windows.Forms
 									     Graphics g, Rectangle bounds)
 		{
 			// The part carries its own separator, so the classic three-line border would double it.
-			return UxTheme.Available && cell.DataGridView != null;
+			return cell.DataGridView != null;
 		}
 
 		public override bool DataGridViewRowHeaderCellDrawBackground (DataGridViewRowHeaderCell cell,
@@ -605,14 +520,15 @@ namespace System.Windows.Forms
 		public override bool DataGridViewRowHeaderCellDrawBorder (DataGridViewRowHeaderCell cell,
 									  Graphics g, Rectangle bounds)
 		{
-			return UxTheme.Available && cell.DataGridView != null;
+			return cell.DataGridView != null;
 		}
 
-		private static bool DrawHeaderCell (DataGridViewHeaderCell cell, Graphics g, Rectangle bounds)
+		private bool DrawHeaderCell (DataGridViewHeaderCell cell, Graphics g, Rectangle bounds)
 		{
 			if (cell == null || cell.DataGridView == null)
 				return false;
-			return UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, UxTheme.HIS_NORMAL, bounds);
+			DrawModernHeaderCell (g, bounds, false);
+			return true;
 		}
 
 		// ---- scroll bar metrics ------------------------------------------------------
@@ -623,8 +539,8 @@ namespace System.Windows.Forms
 		// the middle to stretch and the thumb comes out as a one-pixel hairline instead of the two
 		// -pixel bar next door. Ask Windows for its own numbers.
 
-		private static readonly int ScrollBarWidth = UxTheme.SystemMetric (UxTheme.SM_CXVSCROLL, 17);
-		private static readonly int ScrollBarHeight = UxTheme.SystemMetric (UxTheme.SM_CYHSCROLL, 17);
+		private static readonly int ScrollBarWidth = 17;
+		private static readonly int ScrollBarHeight = 17;
 
 		public override int VerticalScrollBarWidth => ScrollBarWidth;
 		public override int HorizontalScrollBarHeight => ScrollBarHeight;
@@ -637,63 +553,39 @@ namespace System.Windows.Forms
 			// The size box part draws a resize GRIP, which belongs to the bottom-right corner of a
 			// sizable window, not to the gap between two scroll bars inside a control. Windows fills
 			// that gap with the same panel the track is drawn on, so use the track.
-			if (UxTheme.Draw (dc, "SCROLLBAR", UxTheme.SBP_UPPERTRACKVERT, UxTheme.SCRBS_NORMAL, area))
-				return;
-			base.DrawScrollBarCorner (dc, area);
+			dc.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), area);
 		}
 
 		// ---- list view headers -------------------------------------------------------
 		//
-		// The same HEADER class the data grid uses. A ListView in Details view is what SharpDevelop's
-		// About box shows its assembly list in, so this is the one that was actually on screen.
+		// Flat and white with a hairline separator, the same drawing the data grid's headers use.
+		// A ListView in Details view is what SharpDevelop's About box shows its assembly list in.
 
 		protected override void ListViewDrawColumnHeaderBackground (ListView listView, ColumnHeader columnHeader,
 									    Graphics g, Rectangle area, Rectangle clippingArea)
 		{
-			int state = listView.HeaderStyle == ColumnHeaderStyle.Clickable && columnHeader.Pressed
-				  ? UxTheme.HIS_PRESSED : UxTheme.HIS_NORMAL;
-			if (UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, state, area))
-				return;
-			base.ListViewDrawColumnHeaderBackground (listView, columnHeader, g, area, clippingArea);
+			bool pressed = listView.HeaderStyle == ColumnHeaderStyle.Clickable && columnHeader.Pressed;
+			DrawModernHeaderCell (g, area, pressed);
 		}
 
 		// ---- progress bar, combo arrow, check box primitive --------------------------
 
 		public override void DrawProgressBar (Graphics dc, Rectangle clip_rect, ProgressBar ctrl)
 		{
-			// The classic bar is a row of separate blocks with gaps. Windows has drawn one
-			// continuous fill inside a rounded trough for a long time.
-			Rectangle bounds = ctrl.ClientRectangle;
-			if (!UxTheme.Draw (dc, "PROGRESS", UxTheme.PP_BAR, 1, bounds)) {
-				base.DrawProgressBar (dc, clip_rect, ctrl);
-				return;
-			}
-
-			int range = ctrl.Maximum - ctrl.Minimum;
-			if (range <= 0)
-				return;
-			double fraction = (double) (ctrl.Value - ctrl.Minimum) / range;
-			if (fraction <= 0)
-				return;
-
-			Rectangle fill = ctrl.client_area;
-			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
-			if (fill.Width <= 0 || fill.Height <= 0)
-				return;
-			UxTheme.Draw (dc, "PROGRESS", UxTheme.PP_FILL, UxTheme.PBFS_NORMAL, fill);
+			DrawModernProgressBar (dc, ctrl);
 		}
 
 		/// <summary>The check box primitive, which is what a CheckedListBox and a few other
 		/// controls draw their boxes with -- they never reach DrawCheckBoxGlyph.</summary>
 		public override void CPDrawCheckBox (Graphics dc, Rectangle rectangle, ButtonState state)
 		{
-			int baseState = (state & ButtonState.Checked) != 0 ? UxTheme.CBS_CHECKEDNORMAL
-				      : UxTheme.CBS_UNCHECKEDNORMAL;
-			int offset = (state & ButtonState.Inactive) != 0 ? 3
-				   : (state & ButtonState.Pushed) != 0 ? 2 : 0;
-			if (UxTheme.Draw (dc, "BUTTON", UxTheme.BP_CHECKBOX, baseState + offset, CentredGlyph (rectangle)))
+			Rectangle box = CentredGlyph (rectangle);
+			box.Width = Math.Max (box.Width - 1, 0);
+			box.Height = Math.Max (box.Height - 1, 0);
+			if (box.Width <= 0 || box.Height <= 0)
 				return;
-			base.CPDrawCheckBox (dc, rectangle, state);
+			DrawModernCheck (dc, box, (state & ButtonState.Checked) != 0, false,
+					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0);
 		}
 
 		// ---- month calendar ----------------------------------------------------------
@@ -774,55 +666,182 @@ namespace System.Windows.Forms
 		}
 
 
-		// Windows fills a selected day with a rounded rectangle. The classic theme fills a pie,
-		// which is a circle for a lone day -- so the cell came out as an ellipse.
-		// Windows fills a selected day with a plain rectangle. The classic theme fills a pie --
-		// a circle for a lone day -- so once FillPie actually drew something the cell came out as
-		// an ellipse. A rounded path is no good either: flattened, its corners bulge inwards.
-		protected override void MonthCalendarFillSelection (Graphics dc, MonthCalendar mc, Rectangle rect, Brush brush,
-					   float startAngle, float sweepAngle)
+		// Windows fills a selected day with a plain rectangle. The classic theme fills a pie -- a
+		// circle for a lone day -- so once FillPie actually drew something the cell came out as an
+		// ellipse.
+		protected override void MonthCalendarFillSelection (Graphics dc, MonthCalendar mc, Rectangle rect,
+					   Brush brush, float startAngle, float sweepAngle)
 		{
-			if (rect.Width <= 0 || rect.Height <= 0)
-				return;
-			// Windows' own selected-cell background, which is a translucent wash rather than a
-			// flat fill. The classic theme fills a pie here -- a circle for a lone day -- so once
-			// FillPie actually drew something the cell came out as an ellipse.
-			// Windows greys a selection out when the calendar does not have the focus, which is why
-			// its selected day reads as grey next to our blue: a different state, not a different
-			// colour.
-			int state = mc.Focused ? UxTheme.MCGCB_SELECTED : UxTheme.MCGCB_SELECTEDNOTFOCUSED;
-			if (UxTheme.Draw (dc, "MONTHCAL", UxTheme.MC_GRIDCELLBACKGROUND, state, rect))
-				return;
-			dc.FillRectangle (brush, rect);
+			if (rect.Width > 0 && rect.Height > 0)
+				dc.FillRectangle (brush, rect);
 		}
 
-		/// <summary>Windows marks today with a one-pixel frame. Its corners are nominally rounded,
-		/// but at a cell this size the rounding is exactly one pixel: the corner is not painted.
-		/// Trying to draw it as a curve does not survive the trip: a flattened path bulges
-		/// inwards, an arc or a diagonal antialiases outwards, a half-pixel offset blurs the
-		/// whole stroke, and blending the corner pixels by hand reads as four dots.</summary>
+		/// <summary>Windows marks today with a one-pixel frame whose corners are rounded by exactly
+		/// one pixel -- which is to say the corner pixel is simply not painted. Drawing it as a curve
+		/// does not survive: a path is flattened into unjoined segments and bulges inwards, an arc or
+		/// a diagonal antialiases outwards and fringes the corner, and a half-pixel offset blurs the
+		/// whole stroke. Four edges that each stop a pixel short need none of that.</summary>
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
-			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
-						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
-			if (box.Width <= 0 || box.Height <= 0)
-				return;
-			// Windows draws this cell itself, and its corners are genuinely antialiased -- the blends
-			// come out of the msstyles artwork and are not derivable from the two colours around them.
-			// Every attempt to reconstruct it here failed in a different way: a flattened path bulged
-			// inwards, an arc or diagonal antialiased outwards, a half-pixel offset blurred the whole
-			// stroke, and hand-blended corner pixels read as four dots. So ask for the real thing; the
-			// part has a transparent middle, so the cell's own fill still shows through it.
-			if (UxTheme.Draw (dc, "MONTHCAL", UxTheme.MC_GRIDCELLBACKGROUND, UxTheme.MCGCB_TODAY, box))
+			// The same rectangle the selected-day fill occupies: this method is handed the cell less
+			// one pixel while the fill gets it inset by one on every side, so a frame drawn on the rect
+			// as given sat inside the fill and the grey showed past it on two edges.
+			var box = new Rectangle (rectangle.X + 1, rectangle.Y + 1,
+						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 1, 0));
+			if (box.Width <= 1 || box.Height <= 1)
 				return;
 
-			// No uxtheme: a crisp one-pixel frame, corners left square.
+			Pen pen = ResPool.GetPen (ColorHotTrack);
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.None;
-			dc.DrawRectangle (ResPool.GetPen (ColorHotTrack), box.X, box.Y, box.Width, box.Height);
+			dc.DrawLine (pen, box.X + 1, box.Y, box.Right - 1, box.Y);
+			dc.DrawLine (pen, box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
+			dc.DrawLine (pen, box.X, box.Y + 1, box.X, box.Bottom - 1);
+			dc.DrawLine (pen, box.Right, box.Y + 1, box.Right, box.Bottom - 1);
 			dc.SmoothingMode = old;
+		}
+
+		// ---- the same drawing, without Windows ---------------------------------------
+		//
+		// Everything above asks Windows for its own artwork and falls through to here when there is
+		// none to ask -- macOS, Linux, the browser, or WF_UXTHEME=0. That fall-through used to land
+		// on the CLASSIC theme, which meant those heads got a 1995 progress bar and hatched scroll
+		// bars while Windows got modern ones. Same theme, same look, wherever it runs.
+
+		private static readonly Color ScrollTrack = Color.FromArgb (240, 240, 240);
+		private static readonly Color ScrollThumb = Color.FromArgb (133, 133, 133);
+		private static readonly Color ScrollArrow = Color.FromArgb (96, 96, 96);
+		private static readonly Color ProgressTrough = Color.FromArgb (230, 230, 230);
+		private static readonly Color ProgressFill = Color.FromArgb (6, 176, 37);
+		private static readonly Color TabPaneFace = Color.FromArgb (249, 249, 249);
+		private static readonly Color TabItemFace = Color.FromArgb (240, 240, 240);
+		private static readonly Color HairLine = Color.FromArgb (217, 217, 217);
+
+		private void DrawModernProgressBar (Graphics dc, ProgressBar ctrl)
+		{
+			Rectangle bounds = ctrl.ClientRectangle;
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			dc.FillRectangle (ResPool.GetSolidBrush (ProgressTrough), bounds);
+			dc.DrawRectangle (ResPool.GetPen (HairLine), bounds.X, bounds.Y,
+					  bounds.Width - 1, bounds.Height - 1);
+
+			int range = ctrl.Maximum - ctrl.Minimum;
+			if (range <= 0)
+				return;
+			double fraction = (double) (ctrl.Value - ctrl.Minimum) / range;
+			if (fraction <= 0)
+				return;
+
+			// One continuous fill, not the classic row of blocks.
+			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
+			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
+			if (fill.Width > 0 && fill.Height > 0)
+				dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
+		}
+
+		private void DrawModernScrollBar (Graphics dc, ScrollBar bar, Rectangle client,
+						  Rectangle first, Rectangle second, Rectangle thumb)
+		{
+			dc.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), client);
+			DrawScrollArrow (dc, first, bar.vert ? ArrowDirection.Up : ArrowDirection.Left, bar.Enabled);
+			DrawScrollArrow (dc, second, bar.vert ? ArrowDirection.Down : ArrowDirection.Right, bar.Enabled);
+
+			if (!bar.Enabled || thumb.Width <= 0 || thumb.Height <= 0)
+				return;
+
+			// A slim bar centred in the channel, which is what Windows draws now -- not a raised
+			// button filling the whole width.
+			Rectangle slim = thumb;
+			if (bar.vert) {
+				int inset = Math.Max (0, (thumb.Width - 6) / 2);
+				slim.X += inset;
+				slim.Width = Math.Max (2, thumb.Width - inset * 2);
+			} else {
+				int inset = Math.Max (0, (thumb.Height - 6) / 2);
+				slim.Y += inset;
+				slim.Height = Math.Max (2, thumb.Height - inset * 2);
+			}
+			dc.FillRectangle (ResPool.GetSolidBrush (ScrollThumb), slim);
+		}
+
+		private void DrawScrollArrow (Graphics dc, Rectangle area, ArrowDirection direction, bool enabled)
+		{
+			if (area.Width <= 0 || area.Height <= 0)
+				return;
+			int cx = area.X + area.Width / 2;
+			int cy = area.Y + area.Height / 2;
+			int r = Math.Max (2, Math.Min (4, Math.Min (area.Width, area.Height) / 4));
+			Color ink = enabled ? ScrollArrow : ColorGrayText;
+
+			Point [] arrow;
+			switch (direction) {
+			case ArrowDirection.Up:
+				arrow = new [] { new Point (cx - r, cy + r / 2), new Point (cx + r, cy + r / 2), new Point (cx, cy - r) };
+				break;
+			case ArrowDirection.Down:
+				arrow = new [] { new Point (cx - r, cy - r / 2), new Point (cx + r, cy - r / 2), new Point (cx, cy + r) };
+				break;
+			case ArrowDirection.Left:
+				arrow = new [] { new Point (cx + r / 2, cy - r), new Point (cx + r / 2, cy + r), new Point (cx - r, cy) };
+				break;
+			default:
+				arrow = new [] { new Point (cx - r / 2, cy - r), new Point (cx - r / 2, cy + r), new Point (cx + r, cy) };
+				break;
+			}
+
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
+			dc.SmoothingMode = old;
+		}
+
+		private void DrawModernHeaderCell (Graphics g, Rectangle area, bool pressed)
+		{
+			if (area.Width <= 0 || area.Height <= 0)
+				return;
+			// Flat and white, separated by a hairline -- no raised bevel.
+			g.FillRectangle (ResPool.GetSolidBrush (pressed ? TabItemFace : ColorWindow), area);
+			Pen pen = ResPool.GetPen (HairLine);
+			g.DrawLine (pen, area.Right - 1, area.Y + 3, area.Right - 1, area.Bottom - 4);
+			g.DrawLine (pen, area.X, area.Bottom - 1, area.Right - 1, area.Bottom - 1);
+		}
+
+		private void DrawModernTabControl (Graphics dc, Rectangle area, TabControl tab)
+		{
+			dc.FillRectangle (ResPool.GetSolidBrush (tab.BackColor), area);
+			if (tab.TabCount == 0)
+				return;
+
+			Rectangle pane = tab.DisplayRectangle;
+			pane.Inflate (2, 2);
+			dc.FillRectangle (ResPool.GetSolidBrush (TabPaneFace), pane);
+			dc.DrawRectangle (ResPool.GetPen (HairLine), pane.X, pane.Y, pane.Width - 1, pane.Height - 1);
+
+			for (int i = 0; i < tab.TabCount; i++) {
+				bool selected = i == tab.SelectedIndex;
+				Rectangle bounds = tab.GetTabRect (i);
+				if (bounds.Width <= 0 || bounds.Height <= 0)
+					continue;
+				if (selected)
+					bounds.Inflate (2, 0);
+
+				dc.FillRectangle (ResPool.GetSolidBrush (selected ? TabPaneFace : TabItemFace), bounds);
+				dc.DrawRectangle (ResPool.GetPen (HairLine), bounds.X, bounds.Y,
+						  bounds.Width - 1, bounds.Height - 1);
+
+				TabPage page = tab.TabPages[i];
+				var format = new StringFormat {
+					Alignment = StringAlignment.Center,
+					LineAlignment = StringAlignment.Center,
+					HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
+					FormatFlags = StringFormatFlags.NoWrap,
+				};
+				Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
+				dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
+			}
 		}
 	}
 }
