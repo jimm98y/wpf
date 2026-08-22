@@ -785,10 +785,28 @@ namespace System.Windows.Forms
 			dc.DrawLine (pen, r.X + radius, r.Bottom, r.Right - radius, r.Bottom);
 			dc.DrawLine (pen, r.X, r.Y + radius, r.X, r.Bottom - radius);
 			dc.DrawLine (pen, r.Right, r.Y + radius, r.Right, r.Bottom - radius);
-			dc.DrawArc (pen, r.X, r.Y, d, d, 180, 90);
-			dc.DrawArc (pen, r.Right - d, r.Y, d, d, 270, 90);
-			dc.DrawArc (pen, r.Right - d, r.Bottom - d, d, d, 0, 90);
-			dc.DrawArc (pen, r.X, r.Bottom - d, d, d, 90, 90);
+			// The corners are short diagonals, not arcs. An arc antialiases outwards from its
+			// bounding box, so one sitting on the edge left a pale blob just outside each corner;
+			// every point of a diagonal drawn between the edge ends is inside the rectangle by
+			// construction, and at a two-pixel radius it reads as a curve anyway.
+			dc.DrawLine (pen, r.X, r.Y + radius, r.X + radius, r.Y);
+			dc.DrawLine (pen, r.Right - radius, r.Y, r.Right, r.Y + radius);
+			dc.DrawLine (pen, r.Right, r.Bottom - radius, r.Right - radius, r.Bottom);
+			dc.DrawLine (pen, r.X + radius, r.Bottom, r.X, r.Bottom - radius);
+		}
+
+		// Windows fills a selected day with a rounded rectangle. The classic theme fills a pie,
+		// which is a circle for a lone day -- so the cell came out as an ellipse.
+		protected override void MonthCalendarFillSelection (Graphics dc, Rectangle rect, Brush brush,
+					   float startAngle, float sweepAngle)
+		{
+			if (rect.Width <= 0 || rect.Height <= 0)
+				return;
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			using (GraphicsPath path = RoundedRect (rect, 2))
+				dc.FillPath (brush, path);
+			dc.SmoothingMode = old;
 		}
 
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)

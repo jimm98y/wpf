@@ -4033,13 +4033,13 @@ namespace System.Windows.Forms
 				date_color = MonthCalendarSelectionForeColor (mc);
 				// draw the left hand of the back ground
 				Rectangle selection_rect = Rectangle.Inflate (rectangle, inflate, inflate);				
-				dc.FillPie (ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), selection_rect, 0, 360);
+				MonthCalendarFillSelection (dc, selection_rect, ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), 0, 360);
 			} else if (date == mc.SelectionStart.Date) {
 				// see if the date is in the start of selection
 				date_color = MonthCalendarSelectionForeColor (mc);
 				// draw the left hand of the back ground
 				Rectangle selection_rect = Rectangle.Inflate (rectangle, inflate, inflate);				
-				dc.FillPie (ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), selection_rect, 90, 180);
+				MonthCalendarFillSelection (dc, selection_rect, ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), 90, 180);
 				// fill the other side as a straight rect
 				if (date < mc.SelectionEnd.Date) 
 				{
@@ -4053,7 +4053,7 @@ namespace System.Windows.Forms
 				date_color = MonthCalendarSelectionForeColor (mc);
 				// draw the left hand of the back ground
 				Rectangle selection_rect = Rectangle.Inflate (rectangle, inflate, inflate);
-				dc.FillPie (ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), selection_rect, 270, 180);
+				MonthCalendarFillSelection (dc, selection_rect, ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), 270, 180);
 				// fill the other side as a straight rect
 				if (date > mc.SelectionStart.Date) {
 					selection_rect.X = rectangle.X;
@@ -4096,6 +4096,15 @@ namespace System.Windows.Forms
 		/// <summary>The font the "Today: ..." line under the calendar is set in. The classic
 		/// theme emboldens it; Windows does not.</summary>
 		protected virtual Font MonthCalendarTodayFont (MonthCalendar mc) => mc.bold_font;
+
+		/// <summary>Fill the shape a selected day sits in. The classic theme draws a pie: a full
+		/// circle for a lone day and a half circle for each end of a range, which together make
+		/// its pill. Windows fills a rounded rectangle, so this is the theme's to decide.</summary>
+		protected virtual void MonthCalendarFillSelection (Graphics dc, Rectangle rect, Brush brush,
+					   float startAngle, float sweepAngle)
+		{
+			dc.FillPie (brush, rect, startAngle, sweepAngle);
+		}
 
 		/// <summary>The fill behind a selected day.</summary>
 		protected virtual Color MonthCalendarSelectionBackColor (MonthCalendar mc) => mc.TitleBackColor;
