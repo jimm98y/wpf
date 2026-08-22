@@ -101,7 +101,10 @@ namespace System.Windows.Forms
 
 		// Windows draws a single hairline around an input, not a carved bevel. These are the two
 		// greys it uses: #7A7A7A around something you type in, #ADADAD around something you press.
-		private static readonly Color InputBorder = Color.FromArgb (122, 122, 122);
+		// Measured off Windows: a text box or a list is outlined #838383, a combo box the lighter
+		// #BCBCBC. One colour for all of them was wrong in both directions at once.
+		private static readonly Color ComboBorder = Color.FromArgb (188, 188, 188);
+		private static readonly Color InputBorder = Color.FromArgb (131, 131, 131);
 		private static readonly Color RaisedBorder = Color.FromArgb (173, 173, 173);
 		private static readonly Color EtchedBorder = Color.FromArgb (223, 223, 223);
 
@@ -128,7 +131,7 @@ namespace System.Windows.Forms
 				Rectangle border = comboBox.TextArea;
 				border.Width -= 1;
 				border.Height -= 1;
-				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover : ButtonBorderNormal);
+				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover : ComboBorder);
 			}
 		}
 
@@ -153,7 +156,11 @@ namespace System.Windows.Forms
 		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 76, 148);
 		private static readonly Color ButtonFaceDisabled = Color.FromArgb (249, 249, 249);
 		private static readonly Color ButtonBorderDisabled = Color.FromArgb (205, 205, 205);
-		private static readonly Color GlyphBorder = Color.FromArgb (122, 122, 122);
+		// An unchecked box is not white: Windows fills it #F3F3F3 and outlines it #626262, both
+		// measured off its own rendering. White with a pale border read as the greyer of the two
+		// even though it was the lighter one.
+		private static readonly Color GlyphBorder = Color.FromArgb (98, 98, 98);
+		private static readonly Color GlyphFace = Color.FromArgb (243, 243, 243);
 
 		private const int ButtonCornerRadius = 3;
 
@@ -276,15 +283,38 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
-		private void RoundGlyphCorners (Graphics g, Rectangle box, Color surround)
+		/// <summary>Round a filled glyph's corners with partial coverage, so the curve reads as a
+		/// curve. Clearing whole corner pixels was the previous attempt and it showed: four hard
+		/// light squares where Windows has a smooth arc. A pixel's colour is the fill and the
+		/// surround mixed by how much of it falls inside the corner's quarter circle -- which is what
+		/// antialiasing is, done where we can control it rather than left to the renderer.</summary>
+		private void RoundGlyphCorners (Graphics g, Rectangle box, Color fill, Color surround, int radius)
 		{
-			if (box.Width < 4 || box.Height < 4)
+			if (radius < 1 || box.Width < radius * 2 || box.Height < radius * 2)
 				return;
-			Brush brush = ResPool.GetSolidBrush (surround);
-			g.FillRectangle (brush, box.X, box.Y, 1, 1);
-			g.FillRectangle (brush, box.Right, box.Y, 1, 1);
-			g.FillRectangle (brush, box.X, box.Bottom, 1, 1);
-			g.FillRectangle (brush, box.Right, box.Bottom, 1, 1);
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
+			float limit = radius - 0.5f;
+			for (int dy = 0; dy < radius; dy++) {
+				for (int dx = 0; dx < radius; dx++) {
+					float ox = limit - dx, oy = limit - dy;
+					double dist = Math.Sqrt (ox * ox + oy * oy);
+					double inside = limit + 0.5 - dist;          // 1 fully in, 0 fully out
+					if (inside >= 1.0)
+						continue;
+					double t = Math.Max (0.0, inside);
+					Color blend = Color.FromArgb (
+						(int) Math.Round (surround.R + (fill.R - surround.R) * t),
+						(int) Math.Round (surround.G + (fill.G - surround.G) * t),
+						(int) Math.Round (surround.B + (fill.B - surround.B) * t));
+					Brush brush = ResPool.GetSolidBrush (blend);
+					g.FillRectangle (brush, box.X + dx, box.Y + dy, 1, 1);
+					g.FillRectangle (brush, box.Right - dx, box.Y + dy, 1, 1);
+					g.FillRectangle (brush, box.X + dx, box.Bottom - dy, 1, 1);
+					g.FillRectangle (brush, box.Right - dx, box.Bottom - dy, 1, 1);
+				}
+			}
+			g.SmoothingMode = old;
 		}
 
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
@@ -296,12 +326,15 @@ namespace System.Windows.Forms
 			} else if (ticked || mixed) {
 				fill = border = hot ? ButtonBorderPressed : ButtonBorderHover;      // accent
 			} else {
-				fill = ColorWindow; border = hot ? ButtonBorderHover : GlyphBorder;
+				fill = GlyphFace; border = hot ? ButtonBorderHover : GlyphBorder;
 			}
 
 			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
 			g.DrawRectangle (ResPool.GetPen (border), box);
-			RoundGlyphCorners (g, box, surround);
+			// The BORDER colour, not the fill: a corner pixel sits on the outline, and blending the
+			// fill there erased the outline where it curved -- on a checked box the two are the same
+			// colour so it went unnoticed, on an unchecked one the box came out with open corners.
+			RoundGlyphCorners (g, box, border, surround, 2);
 
 			if (mixed) {
 				var inner = Rectangle.Inflate (box, -3, -3);
@@ -318,7 +351,7 @@ namespace System.Windows.Forms
 			// as a different mark rather than the same one drawn a little off.
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.4f)) {
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.1f)) {
 				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
 				g.DrawLines (pen, new PointF [] {
 					new PointF (x + w * 0.22f, y + h * 0.47f),
@@ -508,7 +541,7 @@ namespace System.Windows.Forms
 			else if (control != null && control.Entered)
 				edge = GlyphBorder;
 			else
-				edge = ButtonBorderNormal;
+				edge = InputBorder;
 			DrawRoundedOutline (dc, new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1), edge);
 		}
 
