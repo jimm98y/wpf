@@ -41,9 +41,10 @@ namespace System.Windows.Forms {
 		internal override void HandleException(Exception e) {  }
 		internal override Region GetClipRegion(IntPtr hwnd) { return default(Region); }
 		internal override void SetClipRegion(IntPtr hwnd, Region region) {  }
-		internal override void OverrideCursor(IntPtr cursor) {  }
+		internal override void OverrideCursor(IntPtr cursor) { SetCursorOverride(cursor); }
 		internal override IntPtr DefineCursor(Bitmap bitmap, Bitmap mask, Color cursor_pixel, Color mask_pixel, int xHotSpot, int yHotSpot) { return IntPtr.Zero; }
-		internal override IntPtr DefineStdCursor(StdCursor id) { return IntPtr.Zero; }
+		// Plus one so the handle is never zero, which is how callers spell "no cursor".
+		internal override IntPtr DefineStdCursor(StdCursor id) { return (IntPtr)((int)id + 1); }
 		internal override Bitmap DefineStdCursorBitmap(StdCursor id) { return default(Bitmap); }
 		internal override void DestroyCursor(IntPtr cursor) {  }
 		internal override void GetCursorInfo(IntPtr cursor, out int width, out int height, out int hotspot_x, out int hotspot_y) { width = default(int); height = default(int); hotspot_x = default(int); hotspot_y = default(int); }

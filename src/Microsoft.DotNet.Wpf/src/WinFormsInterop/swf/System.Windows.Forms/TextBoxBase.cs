@@ -1755,6 +1755,20 @@ namespace System.Windows.Forms
 			pevent.Handled = true;
 		}
 
+		/// <summary>How far the text sits in from the control's own edge. This driver models no
+		/// non-client frame -- a window and its client are the same rectangle -- so the border is
+		/// painted over the control's outer edge and the document, which starts at zero, ran
+		/// underneath it: the first character came out sliced in half.</summary>
+		internal int TextFrameWidth {
+			get {
+				switch (actual_border_style) {
+					case BorderStyle.None: return 0;
+					case BorderStyle.FixedSingle: return 1;
+					default: return ThemeEngine.Current.Border3DSize.Width;
+				}
+			}
+		}
+
 		internal void Draw (Graphics g, Rectangle clippingArea)
 		{
 			ThemeEngine.Current.TextBoxBaseFillBackground (this, g, clippingArea);
@@ -1907,15 +1921,16 @@ namespace System.Windows.Forms
 				canvas_width = ClientSize.Width - vscroll.Width;
 
 				if (GetInheritedRtoL () == RightToLeft.Yes) {
-					document.OffsetX = vscroll.Width;
+					document.OffsetX = vscroll.Width + TextFrameWidth;
 				} else {
-					document.OffsetX = 0;
+					document.OffsetX = TextFrameWidth;
 				}
 
 			} else {
 				canvas_width = ClientSize.Width;
-				document.OffsetX = 0;
+				document.OffsetX = TextFrameWidth;
 			}
+			canvas_width = Math.Max (canvas_width - 2 * TextFrameWidth, 0);
 
 			document.ViewPortWidth = canvas_width;
 			document.ViewPortHeight = canvas_height;

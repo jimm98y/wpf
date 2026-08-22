@@ -3664,7 +3664,9 @@ namespace System.Windows.Forms
 					text_format.Alignment = StringAlignment.Near;
 					Rectangle today_rect = new Rectangle (
 							today_offset + client_rectangle.X,
-							Math.Max(client_rectangle.Bottom - date_cell_size.Height - margin, 0),
+							// The same row the marker occupies. Two pixels lower left the text hanging
+						// below the marker instead of reading as one line with it.
+						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2 - margin, 0),
 							Math.Max(client_rectangle.Width - today_offset, 0),
 							date_cell_size.Height);
 					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
@@ -4009,6 +4011,13 @@ namespace System.Windows.Forms
 		
 
 		// draws one day in the calendar grid
+		/// <summary>The wash behind the day under the pointer, or Empty for a theme that has no
+		/// such state.</summary>
+		protected virtual Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		{
+			return Color.Empty;
+		}
+
 		private void DrawMonthCalendarDate (Graphics dc, Rectangle rectangle, MonthCalendar mc,	DateTime date, DateTime month, int row, int col) {
 			Color date_color = mc.ForeColor;
 			Rectangle interior = new Rectangle (rectangle.X, rectangle.Y, Math.Max(rectangle.Width - 1, 0), Math.Max(rectangle.Height - 1, 0));
@@ -4033,6 +4042,17 @@ namespace System.Windows.Forms
 			}
 
 			const int inflate = -1;
+
+			// The pointer's own day, drawn under everything else so a selected or today cell still
+			// reads as itself.
+			if (date == mc.HoverDate.Date && date != mc.SelectionStart.Date && date != mc.SelectionEnd.Date) {
+				Color hover = MonthCalendarHoverBackColor (mc);
+				if (hover != Color.Empty) {
+					Rectangle hover_rect = Rectangle.Inflate (rectangle, inflate, inflate);
+					if (hover_rect.Width > 0 && hover_rect.Height > 0)
+						dc.FillRectangle (ResPool.GetSolidBrush (hover), hover_rect);
+				}
+			}
 
 			if (date == mc.SelectionStart.Date && date == mc.SelectionEnd.Date) {
 				// see if the date is in the start of selection

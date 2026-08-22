@@ -441,6 +441,10 @@ namespace System.Windows.Forms
 				int edge = border_style == BorderStyle.FixedSingle
 						 ? 1 : ThemeEngine.Current.Border3DSize.Width;
 				rect.Inflate (-edge, -edge);
+				// Windows leaves a further pixel or two of air before the text; without it the first
+				// character sits against the frame and its leading stroke is shaved off.
+				rect.X += 2;
+				rect.Width = Math.Max (rect.Width - 2, 0);
 				return rect;
 			}
 		}

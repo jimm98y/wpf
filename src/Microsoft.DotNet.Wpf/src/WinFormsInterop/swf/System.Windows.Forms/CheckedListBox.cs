@@ -162,7 +162,11 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		// A row holds a check box as well as a line of text; Windows gives it two pixels more
 		// than a plain list's row.
+		// A stock checked row is 18 where a plain one is 15.
 		internal override int ExtraItemHeight => 2;
+
+		// The check box is already drawn at its own indent, so the row needs no further inset.
+		internal override int ItemLeftMargin => 0;
 
 		public override int ItemHeight {
 			get { return base.ItemHeight; }

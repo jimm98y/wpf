@@ -672,8 +672,7 @@ namespace System.Windows.Forms
 					$" control={(c == null ? "-" : c.Bounds.ToString())}");
 			}
 			if (scene is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv && hwnd != null)
-				sv.Clip = new Microsoft.Wpf.Interop.WebGpu.Composition.Rect(
-					0, 0, Math.Max(0, hwnd.width), Math.Max(0, hwnd.height));
+				ApplyWindowClip(sv, hwnd);
 			return scene;
 		}
 
@@ -699,7 +698,48 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
-		internal object GetWindowScene(IntPtr handle) => _scenes.TryGetValue(handle, out object s) ? s : null;
+		internal object GetWindowScene(IntPtr handle)
+		{
+			if (!_scenes.TryGetValue(handle, out object s)) return null;
+			// Re-clip on the way out rather than when the scene was recorded. A scene is recorded
+			// once and composited many times, so a clip baked in at record time describes wherever
+			// the control happened to be when it last painted: scroll it and the clip stays behind,
+			// which left scrolled controls invisible until something forced them to repaint.
+			if (s is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv)
+				ApplyWindowClip(sv, Hwnd.ObjectFromHandle(handle));
+			return s;
+		}
+
+		/// <summary>Confine a window's scene to its own bounds and to every ancestor's, brought
+		/// into its coordinates. A child is clipped by its parent in Windows and nothing here did
+		/// that, so a control scrolled out of a panel went on drawing over whatever lay below the
+		/// panel -- the status bar most visibly, which looked transparent as a result.</summary>
+		private static void ApplyWindowClip(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, Hwnd hwnd)
+		{
+			if (sv == null || hwnd == null) return;
+			float left = 0, top = 0;
+			float right = Math.Max(0, hwnd.width), bottom = Math.Max(0, hwnd.height);
+			// A popup is not confined by whatever it hangs off: a menu, a combo box's list and a
+			// tooltip all stand outside their owner on purpose.
+			if ((hwnd.initial_style & WindowStyles.WS_POPUP) == 0)
+			{
+				int offX = 0, offY = 0;
+				Hwnd child = hwnd;
+				for (Hwnd parent = hwnd.parent; parent != null; child = parent, parent = parent.parent)
+				{
+					offX -= child.x;
+					offY -= child.y;
+					left = Math.Max(left, offX);
+					top = Math.Max(top, offY);
+					right = Math.Min(right, offX + parent.width);
+					bottom = Math.Min(bottom, offY + parent.height);
+					if ((parent.initial_style & WindowStyles.WS_POPUP) != 0)
+						break;
+				}
+			}
+			sv.Clip = new Microsoft.Wpf.Interop.WebGpu.Composition.Rect(
+				left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+		}
 
 		// Bumped on anything that changes what the compositor should show (a control repaints, or a
 		// window is created/moved/shown/hidden/destroyed). The host presents only when this advances
@@ -1196,7 +1236,39 @@ namespace System.Windows.Forms
 		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd) { _grabHandle = hwnd; }
 		internal override void UngrabWindow(IntPtr hwnd) { if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero; }
-		internal override void SetCursor(IntPtr hwnd, IntPtr cursor) { }
+		// ---- cursors -------------------------------------------------------------
+		//
+		// Nothing here set a cursor, so the pointer stayed an arrow everywhere: no I-beam over
+		// text, no hand over a link, and no double arrow over a list view's column divider, which
+		// left column resizing with no indication that it was possible at all.
+		//
+		// A cursor handle in this driver is just a StdCursor plus one, so it is never zero. The
+		// host turns that into whatever its platform draws -- IDC_* on Windows, NSCursor on macOS
+		// -- which keeps the shape names on this side of the fence portable.
+		private readonly Dictionary<IntPtr, int> _cursors = new Dictionary<IntPtr, int>();
+		private int _cursorOverride = -1;
+
+		internal static int CursorIdFromHandle(IntPtr cursor)
+			=> cursor == IntPtr.Zero ? -1 : (int)cursor - 1;
+
+		internal override void SetCursor(IntPtr hwnd, IntPtr cursor)
+		{
+			int id = CursorIdFromHandle(cursor);
+			if (id < 0) _cursors.Remove(hwnd); else _cursors[hwnd] = id;
+		}
+
+		/// <summary>The StdCursor the pointer should be showing where it currently is, or -1 for
+		/// the default. Walks up from the window under the pointer, because a control that sets
+		/// no cursor of its own inherits its parent's.</summary>
+		internal int GetActiveCursor()
+		{
+			if (_cursorOverride >= 0) return _cursorOverride;
+			for (Hwnd h = Hwnd.ObjectFromHandle(_hotWindow); h != null; h = h.parent)
+				if (_cursors.TryGetValue(h.Handle, out int id)) return id;
+			return -1;
+		}
+
+		internal void SetCursorOverride(IntPtr cursor) => _cursorOverride = CursorIdFromHandle(cursor);
 		internal override void ShowCursor(bool show) { }
 		internal override void SetCursorPos(IntPtr hwnd, int x, int y) { }
 		internal override void GetCursorPos(IntPtr hwnd, out int x, out int y) { x = 0; y = 0; }

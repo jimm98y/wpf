@@ -291,42 +291,39 @@ namespace System.Windows.Forms
 		/// light squares where Windows has a smooth arc. A pixel's colour is the fill and the
 		/// surround mixed by how much of it falls inside the corner's quarter circle -- which is what
 		/// antialiasing is, done where we can control it rather than left to the renderer.</summary>
-		// How much of the border colour each pixel of a corner carries, read straight off a stock
-		// Windows check box. The corner is three pixels, not two, and the outermost pixel of it is
-		// left clear -- the arc passes diagonally through the middle of the three. A quarter-circle
-		// coverage model gets both wrong: it puts the ink in the wrong pixels and too little of it,
-		// which is why the corners read as cut off rather than rounded.
-		private static readonly double [,] CornerInk = {
-			{ 0.00, 0.53, 0.94 },
-			{ 0.53, 0.65, 0.16 },
-			{ 0.94, 0.16, 0.00 },
-		};
-
-		private void RoundGlyphCorners (Graphics g, Rectangle box, Color fill, Color surround, int radius)
+		/// <summary>Rounds the corners of a box that has already been filled and outlined.
+		/// <para>Only two kinds of pixel are touched: one that falls outside the rounded rectangle,
+		/// which becomes the surround, and one the arc passes through, which becomes the border
+		/// colour blended by how much of it the arc covers. Pixels inside are left exactly as the
+		/// fill left them.</para>
+		/// <para>Painting a blend of the border and the surround across the whole corner instead --
+		/// which is what this did -- overwrites the fill near the corners with a pale wash. On an
+		/// unchecked box the fill is nearly white and it passed unnoticed; on a checked one the fill
+		/// is the accent colour, and the corners came out with the colour missing.</para></summary>
+		private void RoundGlyphCorners (Graphics g, Rectangle box, Color border, Color surround, int radius)
 		{
 			if (radius < 1 || box.Width < radius * 2 || box.Height < radius * 2)
 				return;
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.None;
-			float limit = radius - 0.5f;
 			for (int dy = 0; dy < radius; dy++) {
 				for (int dx = 0; dx < radius; dx++) {
-					double t;
-					if (radius == CornerInk.GetLength (0)) {
-						t = CornerInk [dy, dx];
+					// Distance from the arc's centre to this pixel's centre.
+					double ox = radius - (dx + 0.5), oy = radius - (dy + 0.5);
+					double dist = Math.Sqrt (ox * ox + oy * oy);
+					Color paint;
+					if (radius - dist >= 0.5)
+						continue;                               // well inside: the fill already has it
+					if (dist > radius) {
+						paint = surround;                       // its centre falls outside the arc
 					} else {
-						float ox = limit - dx, oy = limit - dy;
-						double dist = Math.Sqrt (ox * ox + oy * oy);
-						t = limit + 0.5 - dist;                 // 1 fully in, 0 fully out
+						double t = 0.5 + (radius - dist);       // how much of the arc covers it
+						paint = Color.FromArgb (
+							(int) Math.Round (surround.R + (border.R - surround.R) * t),
+							(int) Math.Round (surround.G + (border.G - surround.G) * t),
+							(int) Math.Round (surround.B + (border.B - surround.B) * t));
 					}
-					if (t >= 1.0)
-						continue;
-					t = Math.Max (0.0, t);
-					Color blend = Color.FromArgb (
-						(int) Math.Round (surround.R + (fill.R - surround.R) * t),
-						(int) Math.Round (surround.G + (fill.G - surround.G) * t),
-						(int) Math.Round (surround.B + (fill.B - surround.B) * t));
-					Brush brush = ResPool.GetSolidBrush (blend);
+					Brush brush = ResPool.GetSolidBrush (paint);
 					g.FillRectangle (brush, box.X + dx, box.Y + dy, 1, 1);
 					g.FillRectangle (brush, box.Right - dx, box.Y + dy, 1, 1);
 					g.FillRectangle (brush, box.X + dx, box.Bottom - dy, 1, 1);
@@ -357,7 +354,9 @@ namespace System.Windows.Forms
 			// The BORDER colour, not the fill: a corner pixel sits on the outline, and blending the
 			// fill there erased the outline where it curved -- on a checked box the two are the same
 			// colour so it went unnoticed, on an unchecked one the box came out with open corners.
-			RoundGlyphCorners (g, box, border, surround, CornerInk.GetLength (0));
+			// Three, measured off a stock box: its corner ramps over three pixels, and at two the
+			// curve is too tight to read as one.
+			RoundGlyphCorners (g, box, border, surround, 3);
 			g.SmoothingMode = boxMode;
 
 			if (mixed) {
@@ -423,7 +422,7 @@ namespace System.Windows.Forms
 			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
 			var circle = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
 						    glyphArea.Y + (glyphArea.Height - size) / 2,
-						    size - 1, size - 1);
+						    size, size);
 
 			Color border = !rb.Enabled ? ButtonBorderDisabled
 				     : rb.Checked ? ButtonBorderHover
@@ -440,7 +439,13 @@ namespace System.Windows.Forms
 			g.DrawEllipse (ResPool.GetPen (border), circle);
 
 			if (rb.Checked) {
-				var dot = Rectangle.Inflate (circle, -(circle.Width / 3), -(circle.Height / 3));
+				// Five pixels across in a thirteen pixel disc, measured off a stock radio button.
+				// A third of the disc gave four, which at this size reads as a square rather than a
+				// dot -- there is no room left for the corners to be rounded away.
+				int span = circle.Width;
+				int dotSize = Math.Max (3, span * 5 / 13);
+				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2,
+						     dotSize, dotSize);
 				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), dot);
 			}
 			g.SmoothingMode = old;
@@ -558,10 +563,61 @@ namespace System.Windows.Forms
 		// eyeballing was going to fix: an input had no border at all, the scroll bars were the
 		// hatched 1995 ones, and the tab headers were sunken boxes. Windows draws them.
 
+		/// <summary>One ring of a carved bevel: lit from the top left.</summary>
+		private void DrawBevel (Graphics dc, Rectangle r, Color topLeft, Color bottomRight)
+		{
+			if (r.Width <= 1 || r.Height <= 1)
+				return;
+			Pen tl = ResPool.GetPen (topLeft), br = ResPool.GetPen (bottomRight);
+			dc.DrawLine (tl, r.X, r.Y, r.Right - 1, r.Y);
+			dc.DrawLine (tl, r.X, r.Y, r.X, r.Bottom - 1);
+			dc.DrawLine (br, r.X, r.Bottom - 1, r.Right - 1, r.Bottom - 1);
+			dc.DrawLine (br, r.Right - 1, r.Y, r.Right - 1, r.Bottom - 1);
+		}
+
+		/// <summary>Whether Windows draws this control's frame with the visual style. It themes
+		/// what holds content -- text, lists, trees, grids -- and nothing else.</summary>
+		private static bool IsThemedFrame (Control control)
+		{
+			if (control == null)
+				return true;
+			for (Type t = control.GetType (); t != null; t = t.BaseType) {
+				switch (t.Name) {
+					case "TextBoxBase":
+					case "ComboBox":
+					case "ListBox":
+					case "ListView":
+					case "TreeView":
+					case "DataGridView":
+					case "UpDownBase":
+					case "PropertyGrid":
+						return true;
+					case "PictureBox":
+					case "Panel":
+						return false;
+				}
+			}
+			return true;
+		}
+
 		public override void DrawControlBorder (Graphics dc, Rectangle bounds, Control control, bool sunken)
 		{
 			if (bounds.Width <= 1 || bounds.Height <= 1)
 				return;
+			// Windows themes the controls that hold content you can edit or pick from, and leaves the
+			// rest with the classic carved bevel -- a picture box still has the two-tone sunken frame,
+			// #A0A0A0 outside and #696969 in. Giving everything the hairline flattened those.
+			if (sunken && !IsThemedFrame (control)) {
+				// Drawn here rather than through CPDrawBorder3D, which this theme flattens to a
+				// hairline -- routing through it gave the picture box the same single line again.
+				// Two rings of one colour each is a frame, not a bevel: the light has to come from the
+				// top left, so those edges are dark and the opposite ones light. Measured off a stock
+				// picture box, outer #A0A0A0 / #FFFFFF and inner #696969 / #E3E3E3.
+				DrawBevel (dc, bounds, ColorControlDark, ColorControlLightLight);
+				DrawBevel (dc, Rectangle.Inflate (bounds, -1, -1), ColorControlDarkDark, ColorControlLight);
+				return;
+			}
+
 			// One hairline, not the classic carved bevel -- this theme's whole point. An input picks
 			// up the accent colour when it has the focus, which is what Windows does with it.
 			Color edge;
@@ -718,11 +774,21 @@ namespace System.Windows.Forms
 		// Flat and white with a hairline separator, the same drawing the data grid's headers use.
 		// A ListView in Details view is what SharpDevelop's About box shows its assembly list in.
 
+		// Stock gives a column header ten pixels of air around the text, not the classic theme's
+		// five: measured against a stock list view, its first row starts five pixels lower than
+		// ours did.
+		public override int ListViewGetHeaderHeight (ListView listView, Font font)
+		{
+			return font.Height + 10;
+		}
+
 		protected override void ListViewDrawColumnHeaderBackground (ListView listView, ColumnHeader columnHeader,
 									    Graphics g, Rectangle area, Rectangle clippingArea)
 		{
 			bool pressed = listView.HeaderStyle == ColumnHeaderStyle.Clickable && columnHeader.Pressed;
-			DrawModernHeaderCell (g, area, pressed);
+			bool hot = !pressed && listView.header_control != null
+				&& listView.header_control.EnteredColumnHeader == columnHeader;
+			DrawModernHeaderCell (g, area, pressed, false, hot);
 		}
 
 		// ---- progress bar, combo arrow, check box primitive --------------------------
@@ -789,6 +855,13 @@ namespace System.Windows.Forms
 				dc.DrawRectangle (ResPool.GetPen (Color.FromArgb (151, 151, 151)),
 						   r.X, r.Y, r.Width - 1, r.Height - 1);
 			}
+		}
+
+		// Windows tints the day under the pointer. The classic theme has no such state, so this
+		// returns Empty there and the calendar draws nothing.
+		protected override Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		{
+			return HeaderHotFace;
 		}
 
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
@@ -897,7 +970,8 @@ namespace System.Windows.Forms
 		private static readonly Color ScrollThumb = Color.FromArgb (133, 133, 133);
 		private static readonly Color ScrollArrow = Color.FromArgb (96, 96, 96);
 		private static readonly Color ProgressTrough = Color.FromArgb (230, 230, 230);
-		private static readonly Color ProgressFill = Color.FromArgb (6, 176, 37);
+		// #0F7B0F, read off a stock progress bar. Ours was a brighter, yellower green.
+		private static readonly Color ProgressFill = Color.FromArgb (15, 123, 15);
 		private static readonly Color TabPaneFace = Color.FromArgb (249, 249, 249);
 		private static readonly Color TabItemFace = Color.FromArgb (240, 240, 240);
 		private static readonly Color HairLine = Color.FromArgb (217, 217, 217);
@@ -981,15 +1055,37 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
+		// Windows washes a column header with a pale tint of the accent under the pointer, and
+		// tracks it only if the theme says it has a hot style -- the classic one says no, so
+		// nothing was ever invalidated and the header never lit up.
+		private static readonly Color HeaderHotFace = Color.FromArgb (233, 242, 250);
+
+		public override bool ListViewHasHotHeaderStyle => true;
+
 		private void DrawModernHeaderCell (Graphics g, Rectangle area, bool pressed)
+		{
+			DrawModernHeaderCell (g, area, pressed, true);
+		}
+
+		// A data grid rules off its header row; a list view does not, and drawing one there put a
+		// line across the top of the list that a stock one has no trace of.
+		private void DrawModernHeaderCell (Graphics g, Rectangle area, bool pressed, bool bottomRule)
+		{
+			DrawModernHeaderCell (g, area, pressed, bottomRule, false);
+		}
+
+		private void DrawModernHeaderCell (Graphics g, Rectangle area, bool pressed, bool bottomRule,
+					    bool hot)
 		{
 			if (area.Width <= 0 || area.Height <= 0)
 				return;
 			// Flat and white, separated by a hairline -- no raised bevel.
-			g.FillRectangle (ResPool.GetSolidBrush (pressed ? TabItemFace : ColorWindow), area);
+			Color face = pressed ? TabItemFace : hot ? HeaderHotFace : ColorWindow;
+			g.FillRectangle (ResPool.GetSolidBrush (face), area);
 			Pen pen = ResPool.GetPen (HairLine);
 			g.DrawLine (pen, area.Right - 1, area.Y + 3, area.Right - 1, area.Bottom - 4);
-			g.DrawLine (pen, area.X, area.Bottom - 1, area.Right - 1, area.Bottom - 1);
+			if (bottomRule)
+				g.DrawLine (pen, area.X, area.Bottom - 1, area.Right - 1, area.Bottom - 1);
 		}
 
 		private void DrawModernTabControl (Graphics dc, Rectangle area, TabControl tab)

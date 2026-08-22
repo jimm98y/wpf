@@ -1920,8 +1920,22 @@ namespace System.Windows.Forms {
 		}
 
 		// occurs when mouse moves around control, used for selection
+		/// <summary>The day the pointer is over, for a theme that draws one. MinValue when the
+		/// pointer is not over a day at all.</summary>
+		internal DateTime HoverDate => hover_date;
+		private DateTime hover_date = DateTime.MinValue;
+
 		private void MouseMoveHandler (object sender, MouseEventArgs e) {
 			HitTestInfo hti = this.HitTest (e.X, e.Y);
+
+			// Nothing tracked the pointer unless a button was down, so there was no hovered day to
+			// draw and Windows draws one.
+			DateTime over = hti.HitArea == HitArea.Date || hti.HitArea == HitArea.PrevMonthDate
+				   || hti.HitArea == HitArea.NextMonthDate ? hti.Time.Date : DateTime.MinValue;
+			if (over != hover_date) {
+				hover_date = over;
+				Invalidate ();
+			}
 			// clear the last clicked item 
 			if (click_state [0]) {
 				// register the click
@@ -1954,6 +1968,15 @@ namespace System.Windows.Forms {
 		}
 		
 		// to check if the mouse has come down on this control
+		protected override void OnMouseLeave (EventArgs e)
+		{
+			base.OnMouseLeave (e);
+			if (hover_date != DateTime.MinValue) {
+				hover_date = DateTime.MinValue;
+				Invalidate ();
+			}
+		}
+
 		private void MouseDownHandler (object sender, MouseEventArgs e)
 		{
 			if ((e.Button & MouseButtons.Left) == 0)

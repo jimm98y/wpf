@@ -411,7 +411,11 @@ namespace System.Windows.Forms
 		/// top. A CheckedListBox needs the difference between a line and its box, or the glyph sits
 		/// hard against the rows either side -- Windows gives those rows two more pixels than a
 		/// plain list's.</summary>
-		internal virtual int ExtraItemHeight => 0;
+		/// <summary>How much a row is taller than one line of text. Measured against a stock list
+		/// box: its rows are 15 pixels for Segoe UI 9pt where MeasureString reports 16, so a list
+		/// given 64 pixels fits four rows there and only three here. A checked list adds its own.
+		/// </summary>
+		internal virtual int ExtraItemHeight => -1;
 
 		public virtual int ItemHeight {
 			get {
@@ -1322,6 +1326,11 @@ namespace System.Windows.Forms
 		/// <summary>The gap between the list's frame and its first row.</summary>
 		internal const int ItemTopMargin = 2;
 
+		/// <summary>How far a row's content sits in from the left frame. Windows leaves the same
+		/// air at the side as at the top; ours ran the text hard against the border. A checked
+		/// list draws its own box at its own indent and needs none of this.</summary>
+		internal virtual int ItemLeftMargin => 5;
+
 		internal Rectangle GetItemDisplayRectangle (int index, int first_displayble)
 		{
 			Rectangle item_rect;
@@ -1334,6 +1343,8 @@ namespace System.Windows.Forms
 			// this method is what BOTH the painting and the mouse use -- IndexAtClientPoint hit
 			// tests against these same rectangles -- so the rows and the clicks move together.
 			item_rect.Y += ItemTopMargin;
+			item_rect.X += ItemLeftMargin;
+			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin, 0);
 			
 			// Subtract the checkboxes from the width
 			if (this is CheckedListBox)
