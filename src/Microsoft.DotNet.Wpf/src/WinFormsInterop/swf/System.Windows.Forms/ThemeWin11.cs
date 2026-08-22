@@ -770,59 +770,49 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
-		/// <summary>A rounded outline drawn as four edges and four corner arcs, rather than as a
-		/// path. The recorder draws a path by flattening it into unjoined line segments, which at a
-		/// two-pixel radius turns the corners into steps and draws one edge twice; DrawArc is a
-		/// primitive it records directly, so the corners come out as curves.</summary>
-		private static void DrawRoundedOutline (Graphics dc, Rectangle r, int radius, Pen pen)
+		/// <summary>Windows marks today with a one-pixel frame whose corner pixels are softened
+		/// towards the background -- that is the whole of its rounding at a cell this small.
+		/// Drawing an actual curve does not survive the trip: a path is flattened into unjoined
+		/// segments and its corners bulge INWARDS, while an arc or a diagonal antialiases outwards
+		/// and leaves a pale blob beyond each corner. Four blended pixels reproduce it exactly.
+		/// </summary>
+		private void DrawSoftCornerRect (Graphics dc, Rectangle r, Color border, Color surround)
 		{
-			int d = radius * 2;
-			if (d <= 0 || r.Width <= d || r.Height <= d) {
-				dc.DrawRectangle (pen, r);
+			if (r.Width <= 1 || r.Height <= 1)
 				return;
-			}
-			dc.DrawLine (pen, r.X + radius, r.Y, r.Right - radius, r.Y);
-			dc.DrawLine (pen, r.X + radius, r.Bottom, r.Right - radius, r.Bottom);
-			dc.DrawLine (pen, r.X, r.Y + radius, r.X, r.Bottom - radius);
-			dc.DrawLine (pen, r.Right, r.Y + radius, r.Right, r.Bottom - radius);
-			// The corners are short diagonals, not arcs. An arc antialiases outwards from its
-			// bounding box, so one sitting on the edge left a pale blob just outside each corner;
-			// every point of a diagonal drawn between the edge ends is inside the rectangle by
-			// construction, and at a two-pixel radius it reads as a curve anyway.
-			dc.DrawLine (pen, r.X, r.Y + radius, r.X + radius, r.Y);
-			dc.DrawLine (pen, r.Right - radius, r.Y, r.Right, r.Y + radius);
-			dc.DrawLine (pen, r.Right, r.Bottom - radius, r.Right - radius, r.Bottom);
-			dc.DrawLine (pen, r.X + radius, r.Bottom, r.X, r.Bottom - radius);
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.None;
+			dc.DrawRectangle (ResPool.GetPen (border), r.X, r.Y, r.Width, r.Height);
+			Color soft = Color.FromArgb ((border.R + surround.R) / 2,
+						   (border.G + surround.G) / 2,
+						   (border.B + surround.B) / 2);
+			Brush brush = ResPool.GetSolidBrush (soft);
+			dc.FillRectangle (brush, r.X, r.Y, 1, 1);
+			dc.FillRectangle (brush, r.Right, r.Y, 1, 1);
+			dc.FillRectangle (brush, r.X, r.Bottom, 1, 1);
+			dc.FillRectangle (brush, r.Right, r.Bottom, 1, 1);
+			dc.SmoothingMode = old;
 		}
 
 		// Windows fills a selected day with a rounded rectangle. The classic theme fills a pie,
 		// which is a circle for a lone day -- so the cell came out as an ellipse.
+		// Windows fills a selected day with a plain rectangle. The classic theme fills a pie --
+		// a circle for a lone day -- so once FillPie actually drew something the cell came out as
+		// an ellipse. A rounded path is no good either: flattened, its corners bulge inwards.
 		protected override void MonthCalendarFillSelection (Graphics dc, Rectangle rect, Brush brush,
 					   float startAngle, float sweepAngle)
 		{
-			if (rect.Width <= 0 || rect.Height <= 0)
-				return;
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			using (GraphicsPath path = RoundedRect (rect, 2))
-				dc.FillPath (brush, path);
-			dc.SmoothingMode = old;
+			if (rect.Width > 0 && rect.Height > 0)
+				dc.FillRectangle (brush, rect);
 		}
 
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
-			// Windows outlines today's cell instead of ringing the number in red, and that outline
-			// has rounded corners.
 			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
-						 Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
-			if (box.Width <= 0 || box.Height <= 0)
-				return;
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			DrawRoundedOutline (dc, box, 2, ResPool.GetPen (ButtonBorderHover));
-			dc.SmoothingMode = old;
+						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
+			DrawSoftCornerRect (dc, box, ButtonBorderHover, ColorWindow);
 		}
 	}
 }
