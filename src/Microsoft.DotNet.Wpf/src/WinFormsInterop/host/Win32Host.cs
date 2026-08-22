@@ -18,6 +18,17 @@ using System.Windows.Forms;
 internal sealed unsafe class Win32Host : IWinFormsHost
 {
     private readonly Form _form;
+
+    // The form's driver window, taken once. Control.Handle CREATES the handle if it has gone, and
+    // on a disposed control that throws ObjectDisposedException -- which is exactly the state a
+    // dialog is in between its OK button disposing it and Windows delivering the paint that
+    // follows. Asking the live control every frame therefore took the process down every time a
+    // dialog was closed with a button rather than the window close box.
+    private IntPtr _formHandle;
+
+    /// <summary>Whether there is still a form behind this window. A disposed one has no pixels to
+    /// present and must not be touched.</summary>
+    private bool FormGone => _form == null || _form.IsDisposed;
     private readonly object _driver;
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
     private readonly MethodInfo _isPopup;
@@ -50,6 +61,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
+        _formHandle = form.Handle;
         PresentationHost.Attach(this, form);
     }
 
@@ -489,10 +501,11 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     // whichever window the user is working in live.
     private long[] PresentWindows()
     {
+        if (FormGone) return System.Array.Empty<long>();
         if (_getSubtree == null)
-            return (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+            return (long[])_getPresent.Invoke(_driver, new object[] { _formHandle });
 
-        long[] mine = (long[])_getSubtree.Invoke(_driver, new object[] { _form.Handle });
+        long[] mine = (long[])_getSubtree.Invoke(_driver, new object[] { _formHandle });
         if (!PresentationHost.IsTopHost(this)) return mine;
 
         // Everything another host owns, or that is a compositing container belonging to a WPF
@@ -508,7 +521,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         foreach (IntPtr composited in PresentationHost.CompositedWindows())
             AddSubtree(claimed, (long[])_getSubtree.Invoke(_driver, new object[] { composited }));
 
-        long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _formHandle });
         var outl = new System.Collections.Generic.List<long>(mine.Length + 12);
         outl.AddRange(mine);
         for (int i = 0; i + 2 < all.Length; i += 3)
@@ -548,7 +561,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     {
         if (_tracedPresent) return;
         _tracedPresent = true;
-        Console.Error.WriteLine($"present[{_form.Text}] form=0x{_form.Handle.ToInt64():x} " +
+        Console.Error.WriteLine($"present[{_form.Text}] form=0x{_formHandle.ToInt64():x} " +
                                 $"{_form.Width}x{_form.Height}: own={mine.Length / 3} total={all.Count / 3}");
         for (int i = 0; i + 2 < all.Count; i += 3)
         {

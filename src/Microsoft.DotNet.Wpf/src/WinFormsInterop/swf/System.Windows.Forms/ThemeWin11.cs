@@ -566,5 +566,43 @@ namespace System.Windows.Forms
 			Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
 			dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
 		}
+
+		// ---- data grid -------------------------------------------------------------
+		//
+		// Mono draws a column header as a raised classic bevel. Windows has drawn them flat, white
+		// and separated by hairlines for a long time, and that is the HEADER class -- the same one
+		// a ListView's column headers come from, so both get it at once.
+
+		public override bool DataGridViewColumnHeaderCellDrawBackground (DataGridViewColumnHeaderCell cell,
+										Graphics g, Rectangle bounds)
+		{
+			return DrawHeaderCell (cell, g, bounds);
+		}
+
+		public override bool DataGridViewColumnHeaderCellDrawBorder (DataGridViewColumnHeaderCell cell,
+									     Graphics g, Rectangle bounds)
+		{
+			// The part carries its own separator, so the classic three-line border would double it.
+			return UxTheme.Available && cell.DataGridView != null;
+		}
+
+		public override bool DataGridViewRowHeaderCellDrawBackground (DataGridViewRowHeaderCell cell,
+									      Graphics g, Rectangle bounds)
+		{
+			return DrawHeaderCell (cell, g, bounds);
+		}
+
+		public override bool DataGridViewRowHeaderCellDrawBorder (DataGridViewRowHeaderCell cell,
+									  Graphics g, Rectangle bounds)
+		{
+			return UxTheme.Available && cell.DataGridView != null;
+		}
+
+		private static bool DrawHeaderCell (DataGridViewHeaderCell cell, Graphics g, Rectangle bounds)
+		{
+			if (cell == null || cell.DataGridView == null)
+				return false;
+			return UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, UxTheme.HIS_NORMAL, bounds);
+		}
 	}
 }

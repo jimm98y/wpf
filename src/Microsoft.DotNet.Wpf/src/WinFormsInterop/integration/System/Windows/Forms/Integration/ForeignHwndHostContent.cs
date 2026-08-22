@@ -163,6 +163,7 @@ namespace System.Windows.Forms.Integration
             _host.MouseLeftButtonDown += OnHostMouseDown;
             _host.MouseLeftButtonUp += OnHostMouseUp;
             _host.MouseWheel += OnHostMouseWheel;
+            _host.MouseLeave += OnHostMouseLeave;
             _host.MouseRightButtonDown += OnHostRightDown;
             _host.MouseRightButtonUp += OnHostRightUp;
             _host.TextInput += OnHostTextInput;
@@ -240,6 +241,7 @@ namespace System.Windows.Forms.Integration
             _host.MouseLeftButtonDown -= OnHostMouseDown;
             _host.MouseLeftButtonUp -= OnHostMouseUp;
             _host.MouseWheel -= OnHostMouseWheel;
+            _host.MouseLeave -= OnHostMouseLeave;
             _host.MouseRightButtonDown -= OnHostRightDown;
             _host.MouseRightButtonUp -= OnHostRightUp;
             _host.TextInput -= OnHostTextInput;
@@ -542,6 +544,13 @@ namespace System.Windows.Forms.Integration
             var (x, y) = ToDriver(e.GetPosition(_host));
             _driver.InjectRightUpAt(TargetAt(x, y), x, y);
             e.Handled = true;
+        }
+
+        // Leaving the hosted element is a leave for whatever was hot inside it; without this a
+        // control at the edge kept its hover look after the pointer had gone somewhere else entirely.
+        private void OnHostMouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            _driver?.InjectMouseLeaveAll();
         }
 
         private void OnHostMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)

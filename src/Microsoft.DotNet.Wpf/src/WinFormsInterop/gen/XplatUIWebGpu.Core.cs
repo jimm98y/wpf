@@ -343,10 +343,35 @@ namespace System.Windows.Forms
 			DispatchMouse(target, screenX, screenY, message, wParam);
 		}
 
+		// The window the pointer is currently over, so it can be told when the pointer leaves.
+		private IntPtr _hotWindow;
+
+		/// <summary>Say when the pointer arrives at a window and when it leaves it. Win32 does this
+		/// with WM_MOUSE_ENTER and WM_MOUSELEAVE, and Mono's Control turns them into Entered -- which
+		/// is what a theme reads to draw the hover look. This driver only ever sent WM_MOUSEMOVE, so
+		/// a control that was entered stayed entered for the life of the process: once the pointer
+		/// had crossed a button, it kept the hot face for ever. Nothing noticed until Windows itself
+		/// started drawing the buttons, because the hover state had never been painted before.</summary>
+		private void TrackHover(IntPtr target)
+		{
+			if (target == _hotWindow) return;
+			IntPtr previous = _hotWindow;
+			_hotWindow = target;
+			if (previous != IntPtr.Zero && Hwnd.ObjectFromHandle(previous) != null)
+				SendMessage(previous, Msg.WM_MOUSELEAVE, IntPtr.Zero, IntPtr.Zero);
+			if (target != IntPtr.Zero)
+				SendMessage(target, Msg.WM_MOUSE_ENTER, IntPtr.Zero, IntPtr.Zero);
+		}
+
+		/// <summary>The pointer has left the hosted surface altogether -- the WPF element hosting us
+		/// says so. Whatever was hot no longer is.</summary>
+		internal void InjectMouseLeaveAll() => TrackHover(IntPtr.Zero);
+
 		/// <summary>Deliver one mouse message to <paramref name="target"/>, in its client coords.</summary>
 		private void DispatchMouse(IntPtr target, int screenX, int screenY, Msg message, int wParam)
 		{
 			if (target == IntPtr.Zero) return;
+			if (message == Msg.WM_MOUSEMOVE) TrackHover(target);
 			Hwnd h = Hwnd.ObjectFromHandle(target);
 			if (h == null) return;
 			Point p = ScreenLocation(h);
@@ -448,6 +473,7 @@ namespace System.Windows.Forms
 
 			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.Remove(handle); }
 			lock (window_queue) window_queue.Remove(handle);
+			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
 			captions.Remove(handle);
 			_scenes.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite

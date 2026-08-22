@@ -4733,7 +4733,16 @@ namespace System.Windows.Forms {
 		{
 			base.OnMouseWheel(e);
 
-			int delta = SystemInformation.MouseWheelScrollLines * verticalScrollBar.SmallChange;
+			// A notch scrolls MouseWheelScrollLines ROWS, so the step has to be a row height.
+			// SmallChange is only assigned while a vertical scroll bar is visible, and is 1 until
+			// then -- so the wheel moved the grid three PIXELS a notch and scrolling it took
+			// several turns of the wheel. Measure the row instead, and only fall back on
+			// SmallChange when there are no rows to measure.
+			int rowHeight = Rows.Count > 0
+				? Rows[Math.Min (Rows.Count - 1, Math.Max (0, first_row_index))].Height + 1
+				: 0;
+			if (rowHeight <= 1) rowHeight = verticalScrollBar.SmallChange;
+			int delta = SystemInformation.MouseWheelScrollLines * rowHeight;
 			if (e.Delta < 0)
 				verticalScrollBar.SafeValueSet (verticalScrollBar.Value + delta);
 			else

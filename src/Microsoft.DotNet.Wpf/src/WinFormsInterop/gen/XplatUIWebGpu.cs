@@ -19,7 +19,10 @@ namespace System.Windows.Forms {
 		internal override Size SmallIconSize { get { return default(Size); } }
 		internal override int MouseButtonCount { get { return default(int); } }
 		internal override bool MouseButtonsSwapped { get { return default(bool); } }
-		internal override bool MouseWheelPresent { get { return default(bool); } }
+		// Generated as default(bool) -- false -- which is a claim that the machine has no wheel.
+		// Every head this driver serves has one, and SystemInformation.MouseWheelPresent is what
+		// scrolling code consults before it bothers to listen.
+		internal override bool MouseWheelPresent { get { return true; } }
 		// VirtualScreen / WorkingArea / AllScreens implemented in XplatUIWebGpu.Core.cs
 		internal override bool ThemesEnabled { get { return default(bool); } }
 		internal override event EventHandler Idle;
