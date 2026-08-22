@@ -1674,9 +1674,14 @@ namespace System.Drawing
 					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
 						layoutRectangle.Width, layoutRectangle.Height, false);
 				string[] lines = WrapLines (text, emPx, sims, family, layoutRectangle.Width, format);
+				// A line of text is taller than its em square: the font's line height adds the
+				// descender and its leading. Stepping by the em size instead packed every
+				// multi-line run tighter than the same text drawn by Windows.
+				float lineHeight = font.GetHeight ();
+				if (lineHeight <= 0) lineHeight = emPx;
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
-					float totalH = emPx * lines.Length;
+					float totalH = lineHeight * lines.Length;
 					if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - totalH) / 2f;
 					else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - totalH;
 				}
@@ -1702,14 +1707,14 @@ namespace System.Drawing
 							if (col > 0)
 								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, sims, family, out ux, out unused2);
 							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, sims, family, out uw, out unused2);
-							float uy = ty + i * emPx + emPx;
+							float uy = ty + i * lineHeight + emPx;
 							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw, uy, argb);
 						}
 					}
 
 					if (s_traceText)
 						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
-					GpuRecorder.DrawText (line, tx, ty + i * emPx, emPx, argb, sims, family);
+					GpuRecorder.DrawText (line, tx, ty + i * lineHeight, emPx, argb, sims, family);
 				}
 
 				if (clipToLayout) GpuRecorder.ClearClip ();
@@ -2534,6 +2539,7 @@ namespace System.Drawing
 
 				float w = 0f, h;
 				WebGpuBackend.GpuRaster.MeasureText (length > 0 ? text.Substring (first, length) : "I", em, out w, out h);
+				h = font.GetHeight () > 0 ? font.GetHeight () : h;
 				if (length == 0)
 					w = 0f;
 
@@ -2562,6 +2568,16 @@ namespace System.Drawing
 				// Measured in the family it will be DRAWN in: a run measured with one face and drawn
 				// with another does not fit where the caller was told it would.
 				string measureFamily = font.FontFamily?.Name;
+				// The height a caller gets back has to be the height the text will occupy, which is
+				// the font's line height and not its em size. ListBox asks exactly this question to
+				// size its rows, so answering 12 where Windows answers 16 made every list, and every
+				// other control that measures a line, a quarter tighter than the real thing.
+				float lineHeight = font.GetHeight ();
+				if (lineHeight <= 0) lineHeight = em;
+				// GDI+ reports a line box in whole pixels, and callers truncate what they get back:
+				// ListBox does (int) sz.Height to size its rows, so handing it 15.96 produced 15 where
+				// Windows produces 16, and every row was a pixel short.
+				lineHeight = (float) Math.Ceiling (lineHeight);
 				if (layoutRect.Width > 0) {
 						string[] wrapped = WrapLines (text, em, simulations, measureFamily, layoutRect.Width, null);
 						float widest = 0f;
@@ -2569,10 +2585,10 @@ namespace System.Drawing
 							WebGpuBackend.GpuRaster.MeasureText (line, em, simulations, measureFamily, out float lw, out float _);
 							if (lw > widest) widest = lw;
 						}
-						return new SizeF (widest, em * Math.Max (1, wrapped.Length));
+						return new SizeF (widest, lineHeight * Math.Max (1, wrapped.Length));
 				}
 				WebGpuBackend.GpuRaster.MeasureText (text, em, simulations, measureFamily, out float mw, out float mh);
-				return new SizeF (mw, mh);
+				return new SizeF (mw, lineHeight * Math.Max (1, mh / Math.Max (1f, em)));
 			}
 
 			RectangleF boundingBox = new RectangleF ();

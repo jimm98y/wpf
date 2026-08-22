@@ -361,6 +361,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Faces resolved by family and style, e.g. "Consolas|1". A run names the family it wants;
         // without this every one of them was drawn in the single face loaded at construction.
         private readonly Dictionary<string, Text.IFont> _familyCache = new();
+
+        // WGPU_TRACE_TEXT=1 reports every glyph run the renderer is handed and what became of it.
+        // A run that Graphics recorded but that never reaches the screen is either culled here or
+        // never arrives, and only the renderer can tell those two apart.
+        private static readonly bool s_traceText =
+            Environment.GetEnvironmentVariable("WGPU_TRACE_TEXT") == "1";
         private readonly Text.ITextShaper _shaper;
         private readonly Text.GlyphAtlas _glyphAtlas = new();
         private readonly List<Text.ShapedGlyph> _shapeScratch = new();
@@ -3785,6 +3791,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
+            if (s_traceText)
+                Console.Error.WriteLine($"[emit] '{run.Text}' family={run.FontFamily ?? "-"} sims={run.Simulations} "
+                    + $"em={run.EmSize} origin={run.Origin} colorA={run.Color.A} clipEmpty={clip.IsEmpty} "
+                    + $"opacity={opacity} world=({world.M31},{world.M32}) target={width}x{height}");
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
 
             // The face this run asked for. Style is per-run, so it cannot be resolved once at
