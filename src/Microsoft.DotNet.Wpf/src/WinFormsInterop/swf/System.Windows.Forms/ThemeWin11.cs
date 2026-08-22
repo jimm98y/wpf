@@ -962,5 +962,60 @@ namespace System.Windows.Forms
 			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
 				CPDrawFocusRectangle (e.Graphics, text, fore, back);
 		}
+
+		// ---- date picker -------------------------------------------------------------
+
+		/// <summary>Windows puts a small calendar in a date picker's drop-down, not a chevron -- the
+		/// glyph says what the drop-down contains. The classic theme draws a raised button with an
+		/// arrow on it, which says only that something drops down.</summary>
+		protected override void DateTimePickerDrawDropDownButton (DateTimePicker dateTimePicker, Graphics g,
+									  Rectangle clippingArea)
+		{
+			Rectangle r = dateTimePicker.drop_down_arrow_rect;
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+
+			// The button belongs to the field, so it takes the field's own background -- no chrome
+			// of its own until it is pressed.
+			g.FillRectangle (ResPool.GetSolidBrush (dateTimePicker.Enabled ? ColorWindow : ColorControl), r);
+			if (dateTimePicker.is_drop_down_visible)
+				g.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), r);
+
+			DrawCalendarGlyph (g, r, dateTimePicker.Enabled ? ColorControlText : ColorGrayText);
+		}
+
+		private void DrawCalendarGlyph (Graphics g, Rectangle area, Color ink)
+		{
+			int size = Math.Min (12, Math.Min (area.Width - 2, area.Height - 2));
+			if (size < 7)
+				return;
+			// A page with a bar across the top and two rings above it, which is the whole of what a
+			// calendar icon is at this size.
+			var page = new Rectangle (area.X + (area.Width - size) / 2,
+						  area.Y + (area.Height - size) / 2 + 1,
+						  size - 1, size - 3);
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.None;
+
+			Pen pen = ResPool.GetPen (ink);
+			g.DrawRectangle (pen, page.X, page.Y, page.Width, page.Height);
+			g.FillRectangle (ResPool.GetSolidBrush (ink), page.X + 1, page.Y + 1, Math.Max (1, page.Width - 1), 2);
+
+			// the two rings, standing above the page
+			g.DrawLine (pen, page.X + 2, page.Y - 2, page.X + 2, page.Y);
+			g.DrawLine (pen, page.Right - 2, page.Y - 2, page.Right - 2, page.Y);
+
+			// a couple of day marks, so it reads as a calendar rather than a note
+			int row = page.Y + 5;
+			if (row + 1 < page.Bottom) {
+				Brush dot = ResPool.GetSolidBrush (ink);
+				for (int x = page.X + 2; x <= page.Right - 2; x += 3)
+					g.FillRectangle (dot, x, row, 1, 1);
+				if (row + 3 < page.Bottom)
+					for (int x = page.X + 2; x <= page.Right - 2; x += 3)
+						g.FillRectangle (dot, x, row + 3, 1, 1);
+			}
+			g.SmoothingMode = old;
+		}
 	}
 }

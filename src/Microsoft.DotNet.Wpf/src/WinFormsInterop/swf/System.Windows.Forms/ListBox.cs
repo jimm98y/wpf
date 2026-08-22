@@ -1313,6 +1313,9 @@ namespace System.Windows.Forms
 		}
 
 		// Converts a GetItemRectangle to a one that we can display
+		/// <summary>The gap between the list's frame and its first row.</summary>
+		internal const int ItemTopMargin = 2;
+
 		internal Rectangle GetItemDisplayRectangle (int index, int first_displayble)
 		{
 			Rectangle item_rect;
@@ -1320,6 +1323,11 @@ namespace System.Windows.Forms
 			item_rect = GetItemRectangle (index);
 			item_rect.X -= first_item_rect.X;
 			item_rect.Y -= first_item_rect.Y;
+			// Windows leaves a little air between a list's border and its first row; we ran the
+			// first item hard against the frame. Applied here rather than to the item area because
+			// this method is what BOTH the painting and the mouse use -- IndexAtClientPoint hit
+			// tests against these same rectangles -- so the rows and the clicks move together.
+			item_rect.Y += ItemTopMargin;
 			
 			// Subtract the checkboxes from the width
 			if (this is CheckedListBox)
