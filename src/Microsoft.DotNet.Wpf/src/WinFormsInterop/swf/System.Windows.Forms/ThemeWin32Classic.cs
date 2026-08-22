@@ -3639,10 +3639,18 @@ namespace System.Windows.Forms
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
 				if (mc.ShowToday) {
 					int today_offset = 5;
+					string today_text = "Today: " + DateTime.Now.ToShortDateString();
+					if (MonthCalendarCentersToday (mc)) {
+						// Centre the marker and the date as one group, which is where Windows puts them.
+						int group = (int) Math.Ceiling (dc.MeasureString (today_text, MonthCalendarTodayFont (mc)).Width);
+						if (mc.ShowTodayCircle) group += date_cell_size.Width + 5;
+						today_offset = Math.Max (5, (client_rectangle.Width - group) / 2);
+					}
+					int today_left = today_offset;
 					if (mc.ShowTodayCircle) 
 					{
 						Rectangle today_circle_rect = new Rectangle (
-							client_rectangle.X + 5,
+							client_rectangle.X + today_left,
 							Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2, 0),
 							date_cell_size.Width,
 							date_cell_size.Height);
@@ -3658,7 +3666,7 @@ namespace System.Windows.Forms
 							Math.Max(client_rectangle.Bottom - date_cell_size.Height, 0),
 							Math.Max(client_rectangle.Width - today_offset, 0),
 							date_cell_size.Height);
-					dc.DrawString ("Today: " + DateTime.Now.ToShortDateString(), MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
+					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
 					text_format.Dispose ();
 				}				
 			}
@@ -3745,7 +3753,7 @@ namespace System.Windows.Forms
 				dc.FillRectangle (ResPool.GetSolidBrush (MonthCalendarTitleBackColor (mc)), title_rect);
 				// draw the title				
 				string title_text = this_month.ToString ("MMMM yyyy");
-				dc.DrawString (title_text, mc.bold_font, ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
+				dc.DrawString (title_text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 
 				if (mc.ShowYearUpDown) {
 					Rectangle year_rect;
@@ -4077,6 +4085,13 @@ namespace System.Windows.Forms
 				dc.DrawRectangle (pen, interior);
 			}
 		}
+
+		/// <summary>The font the month and year are set in. The classic theme emboldens them.</summary>
+		protected virtual Font MonthCalendarTitleFont (MonthCalendar mc) => mc.bold_font;
+
+		/// <summary>Whether the "Today" marker and date are centred under the calendar. Windows
+		/// centres them; the classic theme puts them against the left edge.</summary>
+		protected virtual bool MonthCalendarCentersToday (MonthCalendar mc) => false;
 
 		/// <summary>The font the "Today: ..." line under the calendar is set in. The classic
 		/// theme emboldens it; Windows does not.</summary>

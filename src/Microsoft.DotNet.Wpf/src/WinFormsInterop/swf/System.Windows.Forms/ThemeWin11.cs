@@ -161,9 +161,9 @@ namespace System.Windows.Forms
 				return path;
 			}
 			path.AddArc (r.X, r.Y, d, d, 180, 90);
-			path.AddArc (r.Right - d - 1, r.Y, d, d, 270, 90);
-			path.AddArc (r.Right - d - 1, r.Bottom - d - 1, d, d, 0, 90);
-			path.AddArc (r.X, r.Bottom - d - 1, d, d, 90, 90);
+			path.AddArc (r.Right - d, r.Y, d, d, 270, 90);
+			path.AddArc (r.Right - d, r.Bottom - d, d, d, 0, 90);
+			path.AddArc (r.X, r.Bottom - d, d, d, 90, 90);
 			path.CloseFigure ();
 			return path;
 		}
@@ -707,10 +707,15 @@ namespace System.Windows.Forms
 
 		protected override Font MonthCalendarTodayFont (MonthCalendar mc) => mc.Font;
 
+		protected override Font MonthCalendarTitleFont (MonthCalendar mc) => mc.Font;
+
+		protected override bool MonthCalendarCentersToday (MonthCalendar mc) => true;
+
 		// Windows marks the selected day with a pale accent fill and leaves the number dark; the
 		// classic theme fills it with the caption colour and reverses the text out of it.
-		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc)
-			=> Color.FromArgb (204, 232, 255);
+		// Windows fills the selected day with a plain grey and rings it in the accent colour --
+		// the ring being the today marker drawn over it -- rather than washing the cell blue.
+		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc) => ColorControl;
 
 		protected override Color MonthCalendarSelectionForeColor (MonthCalendar mc) => ColorControlText;
 
@@ -752,17 +757,15 @@ namespace System.Windows.Forms
 
 			int cx = button.X + button.Width / 2;
 			int cy = button.Y + button.Height / 2;
-			int reach = Math.Max (2, Math.Min (4, button.Height / 4));
+			int h = Math.Max (3, Math.Min (5, button.Height / 3));
+			int w = Math.Max (2, h - 1);
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (mc.Enabled ? ColorControlText : ColorGrayText, 1.4f)) {
-				int dx = is_previous ? reach : -reach;
-				dc.DrawLines (pen, new Point [] {
-					new Point (cx + dx / 2, cy - reach),
-					new Point (cx - dx / 2, cy),
-					new Point (cx + dx / 2, cy + reach),
-				});
-			}
+			Color ink = mc.Enabled ? ColorControlText : ColorGrayText;
+			Point [] arrow = is_previous
+				? new Point [] { new Point (cx + w / 2, cy - h), new Point (cx + w / 2, cy + h), new Point (cx - w, cy) }
+				: new Point [] { new Point (cx - w / 2, cy - h), new Point (cx - w / 2, cy + h), new Point (cx + w, cy) };
+			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
 			dc.SmoothingMode = old;
 		}
 
