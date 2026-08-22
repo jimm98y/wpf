@@ -1121,7 +1121,33 @@ namespace System.Windows.Forms
 		internal void InjectKeyDown(int vkey)
 		{
 			IntPtr target = _focusHandle;
+			if (target == IntPtr.Zero)
+			{
+				// Nothing has taken the focus yet: a form that has just been shown has no active
+				// control until something selects one. Offer the key to the form itself so that Tab
+				// can make that first selection -- otherwise the first Tab was dropped, nothing ever
+				// became focused, and so every Tab after it was dropped too.
+				Form active = Form.ActiveForm;
+				if (active != null && active.IsHandleCreated) target = active.Handle;
+			}
 			if (target == IntPtr.Zero) return;
+
+			// A real message loop offers a key to the control's pre-processing before dispatching
+			// it, and that is where WinForms handles the keys that navigate rather than type: Tab
+			// and Shift+Tab move the focus, the arrows move within a group, mnemonics activate. This
+			// driver posted straight to the focused window's WndProc, so none of it ran -- Tab did
+			// nothing at all, and with nothing moving the focus no control ever showed a focus
+			// rectangle either.
+			Control focused = Control.FromHandle(target);
+			if (focused != null)
+			{
+				var pre = Message.Create(target, (int)Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
+				try
+				{
+					if (focused.PreProcessMessage(ref pre)) return;
+				}
+				catch (Exception ex) { T("InjectKeyDown: " + ex.Message); }
+			}
 
 			SendMessage(target, Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
 

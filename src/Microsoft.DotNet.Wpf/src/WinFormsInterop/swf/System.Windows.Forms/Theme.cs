@@ -462,6 +462,10 @@ namespace System.Windows.Forms
 		// the cell is 31 x 15 where the classic formula gives 29 x 16, and the grid sits five
 		// pixels inside the control on every side rather than one. Ask for both rather than
 		// baking either into MonthCalendar.
+		/// <summary>Whether a progress bar's look changes over time, and the control therefore
+		/// has to keep repainting itself.</summary>
+		public virtual bool ProgressBarAnimates => false;
+
 		public virtual Size MonthCalendarCellSize (MonthCalendar mc, Size proposed)
 		{
 			return proposed;

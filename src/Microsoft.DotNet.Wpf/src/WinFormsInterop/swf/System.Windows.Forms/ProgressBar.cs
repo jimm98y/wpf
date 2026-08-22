@@ -448,11 +448,39 @@ namespace System.Windows.Forms
 			Refresh ();
 		}
 
+		// A themed progress bar is not a static image: a highlight travels along the fill and
+		// repeats even when the value never changes. Nothing else would ever invalidate the
+		// control, so it has to ask for the repaints itself.
+		private Timer animation;
+
 		protected override void OnHandleCreated (EventArgs e)
 		{
 			base.OnHandleCreated (e);
 
 			UpdateAreas ();
+			StartAnimation ();
+		}
+
+		private void StartAnimation ()
+		{
+			if (animation != null || !ThemeEngine.Current.ProgressBarAnimates)
+				return;
+			animation = new Timer ();
+			animation.Interval = 33;                       // about thirty frames a second
+			animation.Tick += delegate {
+				if (IsHandleCreated && Visible)
+					Invalidate ();
+			};
+			animation.Start ();
+		}
+
+		private void StopAnimation ()
+		{
+			if (animation == null)
+				return;
+			animation.Stop ();
+			animation.Dispose ();
+			animation = null;
 		}
 
 		protected override void OnBackColorChanged (EventArgs e)
@@ -467,6 +495,7 @@ namespace System.Windows.Forms
 			
 		protected override void OnHandleDestroyed (EventArgs e)
 		{
+			StopAnimation ();
 			base.OnHandleDestroyed (e);
 		}
 			

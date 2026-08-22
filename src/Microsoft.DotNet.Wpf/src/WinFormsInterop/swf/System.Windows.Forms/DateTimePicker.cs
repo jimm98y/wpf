@@ -1131,8 +1131,9 @@ namespace System.Windows.Forms {
 
 		private Point CalculateDropDownLocation (Rectangle parent_control_rect, Size child_size, bool align_left)
 		{
-			// default bottom left
-			Point location = new Point(parent_control_rect.Left + 5, parent_control_rect.Bottom);
+			// Bottom left -- flush with the control's own left edge. The five pixels that used to be
+			// added here showed up as a gap between the picker and the calendar below it.
+			Point location = new Point(parent_control_rect.Left, parent_control_rect.Bottom);
 			// now adjust the alignment
 			if (!align_left) {
 				location.X = parent_control_rect.Right - child_size.Width;				

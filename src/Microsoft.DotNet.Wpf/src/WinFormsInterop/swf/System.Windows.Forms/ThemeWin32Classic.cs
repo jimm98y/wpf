@@ -4011,9 +4011,9 @@ namespace System.Windows.Forms
 		
 
 		// draws one day in the calendar grid
-		/// <summary>The wash behind the day under the pointer, or Empty for a theme that has no
-		/// such state.</summary>
-		protected virtual Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		/// <summary>The colour of the day under the pointer, or Empty for a theme with no such
+		/// state.</summary>
+		protected virtual Color MonthCalendarHoverForeColor (MonthCalendar mc)
 		{
 			return Color.Empty;
 		}
@@ -4043,16 +4043,10 @@ namespace System.Windows.Forms
 
 			const int inflate = -1;
 
-			// The pointer's own day, drawn under everything else so a selected or today cell still
-			// reads as itself.
-			if (date == mc.HoverDate.Date && date != mc.SelectionStart.Date && date != mc.SelectionEnd.Date) {
-				Color hover = MonthCalendarHoverBackColor (mc);
-				if (hover != Color.Empty) {
-					Rectangle hover_rect = Rectangle.Inflate (rectangle, inflate, inflate);
-					if (hover_rect.Width > 0 && hover_rect.Height > 0)
-						dc.FillRectangle (ResPool.GetSolidBrush (hover), hover_rect);
-				}
-			}
+			// The pointer's own day takes the hover colour, unless it is selected: a selected day
+			// keeps the colour that says so.
+			bool hovered = date == mc.HoverDate.Date && date != mc.SelectionStart.Date
+				   && date != mc.SelectionEnd.Date;
 
 			if (date == mc.SelectionStart.Date && date == mc.SelectionEnd.Date) {
 				// see if the date is in the start of selection
@@ -4098,6 +4092,12 @@ namespace System.Windows.Forms
 			Font font = mc.IsBoldedDate (date) ? mc.bold_font : mc.Font;
 
 			// just draw the date now
+			if (hovered) {
+				Color hover = MonthCalendarHoverForeColor (mc);
+				if (hover != Color.Empty)
+					date_color = hover;
+			}
+
 			dc.DrawString (date.Day.ToString(), font, ResPool.GetSolidBrush (date_color), rectangle, mc.centered_format);
 
 			// today circle if needed

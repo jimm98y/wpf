@@ -1930,7 +1930,6 @@ namespace System.Windows.Forms
 				canvas_width = ClientSize.Width;
 				document.OffsetX = TextFrameWidth;
 			}
-			canvas_width = Math.Max (canvas_width - 2 * TextFrameWidth, 0);
 
 			document.ViewPortWidth = canvas_width;
 			document.ViewPortHeight = canvas_height;

@@ -563,6 +563,28 @@ namespace System.Windows.Forms
 		// eyeballing was going to fix: an input had no border at all, the scroll bars were the
 		// hatched 1995 ones, and the tab headers were sunken boxes. Windows draws them.
 
+		// Measured off a stock text box: three sides, the underline at rest, and the frame a list
+		// or grid gets instead.
+		private static readonly Color InputFrameLight = Color.FromArgb (236, 236, 236);
+		private static readonly Color InputUnderline = Color.FromArgb (131, 131, 131);
+		private static readonly Color ListFrame = Color.FromArgb (130, 135, 144);
+
+		/// <summary>Whether this is something you type into, as opposed to a list you pick from.
+		/// Windows frames the two differently.</summary>
+		private static bool IsTextInput (Control control)
+		{
+			for (Type t = control?.GetType (); t != null; t = t.BaseType) {
+				switch (t.Name) {
+					case "TextBoxBase":
+					case "ComboBox":
+					case "UpDownBase":
+					case "DateTimePicker":
+						return true;
+				}
+			}
+			return false;
+		}
+
 		/// <summary>One ring of a carved bevel: lit from the top left.</summary>
 		private void DrawBevel (Graphics dc, Rectangle r, Color topLeft, Color bottomRight)
 		{
@@ -618,8 +640,25 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			// One hairline, not the classic carved bevel -- this theme's whole point. An input picks
-			// up the accent colour when it has the focus, which is what Windows does with it.
+			var frame = new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+
+			// A text input is not a uniform box in Windows 11. Three of its sides are a very light
+			// #ECECEC and the bottom carries a darker line -- #838383 at rest, the accent colour while
+			// it has the focus. That underline is how Windows says where you are typing; ours drew the
+			// bottom colour on all four sides, which made every input heavier than stock's and left the
+			// focus saying nothing at all.
+			if (sunken && IsTextInput (control)) {
+				bool enabled = control == null || control.Enabled;
+				Color sides = enabled ? InputFrameLight : ButtonBorderDisabled;
+				Color under = !enabled ? ButtonBorderDisabled
+					    : control != null && control.Focused ? ButtonBorderHover
+					    : InputUnderline;
+				DrawRoundedOutline (dc, frame, sides);
+				dc.DrawLine (ResPool.GetPen (under), frame.X + 1, frame.Bottom, frame.Right - 1, frame.Bottom);
+				return;
+			}
+
+			// A list, tree or grid keeps a single even frame; only its colour moves with the state.
 			Color edge;
 			if (!sunken)
 				edge = RaisedBorder;
@@ -630,8 +669,8 @@ namespace System.Windows.Forms
 			else if (control != null && control.Entered)
 				edge = GlyphBorder;
 			else
-				edge = InputBorder;
-			DrawRoundedOutline (dc, new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1), edge);
+				edge = ListFrame;
+			DrawRoundedOutline (dc, frame, edge);
 		}
 
 		// The spin buttons came out as the carved 1995 arrows, because the base theme draws them
@@ -793,6 +832,9 @@ namespace System.Windows.Forms
 
 		// ---- progress bar, combo arrow, check box primitive --------------------------
 
+		// So the control keeps repainting while the highlight travels.
+		public override bool ProgressBarAnimates => true;
+
 		public override void DrawProgressBar (Graphics dc, Rectangle clip_rect, ProgressBar ctrl)
 		{
 			DrawModernProgressBar (dc, ctrl);
@@ -857,11 +899,11 @@ namespace System.Windows.Forms
 			}
 		}
 
-		// Windows tints the day under the pointer. The classic theme has no such state, so this
-		// returns Empty there and the calendar draws nothing.
-		protected override Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		// Windows colours the day under the pointer rather than shading behind it: the number
+		// itself goes accent blue and the cell stays white.
+		protected override Color MonthCalendarHoverForeColor (MonthCalendar mc)
 		{
-			return HeaderHotFace;
+			return ButtonBorderHover;
 		}
 
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
@@ -970,6 +1012,17 @@ namespace System.Windows.Forms
 		private static readonly Color ScrollThumb = Color.FromArgb (133, 133, 133);
 		private static readonly Color ScrollArrow = Color.FromArgb (96, 96, 96);
 		private static readonly Color ProgressTrough = Color.FromArgb (230, 230, 230);
+		// Timed off a stock progress bar: the crest travels about 300 pixels a second, so it
+		// crosses the fill in a little over half a second, and the cycle repeats every second and
+		// a half with a pause in between. Its crest is #34AA34 through the middle of the bar and
+		// much lighter on the top and bottom rows, which is what gives it the rounded look.
+		private const int SweepPeriod = 1500;
+		private const double SweepTravel = 0.6;       // of the period spent moving
+		private const double SweepWidth = 0.36;       // half-width, of the fill
+		private static readonly Color SweepCrest = Color.FromArgb (52, 170, 52);
+		private static readonly Color SweepEdge = Color.FromArgb (128, 198, 128);
+		private static readonly Color SweepNear = Color.FromArgb (63, 185, 63);
+
 		// #0F7B0F, read off a stock progress bar. Ours was a brighter, yellower green.
 		private static readonly Color ProgressFill = Color.FromArgb (15, 123, 15);
 		private static readonly Color TabPaneFace = Color.FromArgb (249, 249, 249);
@@ -995,8 +1048,37 @@ namespace System.Windows.Forms
 			// One continuous fill, not the classic row of blocks.
 			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
 			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
-			if (fill.Width > 0 && fill.Height > 0)
-				dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
+			if (fill.Width <= 0 || fill.Height <= 0)
+				return;
+			dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
+
+			// A highlight sweeps along the fill and repeats, which is why a stock progress bar whose
+			// value never changes is still not a static image.
+			double phase = (Environment.TickCount % SweepPeriod) / (double) SweepPeriod;
+			if (phase > SweepTravel)
+				return;                                         // the pause between passes
+
+			int half = Math.Max (1, (int) Math.Round (SweepWidth * fill.Width));
+			double travel = phase / SweepTravel;                // 0 .. 1 across one pass
+			int crest = fill.X - half + (int) Math.Round (travel * (fill.Width + 2 * half));
+
+			for (int x = Math.Max (fill.X, crest - half); x < Math.Min (fill.Right, crest + half); x++) {
+				double d = (x - crest) / (double) half;             // -1 .. 1 across the crest
+				double lift = Math.Max (0.0, 1.0 - d * d);          // and nothing at either end
+				// Over the WHOLE height, frame included. The highlight lifts the top and bottom rules
+				// most of all -- that is what makes the bar look rounded rather than flat -- and
+				// confining it to the fill left those two rows untouched, so the effect went missing.
+				for (int y = bounds.Y; y < bounds.Bottom; y++) {
+					int depth = Math.Min (y - bounds.Y, bounds.Bottom - 1 - y);
+					Color from = depth == 0 ? HairLine : ProgressFill;
+					Color to = depth == 0 ? SweepEdge : depth <= 2 ? SweepNear : SweepCrest;
+					Color c = Color.FromArgb (
+						(int) Math.Round (from.R + (to.R - from.R) * lift),
+						(int) Math.Round (from.G + (to.G - from.G) * lift),
+						(int) Math.Round (from.B + (to.B - from.B) * lift));
+					dc.FillRectangle (ResPool.GetSolidBrush (c), x, y, 1, 1);
+				}
+			}
 		}
 
 		private void DrawModernScrollBar (Graphics dc, ScrollBar bar, Rectangle client,
@@ -1138,20 +1220,27 @@ namespace System.Windows.Forms
 			Color back = selected ? ColorHighlight : e.BackColor;
 			Color fore = selected ? ColorHighlightText : e.ForeColor;
 
-			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back), item);
-
 			int size = Math.Min (13, Math.Max (0, item.Height - 2));
 			var box = new Rectangle (item.X + Indent, item.Y + (item.Height - size) / 2,
 						 Math.Max (size - 1, 0), Math.Max (size - 1, 0));
-			if (box.Width > 0 && box.Height > 0)
-				DrawModernCheck (e.Graphics, box,
-						 (e.State & DrawItemState.Checked) == DrawItemState.Checked, false,
-						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false,
-						 back);
 
 			Rectangle text = item;
 			text.X = box.Right + Gap;
 			text.Width = Math.Max (0, item.Right - text.X);
+
+			// The row's own background everywhere, and the selection only behind the text.
+			// Filling the whole row put the highlight behind the check box as well, where
+			// Windows leaves it standing on the control's background.
+			e.Graphics.FillRectangle (ResPool.GetSolidBrush (e.BackColor), item);
+			if (selected && text.Width > 0)
+				e.Graphics.FillRectangle (ResPool.GetSolidBrush (back), text);
+
+			if (box.Width > 0 && box.Height > 0)
+				DrawModernCheck (e.Graphics, box,
+						 (e.State & DrawItemState.Checked) == DrawItemState.Checked, false,
+						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false,
+						 e.BackColor);
+
 			if (text.Width > 0)
 				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), text, ctrl.StringFormat);
