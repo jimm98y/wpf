@@ -2099,6 +2099,13 @@ namespace System.Drawing
 		{
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
+			// Approximated as a full ellipse, as the other two overloads already were. Without
+			// this the call reached gdiplus with no surface behind it and drew nothing at all:
+			// the month calendar fills the selected day with a pie and then writes the day
+			// number over it in the background colour, so today's date came out invisible.
+			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (rect.X, rect.Y, rect.Width, rect.Height, ArgbOf (brush)); return; }
+			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Ellipse, rect.X, rect.Y, rect.Width, rect.Height, null, ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryGradient (brush, out GradientDesc pg)) { GpuRecorder.FillGradient (GradientShape.Ellipse, rect.X, rect.Y, rect.Width, rect.Height, null, pg); return; }
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
 			CheckDrawStatus (status);
 		}

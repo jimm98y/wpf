@@ -705,6 +705,27 @@ namespace System.Windows.Forms
 
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
 
+		protected override Font MonthCalendarTodayFont (MonthCalendar mc) => mc.Font;
+
+		// Windows marks the selected day with a pale accent fill and leaves the number dark; the
+		// classic theme fills it with the caption colour and reverses the text out of it.
+		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc)
+			=> Color.FromArgb (204, 232, 255);
+
+		protected override Color MonthCalendarSelectionForeColor (MonthCalendar mc) => ColorControlText;
+
+		public override void DrawMonthCalendar (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
+		{
+			base.DrawMonthCalendar (dc, clip_rectangle, mc);
+
+			// A standalone calendar draws its own "border" in the background colour -- which is to
+			// say none at all -- and relies on the control having one. Windows shows a hairline
+			// around the whole thing, so draw it.
+			Rectangle r = mc.ClientRectangle;
+			if (r.Width > 1 && r.Height > 1)
+				dc.DrawRectangle (ResPool.GetPen (RaisedBorder), r.X, r.Y, r.Width - 1, r.Height - 1);
+		}
+
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
 
 		protected override Color MonthCalendarDayNameColor (MonthCalendar mc) => ColorGrayText;
