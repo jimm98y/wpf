@@ -773,48 +773,56 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
-		/// <summary>A one-pixel frame with its corner pixels softened towards what is around it --
-		/// which is the whole of what Windows draws for a "rounded" marker at this size.</summary>
-		/// <remarks>
-		/// Drawn at a half-pixel offset. A one-pixel stroke is centred ON the coordinate, so at an
-		/// integer one it straddles two rows of pixels and the renderer antialiases it across both:
-		/// the frame gained a pale fringe a pixel outside itself, which read as the corners bulging
-		/// outwards. Half a pixel in puts the stroke inside one row exactly.
-		/// </remarks>
-		private void DrawSoftCornerRect (Graphics dc, Rectangle r, Color border, Color surround)
-		{
-			if (r.Width <= 1 || r.Height <= 1)
-				return;
-			dc.DrawRectangle (ResPool.GetPen (border), r.X + 0.5f, r.Y + 0.5f, r.Width, r.Height);
-			Color soft = Color.FromArgb ((border.R + surround.R) / 2,
-						   (border.G + surround.G) / 2,
-						   (border.B + surround.B) / 2);
-			Brush brush = ResPool.GetSolidBrush (soft);
-			dc.FillRectangle (brush, r.X, r.Y, 1, 1);
-			dc.FillRectangle (brush, r.Right, r.Y, 1, 1);
-			dc.FillRectangle (brush, r.X, r.Bottom, 1, 1);
-			dc.FillRectangle (brush, r.Right, r.Bottom, 1, 1);
-		}
 
 		// Windows fills a selected day with a rounded rectangle. The classic theme fills a pie,
 		// which is a circle for a lone day -- so the cell came out as an ellipse.
 		// Windows fills a selected day with a plain rectangle. The classic theme fills a pie --
 		// a circle for a lone day -- so once FillPie actually drew something the cell came out as
 		// an ellipse. A rounded path is no good either: flattened, its corners bulge inwards.
-		protected override void MonthCalendarFillSelection (Graphics dc, Rectangle rect, Brush brush,
+		protected override void MonthCalendarFillSelection (Graphics dc, MonthCalendar mc, Rectangle rect, Brush brush,
 					   float startAngle, float sweepAngle)
 		{
-			if (rect.Width > 0 && rect.Height > 0)
-				dc.FillRectangle (brush, rect);
+			if (rect.Width <= 0 || rect.Height <= 0)
+				return;
+			// Windows' own selected-cell background, which is a translucent wash rather than a
+			// flat fill. The classic theme fills a pie here -- a circle for a lone day -- so once
+			// FillPie actually drew something the cell came out as an ellipse.
+			// Windows greys a selection out when the calendar does not have the focus, which is why
+			// its selected day reads as grey next to our blue: a different state, not a different
+			// colour.
+			int state = mc.Focused ? UxTheme.MCGCB_SELECTED : UxTheme.MCGCB_SELECTEDNOTFOCUSED;
+			if (UxTheme.Draw (dc, "MONTHCAL", UxTheme.MC_GRIDCELLBACKGROUND, state, rect))
+				return;
+			dc.FillRectangle (brush, rect);
 		}
 
+		/// <summary>Windows marks today with a one-pixel frame. Its corners are nominally rounded,
+		/// but at a cell this size the rounding is exactly one pixel: the corner is not painted.
+		/// Trying to draw it as a curve does not survive the trip: a flattened path bulges
+		/// inwards, an arc or a diagonal antialiases outwards, a half-pixel offset blurs the
+		/// whole stroke, and blending the corner pixels by hand reads as four dots.</summary>
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
 			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
 						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
-			DrawSoftCornerRect (dc, box, ColorHotTrack, CalendarSelection);
+			if (box.Width <= 0 || box.Height <= 0)
+				return;
+			// Windows draws this cell itself, and its corners are genuinely antialiased -- the blends
+			// come out of the msstyles artwork and are not derivable from the two colours around them.
+			// Every attempt to reconstruct it here failed in a different way: a flattened path bulged
+			// inwards, an arc or diagonal antialiased outwards, a half-pixel offset blurred the whole
+			// stroke, and hand-blended corner pixels read as four dots. So ask for the real thing; the
+			// part has a transparent middle, so the cell's own fill still shows through it.
+			if (UxTheme.Draw (dc, "MONTHCAL", UxTheme.MC_GRIDCELLBACKGROUND, UxTheme.MCGCB_TODAY, box))
+				return;
+
+			// No uxtheme: a crisp one-pixel frame, corners left square.
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.None;
+			dc.DrawRectangle (ResPool.GetPen (ColorHotTrack), box.X, box.Y, box.Width, box.Height);
+			dc.SmoothingMode = old;
 		}
 	}
 }

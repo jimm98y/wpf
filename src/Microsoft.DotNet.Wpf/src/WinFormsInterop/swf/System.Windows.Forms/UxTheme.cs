@@ -57,6 +57,11 @@ namespace System.Windows.Forms
 		internal const int ABS_UPNORMAL = 1, ABS_DOWNNORMAL = 5, ABS_LEFTNORMAL = 9, ABS_RIGHTNORMAL = 13;
 		internal const int SCRBS_NORMAL = 1, SCRBS_HOT = 2, SCRBS_PRESSED = 3, SCRBS_DISABLED = 4;
 
+		internal const int MC_BACKGROUND = 1, MC_BORDERS = 2, MC_GRIDBACKGROUND = 3;
+		internal const int MC_COLHEADERSPLITTER = 4, MC_GRIDCELLBACKGROUND = 5, MC_GRIDCELL = 6;
+		internal const int MCGCB_SELECTED = 1, MCGCB_HOT = 2, MCGCB_SELECTEDHOT = 3;
+		internal const int MCGCB_SELECTEDNOTFOCUSED = 4, MCGCB_TODAY = 5;
+
 		internal const int PP_BAR = 1, PP_BARVERT = 2, PP_CHUNK = 3, PP_FILL = 5, PP_FILLVERT = 6;
 		internal const int PBFS_NORMAL = 1, PBFS_ERROR = 2, PBFS_PAUSED = 3, PBFS_PARTIAL = 4;
 
