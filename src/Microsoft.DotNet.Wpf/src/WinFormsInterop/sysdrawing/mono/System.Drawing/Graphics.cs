@@ -1715,6 +1715,21 @@ namespace System.Drawing
 					if (s_traceText)
 						Console.Error.WriteLine ($"drawtext '{line}' at ({tx},{ty + i * emPx}) em={emPx} rect={layoutRectangle} align={(format == null ? "-" : format.Alignment.ToString ())}");
 					GpuRecorder.DrawText (line, tx, ty + i * lineHeight, emPx, argb, sims, family);
+
+					// Underline and strike-out are part of the run for GDI+, but this stack draws a run
+					// as glyphs and nothing else -- the style never travelled with it, so a LinkLabel
+					// came out as plain text with no rule under it. Draw the rules ourselves, on the
+					// font's own scale so they hold at any size.
+					if (font.Underline || font.Strikeout) {
+						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float rw, out float _);
+						if (rw > 0f) {
+							float top = ty + i * lineHeight;
+							if (font.Underline)
+								GpuRecorder.DrawLine (tx, top + emPx, tx + rw, top + emPx, argb);
+							if (font.Strikeout)
+								GpuRecorder.DrawLine (tx, top + emPx * 0.55f, tx + rw, top + emPx * 0.55f, argb);
+						}
+					}
 				}
 
 				if (clipToLayout) GpuRecorder.ClearClip ();
