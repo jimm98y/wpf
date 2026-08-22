@@ -1473,7 +1473,7 @@ namespace System.Windows.Forms
 					current_state = ButtonState.Inactive;
 
 				if (is_flat || theme.ComboBoxNormalDropDownButtonHasTransparentBackground (this, current_state))
-					dc.FillRectangle (theme.ResPool.GetSolidBrush (theme.ColorControl), button_area);
+					dc.FillRectangle (theme.ResPool.GetSolidBrush (theme.ComboBoxDropDownButtonBackColor (this)), button_area);
 
 				if (is_flat) {
 					theme.DrawFlatStyleComboButton (dc, button_area, current_state);

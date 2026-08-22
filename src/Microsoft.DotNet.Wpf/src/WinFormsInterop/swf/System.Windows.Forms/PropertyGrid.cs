@@ -1575,8 +1575,11 @@ namespace System.Windows.Forms
 						continue;
 					}
 
+					// An EMPTY category counts as no category, which is what a stock property grid
+					// does. Testing only for null left every such property in a nameless group of
+					// its own, above the real Misc one.
 					string categoryName = item.PropertyDescriptor.Category;
-					if (categoryName == null)
+					if (string.IsNullOrEmpty (categoryName))
 						categoryName = UNCATEGORIZED_CATEGORY_LABEL;
 					GridItem category_item = rootItem.GridItems [categoryName];
 					if (category_item == null || !(category_item is CategoryGridEntry))

@@ -10,6 +10,7 @@
 // managed drawing all the way down, so it works wherever the classic theme does.
 
 using System.Drawing;
+using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms
 {
@@ -134,6 +135,176 @@ namespace System.Windows.Forms
 		/// that chrome around the arrow is not something Windows has drawn on a combo box for a very
 		/// long time -- it now blends into the field and only the glyph shows.
 		/// </summary>
+		// ---- buttons, check boxes and radio buttons -------------------------------------
+		//
+		// The classic theme builds these out of light/dark bevels. Windows draws a flat, slightly
+		// rounded face with a hairline border, and fills a ticked box with the accent colour.
+
+		private static readonly Color ButtonFaceNormal = Color.FromArgb (225, 225, 225);
+		private static readonly Color ButtonBorderNormal = Color.FromArgb (173, 173, 173);
+		private static readonly Color ButtonFaceHover = Color.FromArgb (229, 241, 251);
+		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 120, 215);
+		private static readonly Color ButtonFacePressed = Color.FromArgb (204, 228, 247);
+		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 84, 153);
+		private static readonly Color ButtonFaceDisabled = Color.FromArgb (204, 204, 204);
+		private static readonly Color ButtonBorderDisabled = Color.FromArgb (191, 191, 191);
+		private static readonly Color GlyphBorder = Color.FromArgb (122, 122, 122);
+
+		private const int ButtonCornerRadius = 3;
+
+		private static GraphicsPath RoundedRect (Rectangle r, int radius)
+		{
+			var path = new GraphicsPath ();
+			int d = radius * 2;
+			if (d <= 0 || r.Width <= d || r.Height <= d) {
+				path.AddRectangle (r);
+				return path;
+			}
+			path.AddArc (r.X, r.Y, d, d, 180, 90);
+			path.AddArc (r.Right - d - 1, r.Y, d, d, 270, 90);
+			path.AddArc (r.Right - d - 1, r.Bottom - d - 1, d, d, 0, 90);
+			path.AddArc (r.X, r.Bottom - d - 1, d, d, 90, 90);
+			path.CloseFigure ();
+			return path;
+		}
+
+		protected override void ButtonBase_DrawButton (ButtonBase button, Graphics dc)
+		{
+			// A check box or radio button rendered AS a button, and the flat styles, keep the base
+			// behaviour: those have their own drawing and their own reasons.
+			if (button is CheckBox || button is RadioButton ||
+			    button.FlatStyle == FlatStyle.Flat || button.FlatStyle == FlatStyle.Popup) {
+				base.ButtonBase_DrawButton (button, dc);
+				return;
+			}
+
+			Color face, border;
+			if (!button.Enabled) {
+				face = ButtonFaceDisabled; border = ButtonBorderDisabled;
+			} else if (button.Pressed) {
+				face = ButtonFacePressed; border = ButtonBorderPressed;
+			} else if (button.Entered) {
+				face = ButtonFaceHover; border = ButtonBorderHover;
+			} else {
+				face = ButtonFaceNormal;
+				// The default button, and a focused one, are outlined in the accent colour.
+				border = button.IsDefault || button.Focused ? ButtonBorderHover : ButtonBorderNormal;
+			}
+
+			Rectangle r = button.ClientRectangle;
+			r.Width -= 1;
+			r.Height -= 1;
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			using (GraphicsPath path = RoundedRect (r, ButtonCornerRadius)) {
+				dc.FillPath (ResPool.GetSolidBrush (face), path);
+				dc.DrawPath (ResPool.GetPen (border), path);
+			}
+			dc.SmoothingMode = old;
+		}
+
+		public override void DrawCheckBoxGlyph (Graphics g, CheckBox cb, Rectangle glyphArea)
+		{
+			if (cb.Appearance == Appearance.Button || cb.FlatStyle == FlatStyle.Flat) {
+				base.DrawCheckBoxGlyph (g, cb, glyphArea);
+				return;
+			}
+
+			// Windows draws a 13x13 box; centre it in whatever space the layout gave us.
+			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
+			var box = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
+						 glyphArea.Y + (glyphArea.Height - size) / 2,
+						 size - 1, size - 1);
+
+			bool ticked = cb.CheckState != CheckState.Unchecked;
+			Color fill, border;
+			if (!cb.Enabled) {
+				fill = ticked ? ButtonFaceDisabled : ColorWindow; border = ButtonBorderDisabled;
+			} else if (ticked) {
+				fill = border = cb.Entered ? ButtonBorderPressed : ButtonBorderHover;   // accent
+			} else {
+				fill = ColorWindow; border = cb.Entered ? ButtonBorderHover : GlyphBorder;
+			}
+
+			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
+			g.DrawRectangle (ResPool.GetPen (border), box);
+
+			if (cb.CheckState == CheckState.Indeterminate) {
+				var inner = Rectangle.Inflate (box, -3, -3);
+				g.FillRectangle (ResPool.GetSolidBrush (cb.Enabled ? ColorWindow : ColorControlDark), inner);
+				return;
+			}
+
+			if (!ticked)
+				return;
+
+			// A tick, drawn as two strokes on the box's own scale so it stays centred at any size.
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			using (var pen = new Pen (cb.Enabled ? ColorWindow : ColorControlDark, 1.6f)) {
+				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
+				g.DrawLines (pen, new PointF [] {
+					new PointF (x + w * 0.22f, y + h * 0.52f),
+					new PointF (x + w * 0.42f, y + h * 0.72f),
+					new PointF (x + w * 0.78f, y + h * 0.28f),
+				});
+			}
+			g.SmoothingMode = old;
+		}
+
+		public override void DrawRadioButtonGlyph (Graphics g, RadioButton rb, Rectangle glyphArea)
+		{
+			if (rb.Appearance == Appearance.Button || rb.FlatStyle == FlatStyle.Flat) {
+				base.DrawRadioButtonGlyph (g, rb, glyphArea);
+				return;
+			}
+
+			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
+			var circle = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
+						    glyphArea.Y + (glyphArea.Height - size) / 2,
+						    size - 1, size - 1);
+
+			Color border = !rb.Enabled ? ButtonBorderDisabled
+				     : rb.Checked ? ButtonBorderHover
+				     : rb.Entered ? ButtonBorderHover : GlyphBorder;
+
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), circle);
+			g.DrawEllipse (ResPool.GetPen (border), circle);
+
+			if (rb.Checked) {
+				// The dot is the accent colour, inset by a third of the circle.
+				var dot = Rectangle.Inflate (circle, -(circle.Width / 3), -(circle.Height / 3));
+				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? border : ButtonBorderDisabled), dot);
+			}
+			g.SmoothingMode = old;
+		}
+
+		/// <summary>The drop-down button belongs to the field, not to a button of its own: fill it
+		/// with the combo's background so the whole control reads as one box with a glyph in it.
+		/// </summary>
+		public override Color ComboBoxDropDownButtonBackColor (ComboBox comboBox)
+		{
+			return comboBox.Enabled ? comboBox.BackColor : ColorControl;
+		}
+
+		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much
+		/// older shell.</summary>
+		public override void DrawPropertyGridExpander (Graphics dc, Rectangle bounds, bool expanded, bool category, Color foreColor)
+		{
+			// Same 8x8 cell the boxed glyph occupied, so nothing around it has to move.
+			int cx = bounds.X + bounds.Width / 2;
+			int cy = bounds.Y + bounds.Height / 2;
+			Point [] chevron = expanded
+				? new Point [] { new Point (cx - 3, cy - 1), new Point (cx + 3, cy - 1), new Point (cx, cy + 3) }
+				: new Point [] { new Point (cx - 1, cy - 3), new Point (cx + 3, cy),     new Point (cx - 1, cy + 3) };
+			dc.FillPolygon (ResPool.GetSolidBrush (foreColor), chevron);
+		}
+
 		public override void CPDrawComboButton (Graphics graphics, Rectangle rectangle, ButtonState state)
 		{
 			if ((state & ButtonState.Inactive) != 0) {

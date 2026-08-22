@@ -701,13 +701,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		private Rectangle DrawPlusMinus (Graphics g, int x, int y, bool expanded, bool category) {
 			Rectangle bounds = new Rectangle (x, y, 8, 8);
-			if (!category) g.FillRectangle (Brushes.White, bounds);
-			Pen pen = ThemeEngine.Current.ResPool.GetPen (property_grid.ViewForeColor);
-			g.DrawRectangle (pen, bounds);
-			g.DrawLine (pen, x+2, y+4, x + 6, y+4);
-			if (!expanded)
-				g.DrawLine (pen, x+4, y+2, x+4, y+6);
-
+			ThemeEngine.Current.DrawPropertyGridExpander (g, bounds, expanded, category, property_grid.ViewForeColor);
 			return bounds;
 		}
 

@@ -522,7 +522,35 @@ namespace System.Drawing
             colorTable[(int)KnownColor.Window] = unchecked((int)0xFFFFFFFF);
             colorTable[(int)KnownColor.WindowFrame] = unchecked((int)0xFF646464);
             colorTable[(int)KnownColor.WindowText] = unchecked((int)0xFF000000);
+
+            // ...and then take whatever the machine actually says. The block above is only a
+            // fallback: a user who has picked a different accent colour, or is running a dark
+            // theme, should see THEIR colours, which is what a stock build does. KnownColors
+            // already asks the OS through GetSysColor when running on Windows, so read the
+            // answers rather than p/invoking a second time.
+            AdoptSystemColors(colorTable);
 #endif
+        }
+
+        /// <summary>Copy the OS-reported system colours over the hard-coded defaults.</summary>
+        private static void AdoptSystemColors(int[] colorTable)
+        {
+            // Everything from ActiveBorder..WindowText is a system colour; the named web colours
+            // that follow are fixed and must not be touched.
+            for (KnownColor c = KnownColor.ActiveBorder; c <= KnownColor.WindowText; c++)
+            {
+                uint argb = KnownColors.ArgbValues[(int)c];
+                if ((argb >> 24) != 0)                       // 0 alpha = never filled in
+                    colorTable[(int)c] = unchecked((int)argb);
+            }
+
+            // The later additions (ButtonFace..MenuHighlight) live past the web colours.
+            for (KnownColor c = KnownColor.ButtonFace; c <= KnownColor.MenuHighlight; c++)
+            {
+                uint argb = KnownColors.ArgbValues[(int)c];
+                if ((argb >> 24) != 0)
+                    colorTable[(int)c] = unchecked((int)argb);
+            }
         }
     }
 }

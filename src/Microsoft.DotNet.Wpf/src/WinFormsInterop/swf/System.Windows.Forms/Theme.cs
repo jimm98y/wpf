@@ -299,6 +299,26 @@ namespace System.Windows.Forms
 			set { SetSystemColors (KnownColor.HighlightText, value); }
 		}
 
+		/// <summary>What fills a combo box's drop-down button before the glyph goes on. Classic
+		/// paints it as a raised control-coloured button; a modern one blends it into the field.</summary>
+		public virtual Color ComboBoxDropDownButtonBackColor (ComboBox comboBox)
+		{
+			return ColorControl;
+		}
+
+		/// <summary>Draw a property grid's expander. Classic uses a boxed +/-, Windows a chevron.</summary>
+		public virtual void DrawPropertyGridExpander (Graphics dc, Rectangle bounds, bool expanded, bool category, Color foreColor)
+		{
+			if (!category)
+				dc.FillRectangle (Brushes.White, bounds);
+
+			Pen pen = ResPool.GetPen (foreColor);
+			dc.DrawRectangle (pen, bounds);
+			dc.DrawLine (pen, bounds.X + 2, bounds.Y + 4, bounds.X + 6, bounds.Y + 4);
+			if (!expanded)
+				dc.DrawLine (pen, bounds.X + 4, bounds.Y + 2, bounds.X + 4, bounds.Y + 6);
+		}
+
 		/// <summary>The renderer a tool bar of the given appearance should draw itself with.
 		/// Controls that build their own tool bar -- the property grid does -- ask here rather than
 		/// hard-coding one, so the answer follows the theme.</summary>
