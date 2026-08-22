@@ -705,6 +705,9 @@ namespace System.Windows.Forms
 
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
 
+		// The grey Windows fills a selected day with, measured off its own calendar.
+		private static readonly Color CalendarSelection = Color.FromArgb (217, 217, 217);
+
 		protected override Font MonthCalendarTodayFont (MonthCalendar mc) => mc.Font;
 
 		protected override Font MonthCalendarTitleFont (MonthCalendar mc) => mc.Font;
@@ -716,7 +719,7 @@ namespace System.Windows.Forms
 		// Windows fills the selected day with a plain grey and rings it in the accent colour --
 		// the ring being the today marker drawn over it -- rather than washing the cell blue.
 		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc)
-			=> Color.FromArgb (217, 217, 217);      // the grey Windows fills a selected day with
+			=> CalendarSelection;
 
 		protected override Color MonthCalendarSelectionForeColor (MonthCalendar mc) => ColorControlText;
 
@@ -770,19 +773,19 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
-		/// <summary>Windows marks today with a one-pixel frame whose corner pixels are softened
-		/// towards the background -- that is the whole of its rounding at a cell this small.
-		/// Drawing an actual curve does not survive the trip: a path is flattened into unjoined
-		/// segments and its corners bulge INWARDS, while an arc or a diagonal antialiases outwards
-		/// and leaves a pale blob beyond each corner. Four blended pixels reproduce it exactly.
-		/// </summary>
+		/// <summary>A one-pixel frame with its corner pixels softened towards what is around it --
+		/// which is the whole of what Windows draws for a "rounded" marker at this size.</summary>
+		/// <remarks>
+		/// Drawn at a half-pixel offset. A one-pixel stroke is centred ON the coordinate, so at an
+		/// integer one it straddles two rows of pixels and the renderer antialiases it across both:
+		/// the frame gained a pale fringe a pixel outside itself, which read as the corners bulging
+		/// outwards. Half a pixel in puts the stroke inside one row exactly.
+		/// </remarks>
 		private void DrawSoftCornerRect (Graphics dc, Rectangle r, Color border, Color surround)
 		{
 			if (r.Width <= 1 || r.Height <= 1)
 				return;
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.None;
-			dc.DrawRectangle (ResPool.GetPen (border), r.X, r.Y, r.Width, r.Height);
+			dc.DrawRectangle (ResPool.GetPen (border), r.X + 0.5f, r.Y + 0.5f, r.Width, r.Height);
 			Color soft = Color.FromArgb ((border.R + surround.R) / 2,
 						   (border.G + surround.G) / 2,
 						   (border.B + surround.B) / 2);
@@ -791,7 +794,6 @@ namespace System.Windows.Forms
 			dc.FillRectangle (brush, r.Right, r.Y, 1, 1);
 			dc.FillRectangle (brush, r.X, r.Bottom, 1, 1);
 			dc.FillRectangle (brush, r.Right, r.Bottom, 1, 1);
-			dc.SmoothingMode = old;
 		}
 
 		// Windows fills a selected day with a rounded rectangle. The classic theme fills a pie,
@@ -812,7 +814,7 @@ namespace System.Windows.Forms
 				return;
 			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
 						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
-			DrawSoftCornerRect (dc, box, ButtonBorderHover, ColorWindow);
+			DrawSoftCornerRect (dc, box, ColorHotTrack, CalendarSelection);
 		}
 	}
 }
