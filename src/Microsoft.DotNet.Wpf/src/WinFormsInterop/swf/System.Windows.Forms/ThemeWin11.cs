@@ -715,7 +715,8 @@ namespace System.Windows.Forms
 		// classic theme fills it with the caption colour and reverses the text out of it.
 		// Windows fills the selected day with a plain grey and rings it in the accent colour --
 		// the ring being the today marker drawn over it -- rather than washing the cell blue.
-		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc) => ColorControl;
+		protected override Color MonthCalendarSelectionBackColor (MonthCalendar mc)
+			=> Color.FromArgb (217, 217, 217);      // the grey Windows fills a selected day with
 
 		protected override Color MonthCalendarSelectionForeColor (MonthCalendar mc) => ColorControlText;
 
@@ -769,17 +770,40 @@ namespace System.Windows.Forms
 			dc.SmoothingMode = old;
 		}
 
+		/// <summary>A rounded outline drawn as four edges and four corner arcs, rather than as a
+		/// path. The recorder draws a path by flattening it into unjoined line segments, which at a
+		/// two-pixel radius turns the corners into steps and draws one edge twice; DrawArc is a
+		/// primitive it records directly, so the corners come out as curves.</summary>
+		private static void DrawRoundedOutline (Graphics dc, Rectangle r, int radius, Pen pen)
+		{
+			int d = radius * 2;
+			if (d <= 0 || r.Width <= d || r.Height <= d) {
+				dc.DrawRectangle (pen, r);
+				return;
+			}
+			dc.DrawLine (pen, r.X + radius, r.Y, r.Right - radius, r.Y);
+			dc.DrawLine (pen, r.X + radius, r.Bottom, r.Right - radius, r.Bottom);
+			dc.DrawLine (pen, r.X, r.Y + radius, r.X, r.Bottom - radius);
+			dc.DrawLine (pen, r.Right, r.Y + radius, r.Right, r.Bottom - radius);
+			dc.DrawArc (pen, r.X, r.Y, d, d, 180, 90);
+			dc.DrawArc (pen, r.Right - d, r.Y, d, d, 270, 90);
+			dc.DrawArc (pen, r.Right - d, r.Bottom - d, d, d, 0, 90);
+			dc.DrawArc (pen, r.X, r.Bottom - d, d, d, 90, 90);
+		}
+
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
-			// Windows outlines today's cell instead of ringing the number in red.
+			// Windows outlines today's cell instead of ringing the number in red, and that outline
+			// has rounded corners.
 			var box = new Rectangle (rectangle.X, rectangle.Y + 1,
 						 Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 2, 0));
+			if (box.Width <= 0 || box.Height <= 0)
+				return;
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			using (GraphicsPath path = RoundedRect (box, 2))
-				dc.DrawPath (ResPool.GetPen (ButtonBorderHover), path);
+			DrawRoundedOutline (dc, box, 2, ResPool.GetPen (ButtonBorderHover));
 			dc.SmoothingMode = old;
 		}
 	}
