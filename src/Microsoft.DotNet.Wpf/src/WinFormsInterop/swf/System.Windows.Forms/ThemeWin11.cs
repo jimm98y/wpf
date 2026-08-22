@@ -318,12 +318,12 @@ namespace System.Windows.Forms
 			// as a different mark rather than the same one drawn a little off.
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.2f)) {
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.4f)) {
 				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
 				g.DrawLines (pen, new PointF [] {
-					new PointF (x + w * 0.23f, y + h * 0.46f),
-					new PointF (x + w * 0.39f, y + h * 0.62f),
-					new PointF (x + w * 0.70f, y + h * 0.31f),
+					new PointF (x + w * 0.22f, y + h * 0.47f),
+					new PointF (x + w * 0.40f, y + h * 0.66f),
+					new PointF (x + w * 0.76f, y + h * 0.28f),
 				});
 			}
 			g.SmoothingMode = old;

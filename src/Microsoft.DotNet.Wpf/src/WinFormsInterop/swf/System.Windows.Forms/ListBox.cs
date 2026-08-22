@@ -102,7 +102,11 @@ namespace System.Windows.Forms
 
 			requested_height = bounds.Height;
 			InternalBorderStyle = BorderStyle.Fixed3D;
-			BackColor = ThemeEngine.Current.ColorControl;
+			// A list's background is the WINDOW colour, not the control colour: white, like every
+			// other thing you read a list of items out of. Grey here made a ListBox and a
+			// CheckedListBox the only white-on-grey surfaces in the toolkit, and it is wrong for the
+			// classic look as much as the modern one -- a Win32 list box has always been white.
+			BackColor = ThemeEngine.Current.ColorWindow;
 
 			/* Vertical scrollbar */
 			vscrollbar = new ImplicitVScrollBar ();
