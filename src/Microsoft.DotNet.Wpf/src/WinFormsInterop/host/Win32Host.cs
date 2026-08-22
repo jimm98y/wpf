@@ -15,7 +15,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-internal sealed unsafe class Win32Host : IWinFormsHost
+internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 {
     private readonly Form _form;
 
@@ -335,6 +335,18 @@ internal sealed unsafe class Win32Host : IWinFormsHost
                 Frame();
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
+            // WM_DPICHANGED: the window moved to a display with a different DPI. Nothing acted
+            // on it, so _scale kept the DPI the window was created at while the client area
+            // changed underneath it -- OnClientResized then read the new pixels through the old
+            // scale, grew the form to match, and every control drew at half the size it should.
+            case 0x02E0: OnDpiChanged(lParam); return IntPtr.Zero;
+            // WM_GETOBJECT: the controls in this window have no handles of their own, so the
+            // automation tree Windows builds out of handles stopped here and everything below
+            // was invisible to a screen reader. Answer for the tree ourselves.
+            case 0x003D:
+                if (WinFormsWebGpu.Accessibility.Uia.TryAnswerGetObject(this, wParam, lParam, out IntPtr uia))
+                    return uia;
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
             // WM_CLOSE: close the FORM, not just its window. Destroying the window on its own left
             // a dialog's modal loop running with nothing on screen, and the form still visible --
             // so the next tick promptly gave it a new window. Honour a cancelled OnClosing too.
@@ -452,6 +464,27 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     // The user resized the window: adopt the new client area as the form's size so the WinForms
     // layout, the driver's windows and the swap chain all agree again (Present reconfigures when the
     // size it is handed changes).
+    // Windows suggests where the window should go at the new DPI -- honouring it is what keeps
+    // the window the same apparent size across the move. The presenter needs the new scale too,
+    // or the swap chain stays at the old device-pixel size.
+    private void OnDpiChanged(IntPtr suggested)
+    {
+        if (_hwnd == IntPtr.Zero)
+            return;
+        _scale = GetDpiForWindow(_hwnd) / 96f;
+        if (suggested != IntPtr.Zero)
+        {
+            RECT r = Marshal.PtrToStructure<RECT>(suggested);
+            SetWindowPos(_hwnd, IntPtr.Zero, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                0x0004 | 0x0010);                        // SWP_NOZORDER | SWP_NOACTIVATE
+        }
+        _wgpu?.SetScale(_scale);
+        EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
+        _lastVer = -1;                                   // force a present at the new scale
+        OnClientResized();
+        Present();
+    }
+
     private void OnClientResized()
     {
         if (_wgpu == null) return;
@@ -487,6 +520,43 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         // windows behind it and none of its own controls ever responded. A form at (0,0) -- an
         // application's main window, which is all there was to test -- worked by accident.
         return (_ox + (int)(px / _scale), _oy + (int)(py / _scale));        // -> driver DIPs
+    }
+
+    // ---- accessibility site ------------------------------------------------------
+    //
+    // The stack renders to a virtual 96-DPI screen which this window magnifies, so a control's
+    // own coordinates are neither client pixels nor screen pixels. Both directions go through
+    // the same origin and scale the input path uses; see ClientDip.
+
+    IntPtr WinFormsWebGpu.Accessibility.IA11yHostSite.Handle => _hwnd;
+    Form WinFormsWebGpu.Accessibility.IA11yHostSite.Form => FormGone ? null : _form;
+
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapToScreen(Rectangle driverRect,
+        out double x, out double y, out double width, out double height)
+    {
+        x = y = width = height = 0;
+        if (_hwnd == IntPtr.Zero)
+            return false;
+        var origin = new POINT { x = 0, y = 0 };
+        if (!ClientToScreen(_hwnd, ref origin))
+            return false;
+        x = origin.x + (driverRect.X - _ox) * _scale;
+        y = origin.y + (driverRect.Y - _oy) * _scale;
+        width = driverRect.Width * _scale;
+        height = driverRect.Height * _scale;
+        return true;
+    }
+
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen(double x, double y, out Point driverPoint)
+    {
+        driverPoint = Point.Empty;
+        if (_hwnd == IntPtr.Zero)
+            return false;
+        var pt = new POINT { x = (int)Math.Round(x), y = (int)Math.Round(y) };
+        if (!ScreenToClient(_hwnd, ref pt))
+            return false;
+        driverPoint = new Point(_ox + (int)(pt.x / _scale), _oy + (int)(pt.y / _scale));
+        return true;
     }
 
     public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
@@ -647,6 +717,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     [DllImport("user32")] private static extern IntPtr SetCapture(IntPtr hwnd);
     [DllImport("user32")] private static extern bool ReleaseCapture();
     [DllImport("user32")] private static extern bool ScreenToClient(IntPtr hwnd, ref POINT pt);
+    [DllImport("user32")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT pt);
     private struct POINT { public int x, y; }
     [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
 

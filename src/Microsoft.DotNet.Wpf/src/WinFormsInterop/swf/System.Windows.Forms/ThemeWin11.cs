@@ -772,7 +772,26 @@ namespace System.Windows.Forms
 
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
 
-		protected override Color MonthCalendarDayNameColor (MonthCalendar mc) => ColorGrayText;
+		// Stock draws these in plain black, not the grey the classic theme uses.
+		protected override Color MonthCalendarDayNameColor (MonthCalendar mc) => ColorControlText;
+
+		// Measured off a stock MonthCalendar at Segoe UI 9: the cell is 31 x 15 where the classic
+		// formula gives 29 x 16, because Windows sizes it to the widest abbreviated day name plus
+		// padding rather than to 1.8 times the font height.
+		public override Size MonthCalendarCellSize (MonthCalendar mc, Size proposed)
+		{
+			int height = Math.Max (1, proposed.Height - 1);
+			return new Size ((int) Math.Round (height * 31.0 / 15.0), height);
+		}
+
+		// Five pixels between the frame and the grid, on every side.
+		public override int MonthCalendarMargin (MonthCalendar mc) => 5;
+
+		protected override void MonthCalendarDrawDayNameDivider (Graphics dc, MonthCalendar mc,
+					     int x1, int x2, int y)
+		{
+			// Windows draws no rule under the day names.
+		}
 
 		protected override void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc,
 								 Size title_size, int x_offset, Size button_size,

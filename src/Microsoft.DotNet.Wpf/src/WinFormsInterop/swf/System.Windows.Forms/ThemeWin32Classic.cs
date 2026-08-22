@@ -3594,8 +3594,9 @@ namespace System.Windows.Forms
 			Size date_cell_size = (Size)((object)mc.date_cell_size);
 			
 			// draw the singlecalendars
-			int x_offset = 1;
-			int y_offset = 1;
+			int margin = MonthCalendarMargin (mc);
+			int x_offset = margin;
+			int y_offset = margin;
 			// adjust for the position of the specific month
 			for (int i=0; i < mc.CalendarDimensions.Height; i++) 
 			{
@@ -3612,7 +3613,7 @@ namespace System.Windows.Forms
 					} 
 					else 
 					{
-						x_offset = 1;
+						x_offset = margin;
 					}
 
 					Rectangle month_rect = new Rectangle (x_offset, y_offset, month_size.Width, month_size.Height);
@@ -3630,7 +3631,7 @@ namespace System.Windows.Forms
 			
 			Rectangle bottom_rect = new Rectangle (
 						client_rectangle.X,
-						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 3, 0),
+						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 3 - margin, 0),
 						client_rectangle.Width,
 						date_cell_size.Height + 2);
 			// draw the today date if it's set
@@ -3651,7 +3652,7 @@ namespace System.Windows.Forms
 					{
 						Rectangle today_circle_rect = new Rectangle (
 							client_rectangle.X + today_left,
-							Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2, 0),
+							Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2 - margin, 0),
 							date_cell_size.Width,
 							date_cell_size.Height);
 							DrawTodayCircle (dc, today_circle_rect);
@@ -3663,7 +3664,7 @@ namespace System.Windows.Forms
 					text_format.Alignment = StringAlignment.Near;
 					Rectangle today_rect = new Rectangle (
 							today_offset + client_rectangle.X,
-							Math.Max(client_rectangle.Bottom - date_cell_size.Height, 0),
+							Math.Max(client_rectangle.Bottom - date_cell_size.Height - margin, 0),
 							Math.Max(client_rectangle.Width - today_offset, 0),
 							date_cell_size.Height);
 					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
@@ -3827,10 +3828,8 @@ namespace System.Windows.Forms
 				
 				// draw the vertical divider
 				int vert_divider_y = Math.Max(title_size.Height+ date_cell_size.Height-1, 0);
-				dc.DrawLine (
-					ResPool.GetPen (mc.ForeColor),
+				MonthCalendarDrawDayNameDivider (dc, mc,
 					rectangle.X + (col_offset * date_cell_size.Width) + mc.divider_line_offset,
-					rectangle.Y + vert_divider_y,
 					rectangle.Right - mc.divider_line_offset,
 					rectangle.Y + vert_divider_y);
 			}
@@ -3924,6 +3923,13 @@ namespace System.Windows.Forms
 					rectangle.X + date_cell_size.Width - 1,
 					rectangle.Y + title_size.Height + date_cell_size.Height + (month_row_count * date_cell_size.Height) - mc.divider_line_offset);
 			}
+		}
+
+		// The rule under the day names. Windows draws none, so it is a seam rather than a line.
+		protected virtual void MonthCalendarDrawDayNameDivider (Graphics dc, MonthCalendar mc,
+					     int x1, int x2, int y)
+		{
+			dc.DrawLine (ResPool.GetPen (mc.ForeColor), x1, y, x2, y);
 		}
 
 		// draws the pervious or next button

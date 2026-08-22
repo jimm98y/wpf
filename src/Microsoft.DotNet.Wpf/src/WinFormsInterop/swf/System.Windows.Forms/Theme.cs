@@ -457,6 +457,21 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// A calendar's cell size and the margin around its grid are both Windows metrics, and the
+		// classic theme's are not Windows'. Measured against a stock MonthCalendar at Segoe UI 9:
+		// the cell is 31 x 15 where the classic formula gives 29 x 16, and the grid sits five
+		// pixels inside the control on every side rather than one. Ask for both rather than
+		// baking either into MonthCalendar.
+		public virtual Size MonthCalendarCellSize (MonthCalendar mc, Size proposed)
+		{
+			return proposed;
+		}
+
+		public virtual int MonthCalendarMargin (MonthCalendar mc)
+		{
+			return 1;
+		}
+
 		public virtual Size Border3DSize {
 			get {
 				return XplatUI.Border3DSize;

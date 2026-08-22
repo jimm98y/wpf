@@ -712,7 +712,8 @@ namespace System.Windows.Forms {
 				int row_count = 7;		// not including the today date
 
 				// set the date_cell_size and the title_size
-				date_cell_size = new Size ((int) Math.Ceiling (1.8 * multiplier), multiplier);
+				date_cell_size = ThemeEngine.Current.MonthCalendarCellSize (this,
+						    new Size ((int) Math.Ceiling (1.8 * multiplier), multiplier));
 				title_size = new Size ((date_cell_size.Width * column_count), 2 * multiplier);
 
 				return new Size (column_count * date_cell_size.Width, row_count * date_cell_size.Height + title_size.Height);
@@ -846,13 +847,15 @@ namespace System.Windows.Forms {
 			get {
 				Size single_month = SingleMonthSize;
 				// get the width
-				int width = calendar_dimensions.Width * single_month.Width;
+				// The margin is on both sides, and the grid origin already sits one of them in.
+				int margin = ThemeEngine.Current.MonthCalendarMargin (this);
+				int width = calendar_dimensions.Width * single_month.Width + 2 * margin;
 				if (calendar_dimensions.Width > 1) {
 					width += (calendar_dimensions.Width - 1) * calendar_spacing.Width;
 				}
 
 				// get the height
-				int height = calendar_dimensions.Height * single_month.Height;
+				int height = calendar_dimensions.Height * single_month.Height + 2 * margin;
 				if (this.ShowToday) {
 					height += date_cell_size.Height + 2;		// add the height of the "Today: " ...
 				}
