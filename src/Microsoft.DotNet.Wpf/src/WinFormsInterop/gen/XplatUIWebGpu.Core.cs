@@ -1,4 +1,4 @@
-// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
+﻿// XplatUIWebGpu core: a managed, in-memory WinForms platform driver. Windows are Hwnd objects
 // with a System.Drawing.Bitmap backing store; painting hands out a Graphics over that bitmap
 // (the theme draws into it). A managed message queue drives Application.Run: Invalidate posts
 // WM_PAINT, DispatchMessage routes to NativeWindow.WndProc, PaintEventStart gives the paint DC.
@@ -32,8 +32,54 @@ namespace System.Windows.Forms
 		private int next_handle = 1;
 		private readonly Dictionary<IntPtr, Bitmap> backing = new Dictionary<IntPtr, Bitmap>();
 		private readonly Dictionary<IntPtr, string> captions = new Dictionary<IntPtr, string>();
-		private readonly Queue<MSG> queue = new Queue<MSG>();
-		private bool quit;
+		// One message queue per UI thread, the way Win32 has one. A posted message belongs to the
+		// queue of the thread that CREATED the target window, and a message loop only ever pumps its
+		// own -- so a second UI thread cannot dispatch another thread's controls. With a single
+		// shared queue it did: SharpDevelop shows its progress dialog by running a whole message
+		// loop on a private STA thread, that loop dequeued a WM_PAINT belonging to a main-thread
+		// control, and painting it threw "Cross-thread access of handle detected". Mono's WndProc
+		// answers a failed paint by replacing the control with a red cross -- which calls Hide(),
+		// which asks for the handle, which threw the same exception a second time, this time outside
+		// the catch. Loading a solution killed the process.
+		private sealed class MsgQueue
+		{
+			internal readonly Queue<MSG> Messages = new Queue<MSG>();
+			internal bool Quit;
+		}
+
+		[ThreadStatic] private static MsgQueue t_queue;
+		private static MsgQueue CurrentQueue => t_queue ??= new MsgQueue();
+
+		// Which thread's queue each window belongs to, recorded when the window is created.
+		private readonly Dictionary<IntPtr, MsgQueue> window_queue = new Dictionary<IntPtr, MsgQueue>();
+
+		/// <summary>The queue a message for <paramref name="handle"/> belongs in. A handle we never
+		/// saw created -- and the null handle a thread-wide message carries -- means this thread.</summary>
+		private MsgQueue QueueFor(IntPtr handle)
+		{
+			if (handle != IntPtr.Zero)
+				lock (window_queue)
+					if (window_queue.TryGetValue(handle, out MsgQueue q)) return q;
+			return CurrentQueue;
+		}
+
+		/// <summary>Post to the queue that owns <paramref name="handle"/>. Cross-thread by design:
+		/// Control.BeginInvoke from a worker thread lands here.</summary>
+		private void Enqueue(IntPtr handle, MSG msg)
+		{
+			MsgQueue q = QueueFor(handle);
+			lock (q.Messages) q.Messages.Enqueue(msg);
+		}
+
+		private static bool TryDequeue(MsgQueue q, out MSG msg)
+		{
+			lock (q.Messages)
+			{
+				if (q.Messages.Count == 0) { msg = default; return false; }
+				msg = q.Messages.Dequeue();
+				return true;
+			}
+		}
 		private static readonly bool Trace = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") == "1";
 		private static void T(string s) { if (Trace) Console.WriteLine("[drv] " + s); }
 
@@ -334,6 +380,7 @@ namespace System.Windows.Forms
 			// GPU-raster mode records scenes (no per-window bitmap); keep the key as the window
 			// registry that GetPresentWindows walks, but allocate no libgdiplus Bitmap.
 			backing[handle] = s_gpuRaster ? null : new Bitmap(w, h);
+			lock (window_queue) window_queue[handle] = CurrentQueue;
 
 			// Child controls are created WS_VISIBLE when their parent is shown; honor that so
 			// invalidation isn't dropped by the visibility guard (top-level Forms get an explicit
@@ -376,6 +423,7 @@ namespace System.Windows.Forms
 			foreach (IntPtr child in ChildHandles(handle)) DestroyWindow(child);
 
 			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.Remove(handle); }
+			lock (window_queue) window_queue.Remove(handle);
 			captions.Remove(handle);
 			_scenes.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
@@ -497,7 +545,7 @@ namespace System.Windows.Forms
 			if (!hwnd.expose_pending)
 			{
 				hwnd.expose_pending = true;
-				queue.Enqueue(new MSG { hwnd = hwnd.Handle, message = Msg.WM_PAINT });
+				Enqueue(hwnd.Handle, new MSG { hwnd = hwnd.Handle, message = Msg.WM_PAINT });
 			}
 		}
 
@@ -699,7 +747,10 @@ namespace System.Windows.Forms
 
 		// ---- message loop --------------------------------------------------------
 
-		internal override object StartLoop(Thread thread) => (object)1;
+		// The queue_id every GetMessage/PeekMessage call carries back. Nothing here reads it -- the
+		// queue is found from the calling thread either way -- but handing back the real object keeps
+		// the contract honest for anything that compares them.
+		internal override object StartLoop(Thread thread) => CurrentQueue;
 		internal override void EndLoop(Thread thread) { }
 
 		// ---- timers --------------------------------------------------------------
@@ -755,19 +806,19 @@ namespace System.Windows.Forms
 
 		internal override bool GetMessage(object queue_id, ref MSG msg, IntPtr hWnd, int wFilterMin, int wFilterMax)
 		{
+			MsgQueue q = CurrentQueue;
 			while (true)
 			{
 				// Before anything else, because a Tick handler is app code that can post messages,
 				// change the UI (so the next present has something to show) or quit the app.
 				int nextTimer = TickTimers();
 
-				if (queue.Count > 0)
+				if (TryDequeue(q, out msg))
 				{
-					msg = queue.Dequeue();
 					if (msg.message == Msg.WM_QUIT) return false;
 					return true;
 				}
-				if (quit) return false;
+				if (q.Quit) return false;
 				// No queued messages. With a window on screen this is simply an idle frame: present
 				// whatever changed, let the OS hand us input (which refills the queue), and go round
 				// again -- that is what makes Application.Run(form) behave like real WinForms. With no
@@ -803,10 +854,14 @@ namespace System.Windows.Forms
 
 		internal override bool PeekMessage(object queue_id, ref MSG msg, IntPtr hWnd, int wFilterMin, int wFilterMax, uint flags)
 		{
-			if (queue.Count == 0) return false;
-			msg = queue.Peek();
+			MsgQueue q = CurrentQueue;
 			const uint PM_REMOVE = 0x0001;
-			if ((flags & PM_REMOVE) != 0) queue.Dequeue();
+			lock (q.Messages)
+			{
+				if (q.Messages.Count == 0) return false;
+				msg = q.Messages.Peek();
+				if ((flags & PM_REMOVE) != 0) q.Messages.Dequeue();
+			}
 			return true;
 		}
 
@@ -829,11 +884,10 @@ namespace System.Windows.Forms
 		// overridden here so DoEvents actually drains the queue.
 		internal override void DoEvents()
 		{
-			MSG msg = new MSG();
-			while (queue.Count > 0)
+			MsgQueue q = CurrentQueue;
+			while (TryDequeue(q, out MSG msg))
 			{
-				msg = queue.Dequeue();
-				if (msg.message == Msg.WM_QUIT) { quit = true; continue; }
+				if (msg.message == Msg.WM_QUIT) { q.Quit = true; continue; }
 				TranslateMessage(ref msg);
 				DispatchMessage(ref msg);
 			}
@@ -841,8 +895,11 @@ namespace System.Windows.Forms
 
 		internal override void PostQuitMessage(int exitCode)
 		{
-			quit = true;
-			queue.Enqueue(new MSG { message = Msg.WM_QUIT, wParam = (IntPtr)exitCode });
+			// Win32 posts the quit to the CALLING thread's queue, and so do we: a wait dialog that
+			// ends its own loop must not take the main one down with it.
+			MsgQueue q = CurrentQueue;
+			q.Quit = true;
+			lock (q.Messages) q.Messages.Enqueue(new MSG { message = Msg.WM_QUIT, wParam = (IntPtr)exitCode });
 		}
 
 		internal override IntPtr SendMessage(IntPtr hwnd, Msg message, IntPtr wParam, IntPtr lParam)
@@ -850,7 +907,7 @@ namespace System.Windows.Forms
 
 		internal override bool PostMessage(IntPtr hwnd, Msg message, IntPtr wParam, IntPtr lParam)
 		{
-			queue.Enqueue(new MSG { hwnd = hwnd, message = message, wParam = wParam, lParam = lParam });
+			Enqueue(hwnd, new MSG { hwnd = hwnd, message = message, wParam = wParam, lParam = lParam });
 			return true;
 		}
 
@@ -864,7 +921,7 @@ namespace System.Windows.Forms
 		/// </remarks>
 		internal override void SendAsyncMethod(AsyncMethodData method)
 		{
-			queue.Enqueue(new MSG
+			Enqueue(method.Handle, new MSG
 			{
 				hwnd = method.Handle,
 				message = Msg.WM_ASYNC_MESSAGE,
@@ -892,13 +949,13 @@ namespace System.Windows.Forms
 		internal void InjectSysKeyDown(int vkey)
 		{
 			if (_focusHandle != IntPtr.Zero)
-				queue.Enqueue(new MSG { hwnd = _focusHandle, message = Msg.WM_SYSKEYDOWN, wParam = (IntPtr)vkey });
+				Enqueue(_focusHandle, new MSG { hwnd = _focusHandle, message = Msg.WM_SYSKEYDOWN, wParam = (IntPtr)vkey });
 		}
 
 		internal void InjectSysChar(char ch)
 		{
 			if (_focusHandle != IntPtr.Zero)
-				queue.Enqueue(new MSG { hwnd = _focusHandle, message = Msg.WM_SYSCHAR, wParam = (IntPtr)ch });
+				Enqueue(_focusHandle, new MSG { hwnd = _focusHandle, message = Msg.WM_SYSCHAR, wParam = (IntPtr)ch });
 		}
 
 		// ---- text / misc ---------------------------------------------------------

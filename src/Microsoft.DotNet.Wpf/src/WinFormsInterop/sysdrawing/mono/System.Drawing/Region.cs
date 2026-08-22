@@ -493,11 +493,31 @@ namespace System.Drawing
 		// Miscellaneous
 		//
 
+		// A recording Graphics -- GPU-raster mode, where drawing is captured as a scene instead of
+		// rasterised -- is not a GDI+ surface at all: its native handle is zero. Both queries below
+		// hand that handle straight to gdiplus, which answers InvalidParameter, so simply asking
+		// whether a region was empty threw. Painting a LinkLabel asks exactly that, so every link
+		// label on this stack failed to draw and reported a GDI+ error instead.
+		//
+		// The graphics argument contributes nothing but a world transform to these two questions,
+		// and a recording surface starts at the identity. So when there is no GDI+ graphics to
+		// consult, answer from the region's own scan list, which takes a matrix rather than a
+		// surface -- no offscreen bitmap has to be conjured up in order to ask.
+		static readonly Matrix identity = new Matrix ();
+
+		bool NoNativeGraphics (Graphics g)
+		{
+			if (g == null)
+				throw new ArgumentNullException ("g");
+			return g.NativeObject == IntPtr.Zero;
+		}
+
 		public bool IsEmpty(Graphics g)
 		{
 			if (nativeRegion == IntPtr.Zero) return false;
-			if (g == null)
-				throw new ArgumentNullException ("g");
+			if (NoNativeGraphics (g))
+				return GetRegionScans (identity).Length == 0;
+
 
                         bool result;               
 
@@ -510,8 +530,13 @@ namespace System.Drawing
 		public bool IsInfinite(Graphics g)
 		{
 			if (nativeRegion == IntPtr.Zero) return true;
-			if (g == null)
-				throw new ArgumentNullException ("g");
+			if (NoNativeGraphics (g)) {
+				// GDI+ represents "infinite" as the single scan (-4194304, -4194304) 8388608 square.
+				RectangleF[] scans = GetRegionScans (identity);
+				return scans.Length == 1 && scans[0].X <= -4194304f && scans[0].Y <= -4194304f
+					&& scans[0].Width >= 8388608f && scans[0].Height >= 8388608f;
+			}
+
 
                         bool result;
 

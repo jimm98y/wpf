@@ -260,14 +260,21 @@ namespace System.Windows.Forms
 #if !ExternalExceptionHandler
 				if (window != null) {
 					if (msg == Msg.WM_PAINT && window is Control.ControlNativeWindow) {
-						// Replace control with a red cross
-						var control = ((Control.ControlNativeWindow)window).Owner;
-						control.Hide ();
-						var redCross = new Control (control.Parent, string.Empty);
-						redCross.BackColor = Color.White;
-						redCross.ForeColor = Color.Red;
-						redCross.Bounds = control.Bounds;
-						redCross.Paint += HandleRedCrossPaint;
+						// Replace control with a red cross. Every step of this is more app code --
+						// Hide() reads the handle, the new Control creates one -- so it can fail in
+						// turn, and when it did the second exception escaped this catch and took the
+						// process down. Reporting the paint failure matters far more than the marker,
+						// so the recovery never gets to replace the exception it is recovering from.
+						try {
+							var control = ((Control.ControlNativeWindow)window).Owner;
+							control.Hide ();
+							var redCross = new Control (control.Parent, string.Empty);
+							redCross.BackColor = Color.White;
+							redCross.ForeColor = Color.Red;
+							redCross.Bounds = control.Bounds;
+							redCross.Paint += HandleRedCrossPaint;
+						} catch {
+						}
 					}
  					window.OnThreadException (ex);
 				}
