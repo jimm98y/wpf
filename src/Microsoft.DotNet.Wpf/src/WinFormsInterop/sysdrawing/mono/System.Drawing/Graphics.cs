@@ -30,6 +30,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
@@ -99,6 +100,61 @@ namespace System.Drawing
 		{
 			pattern = DashOf (p);
 			return pattern != null && pattern.Length > 0;
+		}
+
+		// A path, flattened into its subpaths' points. The recorder draws polygons and lines, not
+		// curves, so the curves are approximated here -- by GDI+, which owns the path's geometry --
+		// rather than each caller having to avoid GraphicsPath. Without this FillPath and DrawPath
+		// went straight to a libgdiplus surface that does not exist in GPU-raster mode and silently
+		// drew nothing at all: a rounded button came out with no face and no border.
+		static List<PointF []> FlattenSubpaths (Drawing2D.GraphicsPath path)
+		{
+			var subpaths = new List<PointF []> ();
+			if (path == null || path.PointCount == 0)
+				return subpaths;
+
+			Drawing2D.GraphicsPath flat;
+			try {
+				flat = (Drawing2D.GraphicsPath) path.Clone ();
+				flat.Flatten ();
+			} catch {
+				return subpaths;
+			}
+
+			using (flat) {
+				PointF [] points;
+				byte [] types;
+				try {
+					points = flat.PathPoints;
+					types = flat.PathTypes;
+				} catch {
+					return subpaths;
+				}
+
+				const byte TypeMask = 0x07, TypeStart = 0x00;
+				var current = new List<PointF> ();
+				for (int i = 0; i < points.Length; i++) {
+					if ((types [i] & TypeMask) == TypeStart && current.Count > 0) {
+						subpaths.Add (current.ToArray ());
+						current = new List<PointF> ();
+					}
+					current.Add (points [i]);
+				}
+				if (current.Count > 0)
+					subpaths.Add (current.ToArray ());
+			}
+
+			return subpaths;
+		}
+
+		static float [] ToXY (PointF [] points)
+		{
+			var xy = new float [points.Length * 2];
+			for (int i = 0; i < points.Length; i++) {
+				xy [i * 2] = points [i].X;
+				xy [i * 2 + 1] = points [i].Y;
+			}
+			return xy;
 		}
 
 		static int Blend (Color a, Color b) =>
@@ -1310,6 +1366,21 @@ namespace System.Drawing
 				throw new ArgumentNullException ("pen");
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			if (RecordPen (pen)) {
+				int c = ArgbOf (pen);
+				RecordDash (pen, out float [] dash);
+				foreach (PointF [] sub in FlattenSubpaths (path)) {
+					for (int i = 1; i < sub.Length; i++)
+						if (dash != null)
+							GpuRecorder.DrawDashedLine (sub [i - 1].X, sub [i - 1].Y, sub [i].X, sub [i].Y, c, pen.Width, dash);
+						else
+							GpuRecorder.DrawLine (sub [i - 1].X, sub [i - 1].Y, sub [i].X, sub [i].Y, c);
+					// A flattened closed figure does not repeat its first point; join it up.
+					if (sub.Length > 2 && sub [0] != sub [sub.Length - 1])
+						GpuRecorder.DrawLine (sub [sub.Length - 1].X, sub [sub.Length - 1].Y, sub [0].X, sub [0].Y, c);
+				}
+				return;
+			}
 			Status status = GDIPlus.GdipDrawPath (nativeObject, pen.NativePen, path.nativePath);
 			CheckDrawStatus (status);
 		}
@@ -1931,6 +2002,13 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			if (GpuRecorder != null) {
+				int c = ArgbOf (brush);
+				foreach (PointF [] sub in FlattenSubpaths (path))
+					if (sub.Length >= 3)
+						GpuRecorder.FillPolygon (ToXY (sub), c);
+				return;
+			}
 			Status status = GDIPlus.GdipFillPath (nativeObject, brush.NativeBrush,  path.nativePath);
 			CheckDrawStatus (status);
 		}

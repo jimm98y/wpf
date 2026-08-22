@@ -349,6 +349,99 @@ namespace System.Windows.Forms.Integration
         /// The system clipboard, for the WinForms driver. Text only, which is what can honestly
         /// cross a process boundary -- see the note in XplatUIWebGpu.Clipboard.cs.
         /// </summary>
+        /// <summary>
+        /// Install the platform services the driver cannot reach on its own. Idempotent, and needed
+        /// from more than one place: an application that hosts through its OWN HwndHost never
+        /// constructs a WindowsFormsHost, and would otherwise get the in-process clipboard and
+        /// Mono's managed file dialog.
+        /// </summary>
+        internal static void EnsurePlatformBridges()
+        {
+            XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+            XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
+        }
+
+        /// <summary>
+        /// The platform's file and folder browsers, which WPF already knows how to open. Without
+        /// this a hosted WinForms app browses with Mono's own managed dialog while the WPF half of
+        /// the same application opens the shell's -- two very different browsers in one program.
+        /// </summary>
+        private sealed class WpfFileDialogBridge : SWF.IFileDialogBridge
+        {
+            public bool ShowOpen(SWF.FileDialogRequest request, out string[] fileNames, out int filterIndex)
+            {
+                fileNames = null;
+                filterIndex = 0;
+
+                var dlg = new Microsoft.Win32.OpenFileDialog();
+                Apply(dlg, request);
+                dlg.Multiselect = request.Multiselect;
+                dlg.CheckFileExists = request.CheckFileExists;
+
+                if (dlg.ShowDialog(OwnerWindow()) != true) return false;
+
+                fileNames = request.Multiselect ? dlg.FileNames : new[] { dlg.FileName };
+                filterIndex = dlg.FilterIndex;
+                return true;
+            }
+
+            public bool ShowSave(SWF.FileDialogRequest request, out string[] fileNames, out int filterIndex)
+            {
+                fileNames = null;
+                filterIndex = 0;
+
+                var dlg = new Microsoft.Win32.SaveFileDialog();
+                Apply(dlg, request);
+                dlg.OverwritePrompt = request.OverwritePrompt;
+
+                if (dlg.ShowDialog(OwnerWindow()) != true) return false;
+
+                fileNames = new[] { dlg.FileName };
+                filterIndex = dlg.FilterIndex;
+                return true;
+            }
+
+            public bool ShowFolder(string description, string initialPath, out string selectedPath)
+            {
+                selectedPath = null;
+
+                var dlg = new Microsoft.Win32.OpenFolderDialog();
+                if (!string.IsNullOrEmpty(description)) dlg.Title = description;
+                if (!string.IsNullOrEmpty(initialPath)) dlg.InitialDirectory = initialPath;
+
+                if (dlg.ShowDialog(OwnerWindow()) != true) return false;
+
+                selectedPath = dlg.FolderName;
+                return true;
+            }
+
+            private static void Apply(Microsoft.Win32.FileDialog dlg, SWF.FileDialogRequest request)
+            {
+                // WinForms and WPF state a filter the same way, so it passes straight through.
+                if (!string.IsNullOrEmpty(request.Title)) dlg.Title = request.Title;
+                if (!string.IsNullOrEmpty(request.Filter)) dlg.Filter = request.Filter;
+                if (request.FilterIndex > 0) dlg.FilterIndex = request.FilterIndex;
+                if (!string.IsNullOrEmpty(request.InitialDirectory)) dlg.InitialDirectory = request.InitialDirectory;
+                if (!string.IsNullOrEmpty(request.FileName)) dlg.FileName = request.FileName;
+                if (!string.IsNullOrEmpty(request.DefaultExt)) dlg.DefaultExt = request.DefaultExt;
+                dlg.AddExtension = request.AddExtension;
+            }
+
+            /// <summary>Parent the dialog on the window the user is looking at, so it centres on it
+            /// and blocks it, rather than appearing detached.</summary>
+            private static Window OwnerWindow()
+            {
+                // Unqualified, Application here is WinForms' own.
+                System.Windows.Application app = System.Windows.Application.Current;
+                if (app == null) return null;
+
+                foreach (Window w in app.Windows)
+                    if (w.IsActive) return w;
+
+                return app.MainWindow;
+            }
+        }
+
         private sealed class WpfClipboardBridge : SWF.IClipboardBridge
         {
             public bool TryGetText(out string text)
@@ -457,6 +550,7 @@ namespace System.Windows.Forms.Integration
         {
             XplatUIWebGpu.GetInstance();
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+            XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
             StartTopLevelPump();
 
             // An application that hosts WinForms through its OWN HwndHost subclass never
@@ -528,6 +622,7 @@ namespace System.Windows.Forms.Integration
             // Copy and paste in a hosted control reach the SYSTEM clipboard the same way: the
             // driver's assembly cannot see WPF's Clipboard, so the host lends it one.
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
+            XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
 
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it

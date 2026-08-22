@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     Builds Mono's managed System.Windows.Forms (fully-managed control painting) on net10 with our
@@ -77,6 +77,7 @@
     <Compile Include="gen/XplatUIWebGpu.Core.cs" />
     <Compile Include="gen/XplatUIWebGpu.DragDrop.cs" />
     <Compile Include="gen/XplatUIWebGpu.Clipboard.cs" />
+    <Compile Include="gen/XplatUIWebGpu.FileDialogBridge.cs" />
     <Compile Include="shims/*.cs" />
 
     <!-- The WebBrowser control and its HtmlDocument object model. OUTSIDE swf/ on purpose: that

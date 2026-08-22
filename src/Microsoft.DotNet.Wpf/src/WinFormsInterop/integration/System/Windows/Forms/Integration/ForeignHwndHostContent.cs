@@ -88,6 +88,10 @@ namespace System.Windows.Forms.Integration
             // Tell the window hosts that this subtree is composited by WPF, so none of them draws it.
             SWF.PresentationHost.SuppressWindow(handle);
 
+            // This application hosts through its own HwndHost, so nothing here ever constructs a
+            // WindowsFormsHost -- install the platform clipboard and file dialogs from here too.
+            WindowsFormsHost.EnsurePlatformBridges();
+
             var claim = new ForeignHwndHostContent(host, handle);
             lock (s_lock)
             {

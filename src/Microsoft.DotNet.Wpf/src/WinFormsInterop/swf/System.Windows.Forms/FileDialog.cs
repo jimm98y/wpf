@@ -706,8 +706,52 @@ namespace System.Windows.Forms
 			disable_form_closed_event = true;
 		}
 		
+		/// <summary>Hand the request to the platform's own browser and take its answer.</summary>
+		private bool RunPlatformDialog (IFileDialogBridge bridge)
+		{
+			var request = new FileDialogRequest {
+				Title = DialogTitle,
+				Filter = Filter,
+				FilterIndex = FilterIndex,
+				InitialDirectory = InitialDirectory,
+				FileName = fileNames != null && fileNames.Length > 0 ? fileNames [0] : string.Empty,
+				DefaultExt = DefaultExt,
+				AddExtension = AddExtension,
+				CheckFileExists = CheckFileExists,
+				Multiselect = multiSelect,
+				OverwritePrompt = fileDialogType == FileDialogType.SaveFileDialog && overwritePrompt,
+			};
+
+			string [] selected;
+			int chosenFilter;
+			bool accepted = fileDialogType == FileDialogType.SaveFileDialog
+				? bridge.ShowSave (request, out selected, out chosenFilter)
+				: bridge.ShowOpen (request, out selected, out chosenFilter);
+
+			if (!accepted)
+				return false;
+
+			fileNames = selected ?? new string [0];
+			if (chosenFilter > 0)
+				FilterIndex = chosenFilter;
+
+			// The events an application listens for still have to happen: a FileOk handler may
+			// veto the choice, exactly as it can with the managed dialog.
+			var cancel = new CancelEventArgs ();
+			OnFileOk (cancel);
+			return !cancel.Cancel;
+		}
+
 		protected override bool RunDialog (IntPtr hWndOwner)
 		{
+			// Where the platform has a file browser of its own -- and WPF is already calling it --
+			// use that one, so an application mixing the two toolkits does not show two completely
+			// different dialogs. Mono's managed one below is the fallback, and still the only
+			// option where there is no common dialog to call.
+			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
+			if (bridge != null)
+				return RunPlatformDialog (bridge);
+
 			ReadConfigValues ();
 			form.Text = DialogTitle;
 
