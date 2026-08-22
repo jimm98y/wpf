@@ -367,6 +367,16 @@ namespace System.Windows.Forms
 
 		public override void CPDrawComboButton (Graphics graphics, Rectangle rectangle, ButtonState state)
 		{
+			// Windows draws a thin chevron, not the filled triangle the classic theme uses -- and
+			// it draws it as a part of its own, so ask for that rather than approximating a glyph.
+			int comboState = (state & ButtonState.Inactive) != 0 ? UxTheme.CBB_DISABLED
+				       : (state & (ButtonState.Pushed | ButtonState.Checked)) != 0 ? UxTheme.CBB_PRESSED
+				       : UxTheme.CBB_NORMAL;
+			if (UxTheme.Draw (graphics, "COMBOBOX", UxTheme.CP_DROPDOWNBUTTONRIGHT, comboState, rectangle))
+				return;
+			if (UxTheme.Draw (graphics, "COMBOBOX", UxTheme.CP_DROPDOWNBUTTON, comboState, rectangle))
+				return;
+
 			if ((state & ButtonState.Inactive) != 0) {
 				DrawComboArrow (graphics, rectangle, SystemColors.GrayText);
 				return;
@@ -645,6 +655,45 @@ namespace System.Windows.Forms
 			if (UxTheme.Draw (g, "HEADER", UxTheme.HP_HEADERITEM, state, area))
 				return;
 			base.ListViewDrawColumnHeaderBackground (listView, columnHeader, g, area, clippingArea);
+		}
+
+		// ---- progress bar, combo arrow, check box primitive --------------------------
+
+		public override void DrawProgressBar (Graphics dc, Rectangle clip_rect, ProgressBar ctrl)
+		{
+			// The classic bar is a row of separate blocks with gaps. Windows has drawn one
+			// continuous fill inside a rounded trough for a long time.
+			Rectangle bounds = ctrl.ClientRectangle;
+			if (!UxTheme.Draw (dc, "PROGRESS", UxTheme.PP_BAR, 1, bounds)) {
+				base.DrawProgressBar (dc, clip_rect, ctrl);
+				return;
+			}
+
+			int range = ctrl.Maximum - ctrl.Minimum;
+			if (range <= 0)
+				return;
+			double fraction = (double) (ctrl.Value - ctrl.Minimum) / range;
+			if (fraction <= 0)
+				return;
+
+			Rectangle fill = ctrl.client_area;
+			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
+			if (fill.Width <= 0 || fill.Height <= 0)
+				return;
+			UxTheme.Draw (dc, "PROGRESS", UxTheme.PP_FILL, UxTheme.PBFS_NORMAL, fill);
+		}
+
+		/// <summary>The check box primitive, which is what a CheckedListBox and a few other
+		/// controls draw their boxes with -- they never reach DrawCheckBoxGlyph.</summary>
+		public override void CPDrawCheckBox (Graphics dc, Rectangle rectangle, ButtonState state)
+		{
+			int baseState = (state & ButtonState.Checked) != 0 ? UxTheme.CBS_CHECKEDNORMAL
+				      : UxTheme.CBS_UNCHECKEDNORMAL;
+			int offset = (state & ButtonState.Inactive) != 0 ? 3
+				   : (state & ButtonState.Pushed) != 0 ? 2 : 0;
+			if (UxTheme.Draw (dc, "BUTTON", UxTheme.BP_CHECKBOX, baseState + offset, CentredGlyph (rectangle)))
+				return;
+			base.CPDrawCheckBox (dc, rectangle, state);
 		}
 	}
 }

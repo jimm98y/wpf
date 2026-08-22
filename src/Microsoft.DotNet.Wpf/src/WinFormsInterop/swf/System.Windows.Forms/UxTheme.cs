@@ -57,6 +57,9 @@ namespace System.Windows.Forms
 		internal const int ABS_UPNORMAL = 1, ABS_DOWNNORMAL = 5, ABS_LEFTNORMAL = 9, ABS_RIGHTNORMAL = 13;
 		internal const int SCRBS_NORMAL = 1, SCRBS_HOT = 2, SCRBS_PRESSED = 3, SCRBS_DISABLED = 4;
 
+		internal const int PP_BAR = 1, PP_BARVERT = 2, PP_CHUNK = 3, PP_FILL = 5, PP_FILLVERT = 6;
+		internal const int PBFS_NORMAL = 1, PBFS_ERROR = 2, PBFS_PAUSED = 3, PBFS_PARTIAL = 4;
+
 		internal const int HP_HEADERITEM = 1, HP_HEADERITEMLEFT = 2, HP_HEADERITEMRIGHT = 3, HP_HEADERSORTARROW = 4;
 		internal const int HIS_NORMAL = 1, HIS_HOT = 2, HIS_PRESSED = 3;
 

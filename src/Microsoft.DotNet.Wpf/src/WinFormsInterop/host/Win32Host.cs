@@ -107,6 +107,34 @@ internal sealed unsafe class Win32Host : IWinFormsHost
         return host.WindowProc(hwnd, msg, wParam, lParam);
     }
 
+    private const int CW_USEDEFAULT = unchecked((int)0x80000000);
+    private const int SM_CXSCREEN = 0, SM_CYSCREEN = 1;
+
+    /// <summary>Where to put the window on screen. This used to be the literal (100, 100), so a form
+    /// that asked to be somewhere was ignored: Form.Location with StartPosition.Manual did nothing,
+    /// a dialog that wanted to be centred was not, and two windows opened together landed exactly on
+    /// top of each other. Honour what the form asked for, and where it asked for nothing let Windows
+    /// cascade them as it does for every other application.</summary>
+    private (int, int) StartLocation()
+    {
+        switch (_form.StartPosition)
+        {
+            case FormStartPosition.Manual:
+                return (_form.Left, _form.Top);
+
+            case FormStartPosition.CenterScreen:
+            case FormStartPosition.CenterParent:
+            {
+                int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+                if (sw <= 0 || sh <= 0) return (CW_USEDEFAULT, CW_USEDEFAULT);
+                return (Math.Max(0, (sw - _form.Width) / 2), Math.Max(0, (sh - _form.Height) / 2));
+            }
+
+            default:
+                return (CW_USEDEFAULT, CW_USEDEFAULT);
+        }
+    }
+
     public void Show()
     {
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
@@ -120,8 +148,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost
             // messages -- they arrive from inside CreateWindowExW, before it has returned a handle.
             s_creating = this;
             (uint style, uint exStyle) = WindowStyles();
+            (int wx, int wy) = StartLocation();
             _hwnd = CreateWindowExW(exStyle, s_classNamePtr, title, style,
-                100, 100, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
+                wx, wy, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
         }
         finally { s_creating = null; Marshal.FreeHGlobal(title); }
@@ -604,6 +633,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost
     [DllImport("kernel32", SetLastError = true)] private static extern IntPtr GetModuleHandleW(string lpModuleName);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr LoadCursorW(IntPtr h, int id);
     [DllImport("user32", SetLastError = true)] private static extern ushort RegisterClassExW(ref WNDCLASSEXW c);
+    [DllImport("user32")] private static extern int GetSystemMetrics(int index);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr CreateWindowExW(uint ex, IntPtr cls, IntPtr name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32")] private static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32")] private static extern bool DestroyWindow(IntPtr h);

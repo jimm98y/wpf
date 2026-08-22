@@ -467,6 +467,17 @@ namespace System.Windows.Forms
 			base.OnClick (e);
 		}
 
+		protected override void OnHandleCreated (EventArgs e)
+		{
+			base.OnHandleCreated (e);
+			// CreateLinkPieces gives up while there is no handle -- it measures character ranges,
+			// which needs a surface. Every other caller of it runs BEFORE the handle exists: the
+			// constructor, the Text setter, SetBoundsCore. So a link label built the ordinary way
+			// (construct, set Text, add to a parent) had pieces == null when the handle finally
+			// arrived, nothing ever rebuilt them, and OnPaint returned without drawing a thing.
+			CreateLinkPieces ();
+		}
+
 		protected override void OnPaint (PaintEventArgs e)
 		{
 			// We need to invoke paintbackground because control is opaque
