@@ -1045,9 +1045,11 @@ namespace System.Windows.Forms
 
 			switch (button.TextImageRelation) {
 				case TextImageRelation.Overlay:
-					// Text is centered vertically, and 2 pixels to the right
+					// Text is centered vertically, and 2 pixels to the right. Centred means centred:
+					// the pixel that used to be taken off the top left every check box's and radio
+					// button's caption riding high against the same caption in Windows.
 					textRectangle.X = content_rect.Left + 2;
-					textRectangle.Y = button.PaddingClientRectangle.Top + ((content_rect.Height - text_size.Height) / 2) - 1;
+					textRectangle.Y = button.PaddingClientRectangle.Top + ((content_rect.Height - text_size.Height) / 2);
 					textRectangle.Size = text_size;
 
 					// Image is dependent on ImageAlign
@@ -2763,8 +2765,11 @@ namespace System.Windows.Forms
 							continue;
 
 						ListViewDrawColumnHeaderBackground (control, col, dc, rect, clip);
-						rect.X += 5;
-						rect.Width -= 10;
+						// The caption is laid out with a margin of its own -- see Graphics.Overhang -- so the
+						// inset asked for here is only what is wanted beyond that. Five put every column
+						// heading two pixels further in than the same heading in Windows.
+						rect.X += 3;
+						rect.Width -= 6;
 						if (rect.Width <= 0)
 							continue;
 
