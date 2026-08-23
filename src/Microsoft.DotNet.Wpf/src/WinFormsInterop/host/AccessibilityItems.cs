@@ -207,11 +207,14 @@ namespace WinFormsWebGpu.Accessibility
                 var bar = control as ScrollBar;
                 if (bar != null)
                 {
+                    // A page area only exists while there is track on that side of the thumb. Asking for either
+                        // dimension rather than both let a bar with its thumb hard against one end publish a page
+                        // button of no height at all, which Windows does not.
                     list.Add(Key(bar, "arrow", 0));
-                    if (PageArea(bar, true).Height > 0 || PageArea(bar, true).Width > 0)
+                    if (!PageArea(bar, true).IsEmpty)
                         list.Add(Key(bar, "page", 0));
                     list.Add(Key(bar, "thumb", 0));
-                    if (PageArea(bar, false).Height > 0 || PageArea(bar, false).Width > 0)
+                    if (!PageArea(bar, false).IsEmpty)
                         list.Add(Key(bar, "page", 1));
                     list.Add(Key(bar, "arrow", 1));
                     return list;
@@ -377,11 +380,15 @@ namespace WinFormsWebGpu.Accessibility
                 {
                     int top = before ? first.Bottom : thumb.Bottom;
                     int bottom = before ? thumb.Y : second.Y;
-                    return new Rectangle(0, top, bar.Width, Math.Max(0, bottom - top));
+                    // Nothing at all rather than a strip of no height: the caller asks whether there is a page
+                    // area on this side, and a rectangle with a width still reads as one.
+                    return bottom <= top ? Rectangle.Empty
+                        : new Rectangle(0, top, bar.Width, bottom - top);
                 }
                 int left = before ? first.Right : thumb.Right;
                 int right = before ? thumb.X : second.X;
-                return new Rectangle(left, 0, Math.Max(0, right - left), bar.Height);
+                return right <= left ? Rectangle.Empty
+                    : new Rectangle(left, 0, right - left, bar.Height);
             }
             catch (Exception)
             {

@@ -764,6 +764,17 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         return true;
     }
 
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryWindowRect(out double x, out double y,
+        out double width, out double height)
+    {
+        x = y = width = height = 0;
+        if (_hwnd == IntPtr.Zero) return false;
+        RECT r;
+        if (!GetWindowRect(_hwnd, out r)) return false;
+        x = r.left; y = r.top; width = r.right - r.left; height = r.bottom - r.top;
+        return true;
+    }
+
     bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen(double x, double y, out Point driverPoint)
     {
         driverPoint = Point.Empty;
@@ -962,6 +973,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern bool AdjustWindowRectExForDpi(ref RECT r, int style, bool menu, int exStyle, uint dpi);
     [DllImport("user32")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
 }

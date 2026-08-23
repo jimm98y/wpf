@@ -338,9 +338,39 @@ namespace WinFormsWebGpu.Accessibility
             get
             {
                 var r = new UiaRect();
-                Rectangle bounds = Control != null
-                    ? (A11y.IsVisible(Control) ? A11y.DriverBounds(Control) : Rectangle.Empty)
-                    : A11yItems.BoundsOf(Element);
+
+                // The form itself is the WINDOW, frame and caption included -- that is what a client is
+                // given for a top-level element, and what every child's position is read against. Answering
+                // with the client area instead put the whole tree out by the width of the border and the
+                // height of the title bar.
+                if (ReferenceEquals(Element, Site.Form)
+                    && Site.TryWindowRect(out r.left, out r.top, out r.width, out r.height))
+                    return r;
+
+                Rectangle bounds;
+                if (Control != null)
+                {
+                    bounds = A11y.IsVisible(Control) ? A11y.DriverBounds(Control) : Rectangle.Empty;
+                }
+                else
+                {
+                    // An item is inside its control and the control is inside whatever holds that: a row
+                    // scrolled past the end of its list is nowhere on screen, and saying where it WOULD be
+                    // sends anything that trusts the answer to a place the user cannot see.
+                    bounds = A11yItems.BoundsOf(Element);
+                    Control owner = A11yItems.OwnerOf(Element);
+                    if (owner != null && !bounds.IsEmpty)
+                    {
+                        try
+                        {
+                            var client = new Rectangle(owner.PointToScreen(Point.Empty), owner.ClientSize);
+                            bounds = A11y.ClipToAncestors(owner, Rectangle.Intersect(bounds, client));
+                        }
+                        catch (Exception)
+                        {
+                        }
+                    }
+                }
                 if (bounds.IsEmpty)
                     return r;
                 Site.TryMapToScreen(bounds, out r.left, out r.top, out r.width, out r.height);

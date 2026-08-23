@@ -299,7 +299,12 @@ namespace System.Windows.Forms
 				if (ts is StatusStrip)
 					new_size.Height = Math.Max (new_size.Height, 22);
 				else
-					new_size.Height = Math.Max (new_size.Height, ts.DefaultSizeInternal.Height);
+					// The floor is on the strip's OWN height, and the caller adds the padding to whatever comes
+					// back -- so it has to be taken off here. A menu bar carries four pixels of padding and
+					// stands twenty-four high in Windows; flooring the inside at twenty-four made it
+					// twenty-eight, and everything below it on the form sat four pixels too low.
+					new_size.Height = Math.Max (new_size.Height,
+						       ts.DefaultSizeInternal.Height - ts.Padding.Vertical);
 
 				return new_size;
 			}

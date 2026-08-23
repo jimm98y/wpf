@@ -76,12 +76,36 @@ namespace WinFormsWebGpu.Accessibility
                     return Rectangle.Empty;
                 if (c.Parent == null)
                     return c.Bounds;
+                // A CONTROL reports where it is even when a scrolling parent has carried it off the top or
+                // the bottom -- Windows does, and a client uses that to scroll it back into view. Only the
+                // ITEMS inside a control disappear when they scroll out of it (see the bridge).
                 return new Rectangle(c.Parent.PointToScreen(c.Location), c.Size);
             }
             catch (Exception)
             {
                 return Rectangle.Empty;
             }
+        }
+
+        /// <summary>What is left of a rectangle once every container between it and the top has had
+        /// its say -- nothing, when the thing is scrolled out of sight.
+        /// <para>A client is told where something is so it can point at it, read it out, or scroll to
+        /// it. Something clipped away by a scrolling panel is nowhere on screen at all, and Windows
+        /// answers with an empty rectangle rather than with where it would be if it could be
+        /// seen.</para></summary>
+        internal static Rectangle ClipToAncestors(Control parent, Rectangle driverRect)
+        {
+            for (Control a = parent; a != null; a = a.Parent)
+            {
+                if (driverRect.IsEmpty)
+                    return Rectangle.Empty;
+                // The top-level window clips nothing: it IS the surface everything is drawn on.
+                if (a.Parent == null)
+                    break;
+                Rectangle client = new Rectangle(a.PointToScreen(Point.Empty), a.ClientSize);
+                driverRect = Rectangle.Intersect(driverRect, client);
+            }
+            return driverRect.Width <= 0 || driverRect.Height <= 0 ? Rectangle.Empty : driverRect;
         }
 
         /// <summary>The deepest visible control containing a point given in driver space.</summary>
@@ -192,14 +216,51 @@ namespace WinFormsWebGpu.Accessibility
             }
             try
             {
-                if (c is TextBoxBase)
-                    return c.Name ?? string.Empty;
-                return c.Text ?? string.Empty;
+                // The control's own text, but only where the control is one whose text names it. A list's
+                // text is the item showing in it and a spin box's is its value: neither is a name, and
+                // answering with one leaves the control nameless to anything that goes looking for it.
+                if (c.GetStyle(ControlStyles.UseTextForAccessibility) && !string.IsNullOrEmpty(c.Text))
+                    return c.Text;
+
+                // Otherwise the label in front of it, which is how a field on a form gets its name -- the
+                // text beside it. Windows does this and so must we, or every control on a form laid out
+                // that way is anonymous.
+                Label label = PrecedingLabel(c);
+                if (label != null && !string.IsNullOrEmpty(label.Text))
+                    return label.Text;
+
+                return string.Empty;
             }
             catch (Exception)
             {
                 return string.Empty;
             }
+        }
+
+        /// <summary>The label immediately in front of a control in tab order, whose text names it.
+        /// <para>Walks backwards through the peers: a Label answers, and any visible tab stop stops the
+        /// search -- a control that can be tabbed to is named by its own label, not by one further
+        /// back. Windows walks tab order here where the old MSAA layer walked z-order.</para></summary>
+        private static Label PrecedingLabel(Control c)
+        {
+            Control parent = c.Parent;
+            if (parent == null)
+                return null;
+            ContainerControl container = parent.GetContainerControl() as ContainerControl;
+            if (container == null)
+                return null;
+
+            for (Control previous = container.GetNextControl(c, false);
+                 previous != null;
+                 previous = container.GetNextControl(previous, false))
+            {
+                Label label = previous as Label;
+                if (label != null)
+                    return label;
+                if (previous.Visible && previous.TabStop)
+                    break;
+            }
+            return null;
         }
 
         internal static string DescriptionOf(Control c)
@@ -523,5 +584,8 @@ namespace WinFormsWebGpu.Accessibility
         bool TryMapToScreen(Rectangle driverRect, out double x, out double y, out double width, out double height);
         /// <summary>The inverse, for hit testing.</summary>
         bool TryMapFromScreen(double x, double y, out Point driverPoint);
+        /// <summary>The whole window on screen, frame and caption included, which is what a client
+        /// expects of a top-level element -- and what every child's position is read against.</summary>
+        bool TryWindowRect(out double x, out double y, out double width, out double height);
     }
 }
