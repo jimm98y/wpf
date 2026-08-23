@@ -80,6 +80,42 @@ namespace WinFormsWebGpu.Accessibility
             return null;
         }
 
+        /// <summary>The element this one hangs under, which is not always the control that owns
+        /// it: a grid's cell belongs to its row, and the row to the grid. Answering the control
+        /// for everything left every row with exactly one visible child, because a client walks
+        /// from one child to the next through the parent's list and a cell was not in it.</summary>
+        internal static object ParentOf(object element)
+        {
+            var key = element as ItemKey;
+            if (key != null)
+            {
+                var grid = key.Owner as DataGridView;
+                if (grid != null)
+                {
+                    if (key.Kind == "corner" || key.Kind == "colheader")
+                        return Key(grid, "headerrow", 0);
+                    if (key.Kind == "rowheader")
+                        return Key(grid, "gridrow", key.Index);
+                    if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
+                    {
+                        int row;
+                        if (int.TryParse(key.Kind.Substring(4).TrimEnd('_'), out row))
+                            return Key(grid, "gridrow", row);
+                    }
+                }
+
+                // A details-view cell belongs to its row.
+                var view = key.Owner as ListView;
+                if (view != null && key.Kind.StartsWith("cell", StringComparison.Ordinal))
+                {
+                    int row;
+                    if (int.TryParse(key.Kind.Substring(4), out row) && row < view.Items.Count)
+                        return view.Items[row];
+                }
+            }
+            return OwnerOf(element);
+        }
+
         /// <summary>The items of a control, in reading order. Empty for a control that has none.</summary>
         internal static IList<object> ChildrenOf(object element)
         {
@@ -138,6 +174,35 @@ namespace WinFormsWebGpu.Accessibility
                         list.Add(Key(list_box, "row", i));
                     return list;
                 }
+
+                // A scroll bar reads as its parts: the two arrows, the thumb, and the empty track
+                // either side of it. That is what lets an assistive technology say where the view
+                // sits, and what a test harness clicks.
+                var bar = control as ScrollBar;
+                if (bar != null)
+                {
+                    list.Add(Key(bar, "arrow", 0));
+                    if (PageArea(bar, true).Height > 0 || PageArea(bar, true).Width > 0)
+                        list.Add(Key(bar, "page", 0));
+                    list.Add(Key(bar, "thumb", 0));
+                    if (PageArea(bar, false).Height > 0 || PageArea(bar, false).Width > 0)
+                        list.Add(Key(bar, "page", 1));
+                    list.Add(Key(bar, "arrow", 1));
+                    return list;
+                }
+
+                // A grid reads as a row of column headers followed by its rows; each row carries
+                // its own header cell and then its data cells.
+                var grid = control as DataGridView;
+                if (grid != null)
+                {
+                    if (grid.ColumnHeadersVisible)
+                        list.Add(Key(grid, "headerrow", 0));
+                    for (int i = 0; i < grid.Rows.Count; i++)
+                        if (grid.Rows[i].Visible)
+                            list.Add(Key(grid, "gridrow", i));
+                    return list;
+                }
             }
             catch (Exception)
             {
@@ -164,6 +229,29 @@ namespace WinFormsWebGpu.Accessibility
                 {
                     for (int i = 0; i < item.SubItems.Count; i++)
                         list.Add(Key(item.ListView, "cell" + item.Index, i));
+                    return;
+                }
+
+                var key = element as ItemKey;
+                if (key != null)
+                {
+                    var grid = key.Owner as DataGridView;
+                    if (grid == null)
+                        return;
+                    if (key.Kind == "headerrow")
+                    {
+                        if (grid.RowHeadersVisible)
+                            list.Add(Key(grid, "corner", 0));
+                        for (int c = 0; c < grid.Columns.Count; c++)
+                            list.Add(Key(grid, "colheader", c));
+                    }
+                    else if (key.Kind == "gridrow")
+                    {
+                        if (grid.RowHeadersVisible)
+                            list.Add(Key(grid, "rowheader", key.Index));
+                        for (int c = 0; c < grid.Columns.Count; c++)
+                            list.Add(Key(grid, "cell" + key.Index + "_", c));
+                    }
                 }
             }
             catch (Exception)
@@ -175,9 +263,18 @@ namespace WinFormsWebGpu.Accessibility
         {
             var key = element as ItemKey;
             if (key != null)
+            {
+                switch (key.Kind)
+                {
+                    case "arrow": case "page": return A11yRole.Button;
+                    case "thumb": return A11yRole.Thumb;
+                    case "headerrow": case "gridrow": return A11yRole.Custom;
+                    case "corner": case "colheader": case "rowheader": return A11yRole.Header;
+                }
                 return key.Owner is CheckedListBox ? A11yRole.CheckBox
                      : key.Kind.StartsWith("cell", StringComparison.Ordinal) ? A11yRole.DataItem
                      : A11yRole.ListItem;
+            }
             if (element is ToolStripSeparator)
                 return A11yRole.Separator;
             var tsi = element as ToolStripItem;
@@ -196,6 +293,65 @@ namespace WinFormsWebGpu.Accessibility
             return A11yRole.Unknown;
         }
 
+        /// <summary>The empty stretch of a scroll bar's track before or after the thumb -- what a client
+        /// clicks to move by a page. Empty when the thumb is against that end.</summary>
+        internal static Rectangle PageArea(ScrollBar bar, bool before)
+        {
+            try
+            {
+                Rectangle thumb = bar.ThumbPos;
+                Rectangle first = bar.FirstArrowArea, second = bar.SecondArrowArea;
+                if (bar.vert)
+                {
+                    int top = before ? first.Bottom : thumb.Bottom;
+                    int bottom = before ? thumb.Y : second.Y;
+                    return new Rectangle(0, top, bar.Width, Math.Max(0, bottom - top));
+                }
+                int left = before ? first.Right : thumb.Right;
+                int right = before ? thumb.X : second.X;
+                return new Rectangle(left, 0, Math.Max(0, right - left), bar.Height);
+            }
+            catch (Exception)
+            {
+                return Rectangle.Empty;
+            }
+        }
+
+        /// <summary>What a scroll bar's parts are called, which differs by orientation exactly as
+        /// Windows names them.</summary>
+        private static string ScrollPartName(ScrollBar bar, string kind, int index)
+        {
+            bool vert = bar.vert;
+            switch (kind)
+            {
+                case "arrow":
+                    return index == 0 ? (vert ? "Line up" : "Column left")
+                                      : (vert ? "Line down" : "Column right");
+                case "page": return index == 0 ? (vert ? "Page up" : "Page left")
+                                               : (vert ? "Page down" : "Page right");
+                default: return "Position";
+            }
+        }
+
+        /// <summary>What a grid's parts are called. Windows names a cell after its column and
+        /// row together with the sort state, which is what a screen reader reads out.</summary>
+        private static string GridPartName(DataGridView grid, ItemKey key)
+        {
+            if (key.Kind == "headerrow") return "Top Row";
+            if (key.Kind == "gridrow" || key.Kind == "rowheader") return "Row " + (key.Index + 1);
+            if (key.Kind == "corner") return "Top Left Header Cell";
+            if (key.Kind == "colheader")
+                return key.Index < grid.Columns.Count ? grid.Columns[key.Index].HeaderText : string.Empty;
+            if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
+            {
+                int row;
+                string digits = key.Kind.Substring(4).TrimEnd('_');
+                if (int.TryParse(digits, out row) && key.Index < grid.Columns.Count)
+                    return grid.Columns[key.Index].HeaderText + " Row " + (row + 1) + ", Not sorted.";
+            }
+            return string.Empty;
+        }
+
         internal static string NameOf(object element)
         {
             try
@@ -203,6 +359,14 @@ namespace WinFormsWebGpu.Accessibility
                 var key = element as ItemKey;
                 if (key != null)
                 {
+                    var scroll = key.Owner as ScrollBar;
+                    if (scroll != null)
+                        return ScrollPartName(scroll, key.Kind, key.Index);
+
+                    var data_grid = key.Owner as DataGridView;
+                    if (data_grid != null)
+                        return GridPartName(data_grid, key);
+
                     var list_box = key.Owner as ListBox;
                     if (list_box != null && key.Kind == "row" && key.Index < list_box.Items.Count)
                         return list_box.GetItemText(list_box.Items[key.Index]);
@@ -256,6 +420,19 @@ namespace WinFormsWebGpu.Accessibility
                 var key = element as ItemKey;
                 if (key != null)
                 {
+                    var scroll = key.Owner as ScrollBar;
+                    if (scroll != null)
+                    {
+                        Rectangle part = key.Kind == "thumb" ? scroll.ThumbPos
+                            : key.Kind == "page" ? PageArea(scroll, key.Index == 0)
+                            : key.Index == 0 ? scroll.FirstArrowArea : scroll.SecondArrowArea;
+                        return Offset(part, origin);
+                    }
+
+                    var data_grid = key.Owner as DataGridView;
+                    if (data_grid != null)
+                        return Offset(GridPartBounds(data_grid, key), origin);
+
                     var list_box = key.Owner as ListBox;
                     if (list_box != null && key.Kind == "row")
                         return Offset(list_box.GetItemRectangle(key.Index), origin);
@@ -294,6 +471,35 @@ namespace WinFormsWebGpu.Accessibility
                 var page = element as TabPage;
                 if (page != null)
                     return A11y.DriverBounds(page);
+            }
+            catch (Exception)
+            {
+            }
+            return Rectangle.Empty;
+        }
+
+        /// <summary>Where a grid's part sits, in the grid's own client coordinates.</summary>
+        private static Rectangle GridPartBounds(DataGridView grid, ItemKey key)
+        {
+            try
+            {
+                if (key.Kind == "headerrow")
+                    return new Rectangle(0, 0, grid.ClientSize.Width, grid.ColumnHeadersHeight);
+                if (key.Kind == "gridrow")
+                    return grid.GetRowDisplayRectangle(key.Index, false);
+                if (key.Kind == "corner")
+                    return new Rectangle(0, 0, grid.RowHeadersWidth, grid.ColumnHeadersHeight);
+                if (key.Kind == "colheader")
+                    return grid.GetCellDisplayRectangle(key.Index, -1, false);
+                if (key.Kind == "rowheader")
+                    return grid.GetCellDisplayRectangle(-1, key.Index, false);
+                if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
+                {
+                    int row;
+                    string digits = key.Kind.Substring(4).TrimEnd('_');
+                    if (int.TryParse(digits, out row))
+                        return grid.GetCellDisplayRectangle(key.Index, row, false);
+                }
             }
             catch (Exception)
             {

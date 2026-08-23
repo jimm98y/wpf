@@ -147,6 +147,8 @@ namespace WinFormsWebGpu.Accessibility
                 case A11yRole.Separator: return 50038;
                 case A11yRole.Header: return 50034;
                 case A11yRole.DataItem: return 50029;
+                case A11yRole.Thumb: return 50027;
+                case A11yRole.Custom: return 50025;
                 default: return 50033;                      // Pane
             }
         }
@@ -265,7 +267,7 @@ namespace WinFormsWebGpu.Accessibility
             Control c = Control;
             if (c != null)
                 return ReferenceEquals(c, Site.Form) ? null : (object)c.Parent;
-            return A11yItems.OwnerOf(Element);
+            return A11yItems.ParentOf(Element);
         }
 
         // ---- the tree ----------------------------------------------------------------------------
