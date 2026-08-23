@@ -564,6 +564,14 @@ namespace System.Windows.Forms {
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		/// <summary>What is left of a wheel gesture that has not yet added up to a whole notch.
+		/// <para>A wheel reports in units of 120 and a mouse sends one notch at a time, so dividing by
+		/// 120 and dropping the remainder costs nothing. A trackpad does not work that way: it reports
+		/// a stream of much smaller deltas, every one of which divides to zero -- so the list did not
+		/// move at all, however far the fingers travelled. Keeping the remainder is what turns that
+		/// stream into scrolling.</para></summary>
+		private int wheel_residue;
+
 		protected override void OnMouseWheel(MouseEventArgs e) {
 			if (vscrollbar.VisibleInternal) {
 				// A notch of the wheel moves a few lines, which is what Windows does and what the
@@ -573,9 +581,14 @@ namespace System.Windows.Forms {
 				int step = lines < 0
 					? vscrollbar.LargeChange                       // the setting asks for a page
 					: Math.Max (1, lines) * vscrollbar.SmallChange;
-				int notches = e.Delta / 120;
+				// Whole notches only, keeping what is left over: a trackpad reports a stream of small
+				// deltas, and treating each one as a notch is what made the least touch run the panel
+				// from top to bottom.
+				wheel_residue += e.Delta;
+				int notches = wheel_residue / 120;
+				wheel_residue -= notches * 120;
 				if (notches == 0)
-					notches = Math.Sign (e.Delta);
+					return;
 				int limit = vscrollbar.Maximum - vscrollbar.LargeChange + 1;
 				int wanted = vscrollbar.Value - notches * step;
 				vscrollbar.Value = Math.Max (vscrollbar.Minimum, Math.Min (Math.Max (vscrollbar.Minimum, limit), wanted));

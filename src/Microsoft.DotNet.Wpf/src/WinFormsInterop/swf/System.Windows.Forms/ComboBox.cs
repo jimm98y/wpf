@@ -435,6 +435,11 @@ namespace System.Windows.Forms
 					textbox_ctrl.TextChanged += new EventHandler (OnTextChangedEdit);
 					textbox_ctrl.KeyPress += new KeyPressEventHandler (OnTextKeyPress);
 					textbox_ctrl.Click += new EventHandler (OnTextBoxClick);
+					// The pointer over the text part enters the TEXT BOX, not the combo: only the deepest
+					// window is told. Windows lights the whole control up wherever over it the pointer is,
+					// so the child's comings and goings are the combo's too.
+					textbox_ctrl.MouseEnter += new EventHandler (OnChildPointerChanged);
+					textbox_ctrl.MouseLeave += new EventHandler (OnChildPointerChanged);
 					textbox_ctrl.ContextMenu = ContextMenu;
 					textbox_ctrl.TopMargin = 1; // since we don't have borders, adjust manually the top
 
@@ -1759,6 +1764,18 @@ namespace System.Windows.Forms
 				Update ();
 			}
 			Capture = true;
+		}
+
+		/// <summary>Whether the pointer is over the control at all -- over its own window, or over the
+		/// text box that covers most of it.</summary>
+		internal bool PointerOver {
+			get { return Entered || (textbox_ctrl != null && textbox_ctrl.Entered); }
+		}
+
+		private void OnChildPointerChanged (object sender, EventArgs e)
+		{
+			if (ThemeEngine.Current.CombBoxBackgroundHasHotElementStyle (this))
+				Invalidate ();
 		}
 
 		void OnMouseEnter (object sender, EventArgs e)

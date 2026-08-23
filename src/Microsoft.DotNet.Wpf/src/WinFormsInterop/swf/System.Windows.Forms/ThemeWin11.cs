@@ -162,10 +162,20 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>The whole control lights up when the pointer is over it or its list is down, not
+		/// merely the button at the end: Windows washes the field, the text and the chevron together.
+		/// </summary>
+		public override bool CombBoxBackgroundHasHotElementStyle (ComboBox comboBox)
+		{
+			return comboBox.Enabled;
+		}
+
 		public override void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style)
 		{
 			if (!comboBox.Enabled)
 				g.FillRectangle (ResPool.GetSolidBrush (ColorControl), comboBox.ClientRectangle);
+			else if (comboBox.DroppedDown || comboBox.PointerOver)
+				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), comboBox.ClientRectangle);
 
 			if (comboBox.DropDownStyle == ComboBoxStyle.Simple)
 				g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent.BackColor), comboBox.ClientRectangle);
@@ -1938,6 +1948,12 @@ namespace System.Windows.Forms
 			return rect;
 		}
 
+		/// <summary>The button lights up under the pointer, as a spin button does. The classic theme
+		/// draws a 3D button that never changes, so it answered no; ours has a hot face to show.
+		public override bool DateTimePickerDropDownButtonHasHotElementStyle {
+			get { return true; }
+		}
+
 		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
 		{
 			Bitmap glyph = CalendarGlyph;
@@ -1961,10 +1977,12 @@ namespace System.Windows.Forms
 				return;
 
 			// The button belongs to the field, so it takes the field's own background -- no chrome of
-			// its own until it is pressed.
+			// its own until the pointer is on it, and then the same pale wash a spin button takes.
 			g.FillRectangle (ResPool.GetSolidBrush (dateTimePicker.Enabled ? ColorWindow : ColorControl), r);
 			if (dateTimePicker.is_drop_down_visible)
-				g.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), r);
+				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), r);
+			else if (dateTimePicker.Enabled && dateTimePicker.DropDownButtonEntered)
+				g.FillRectangle (ResPool.GetSolidBrush (HeaderHotFace), r);
 
 			Bitmap glyph = CalendarGlyph;
 			if (glyph == null) {

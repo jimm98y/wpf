@@ -1938,12 +1938,24 @@ namespace System.Windows.Forms
 			scrollbar.Value = val;
 		}
 
+		/// <summary>What is left of a wheel gesture that has not yet added up to a whole notch.
+		/// <para>A wheel reports in units of 120 and a mouse sends one notch at a time, so dividing by
+		/// 120 and dropping the remainder costs nothing. A trackpad does not work that way: it reports
+		/// a stream of much smaller deltas, every one of which divides to zero -- so the list did not
+		/// move at all, however far the fingers travelled. Keeping the remainder is what turns that
+		/// stream into scrolling.</para></summary>
+		private int wheel_residue;
+
 		private void OnMouseWheelLB (object sender, MouseEventArgs me)
 		{
 			if (Items.Count == 0)
 				return;
 
-			int lines = me.Delta / 120;
+			wheel_residue += me.Delta;
+			int lines = wheel_residue / 120;
+			wheel_residue -= lines * 120;
+			if (lines == 0)
+				return;
 
 			if (MultiColumn)
 				Scroll (hscrollbar, -SystemInformation.MouseWheelScrollLines * lines);
