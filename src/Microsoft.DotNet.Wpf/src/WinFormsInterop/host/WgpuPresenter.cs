@@ -135,10 +135,14 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // pass to the surface. No per-control readback / re-upload — the scenes go straight to the GPU on
     // this one device. `scenes` items are (boxed SceneVisual, x, y) in the driver's paint order.
     internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret, int surfaceW, int surfaceH)
+        => PresentScenes(scenes, caret, null, surfaceW, surfaceH);
+
+    internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
+                                IReadOnlyList<(Rectangle Rect, int Width)> rubberBands, int surfaceW, int surfaceH)
     {
         if (surfaceW != _width || surfaceH != _height) { _width = surfaceW; _height = surfaceH; Configure(); }
 
-        SceneVisual root = BuildRoot(scenes, caret);
+        SceneVisual root = BuildRoot(scenes, caret, rubberBands);
 
         WGPUSurfaceTexture st;
         wgpuSurfaceGetCurrentTexture(_surface, &st);
@@ -158,6 +162,10 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     }
 
     private SceneVisual BuildRoot(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret)
+        => BuildRoot(scenes, caret, null);
+
+    private SceneVisual BuildRoot(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
+                                  IReadOnlyList<(Rectangle Rect, int Width)> rubberBands)
     {
         var root = new SceneVisual();
         foreach ((object scene, int x, int y) in scenes)
@@ -179,6 +187,27 @@ internal sealed unsafe class WgpuPresenter : IDisposable
                 new RectangleGeometry(new Rect(c.X, c.Y, c.Width, c.Height)), RgbaColor.FromBytes(0, 0, 0, 255)));
             root.Children.Add(caretVisual);
         }
+        // A rubber band -- a splitter being dragged, a selection being swept -- goes over
+        // everything, the caret included: it is feedback about a gesture in progress, not part of
+        // any window's content.
+        if (rubberBands != null)
+        {
+            foreach ((Rectangle r, int width) in rubberBands)
+            {
+                if (r.Width <= 0 || r.Height <= 0) continue;
+                int w = width <= 0 ? 1 : width;
+                var band = new SceneVisual();
+                RgbaColor ink = RgbaColor.FromBytes(0, 0, 0, 255);
+                // Four sides rather than a stroked outline: the renderer strokes from the centre
+                // of the line, which for a one-pixel band lands on a half pixel and greys out.
+                band.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(r.X, r.Y, r.Width, w)), ink));
+                band.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(r.X, r.Bottom - w, r.Width, w)), ink));
+                band.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(r.X, r.Y, w, r.Height)), ink));
+                band.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(r.Right - w, r.Y, w, r.Height)), ink));
+                root.Children.Add(band);
+            }
+        }
+
         // Render the point-space scene at device resolution (Retina): scale the whole tree by the
         // backing scale so glyphs (GPU-rasterized in device space) and geometry are crisp, not upscaled.
         root.Transform = Matrix3x2.CreateScale(_scale);

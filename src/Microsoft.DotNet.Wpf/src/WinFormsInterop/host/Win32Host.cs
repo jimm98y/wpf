@@ -31,6 +31,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private bool FormGone => _form == null || _form.IsDisposed;
     private readonly object _driver;
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
+    private readonly MethodInfo _getRubberBands;
     private readonly MethodInfo _isPopup;
     private readonly MethodInfo _getCursor;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
@@ -66,6 +67,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
+        _getRubberBands = M("GetReversibleRects");
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
         _getCursor = M("GetActiveCursor");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -195,6 +197,35 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
     private bool _movingSelf;
 
+    /// <summary>Follow the form on and off screen. A form that is hidden rather than closed -- a
+    /// drop-down between uses -- kept its window: it stayed on screen holding the keyboard, so
+    /// once a picker had been closed the window underneath took no further input, and opening the
+    /// picker again showed nothing because the window was already there.</summary>
+    private void OnFormVisibleChanged(object sender, EventArgs e)
+    {
+        if (_hwnd == IntPtr.Zero || FormGone)
+            return;
+        if (_form.Visible)
+        {
+            if (_form.FormBorderStyle == FormBorderStyle.None
+                && TryMapPopup(_form.Left, _form.Top, out int px, out int py))
+                SetWindowPos(_hwnd, IntPtr.Zero, px, py, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            ShowWindow(_hwnd, SW_SHOWNA);
+            _lastVer = -1;                       // it has no scene from while it was away
+            Present();
+            return;
+        }
+
+        ShowWindow(_hwnd, SW_HIDE);
+        // Hand the keyboard back to whatever this dropped out of, or Windows gives it to some other
+        // application entirely.
+        var anchor = (PresentationHost.HostOf(_form.Owner) ?? PresentationHost.Current) as Win32Host;
+        if (anchor != null && !ReferenceEquals(anchor, this) && anchor._hwnd != IntPtr.Zero)
+            SetForegroundWindow(anchor._hwnd);
+    }
+
+    private const int SW_HIDE = 0, SW_SHOWNA = 8;
+
     public void Show()
     {
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
@@ -239,6 +270,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         // scale now that both exist. Inert when nothing is embedded.
         EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
         _form.LocationChanged += OnFormMoved;
+        _form.VisibleChanged += OnFormVisibleChanged;
         Present();
     }
 
@@ -299,7 +331,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
-        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
+        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.Width, _form.Height);
         _lastVer = ver; _lastCaretOn = caretOn;
         if (wantSave)
         {
@@ -809,6 +841,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         }
     }
 
+    /// <summary>The rubber bands the driver is holding, in this window's client space.</summary>
+    private System.Collections.Generic.List<(Rectangle Rect, int Width)> RubberBands(int ox, int oy)
+    {
+        if (_getRubberBands == null) return null;
+        long[] raw = (long[])_getRubberBands.Invoke(_driver, null);
+        if (raw == null || raw.Length == 0) return null;
+        var bands = new System.Collections.Generic.List<(Rectangle, int)>(raw.Length / 5);
+        for (int i = 0; i + 4 < raw.Length; i += 5)
+            bands.Add((new Rectangle((int)raw[i] - ox, (int)raw[i + 1] - oy, (int)raw[i + 2], (int)raw[i + 3]),
+                       (int)raw[i + 4]));
+        return bands;
+    }
+
     private Rectangle? GetCaretRect(int ox, int oy)
     {
         if (_getCaret == null) return null;
@@ -870,5 +915,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern bool AdjustWindowRectEx(ref RECT r, int style, bool menu, int exStyle);
     [DllImport("user32")] private static extern bool AdjustWindowRectExForDpi(ref RECT r, int style, bool menu, int exStyle, uint dpi);
     [DllImport("user32")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
 }

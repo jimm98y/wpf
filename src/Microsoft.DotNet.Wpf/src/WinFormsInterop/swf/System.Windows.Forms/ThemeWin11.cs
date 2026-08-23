@@ -90,19 +90,33 @@ namespace System.Windows.Forms
 		public override Color ImageMarginGradientEnd => Surface;
 	}
 
+	/// <summary>The same colours, without the shading along a tool strip's background. A button row
+	/// embedded in another control -- the property grid's -- is flat in Windows.</summary>
+	internal class FlatSurfaceColorTable : ModernProfessionalColorTable
+	{
+		public override Color ToolStripGradientBegin => SystemColors.Control;
+		public override Color ToolStripGradientMiddle => SystemColors.Control;
+		public override Color ToolStripGradientEnd => SystemColors.Control;
+		public override Color ToolStripBorder => SystemColors.Control;
+	}
+
 	internal class ThemeWin11 : ThemeWin32Classic
 	{
 		private readonly ProfessionalColorTable color_table = new ModernProfessionalColorTable ();
 
 		public override ProfessionalColorTable ColorTable => color_table;
 
-		/// <summary>Always the professional renderer with this theme's colours. The system renderer
-		/// a "flat" tool bar would otherwise get draws the pre-visual-styles look, which is what put
-		/// carved 3D frames on the property grid's toggled buttons instead of a blue fill.</summary>
+		/// <summary>The professional renderer with this theme's colours, but a flat background. The
+		/// system renderer a "flat" tool bar would otherwise get draws the pre-visual-styles look,
+		/// which is what put carved 3D frames on the property grid's toggled buttons instead of a blue
+		/// fill; the shading a free-standing tool strip carries does not belong on a button row inside
+		/// another control, and Windows draws the property grid's flat.</summary>
 		public override ToolStripRenderer CreateToolBarRenderer (ToolBarAppearance appearance)
 		{
-			return new ToolStripProfessionalRenderer (color_table);
+			return new ToolStripProfessionalRenderer (flat_color_table);
 		}
+
+		private readonly ProfessionalColorTable flat_color_table = new FlatSurfaceColorTable ();
 
 		// Windows draws a single hairline around an input, not a carved bevel. These are the two
 		// greys it uses: #7A7A7A around something you type in, #ADADAD around something you press.

@@ -367,6 +367,52 @@ namespace System.Windows.Forms
 		/// says so. Whatever was hot no longer is.</summary>
 		internal void InjectMouseLeaveAll() => TrackHover(IntPtr.Zero);
 
+		// Rubber-band rectangles, in this driver's screen space, with the width of the line each
+		// was asked for.
+		private readonly List<(Rectangle Rect, int Width)> _reversible = new List<(Rectangle, int)>();
+
+		internal void ToggleReversible(IntPtr handle, Rectangle rect, int lineWidth)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			if (h != null)
+			{
+				Point origin = ScreenLocation(h);
+				rect.Offset(origin.X, origin.Y);
+			}
+			lock (_reversible)
+			{
+				int at = _reversible.FindIndex(r => r.Rect == rect && r.Width == lineWidth);
+				if (at >= 0) _reversible.RemoveAt(at);
+				else _reversible.Add((rect, lineWidth));
+			}
+			// Nothing invalidates for a rubber band -- it is not part of any window's content -- so
+			// the frame has to be asked for directly, or it appears only when something else
+			// happens to repaint.
+			BumpPaintVersion();
+		}
+
+		/// <summary>The rubber bands to draw over the finished frame, as {x, y, width, height,
+		/// lineWidth} in driver screen space.</summary>
+		/// <summary>Ask for another frame when nothing was invalidated -- a rubber band is not part
+		/// of any window's content, so nothing else would.</summary>
+		private void BumpPaintVersion() { _paintVersion++; }
+
+		internal long[] GetReversibleRects()
+		{
+			lock (_reversible)
+			{
+				var outl = new long[_reversible.Count * 5];
+				for (int i = 0; i < _reversible.Count; i++)
+				{
+					var (r, w) = _reversible[i];
+					outl[i * 5] = r.X; outl[i * 5 + 1] = r.Y;
+					outl[i * 5 + 2] = r.Width; outl[i * 5 + 3] = r.Height;
+					outl[i * 5 + 4] = w;
+				}
+				return outl;
+			}
+		}
+
 		/// <summary>Where the pointer is, in this driver's screen space.</summary>
 		private int _cursorX, _cursorY;
 

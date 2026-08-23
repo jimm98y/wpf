@@ -795,7 +795,7 @@ namespace System.Windows.Forms
 
 		[Localizable (true)]
 		[Editor ("System.ComponentModel.Design.MultilineStringEditor, " + Consts.AssemblySystem_Design,
-			 "System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing)]
+			 typeof (System.Drawing.Design.UITypeEditor))]
 		public string ToolTipText {
 			get { return this.tool_tip_text; }
 			set { this.tool_tip_text = value; }

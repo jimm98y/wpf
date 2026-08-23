@@ -90,7 +90,7 @@ namespace System.Windows.Forms {
 		}
 
 		[Editor ("System.Windows.Forms.Design.DataMemberFieldEditor, " + Consts.AssemblySystem_Design,
-			 "System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing)]
+			 typeof (System.Drawing.Design.UITypeEditor))]
 		[DefaultValue ("")]
 		[TypeConverter ("System.Windows.Forms.Design.DataMemberFieldConverter, " + Consts.AssemblySystem_Design)]
 		public string DisplayMember {
@@ -146,7 +146,7 @@ namespace System.Windows.Forms {
 		}
 
 		[Editor ("System.Windows.Forms.Design.StringCollectionEditor, " + Consts.AssemblySystem_Design,
-			 "System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing)]
+			 typeof (System.Drawing.Design.UITypeEditor))]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Content)]
 		public DataGridViewComboBoxCell.ObjectCollection Items {
 			get {
@@ -191,7 +191,7 @@ namespace System.Windows.Forms {
 
 		[DefaultValue ("")]
 		[Editor ("System.Windows.Forms.Design.DataMemberFieldEditor, " + Consts.AssemblySystem_Design,
-			 "System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing)]
+			 typeof (System.Drawing.Design.UITypeEditor))]
 		[TypeConverter ("System.Windows.Forms.Design.DataMemberFieldConverter, " + Consts.AssemblySystem_Design)]
 		public string ValueMember {
 			get {

@@ -77,7 +77,17 @@ namespace System.Windows.Forms {
 		internal override void ScreenToMenu(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void SetIcon(IntPtr handle, Icon icon) {  }
 		internal override void DrawReversibleLine(Point start, Point end, Color backColor) {  }
-		internal override void DrawReversibleRectangle(IntPtr handle, Rectangle rect, int line_width) {  }
+		/// <summary>The rubber band a drag draws: a splitter's position, a designer's selection.
+		/// <para>Win32 draws it straight onto the screen with an XOR pen, so drawing the same
+		/// rectangle twice rubs it out again -- which is exactly how callers use it, erasing the
+		/// previous rectangle before drawing the next. There is no screen to scribble on here,
+		/// so the rectangles are kept and the compositor draws them over the finished frame; the
+		/// toggle is what preserves the caller's contract. A no-op was why dragging a splitter
+		/// showed nothing at all until the mouse came up.</para></summary>
+		internal override void DrawReversibleRectangle(IntPtr handle, Rectangle rect, int line_width)
+		{
+			ToggleReversible(handle, rect, line_width);
+		}
 		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor) {  }
 		internal override void DrawReversibleFrame(Rectangle rectangle, Color backColor, FrameStyle style) {  }
 		internal override SizeF GetAutoScaleSize(Font font) { return default(SizeF); }

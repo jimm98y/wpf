@@ -111,12 +111,17 @@ namespace System.Windows.Forms
 			splitter = new Splitter();
 			splitter.Dock = DockStyle.Bottom;
 
+			// The margin round the description pane's contents, and the line the title sits on. Both are
+			// Windows' own numbers, and the pane's height depends on them.
+			int HelpBorder = 3;
+			int HelpLineHeight = Font.Height + 2;
+
 			help_panel = new Panel();
 			help_panel.Dock = DockStyle.Bottom;
 			//help_panel.DockPadding.All = 3;
-			// The description pane is 59 high in Windows -- a title line and two lines of text, plus
-			// its margins. At fifty it was a line short, which is the whole of why a stock grid has
-			// more space under its rows than ours did.
+			// Fifty-nine: room for a title line and two lines of text, and the number Windows uses
+			// outright rather than deriving. At fifty it was a line short, and that is the whole of
+			// why a stock grid had more space under its rows than ours did.
 			help_panel.Height = 59;
 			help_panel.BackColor = SystemColors.Control;
 
@@ -125,9 +130,9 @@ namespace System.Windows.Forms
 			help_title_label.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 			help_title_label.Name = "help_title_label";
 			help_title_label.Font = new Font(this.Font,FontStyle.Bold);
-			help_title_label.Location = new Point(2,2);
-			help_title_label.Height = 17;
-			help_title_label.Width = help_panel.Width - 4;
+			help_title_label.Location = new Point (HelpBorder, HelpBorder);
+			help_title_label.Height = HelpLineHeight;
+			help_title_label.Width = help_panel.Width - HelpBorder * 2;
 
 			
 			help_description_label = new Label();
@@ -135,9 +140,12 @@ namespace System.Windows.Forms
 			help_description_label.AutoEllipsis = true;
 			help_description_label.AutoSize = false;
 			help_description_label.Font = this.Font;
-			help_description_label.Location = new Point(2,help_title_label.Top+help_title_label.Height);
-			help_description_label.Width = help_panel.Width - 4;
-			help_description_label.Height = help_panel.Height - help_description_label.Top - 2;
+			// Windows lays the pane out as a border, one line for the title and the rest for the text,
+			// less one pixel. Ours left two pixels of border and gave the description everything that
+			// remained, so the two blocks sat at different heights from a stock grid's.
+			help_description_label.Location = new Point (HelpBorder, HelpBorder + HelpLineHeight);
+			help_description_label.Width = help_panel.Width - HelpBorder * 2;
+			help_description_label.Height = Math.Max (0, help_panel.Height - HelpBorder * 2 - HelpLineHeight - 1);
 
 			help_panel.Controls.Add(help_description_label);
 			help_panel.Controls.Add(help_title_label);

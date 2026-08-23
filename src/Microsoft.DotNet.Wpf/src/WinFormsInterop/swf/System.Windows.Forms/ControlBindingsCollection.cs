@@ -31,7 +31,7 @@ using System.Reflection;
 
 namespace System.Windows.Forms {
 	[DefaultEvent("CollectionChanged")]
-	[Editor("System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing, typeof(System.Drawing.Design.UITypeEditor))]
+	[Editor(typeof (System.Drawing.Design.UITypeEditor), typeof(System.Drawing.Design.UITypeEditor))]
 	[TypeConverter("System.Windows.Forms.Design.ControlBindingsConverter, " + Consts.AssemblySystem_Design)]
 	public class ControlBindingsCollection : BindingsCollection {
 		#region	Fields

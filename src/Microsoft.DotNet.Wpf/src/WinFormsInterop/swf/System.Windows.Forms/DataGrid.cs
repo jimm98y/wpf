@@ -612,7 +612,7 @@ namespace System.Windows.Forms
 		}
 
 		[DefaultValue(null)]
-		[Editor ("System.Windows.Forms.Design.DataMemberListEditor, " + Consts.AssemblySystem_Design, "System.Drawing.Design.UITypeEditor, " + Consts.AssemblySystem_Drawing)]
+		[Editor ("System.Windows.Forms.Design.DataMemberListEditor, " + Consts.AssemblySystem_Design, typeof (System.Drawing.Design.UITypeEditor))]
 		public string DataMember {
 			get { return datamember; }
 			set {
