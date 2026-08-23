@@ -3639,13 +3639,14 @@ namespace System.Windows.Forms
 			{
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
 				if (mc.ShowToday) {
-					int today_offset = 5;
+					int today_offset = MonthCalendarTodayIndent (mc, client_rectangle.Width, date_cell_size, margin);
 					string today_text = "Today: " + DateTime.Now.ToShortDateString();
 					if (MonthCalendarCentersToday (mc)) {
 						// Centre the marker and the date as one group, which is where Windows puts them.
 						int group = (int) Math.Ceiling (dc.MeasureString (today_text, MonthCalendarTodayFont (mc)).Width);
 						if (mc.ShowTodayCircle) group += date_cell_size.Width + 5;
-						today_offset = Math.Max (5, (client_rectangle.Width - group) / 2);
+						if (today_offset < 0)
+					today_offset = Math.Max (5, (client_rectangle.Width - group) / 2);
 					}
 					int today_left = today_offset;
 					if (mc.ShowTodayCircle) 
@@ -3934,6 +3935,20 @@ namespace System.Windows.Forms
 			dc.DrawLine (ResPool.GetPen (mc.ForeColor), x1, y, x2, y);
 		}
 
+		/// <summary>Where the "Today" group starts, or -1 to centre it. Windows lines the right
+		/// edge of the marker up with the third column rather than centring the group.</summary>
+		protected virtual int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
+		{
+			return -1;
+		}
+
+		/// <summary>How a day number sits in its cell. Windows ranges them right so the units line
+		/// up down each column; the classic theme centres them.</summary>
+		protected virtual StringFormat MonthCalendarDateFormat (MonthCalendar mc)
+		{
+			return mc.centered_format;
+		}
+
 		// draws the pervious or next button
 		protected virtual void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc, Size title_size, int x_offset, Size button_size, bool is_previous) 
 		{
@@ -4018,6 +4033,13 @@ namespace System.Windows.Forms
 			return Color.Empty;
 		}
 
+		/// <summary>The wash behind that day. Windows puts a faint tint there as well as colouring
+		/// the number; the colour alone was too quiet to read as a hover.</summary>
+		protected virtual Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		{
+			return Color.Empty;
+		}
+
 		private void DrawMonthCalendarDate (Graphics dc, Rectangle rectangle, MonthCalendar mc,	DateTime date, DateTime month, int row, int col) {
 			Color date_color = mc.ForeColor;
 			Rectangle interior = new Rectangle (rectangle.X, rectangle.Y, Math.Max(rectangle.Width - 1, 0), Math.Max(rectangle.Height - 1, 0));
@@ -4047,6 +4069,15 @@ namespace System.Windows.Forms
 			// keeps the colour that says so.
 			bool hovered = date == mc.HoverDate.Date && date != mc.SelectionStart.Date
 				   && date != mc.SelectionEnd.Date;
+
+			if (hovered) {
+				Color wash = MonthCalendarHoverBackColor (mc);
+				if (wash != Color.Empty) {
+					Rectangle cell = Rectangle.Inflate (rectangle, inflate, inflate);
+					if (cell.Width > 0 && cell.Height > 0)
+						dc.FillRectangle (ResPool.GetSolidBrush (wash), cell);
+				}
+			}
 
 			if (date == mc.SelectionStart.Date && date == mc.SelectionEnd.Date) {
 				// see if the date is in the start of selection
@@ -4098,7 +4129,7 @@ namespace System.Windows.Forms
 					date_color = hover;
 			}
 
-			dc.DrawString (date.Day.ToString(), font, ResPool.GetSolidBrush (date_color), rectangle, mc.centered_format);
+			dc.DrawString (date.Day.ToString(), font, ResPool.GetSolidBrush (date_color), rectangle, MonthCalendarDateFormat (mc));
 
 			// today circle if needed
 			if (mc.ShowTodayCircle && date == DateTime.Now.Date) {

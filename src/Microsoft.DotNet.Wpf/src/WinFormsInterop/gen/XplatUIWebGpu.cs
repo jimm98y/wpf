@@ -13,7 +13,10 @@ namespace System.Windows.Forms {
 		internal override Size FrameBorderSize { get { return default(Size); } }
 		internal override Size IconSize { get { return default(Size); } }
 		internal override Size MaxWindowTrackSize { get { return default(Size); } }
-		internal override bool MenuAccessKeysUnderlined { get { return default(bool); } }
+		// False here meant Control.show_focus_cues started false and nothing ever set it, so no
+		// button, check box or radio button drew a focus rectangle -- ShouldPaintFocusRectangle
+		// asks for ShowFocusCues and never got it -- and no menu mnemonic was ever underlined.
+		internal override bool MenuAccessKeysUnderlined { get { return true; } }
 		internal override Size MinimizedWindowSpacingSize { get { return default(Size); } }
 		internal override Size MinimumWindowSize { get { return default(Size); } }
 		internal override Size SmallIconSize { get { return default(Size); } }

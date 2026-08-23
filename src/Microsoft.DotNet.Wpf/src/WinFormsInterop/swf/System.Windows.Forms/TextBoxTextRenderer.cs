@@ -42,17 +42,13 @@ namespace System.Windows.Forms
 				
 		static TextBoxTextRenderer ()
 		{
-			// On Windows, we want to use TextRenderer (GDI)
-			// On Linux, we want to use DrawString (GDI+)
-			// TextRenderer provides translation from TextRenderer to
-			// DrawString, but I doubt it's exact enough.
-			// Another option would be to put Pango here for Linux.
-			int platform = (int)Environment.OSVersion.Platform;
-			
-			if (platform == 4 || platform == 128 || platform == 6)
-				use_textrenderer = false;
-			else
-				use_textrenderer = true;
+			// The choice used to be made by operating system: GDI's TextRenderer on Windows, GDI+'s
+			// DrawString everywhere else, on the grounds that translating between them is not exact.
+			// There is no GDI underneath this stack on any platform -- both paths end up in the same
+			// recorder -- and the TextRenderer one loses a glyph's leading stroke: the diagonal of a
+			// "4" was missing from every text box, while the same character drawn through DrawString
+			// elsewhere in the same window came out whole. Draw the way that draws it.
+			use_textrenderer = false;
 
 			// windows 2000 doesn't draw with gdi if bounds are In32.MaxValue
 			max_size = new Size (Int16.MaxValue, Int16.MaxValue);
@@ -76,10 +72,12 @@ namespace System.Windows.Forms
 				else
 					g.DrawString (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (color), x, y, sf_printing);
 			} else {
-				if (showNonPrint)
-					TextRenderer.DrawTextInternal (g, text, font, new Rectangle (new Point ((int)x, (int)y), max_size), color, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix, false);
-				else
-					TextRenderer.DrawTextInternal (g, text, font, new Rectangle (new Point ((int)x, (int)y), max_size), color, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix, false);
+				// NoClipping, because a glyph whose outline reaches left of where the pen sits --
+				// the diagonal of a 4, an italic f -- was being cut off at the layout rectangle's
+				// edge. The first character of every text box lost its leading stroke.
+				const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix
+					| TextFormatFlags.NoClipping;
+				TextRenderer.DrawTextInternal (g, text, font, new Rectangle (new Point ((int)x, (int)y), max_size), color, flags, false);
 			}
 		}
 		

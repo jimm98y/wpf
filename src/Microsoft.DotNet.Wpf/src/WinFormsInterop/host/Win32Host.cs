@@ -43,6 +43,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private int _lastVer = -1;
     private int _ox, _oy;               // this form's origin in the driver's screen space
     private bool _lastCaretOn, _lastPresentOk;
+    // Set when a key-down was taken by keyboard navigation, so the character Windows
+    // translates that key into is not also delivered.
+    private bool _swallowChar;
 
     internal Win32Host(Form form)
     {
@@ -303,6 +306,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 return IntPtr.Zero;
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
             case 0x0102:                                                          // WM_CHAR
+                if (_swallowChar) { _swallowChar = false; return IntPtr.Zero; }
                 char typed = (char)(int)wParam;
                 // A control combination (Ctrl+C is 0x03) arrives here as a control code as well as
                 // a key-down. The key-down is the one a control acts on; inserting the code too put
@@ -312,11 +316,21 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             case 0x0100:                                                          // WM_KEYDOWN
                 int vk = (int)wParam;
                 PublishModifiers();
-                // Win32 VK == WinForms Keys, so keys pass straight through. Backspace(8) Tab(9)
+                // Win32 VK == WinForms Keys, so keys pass straight through. Backspace(8)
                 // Return(13) and Escape(27) are the exception: the driver synthesises their WM_CHAR
                 // from the key-down, and TranslateMessage sends one as well, so forwarding those
                 // here would act on them twice.
-                if (vk != 8 && vk != 9 && vk != 13 && vk != 27)
+                //
+                // Tab(9) used to be excluded on the same grounds, and that is why Tab did nothing
+                // at all: it is the key that moves the focus, and the driver never saw it. Forward
+                // it, and when navigation takes it, drop the tab character that follows so it does
+                // not also get typed into whatever just received the focus.
+                if (vk == 9)
+                {
+                    _swallowChar = _keyDown.Invoke(_driver, new object[] { vk }) is bool b && b;
+                    Frame();
+                }
+                else if (vk != 8 && vk != 13 && vk != 27)
                 { _keyDown.Invoke(_driver, new object[] { vk }); Frame(); }
                 return IntPtr.Zero;
             case 0x0101:                                                          // WM_KEYUP

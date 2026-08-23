@@ -1118,7 +1118,10 @@ namespace System.Windows.Forms
 
 		internal void SetModifierKeys(Keys keys) { _modifierKeys = keys; }
 
-		internal void InjectKeyDown(int vkey)
+		/// <summary>Deliver a key. Returns true when pre-processing consumed it -- a navigation
+		/// key such as Tab -- so the host knows not to follow it with the character Windows
+		/// translates it into.</summary>
+		internal bool InjectKeyDown(int vkey)
 		{
 			IntPtr target = _focusHandle;
 			if (target == IntPtr.Zero)
@@ -1130,7 +1133,7 @@ namespace System.Windows.Forms
 				Form active = Form.ActiveForm;
 				if (active != null && active.IsHandleCreated) target = active.Handle;
 			}
-			if (target == IntPtr.Zero) return;
+			if (target == IntPtr.Zero) return false;
 
 			// A real message loop offers a key to the control's pre-processing before dispatching
 			// it, and that is where WinForms handles the keys that navigate rather than type: Tab
@@ -1144,7 +1147,7 @@ namespace System.Windows.Forms
 				var pre = Message.Create(target, (int)Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
 				try
 				{
-					if (focused.PreProcessMessage(ref pre)) return;
+					if (focused.PreProcessMessage(ref pre)) return true;
 				}
 				catch (Exception ex) { T("InjectKeyDown: " + ex.Message); }
 			}
@@ -1167,6 +1170,7 @@ namespace System.Windows.Forms
 				_ => 0,
 			};
 			if (ch != 0) SendMessage(target, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
+			return false;
 		}
 		internal void InjectChar(char ch)
 		{

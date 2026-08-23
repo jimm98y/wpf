@@ -686,8 +686,12 @@ namespace System.Windows.Forms
 
 			var box = new Rectangle (bounds.X + 1, bounds.Y, bounds.Width - 3, bounds.Height - 1);
 
-			Color face = state == VisualStyles.PushButtonState.Pressed ? Color.FromArgb (229, 229, 229)
-				   : state == VisualStyles.PushButtonState.Hot ? Color.FromArgb (240, 240, 240)
+			// A hovered spin button takes a tint of the accent rather than a grey wash, and its arrow
+			// goes accent blue with it.
+			bool hot = state == VisualStyles.PushButtonState.Hot;
+			bool pushed = state == VisualStyles.PushButtonState.Pressed;
+			Color face = pushed ? ButtonFaceHover
+				   : hot ? HeaderHotFace
 				   : Color.FromArgb (250, 250, 250);
 
 			SmoothingMode old = g.SmoothingMode;
@@ -701,6 +705,7 @@ namespace System.Windows.Forms
 			// rows rather than a filled path: a path is flattened into unjoined segments here and
 			// would not close into a triangle.
 			Color glyph = state == VisualStyles.PushButtonState.Disabled ? ButtonBorderDisabled
+				    : hot || pushed ? ButtonBorderHover
 				    : Color.FromArgb (26, 26, 26);
 			Brush brush = ResPool.GetSolidBrush (glyph);
 			int cx = box.X + box.Width / 2 + 1;
@@ -899,11 +904,22 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// The marker's right edge lines up with the third column's, which is where Windows puts it.
+		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
+		{
+			return margin + 2 * cell.Width;
+		}
+
 		// Windows colours the day under the pointer rather than shading behind it: the number
 		// itself goes accent blue and the cell stays white.
 		protected override Color MonthCalendarHoverForeColor (MonthCalendar mc)
 		{
 			return ButtonBorderHover;
+		}
+
+		protected override Color MonthCalendarHoverBackColor (MonthCalendar mc)
+		{
+			return HeaderHotFace;
 		}
 
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
