@@ -1,4 +1,4 @@
-
+﻿
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
@@ -51,6 +51,34 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private const int VALUE_PAINT_INDENT = 27;
 		private double splitter_percent = .5;
 		private int row_height;
+
+		/// <summary>The gap Windows leaves between the frame around the list and its first row.
+		/// Used by everything that turns a row into a position and back -- the painting, the hit
+		/// testing, the editor's placement, scrolling one into view -- so they stay in step.
+		/// </summary>
+		internal const int TopMargin = 1;
+
+		/// <summary>How tall one row is, and where the rows begin: what an assistive
+		/// technology needs to say where a property sits.</summary>
+		/// <summary>The strip one row occupies, which is a pixel shorter than the step from one
+		/// row to the next: Windows leaves a hairline between them, as it does between the rows
+		/// of a details view.</summary>
+		internal int RowHeight {
+			get { return Math.Max (1, row_height - 1); }
+		}
+
+		internal GridItem RootItem {
+			get { return property_grid == null ? null : property_grid.RootGridItem; }
+		}
+
+		internal int RowWidth {
+			get {
+				int width = ClientRectangle.Width - 1;
+				if (vbar != null && vbar.Visible)
+					width -= vbar.Width;
+				return Math.Max (0, width);
+			}
+		}
 		private int font_height_padding = 3;
 		private PropertyGridTextBox grid_textbox;
 		private PropertyGrid property_grid;
@@ -180,7 +208,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			// Background
 			e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (BackColor), ClientRectangle);
 			
-			int yLoc = -vbar.Value*row_height;
+			int yLoc = TopMargin - vbar.Value*row_height;
 			if (this.RootGridItem != null)
 				DrawGridItems (this.RootGridItem.GridItems, e, 1, ref yLoc);
 
@@ -231,7 +259,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				resizing_grid = true;
 			}
 			else {
-				int offset = -vbar.Value*row_height;
+				int offset = TopMargin - vbar.Value*row_height;
 				GridItem foundItem = GetSelectedGridItem (this.RootGridItem.GridItems, e.Y, ref offset);
 
 				if (foundItem != null) {
@@ -934,7 +962,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			if (entry == null || this.RootGridItem == null)
 				return;
 
-			int y = -vbar.Value*row_height;
+			int y = TopMargin - vbar.Value*row_height;
 			CalculateItemY (entry, this.RootGridItem.GridItems, ref y);
 			int x = SplitterLocation + ENTRY_SPACING + (entry.PaintValueSupported ? VALUE_PAINT_INDENT : 0);
 			grid_textbox.SetBounds (x + ENTRY_SPACING, y + ENTRY_SPACING,
@@ -962,7 +990,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			if (item == null || this.RootGridItem == null)
 				return;
 
-			int itemY = -vbar.Value*row_height;
+			int itemY = TopMargin - vbar.Value*row_height;
 			int value = vbar.Value;;
 			CalculateItemY (item, this.RootGridItem.GridItems, ref itemY);
 			if (itemY < 0) // the new item is above the viewable area

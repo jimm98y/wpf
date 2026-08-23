@@ -928,6 +928,13 @@ namespace System.Windows.Forms
 		// Sizing
 		public abstract int ListViewGetHeaderHeight (ListView listView, Font font);
 
+		/// <summary>Where the date sits inside a picker, measured from the top of the control.
+		/// The classic look pins it two pixels below the frame and stays as it was.</summary>
+		public virtual int DateTimePickerTextTop (DateTimePicker dateTimePicker, int textHeight)
+		{
+			return 2;
+		}
+
 		/// <summary>How much wider a drop-down menu is than the widest caption in it: the strip
 		/// down the left where an icon would go, the column on the right for a shortcut, and the
 		/// air around them. The classic figures stay as they were.</summary>

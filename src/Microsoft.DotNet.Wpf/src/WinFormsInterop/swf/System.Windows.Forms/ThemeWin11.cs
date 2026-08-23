@@ -1904,7 +1904,9 @@ namespace System.Windows.Forms
 			// The classic layout puts the box two pixels from the edge and starts the text the
 			// instant the box ends, so the tick and the first letter touch. Windows indents the box
 			// and leaves a gap after it.
-			const int Indent = 4;
+			// Measured against a stock list: the box sits one pixel in from the row, and the row
+			// itself already begins inside the frame.
+			const int Indent = 1;
 			// The text is laid out with a margin of its own -- see Graphics.Overhang -- so the gap
 			// asked for here is only what is wanted beyond that.
 			const int Gap = 2;
@@ -1983,6 +1985,14 @@ namespace System.Windows.Forms
 
 		/// <summary>The button lights up under the pointer, as a spin button does. The classic theme
 		/// draws a 3D button that never changes, so it answered no; ours has a hot face to show.
+		/// <summary>Windows centres the date in the field. Pinning it two pixels below the frame
+		/// left it riding two pixels high, which is where ours sat against a stock one.</summary>
+		public override int DateTimePickerTextTop (DateTimePicker dateTimePicker, int textHeight)
+		{
+			Rectangle area = DateTimePickerGetDateArea (dateTimePicker);
+			return area.Y + Math.Max (0, (area.Height - textHeight) / 2);
+		}
+
 		public override bool DateTimePickerDropDownButtonHasHotElementStyle {
 			get { return true; }
 		}

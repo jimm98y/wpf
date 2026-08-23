@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -178,6 +178,8 @@ namespace System.Windows.Forms
 			toolbar.ShowToolTips = true;
 			// Twenty-five, measured across a stock grid's button row.
 			toolbar.Size = new System.Drawing.Size(256, 25);
+			// The buttons start two pixels in, as they do in Windows.
+			toolbar.Padding = new Padding (2, 0, 0, 0);
 			toolbar.TabIndex = 0;
 
 			toolbar.Items.AddRange (new ToolStripItem [] {categorized_toolbarbutton,
@@ -191,9 +193,13 @@ namespace System.Windows.Forms
 
 			categorized_toolbarbutton.Style = ToolBarButtonStyle.ToggleButton;
 			categorized_toolbarbutton.ToolTipText = Locale.GetText ("Categorized");
+			// Sorting one way or the other is a single choice, and Windows publishes the two
+			// buttons that make it as a pair of radio buttons rather than as toggles.
+			categorized_toolbarbutton.AccessibleRole = AccessibleRole.RadioButton;
+			alphabetic_toolbarbutton.AccessibleRole = AccessibleRole.RadioButton;
 
 			alphabetic_toolbarbutton.Style = ToolBarButtonStyle.ToggleButton;
-			alphabetic_toolbarbutton.ToolTipText = Locale.GetText ("Alphabetic");
+			alphabetic_toolbarbutton.ToolTipText = Locale.GetText ("Alphabetical");
 
 			propertypages_toolbarbutton.Enabled = false;
 			propertypages_toolbarbutton.Style = ToolBarButtonStyle.ToggleButton;
@@ -220,6 +226,10 @@ namespace System.Windows.Forms
 			this.Controls.Add(toolbar);
 			this.Controls.Add(splitter);
 			this.Controls.Add(help_panel);
+			// Windows leaves a pixel between the top of the control and the button row, and the
+			// same pixel above the list under it. Without it everything inside sat a pixel high
+			// against a stock grid.
+			DockPadding.Top = 1;
 			this.Name = "PropertyGrid";
 			this.Size = new System.Drawing.Size(256, 400);
 		}
@@ -551,6 +561,11 @@ namespace System.Windows.Forms
 
 		internal GridItem RootGridItem {
 			get { return root_grid_item; }
+		}
+
+		/// <summary>The list of rows itself, which is where a row's position is measured.</summary>
+		internal PropertyGridView GridView {
+			get { return property_grid_view; }
 		}
 
 		private void UpdateHelp (GridItem item)

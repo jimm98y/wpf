@@ -1,4 +1,4 @@
-// Win32 windowing shell for the WinForms-on-WebGPU host — the Windows sibling of CocoaHost. It
+﻿// Win32 windowing shell for the WinForms-on-WebGPU host — the Windows sibling of CocoaHost. It
 // creates a top-level HWND (+ message pump), a wgpu surface over that HWND (via the cross-platform
 // NativePlatform.CreateWindowSurface -> WGPUSurfaceSourceWindowsHWND), and drives the SAME
 // WgpuPresenter scene path. Everything below the surface (driver, scene recorder, WebGPU present) is
@@ -293,6 +293,11 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
         // scale now that both exist. Inert when nothing is embedded.
         EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
+        // What this surface can show is what the driver calls the screen: a popup placed past its
+        // edge is not on any screen at all. A popup's own host does not speak for it -- it is
+        // smaller than the window it drops out of.
+        if (_form.Owner == null)
+            XplatUIWebGpu.SetScreenSize(_form.Width, _form.Height);
         _form.LocationChanged += OnFormMoved;
         _form.VisibleChanged += OnFormVisibleChanged;
         Present();

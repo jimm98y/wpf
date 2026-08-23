@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
+using System.Windows.Forms.PropertyGridInternal;
 
 namespace WinFormsWebGpu.Accessibility
 {
@@ -64,6 +65,22 @@ namespace WinFormsWebGpu.Accessibility
                 var split = parent as SplitContainer;
                 if (split != null)
                     list.Sort((a, b) => PanelOrder(split, a).CompareTo(PanelOrder(split, b)));
+
+                // A property grid holds its parts in the order they were constructed, which is
+                // bottom-up; they read top-down. The splitter between the grid and the help strip
+                // is not published at all -- Windows does not, and there is nothing to say about
+                // it that its neighbours do not already say.
+                if (parent is PropertyGrid)
+                {
+                    list.RemoveAll(c => c is Splitter);
+                    // The list of properties is wrapped in a control that exists only to draw a
+                    // frame round it. Windows publishes the list, framed; publishing the frame as
+                    // well put a pane between the grid and its rows that says nothing.
+                    for (int i = 0; i < list.Count; i++)
+                        if (list[i] is PropertyGrid.BorderHelperControl && list[i].Controls.Count == 1)
+                            list[i] = list[i].Controls[0];
+                    list.Sort((a, b) => a.Top.CompareTo(b.Top));
+                }
             }
             catch (Exception)
             {
@@ -78,6 +95,18 @@ namespace WinFormsWebGpu.Accessibility
                  : ReferenceEquals(panel, split.Panel2) ? 1 : 2;
         }
 
+        /// <summary>The control this one hangs under in the tree that is published, which is not
+        /// always the one it is parented to: a frame drawn around a control is not itself an
+        /// element, so what it holds hangs under whatever holds the frame. This has to agree with
+        /// <see cref="Children"/>, because a client walks from one sibling to the next by asking
+        /// its parent for the list and finding itself in it -- disagree, and everything after the
+        /// first child of that parent is unreachable.</summary>
+        internal static Control ParentOf(Control c)
+        {
+            Control parent = c == null ? null : c.Parent;
+            return parent is PropertyGrid.BorderHelperControl ? parent.Parent : parent;
+        }
+
         /// <summary>A control's bounds in the driver's screen space. That is not the real screen:
         /// the stack renders to a virtual 96-DPI screen which the host magnifies, so a host has to
         /// map this before handing it to the platform.</summary>
@@ -85,6 +114,11 @@ namespace WinFormsWebGpu.Accessibility
         {
             try
             {
+                // A property grid's list of rows is published framed -- the frame is drawn by a
+                // control wrapped round it that the tree does not show -- so the list is as big as
+                // the frame, which is what Windows reports for it.
+                if (c != null && c.Parent is PropertyGrid.BorderHelperControl)
+                    c = c.Parent;
                 if (c == null || c.IsDisposed)
                     return Rectangle.Empty;
                 if (c.Parent == null)
@@ -218,6 +252,7 @@ namespace WinFormsWebGpu.Accessibility
                     case "CheckedListBox":
                     case "ListBox": return A11yRole.List;
                     case "ListView": return A11yRole.Table;
+                    case "PropertyGridView": return A11yRole.Table;
                     case "MonthCalendar": return A11yRole.Calendar;
                     case "NumericUpDown":
                     case "DomainUpDown":
@@ -269,6 +304,18 @@ namespace WinFormsWebGpu.Accessibility
 
                 if (c.GetStyle(ControlStyles.UseTextForAccessibility) && !string.IsNullOrEmpty(c.Text))
                     return c.Text;
+
+                // The parts of a property grid. Windows names the button row and the grid itself
+                // after the grid -- they are the grid, as far as anything reading the screen is
+                // concerned -- and leaves the strip of help along the bottom anonymous.
+                Control part_parent = c.Parent is PropertyGrid.BorderHelperControl ? c.Parent.Parent : c.Parent;
+                var owning_grid = part_parent as PropertyGrid;
+                if (owning_grid != null)
+                {
+                    if (c is PropertyGridView)
+                        return NameOf(owning_grid) + " Properties Window";
+                    return c is PropertyGrid.PropertyToolBar ? NameOf(owning_grid) : string.Empty;
+                }
 
                 // The parts a compound control is built from: the spin button between a spinner's
                 // arrows, and the field beside it. Neither has a label of its own -- the label

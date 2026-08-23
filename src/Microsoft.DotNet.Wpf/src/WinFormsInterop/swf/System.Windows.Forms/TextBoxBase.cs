@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -762,6 +762,71 @@ namespace System.Windows.Forms
 			Modified = false;
 			Text = string.Empty;
 		}
+
+		#region The menu an editable field puts up
+		// Windows gives every editable field a context menu without the application having to
+		// supply one, and an application that does not supply one still expects a right click to
+		// offer the clipboard. Ours offered nothing at all: right-clicking a text box, with text
+		// selected or without, did nothing whatever.
+		//
+		// The Windows menu carries three more groups below these -- the reading order, the
+		// Unicode control characters, and the IME -- which are Windows text services with no
+		// counterpart on the other platforms this has to run on. Every command that means
+		// something everywhere is here, in the order and grouping Windows puts them in.
+		private ContextMenuStrip edit_menu;
+		private ToolStripMenuItem edit_undo, edit_cut, edit_copy, edit_paste, edit_delete, edit_all;
+
+		internal override ContextMenuStrip DefaultContextMenuStrip {
+			get {
+				if (edit_menu == null)
+					BuildEditMenu ();
+				UpdateEditMenu ();
+				return edit_menu;
+			}
+		}
+
+		private void BuildEditMenu ()
+		{
+			edit_undo = new ToolStripMenuItem (Locale.GetText ("Undo"));
+			edit_cut = new ToolStripMenuItem (Locale.GetText ("Cut"));
+			edit_copy = new ToolStripMenuItem (Locale.GetText ("Copy"));
+			edit_paste = new ToolStripMenuItem (Locale.GetText ("Paste"));
+			edit_delete = new ToolStripMenuItem (Locale.GetText ("Delete"));
+			edit_all = new ToolStripMenuItem (Locale.GetText ("Select All"));
+
+			edit_undo.Click += delegate { Undo (); };
+			edit_cut.Click += delegate { Cut (); };
+			edit_copy.Click += delegate { Copy (); };
+			edit_paste.Click += delegate { Paste (); };
+			edit_delete.Click += delegate { SelectedText = string.Empty; };
+			edit_all.Click += delegate { SelectAll (); Focus (); };
+
+			edit_menu = new ContextMenuStrip ();
+			edit_menu.Items.AddRange (new ToolStripItem [] {
+				edit_undo,
+				new ToolStripSeparator (),
+				edit_cut, edit_copy, edit_paste, edit_delete,
+				new ToolStripSeparator (),
+				edit_all,
+			});
+		}
+
+		private void UpdateEditMenu ()
+		{
+			// A field showing dots does not hand out what it hides, so it offers neither cut nor
+			// copy -- which is what Windows does with a password box.
+			bool hidden = password_char != '\0';
+			bool selection = SelectionLength > 0;
+			bool editable = !ReadOnly;
+
+			edit_undo.Enabled = editable && CanUndo;
+			edit_cut.Enabled = editable && selection && !hidden;
+			edit_copy.Enabled = selection && !hidden;
+			edit_paste.Enabled = editable && Clipboard.ContainsText ();
+			edit_delete.Enabled = editable && selection;
+			edit_all.Enabled = TextLength > 0 && SelectionLength != TextLength;
+		}
+		#endregion
 
 		public void ClearUndo ()
 		{

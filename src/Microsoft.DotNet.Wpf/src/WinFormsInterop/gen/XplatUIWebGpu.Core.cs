@@ -192,12 +192,30 @@ namespace System.Windows.Forms
 			return outl.ToArray();
 		}
 
-		// A large virtual desktop so WinForms geometry (e.g. ComboBox.ShowWindow's
-		// "does the dropdown fall off the bottom of the screen?" check) has real bounds
-		// to work with. A zero-sized screen makes popups flip above their owner to
-		// negative Y and vanish off-screen.
-		internal override Rectangle VirtualScreen { get { return new Rectangle(0, 0, 2560, 1440); } }
-		internal override Rectangle WorkingArea { get { return new Rectangle(0, 0, 2560, 1440); } }
+		// The screen, as far as anything drawn by this driver is concerned, is the surface the
+		// host presents: a menu, a drop-down, a tooltip is composited into it, and anything
+		// placed outside it simply cannot be seen. WinForms asks how big the screen is before
+		// it puts a popup up -- "does this drop off the bottom?" -- and answering with a large
+		// imaginary desktop meant nothing ever did: a context menu raised near the foot of the
+		// window opened downwards and was cut off by the window's own edge, where Windows would
+		// have flipped it above the pointer. The host says how big its surface is; until one
+		// does, a large desktop, so geometry still has real bounds to work with.
+		private static Size s_screen = new Size(2560, 1440);
+
+		/// <summary>The area a window can actually be seen in, in this driver's own units.
+		/// Called by the host that owns the presentation surface, whenever it changes size.
+		/// </summary>
+		internal static void SetScreenSize(int width, int height)
+		{
+			if (width <= 0 || height <= 0 || s_screen == new Size(width, height))
+				return;
+			s_screen = new Size(width, height);
+			// Screen works its list out once and keeps it, so it has to be told.
+			Screen.Rescan();
+		}
+
+		internal override Rectangle VirtualScreen { get { return new Rectangle(Point.Empty, s_screen); } }
+		internal override Rectangle WorkingArea { get { return new Rectangle(Point.Empty, s_screen); } }
 		internal override Screen[] AllScreens
 		{
 			get { return new[] { new Screen(true, "WebGpu Primary Display", VirtualScreen, WorkingArea) }; }

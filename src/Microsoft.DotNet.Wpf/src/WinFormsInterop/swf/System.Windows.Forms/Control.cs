@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -5507,7 +5507,20 @@ namespace System.Windows.Forms
 				0));
 		}
 
+		/// <summary>The menu this control puts up when the application has assigned it none.
+		/// Windows gives an editable field one without being asked; everything else has none.
+		/// </summary>
+		internal virtual ContextMenuStrip DefaultContextMenuStrip {
+			get { return null; }
+		}
+
 		private void WmContextMenu (ref Message m) {
+			// A menu raised with the pointer does not show the lines under its access keys; one
+			// raised from the keyboard does, and that is decided here, by whether the message
+			// carries a point at all. Shift+F10 and the menu key send it without one.
+			ToolStripManager.ActivatedByKeyboard = LowOrder ((int) m.LParam.ToInt32 ()) == -1
+				&& HighOrder ((int) m.LParam.ToInt32 ()) == -1;
+
 			if (context_menu != null) {
 				Point	pt;
 
@@ -5536,6 +5549,20 @@ namespace System.Windows.Forms
 				}
 				
 				context_menu_strip.Show (this, PointToClient (pt));
+				return;
+			}
+
+			// Nothing was assigned, so whatever the control provides for itself.
+			ContextMenuStrip own = DefaultContextMenuStrip;
+			if (own != null && own.Items.Count > 0) {
+				Point pt = new Point (LowOrder ((int) m.LParam.ToInt32 ()),
+					HighOrder ((int) m.LParam.ToInt32 ()));
+				if (pt.X == -1 || pt.Y == -1) {
+					pt.X = (this.Width / 2) + this.Left;
+					pt.Y = (this.Height / 2) + this.Top;
+					pt = this.PointToScreen (pt);
+				}
+				own.Show (this, PointToClient (pt));
 				return;
 			}
 			DefWndProc(ref m);

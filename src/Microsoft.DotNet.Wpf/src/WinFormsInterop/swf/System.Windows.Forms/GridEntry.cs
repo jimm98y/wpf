@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -283,6 +283,12 @@ namespace System.Windows.Forms.PropertyGridInternal
 		}
 
 		#endregion
+
+		/// <summary>The list this row is drawn in, so that anything asking where the row sits can
+		/// be told.</summary>
+		internal PropertyGridView GridView {
+			get { return property_grid == null ? null : property_grid.GridView; }
+		}
 
 		internal int Top {
 			get { return top; }

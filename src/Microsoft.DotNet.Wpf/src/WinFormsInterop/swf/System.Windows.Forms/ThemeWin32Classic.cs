@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -2464,7 +2464,7 @@ namespace System.Windows.Forms
 						} else {
 							text_rect.X = date_area_rect.X;
 						}
-						text_rect.Y = 2;
+						text_rect.Y = DateTimePickerTextTop (dtp, (int) text_rect.Height);
 						text_rect.Inflate (1, 0);
 						fd.drawing_rectangle = text_rect;
 					}

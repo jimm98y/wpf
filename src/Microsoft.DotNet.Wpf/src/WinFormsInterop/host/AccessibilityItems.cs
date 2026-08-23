@@ -16,6 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
+using System.Windows.Forms.PropertyGridInternal;
 
 namespace WinFormsWebGpu.Accessibility
 {
@@ -77,6 +78,9 @@ namespace WinFormsWebGpu.Accessibility
             var page = element as TabPage;
             if (page != null)
                 return page.Parent;
+            var grid_item = element as GridEntry;
+            if (grid_item != null)
+                return grid_item.GridView;
             return null;
         }
 
@@ -86,6 +90,20 @@ namespace WinFormsWebGpu.Accessibility
         /// from one child to the next through the parent's list and a cell was not in it.</summary>
         internal static object ParentOf(object element)
         {
+            // A node belongs to the node it is under, and only the top ones to the tree itself;
+            // a property to the category it is under. Answering the control for all of them left
+            // every item after the first child of a branch unreachable: a client finds a sibling
+            // by looking for itself in its parent's children, and a nested item is not among the
+            // control's own.
+            var tree_node = element as TreeNode;
+            if (tree_node != null && tree_node.Parent != null)
+                return tree_node.Parent;
+
+            var grid_item = element as GridItem;
+            if (grid_item != null && grid_item.Parent != null
+                && grid_item.Parent.GridItemType != GridItemType.Root)
+                return grid_item.Parent;
+
             var key = element as ItemKey;
             if (key != null)
             {
@@ -184,6 +202,17 @@ namespace WinFormsWebGpu.Accessibility
                         list.Add(tabs.SelectedTab);
                     for (int i = 0; i < tabs.TabCount; i++)
                         list.Add(Key(tabs, "tabitem", i));
+                    return list;
+                }
+
+                // A property grid's rows: the categories, each with its properties under it.
+                var properties = control as PropertyGridView;
+                if (properties != null)
+                {
+                    GridItem root = properties.RootItem;
+                    if (root != null)
+                        foreach (GridItem item in root.GridItems)
+                            list.Add(item);
                     return list;
                 }
 
@@ -310,6 +339,18 @@ namespace WinFormsWebGpu.Accessibility
                     return;
                 }
 
+                // A property row that is open reads as the rows under it. A closed one reads as
+                // nothing, the same as a closed tree node: what is not on the screen is not there.
+                var grid_item = element as GridItem;
+                if (grid_item != null)
+                {
+                    if (grid_item.Expandable && !grid_item.Expanded)
+                        return;
+                    foreach (GridItem child in grid_item.GridItems)
+                        list.Add(child);
+                    return;
+                }
+
                 var key = element as ItemKey;
                 if (key != null)
                 {
@@ -396,18 +437,42 @@ namespace WinFormsWebGpu.Accessibility
                 return A11yRole.Separator;
             var tsi = element as ToolStripItem;
             if (tsi != null)
+            {
+                // What it was told it is, if it was told: two buttons that are one choice between
+                // them are a pair of radio buttons however they are drawn, and only the control
+                // that made them knows that.
+                A11yRole given = FromAccessibleRole(tsi.AccessibleRole);
+                if (given != A11yRole.Unknown)
+                    return given;
                 return tsi.Owner is MenuStrip ? A11yRole.MenuItem
                      : tsi.Owner is StatusStrip ? A11yRole.Text
                      : A11yRole.Button;
+            }
             if (element is ColumnHeader)
                 return A11yRole.Header;
             if (element is ListViewItem)
                 return A11yRole.ListItem;
-            if (element is TreeNode)
+            if (element is TreeNode || element is GridItem)
                 return A11yRole.TreeItem;
             if (element is TabPage)
                 return A11yRole.TabItem;
             return A11yRole.Unknown;
+        }
+
+        /// <summary>What a control was explicitly told to call itself, in this layer's terms.
+        /// Unknown when it was told nothing, which is the usual case.</summary>
+        private static A11yRole FromAccessibleRole(AccessibleRole role)
+        {
+            switch (role)
+            {
+                case AccessibleRole.PushButton: return A11yRole.Button;
+                case AccessibleRole.RadioButton: return A11yRole.RadioButton;
+                case AccessibleRole.CheckButton: return A11yRole.CheckBox;
+                case AccessibleRole.MenuItem: return A11yRole.MenuItem;
+                case AccessibleRole.Separator: return A11yRole.Separator;
+                case AccessibleRole.StaticText: return A11yRole.Text;
+                default: return A11yRole.Unknown;
+            }
         }
 
         /// <summary>The empty stretch of a scroll bar's track before or after the thumb -- what a client
@@ -569,7 +634,17 @@ namespace WinFormsWebGpu.Accessibility
 
                 var tsi = element as ToolStripItem;
                 if (tsi != null)
-                    return WithoutMnemonic(tsi.Text);
+                {
+                    // What it was given to be called, then its caption, then the tip that appears
+                    // when the pointer rests on it. A toolbar button usually carries only an icon,
+                    // and the tip is the only thing that says what the icon means -- which is what
+                    // Windows reads out for one.
+                    if (!string.IsNullOrEmpty(tsi.AccessibleName))
+                        return tsi.AccessibleName;
+                    if (!string.IsNullOrEmpty(tsi.Text))
+                        return WithoutMnemonic(tsi.Text);
+                    return tsi.ToolTipText ?? string.Empty;
+                }
                 var col = element as ColumnHeader;
                 if (col != null)
                     return col.Text ?? string.Empty;
@@ -579,6 +654,9 @@ namespace WinFormsWebGpu.Accessibility
                 var node = element as TreeNode;
                 if (node != null)
                     return node.Text ?? string.Empty;
+                var grid_item = element as GridItem;
+                if (grid_item != null)
+                    return grid_item.Label ?? string.Empty;
                 var page = element as TabPage;
                 if (page != null)
                     return page.Text ?? string.Empty;
@@ -688,6 +766,14 @@ namespace WinFormsWebGpu.Accessibility
                 var node = element as TreeNode;
                 if (node != null)
                     return Offset(node.Bounds, origin);
+                var grid_row = element as GridEntry;
+                if (grid_row != null && grid_row.GridView != null)
+                {
+                    // The row's own strip, inside the frame the grid draws around itself.
+                    PropertyGridView view = grid_row.GridView;
+                    return Offset(new Rectangle(0, grid_row.Top, view.RowWidth, view.RowHeight),
+                        origin);
+                }
                 var page = element as TabPage;
                 if (page != null)
                     return A11y.DriverBounds(page);

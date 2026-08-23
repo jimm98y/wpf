@@ -1340,12 +1340,18 @@ namespace System.Windows.Forms
 			}
 		}
 
-		/// <summary>How far a row's content sits in from the left frame, on top of the margin the
-		/// text itself is laid out with. Most of the air Windows leaves at the side of a row is
-		/// that margin; this is the little that is left over. A checked list draws its own box at
-		/// its own indent and needs none of this.</summary>
-		internal virtual int ItemLeftMargin => 1;
+		/// <summary>How far a row's content sits in from the item area, on top of the margin the
+		/// text itself is laid out with. Between the frame and that margin there is already as
+		/// much air at the side of a row as Windows leaves, so there is nothing more to
+		/// add.</summary>
+		internal virtual int ItemLeftMargin => 0;
 
+		/// <summary>Where a row is drawn, in the list's own client coordinates.
+		/// <para>Inside the frame: the rows live in the item area, and the item area begins a
+		/// border in. Answering in coordinates that ignored it put every row two pixels above
+		/// where the same row is in Windows -- and above where this control itself says the row
+		/// is, since the frame is counted there. Painting and hit testing both come through
+		/// here, so they move together.</para></summary>
 		internal Rectangle GetItemDisplayRectangle (int index, int first_displayble)
 		{
 			Rectangle item_rect;
@@ -1353,8 +1359,9 @@ namespace System.Windows.Forms
 			item_rect = GetItemRectangle (index);
 			item_rect.X -= first_item_rect.X;
 			item_rect.Y -= first_item_rect.Y;
+			item_rect.Offset (items_area.X, items_area.Y);
 			item_rect.X += ItemLeftMargin;
-			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin, 0);
+			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin - items_area.X, 0);
 			
 			// Subtract the checkboxes from the width
 			if (this is CheckedListBox)

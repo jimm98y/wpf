@@ -289,7 +289,7 @@ namespace WinFormsWebGpu.Accessibility
         {
             Control c = Control;
             if (c != null)
-                return ReferenceEquals(c, Site.Form) ? null : (object)c.Parent;
+                return ReferenceEquals(c, Site.Form) ? null : (object)A11y.ParentOf(c);
             return A11yItems.ParentOf(Element);
         }
 

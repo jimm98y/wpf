@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -52,6 +52,21 @@ namespace System.Windows.Forms {
 				// just use a default one
 				all_screens = new[] { new Screen(true, "Mono MWF Primary Display",
 					XplatUI.VirtualScreen, XplatUI.WorkingArea) };
+			}
+		}
+
+		/// <summary>Ask the driver again what the screens are. They are worked out once and kept,
+		/// which is right for a real desktop and wrong for a driver whose screen is a surface some
+		/// host presents: the size arrives after the first window is up, and everything that had
+		/// already asked went on believing the placeholder.</summary>
+		internal static void Rescan ()
+		{
+			try {
+				Screen[] found = XplatUI.AllScreens;
+				if (found != null && found.Length > 0)
+					all_screens = found;
+			} catch (Exception) {
+				// Keep what we had; a driver that cannot say is no worse than before.
 			}
 		}
 
