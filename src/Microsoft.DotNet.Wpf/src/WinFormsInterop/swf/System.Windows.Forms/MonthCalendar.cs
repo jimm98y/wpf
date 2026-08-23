@@ -1944,24 +1944,59 @@ namespace System.Windows.Forms {
 		internal int ZoomOriginCell => zoom_origin;
 		private int zoom_origin = -1;
 		internal static readonly object ZoomKey = new object ();
-		private const int ZoomMilliseconds = 180;
+		private const int CollapseMilliseconds = 130;
+		private const int FadeMilliseconds = 110;
 
-		private void StartZoomTransition (int origin)
+		/// <summary>The level being moved to while the one on screen is still shrinking away.</summary>
+		internal ZoomLevel ZoomPending => zoom_pending;
+		private ZoomLevel zoom_pending;
+
+		/// <summary>Whether the view on screen is the one being left, on its way out. A zoom runs
+		/// in two parts the way Windows does it: what is showing gathers itself into the cell it
+		/// will occupy in the view being entered, and only then does that view fade in. Swapping
+		/// first and animating afterwards gets the order backwards -- the new view appears whole
+		/// and then expands, which is not a zoom at all.</summary>
+		internal bool ZoomCollapsing => zoom_collapsing;
+		private bool zoom_collapsing;
+
+		private void StartZoomTransition (ZoomLevel target, int origin)
 		{
+			zoom_pending = target;
 			zoom_origin = origin;
+			zoom_collapsing = true;
 			Animation.To (this, ZoomKey, 0.0, 1);
-			Animation.To (this, ZoomKey, 1.0, ZoomMilliseconds);
+			Animation.To (this, ZoomKey, 1.0, CollapseMilliseconds);
 			Invalidate ();
 		}
 
-		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
-		private int CurrentCellInZoom ()
+		/// <summary>Called as the calendar is painted: once the outgoing view has finished
+		/// gathering itself up, swap to the new one and fade it in.</summary>
+		internal void AdvanceZoom ()
 		{
-			for (int i = 0; i < ZoomColumns * ZoomRows; i++) {
-				bool outside, current;
-				ZoomCellText (i, out outside, out current);
-				if (current)
-					return i;
+			if (!zoom_collapsing || Animation.Value (this, ZoomKey) < 1.0)
+				return;
+			zoom = zoom_pending;
+			zoom_collapsing = false;
+			Animation.To (this, ZoomKey, 0.0, 1);
+			Animation.To (this, ZoomKey, 1.0, FadeMilliseconds);
+		}
+
+		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
+		/// <summary>Which cell of <paramref name="level"/> the calendar's current date falls in.
+		/// Asked of the level being entered, which is not the one on screen yet.</summary>
+		private int CellOf (ZoomLevel level)
+		{
+			ZoomLevel was = zoom;
+			zoom = level;
+			try {
+				for (int i = 0; i < ZoomColumns * ZoomRows; i++) {
+					bool outside, current;
+					ZoomCellText (i, out outside, out current);
+					if (current)
+						return i;
+				}
+			} finally {
+				zoom = was;
 			}
 			return -1;
 		}
@@ -2053,34 +2088,42 @@ namespace System.Windows.Forms {
 		/// <summary>Step out one level, as far as decades.</summary>
 		internal void ZoomOut ()
 		{
-			if (zoom == ZoomLevel.Decades)
+			if (zoom == ZoomLevel.Decades || zoom_collapsing)
 				return;
-			zoom++;
-			// The new view grows out of the cell the old one occupies within it.
-			StartZoomTransition (CurrentCellInZoom ());
+			// Where what is showing will end up once the next view is on screen -- that is the cell
+			// it gathers itself into.
+			ZoomLevel target = zoom + 1;
+			StartZoomTransition (target, CellOf (target));
 		}
 
 		/// <summary>Pick a cell and step back in, landing on the days of whatever was chosen.</summary>
 		internal void ZoomInto (int index)
 		{
+			if (zoom_collapsing)
+				return;
+			ZoomLevel was = zoom;
+			ZoomLevel entering;
 			switch (zoom) {
 				case ZoomLevel.Months:
 					if (index >= 12) return;
 					current_month = new DateTime (current_month.Year, index + 1, 1);
-					zoom = ZoomLevel.Days;
+					entering = ZoomLevel.Days;
 					break;
 				case ZoomLevel.Years:
 					current_month = new DateTime (ZoomFirst + index, current_month.Month, 1);
-					zoom = ZoomLevel.Months;
+					entering = ZoomLevel.Months;
 					break;
 				case ZoomLevel.Decades:
 					current_month = new DateTime (ZoomFirst + index * 10, current_month.Month, 1);
-					zoom = ZoomLevel.Years;
+					entering = ZoomLevel.Years;
 					break;
 				default:
 					return;
 			}
-			StartZoomTransition (index);
+			// Stepping in, the cell that was picked is the one the old view collapses into.
+			int picked = index;
+			zoom = was;
+			StartZoomTransition (entering, picked);
 		}
 
 		/// <summary>What the arrows step by at this zoom: a month, a year, a decade, a century.</summary>

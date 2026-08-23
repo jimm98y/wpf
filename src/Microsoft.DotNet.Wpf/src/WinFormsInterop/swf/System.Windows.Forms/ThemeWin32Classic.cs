@@ -3596,6 +3596,10 @@ namespace System.Windows.Forms
 		// draw the month calendar
 		public override void DrawMonthCalendar(Graphics dc, Rectangle clip_rectangle, MonthCalendar mc) 
 		{
+			// Once the outgoing view has finished gathering itself up, the calendar swaps to the new
+			// one and fades it in. Asking here is what drives the second half of the transition.
+			mc.AdvanceZoom ();
+
 			Rectangle client_rectangle = mc.ClientRectangle;
 			Size month_size = mc.SingleMonthSize;
 			// cache local copies of Marshal-by-ref internal members (gets around error CS0197)
@@ -3604,8 +3608,38 @@ namespace System.Windows.Forms
 			
 			// draw the singlecalendars
 			int margin = MonthCalendarMargin (mc);
-			int x_offset = margin;
-			int y_offset = margin;
+
+			// While a zoom is running the view being left is drawn smaller and smaller, closing on the
+			// cell it will occupy in the view being entered, and fading as it goes. This recorder can
+			// translate what it draws but not scale it, so the month is laid out at the size it should
+			// appear: the cell and title sizes it is built from are scaled, and so is the font.
+			double shrink = 1.0;
+			Size saved_cell = mc.date_cell_size, saved_title = mc.title_size;
+			Font saved_font = zoom_font;
+			Point collapse_at = Point.Empty;
+			if (mc.ZoomCollapsing) {
+				double t = Animation.Value (mc, MonthCalendar.ZoomKey);
+				Rectangle grid = new Rectangle (margin, margin + saved_title.Height,
+					      7 * saved_cell.Width, 7 * saved_cell.Height);
+				int cw = grid.Width / MonthCalendar.ZoomColumns;
+				int ch = grid.Height / MonthCalendar.ZoomRows;
+				int cell = mc.ZoomOriginCell;
+				Rectangle target = cell < 0 ? grid
+					   : new Rectangle (grid.X + (cell % MonthCalendar.ZoomColumns) * cw,
+							  grid.Y + (cell / MonthCalendar.ZoomColumns) * ch, cw, ch);
+				shrink = 1.0 - t * (1.0 - (double) target.Width / Math.Max (1, grid.Width));
+				collapse_at = new Point ((int) Math.Round ((target.X - margin) * t),
+						    (int) Math.Round ((target.Y - grid.Y) * t));
+				mc.date_cell_size = new Size (Math.Max (1, (int) Math.Round (saved_cell.Width * shrink)),
+						        Math.Max (1, (int) Math.Round (saved_cell.Height * shrink)));
+				mc.title_size = new Size (Math.Max (1, (int) Math.Round (saved_title.Width * shrink)),
+						     Math.Max (1, (int) Math.Round (saved_title.Height * shrink)));
+				zoom_font = ScaledFont (mc.Font, shrink);
+				date_cell_size = mc.date_cell_size;
+			}
+
+			int x_offset = margin + collapse_at.X;
+			int y_offset = margin + collapse_at.Y;
 			// adjust for the position of the specific month
 			for (int i=0; i < mc.CalendarDimensions.Height; i++) 
 			{
@@ -3725,6 +3759,22 @@ namespace System.Windows.Forms
 				}
 			}
 			
+			// Put back whatever the collapse borrowed, and wash the whole thing out by how far the
+			// transition has run -- a shrinking view that stayed at full strength would read as the
+			// calendar being squashed rather than going away.
+			if (mc.ZoomCollapsing) {
+				mc.date_cell_size = saved_cell;
+				mc.title_size = saved_title;
+				zoom_font = saved_font;
+			}
+			double faded = MonthCalendarFadeAmount (mc);
+			if (faded > 0.01) {
+				Color wash = mc.BackColor;
+				int alpha = (int) Math.Round (Math.Min (1.0, faded) * 255);
+				using (var brush = new SolidBrush (Color.FromArgb (alpha, wash.R, wash.G, wash.B)))
+					dc.FillRectangle (brush, client_rectangle);
+			}
+
 			// draw the drop down border if need
 			if (mc.owner != null) {
 				// One hairline all round, in whatever this theme frames a popup with. The classic
@@ -3755,7 +3805,7 @@ namespace System.Windows.Forms
 				// The heading names whatever is on show: the month, the year, the decade or the century.
 				string title_text = mc.Zoom == MonthCalendar.ZoomLevel.Days
 					? this_month.ToString ("MMMM yyyy") : mc.ZoomTitle;
-				dc.DrawString (title_text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
+				dc.DrawString (title_text, ZoomScaled (MonthCalendarTitleFont (mc)), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 
 				if (mc.ShowYearUpDown) {
 					Rectangle year_rect;
@@ -3831,7 +3881,7 @@ namespace System.Windows.Forms
 						day_name_rect.Y,
 						date_cell_size.Width,
 						date_cell_size.Height);
-					dc.DrawString (sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd"), mc.Font, ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), day_rect, mc.centered_format);
+					dc.DrawString (sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd"), ZoomScaled (mc.Font), ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), day_rect, mc.centered_format);
 				}
 				
 				// draw the vertical divider
@@ -4024,6 +4074,41 @@ namespace System.Windows.Forms
 				dc.DrawString (text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (ink), cell,
 					       zoom_cell_format);
 			}
+		}
+
+		/// <summary>How much of the background is laid over the calendar just now: it rises as the
+		/// outgoing view shrinks away, and falls again as the incoming one arrives.</summary>
+		private static double MonthCalendarFadeAmount (MonthCalendar mc)
+		{
+			double t = Animation.Value (mc, MonthCalendar.ZoomKey);
+			if (mc.ZoomCollapsing)
+				return t;                       // going: fade out with the shrink
+			return t >= 1.0 ? 0.0 : 1.0 - t; // arriving: fade in
+		}
+
+		/// <summary>The font a collapsing calendar draws with, or null when nothing is collapsing.
+		/// Text that kept its size while the grid around it shrank would spill out of the cells.
+		/// </summary>
+		private Font zoom_font;
+
+		private Font ZoomScaled (Font font)
+		{
+			return zoom_font ?? font;
+		}
+
+		private Font zoom_font_cache;
+		private float zoom_font_size;
+
+		/// <summary>A copy of the font at a fraction of its size, kept from one frame to the next so
+		/// a transition does not build a new font sixty times a second.</summary>
+		private Font ScaledFont (Font font, double scale)
+		{
+			float size = Math.Max (1f, (float) (font.Size * scale));
+			if (zoom_font_cache == null || Math.Abs (zoom_font_size - size) > 0.2f) {
+				zoom_font_cache = new Font (font.FontFamily, size, font.Style);
+				zoom_font_size = size;
+			}
+			return zoom_font_cache;
 		}
 
 		/// <summary>A rectangle part of the way from one to another.</summary>
@@ -4227,7 +4312,7 @@ namespace System.Windows.Forms
 					date_color = hover;
 			}
 
-			dc.DrawString (MonthCalendarDayText (mc, date), font, ResPool.GetSolidBrush (date_color),
+			dc.DrawString (MonthCalendarDayText (mc, date), ZoomScaled (font), ResPool.GetSolidBrush (date_color),
 					       MonthCalendarDateBounds (mc, dc, rectangle), MonthCalendarDateFormat (mc));
 
 			// today circle if needed
