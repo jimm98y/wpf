@@ -623,6 +623,30 @@ namespace System.Windows.Forms {
 			driver.DoEvents ();
 		}
 
+		/// <summary>Every mouse press the driver routes, with the window it landed on -- whatever else
+		/// happens to that press afterwards.
+		/// <para>Windows watches for clicks the same way, with a WH_MOUSE hook, and for the same
+		/// reason: a control that has put up a drop-down needs to know about a click somewhere else in
+		/// order to take the drop-down down, and it cannot learn that from its own message queue. This
+		/// driver dispatches mouse input directly rather than posting it, so a nested message loop
+		/// never sees a click at all -- which is why a drop-down's own loop could not dismiss it.
+		/// Being a seam here rather than a hook in the host, it works the same on every head.</para>
+		/// </summary>
+		internal static event Action<IntPtr> MousePress;
+
+		/// <summary>For the driver to call. Never throws into the input path: a handler that fails
+		/// must not cost the application the click.</summary>
+		internal static void RaiseMousePress (IntPtr window)
+		{
+			Action<IntPtr> handler = MousePress;
+			if (handler == null)
+				return;
+			try {
+				handler (window);
+			} catch (Exception) {
+			}
+		}
+
 		internal static void DrawReversibleRectangle (IntPtr handle, Rectangle rect, int line_width)
 		{
 			DriverDebug ("DrawReversibleRectangle ({0}, {1}, {2}): Called", Window (handle), rect, line_width);

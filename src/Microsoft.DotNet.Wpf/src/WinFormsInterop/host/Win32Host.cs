@@ -423,7 +423,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 DismissPopup("WM_KILLFOCUS");
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x001C:                                   // WM_ACTIVATEAPP: another application entirely
-                if (wParam == IntPtr.Zero) DismissPopup("WM_ACTIVATEAPP");
+                // Every window of the application is told; the consequence is the application's, not this
+                // window's, so it is said once in a place every head shares.
+                if (wParam == IntPtr.Zero) PresentationHost.ApplicationDeactivated();
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             // WM_MOUSEWHEEL carries SCREEN coordinates and the notch count in the wParam high word.
             // Nothing forwarded it, so the wheel did nothing anywhere -- no list, grid or text box

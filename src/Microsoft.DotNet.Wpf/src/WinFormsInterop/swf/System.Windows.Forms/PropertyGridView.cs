@@ -1006,6 +1006,15 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			Invalidate (new Rectangle (0, item.Top, Width, Height - item.Top));
 		}
 
+		/// <summary>A press anywhere but inside the drop-down takes it down, which is what Windows
+		/// does with its mouse hook. The press is still delivered: a property grid is not a menu, and
+		/// clicking another row has to select that row as well as close the drop-down.</summary>
+		private void DropDownWatchClick (IntPtr window)
+		{
+			if (dropdown_form.Visible && !HwndInControl (dropdown_form, window))
+				CloseDropDown ();
+		}
+
 		private void ShowDropDownControl (Control control, bool resizeable) 
 		{
 			dropdown_form.Size = control.Size;
@@ -1045,6 +1054,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			// Deaf to the mouse for as long as the drop-down is up, as Windows makes it: the click that
 			// dismisses the drop-down would otherwise be the click that opens it again.
 			grid_textbox.IgnoreDropDownButtonMouse = true;
+			XplatUI.MousePress += DropDownWatchClick;
 			control.Focus ();
 			while (dropdown_form.Visible && XplatUI.GetMessage (queue_id, ref msg, IntPtr.Zero, 0, 0)) {
 				switch (msg.message) {
@@ -1070,6 +1080,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				XplatUI.TranslateMessage (ref msg);
 				XplatUI.DispatchMessage (ref msg);
 			}
+			XplatUI.MousePress -= DropDownWatchClick;
 			XplatUI.EndLoop (Thread.CurrentThread);
 			grid_textbox.IgnoreDropDownButtonMouse = false;
 

@@ -167,6 +167,31 @@ namespace System.Windows.Forms
             return null;
         }
 
+        /// <summary>The application as a whole has been looked away from -- another application was
+        /// brought forward. Every popup on screen belongs to work the user has stopped doing, so they
+        /// go.
+        /// <para>Each head says this in its own words -- Windows sends WM_ACTIVATEAPP, macOS resigns
+        /// active, a browser blurs the canvas -- so the words are translated at the edge and the
+        /// consequence lives here, the same everywhere. Clicks INSIDE the application need none of
+        /// this: they reach the driver, which announces them (XplatUI.MousePress), and whatever put
+        /// the popup up takes it down.</para></summary>
+        internal static void ApplicationDeactivated()
+        {
+            Form[] forms;
+            lock (s_lock)
+            {
+                forms = new Form[s_forms.Count];
+                s_forms.Values.CopyTo(forms, 0);
+            }
+            foreach (Form form in forms)
+            {
+                if (form == null || form.IsDisposed || !form.Visible) continue;
+                if (form.FormBorderStyle != FormBorderStyle.None) continue;   // not a popup
+                if (form.InvokeRequired) continue;                            // another thread's to close
+                try { form.Hide(); } catch (Exception) { }
+            }
+        }
+
         internal static void Detach(IWinFormsHost host)
         {
             if (host == null) return;

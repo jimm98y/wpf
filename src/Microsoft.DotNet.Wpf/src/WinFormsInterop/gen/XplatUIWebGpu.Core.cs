@@ -443,6 +443,13 @@ namespace System.Windows.Forms
 			Point p = ScreenLocation(h);
 			int cx = screenX - p.X, cy = screenY - p.Y;
 			IntPtr lp = (IntPtr)((cy << 16) | (cx & 0xFFFF));
+
+			// Announce a press before delivering it, so a control holding a drop-down open hears about
+			// clicks that are none of its business -- the one thing it needs in order to close.
+			if (message == Msg.WM_LBUTTONDOWN || message == Msg.WM_RBUTTONDOWN
+				|| message == Msg.WM_MBUTTONDOWN)
+				XplatUI.RaiseMousePress(target);
+
 			SendMessage(target, message, (IntPtr)wParam, lp);
 		}
 
