@@ -47,6 +47,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     // Set when a key-down was taken by keyboard navigation, so the character Windows
     // translates that key into is not also delivered.
     private bool _swallowChar;
+    private const int FrameTimerId = 1;
     // WF_TRACE_CURSOR=1 prints what shape the pointer is being asked for, which is the only way
     // to tell "the control never asked" from "the shape never arrived".
     private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
@@ -369,6 +370,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 Frame();
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
+            // Dragging or resizing a window puts Windows into a modal loop of its own inside
+            // DefWindowProc, and this window's frame loop does not run again until it ends -- so
+            // every animation froze for as long as the window was being moved. A Win32 timer is
+            // dispatched by that loop when nothing else is, which is exactly what it is for.
+            case 0x0231:                                                          // WM_ENTERSIZEMOVE
+                SetTimer(hwnd, FrameTimerId, 16, IntPtr.Zero);
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            case 0x0232:                                                          // WM_EXITSIZEMOVE
+                KillTimer(hwnd, FrameTimerId);
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            case 0x0113:                                                          // WM_TIMER
+                if ((int)wParam == FrameTimerId) { Frame(); return IntPtr.Zero; }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
             // WM_DPICHANGED: the window moved to a display with a different DPI. Nothing acted
             // on it, so _scale kept the DPI the window was created at while the client area
             // changed underneath it -- OnClientResized then read the new pixels through the old
@@ -779,6 +793,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("kernel32", SetLastError = true)] private static extern IntPtr GetModuleHandleW(string lpModuleName);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr LoadCursorW(IntPtr h, int id);
     [DllImport("user32")] private static extern IntPtr SetCursor(IntPtr cursor);
+    [DllImport("user32")] private static extern IntPtr SetTimer(IntPtr h, int id, uint ms, IntPtr proc);
+    [DllImport("user32")] private static extern bool KillTimer(IntPtr h, int id);
     [DllImport("user32", SetLastError = true)] private static extern ushort RegisterClassExW(ref WNDCLASSEXW c);
     [DllImport("user32")] private static extern int GetSystemMetrics(int index);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr CreateWindowExW(uint ex, IntPtr cls, IntPtr name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);

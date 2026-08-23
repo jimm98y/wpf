@@ -1938,6 +1938,34 @@ namespace System.Windows.Forms {
 		internal ZoomLevel Zoom => zoom;
 		private ZoomLevel zoom = ZoomLevel.Days;
 
+		/// <summary>Which cell of the view being entered the previous one came from, so the new
+		/// grid can grow out of the place the old one occupied. -1 when there is nowhere in
+		/// particular to grow from.</summary>
+		internal int ZoomOriginCell => zoom_origin;
+		private int zoom_origin = -1;
+		internal static readonly object ZoomKey = new object ();
+		private const int ZoomMilliseconds = 180;
+
+		private void StartZoomTransition (int origin)
+		{
+			zoom_origin = origin;
+			Animation.To (this, ZoomKey, 0.0, 1);
+			Animation.To (this, ZoomKey, 1.0, ZoomMilliseconds);
+			Invalidate ();
+		}
+
+		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
+		private int CurrentCellInZoom ()
+		{
+			for (int i = 0; i < ZoomColumns * ZoomRows; i++) {
+				bool outside, current;
+				ZoomCellText (i, out outside, out current);
+				if (current)
+					return i;
+			}
+			return -1;
+		}
+
 		/// <summary>The four by three grid every zoomed view is laid out in.</summary>
 		internal const int ZoomColumns = 4;
 		internal const int ZoomRows = 3;
@@ -1998,7 +2026,9 @@ namespace System.Windows.Forms {
 					int start = (current_month.Year / 100) * 100;
 					outside = decade < start || decade > start + 90;
 					current = decade == (current_month.Year / 10) * 10;
-					return decade + "-" + (decade + 9);
+					// Over two lines: a decade does not fit its cell on one, and Windows breaks it after
+					// the dash.
+					return decade + "-" + Environment.NewLine + (decade + 9);
 				}
 			}
 			return string.Empty;
@@ -2026,7 +2056,8 @@ namespace System.Windows.Forms {
 			if (zoom == ZoomLevel.Decades)
 				return;
 			zoom++;
-			Invalidate ();
+			// The new view grows out of the cell the old one occupies within it.
+			StartZoomTransition (CurrentCellInZoom ());
 		}
 
 		/// <summary>Pick a cell and step back in, landing on the days of whatever was chosen.</summary>
@@ -2049,7 +2080,7 @@ namespace System.Windows.Forms {
 				default:
 					return;
 			}
-			Invalidate ();
+			StartZoomTransition (index);
 		}
 
 		/// <summary>What the arrows step by at this zoom: a month, a year, a decade, a century.</summary>
@@ -2198,6 +2229,12 @@ namespace System.Windows.Forms {
 					ZoomOut ();
 					break;
 				case HitArea.TitleYear:
+					// Out a level, the same as the month. A modern calendar zooms rather than growing a
+					// spin box -- which is still there for an app that asks for it by name.
+					if (!ShowYearUpDown) {
+						ZoomOut ();
+						break;
+					}
 					// place the numeric up down
 					if (ShowYearUpDown) {
 						if (hti.hit_area_extra == HitAreaExtra.UpButton) {

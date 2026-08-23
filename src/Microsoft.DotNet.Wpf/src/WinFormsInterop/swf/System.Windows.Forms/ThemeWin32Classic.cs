@@ -3976,6 +3976,8 @@ namespace System.Windows.Forms
 		/// <summary>A zoomed calendar: twelve cells, four across and three down, holding months,
 		/// years or decades. The one the calendar is currently on is boxed, and any that fall
 		/// outside the range the heading names are greyed.</summary>
+		private StringFormat zoom_cell_format;
+
 		protected virtual void DrawMonthCalendarZoomed (Graphics dc, Rectangle clip, Rectangle rectangle,
 					     MonthCalendar mc, Size title_size, Size date_cell_size)
 		{
@@ -3987,6 +3989,17 @@ namespace System.Windows.Forms
 
 			int cw = grid.Width / MonthCalendar.ZoomColumns;
 			int ch = grid.Height / MonthCalendar.ZoomRows;
+
+			// While the view is arriving it grows out of the cell the previous one occupied, so the
+			// months open from the month you were on and the years from the year. Interpolating the
+			// cell rectangles is how it is done: this recorder can translate what it draws but not
+			// scale it, so the geometry has to be laid out at the size it should appear.
+			double grown = Animation.Value (mc, MonthCalendar.ZoomKey);
+			int origin = mc.ZoomOriginCell;
+			Rectangle from = origin < 0 ? grid
+				   : new Rectangle (grid.X + (origin % MonthCalendar.ZoomColumns) * cw,
+						 grid.Y + (origin / MonthCalendar.ZoomColumns) * ch, cw, ch);
+
 			for (int i = 0; i < MonthCalendar.ZoomColumns * MonthCalendar.ZoomRows; i++) {
 				bool outside, current;
 				string text = mc.ZoomCellText (i, out outside, out current);
@@ -3994,14 +4007,35 @@ namespace System.Windows.Forms
 					continue;
 				var cell = new Rectangle (grid.X + (i % MonthCalendar.ZoomColumns) * cw,
 					       grid.Y + (i / MonthCalendar.ZoomColumns) * ch, cw, ch);
-				if (!clip.IntersectsWith (cell))
+				if (grown < 1.0)
+					cell = Grow (from, cell, grown);
+				if (cell.Width <= 0 || cell.Height <= 0 || !clip.IntersectsWith (cell))
 					continue;
 				if (current)
 					MonthCalendarDrawZoomedSelection (dc, mc, cell);
 				Color ink = outside ? mc.TrailingForeColor : mc.ForeColor;
+				// A decade arrives over two lines, so this one format has to wrap where the day names
+				// never do.
+				if (zoom_cell_format == null)
+					zoom_cell_format = new StringFormat {
+						Alignment = StringAlignment.Center,
+						LineAlignment = StringAlignment.Center,
+					};
 				dc.DrawString (text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (ink), cell,
-					       mc.centered_format);
+					       zoom_cell_format);
 			}
+		}
+
+		/// <summary>A rectangle part of the way from one to another.</summary>
+		private static Rectangle Grow (Rectangle from, Rectangle to, double t)
+		{
+			if (t <= 0) return from;
+			if (t >= 1) return to;
+			return new Rectangle (
+				(int) Math.Round (from.X + (to.X - from.X) * t),
+				(int) Math.Round (from.Y + (to.Y - from.Y) * t),
+				(int) Math.Round (from.Width + (to.Width - from.Width) * t),
+				(int) Math.Round (from.Height + (to.Height - from.Height) * t));
 		}
 
 		/// <summary>How the cell the calendar is currently on is marked out.</summary>
