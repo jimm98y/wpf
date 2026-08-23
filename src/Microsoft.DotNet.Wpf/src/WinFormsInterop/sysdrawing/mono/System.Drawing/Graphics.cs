@@ -1647,6 +1647,23 @@ namespace System.Drawing
 		/// <summary>The margin a string is laid out inside: a sixth of the font's height, which is
 		/// what both GDI+ and Windows leave for a glyph that overhangs its cell. A typographic
 		/// format asks for none -- that is what it is for.</summary>
+		/// <summary>How far below the baseline the line box reaches, truncated as Windows
+		/// truncates it.</summary>
+		static float Descent (Font font, float emPx)
+		{
+			FontFamily family = font.FontFamily;
+			if (family == null)
+				return 0.2f * emPx;
+			try {
+				int em = family.GetEmHeight (font.Style);
+				if (em <= 0)
+					return 0.2f * emPx;
+				return (float) Math.Floor (family.GetCellDescent (font.Style) * emPx / em);
+			} catch (Exception) {
+				return 0.2f * emPx;
+			}
+		}
+
 		static float Overhang (Font font, StringFormat format)
 		{
 			if (format != null && format.IsTypographic)
@@ -2664,9 +2681,11 @@ namespace System.Drawing
 				// other control that measures a line, a quarter tighter than the real thing.
 				float lineHeight = font.GetHeight ();
 				if (lineHeight <= 0) lineHeight = em;
-				// GDI+ reports a line box in whole pixels, and callers truncate what they get back:
-				// ListBox does (int) sz.Height to size its rows, so handing it 15.96 produced 15 where
-				// Windows produces 16, and every row was a pixel short.
+				// The line box a caller is told about is a whole number of pixels, and callers truncate
+				// what they get back: a list sizes its rows by it. Windows answers fifteen for a font
+				// whose design line spacing is 15.96 -- its own metric truncates -- but its rows are
+				// sixteen even so, and it is the rows that everything here is measured against. Rounding
+				// up gives those rows; answering the smaller number made every list a pixel tight.
 				lineHeight = (float) Math.Ceiling (lineHeight);
 				// The margin the text will be drawn inside -- see Overhang. A caller that sizes a
 				// control to what it is told here and then draws the text in that space needs the

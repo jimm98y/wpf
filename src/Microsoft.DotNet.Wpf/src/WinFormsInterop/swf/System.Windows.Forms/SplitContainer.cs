@@ -1,4 +1,4 @@
-//
+﻿//
 // SplitContainer.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -174,6 +174,12 @@ namespace System.Windows.Forms
 
 			this.Controls.Add (panel2);
 			this.Controls.Add (panel1);
+			// The panels are held in the order they were made, which is not the order they read or
+			// tab in: Panel1 comes first on the screen and comes first to the keyboard. Left as it
+			// was, tabbing crossed the splitter backwards, and anything naming a control by the
+			// label in front of it named the left-hand panel after the right-hand one's contents.
+			panel1.TabIndex = 0;
+			panel2.TabIndex = 1;
 		}
 		#endregion
 

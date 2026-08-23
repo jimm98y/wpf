@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -370,9 +370,13 @@ namespace System.Windows.Forms
 			
 			txtView.Dock = DockStyle.Fill;
 			
+			// The field first, the spin button after it: docking is done from the last child to the
+			// first, so whichever is added last is placed first. Adding the field last let it fill
+			// the whole control and left the spin button no room -- it ended up drawn over the end
+			// of the text, where Windows has the text stop short of it.
 			SuspendLayout ();
+			Controls.Add (txtView);
 			Controls.Add (spnSpinner);
-			Controls.Add (txtView);	
 			ResumeLayout ();
 
 			Height = PreferredHeight;

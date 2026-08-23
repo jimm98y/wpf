@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Windows.Forms.ScrollBar.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -64,7 +64,13 @@ namespace System.Windows.Forms
 		private Timer timer = new Timer ();
 		private TimerType timer_type;
 		private int thumb_size = 40;
-		private const int thumb_min_size = 8;
+		// The smallest a thumb is allowed to get. Windows never shrinks one below the breadth of
+		// the bar it runs in -- the same measure as the arrow buttons at its ends -- so that there
+		// is always something to take hold of. Eight pixels left a long list with a sliver a third
+		// the size of the one Windows shows for the same list.
+		private int ThumbMinSize {
+			get { return vert ? scrollbutton_height : scrollbutton_width; }
+		}
 		private const int thumb_notshown_size = 40;
 		internal bool use_manual_thumb_size;
 		internal int manual_thumb_size;
@@ -757,8 +763,8 @@ namespace System.Windows.Forms
 					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
 					thumb_size = 1 + (int) (thumb_area.Height * per);
 
-					if (thumb_size < thumb_min_size)
-						thumb_size = thumb_min_size;
+					if (thumb_size < ThumbMinSize)
+						thumb_size = ThumbMinSize;
 						
 					// Give the user something to drag if LargeChange is zero
 					if (LargeChange == 0)
@@ -780,8 +786,8 @@ namespace System.Windows.Forms
 					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
 					thumb_size = 1 + (int) (thumb_area.Width * per);
 
-					if (thumb_size < thumb_min_size)
-						thumb_size = thumb_min_size;
+					if (thumb_size < ThumbMinSize)
+						thumb_size = ThumbMinSize;
 						
 					// Give the user something to drag if LargeChange is zero
 					if (LargeChange == 0)
