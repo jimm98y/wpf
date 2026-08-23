@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -927,6 +927,20 @@ namespace System.Windows.Forms
 
 		// Sizing
 		public abstract int ListViewGetHeaderHeight (ListView listView, Font font);
+
+		/// <summary>How much wider a drop-down menu is than the widest caption in it: the strip
+		/// down the left where an icon would go, the column on the right for a shortcut, and the
+		/// air around them. The classic figures stay as they were.</summary>
+		public virtual int ToolStripDropDownMenuMargin (bool imageMargin)
+		{
+			return imageMargin ? 68 : 47;
+		}
+
+		/// <summary>The hairline a details view leaves below each row. Windows separates them;
+		/// the classic theme packs them, and stays as it was.</summary>
+		public virtual int ListViewDetailsRowGap {
+			get { return 0; }
+		}
 		public abstract Size ListViewCheckBoxSize { get; }
 		public abstract int ListViewColumnHeaderHeight { get; }
 		public abstract int ListViewDefaultColumnWidth { get; }

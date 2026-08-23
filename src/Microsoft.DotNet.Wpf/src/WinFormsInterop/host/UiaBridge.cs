@@ -1,4 +1,4 @@
-// The Windows binding for the host's accessibility tree: a server-side UI Automation provider.
+﻿// The Windows binding for the host's accessibility tree: a server-side UI Automation provider.
 //
 // A window that draws its own content answers WM_GETOBJECT with a provider and describes its tree
 // itself, which is exactly the position this host is in -- see Accessibility.cs for why. Everything
@@ -354,22 +354,14 @@ namespace WinFormsWebGpu.Accessibility
                 }
                 else
                 {
-                    // An item is inside its control and the control is inside whatever holds that: a row
-                    // scrolled past the end of its list is nowhere on screen, and saying where it WOULD be
-                    // sends anything that trusts the answer to a place the user cannot see.
+                    // Whether an item that has scrolled out of sight still says where it is, is the
+                    // control's own business and no rule that can be applied from here. A list box
+                    // publishes only the rows it can show; a details view reports every row, even
+                    // one hanging off the bottom, and a row wider than the view keeps its full
+                    // width; a grid gives nothing for a cell that is not on screen. Clipping every
+                    // item to its control's client overrode all three, and reported a toolbar's
+                    // buttons as nowhere the moment the form was scrolled.
                     bounds = A11yItems.BoundsOf(Element);
-                    Control owner = A11yItems.OwnerOf(Element);
-                    if (owner != null && !bounds.IsEmpty)
-                    {
-                        try
-                        {
-                            var client = new Rectangle(owner.PointToScreen(Point.Empty), owner.ClientSize);
-                            bounds = A11y.ClipToAncestors(owner, Rectangle.Intersect(bounds, client));
-                        }
-                        catch (Exception)
-                        {
-                        }
-                    }
                 }
                 if (bounds.IsEmpty)
                     return r;
@@ -439,6 +431,7 @@ namespace WinFormsWebGpu.Accessibility
         {
             if (Control == null)
                 return patternId == Uia.InvokePattern && A11yItems.CanInvoke(Element) ? this :
+                    patternId == Uia.ExpandCollapsePattern && A11yItems.CanExpand(Element) ? this :
                     patternId == Uia.ScrollItemPattern ? this : null;
 
             switch (patternId)
@@ -526,11 +519,26 @@ namespace WinFormsWebGpu.Accessibility
 
         public void Toggle() { A11y.Toggle(Control); }
 
-        public void Expand() { A11y.SetExpanded(Control, true); }
+        public void Expand()
+        {
+            if (Control != null) A11y.SetExpanded(Control, true);
+            else A11yItems.SetExpanded(Element, true);
+        }
 
-        public void Collapse() { A11y.SetExpanded(Control, false); }
+        public void Collapse()
+        {
+            if (Control != null) A11y.SetExpanded(Control, false);
+            else A11yItems.SetExpanded(Element, false);
+        }
 
-        public int ExpandCollapseState { get { return A11y.IsExpanded(Control) ? 1 : 0; } }
+        public int ExpandCollapseState
+        {
+            get
+            {
+                return (Control != null ? A11y.IsExpanded(Control) : A11yItems.IsExpanded(Element))
+                    ? 1 : 0;
+            }
+        }
 
         public int ToggleState
         {

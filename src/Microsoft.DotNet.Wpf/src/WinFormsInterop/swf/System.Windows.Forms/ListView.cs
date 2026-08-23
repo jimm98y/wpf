@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -1539,8 +1539,16 @@ namespace System.Windows.Forms
 		/// are the same rectangle -- so the border is painted on the control's own outer edge, and
 		/// children laid out at the origin composite straight over it. That is why the list view was
 		/// the one control with no frame at all.</summary>
+		/// <summary>How far the header and the rows sit inside the control, so the frame drawn
+		/// around it stays visible. A sunken frame is two pixels thick, a single line one.</summary>
 		internal int BorderInset {
-			get { return InternalBorderStyle == BorderStyle.None ? 0 : 1; }
+			get {
+				switch (InternalBorderStyle) {
+				case BorderStyle.None: return 0;
+				case BorderStyle.FixedSingle: return 1;
+				default: return 2;
+				}
+			}
 		}
 
 		int GetDetailsItemHeight ()
@@ -1550,7 +1558,7 @@ namespace System.Windows.Forms
 			int small_image_height = SmallImageList == null ? 0 : SmallImageList.ImageSize.Height;
 			item_height = Math.Max (checkbox_height, text_size.Height);
 			item_height = Math.Max (item_height, small_image_height);
-			return item_height;
+			return item_height + ThemeEngine.Current.ListViewDetailsRowGap;
 		}
 
 		void SetItemLocation (int index, int x, int y, int row, int col)

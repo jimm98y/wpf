@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.Graphics.cs
 //
 // Authors:
@@ -1626,6 +1626,43 @@ namespace System.Drawing
 			return lo;
 		}
 
+		/// <summary>How far down a line box the baseline sits: the font's ascent, truncated the
+		/// way Windows truncates a scaled metric. Segoe UI at nine point asks for 12.95 pixels
+		/// and Windows uses 12, which is why text drawn on the fraction sat a pixel low.</summary>
+		static float Ascent (Font font, float emPx)
+		{
+			FontFamily family = font.FontFamily;
+			if (family == null)
+				return 0.8f * emPx;
+			try {
+				int em = family.GetEmHeight (font.Style);
+				if (em <= 0)
+					return 0.8f * emPx;
+				return (float) Math.Floor (family.GetCellAscent (font.Style) * emPx / em);
+			} catch (Exception) {
+				return 0.8f * emPx;
+			}
+		}
+
+		/// <summary>The margin a string is laid out inside: a sixth of the font's height, which is
+		/// what both GDI+ and Windows leave for a glyph that overhangs its cell. A typographic
+		/// format asks for none -- that is what it is for.</summary>
+		static float Overhang (Font font, StringFormat format)
+		{
+			if (format != null && format.IsTypographic)
+				return 0f;
+			return (float) Math.Ceiling (font.Height / 6f);
+		}
+
+		/// <summary>Both margins together: the one before the first glyph and the wider one after
+		/// the last, which leaves room for an italic's tail. A measurement has to include them,
+		/// because they are room the drawing will use.</summary>
+		static float Margins (Font font, StringFormat format)
+		{
+			float left = Overhang (font, format);
+			return left == 0f ? 0f : left + (float) Math.Ceiling (font.Height / 6f * 1.5f);
+		}
+
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
 		{
 			if (font == null)
@@ -1679,19 +1716,25 @@ namespace System.Drawing
 				if (clipToLayout)
 					GpuRecorder.SetClipRect (layoutRectangle.X, layoutRectangle.Y,
 						layoutRectangle.Width, layoutRectangle.Height, false);
+				// The margin left before the first glyph, so that one which overhangs its cell is not
+				// clipped by the rectangle it was asked to fit in. GDI+ leaves it and Windows leaves it
+				// -- a sixth of the font's height -- and this path left none, so every caption in the
+				// application sat three pixels to the left of the same caption in Windows. Centred text
+				// is left alone: the margins either side of it very nearly cancel.
+				float overhang = Overhang (font, format);
 				string[] lines = WrapLines (text, emPx, sims, family, layoutRectangle.Width, format);
 				// A line of text is taller than its em square: the font's line height adds the
 				// descender and its leading. Stepping by the em size instead packed every
 				// multi-line run tighter than the same text drawn by Windows.
 				float lineHeight = font.GetHeight ();
 				if (lineHeight <= 0) lineHeight = emPx;
-				// Where the glyphs sit INSIDE that line box. The recorder turns the y it is given into
-				// a baseline by dropping 0.8 of the em size -- which is right for a line box exactly one
-				// em tall and wrong for a real one, since a line is taller than its em square by the
-				// descender and the leading. Passing the line's top left every run riding about three
-				// pixels high in its own line: a button's caption sat above centre, and so did every
-				// list item and cell.
-				float baseline = 0.8f * (lineHeight - emPx);
+				// Where the glyphs sit INSIDE that line box: on a baseline as far down as the font's own
+				// ascent, truncated to whole pixels exactly as Windows truncates it. Guessing at four
+				// fifths of the line box came out a fraction low, and a fraction low rounds to a whole
+				// pixel: every caption in the application sat one pixel below the same caption in
+				// Windows. The recorder turns the y it is given into a baseline by dropping 0.8 of the
+				// em size, so what it wants is the ascent less that.
+				float baseline = Ascent (font, emPx) - 0.8f * emPx;
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
 					float totalH = lineHeight * lines.Length;
@@ -1702,11 +1745,13 @@ namespace System.Drawing
 					string line = lines[i].TrimEnd ('\r');
 					if (line.Length == 0) continue;
 					float tx = layoutRectangle.X;
-					if (format != null && layoutRectangle.Width > 0) {
+					if (format != null && layoutRectangle.Width > 0 && format.Alignment != StringAlignment.Near) {
 						// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
 						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float mw, out float mh);
 						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
-						else if (format.Alignment == StringAlignment.Far) tx += layoutRectangle.Width - mw;
+						else tx += layoutRectangle.Width - mw - overhang;
+					} else {
+						tx += overhang;
 					}
 					// Underline the mnemonic, if it falls on this line.
 					if (prefix == Text.HotkeyPrefix.Show && mnemonic >= 0)
@@ -2585,10 +2630,20 @@ namespace System.Drawing
 		}
 
 		private unsafe SizeF GdipMeasureString (IntPtr graphics, string text, Font font, ref RectangleF layoutRect,
-			IntPtr stringFormat)
+			IntPtr stringFormat, StringFormat managedFormat = null)
 		{
 			if ((text == null) || (text.Length == 0))
 				return SizeF.Empty;
+
+			// "&File" is a File with a line under the F: the ampersand names the key that reaches
+			// it and is no part of the caption. Windows does not measure it, and neither does the
+			// drawing below -- but this did, so every menu came out about a character wider than
+			// the same menu in Windows.
+			if (s_gpuRasterMode && managedFormat != null
+				&& managedFormat.HotkeyPrefix != Text.HotkeyPrefix.None) {
+				int ignored;
+				text = StripHotkeyPrefix (text, out ignored);
+			}
 
 			if (font == null)
 				throw new ArgumentNullException ("font");
@@ -2613,6 +2668,10 @@ namespace System.Drawing
 				// ListBox does (int) sz.Height to size its rows, so handing it 15.96 produced 15 where
 				// Windows produces 16, and every row was a pixel short.
 				lineHeight = (float) Math.Ceiling (lineHeight);
+				// The margin the text will be drawn inside -- see Overhang. A caller that sizes a
+				// control to what it is told here and then draws the text in that space needs the
+				// margin counted in, or the last letter or two run out of the room measured for them.
+				float margin = Margins (font, managedFormat);
 				if (layoutRect.Width > 0) {
 						string[] wrapped = WrapLines (text, em, simulations, measureFamily, layoutRect.Width, null);
 						float widest = 0f;
@@ -2620,10 +2679,10 @@ namespace System.Drawing
 							WebGpuBackend.GpuRaster.MeasureText (line, em, simulations, measureFamily, out float lw, out float _);
 							if (lw > widest) widest = lw;
 						}
-						return new SizeF (widest, lineHeight * Math.Max (1, wrapped.Length));
+						return new SizeF (widest + margin, lineHeight * Math.Max (1, wrapped.Length));
 				}
 				WebGpuBackend.GpuRaster.MeasureText (text, em, simulations, measureFamily, out float mw, out float mh);
-				return new SizeF (mw, lineHeight * Math.Max (1, mh / Math.Max (1f, em)));
+				return new SizeF (mw + margin, lineHeight * Math.Max (1, mh / Math.Max (1f, em)));
 			}
 
 			RectangleF boundingBox = new RectangleF ();
@@ -2656,21 +2715,21 @@ namespace System.Drawing
 		{
 			RectangleF rect = new RectangleF (0, 0, layoutArea.Width, layoutArea.Height);
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
-			return GdipMeasureString (nativeObject, text, font, ref rect, format);
+			return GdipMeasureString (nativeObject, text, font, ref rect, format, stringFormat);
 		}
 
 		public SizeF MeasureString (string text, Font font, int width, StringFormat format)
 		{
 			RectangleF rect = new RectangleF (0, 0, width, Int32.MaxValue);
 			IntPtr stringFormat = (format == null) ? IntPtr.Zero : format.NativeObject;
-			return GdipMeasureString (nativeObject, text, font, ref rect, stringFormat);
+			return GdipMeasureString (nativeObject, text, font, ref rect, stringFormat, format);
 		}
 
 		public SizeF MeasureString (string text, Font font, PointF origin, StringFormat stringFormat)
 		{
 			RectangleF rect = new RectangleF (origin.X, origin.Y, 0, 0);
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
-			return GdipMeasureString (nativeObject, text, font, ref rect, format);
+			return GdipMeasureString (nativeObject, text, font, ref rect, format, stringFormat);
 		}
 
 		public SizeF MeasureString (string text, Font font, SizeF layoutArea, StringFormat stringFormat, 

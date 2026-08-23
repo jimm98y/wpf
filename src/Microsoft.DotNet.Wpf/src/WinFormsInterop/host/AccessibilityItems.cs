@@ -1,4 +1,4 @@
-// The parts of a control that are not themselves controls: a menu's entries, a list's rows, a
+﻿// The parts of a control that are not themselves controls: a menu's entries, a list's rows, a
 // grid's cells, a tree's nodes, a calendar's days.
 //
 // Left out, an automation tree stops at the control. A stock WinForms gallery publishes about four
@@ -154,9 +154,12 @@ namespace WinFormsWebGpu.Accessibility
                 var view = control as ListView;
                 if (view != null)
                 {
-                    if (view.View == View.Details)
-                        foreach (ColumnHeader col in view.Columns)
-                            list.Add(col);
+                    // Windows publishes the header as one anonymous pane above the rows, not as a
+                    // run of header elements: the columns are reachable through the cells, which
+                    // are named after them.
+                    if (view.View == View.Details && view.header_control != null
+                        && view.header_control.Visible)
+                        list.Add(Key(view, "lvheader", 0));
                     foreach (ListViewItem item in view.Items)
                         list.Add(item);
                     return list;
@@ -174,11 +177,43 @@ namespace WinFormsWebGpu.Accessibility
                 if (tabs != null)
                 {
                     // The page is a control and shows as a pane; the tab you click on is a
-                    // separate element, which is what Windows publishes as well.
-                    foreach (TabPage page in tabs.TabPages)
-                        list.Add(page);
+                    // separate element, which is what Windows publishes as well. Only the page on
+                    // top is published: the others are not on the screen, and listing them gave
+                    // every tab control a pane per page that nothing could ever be read from.
+                    if (tabs.SelectedTab != null)
+                        list.Add(tabs.SelectedTab);
                     for (int i = 0; i < tabs.TabCount; i++)
                         list.Add(Key(tabs, "tabitem", i));
+                    return list;
+                }
+
+                // A combo box reads as the field the value shows in and the button that opens
+                // the list, which is what Windows publishes for one whether or not it is editable.
+                var combo = control as ComboBox;
+                if (combo != null)
+                {
+                    list.Add(Key(combo, "cbfield", 0));
+                    if (combo.DropDownStyle != ComboBoxStyle.Simple)
+                        list.Add(Key(combo, "cbopen", 0));
+                    return list;
+                }
+
+                // The two halves of a spin button.
+                var spinner = control as UpDownBase.UpDownSpinner;
+                if (spinner != null)
+                {
+                    list.Add(Key(spinner, "spin", 0));
+                    list.Add(Key(spinner, "spin", 1));
+                    return list;
+                }
+
+                // A slider reads as the thumb and the track either side of it.
+                var track = control as TrackBar;
+                if (track != null)
+                {
+                    list.Add(Key(track, "trackpage", 0));
+                    list.Add(Key(track, "trackthumb", 0));
+                    list.Add(Key(track, "trackpage", 1));
                     return list;
                 }
 
@@ -229,6 +264,8 @@ namespace WinFormsWebGpu.Accessibility
                     list.Add(Key(calendar, "calprev", 0));
                     list.Add(Key(calendar, "calnext", 0));
                     list.Add(Key(calendar, "calpane", 0));
+                    if (calendar.ShowToday)
+                        list.Add(Key(calendar, "caltoday", 0));
                     return list;
                 }
 
@@ -334,7 +371,12 @@ namespace WinFormsWebGpu.Accessibility
                     case "thumb": return A11yRole.Thumb;
                     case "headerrow": case "gridrow": return A11yRole.Custom;
                     case "corner": case "colheader": case "rowheader": return A11yRole.Header;
-                    case "calprev": case "calnext": case "caltitle": return A11yRole.Button;
+                    case "calprev": case "calnext": case "caltitle": case "caltoday":
+                        return A11yRole.Button;
+                    case "lvheader": return A11yRole.Pane;
+                    case "cbfield": return A11yRole.Text;
+                    case "cbopen": case "spin": case "trackpage": return A11yRole.Button;
+                    case "trackthumb": return A11yRole.Thumb;
                     case "calpane": case "calrow": return A11yRole.Pane;
                     case "caltable": return A11yRole.Table;
                     case "calname": return A11yRole.Header;
@@ -462,6 +504,8 @@ namespace WinFormsWebGpu.Accessibility
                 }
                 case "calday":
                     return CalendarFirstDay(cal).AddDays(key.Index).ToString("D");
+                case "caltoday":
+                    return "Today: " + cal.TodayDate.ToShortDateString();
             }
             return string.Empty;
         }
@@ -484,6 +528,19 @@ namespace WinFormsWebGpu.Accessibility
                     var tab_control = key.Owner as TabControl;
                     if (tab_control != null && key.Index < tab_control.TabCount)
                         return tab_control.TabPages[key.Index].Text ?? string.Empty;
+
+                    // The field carries the combo box's own name -- it is where the value shows --
+                    // and the rest are called what they do.
+                    if (key.Kind == "cbfield")
+                        return A11y.NameOf(key.Owner);
+                    if (key.Kind == "cbopen")
+                        return "Open";
+                    if (key.Kind == "spin")
+                        return key.Index == 0 ? "Up" : "Down";
+                    if (key.Kind == "trackpage")
+                        return key.Index == 0 ? "Large decrease" : "Large increase";
+                    if (key.Kind == "trackthumb")
+                        return "Position";
 
                     var link = key.Owner as LinkLabel;
                     if (link != null)
@@ -512,7 +569,7 @@ namespace WinFormsWebGpu.Accessibility
 
                 var tsi = element as ToolStripItem;
                 if (tsi != null)
-                    return tsi.Text ?? string.Empty;
+                    return WithoutMnemonic(tsi.Text);
                 var col = element as ColumnHeader;
                 if (col != null)
                     return col.Text ?? string.Empty;
@@ -541,7 +598,8 @@ namespace WinFormsWebGpu.Accessibility
                 Control owner = OwnerOf(element);
                 if (owner == null || owner.IsDisposed)
                     return Rectangle.Empty;
-                Point origin = owner.PointToScreen(Point.Empty);
+                // From the client, not the window: a bordered control's items begin a border in.
+                Point origin = A11y.ClientOrigin(owner);
 
                 var key = element as ItemKey;
                 if (key != null)
@@ -556,7 +614,7 @@ namespace WinFormsWebGpu.Accessibility
 
                     var link = key.Owner as LinkLabel;
                     if (link != null)
-                        return Offset(link.ClientRectangle, origin);
+                        return Offset(LinkBounds(link, key.Index), origin);
 
                     var scroll = key.Owner as ScrollBar;
                     if (scroll != null)
@@ -571,15 +629,39 @@ namespace WinFormsWebGpu.Accessibility
                     if (data_grid != null)
                         return Offset(GridPartBounds(data_grid, key), origin);
 
+                    if (key.Kind == "cbfield")
+                        return Offset(new Rectangle(Point.Empty, key.Owner.ClientSize), origin);
+                    if (key.Kind == "cbopen")
+                        return Offset(ComboOpenBounds((ComboBox) key.Owner), origin);
+                    if (key.Kind == "spin")
+                    {
+                        Rectangle half = new Rectangle(Point.Empty, key.Owner.ClientSize);
+                        half.Height /= 2;
+                        if (key.Index == 1)
+                            half.Y += half.Height;
+                        return Offset(half, origin);
+                    }
+                    if (key.Kind.StartsWith("track", StringComparison.Ordinal))
+                        return Offset(TrackPartBounds((TrackBar) key.Owner, key), origin);
+
                     var list_box = key.Owner as ListBox;
                     if (list_box != null && key.Kind == "row")
-                        return Offset(list_box.GetItemRectangle(key.Index), origin);
+                        return Offset(ListRowBounds(list_box, key.Index), origin);
+                    if (key.Kind == "lvheader")
+                    {
+                        var header_view = (ListView) key.Owner;
+                        int strip = header_view.ClientRectangle.Width - header_view.BorderInset * 2;
+                        if (header_view.v_scroll != null && header_view.v_scroll.Visible)
+                            strip -= header_view.v_scroll.Width;
+                        return Offset(new Rectangle(0, 0, Math.Max(0, strip),
+                            header_view.header_control.Height), origin);
+                    }
                     var view = key.Owner as ListView;
                     if (view != null && key.Kind.StartsWith("cell", StringComparison.Ordinal))
                     {
                         int row;
                         if (int.TryParse(key.Kind.Substring(4), out row) && row < view.Items.Count)
-                            return Offset(view.Items[row].SubItems[key.Index].Bounds, origin);
+                            return Offset(CellBounds(view, view.Items[row], key.Index), origin);
                     }
                     return Rectangle.Empty;
                 }
@@ -646,13 +728,22 @@ namespace WinFormsWebGpu.Accessibility
                     case "calday":
                         return new Rectangle(gridX + (key.Index % 7) * cell.Width,
                             gridY + (key.Index / 7 + 1) * cell.Height, cell.Width, cell.Height);
+                    case "caltoday":
+                    {
+                        // The strip under the grid, with the date written across the middle of it.
+                        int top = margin + title.Height + CalendarRows * cell.Height;
+                        return new Rectangle(gridX, top, width, cell.Height);
+                    }
                     case "calprev":
                     case "calnext":
                     {
-                        Size button = new Size(cell.Width, title.Height - 6);
-                        int y = margin + 3;
-                        int x = key.Kind == "calprev" ? margin + 3 : margin + width - button.Width - 3;
-                        return new Rectangle(x, y, button.Width, button.Height);
+                        // Windows reports the arrow itself -- a fixed 16x16 glyph centred in the
+                        // title, flush with the ends of the grid -- not the whole hit area around
+                        // it, which is what our theme paints and what this used to report.
+                        const int Glyph = 16;
+                        int y = margin + (title.Height - Glyph) / 2;
+                        int x = key.Kind == "calprev" ? margin : margin + width - Glyph;
+                        return new Rectangle(x, y, Glyph, Glyph);
                     }
                 }
             }
@@ -662,28 +753,172 @@ namespace WinFormsWebGpu.Accessibility
             return Rectangle.Empty;
         }
 
+        /// <summary>A caption without the ampersand that marks the key which reaches it. The
+        /// name a client reads is what the menu says on screen: "File", not "&amp;File". A doubled
+        /// ampersand is one real one.</summary>
+        private static string WithoutMnemonic(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.IndexOf('&') < 0)
+                return text ?? string.Empty;
+
+            var built = new System.Text.StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] != '&')
+                    built.Append(text[i]);
+                else if (i + 1 < text.Length && text[i + 1] == '&')
+                    built.Append(text[i++]);
+            }
+            return built.ToString();
+        }
+
+        /// <summary>Where a list box's row sits, in the row area's own coordinates -- which is
+        /// what GetItemRectangle already answers in, and where the caller's origin starts.
+        /// <para>Windows publishes only the rows a list can actually show: one scrolled past the
+        /// end, or hanging out of the bottom, reports nothing at all rather than a sliver.</para>
+        /// </summary>
+        private static Rectangle ListRowBounds(ListBox list, int index)
+        {
+            Rectangle row = list.GetItemRectangle(index);
+            Rectangle first = list.GetItemRectangle(list.TopIndex);
+            row.X -= first.X;
+            row.Y -= first.Y;
+
+            row.Intersect(new Rectangle(Point.Empty, list.items_area.Size));
+            return row.Width <= 0 || row.Height <= 0 ? Rectangle.Empty : row;
+        }
+
+        /// <summary>The button that drops a combo box's list down, in the box's own coordinates.</summary>
+        private static Rectangle ComboOpenBounds(ComboBox combo)
+        {
+            Rectangle button = combo.ButtonArea;
+            if (!button.IsEmpty)
+                return button;
+            int width = SystemInformation.VerticalScrollBarWidth;
+            return new Rectangle(combo.ClientSize.Width - width, 0, width, combo.ClientSize.Height);
+        }
+
+        /// <summary>Where a slider's thumb, and the track either side of it, sit.</summary>
+        private static Rectangle TrackPartBounds(TrackBar track, ItemKey key)
+        {
+            Rectangle thumb = track.ThumbPos, area = track.ThumbArea;
+            if (key.Kind == "trackthumb")
+                return thumb;
+
+            // The channel is the four pixels the theme paints, not the whole strip the thumb
+            // travels in: a client aiming at "large decrease" aims at the groove.
+            const int Channel = 4;
+            if (track.Orientation == Orientation.Horizontal)
+            {
+                int left = key.Index == 0 ? area.X : thumb.Right;
+                int right = key.Index == 0 ? thumb.X : area.Right;
+                return right <= left ? Rectangle.Empty
+                    : new Rectangle(left, area.Y, right - left, Channel);
+            }
+            int top = key.Index == 0 ? area.Y : thumb.Bottom;
+            int bottom = key.Index == 0 ? thumb.Y : area.Bottom;
+            return bottom <= top ? Rectangle.Empty
+                : new Rectangle(area.X, top, Channel, bottom - top);
+        }
+
+        /// <summary>Where a link's own text sits, in the label's client coordinates.
+        /// <para>A LinkLabel is ordinary text with a link somewhere inside it, and Windows reports
+        /// the link's run of characters rather than the whole label -- a reader should land on the
+        /// words that can actually be clicked, not on the sentence around them. The runs are
+        /// already measured for painting; this is their union.</para></summary>
+        private static Rectangle LinkBounds(LinkLabel label, int index)
+        {
+            if (index < 0 || index >= label.Links.Count)
+                return label.ClientRectangle;
+
+            Rectangle bounds = Rectangle.Empty;
+            using (Graphics g = label.CreateGraphics())
+            {
+                foreach (LinkLabel.Piece piece in label.Links[index].pieces)
+                {
+                    if (piece.region == null)
+                        continue;
+                    Rectangle run = Rectangle.Ceiling(piece.region.GetBounds(g));
+                    bounds = bounds.IsEmpty ? run : Rectangle.Union(bounds, run);
+                }
+            }
+            return bounds.IsEmpty ? label.ClientRectangle : bounds;
+        }
+
+        /// <summary>Where a details-view cell sits, the way Windows reports one.
+        /// <para>The first column's cell is the whole row: the row IS the item, and a reader
+        /// announces the item's label for it. The last column's runs on to the row's right edge
+        /// instead of stopping at its header's width, so that no part of the row belongs to
+        /// nothing. Only the columns in between are exactly as wide as their header. Reporting
+        /// every cell at its own column width -- which is what the sub-item's own Bounds gives --
+        /// left the row's right-hand remainder unreachable and named the first column something
+        /// narrower than the row a reader had just moved to.</para></summary>
+        private static Rectangle CellBounds(ListView view, ListViewItem item, int column)
+        {
+            Rectangle row = item.Bounds;
+            if (view.item_control != null)
+                row.Width = Math.Max(row.Width, view.item_control.Width - row.X);
+            if (column <= 0 || view.Columns.Count == 0)
+                return row;
+
+            int x = row.X;
+            for (int i = 0; i < column && i < view.Columns.Count; i++)
+                x += view.Columns[i].Width;
+            int right = column >= view.Columns.Count - 1
+                ? row.Right
+                : Math.Min(row.Right, x + view.Columns[column].Width);
+            return right <= x ? Rectangle.Empty : new Rectangle(x, row.Y, right - x, row.Height);
+        }
+
+        /// <summary>The part of a grid a client can actually see: inside the frame, and short of
+        /// whichever scroll bars are up. A row past the bottom of it, or a column past the right,
+        /// is not on the screen at all, and Windows answers nothing for one rather than pointing
+        /// at where it would be if the grid were bigger.</summary>
+        private static Rectangle GridViewport(DataGridView grid)
+        {
+            Rectangle view = grid.ClientRectangle;
+            int frame = grid.BorderStyle == BorderStyle.None ? 0
+                      : grid.BorderStyle == BorderStyle.FixedSingle ? 1 : 2;
+            view.Inflate(-frame, -frame);
+            if (grid.verticalScrollBar != null && grid.verticalScrollBar.Visible)
+                view.Width -= grid.verticalScrollBar.Width;
+            if (grid.horizontalScrollBar != null && grid.horizontalScrollBar.Visible)
+                view.Height -= grid.horizontalScrollBar.Height;
+            return view;
+        }
+
         /// <summary>Where a grid's part sits, in the grid's own client coordinates.</summary>
         private static Rectangle GridPartBounds(DataGridView grid, ItemKey key)
         {
             try
             {
+                Rectangle view = GridViewport(grid);
+                Rectangle part = Rectangle.Empty;
                 if (key.Kind == "headerrow")
-                    return new Rectangle(0, 0, grid.ClientSize.Width, grid.ColumnHeadersHeight);
-                if (key.Kind == "gridrow")
-                    return grid.GetRowDisplayRectangle(key.Index, false);
-                if (key.Kind == "corner")
-                    return new Rectangle(0, 0, grid.RowHeadersWidth, grid.ColumnHeadersHeight);
-                if (key.Kind == "colheader")
-                    return grid.GetCellDisplayRectangle(key.Index, -1, false);
-                if (key.Kind == "rowheader")
-                    return grid.GetCellDisplayRectangle(-1, key.Index, false);
-                if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
+                    part = new Rectangle(view.X, view.Y, view.Width, grid.ColumnHeadersHeight);
+                else if (key.Kind == "gridrow")
+                {
+                    part = grid.GetRowDisplayRectangle(key.Index, false);
+                    // A row is as wide as the grid can show, whatever the columns add up to.
+                    part.X = view.X;
+                    part.Width = view.Width;
+                }
+                else if (key.Kind == "corner")
+                    part = new Rectangle(view.X, view.Y, grid.RowHeadersWidth, grid.ColumnHeadersHeight);
+                else if (key.Kind == "colheader")
+                    part = grid.GetCellDisplayRectangle(key.Index, -1, false);
+                else if (key.Kind == "rowheader")
+                    part = grid.GetCellDisplayRectangle(-1, key.Index, false);
+                else if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
                 {
                     int row;
                     string digits = key.Kind.Substring(4).TrimEnd('_');
                     if (int.TryParse(digits, out row))
-                        return grid.GetCellDisplayRectangle(key.Index, row, false);
+                        part = grid.GetCellDisplayRectangle(key.Index, row, false);
                 }
+
+                part.Intersect(view);
+                return part.Width <= 0 || part.Height <= 0 ? Rectangle.Empty : part;
             }
             catch (Exception)
             {
@@ -729,6 +964,33 @@ namespace WinFormsWebGpu.Accessibility
                 case "caltitle": calendar.ZoomOut(); break;
                 case "calday": calendar.InvokeCell(key.Index); break;
             }
+        }
+
+        /// <summary>Whether an item opens something -- a menu entry with a submenu under it, a
+        /// split button's arrow. Windows publishes those as expandable, and it is the only way
+        /// anything but a pointer can open one: a menu with a submenu does not respond to being
+        /// invoked, it responds to being opened.</summary>
+        internal static bool CanExpand(object element)
+        {
+            var item = element as ToolStripDropDownItem;
+            return item != null && item.HasDropDownItems;
+        }
+
+        internal static bool IsExpanded(object element)
+        {
+            var item = element as ToolStripDropDownItem;
+            return item != null && item.DropDown != null && item.DropDown.Visible;
+        }
+
+        internal static void SetExpanded(object element, bool expanded)
+        {
+            var item = element as ToolStripDropDownItem;
+            if (item == null || !item.HasDropDownItems)
+                return;
+            if (expanded)
+                item.ShowDropDown();
+            else
+                item.HideDropDown();
         }
 
         internal static bool IsEnabled(object element)

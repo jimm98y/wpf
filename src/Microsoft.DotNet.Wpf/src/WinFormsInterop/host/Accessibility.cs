@@ -1,4 +1,4 @@
-// The portable half of accessibility for the WinForms-on-WebGPU host.
+﻿// The portable half of accessibility for the WinForms-on-WebGPU host.
 //
 // The controls in this stack have no native handles -- the driver keeps them as managed Hwnd objects
 // and the whole form is drawn into a single window -- so the tree that every platform's assistive
@@ -57,12 +57,25 @@ namespace WinFormsWebGpu.Accessibility
                     if (c != null && c.Visible && !c.IsDisposed)
                         list.Add(c);
                 }
+
+                // A split container holds its panels in the order they were constructed, which is
+                // not the order they read in: Panel2 came first, so the tree named the left-hand
+                // panel after the right-hand one's contents.
+                var split = parent as SplitContainer;
+                if (split != null)
+                    list.Sort((a, b) => PanelOrder(split, a).CompareTo(PanelOrder(split, b)));
             }
             catch (Exception)
             {
                 // A control disposed mid-walk must not take the caller down with it.
             }
             return list;
+        }
+
+        private static int PanelOrder(SplitContainer split, Control panel)
+        {
+            return ReferenceEquals(panel, split.Panel1) ? 0
+                 : ReferenceEquals(panel, split.Panel2) ? 1 : 2;
         }
 
         /// <summary>A control's bounds in the driver's screen space. That is not the real screen:
@@ -106,6 +119,35 @@ namespace WinFormsWebGpu.Accessibility
                 driverRect = Rectangle.Intersect(driverRect, client);
             }
             return driverRect.Width <= 0 || driverRect.Height <= 0 ? Rectangle.Empty : driverRect;
+        }
+
+        /// <summary>Where a control's client area begins, in driver space.
+        /// <para>This driver models no non-client area -- a window and its client are the same
+        /// rectangle -- so a control's border is painted inside its own bounds and the client really
+        /// starts a border in from the corner. Everything positioned against the client, which is
+        /// every item a control holds, is otherwise a border out.</para></summary>
+        internal static Point ClientOrigin(Control c)
+        {
+            Point p = c.PointToScreen(Point.Empty);
+            int inset = BorderInset(c);
+            return inset == 0 ? p : new Point(p.X + inset, p.Y + inset);
+        }
+
+        internal static int BorderInset(Control c)
+        {
+            try
+            {
+                switch (c.InternalBorderStyle)
+                {
+                    case BorderStyle.FixedSingle: return 1;
+                    case BorderStyle.Fixed3D: return 2;
+                    default: return 0;
+                }
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
         }
 
         /// <summary>The deepest visible control containing a point given in driver space.</summary>
@@ -179,6 +221,7 @@ namespace WinFormsWebGpu.Accessibility
                     case "MonthCalendar": return A11yRole.Calendar;
                     case "NumericUpDown":
                     case "DomainUpDown":
+                    case "UpDownSpinner":
                     case "UpDownBase": return A11yRole.Spinner;
                     case "ProgressBar": return A11yRole.ProgressBar;
                     case "TrackBar": return A11yRole.Slider;
@@ -219,8 +262,26 @@ namespace WinFormsWebGpu.Accessibility
                 // The control's own text, but only where the control is one whose text names it. A list's
                 // text is the item showing in it and a spin box's is its value: neither is a name, and
                 // answering with one leaves the control nameless to anything that goes looking for it.
+                // A date picker is left unnamed, as Windows leaves it: what it reads out is the
+                // date, and a name as well would say the date twice.
+                if (c is DateTimePicker)
+                    return string.Empty;
+
                 if (c.GetStyle(ControlStyles.UseTextForAccessibility) && !string.IsNullOrEmpty(c.Text))
                     return c.Text;
+
+                // The parts a compound control is built from: the spin button between a spinner's
+                // arrows, and the field beside it. Neither has a label of its own -- the label
+                // belongs to the control they are part of -- and the tab-order walk below cannot
+                // reach it, because the control itself is a tab stop and stops the search.
+                if (c.Parent is UpDownBase)
+                    return c is UpDownBase.UpDownSpinner ? "UpDown" : NameOf(c.Parent);
+
+                // A scroll bar that no label introduces is named for the way it runs, which is how
+                // Windows names the pair a scrolling control puts up.
+                var bar = c as ScrollBar;
+                if (bar != null && PrecedingLabel(c) == null)
+                    return bar.vert ? "Vertical" : "Horizontal";
 
                 // Otherwise the label in front of it, which is how a field on a form gets its name -- the
                 // text beside it. Windows does this and so must we, or every control on a form laid out

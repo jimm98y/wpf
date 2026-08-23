@@ -1,4 +1,4 @@
-//
+﻿//
 // TextRenderer.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -208,7 +208,7 @@ namespace System.Windows.Forms
 
 				StringFormat sf = FlagsToStringFormat (flags);
 
-				Rectangle new_bounds = PadDrawStringRectangle (bounds, flags);
+				Rectangle new_bounds = PadDrawStringRectangle (bounds, font, flags);
 
 				g.DrawString (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new_bounds, sf);
 
@@ -259,21 +259,22 @@ namespace System.Windows.Forms
 
 				Size retval;
 
+				int left, right;
+				GlyphOverhang (font, flags, out left, out right);
+
 				int proposedWidth;
 				if (proposedSize.Width == 0)
 					proposedWidth = Int32.MaxValue;
 				else {
-					proposedWidth = proposedSize.Width;
-					if ((flags & TextFormatFlags.NoPadding) == 0)
-						proposedWidth -= 9;
+					proposedWidth = proposedSize.Width - left - right;
 				}
 				if (dc is Graphics)
 					retval = (dc as Graphics).MeasureString (text, font, proposedWidth, sf).ToSize ();
 				else
 					retval = TextRenderer.MeasureString (text, font, proposedWidth, sf).ToSize ();
 
-				if (retval.Width > 0 && (flags & TextFormatFlags.NoPadding) == 0)
-					retval.Width += 9;
+				// MeasureString already leaves the glyph overhang either side of the run, exactly as it
+				// will be drawn, so there is nothing to add here.
 
 				return retval;
 			}
@@ -488,14 +489,27 @@ namespace System.Windows.Forms
 			return r;
 		}
 
-		private static Rectangle PadDrawStringRectangle (Rectangle r, TextFormatFlags flags)
+		/// <summary>The margin DrawText leaves around a run of text, so that a glyph that
+		/// overhangs its cell -- the tail of an italic f, the curve of a C -- is not clipped by
+		/// the rectangle it was asked to fit in.
+		/// <para>Windows leaves a sixth of the font's height on the left and half as much again
+		/// on the right; the GDI branch above already does. This branch left a single pixel
+		/// whatever the font, so every left-aligned caption in the application -- a label, a
+		/// check box's text, a menu entry, a grid cell -- sat two or three pixels further left
+		/// than the same caption in Windows, while the width MeasureText reported still
+		/// included the margin. The pixel taken off the top is the other half of the same story:
+		/// DrawString lays a line out on the font's own ascent where DrawText uses the metric
+		/// height, which at nine point is a pixel further down.</para></summary>
+		private static Rectangle PadDrawStringRectangle (Rectangle r, Font font, TextFormatFlags flags)
 		{
-			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Right) == 0 && (flags & TextFormatFlags.HorizontalCenter) == 0) {
-				r.X += 1;
-				r.Width -= 1;
-			}
-			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
-				r.Width -= 4;
+			int left, right;
+			GlyphOverhang (font, flags, out left, out right);
+
+			if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
+				r.Width -= right;
+			} else if ((flags & TextFormatFlags.HorizontalCenter) == 0) {
+				r.X += left;
+				r.Width -= left;
 			}
 			if ((flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding) {
 				r.X -= 2;
@@ -503,15 +517,26 @@ namespace System.Windows.Forms
 			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom) {
 				r.Y += 1;
 			}
-			if ((flags & TextFormatFlags.LeftAndRightPadding) == TextFormatFlags.LeftAndRightPadding) {
-				r.X += 2;
-				r.Width -= 2;
-			}
-			if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter && XplatUI.RunningOnUnix) {
+			if (XplatUI.RunningOnUnix) {
 				r.Y -= 1;
 			}
 
 			return r;
+		}
+
+		/// <summary>The left and right margins Windows leaves around text, in pixels: an
+		/// overhang of a sixth of the font's height, doubled when the caller asks for padding on
+		/// both sides, and half as much again on the right to leave room for an italic.</summary>
+		private static void GlyphOverhang (Font font, TextFormatFlags flags, out int left, out int right)
+		{
+			left = right = 0;
+			if (font == null || (flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding)
+				return;
+
+			float overhang = font.Height / 6f;
+			bool both = (flags & TextFormatFlags.LeftAndRightPadding) == TextFormatFlags.LeftAndRightPadding;
+			left = (int) Math.Ceiling (both ? overhang * 2 : overhang);
+			right = (int) Math.Ceiling (overhang * ((both ? 2 : 1) + 0.5f));
 		}
 #endregion
 

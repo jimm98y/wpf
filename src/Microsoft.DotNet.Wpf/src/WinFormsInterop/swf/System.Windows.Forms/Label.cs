@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -396,8 +396,10 @@ namespace System.Windows.Forms
 				size = new Size (0, Font.Height);
 			} else {
 				int proposed_width = proposed.Width <= 1 ? int.MaxValue : (proposed.Width - borders_and_paddings.Width);
+				// The measurement already leaves the margin the text is drawn inside, so the three
+				// pixels that used to be added on top of it made every label that sizes itself four
+				// pixels wider than the same label in Windows.
 				size = Size.Ceiling (TextRenderer.MeasureString (Text, Font, proposed_width, string_format));
-				size.Width += 3;
 			}
 			
 			return size + borders_and_paddings;

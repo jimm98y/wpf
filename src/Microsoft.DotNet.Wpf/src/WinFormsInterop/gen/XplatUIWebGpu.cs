@@ -1,4 +1,4 @@
-// Auto-generated non-core XplatUIDriver stub overrides (defaults). Core methods are in XplatUIWebGpu.Core.cs.
+﻿// Auto-generated non-core XplatUIDriver stub overrides (defaults). Core methods are in XplatUIWebGpu.Core.cs.
 // Clipboard is implemented in XplatUIWebGpu.Clipboard.cs and drag and drop in XplatUIWebGpu.DragDrop.cs;
 // neither belongs here, and a stub for either silently un-implements a working feature (see gen-driver.txt).
 using System; using System.Drawing; using System.Threading; using System.Collections;
@@ -16,7 +16,12 @@ namespace System.Windows.Forms {
 		// False here meant Control.show_focus_cues started false and nothing ever set it, so no
 		// button, check box or radio button drew a focus rectangle -- ShouldPaintFocusRectangle
 		// asks for ShowFocusCues and never got it -- and no menu mnemonic was ever underlined.
-		internal override bool MenuAccessKeysUnderlined { get { return true; } }
+		/// <summary>Whether a menu shows the line under its access key before anyone has asked
+		/// for it. Windows does not -- the line appears once the menu is reached from the
+		/// keyboard, and the renderer already asks for it then -- and neither does any other
+		/// desktop this runs on. Saying yes here underlined every caption in every menu, which is
+		/// not what the same menu looks like in Windows.</summary>
+		internal override bool MenuAccessKeysUnderlined { get { return false; } }
 		internal override Size MinimizedWindowSpacingSize { get { return default(Size); } }
 		internal override Size MinimumWindowSize { get { return default(Size); } }
 		internal override Size SmallIconSize { get { return default(Size); } }

@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripDropDownMenu.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -125,10 +125,8 @@ namespace System.Windows.Forms
 
 			int x = this.Padding.Left;
 			
-			if (show_check_margin || show_image_margin)
-				widest += 68 - this.Padding.Horizontal;
-			else
-				widest += 47 - this.Padding.Horizontal;
+			widest += ThemeEngine.Current.ToolStripDropDownMenuMargin (show_check_margin || show_image_margin)
+				- this.Padding.Horizontal;
 			
 			int y = this.Padding.Top;
 

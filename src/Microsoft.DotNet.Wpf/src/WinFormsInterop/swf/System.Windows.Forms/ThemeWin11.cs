@@ -1,4 +1,4 @@
-// The modern Windows look, as a theme of its own.
+﻿// The modern Windows look, as a theme of its own.
 //
 // ThemeWin32Classic draws what Windows drew before visual styles: two-pixel carved bevels around
 // every input, and Office 2003's slate-blue gradients on tool strips. That is still exactly right
@@ -85,6 +85,10 @@ namespace System.Windows.Forms
 		public override Color MenuStripGradientEnd => Color.FromArgb (251, 251, 251);
 		public override Color StatusStripGradientBegin => Surface;
 		public override Color StatusStripGradientEnd => Surface;
+		// A menu is white behind its entries -- #FDFDFD, measured off a stock one -- with the
+		// shading only in the strip down the left where an icon would go. Ours took the grey the
+		// base table names, and the whole menu came out a shade of grey.
+		public override Color ToolStripDropDownBackground => Color.FromArgb (253, 253, 253);
 		public override Color ImageMarginGradientBegin => Surface;
 		public override Color ImageMarginGradientMiddle => Surface;
 		public override Color ImageMarginGradientEnd => Surface;
@@ -1185,7 +1189,20 @@ namespace System.Windows.Forms
 		// ours did.
 		public override int ListViewGetHeaderHeight (ListView listView, Font font)
 		{
-			return font.Height + 10;
+			return font.Height + 8;
+		}
+
+		/// <summary>Measured off a Windows 11 menu: a two-entry File menu comes out 104 pixels
+		/// wide against a widest caption of 36. Ours came out twelve wider, because the item's own
+		/// padding is counted into the caption before this is added and Windows counts the margins
+		/// once.</summary>
+		public override int ToolStripDropDownMenuMargin (bool imageMargin)
+		{
+			return imageMargin ? 56 : 35;
+		}
+
+		public override int ListViewDetailsRowGap {
+			get { return 1; }
 		}
 
 		protected override void ListViewDrawColumnHeaderBackground (ListView listView, ColumnHeader columnHeader,
@@ -1888,7 +1905,9 @@ namespace System.Windows.Forms
 			// instant the box ends, so the tick and the first letter touch. Windows indents the box
 			// and leaves a gap after it.
 			const int Indent = 4;
-			const int Gap = 5;
+			// The text is laid out with a margin of its own -- see Graphics.Overhang -- so the gap
+			// asked for here is only what is wanted beyond that.
+			const int Gap = 2;
 
 			Rectangle item = e.Bounds;
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;

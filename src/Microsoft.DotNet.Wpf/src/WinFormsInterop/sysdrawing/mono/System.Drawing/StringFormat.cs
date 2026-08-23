@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.StringFormat.cs
 //
 // Authors:
@@ -238,15 +238,20 @@ namespace System.Drawing {
 		}
 
 		
+		/// <summary>Whether this is the typographic format, which asks for the text to be laid
+		/// out with no margin around it -- a caller placing glyphs itself wants exactly the run
+		/// it asked for, and nothing either side of it.</summary>
+		internal bool IsTypographic;
+
 		public static StringFormat GenericTypographic {
 			get {
-				if (!GDIPlus.Initialized) return new StringFormat (StringFormatFlags.NoWrap);
+				if (!GDIPlus.Initialized) return new StringFormat (StringFormatFlags.NoWrap) { IsTypographic = true };
 				IntPtr ptr;
 
 				Status status = GDIPlus.GdipStringFormatGetGenericTypographic (out ptr);
 				GDIPlus.CheckStatus (status);
 
-				return new StringFormat (ptr);
+				return new StringFormat (ptr) { IsTypographic = true };
 			}
 		}
 

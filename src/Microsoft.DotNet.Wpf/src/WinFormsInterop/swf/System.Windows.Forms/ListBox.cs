@@ -1,4 +1,4 @@
-/// Permission is hereby granted, free of charge, to any person obtaining
+﻿/// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -87,7 +87,7 @@ namespace System.Windows.Forms
 		private bool explicit_item_height = false;
 		private int top_index = 0;
 		private int last_visible_index = 0;
-		private Rectangle items_area;
+		internal Rectangle items_area;
 		private int focused_item = -1;
 		private ObjectCollection items;
 		private IntegerCollection custom_tab_offsets;
@@ -1323,19 +1323,28 @@ namespace System.Windows.Forms
 		}
 
 		// Converts a GetItemRectangle to a one that we can display
-		/// <summary>The gap between the list's frame and its first row.</summary>
 		/// <summary>How far the rows and the scroll bars sit inside the control, so the frame drawn
-		/// around it stays visible.</summary>
+		/// around it stays visible.
+		/// <para>A sunken frame is two pixels thick, as CPDrawBorder3D draws it and as Windows
+		/// measures it; a single line is one. Calling every frame one pixel put the first row on
+		/// top of the inner line, which is why there used to be a separate top margin here
+		/// making up the difference -- and only at the top, so the rows sat a pixel too far in
+		/// from the left and the last row overhung the bottom of the list.</para></summary>
 		internal int BorderInset {
-			get { return border_style == BorderStyle.None ? 0 : 1; }
+			get {
+				switch (border_style) {
+				case BorderStyle.None: return 0;
+				case BorderStyle.FixedSingle: return 1;
+				default: return 2;
+				}
+			}
 		}
 
-		internal const int ItemTopMargin = 2;
-
-		/// <summary>How far a row's content sits in from the left frame. Windows leaves the same
-		/// air at the side as at the top; ours ran the text hard against the border. A checked
-		/// list draws its own box at its own indent and needs none of this.</summary>
-		internal virtual int ItemLeftMargin => 5;
+		/// <summary>How far a row's content sits in from the left frame, on top of the margin the
+		/// text itself is laid out with. Most of the air Windows leaves at the side of a row is
+		/// that margin; this is the little that is left over. A checked list draws its own box at
+		/// its own indent and needs none of this.</summary>
+		internal virtual int ItemLeftMargin => 1;
 
 		internal Rectangle GetItemDisplayRectangle (int index, int first_displayble)
 		{
@@ -1344,11 +1353,6 @@ namespace System.Windows.Forms
 			item_rect = GetItemRectangle (index);
 			item_rect.X -= first_item_rect.X;
 			item_rect.Y -= first_item_rect.Y;
-			// Windows leaves a little air between a list's border and its first row; we ran the
-			// first item hard against the frame. Applied here rather than to the item area because
-			// this method is what BOTH the painting and the mouse use -- IndexAtClientPoint hit
-			// tests against these same rectangles -- so the rows and the clicks move together.
-			item_rect.Y += ItemTopMargin;
 			item_rect.X += ItemLeftMargin;
 			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin, 0);
 			
