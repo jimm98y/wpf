@@ -47,6 +47,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     // Set when a key-down was taken by keyboard navigation, so the character Windows
     // translates that key into is not also delivered.
     private bool _swallowChar;
+    // WF_TRACE_CURSOR=1 prints what shape the pointer is being asked for, which is the only way
+    // to tell "the control never asked" from "the shape never arrived".
+    private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
 
     internal Win32Host(Form form)
     {
@@ -91,7 +94,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             style = 0x0003,  // CS_HREDRAW | CS_VREDRAW
             lpfnWndProc = Marshal.GetFunctionPointerForDelegate(s_wndProc),
             hInstance = hinstance,
-            hCursor = LoadCursorW(IntPtr.Zero, 32512),  // IDC_ARROW
+            // No class cursor: this window sets its own from whatever control is under the
+            // pointer, and a class cursor is re-applied on the paths that do not reach our
+            // WM_SETCURSOR, which would flick the arrow back on.
+            hCursor = IntPtr.Zero,
             lpszClassName = s_classNamePtr,
         };
         if (RegisterClassExW(ref wc) == 0)
@@ -556,6 +562,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         int id;
         try { id = (int)_getCursor.Invoke(_driver, null); }
         catch (Exception) { return false; }
+        if (s_traceCursor) Console.WriteLine($"WM_SETCURSOR -> StdCursor {id}");
         if (id < 0) return false;
 
         int idc;

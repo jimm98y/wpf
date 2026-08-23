@@ -104,6 +104,19 @@ namespace WinFormsWebGpu.Accessibility
                     }
                 }
 
+                var calendar = key.Owner as MonthCalendar;
+                if (calendar != null)
+                {
+                    if (key.Kind == "caltitle" || key.Kind == "caltable")
+                        return Key(calendar, "calpane", 0);
+                    if (key.Kind == "calrow")
+                        return Key(calendar, "caltable", 0);
+                    if (key.Kind == "calname")
+                        return Key(calendar, "calrow", 0);
+                    if (key.Kind == "calday")
+                        return Key(calendar, "calrow", key.Index / 7 + 1);
+                }
+
                 // A details-view cell belongs to its row.
                 var view = key.Owner as ListView;
                 if (view != null && key.Kind.StartsWith("cell", StringComparison.Ordinal))
@@ -160,8 +173,21 @@ namespace WinFormsWebGpu.Accessibility
                 var tabs = control as TabControl;
                 if (tabs != null)
                 {
+                    // The page is a control and shows as a pane; the tab you click on is a
+                    // separate element, which is what Windows publishes as well.
                     foreach (TabPage page in tabs.TabPages)
                         list.Add(page);
+                    for (int i = 0; i < tabs.TabCount; i++)
+                        list.Add(Key(tabs, "tabitem", i));
+                    return list;
+                }
+
+                // A link label reads as its text with the links inside it.
+                var link_label = control as LinkLabel;
+                if (link_label != null)
+                {
+                    for (int i = 0; i < link_label.Links.Count; i++)
+                        list.Add(Key(link_label, "link", i));
                     return list;
                 }
 
@@ -188,6 +214,18 @@ namespace WinFormsWebGpu.Accessibility
                     if (PageArea(bar, false).Height > 0 || PageArea(bar, false).Width > 0)
                         list.Add(Key(bar, "page", 1));
                     list.Add(Key(bar, "arrow", 1));
+                    return list;
+                }
+
+                // A calendar reads the way Windows describes one: the two arrows, then a pane for
+                // the month holding its title and a table of week rows -- the first of which is
+                // the day names.
+                var calendar = control as MonthCalendar;
+                if (calendar != null)
+                {
+                    list.Add(Key(calendar, "calprev", 0));
+                    list.Add(Key(calendar, "calnext", 0));
+                    list.Add(Key(calendar, "calpane", 0));
                     return list;
                 }
 
@@ -235,6 +273,29 @@ namespace WinFormsWebGpu.Accessibility
                 var key = element as ItemKey;
                 if (key != null)
                 {
+                    var calendar = key.Owner as MonthCalendar;
+                    if (calendar != null)
+                    {
+                        if (key.Kind == "calpane")
+                        {
+                            list.Add(Key(calendar, "caltitle", 0));
+                            list.Add(Key(calendar, "caltable", 0));
+                        }
+                        else if (key.Kind == "caltable")
+                        {
+                            for (int r = 0; r < CalendarRows; r++)
+                                list.Add(Key(calendar, "calrow", r));
+                        }
+                        else if (key.Kind == "calrow")
+                        {
+                            for (int c = 0; c < 7; c++)
+                                list.Add(key.Index == 0
+                                    ? Key(calendar, "calname", c)
+                                    : Key(calendar, "calday", (key.Index - 1) * 7 + c));
+                        }
+                        return;
+                    }
+
                     var grid = key.Owner as DataGridView;
                     if (grid == null)
                         return;
@@ -270,10 +331,21 @@ namespace WinFormsWebGpu.Accessibility
                     case "thumb": return A11yRole.Thumb;
                     case "headerrow": case "gridrow": return A11yRole.Custom;
                     case "corner": case "colheader": case "rowheader": return A11yRole.Header;
+                    case "calprev": case "calnext": case "caltitle": return A11yRole.Button;
+                    case "calpane": case "calrow": return A11yRole.Pane;
+                    case "caltable": return A11yRole.Table;
+                    case "calname": return A11yRole.Header;
+                    case "calday": return A11yRole.DataItem;
+                    case "tabitem": return A11yRole.TabItem;
+                    case "link": return A11yRole.Link;
                 }
-                return key.Owner is CheckedListBox ? A11yRole.CheckBox
-                     : key.Kind.StartsWith("cell", StringComparison.Ordinal) ? A11yRole.DataItem
-                     : A11yRole.ListItem;
+                if (key.Owner is CheckedListBox)
+                    return A11yRole.CheckBox;
+                if (key.Kind.StartsWith("cell", StringComparison.Ordinal))
+                    // A grid publishes its cells as data; a list view publishes its columns as
+                    // plain text, which is what Windows does with each.
+                    return key.Owner is DataGridView ? A11yRole.DataItem : A11yRole.Text;
+                return A11yRole.ListItem;
             }
             if (element is ToolStripSeparator)
                 return A11yRole.Separator;
@@ -352,6 +424,39 @@ namespace WinFormsWebGpu.Accessibility
             return string.Empty;
         }
 
+        // Seven columns, and six week rows under the row of day names.
+        private const int CalendarRows = 7;
+
+        /// <summary>The first day the grid shows, which is usually in the previous month.</summary>
+        private static DateTime CalendarFirstDay(MonthCalendar cal)
+        {
+            DateTime month = cal.current_month;
+            return cal.GetFirstDateInMonthGrid(new DateTime(month.Year, month.Month, 1));
+        }
+
+        private static string CalendarPartName(MonthCalendar cal, ItemKey key)
+        {
+            switch (key.Kind)
+            {
+                case "calprev": return "Previous";
+                case "calnext": return "Next";
+                case "calpane":
+                case "caltitle":
+                case "caltable":
+                    return cal.current_month.ToString("MMMM yyyy");
+                case "calname":
+                {
+                    // Sunday is the 1st of October 2006, which is what the theme counts from.
+                    DateTime sunday = new DateTime(2006, 10, 1);
+                    int first = (int) cal.GetDayOfWeek(cal.FirstDayOfWeek);
+                    return sunday.AddDays(key.Index + first).ToString("ddd");
+                }
+                case "calday":
+                    return CalendarFirstDay(cal).AddDays(key.Index).ToString("D");
+            }
+            return string.Empty;
+        }
+
         internal static string NameOf(object element)
         {
             try
@@ -362,6 +467,18 @@ namespace WinFormsWebGpu.Accessibility
                     var scroll = key.Owner as ScrollBar;
                     if (scroll != null)
                         return ScrollPartName(scroll, key.Kind, key.Index);
+
+                    var cal = key.Owner as MonthCalendar;
+                    if (cal != null)
+                        return CalendarPartName(cal, key);
+
+                    var tab_control = key.Owner as TabControl;
+                    if (tab_control != null && key.Index < tab_control.TabCount)
+                        return tab_control.TabPages[key.Index].Text ?? string.Empty;
+
+                    var link = key.Owner as LinkLabel;
+                    if (link != null)
+                        return link.Text ?? string.Empty;
 
                     var data_grid = key.Owner as DataGridView;
                     if (data_grid != null)
@@ -420,6 +537,18 @@ namespace WinFormsWebGpu.Accessibility
                 var key = element as ItemKey;
                 if (key != null)
                 {
+                    var cal = key.Owner as MonthCalendar;
+                    if (cal != null)
+                        return Offset(CalendarPartBounds(cal, key), origin);
+
+                    var tab_control = key.Owner as TabControl;
+                    if (tab_control != null && key.Index < tab_control.TabCount)
+                        return Offset(tab_control.GetTabRect(key.Index), origin);
+
+                    var link = key.Owner as LinkLabel;
+                    if (link != null)
+                        return Offset(link.ClientRectangle, origin);
+
                     var scroll = key.Owner as ScrollBar;
                     if (scroll != null)
                     {
@@ -471,6 +600,52 @@ namespace WinFormsWebGpu.Accessibility
                 var page = element as TabPage;
                 if (page != null)
                     return A11y.DriverBounds(page);
+            }
+            catch (Exception)
+            {
+            }
+            return Rectangle.Empty;
+        }
+
+        /// <summary>Where a calendar's part sits, in the calendar's own client coordinates. The
+        /// grid starts one margin in and one title down, and every cell is date_cell_size --
+        /// the same numbers the theme lays the calendar out with.</summary>
+        private static Rectangle CalendarPartBounds(MonthCalendar cal, ItemKey key)
+        {
+            try
+            {
+                Size cell = cal.date_cell_size;
+                Size title = cal.title_size;
+                int margin = ThemeEngine.Current.MonthCalendarMargin(cal);
+                if (cell.Width <= 0 || cell.Height <= 0)
+                    return Rectangle.Empty;
+                int gridX = margin, gridY = margin + title.Height;
+                int width = 7 * cell.Width;
+
+                switch (key.Kind)
+                {
+                    case "calpane":
+                        return new Rectangle(margin, margin, width, title.Height + CalendarRows * cell.Height);
+                    case "caltitle":
+                        return new Rectangle(margin, margin, width, title.Height);
+                    case "caltable":
+                        return new Rectangle(gridX, gridY, width, CalendarRows * cell.Height);
+                    case "calrow":
+                        return new Rectangle(gridX, gridY + key.Index * cell.Height, width, cell.Height);
+                    case "calname":
+                        return new Rectangle(gridX + key.Index * cell.Width, gridY, cell.Width, cell.Height);
+                    case "calday":
+                        return new Rectangle(gridX + (key.Index % 7) * cell.Width,
+                            gridY + (key.Index / 7 + 1) * cell.Height, cell.Width, cell.Height);
+                    case "calprev":
+                    case "calnext":
+                    {
+                        Size button = new Size(cell.Width, title.Height - 6);
+                        int y = margin + 3;
+                        int x = key.Kind == "calprev" ? margin + 3 : margin + width - button.Width - 3;
+                        return new Rectangle(x, y, button.Width, button.Height);
+                    }
+                }
             }
             catch (Exception)
             {
