@@ -698,6 +698,58 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
+		// How far a popup's shadow reaches past its own edges, and how dark it is at each step.
+		// Sampled off a stock combo box's list: down and to the right only, never up or left,
+		// reaching #868686 at the first step and fading to nothing by the fifth.
+		//
+		// The alphas are the ones that land on those samples, not the ones the arithmetic in sRGB
+		// would suggest: this compositor blends in linear light, so the same alpha comes out about
+		// half as dark as it would over a plain sRGB surface.
+		private const int ShadowDepth = 5;
+		private static readonly int[] ShadowAlpha = { 224, 168, 85, 28, 6 };
+
+		// Scenes that already carry their shadow. A scene is replaced wholesale on every repaint,
+		// so tracking the scene rather than the window is what keeps one shadow per paint.
+		private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object>
+			_shadowed = new System.Runtime.CompilerServices.ConditionalWeakTable<object, object>();
+
+		/// <summary>Give a popup the drop shadow Windows gives it at the window-class level, so
+		/// menus, combo lists, tooltips and drop-down calendars all get one without any of them
+		/// having to know. Drawn in the window's own coordinates, past its right and bottom edges,
+		/// where ApplyWindowClip has left room.</summary>
+		private static void AddPopupShadow(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, Hwnd hwnd)
+		{
+			if (sv == null || hwnd == null) return;
+			if ((hwnd.initial_style & WindowStyles.WS_POPUP) == 0) return;
+			if (hwnd.width <= 0 || hwnd.height <= 0) return;
+			if (_shadowed.TryGetValue(sv, out _)) return;
+			_shadowed.Add(sv, sv);
+
+			Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual shadow = null;
+			try
+			{
+				using (Graphics g = System.Drawing.WebGpuBackend.GpuRaster.NewRecording(
+					gg => shadow = System.Drawing.WebGpuBackend.GpuRaster.EndScene(gg)
+						as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual))
+				{
+					for (int i = 0; i < ShadowDepth; i++)
+					{
+						using (var brush = new SolidBrush(Color.FromArgb(ShadowAlpha[i], 0, 0, 0)))
+						{
+							// Down the right edge, starting below the top so the shadow does not
+							// climb past the window, and along the bottom the same way.
+							g.FillRectangle(brush, hwnd.width + i, ShadowDepth, 1, hwnd.height - ShadowDepth + i + 1);
+							g.FillRectangle(brush, ShadowDepth, hwnd.height + i, hwnd.width - ShadowDepth + i + 1, 1);
+						}
+					}
+				}
+			}
+			catch (Exception ex) { T("AddPopupShadow: " + ex.Message); return; }
+
+			if (shadow != null && (shadow.Content.Count > 0 || shadow.Children.Count > 0))
+				sv.Children.Add(shadow);
+		}
+
 		internal object GetWindowScene(IntPtr handle)
 		{
 			if (!_scenes.TryGetValue(handle, out object s)) return null;
@@ -706,7 +758,11 @@ namespace System.Windows.Forms
 			// the control happened to be when it last painted: scroll it and the clip stays behind,
 			// which left scrolled controls invisible until something forced them to repaint.
 			if (s is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv)
-				ApplyWindowClip(sv, Hwnd.ObjectFromHandle(handle));
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(handle);
+				AddPopupShadow(sv, h);
+				ApplyWindowClip(sv, h);
+			}
 			return s;
 		}
 
@@ -720,8 +776,14 @@ namespace System.Windows.Forms
 			float left = 0, top = 0;
 			float right = Math.Max(0, hwnd.width), bottom = Math.Max(0, hwnd.height);
 			// A popup is not confined by whatever it hangs off: a menu, a combo box's list and a
-			// tooltip all stand outside their owner on purpose.
-			if ((hwnd.initial_style & WindowStyles.WS_POPUP) == 0)
+			// tooltip all stand outside their owner on purpose. It also needs room past its own
+			// edges for the shadow underneath it.
+			if ((hwnd.initial_style & WindowStyles.WS_POPUP) != 0)
+			{
+				right += ShadowDepth;
+				bottom += ShadowDepth;
+			}
+			else
 			{
 				int offX = 0, offY = 0;
 				Hwnd child = hwnd;
@@ -1288,13 +1350,31 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The StdCursor the pointer should be showing where it currently is, or -1 for
-		/// the default. Walks up from the window under the pointer, because a control that sets
-		/// no cursor of its own inherits its parent's.</summary>
+		/// the default.
+		/// <para>Asks the control under the pointer what it wants rather than waiting to be told.
+		/// Being told does not work here: Control.UpdateCursor checks that Cursor.Position falls
+		/// inside the control before it calls SetCursor, and this driver has no pointer position
+		/// to give it -- GetCursorPos answers the origin -- so it bailed out every time and no
+		/// control's cursor was ever registered.</para></summary>
 		internal int GetActiveCursor()
 		{
 			if (_cursorOverride >= 0) return _cursorOverride;
 			for (Hwnd h = Hwnd.ObjectFromHandle(_hotWindow); h != null; h = h.parent)
+			{
 				if (_cursors.TryGetValue(h.Handle, out int id)) return id;
+				try
+				{
+					Control c = Control.FromHandle(h.Handle);
+					// Control.Cursor already inherits from the parent when the control sets none,
+					// so the first control that answers settles it.
+					if (c != null && c.Cursor != null)
+					{
+						int std = CursorIdFromHandle(c.Cursor.handle);
+						if (std >= 0) return std;
+					}
+				}
+				catch (Exception) { }
+			}
 			return -1;
 		}
 

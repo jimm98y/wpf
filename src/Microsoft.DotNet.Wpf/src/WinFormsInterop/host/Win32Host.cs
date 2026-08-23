@@ -32,6 +32,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private readonly object _driver;
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
     private readonly MethodInfo _isPopup;
+    private readonly MethodInfo _getCursor;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
@@ -62,6 +63,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
+        _getCursor = M("GetActiveCursor");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
         _formHandle = form.Handle;
@@ -305,6 +307,14 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 }
                 return IntPtr.Zero;
             case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
+            // WM_SETCURSOR: the window class carries a plain arrow, so without answering this
+            // the pointer stayed an arrow no matter what a control asked for -- no I-beam over
+            // text, no double arrow over a column divider. Only the client area is ours; the
+            // frame and buttons belong to the default handling.
+            case 0x0020:
+                if ((((long)lParam) & 0xFFFF) == 1 && ApplyCursor())   // HTCLIENT
+                    return (IntPtr)1;
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0102:                                                          // WM_CHAR
                 if (_swallowChar) { _swallowChar = false; return IntPtr.Zero; }
                 char typed = (char)(int)wParam;
@@ -536,6 +546,47 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         return (_ox + (int)(px / _scale), _oy + (int)(py / _scale));        // -> driver DIPs
     }
 
+    /// <summary>Show whatever cursor the control under the pointer asked for. The driver names
+    /// shapes rather than handles -- it has no idea what a Windows cursor is -- so the mapping
+    /// from a shape to this platform's cursor lives here, and the Cocoa host maps the same
+    /// names to NSCursor.</summary>
+    private bool ApplyCursor()
+    {
+        if (_getCursor == null) return false;
+        int id;
+        try { id = (int)_getCursor.Invoke(_driver, null); }
+        catch (Exception) { return false; }
+        if (id < 0) return false;
+
+        int idc;
+        switch (id)
+        {
+            case 1: idc = 32650; break;                       // AppStarting
+            case 3: idc = 32515; break;                       // Cross
+            case 4: idc = 32649; break;                       // Hand
+            case 5: idc = 32651; break;                       // Help
+            case 6: idc = 32645; break;                       // HSplit  -> size N-S
+            case 7: idc = 32513; break;                       // IBeam
+            case 8: idc = 32648; break;                       // No
+            case 9: case 10: case 11: idc = 32646; break;     // NoMove* -> size all
+            case 12: case 13: case 14: case 15:
+            case 16: case 17: case 18: case 19: idc = 32646; break;   // Pan*
+            case 20: idc = 32646; break;                      // SizeAll
+            case 21: idc = 32643; break;                      // SizeNESW
+            case 22: idc = 32645; break;                      // SizeNS
+            case 23: idc = 32642; break;                      // SizeNWSE
+            case 24: idc = 32644; break;                      // SizeWE
+            case 25: idc = 32516; break;                      // UpArrow
+            case 26: idc = 32644; break;                      // VSplit  -> size W-E
+            case 27: idc = 32514; break;                      // Wait
+            default: idc = 32512; break;                      // Default / Arrow
+        }
+        IntPtr cursor = LoadCursorW(IntPtr.Zero, idc);
+        if (cursor == IntPtr.Zero) return false;
+        SetCursor(cursor);
+        return true;
+    }
+
     // ---- accessibility site ------------------------------------------------------
     //
     // The stack renders to a virtual 96-DPI screen which this window magnifies, so a control's
@@ -716,6 +767,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
     [DllImport("kernel32", SetLastError = true)] private static extern IntPtr GetModuleHandleW(string lpModuleName);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr LoadCursorW(IntPtr h, int id);
+    [DllImport("user32")] private static extern IntPtr SetCursor(IntPtr cursor);
     [DllImport("user32", SetLastError = true)] private static extern ushort RegisterClassExW(ref WNDCLASSEXW c);
     [DllImport("user32")] private static extern int GetSystemMetrics(int index);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr CreateWindowExW(uint ex, IntPtr cls, IntPtr name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);

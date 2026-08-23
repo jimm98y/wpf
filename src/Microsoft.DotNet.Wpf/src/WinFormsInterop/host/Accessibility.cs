@@ -28,6 +28,7 @@ namespace WinFormsWebGpu.Accessibility
         Unknown, Window, Pane, Group, Button, CheckBox, RadioButton, Text, Link, ComboBox, Edit,
         Document, List, ListItem, Table, Calendar, Spinner, ProgressBar, Slider, ScrollBar, Tree,
         TreeItem, Tab, TabItem, MenuBar, MenuItem, StatusBar, ToolBar, DataGrid, Image, Separator,
+        Header, DataItem,
     }
 
     /// <summary>Three states, because a check box has three.</summary>

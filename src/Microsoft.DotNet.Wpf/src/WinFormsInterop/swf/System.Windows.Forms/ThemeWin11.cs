@@ -999,11 +999,37 @@ namespace System.Windows.Forms
 		}
 
 		// The marker's right edge lines up with the third column's, which is where Windows puts it.
-		// A no-break space in front of a single digit, so the units sit under each other.
-		protected override string MonthCalendarDayText (MonthCalendar mc, DateTime date)
+		// The same frame a combo box's list gets: a popup is a popup.
+		protected override Color MonthCalendarPopupBorderColor (MonthCalendar mc)
 		{
-			string day = date.Day.ToString ();
-			return day.Length < 2 ? " " + day : day;
+			return PopupBorder;
+		}
+
+		// Windows lines the units up down each column: a single digit sits exactly where the units
+		// digit of a double one does. Padding the string with a space does not achieve it -- the
+		// typographic format these are drawn with trims a leading space away again -- so give every
+		// number the width of two digits, centred in the cell, and range it right inside that.
+		protected override Rectangle MonthCalendarDateBounds (MonthCalendar mc, Graphics dc, Rectangle cell)
+		{
+			if (dc == null || mc == null || cell.Width <= 0)
+				return cell;
+			int digits = (int) Math.Ceiling (dc.MeasureString ("00", mc.Font).Width);
+			if (digits <= 0 || digits >= cell.Width)
+				return cell;
+			return new Rectangle (cell.X + (cell.Width - digits) / 2, cell.Y, digits, cell.Height);
+		}
+
+		private StringFormat units_format;
+
+		protected override StringFormat MonthCalendarDateFormat (MonthCalendar mc)
+		{
+			if (units_format == null)
+				units_format = new StringFormat (StringFormat.GenericTypographic) {
+					Alignment = StringAlignment.Far,
+					LineAlignment = StringAlignment.Center,
+					FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces,
+				};
+			return units_format;
 		}
 
 		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)

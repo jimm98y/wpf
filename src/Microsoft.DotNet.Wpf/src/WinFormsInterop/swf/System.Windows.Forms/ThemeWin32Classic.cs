@@ -3718,26 +3718,13 @@ namespace System.Windows.Forms
 			
 			// draw the drop down border if need
 			if (mc.owner != null) {
+				// One hairline all round, in whatever this theme frames a popup with. The classic
+				// code drew four separate lines, each only when the clip happened to contain a
+				// particular corner, so the frame came and went as the calendar repainted.
 				Rectangle bounds = mc.ClientRectangle;
-				if (clip_rectangle.Contains (mc.Location)) {
-					// find out if top or left line to draw
-					if(clip_rectangle.Contains (new Point (bounds.Left, bounds.Bottom))) {
-					
-						dc.DrawLine (SystemPens.ControlText, bounds.X, bounds.Y, bounds.X, bounds.Bottom-1);
-					}
-					if(clip_rectangle.Contains (new Point (bounds.Right, bounds.Y))) {
-						dc.DrawLine (SystemPens.ControlText, bounds.X, bounds.Y, bounds.Right-1, bounds.Y);
-					}
-				}
-				if (clip_rectangle.Contains (new Point(bounds.Right, bounds.Bottom))) {
-					// find out if bottom or right line to draw
-					if(clip_rectangle.Contains (new Point (bounds.Left, bounds.Bottom))) {
-						dc.DrawLine (SystemPens.ControlText, bounds.X, bounds.Bottom-1, bounds.Right-1, bounds.Bottom-1);
-					}
-					if(clip_rectangle.Contains (new Point (bounds.Right, bounds.Y))) {
-						dc.DrawLine (SystemPens.ControlText, bounds.Right-1, bounds.Y, bounds.Right-1, bounds.Bottom-1);
-					}
-				}
+				if (bounds.Width > 1 && bounds.Height > 1)
+					dc.DrawRectangle (ResPool.GetPen (MonthCalendarPopupBorderColor (mc)),
+							   bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
 			}
 		}
 
@@ -3942,8 +3929,20 @@ namespace System.Windows.Forms
 			return -1;
 		}
 
+		/// <summary>The frame around a calendar shown as a drop-down.</summary>
+		protected virtual Color MonthCalendarPopupBorderColor (MonthCalendar mc)
+		{
+			return SystemColors.ControlText;
+		}
+
 		/// <summary>The text of a day number. Centring "1" and "11" in the same cell leaves the
 		/// units out of line down the column; Windows keeps them lined up.</summary>
+		/// <summary>The box a day number is laid out in, which need not be the whole cell.</summary>
+		protected virtual Rectangle MonthCalendarDateBounds (MonthCalendar mc, Graphics dc, Rectangle cell)
+		{
+			return cell;
+		}
+
 		protected virtual string MonthCalendarDayText (MonthCalendar mc, DateTime date)
 		{
 			return date.Day.ToString ();
@@ -4136,7 +4135,8 @@ namespace System.Windows.Forms
 					date_color = hover;
 			}
 
-			dc.DrawString (date.Day.ToString(), font, ResPool.GetSolidBrush (date_color), rectangle, MonthCalendarDateFormat (mc));
+			dc.DrawString (MonthCalendarDayText (mc, date), font, ResPool.GetSolidBrush (date_color),
+					       MonthCalendarDateBounds (mc, dc, rectangle), MonthCalendarDateFormat (mc));
 
 			// today circle if needed
 			if (mc.ShowTodayCircle && date == DateTime.Now.Date) {

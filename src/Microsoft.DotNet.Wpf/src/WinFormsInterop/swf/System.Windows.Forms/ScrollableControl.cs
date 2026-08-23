@@ -553,20 +553,19 @@ namespace System.Windows.Forms {
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected override void OnMouseWheel(MouseEventArgs e) {
 			if (vscrollbar.VisibleInternal) {
-				if (e.Delta > 0) {
-					if (vscrollbar.Minimum < (vscrollbar.Value - vscrollbar.LargeChange)) {
-						vscrollbar.Value -= vscrollbar.LargeChange;
-					} else {
-						vscrollbar.Value = vscrollbar.Minimum;
-					}
-				} else {
-					int maximum_scrollbar_value = vscrollbar.Maximum - vscrollbar.LargeChange + 1;
-					if (maximum_scrollbar_value > (vscrollbar.Value + vscrollbar.LargeChange)) {
-						vscrollbar.Value += vscrollbar.LargeChange;
-					} else {
-						vscrollbar.Value = maximum_scrollbar_value;
-					}
-				}
+				// A notch of the wheel moves a few lines, which is what Windows does and what the
+				// system setting says. This moved a whole page per notch, so one flick of the wheel
+				// ran a long panel from top to bottom.
+				int lines = SystemInformation.MouseWheelScrollLines;
+				int step = lines < 0
+					? vscrollbar.LargeChange                       // the setting asks for a page
+					: Math.Max (1, lines) * vscrollbar.SmallChange;
+				int notches = e.Delta / 120;
+				if (notches == 0)
+					notches = Math.Sign (e.Delta);
+				int limit = vscrollbar.Maximum - vscrollbar.LargeChange + 1;
+				int wanted = vscrollbar.Value - notches * step;
+				vscrollbar.Value = Math.Max (vscrollbar.Minimum, Math.Min (Math.Max (vscrollbar.Minimum, limit), wanted));
 			}
 			base.OnMouseWheel(e);
 		}

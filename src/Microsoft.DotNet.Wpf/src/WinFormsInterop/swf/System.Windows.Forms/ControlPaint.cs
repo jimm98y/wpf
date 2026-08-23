@@ -371,7 +371,12 @@ namespace System.Windows.Forms {
 		}
 
 		public static void DrawFocusRectangle(Graphics graphics, Rectangle rectangle) {
-			DrawFocusRectangle(graphics, rectangle, SystemColors.Control, SystemColors.ControlText);
+			// backColor is the surface the rectangle lands on, which is how every other caller uses
+			// it -- a list view passes the row's background, a checked list the item's. This overload
+			// had the two the other way round, so a theme that picks its dot colour by the brightness
+			// of the background was told the background was black and drew white dots on a white
+			// control.
+			DrawFocusRectangle(graphics, rectangle, SystemColors.ControlText, SystemColors.Control);
 		}
 
 		public static void DrawFocusRectangle(Graphics graphics, Rectangle rectangle, Color foreColor, Color backColor) {

@@ -145,6 +145,8 @@ namespace WinFormsWebGpu.Accessibility
                 case A11yRole.Document: return 50030;
                 case A11yRole.Table: return 50036;
                 case A11yRole.Separator: return 50038;
+                case A11yRole.Header: return 50034;
+                case A11yRole.DataItem: return 50029;
                 default: return 50033;                      // Pane
             }
         }
@@ -189,36 +191,81 @@ namespace WinFormsWebGpu.Accessibility
     internal class UiaProvider : IRawElementProviderFragment, IInvokeProvider, IValueProvider, IToggleProvider,
         IExpandCollapseProvider
     {
-        private static readonly ConditionalWeakTable<Control, UiaProvider> s_cache = new ConditionalWeakTable<Control, UiaProvider>();
+        // Keyed on the element itself -- a Control, or the object a control already keeps for an
+        // item (a ToolStripItem, a ListViewItem, a TreeNode) -- because those are stable across
+        // calls, which is what lets a client tell the same element from a new one.
+        private static readonly ConditionalWeakTable<object, UiaProvider> s_cache = new ConditionalWeakTable<object, UiaProvider>();
         private static int s_nextId = 1;
 
         protected readonly IA11yHostSite Site;
-        protected readonly Control Control;
+        /// <summary>The element described here: a Control, or one of a control's items.</summary>
+        protected readonly object Element;
+        /// <summary>The element as a Control, or null when it is an item.</summary>
+        protected Control Control { get { return Element as Control; } }
         private readonly int _runtimeId;
 
-        protected UiaProvider(IA11yHostSite site, Control control)
+        protected UiaProvider(IA11yHostSite site, object element)
         {
             Site = site;
-            Control = control;
+            Element = element;
             lock (s_cache)
                 _runtimeId = s_nextId++;
         }
 
-        internal static UiaProvider For(IA11yHostSite site, Control control)
+        internal static UiaProvider For(IA11yHostSite site, object element)
         {
-            if (control == null)
+            if (element == null)
                 return null;
             lock (s_cache)
             {
                 UiaProvider existing;
-                if (s_cache.TryGetValue(control, out existing))
+                if (s_cache.TryGetValue(element, out existing))
                     return existing;
-                UiaProvider created = ReferenceEquals(control, site.Form)
-                    ? new UiaRootProvider(site, control)
-                    : new UiaProvider(site, control);
-                s_cache.Add(control, created);
+                UiaProvider created = ReferenceEquals(element, site.Form)
+                    ? new UiaRootProvider(site, (Control)element)
+                    : new UiaProvider(site, element);
+                s_cache.Add(element, created);
                 return created;
             }
+        }
+
+        /// <summary>This element's children: a control's child controls followed by whatever
+        /// items it holds, or an item's own nested items.</summary>
+        private IList<object> Kids()
+        {
+            var all = new List<object>();
+            Control c = Control;
+            if (c != null)
+                foreach (Control child in A11y.Children(c))
+                    all.Add(child);
+
+            // By reference, and never twice. A tab page is both a child control and one of the
+            // tab control's items; listed twice it became its own next sibling, and a client
+            // walking the tree went round for ever.
+            foreach (object item in A11yItems.ChildrenOf(Element))
+            {
+                bool seen = false;
+                for (int i = 0; i < all.Count && !seen; i++)
+                    seen = ReferenceEquals(all[i], item);
+                if (!seen)
+                    all.Add(item);
+            }
+            return all;
+        }
+
+        /// <summary>The children of whatever holds this element, for sibling navigation.</summary>
+        private IList<object> Siblings()
+        {
+            UiaProvider p = For(Site, ParentElement());
+            return p == null ? new List<object>() : p.Kids();
+        }
+
+        private object ParentElement()
+        {
+            Control c = Control;
+            if (c != null)
+                return ReferenceEquals(c, Site.Form) ? null : (object)c.Parent;
+            return A11yItems.OwnerOf(Element);
         }
 
         // ---- the tree ----------------------------------------------------------------------------
@@ -228,27 +275,25 @@ namespace WinFormsWebGpu.Accessibility
             switch (direction)
             {
                 case NavigateDirection.Parent:
-                    return ReferenceEquals(Control, Site.Form) ? null : (object)For(Site, Control.Parent);
+                    return For(Site, ParentElement());
 
                 case NavigateDirection.FirstChild:
                 {
-                    IList<Control> kids = A11y.Children(Control);
+                    IList<object> kids = Kids();
                     return kids.Count > 0 ? For(Site, kids[0]) : null;
                 }
 
                 case NavigateDirection.LastChild:
                 {
-                    IList<Control> kids = A11y.Children(Control);
+                    IList<object> kids = Kids();
                     return kids.Count > 0 ? For(Site, kids[kids.Count - 1]) : null;
                 }
 
                 case NavigateDirection.NextSibling:
                 case NavigateDirection.PreviousSibling:
                 {
-                    if (ReferenceEquals(Control, Site.Form))
-                        return null;
-                    IList<Control> siblings = A11y.Children(Control.Parent);
-                    int i = siblings.IndexOf(Control);
+                    IList<object> siblings = Siblings();
+                    int i = siblings.IndexOf(Element);
                     if (i < 0)
                         return null;
                     int j = direction == NavigateDirection.NextSibling ? i + 1 : i - 1;
@@ -268,16 +313,19 @@ namespace WinFormsWebGpu.Accessibility
             get
             {
                 var r = new UiaRect();
-                if (!A11y.IsVisible(Control))
+                Rectangle bounds = Control != null
+                    ? (A11y.IsVisible(Control) ? A11y.DriverBounds(Control) : Rectangle.Empty)
+                    : A11yItems.BoundsOf(Element);
+                if (bounds.IsEmpty)
                     return r;
-                Site.TryMapToScreen(A11y.DriverBounds(Control), out r.left, out r.top, out r.width, out r.height);
+                Site.TryMapToScreen(bounds, out r.left, out r.top, out r.width, out r.height);
                 return r;
             }
         }
 
         public object[] GetEmbeddedFragmentRoots() { return null; }
 
-        public void SetFocus() { A11y.Focus(Control); }
+        public void SetFocus() { if (Control != null) A11y.Focus(Control); }
 
         public IRawElementProviderFragmentRoot FragmentRoot
         {
@@ -302,6 +350,19 @@ namespace WinFormsWebGpu.Accessibility
 
         public virtual object GetPropertyValue(int propertyId)
         {
+            if (Control == null)
+                switch (propertyId)
+                {
+                    case Uia.NameProperty: return A11yItems.NameOf(Element);
+                    case Uia.ControlTypeProperty: return Uia.ControlType(A11yItems.RoleOf(Element));
+                    case Uia.ClassNameProperty: return Element.GetType().Name;
+                    case Uia.IsEnabledProperty: return A11yItems.IsEnabled(Element);
+                    case Uia.IsControlElementProperty: return true;
+                    case Uia.IsContentElementProperty: return true;
+                    case Uia.IsOffscreenProperty: return false;
+                    default: return null;
+                }
+
             switch (propertyId)
             {
                 case Uia.NameProperty: return A11y.NameOf(Control);
@@ -321,6 +382,9 @@ namespace WinFormsWebGpu.Accessibility
 
         public object GetPatternProvider(int patternId)
         {
+            if (Control == null)
+                return patternId == Uia.InvokePattern && A11yItems.CanInvoke(Element) ? this : null;
+
             switch (patternId)
             {
                 case Uia.InvokePattern: return A11y.CanInvoke(Control) ? this : null;
@@ -333,7 +397,10 @@ namespace WinFormsWebGpu.Accessibility
 
         // ---- patterns -----------------------------------------------------------------------------
 
-        public void Invoke() { A11y.Invoke(Control); }
+        public void Invoke()
+        {
+            if (Control != null) A11y.Invoke(Control); else A11yItems.Invoke(Element);
+        }
 
         public void SetValue(string value) { A11y.SetValue(Control, value); }
 

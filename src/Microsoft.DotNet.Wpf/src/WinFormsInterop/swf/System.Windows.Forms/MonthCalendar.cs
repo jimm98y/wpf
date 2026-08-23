@@ -714,7 +714,10 @@ namespace System.Windows.Forms {
 				// set the date_cell_size and the title_size
 				date_cell_size = ThemeEngine.Current.MonthCalendarCellSize (this,
 						    new Size ((int) Math.Ceiling (1.8 * multiplier), multiplier));
-				title_size = new Size ((date_cell_size.Width * column_count), 2 * multiplier);
+				// Two rows of the cell height, not of the raw font height: a theme that adjusts the cell
+				// adjusts the title with it, and taking the font height here left the calendar two
+				// pixels taller than a stock one.
+				title_size = new Size ((date_cell_size.Width * column_count), 2 * date_cell_size.Height);
 
 				return new Size (column_count * date_cell_size.Width, row_count * date_cell_size.Height + title_size.Height);
 			}
@@ -863,13 +866,9 @@ namespace System.Windows.Forms {
 					height += (calendar_dimensions.Height - 1) * calendar_spacing.Height;
 				}
 
-				// add the 1 pixel boundary
-				if (width > 0) {
-					width += 2;
-				}
-				if (height > 0) {
-					height +=2;
-				}
+				// The frame used to be added here as a flat two pixels. The margin above is that frame
+				// now -- one pixel each side for the classic theme, five for a Windows 11 calendar --
+				// so counting it twice made the control two pixels bigger than it draws.
 
 				return new Size (width, height);
 			}
