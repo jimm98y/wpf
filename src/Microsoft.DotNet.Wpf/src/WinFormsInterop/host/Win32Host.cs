@@ -201,9 +201,14 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// drop-down between uses -- kept its window: it stayed on screen holding the keyboard, so
     /// once a picker had been closed the window underneath took no further input, and opening the
     /// picker again showed nothing because the window was already there.</summary>
-    /// <summary>Look away from a popup and it is finished with: click the window it dropped out of,
-    /// or another application altogether. Windows dismisses a menu on exactly this, and says so in
-    /// three different ways depending on what the click landed on -- so all three are taken.
+    /// <summary>Look away from a popup and it is finished with.
+    /// <para>Windows watches for this with a global mouse hook -- see PropertyGridView.MouseHook --
+    /// which sees a click anywhere at all: in the window the drop-down came from, or in another
+    /// application entirely. There is no hook here, but a click landing in this application reaches
+    /// the driver and the drop-down's own loop acts on it, and the OS says so when one lands
+    /// outside. Windows shows a drop-down WITHOUT activating it (SW_SHOWNA) and so do we, which
+    /// makes the application being deactivated the signal that matters; the other two cost nothing
+    /// and cover a popup that did take the keyboard.</para>
     /// <para>Nothing told the popup before. It is a window of its own, and a click elsewhere is not
     /// a message the driver ever sees, so a picker clicked away from stayed open behind the window
     /// with its nested message loop still spinning, and the application took no further

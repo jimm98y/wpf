@@ -292,6 +292,11 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			return base.ProcessDialogKey (keyData);
 		}
 
+		/// <summary>The text a value was last refused for, and whether the complaint is on screen.
+		/// Both keep one bad value from asking over and over.</summary>
+		private string rejected_text;
+		private bool showing_error;
+
 		private bool TrySetEntry (GridEntry entry, object value)
 		{
 			if (entry == null || grid_textbox.Text.Equals (entry.ValueText))
@@ -303,13 +308,28 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				string error = null;
 				bool changed = entry.SetValue (value, out error);
 				if (!changed && error != null) {
-					if (property_grid.ShowError (error, MessageBoxButtons.OKCancel) == DialogResult.Cancel) {
-						UpdateItem (entry); // restore value, repaint, etc
-						UnfocusSelection ();
+					// Say it once for a given text. Refusing the value cancels the validation, which brings
+					// the field straight back for another go -- so answering OK put the same complaint up
+					// again, and again, with nothing but Cancel to escape it. The text is left as it is for
+					// correcting; the message returns as soon as it changes and is still wrong.
+					if (showing_error || string.Equals (rejected_text, grid_textbox.Text))
+						return false;
+					showing_error = true;
+					try {
+						if (property_grid.ShowError (error, MessageBoxButtons.OKCancel) == DialogResult.Cancel) {
+							rejected_text = null;
+							UpdateItem (entry); // restore value, repaint, etc
+							UnfocusSelection ();
+						} else {
+							rejected_text = grid_textbox.Text;
+						}
+					} finally {
+						showing_error = false;
 					}
 					return false;
 				}
 			}
+			rejected_text = null;
 			UpdateItem (entry); // restore value, repaint, etc
 			return true;
 		}
@@ -1022,6 +1042,9 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 			System.Windows.Forms.MSG msg = new MSG ();
 			object queue_id = XplatUI.StartLoop (Thread.CurrentThread);
+			// Deaf to the mouse for as long as the drop-down is up, as Windows makes it: the click that
+			// dismisses the drop-down would otherwise be the click that opens it again.
+			grid_textbox.IgnoreDropDownButtonMouse = true;
 			control.Focus ();
 			while (dropdown_form.Visible && XplatUI.GetMessage (queue_id, ref msg, IntPtr.Zero, 0, 0)) {
 				switch (msg.message) {
@@ -1031,8 +1054,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				    case Msg.WM_LBUTTONDOWN:
 				    case Msg.WM_MBUTTONDOWN:
 				    case Msg.WM_RBUTTONDOWN:
+				    	// The click that dismisses is dispatched as well, not swallowed. A property grid is not a
+				    	// menu: clicking another row closes the drop-down AND selects that row, and eating the
+				    	// click left the grid on the row before -- so the next drop-down opened was the previous
+				    	// row's editor, a colour picker over a boolean.
 				    	if (!HwndInControl (dropdown_form, msg.hwnd))
-							CloseDropDown ();
+				    		CloseDropDown ();
 					break;
 					case Msg.WM_ACTIVATE:
 					case Msg.WM_NCPAINT:
@@ -1044,6 +1071,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				XplatUI.DispatchMessage (ref msg);
 			}
 			XplatUI.EndLoop (Thread.CurrentThread);
+			grid_textbox.IgnoreDropDownButtonMouse = false;
 
 			// However the loop ended -- a value picked, a click elsewhere, the window deactivated --
 			// the drop-down is finished with. CloseDropDown is only one of the ways out, and the form

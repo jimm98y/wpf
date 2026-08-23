@@ -241,7 +241,15 @@ namespace System.Windows.Forms.PropertyGridInternal
 			e.Graphics.DrawString("...", new Font(Font,FontStyle.Bold), Brushes.Black, 0,0);
 		}
 
+		/// <summary>Whether the drop-down button turns a deaf ear to the mouse. Windows sets this for
+		/// as long as the drop-down is up, which is what makes pressing the same button again close it:
+		/// the click dismisses the drop-down and the button, ignoring that click, does not open it
+		/// straight back up.</summary>
+		public bool IgnoreDropDownButtonMouse { get; set; }
+
 		private void dropdown_button_Click(object sender, EventArgs e) {
+			if (IgnoreDropDownButtonMouse)
+				return;
 			EventHandler eh = (EventHandler)(Events [DropDownButtonClickedEvent]);
 			if (eh != null)
 				eh (this, e);

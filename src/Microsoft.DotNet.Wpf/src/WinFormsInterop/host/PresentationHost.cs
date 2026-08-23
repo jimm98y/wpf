@@ -45,10 +45,33 @@ namespace System.Windows.Forms
         /// (WF_WEBGPU=0) the render tests use, where there is never a host to wait for.</summary>
         internal static bool Enabled => s_enabled;
 
-        /// <summary>The newest live host, if any -- the one popups and other unclaimed windows
-        /// belong to. Hosts add themselves through <see cref="Attach"/>: either from here, or by a
-        /// host an app created itself (the browser head, or a sample driving its own loop).</summary>
-        internal static IWinFormsHost Current => s_hosts.Count == 0 ? null : s_hosts[s_hosts.Count - 1];
+        /// <summary>The newest live host that is actually ON SCREEN -- the one popups and other
+        /// unclaimed windows belong to. Hosts add themselves through <see cref="Attach"/>: either from
+        /// here, or by a host an app created itself (the browser head, or a sample driving its own
+        /// loop).
+        /// <para>On screen matters. A drop-down is hidden between uses rather than closed, and its host
+        /// stays attached: being the newest, it went on claiming every window no form's subtree
+        /// contains -- menus, tooltips, combo drop-downs -- and drawing them into its own hidden
+        /// window. Once a colour picker had been opened and closed, the File menu still opened; it was
+        /// simply painted somewhere nobody could see.</para></summary>
+        internal static IWinFormsHost Current
+        {
+            get
+            {
+                lock (s_lock)
+                {
+                    for (int i = s_hosts.Count - 1; i >= 0; i--)
+                    {
+                        Form form;
+                        if (!s_forms.TryGetValue(s_hosts[i], out form))
+                            return s_hosts[i];        // a host that never registered a form drives itself
+                        if (form != null && !form.IsDisposed && form.Visible)
+                            return s_hosts[i];
+                    }
+                }
+                return null;
+            }
+        }
 
         /// <summary>How many top-level windows are on screen. One is the common case, and the
         /// present path keeps its original whole-world behaviour there.</summary>
