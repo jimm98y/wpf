@@ -1961,6 +1961,10 @@ namespace System.Windows.Forms
 				Scroll (hscrollbar, -SystemInformation.MouseWheelScrollLines * lines);
 			else
 				Scroll (vscrollbar, -lines);
+
+			// Used here. Without saying so the notch went on to the panel behind as well, and the page
+			// scrolled along with the list under the pointer.
+			HandleMouseWheel (me);
 		}
 
 		internal override void OnPaintInternal (PaintEventArgs pevent)

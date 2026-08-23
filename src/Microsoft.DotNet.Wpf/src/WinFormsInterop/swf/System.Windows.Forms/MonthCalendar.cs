@@ -1970,13 +1970,31 @@ namespace System.Windows.Forms {
 
 		/// <summary>Called as the calendar is painted: once the outgoing view has finished
 		/// gathering itself up, swap to the new one and fade it in.</summary>
+		/// <summary>Whether a zoom is under way at all -- the view leaving, or the one arriving.
+		/// <para>Without this there is no telling a transition that has just begun from no transition
+		/// at all: both read as nought on the clock. Taken for the former, the calendar washed its
+		/// whole grid over on every paint for the life of the control, which is what took the marker
+		/// off today, the highlight off the day under the pointer and the fill off the day
+		/// selected.</para></summary>
+		internal bool ZoomTransitioning {
+			get { return zoom_collapsing || zoom_arriving; }
+		}
+
+		private bool zoom_arriving;
+
 		internal void AdvanceZoom ()
 		{
-			if (!zoom_collapsing || Animation.Value (this, ZoomKey) < 1.0)
+			if (zoom_collapsing) {
+				if (Animation.Value (this, ZoomKey) < 1.0)
+					return;
+				zoom = zoom_pending;
+				zoom_collapsing = false;
+				zoom_arriving = true;
+				Animation.Run (this, ZoomKey, 0.0, 1.0, FadeMilliseconds);
 				return;
-			zoom = zoom_pending;
-			zoom_collapsing = false;
-			Animation.Run (this, ZoomKey, 0.0, 1.0, FadeMilliseconds);
+			}
+			if (zoom_arriving && Animation.Value (this, ZoomKey) >= 1.0)
+				zoom_arriving = false;
 		}
 
 		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
@@ -2166,6 +2184,12 @@ namespace System.Windows.Forms {
 		internal bool HoverTitle => hover_title;
 		private bool hover_title;
 
+		/// <summary>Which of the two arrows either side of the heading the pointer is on, if any.
+		/// Windows colours the one under the pointer, as it colours the heading.</summary>
+		internal bool HoverPrevious => hover_previous;
+		internal bool HoverNext => hover_next;
+		private bool hover_previous, hover_next;
+
 		private void MouseMoveHandler (object sender, MouseEventArgs e) {
 			HitTestInfo hti = this.HitTest (e.X, e.Y);
 
@@ -2174,9 +2198,14 @@ namespace System.Windows.Forms {
 			DateTime over = hti.HitArea == HitArea.Date || hti.HitArea == HitArea.PrevMonthDate
 				   || hti.HitArea == HitArea.NextMonthDate ? hti.Time.Date : DateTime.MinValue;
 			bool over_title = hti.HitArea == HitArea.TitleMonth || hti.HitArea == HitArea.TitleYear;
-			if (over != hover_date || over_title != hover_title) {
+			bool over_previous = hti.HitArea == HitArea.PrevMonthButton;
+			bool over_next = hti.HitArea == HitArea.NextMonthButton;
+			if (over != hover_date || over_title != hover_title
+				|| over_previous != hover_previous || over_next != hover_next) {
 				hover_date = over;
 				hover_title = over_title;
+				hover_previous = over_previous;
+				hover_next = over_next;
 				Invalidate ();
 			}
 			// clear the last clicked item 
@@ -2214,9 +2243,11 @@ namespace System.Windows.Forms {
 		protected override void OnMouseLeave (EventArgs e)
 		{
 			base.OnMouseLeave (e);
-			if (hover_date != DateTime.MinValue || hover_title) {
+			if (hover_date != DateTime.MinValue || hover_title || hover_previous || hover_next) {
 				hover_date = DateTime.MinValue;
 				hover_title = false;
+				hover_previous = false;
+				hover_next = false;
 				Invalidate ();
 			}
 		}

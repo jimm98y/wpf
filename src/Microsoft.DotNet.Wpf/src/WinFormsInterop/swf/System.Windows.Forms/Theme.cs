@@ -813,6 +813,13 @@ namespace System.Windows.Forms
 		public abstract bool ComboBoxDropDownButtonHasHotElementStyle (ComboBox comboBox);
 		public abstract void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style);
 		public abstract bool CombBoxBackgroundHasHotElementStyle (ComboBox comboBox);
+
+		/// <summary>What the editable part of a combo box is filled with. Its own background unless the
+		/// theme washes the control when the pointer is over it.</summary>
+		public virtual Color ComboBoxFieldBackColor (ComboBox comboBox)
+		{
+			return comboBox.BackColor;
+		}
 		#endregion	// ComboBox
 
 		#region Control

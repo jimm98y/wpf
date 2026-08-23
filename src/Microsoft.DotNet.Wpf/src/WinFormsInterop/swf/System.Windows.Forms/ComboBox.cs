@@ -1518,6 +1518,7 @@ namespace System.Windows.Forms
 
 			if (listbox_ctrl.ShowWindow ())
 				dropped_down = true;
+				UpdateFieldBackColor ();
 
 			button_state = ButtonState.Pushed;
 			if (dropdown_style == ComboBoxStyle.DropDownList)
@@ -1533,6 +1534,7 @@ namespace System.Windows.Forms
 			button_state = ButtonState.Normal;
 			Invalidate (button_area);
 			dropped_down = false;
+			UpdateFieldBackColor ();
 			OnDropDownClosed (EventArgs.Empty);
 			/*
 			 * Apples X11 looses override-redirect when doing a Unmap/Map on a previously mapped window
@@ -1767,25 +1769,54 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>Whether the pointer is over the control at all -- over its own window, or over the
-		/// text box that covers most of it.</summary>
+		/// text box that covers most of it.
+		/// <para>Asked of the pointer's position rather than of a flag set when it arrived. The flag
+		/// can be left standing: opening the list takes the pointer away to a window of its own, and
+		/// what happens to the flag after that depends on where the pointer goes next -- so a combo
+		/// that had been opened and closed sat there highlighted with the pointer nowhere near
+		/// it.</para></summary>
 		internal bool PointerOver {
-			get { return Entered || (textbox_ctrl != null && textbox_ctrl.Entered); }
+			get {
+				if (!IsHandleCreated || !Visible || !Enabled)
+					return false;
+				try {
+					return ClientRectangle.Contains (PointToClient (MousePosition));
+				} catch (Exception) {
+					return false;
+				}
+			}
+		}
+
+		/// <summary>The field's background: pale while the pointer is over the control or its list is
+		/// down. The text box is a window of its own and paints its own background, so a theme cannot
+		/// wash the field by drawing under it.</summary>
+		internal void UpdateFieldBackColor ()
+		{
+			if (textbox_ctrl == null)
+				return;
+			Color want = ThemeEngine.Current.ComboBoxFieldBackColor (this);
+			if (textbox_ctrl.BackColor != want)
+				textbox_ctrl.BackColor = want;
 		}
 
 		private void OnChildPointerChanged (object sender, EventArgs e)
 		{
-			if (ThemeEngine.Current.CombBoxBackgroundHasHotElementStyle (this))
+			if (ThemeEngine.Current.CombBoxBackgroundHasHotElementStyle (this)) {
+				UpdateFieldBackColor ();
 				Invalidate ();
+			}
 		}
 
 		void OnMouseEnter (object sender, EventArgs e)
 		{
+			UpdateFieldBackColor ();
 			if (ThemeEngine.Current.CombBoxBackgroundHasHotElementStyle (this))
 				Invalidate ();
 		}
 
 		void OnMouseLeave (object sender, EventArgs e)
 		{
+			UpdateFieldBackColor ();
 			if (ThemeEngine.Current.CombBoxBackgroundHasHotElementStyle (this)) {
 				drop_down_button_entered = false;
 				Invalidate ();

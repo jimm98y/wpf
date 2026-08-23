@@ -3307,6 +3307,10 @@ namespace System.Windows.Forms
 			if (lines == 0)
 				return;
 
+			// Used here. Without saying so the notch went on to the panel behind as well, and the page
+			// scrolled along with the list under the pointer.
+			HandleMouseWheel (me);
+
 			switch (View) {
 			case View.Details:
 			case View.SmallIcon:

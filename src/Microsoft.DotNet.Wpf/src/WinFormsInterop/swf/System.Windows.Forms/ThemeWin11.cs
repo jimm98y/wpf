@@ -137,15 +137,18 @@ namespace System.Windows.Forms
 
 		public override void DrawComboBoxItem (ComboBox ctrl, DrawItemEventArgs e)
 		{
+			// A list without an editable part draws its own field, so this is where the text in the box
+			// gets its background. It follows the control: washed while the pointer is over it or the
+			// list is down, plain otherwise -- and never the list's selection colour, because the text in
+			// the box is not "a selected item", it is what the control says.
+			bool inField = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
-			if (!selected) {
+			if (!inField && !selected) {
 				base.DrawComboBoxItem (ctrl, e);
 				return;
 			}
 
-			// The field and the list say "selected" differently.
-			bool inField = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
-			Color back = inField ? ComboFieldOpenFace : ComboListSelection;
+			Color back = inField ? ComboBoxFieldBackColor (ctrl) : ComboListSelection;
 			Color fore = inField ? ColorControlText : ColorHighlightText;
 			if (!ctrl.Enabled)
 				fore = ColorInactiveCaptionText;
@@ -168,6 +171,14 @@ namespace System.Windows.Forms
 		public override bool CombBoxBackgroundHasHotElementStyle (ComboBox comboBox)
 		{
 			return comboBox.Enabled;
+		}
+
+		public override Color ComboBoxFieldBackColor (ComboBox comboBox)
+		{
+			if (!comboBox.Enabled)
+				return ColorControl;
+			return comboBox.DroppedDown || comboBox.PointerOver
+				? ComboFieldOpenFace : comboBox.BackColor;
 		}
 
 		public override void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style)
@@ -521,7 +532,8 @@ namespace System.Windows.Forms
 				return ColorControl;
 			// With the list down the whole field takes the pale accent, chevron and all. Leaving the
 			// button on the control's own background left a white notch at the end of a blue field.
-			return comboBox.DroppedDown ? ComboFieldOpenFace : comboBox.BackColor;
+			return comboBox.DroppedDown || comboBox.PointerOver
+				? ComboFieldOpenFace : comboBox.BackColor;
 		}
 
 		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much
@@ -1363,10 +1375,8 @@ namespace System.Windows.Forms
 			if (button.Width <= 0 || button.Height <= 0)
 				return;
 
-			// A pressed chevron gets the same light wash a pressed tool bar button gets; an idle one
-			// has no chrome at all, which is what makes the header read as one flat strip.
-			if (clicked)
-				dc.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), button);
+			// No chrome, ever: the header is one flat strip and the arrow says everything by its own
+			// colour. A wash behind a pressed one was chrome Windows does not draw.
 
 			int cx = button.X + button.Width / 2;
 			int cy = button.Y + button.Height / 2;
@@ -1374,7 +1384,11 @@ namespace System.Windows.Forms
 			int w = Math.Max (2, h - 1);
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			Color ink = mc.Enabled ? ColorControlText : ColorGrayText;
+			// Blue under the pointer and while held, the way the heading beside it goes blue.
+			bool hovered = is_previous ? mc.HoverPrevious : mc.HoverNext;
+			Color ink = !mc.Enabled ? ColorGrayText
+				  : clicked || hovered ? ButtonBorderHover
+				  : ColorControlText;
 			Point [] arrow = is_previous
 				? new Point [] { new Point (cx + w / 2, cy - h), new Point (cx + w / 2, cy + h), new Point (cx - w, cy) }
 				: new Point [] { new Point (cx - w / 2, cy - h), new Point (cx - w / 2, cy + h), new Point (cx + w, cy) };
@@ -1954,6 +1968,14 @@ namespace System.Windows.Forms
 			get { return true; }
 		}
 
+		/// <summary>Also true, and not for a border of its own: the control repaints when the pointer
+		/// arrives and when it leaves ONLY if this says yes. Saying no meant a pointer that left
+		/// straight for another control cleared the button's hot flag and never redrew it, so the
+		/// highlight stayed behind on a control the pointer was no longer anywhere near.</summary>
+		public override bool DateTimePickerBorderHasHotElementStyle {
+			get { return true; }
+		}
+
 		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
 		{
 			Bitmap glyph = CalendarGlyph;
@@ -1981,8 +2003,13 @@ namespace System.Windows.Forms
 			g.FillRectangle (ResPool.GetSolidBrush (dateTimePicker.Enabled ? ColorWindow : ColorControl), r);
 			if (dateTimePicker.is_drop_down_visible)
 				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), r);
-			else if (dateTimePicker.Enabled && dateTimePicker.DropDownButtonEntered)
+			else if (dateTimePicker.Enabled && dateTimePicker.DropDownButtonEntered) {
 				g.FillRectangle (ResPool.GetSolidBrush (HeaderHotFace), r);
+				// And a frame in the accent, which is what tells a hovered button from a merely tinted
+				// patch of field.
+				g.DrawRectangle (ResPool.GetPen (ButtonBorderHover), r.X, r.Y,
+						 Math.Max (0, r.Width - 1), Math.Max (0, r.Height - 1));
+			}
 
 			Bitmap glyph = CalendarGlyph;
 			if (glyph == null) {

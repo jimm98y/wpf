@@ -4096,10 +4096,15 @@ namespace System.Windows.Forms
 		/// outgoing view shrinks away, and falls again as the incoming one arrives.</summary>
 		private static double MonthCalendarFadeAmount (MonthCalendar mc)
 		{
+			// Nothing is fading unless a zoom is actually running. A clock reading nought means "the
+			// transition has only just begun" and "there is no transition at all" alike, and taken for
+			// the former the calendar washed its own grid out from under itself on every paint, for the
+			// life of the control -- which is what took the marker off today, the highlight off the day
+			// under the pointer and the fill off the day selected.
+			if (!mc.ZoomTransitioning)
+				return 0.0;
 			double t = Animation.Value (mc, MonthCalendar.ZoomKey);
-			if (mc.ZoomCollapsing)
-				return t;                       // going: fade out with the shrink
-			return t >= 1.0 ? 0.0 : 1.0 - t; // arriving: fade in
+			return mc.ZoomCollapsing ? t : 1.0 - t;   // going: fade with the shrink; arriving: fade in
 		}
 
 		/// <summary>The font a collapsing calendar draws with, or null when nothing is collapsing.
