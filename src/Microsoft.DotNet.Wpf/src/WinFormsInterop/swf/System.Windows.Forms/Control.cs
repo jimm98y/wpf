@@ -5546,10 +5546,26 @@ namespace System.Windows.Forms
 		}
 
 		private void WmMouseWheel (ref Message m) {
-			DefWndProc(ref m);
-			OnMouseWheel (new MouseEventArgs (FromParamToMouseButtons ((long) m.WParam), 
-				mouse_clicks, LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 
-				HighOrder((long)m.WParam)));
+			// The control under the pointer gets first refusal, and the wheel goes on to the parent
+			// only if it does not take it. Handing it to DefWndProc first meant every notch reached
+			// both -- a wheel over a track bar moved the slider AND scrolled the page it sits on.
+			HandledMouseEventArgs args = new HandledMouseEventArgs (
+				FromParamToMouseButtons ((long) m.WParam), mouse_clicks,
+				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()),
+				HighOrder ((long) m.WParam), false);
+			OnMouseWheel (args);
+			if (!args.Handled)
+				DefWndProc (ref m);
+		}
+
+		/// <summary>Say that this control has taken the wheel, so it stops here. Silently does
+		/// nothing for an ordinary MouseEventArgs, which is what a caller raising the event
+		/// directly passes.</summary>
+		internal static void HandleMouseWheel (MouseEventArgs e)
+		{
+			HandledMouseEventArgs handled = e as HandledMouseEventArgs;
+			if (handled != null)
+				handled.Handled = true;
 		}
 
 

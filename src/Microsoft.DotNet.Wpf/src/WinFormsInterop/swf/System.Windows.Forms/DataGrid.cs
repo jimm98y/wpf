@@ -1809,6 +1809,8 @@ namespace System.Windows.Forms
 				GridVScrolled (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, pixels));
 				vert_scrollbar.Value = pixels;
 			}
+			// Taken here: the notch does not go on to whatever this sits in.
+			HandleMouseWheel (e);
 		}
 
 		protected void OnNavigate (NavigateEventArgs e)

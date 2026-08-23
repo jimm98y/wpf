@@ -900,15 +900,29 @@ namespace System.Windows.Forms
 			DataGridView grid = cell == null ? null : cell.DataGridView;
 			if (grid == null || bounds.Width <= 0 || bounds.Height <= 0)
 				return false;
-			// The current row -- the one carrying the arrow -- and only while the grid has the
-			// keyboard, which is exactly when Windows washes it. Not the cell's own Selected: a header
-			// cell is never itself selected, so asking it gave every header the plain face.
-			bool marked = cell is DataGridViewRowHeaderCell && grid.Focused
-				&& grid.CurrentRow != null && grid.CurrentRow.Index == cell.RowIndex;
+			// Washed when the whole row is selected, and only then: a single cell selected somewhere
+			// along the row leaves its header the plain face. Not the header cell's own Selected --
+			// a header cell is never itself selected, so asking it marks nothing ever.
+			bool marked = false;
+			if (cell is DataGridViewRowHeaderCell) {
+				try {
+					DataGridViewRow row = cell.OwningRow;
+					marked = row != null && !row.IsShared && row.Selected;
+				} catch (Exception) {
+				}
+			}
 			g.FillRectangle (ResPool.GetSolidBrush (marked ? HeaderMarkedFace : ColorWindow), bounds);
 			Pen pen = ResPool.GetPen (grid.GridColor);
 			g.DrawLine (pen, bounds.Right - 1, bounds.Y, bounds.Right - 1, bounds.Bottom - 1);
 			g.DrawLine (pen, bounds.X, bounds.Bottom - 1, bounds.Right - 1, bounds.Bottom - 1);
+			// The grid is ruled on all four sides, so the headers along its top and down its left
+			// carry the outer lines too. Windows draws them, and against the control's own border they
+			// read as a two-pixel edge -- which is why leaving them out made ours look a pixel thin all
+			// the way round the first row and the first column.
+			if (cell is DataGridViewRowHeaderCell || cell is DataGridViewTopLeftHeaderCell)
+				g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bounds.Bottom - 1);
+			if (cell is DataGridViewColumnHeaderCell)
+				g.DrawLine (pen, bounds.X, bounds.Y, bounds.Right - 1, bounds.Y);
 			return true;
 		}
 
@@ -931,6 +945,173 @@ namespace System.Windows.Forms
 		{
 			// Already washed by the background above; the classic fill would bury it.
 			return cell != null && cell.DataGridView != null;
+		}
+
+		// ---- track bar ---------------------------------------------------------------
+		//
+		// A flat pale channel with a solid accent-coloured slider, in place of the sunken groove and
+		// the bevelled grey pointer the classic theme carves. The shapes and their positions are the
+		// classic ones -- the control works out where the thumb goes, and hit testing has to agree
+		// with what is drawn -- so only the painting changes.
+
+		private static readonly Color TrackChannel = Color.FromArgb (231, 234, 234);
+		private static readonly Color TrackChannelEdge = Color.FromArgb (214, 214, 214);
+		private static readonly Color TrackTick = Color.FromArgb (196, 196, 196);
+
+		private void FillChannel (Graphics dc, Rectangle channel)
+		{
+			if (channel.Width <= 0 || channel.Height <= 0)
+				return;
+			dc.FillRectangle (ResPool.GetSolidBrush (TrackChannel), channel);
+			dc.DrawRectangle (ResPool.GetPen (TrackChannelEdge), channel.X, channel.Y,
+					  channel.Width - 1, channel.Height - 1);
+		}
+
+		protected override void TrackBarDrawHorizontalTrack (Graphics dc, Rectangle thumb_area,
+								     Point channel_startpoint, Rectangle clippingArea)
+		{
+			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y,
+							thumb_area.Width, 4));
+		}
+
+		protected override void TrackBarDrawVerticalTrack (Graphics dc, Rectangle thumb_area,
+								   Point channel_startpoint, Rectangle clippingArea)
+		{
+			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y,
+							4, thumb_area.Height));
+		}
+
+		/// <summary>The slider, as a pointer with its tip on the given side, or a plain bar when
+		/// <paramref name="tip"/> is none. Sampled rather than filled as a polygon: the recorder
+		/// leaves a polygon's diagonals hard, and against the pale channel behind it a stepped edge
+		/// on a shape this small is the whole of what one sees.</summary>
+		private void FillPointer (Graphics dc, Rectangle body, TrackBarTip tip, Color colour, Color behind)
+		{
+			Rectangle bounds = body;
+			double cx = body.X + body.Width / 2.0, cy = body.Y + body.Height / 2.0;
+			Func<double, double, bool> inside;
+			switch (tip) {
+			case TrackBarTip.Bottom:
+				inside = (x, y) => {
+					if (y <= body.Bottom - PointerTip)
+						return x >= body.X && x <= body.Right;
+					double t = (body.Bottom - y) / (double) PointerTip;
+					double half = body.Width / 2.0 * t;
+					return x >= cx - half && x <= cx + half;
+				};
+				break;
+			case TrackBarTip.Top:
+				inside = (x, y) => {
+					if (y >= body.Y + PointerTip)
+						return x >= body.X && x <= body.Right;
+					double t = (y - body.Y) / (double) PointerTip;
+					double half = body.Width / 2.0 * t;
+					return x >= cx - half && x <= cx + half;
+				};
+				break;
+			case TrackBarTip.Right:
+				inside = (x, y) => {
+					if (x <= body.Right - PointerTip)
+						return y >= body.Y && y <= body.Bottom;
+					double t = (body.Right - x) / (double) PointerTip;
+					double half = body.Height / 2.0 * t;
+					return y >= cy - half && y <= cy + half;
+				};
+				break;
+			case TrackBarTip.Left:
+				inside = (x, y) => {
+					if (x >= body.X + PointerTip)
+						return y >= body.Y && y <= body.Bottom;
+					double t = (x - body.X) / (double) PointerTip;
+					double half = body.Height / 2.0 * t;
+					return y >= cy - half && y <= cy + half;
+				};
+				break;
+			default:
+				dc.FillRectangle (ResPool.GetSolidBrush (colour), body);
+				return;
+			}
+			FillAntialiased (dc, bounds, colour, behind, inside);
+		}
+
+		private enum TrackBarTip { None, Top, Bottom, Left, Right }
+
+		/// <summary>How far along the slider its point runs.</summary>
+		private const int PointerTip = 4;
+
+		private Color ThumbColour (TrackBar bar)
+		{
+			return bar != null && !bar.Enabled ? ColorGrayText : ColorHighlight;
+		}
+
+		protected override void TrackBarDrawHorizontalThumbBottom (Graphics dc, Rectangle thumb_pos,
+									   Brush br_thumb, Rectangle clippingArea,
+									   TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.Bottom,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override void TrackBarDrawHorizontalThumbTop (Graphics dc, Rectangle thumb_pos,
+									Brush br_thumb, Rectangle clippingArea,
+									TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.Top,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override void TrackBarDrawHorizontalThumb (Graphics dc, Rectangle thumb_pos,
+								     Brush br_thumb, Rectangle clippingArea,
+								     TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.None,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override void TrackBarDrawVerticalThumbRight (Graphics dc, Rectangle thumb_pos,
+									Brush br_thumb, Rectangle clippingArea,
+									TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.Right,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override void TrackBarDrawVerticalThumbLeft (Graphics dc, Rectangle thumb_pos,
+								       Brush br_thumb, Rectangle clippingArea,
+								       TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.Left,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override void TrackBarDrawVerticalThumb (Graphics dc, Rectangle thumb_pos,
+								   Brush br_thumb, Rectangle clippingArea,
+								   TrackBar trackBar)
+		{
+			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.None,
+				     ThumbColour (trackBar), trackBar.BackColor);
+		}
+
+		protected override ITrackBarTickPainter GetTrackBarTickPainter (Graphics g)
+		{
+			return new ModernTickPainter (g, ResPool.GetPen (TrackTick));
+		}
+
+		private class ModernTickPainter : ITrackBarTickPainter
+		{
+			private readonly Graphics g;
+			private readonly Pen pen;
+
+			public ModernTickPainter (Graphics graphics, Pen tickPen)
+			{
+				g = graphics;
+				pen = tickPen;
+			}
+
+			public void Paint (float x1, float y1, float x2, float y2)
+			{
+				g.DrawLine (pen, x1, y1, x2, y2);
+			}
 		}
 
 		// ---- scroll bar metrics ------------------------------------------------------
@@ -1420,19 +1601,33 @@ namespace System.Windows.Forms
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.None;
 			const int Samples = 4;
+			const int Full = Samples * Samples;
+			Brush solid = ResPool.GetSolidBrush (colour);
 			for (int y = bounds.Y; y < bounds.Bottom; y++) {
-				for (int x = bounds.X; x < bounds.Right; x++) {
+				int run = -1;	// where the current stretch of fully covered pixels began
+				for (int x = bounds.X; x <= bounds.Right; x++) {
 					int hits = 0;
-					for (int sy = 0; sy < Samples; sy++)
-						for (int sx = 0; sx < Samples; sx++)
-							if (inside (x + (sx + 0.5) / Samples, y + (sy + 0.5) / Samples))
-								hits++;
-					if (hits == 0)
+					if (x < bounds.Right)
+						for (int sy = 0; sy < Samples; sy++)
+							for (int sx = 0; sx < Samples; sx++)
+								if (inside (x + (sx + 0.5) / Samples, y + (sy + 0.5) / Samples))
+									hits++;
+					if (hits == Full) {
+						if (run < 0)
+							run = x;
 						continue;
-					Color c = hits == Samples * Samples
-						? colour
-						: Blend (behind, colour, hits / (double) (Samples * Samples));
-					dc.FillRectangle (ResPool.GetSolidBrush (c), x, y, 1, 1);
+					}
+					// The stretch ends here, so lay it down in one piece. A row of one-pixel rectangles is
+					// not the same thing to this renderer -- each comes out short of the colour asked for,
+					// so a shape filled that way reads as translucent -- and it is a great many more shapes
+					// than the row needs.
+					if (run >= 0) {
+						dc.FillRectangle (solid, run, y, x - run, 1);
+						run = -1;
+					}
+					if (hits > 0)
+						dc.FillRectangle (ResPool.GetSolidBrush (
+							       Blend (behind, colour, hits / (double) Full)), x, y, 1, 1);
 				}
 			}
 			dc.SmoothingMode = old;

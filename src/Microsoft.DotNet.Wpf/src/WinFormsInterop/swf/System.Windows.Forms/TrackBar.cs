@@ -591,7 +591,8 @@ namespace System.Windows.Forms
 			if (e.Delta > 0)
 				SmallDecrement ();
 			else
-				SmallIncrement ();    					
+				SmallIncrement ();
+			HandleMouseWheel (e);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]

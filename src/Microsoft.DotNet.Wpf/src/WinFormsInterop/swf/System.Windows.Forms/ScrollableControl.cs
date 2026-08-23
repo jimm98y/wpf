@@ -579,6 +579,8 @@ namespace System.Windows.Forms {
 				int limit = vscrollbar.Maximum - vscrollbar.LargeChange + 1;
 				int wanted = vscrollbar.Value - notches * step;
 				vscrollbar.Value = Math.Max (vscrollbar.Minimum, Math.Min (Math.Max (vscrollbar.Minimum, limit), wanted));
+				// Taken here: a panel that scrolls does not pass the notch to the panel outside it.
+				HandleMouseWheel (e);
 			}
 			base.OnMouseWheel(e);
 		}

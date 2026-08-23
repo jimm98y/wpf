@@ -253,6 +253,8 @@ namespace System.Windows.Forms
 					owner.UpButton();
 				else if (e.Delta < 0)
 					owner.DownButton();
+				// Taken here: a spin box swallows the notch rather than passing it on.
+				HandleMouseWheel (e);
 			}
 
 			protected override void OnMouseLeave (EventArgs e)
@@ -744,6 +746,8 @@ namespace System.Windows.Forms
 				UpButton();
 			else if (e.Delta < 0)
 				DownButton();
+			// Taken here: a spin box swallows the notch rather than passing it on.
+			HandleMouseWheel (e);
 		}
 
 		protected override void OnPaint (PaintEventArgs e)

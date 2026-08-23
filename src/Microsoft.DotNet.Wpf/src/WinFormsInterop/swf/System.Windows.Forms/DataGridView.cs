@@ -4761,6 +4761,8 @@ namespace System.Windows.Forms {
 				verticalScrollBar.SafeValueSet (verticalScrollBar.Value - delta);
 
 			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));
+			// Taken here: the notch does not go on to the page the grid sits on.
+			HandleMouseWheel (e);
 		}
 
 		protected virtual void OnMultiSelectChanged (EventArgs e)

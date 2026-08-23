@@ -367,9 +367,19 @@ namespace System.Windows.Forms
 		/// says so. Whatever was hot no longer is.</summary>
 		internal void InjectMouseLeaveAll() => TrackHover(IntPtr.Zero);
 
+		/// <summary>Where the pointer is, in this driver's screen space.</summary>
+		private int _cursorX, _cursorY;
+
 		/// <summary>Deliver one mouse message to <paramref name="target"/>, in its client coords.</summary>
 		private void DispatchMouse(IntPtr target, int screenX, int screenY, Msg message, int wParam)
 		{
+			// Remember where the pointer is, whether or not anything is under it. Win32 keeps this
+			// for the asking and WinForms leans on it more than it looks: an open menu follows the
+			// pointer through Control.MousePosition rather than through the coordinates in the
+			// message, so answering the origin meant every menu thought the pointer was in the
+			// top-left corner and no item ever highlighted.
+			_cursorX = screenX;
+			_cursorY = screenY;
 			if (target == IntPtr.Zero) return;
 			if (message == Msg.WM_MOUSEMOVE) TrackHover(target);
 			Hwnd h = Hwnd.ObjectFromHandle(target);
@@ -392,6 +402,8 @@ namespace System.Windows.Forms
 		/// SCREEN coordinates in lParam — matching what ScrollableControl/ListBox expect.</summary>
 		internal void InjectWheel(int screenX, int screenY, int delta)
 		{
+			_cursorX = screenX;
+			_cursorY = screenY;
 			IntPtr target = WindowAtPoint(screenX, screenY);
 			if (target == IntPtr.Zero) return;
 			IntPtr wParam = (IntPtr)((delta << 16) & unchecked((int)0xFFFF0000));
@@ -1373,11 +1385,9 @@ namespace System.Windows.Forms
 
 		/// <summary>The StdCursor the pointer should be showing where it currently is, or -1 for
 		/// the default.
-		/// <para>Asks the control under the pointer what it wants rather than waiting to be told.
-		/// Being told does not work here: Control.UpdateCursor checks that Cursor.Position falls
-		/// inside the control before it calls SetCursor, and this driver has no pointer position
-		/// to give it -- GetCursorPos answers the origin -- so it bailed out every time and no
-		/// control's cursor was ever registered.</para></summary>
+		/// <para>Asks the control under the pointer what it wants rather than waiting to be told,
+		/// which is the more direct route in any case: the window the pointer is over is already
+		/// tracked here, so there is nothing to work out from a position.</para></summary>
 		internal int GetActiveCursor()
 		{
 			if (_cursorOverride >= 0) return _cursorOverride;
@@ -1403,7 +1413,18 @@ namespace System.Windows.Forms
 		internal void SetCursorOverride(IntPtr cursor) => _cursorOverride = CursorIdFromHandle(cursor);
 		internal override void ShowCursor(bool show) { }
 		internal override void SetCursorPos(IntPtr hwnd, int x, int y) { }
-		internal override void GetCursorPos(IntPtr hwnd, out int x, out int y) { x = 0; y = 0; }
+		internal override void GetCursorPos(IntPtr hwnd, out int x, out int y)
+		{
+			x = _cursorX;
+			y = _cursorY;
+			if (hwnd == IntPtr.Zero) return;
+			// Asked about a window, Win32 answers in that window's client space.
+			Hwnd h = Hwnd.ObjectFromHandle(hwnd);
+			if (h == null) return;
+			Point origin = ScreenLocation(h);
+			x -= origin.X;
+			y -= origin.Y;
+		}
 		// Text caret: WinForms drives it via CreateCaret/SetCaretPos/CaretVisible/DestroyCaret.
 		// We just track its window + client rect + logical visibility; the host draws a blinking
 		// vertical bar at the screen position (the backing bitmaps don't contain the caret).

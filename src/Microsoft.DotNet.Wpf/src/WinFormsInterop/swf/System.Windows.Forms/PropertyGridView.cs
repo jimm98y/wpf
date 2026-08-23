@@ -196,6 +196,8 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			else
 				vbar.Value = Math.Max (0, vbar.Value - SystemInformation.MouseWheelScrollLines);
 			base.OnMouseWheel (e);
+			// Taken here: the notch does not go on to whatever this sits in.
+			HandleMouseWheel (e);
 		}
 
 
