@@ -1827,6 +1827,11 @@ namespace System.Windows.Forms {
 		private void DoButtonMouseDown (HitTestInfo hti) {
 			// show the click then move on
 			SetItemClick(hti);
+			// Zoomed out, the arrows step by a year, a decade or a century rather than a month.
+			if (zoom != ZoomLevel.Days) {
+				ZoomStep (hti.HitArea == HitArea.PrevMonthButton ? -1 : 1);
+				return;
+			}
 			if (hti.HitArea == HitArea.PrevMonthButton) {
 				// invalidate the prev monthbutton
 				this.Invalidate(
@@ -1924,6 +1929,146 @@ namespace System.Windows.Forms {
 		internal DateTime HoverDate => hover_date;
 		private DateTime hover_date = DateTime.MinValue;
 
+		/// <summary>How far out the calendar is zoomed. Windows steps out from days to months to
+		/// years to decades as the heading is clicked, and back in again as a cell is picked; the
+		/// old month context menu this used to open in its place is a thing of a much older
+		/// shell.</summary>
+		internal enum ZoomLevel { Days, Months, Years, Decades }
+
+		internal ZoomLevel Zoom => zoom;
+		private ZoomLevel zoom = ZoomLevel.Days;
+
+		/// <summary>The four by three grid every zoomed view is laid out in.</summary>
+		internal const int ZoomColumns = 4;
+		internal const int ZoomRows = 3;
+
+		/// <summary>The first year, month or decade the zoomed grid shows. It starts one before
+		/// the range proper, which is why a decade view opens with the last year of the one
+		/// before it greyed out.</summary>
+		internal int ZoomFirst {
+			get {
+				switch (zoom) {
+					case ZoomLevel.Years: return (current_month.Year / 10) * 10 - 1;
+					case ZoomLevel.Decades: return (current_month.Year / 100) * 100 - 10;
+					default: return 0;
+				}
+			}
+		}
+
+		/// <summary>The heading over a zoomed view: the year, the decade or the century.</summary>
+		internal string ZoomTitle {
+			get {
+				switch (zoom) {
+					case ZoomLevel.Months: return current_month.Year.ToString ();
+					case ZoomLevel.Years: {
+						int start = (current_month.Year / 10) * 10;
+						return start + "-" + (start + 9);
+					}
+					case ZoomLevel.Decades: {
+						int start = (current_month.Year / 100) * 100;
+						return start + "-" + (start + 99);
+					}
+					default: return current_month.ToString ("MMMM yyyy");
+				}
+			}
+		}
+
+		/// <summary>What one cell of a zoomed view says, and whether it belongs to the range the
+		/// heading names -- the ones that do not are drawn greyed.</summary>
+		internal string ZoomCellText (int index, out bool outside, out bool current)
+		{
+			outside = false;
+			current = false;
+			switch (zoom) {
+				case ZoomLevel.Months: {
+					outside = index >= 12;
+					if (outside) return string.Empty;
+					current = index + 1 == current_month.Month;
+					return new DateTime (current_month.Year, index + 1, 1).ToString ("MMM");
+				}
+				case ZoomLevel.Years: {
+					int year = ZoomFirst + index;
+					int start = (current_month.Year / 10) * 10;
+					outside = year < start || year > start + 9;
+					current = year == current_month.Year;
+					return year.ToString ();
+				}
+				case ZoomLevel.Decades: {
+					int decade = ZoomFirst + index * 10;
+					int start = (current_month.Year / 100) * 100;
+					outside = decade < start || decade > start + 90;
+					current = decade == (current_month.Year / 10) * 10;
+					return decade + "-" + (decade + 9);
+				}
+			}
+			return string.Empty;
+		}
+
+		/// <summary>Which cell of a zoomed grid a point falls in, or -1. The grid occupies the same
+		/// area the days do, four across and three down.</summary>
+		internal int ZoomCellAt (Point point)
+		{
+			int margin = ThemeEngine.Current.MonthCalendarMargin (this);
+			Rectangle grid = new Rectangle (margin, margin + title_size.Height,
+				      7 * date_cell_size.Width, 7 * date_cell_size.Height);
+			if (grid.Width <= 0 || grid.Height <= 0 || !grid.Contains (point))
+				return -1;
+			int col = (point.X - grid.X) * ZoomColumns / grid.Width;
+			int row = (point.Y - grid.Y) * ZoomRows / grid.Height;
+			col = Math.Max (0, Math.Min (ZoomColumns - 1, col));
+			row = Math.Max (0, Math.Min (ZoomRows - 1, row));
+			return row * ZoomColumns + col;
+		}
+
+		/// <summary>Step out one level, as far as decades.</summary>
+		internal void ZoomOut ()
+		{
+			if (zoom == ZoomLevel.Decades)
+				return;
+			zoom++;
+			Invalidate ();
+		}
+
+		/// <summary>Pick a cell and step back in, landing on the days of whatever was chosen.</summary>
+		internal void ZoomInto (int index)
+		{
+			switch (zoom) {
+				case ZoomLevel.Months:
+					if (index >= 12) return;
+					current_month = new DateTime (current_month.Year, index + 1, 1);
+					zoom = ZoomLevel.Days;
+					break;
+				case ZoomLevel.Years:
+					current_month = new DateTime (ZoomFirst + index, current_month.Month, 1);
+					zoom = ZoomLevel.Months;
+					break;
+				case ZoomLevel.Decades:
+					current_month = new DateTime (ZoomFirst + index * 10, current_month.Month, 1);
+					zoom = ZoomLevel.Years;
+					break;
+				default:
+					return;
+			}
+			Invalidate ();
+		}
+
+		/// <summary>What the arrows step by at this zoom: a month, a year, a decade, a century.</summary>
+		internal void ZoomStep (int direction)
+		{
+			switch (zoom) {
+				case ZoomLevel.Months: current_month = current_month.AddYears (direction); break;
+				case ZoomLevel.Years: current_month = current_month.AddYears (direction * 10); break;
+				case ZoomLevel.Decades: current_month = current_month.AddYears (direction * 100); break;
+				default: return;
+			}
+			Invalidate ();
+		}
+
+		/// <summary>Whether the pointer is over the month and year at the top, which Windows
+		/// colours to say it can be clicked.</summary>
+		internal bool HoverTitle => hover_title;
+		private bool hover_title;
+
 		private void MouseMoveHandler (object sender, MouseEventArgs e) {
 			HitTestInfo hti = this.HitTest (e.X, e.Y);
 
@@ -1931,8 +2076,10 @@ namespace System.Windows.Forms {
 			// draw and Windows draws one.
 			DateTime over = hti.HitArea == HitArea.Date || hti.HitArea == HitArea.PrevMonthDate
 				   || hti.HitArea == HitArea.NextMonthDate ? hti.Time.Date : DateTime.MinValue;
-			if (over != hover_date) {
+			bool over_title = hti.HitArea == HitArea.TitleMonth || hti.HitArea == HitArea.TitleYear;
+			if (over != hover_date || over_title != hover_title) {
 				hover_date = over;
+				hover_title = over_title;
 				Invalidate ();
 			}
 			// clear the last clicked item 
@@ -1970,8 +2117,9 @@ namespace System.Windows.Forms {
 		protected override void OnMouseLeave (EventArgs e)
 		{
 			base.OnMouseLeave (e);
-			if (hover_date != DateTime.MinValue) {
+			if (hover_date != DateTime.MinValue || hover_title) {
 				hover_date = DateTime.MinValue;
+				hover_title = false;
 				Invalidate ();
 			}
 		}
@@ -2019,6 +2167,14 @@ namespace System.Windows.Forms {
 				case HitArea.Date:
 				case HitArea.PrevMonthDate:
 				case HitArea.NextMonthDate:
+					// While zoomed out the grid holds months, years or decades, so a click picks one of
+					// those and steps back in rather than selecting a date.
+					if (zoom != ZoomLevel.Days) {
+						int cell = ZoomCellAt (hti.Point);
+						if (cell >= 0)
+							ZoomInto (cell);
+						break;
+					}
 					DoDateMouseDown (hti);
 
 					// select date before updating click_state
@@ -2036,12 +2192,10 @@ namespace System.Windows.Forms {
 
 					break;
 				case HitArea.TitleMonth:
+					// Out a level, the way Windows does it. This used to open a context menu of month
+					// names -- a much older shell's idea, and one this driver cannot show anyway.
 					month_title_click_location = hti.Point;
-					month_menu.Show (this, hti.Point);
-					if (this.Capture && owner != null) {
-						Capture = false;
-						Capture = true;
-					}
+					ZoomOut ();
 					break;
 				case HitArea.TitleYear:
 					// place the numeric up down

@@ -1324,6 +1324,12 @@ namespace System.Windows.Forms
 
 		// Converts a GetItemRectangle to a one that we can display
 		/// <summary>The gap between the list's frame and its first row.</summary>
+		/// <summary>How far the rows and the scroll bars sit inside the control, so the frame drawn
+		/// around it stays visible.</summary>
+		internal int BorderInset {
+			get { return border_style == BorderStyle.None ? 0 : 1; }
+		}
+
 		internal const int ItemTopMargin = 2;
 
 		/// <summary>How far a row's content sits in from the left frame. Windows leaves the same
@@ -1957,12 +1963,12 @@ namespace System.Windows.Forms
 		{
 			if (vscrollbar.is_visible) {
 				vscrollbar.Size = new Size (vscrollbar.Width, items_area.Height);
-				vscrollbar.Location = new Point (items_area.Width, 0);
+				vscrollbar.Location = new Point (items_area.Right, items_area.Y);
 			}
 
 			if (hscrollbar.is_visible) {
 				hscrollbar.Size = new Size (items_area.Width, hscrollbar.Height);
-				hscrollbar.Location = new Point (0, items_area.Height);
+				hscrollbar.Location = new Point (items_area.X, items_area.Bottom);
 			}
 		}
 
@@ -2159,7 +2165,11 @@ namespace System.Windows.Forms
 
 		private void UpdateScrollBars ()
 		{
-			items_area = ClientRectangle;
+			// Inside the frame, not on it. This driver models no non-client area, so the border is
+			// painted on the control's own outer edge and a scroll bar laid out against the client
+			// rectangle covers it -- the right-hand side of the frame went missing whenever the list
+			// had one.
+			items_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
 			if (UpdateHorizontalScrollBar ()) {
 				items_area.Height -= hscrollbar.Height;
 				if (UpdateVerticalScrollBar ()) {

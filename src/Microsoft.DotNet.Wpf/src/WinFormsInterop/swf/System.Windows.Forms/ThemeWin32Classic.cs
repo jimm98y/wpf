@@ -3752,7 +3752,9 @@ namespace System.Windows.Forms
 			if (title_rect.IntersectsWith (clip_rectangle)) {
 				dc.FillRectangle (ResPool.GetSolidBrush (MonthCalendarTitleBackColor (mc)), title_rect);
 				// draw the title				
-				string title_text = this_month.ToString ("MMMM yyyy");
+				// The heading names whatever is on show: the month, the year, the decade or the century.
+				string title_text = mc.Zoom == MonthCalendar.ZoomLevel.Days
+					? this_month.ToString ("MMMM yyyy") : mc.ZoomTitle;
 				dc.DrawString (title_text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 
 				if (mc.ShowYearUpDown) {
@@ -3798,6 +3800,13 @@ namespace System.Windows.Forms
 				}
 			}
 			
+			// Zoomed out, the same grid holds months, years or decades in four columns of three
+			// instead of seven columns of days.
+			if (mc.Zoom != MonthCalendar.ZoomLevel.Days) {
+				DrawMonthCalendarZoomed (dc, clip_rectangle, rectangle, mc, title_size, date_cell_size);
+				return;
+			}
+
 			// set the week offset and draw week nums if needed
 			int col_offset = (mc.ShowWeekNumbers) ? 1 : 0;
 			Rectangle day_name_rect = new Rectangle(
@@ -3962,6 +3971,46 @@ namespace System.Windows.Forms
 		protected virtual StringFormat MonthCalendarDateFormat (MonthCalendar mc)
 		{
 			return mc.centered_format;
+		}
+
+		/// <summary>A zoomed calendar: twelve cells, four across and three down, holding months,
+		/// years or decades. The one the calendar is currently on is boxed, and any that fall
+		/// outside the range the heading names are greyed.</summary>
+		protected virtual void DrawMonthCalendarZoomed (Graphics dc, Rectangle clip, Rectangle rectangle,
+					     MonthCalendar mc, Size title_size, Size date_cell_size)
+		{
+			Rectangle grid = new Rectangle (rectangle.X, rectangle.Y + title_size.Height,
+				      7 * date_cell_size.Width, 7 * date_cell_size.Height);
+			if (grid.Width <= 0 || grid.Height <= 0)
+				return;
+			dc.FillRectangle (GetControlBackBrush (mc.BackColor), grid);
+
+			int cw = grid.Width / MonthCalendar.ZoomColumns;
+			int ch = grid.Height / MonthCalendar.ZoomRows;
+			for (int i = 0; i < MonthCalendar.ZoomColumns * MonthCalendar.ZoomRows; i++) {
+				bool outside, current;
+				string text = mc.ZoomCellText (i, out outside, out current);
+				if (text.Length == 0)
+					continue;
+				var cell = new Rectangle (grid.X + (i % MonthCalendar.ZoomColumns) * cw,
+					       grid.Y + (i / MonthCalendar.ZoomColumns) * ch, cw, ch);
+				if (!clip.IntersectsWith (cell))
+					continue;
+				if (current)
+					MonthCalendarDrawZoomedSelection (dc, mc, cell);
+				Color ink = outside ? mc.TrailingForeColor : mc.ForeColor;
+				dc.DrawString (text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (ink), cell,
+					       mc.centered_format);
+			}
+		}
+
+		/// <summary>How the cell the calendar is currently on is marked out.</summary>
+		protected virtual void MonthCalendarDrawZoomedSelection (Graphics dc, MonthCalendar mc, Rectangle cell)
+		{
+			Rectangle box = Rectangle.Inflate (cell, -4, -2);
+			if (box.Width <= 0 || box.Height <= 0)
+				return;
+			dc.FillRectangle (ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), box);
 		}
 
 		// draws the pervious or next button

@@ -744,7 +744,9 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			// A list, tree or grid keeps a single even frame; only its colour moves with the state.
+			// A list, tree or grid keeps a single even frame. It does not take the accent when it has
+			// the focus: selecting a row in a list box turned the whole frame blue, which Windows does
+			// not do -- the selection says which row, the frame says nothing.
 			Color edge;
 			if (IsPopupList (control))
 				edge = PopupBorder;
@@ -752,13 +754,12 @@ namespace System.Windows.Forms
 				edge = RaisedBorder;
 			else if (control != null && !control.Enabled)
 				edge = ButtonBorderDisabled;
-			else if (control != null && control.Focused)
-				edge = ButtonBorderHover;
-			else if (control != null && control.Entered)
-				edge = GlyphBorder;
 			else
 				edge = IsSpinner (control) ? SpinnerFrame : ListFrame;
-			DrawRoundedOutline (dc, frame, edge);
+
+			// Square, not rounded. A list, a grid and a spin box are plain rectangles in Windows;
+			// dropping their corner pixels made them look softened at every corner.
+			dc.DrawRectangle (ResPool.GetPen (edge), frame.X, frame.Y, frame.Width, frame.Height);
 		}
 
 		// The spin buttons came out as the carved 1995 arrows, because the base theme draws them
@@ -1049,7 +1050,24 @@ namespace System.Windows.Forms
 			return HeaderHotFace;
 		}
 
-		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc) => ColorControlText;
+		// The current cell of a zoomed view is boxed rather than washed: a light face inside a
+		// hairline, which is what Windows draws around the month or year you are on.
+		protected override void MonthCalendarDrawZoomedSelection (Graphics dc, MonthCalendar mc, Rectangle cell)
+		{
+			Rectangle box = Rectangle.Inflate (cell, -4, -2);
+			if (box.Width <= 1 || box.Height <= 1)
+				return;
+			dc.FillRectangle (ResPool.GetSolidBrush (GlyphFace), box);
+			DrawRoundedOutline (dc, new Rectangle (box.X, box.Y, box.Width - 1, box.Height - 1),
+				      ButtonBorderHover);
+		}
+
+		// The month and year take the accent under the pointer, which is how Windows says the
+		// heading is something you can click.
+		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc)
+		{
+			return mc.HoverTitle ? ButtonBorderHover : ColorControlText;
+		}
 
 		// Stock draws these in plain black, not the grey the classic theme uses.
 		protected override Color MonthCalendarDayNameColor (MonthCalendar mc) => ColorControlText;
@@ -1313,8 +1331,9 @@ namespace System.Windows.Forms
 		private const int ScrollRestThickness = 2;
 		private const int ScrollOpenThickness = 7;
 		// Darker than it looks it should be on paper: at two pixels wide with both edges softened
-		// there is hardly a solid core left, so a paler colour washes out altogether.
-		private static readonly Color ScrollThumbRest = Color.FromArgb (166, 166, 166);
+		// there is hardly a solid core left, so a paler colour washes out altogether. Windows barely
+		// changes the colour between resting and open at all -- it is the width that changes.
+		private static readonly Color ScrollThumbRest = Color.FromArgb (138, 138, 138);
 
 		/// <summary>Mix two colours, <paramref name="t"/> of the way from the first to the
 		/// second.</summary>
