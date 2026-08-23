@@ -1289,7 +1289,10 @@ namespace System.Windows.Forms
 
 		private void CalculateScrollBars ()
 		{
-			Rectangle client_area = ClientRectangle;
+			// Inside the frame, not on it. The scroll bars are children like the header and the item
+			// area, and laid out against the client rectangle they covered the border along the
+			// bottom and the right.
+			Rectangle client_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
 			int height = client_area.Height;
 			int width = client_area.Width;
 			Size item_size;
@@ -1852,7 +1855,10 @@ namespace System.Windows.Forms
 
 		int LayoutGroupHeader (ListViewGroup group, int y_origin, int item_height, int y_spacing, int rows)
 		{
-			Rectangle client_area = ClientRectangle;
+			// Inside the frame, not on it. The scroll bars are children like the header and the item
+			// area, and laid out against the client rectangle they covered the border along the
+			// bottom and the right.
+			Rectangle client_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
 			int header_height = Font.Height + 15; // one line height + some padding
 
 			group.HeaderBounds = new Rectangle (0, y_origin, client_area.Width - v_scroll.Width, header_height);

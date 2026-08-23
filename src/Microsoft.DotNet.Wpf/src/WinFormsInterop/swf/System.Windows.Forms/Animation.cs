@@ -37,6 +37,10 @@ namespace System.Windows.Forms
             /// control; repainting the whole thing sixty times a second to move it would be
             /// most of the work for none of the result.</summary>
             internal Func<Rectangle> Region;
+            /// <summary>Whether the frame at the settled value has been painted. Without it the
+            /// last frame drawn is the one before the end -- a fade-out stops a hair short of
+            /// nothing and leaves what it was fading behind.</summary>
+            internal bool Settled;
         }
 
         private static readonly Dictionary<Control, Dictionary<object, Track>> s_tracks =
@@ -88,6 +92,7 @@ namespace System.Windows.Forms
                 track.Duration = Math.Max(1, milliseconds);
                 track.Looping = false;
                 track.Region = region;
+                track.Settled = false;
                 Wake();
             }
         }
@@ -197,7 +202,13 @@ namespace System.Windows.Forms
                     foreach (Track track in pair.Value.Values)
                     {
                         if (!Live(track))
-                            continue;
+                        {
+                            // Finished, but not yet drawn at where it finished. Ask for that one
+                            // frame and then let it go quiet.
+                            if (track.Settled)
+                                continue;
+                            track.Settled = true;
+                        }
                         live = true;
                         if (track.Region == null)
                         {

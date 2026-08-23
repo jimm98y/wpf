@@ -1276,11 +1276,15 @@ namespace System.Windows.Forms
 			if (bar.Capture)
 				open = 1.0;                                     // dragging holds it open
 
-			// The track only exists once the bar has begun to open.
-			if (open > 0.01)
-				dc.FillRectangle (ResPool.GetSolidBrush (Blend (ColorWindow, ScrollTrack, open)), client);
+			// The track is always there. A scroll bar inside a list or a grid keeps its channel in
+			// Windows whether the pointer is near it or not -- it is the thumb and the arrows that come
+			// and go. Fading the track out to the control's own colour left it white where a stock one
+			// is grey.
+			dc.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), client);
 
-			if (open > 0.01) {
+			// Nothing at all below a twentieth: the last few per cent of a fade are still a visible
+			// grey against the track, and left there they read as an arrow that never went away.
+			if (open > 0.05) {
 				DrawScrollArrow (dc, first, bar.vert ? ArrowDirection.Up : ArrowDirection.Left,
 						  bar.Enabled, open);
 				DrawScrollArrow (dc, second, bar.vert ? ArrowDirection.Down : ArrowDirection.Right,
@@ -1303,13 +1307,14 @@ namespace System.Windows.Forms
 				slim.Y += inset;
 				slim.Height = Math.Max (1, thumb.Height - inset * 2);
 			}
-			FillCapsule (dc, slim, Blend (ScrollThumbRest, ScrollThumb, open),
-				     Blend (ColorWindow, ScrollTrack, open));
+			FillCapsule (dc, slim, Blend (ScrollThumbRest, ScrollThumb, open), ScrollTrack);
 		}
 
 		private const int ScrollRestThickness = 2;
 		private const int ScrollOpenThickness = 7;
-		private static readonly Color ScrollThumbRest = Color.FromArgb (194, 194, 194);
+		// Darker than it looks it should be on paper: at two pixels wide with both edges softened
+		// there is hardly a solid core left, so a paler colour washes out altogether.
+		private static readonly Color ScrollThumbRest = Color.FromArgb (166, 166, 166);
 
 		/// <summary>Mix two colours, <paramref name="t"/> of the way from the first to the
 		/// second.</summary>
