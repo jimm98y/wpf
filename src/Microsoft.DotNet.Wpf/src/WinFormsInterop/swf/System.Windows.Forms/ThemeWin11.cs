@@ -1069,7 +1069,10 @@ namespace System.Windows.Forms
 		protected override void MonthCalendarDrawDayNameDivider (Graphics dc, MonthCalendar mc,
 					     int x1, int x2, int y)
 		{
-			// Windows draws no rule under the day names.
+			// There is a rule under the day names, but at #F5F5F5 it is almost invisible -- faint
+			// enough that reading it off a screen grab took a threshold tight enough to separate it
+			// from white. The classic theme draws the same line in the fore colour, which is black.
+			dc.DrawLine (ResPool.GetPen (Color.FromArgb (245, 245, 245)), x1, y, x2, y);
 		}
 
 		protected override void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc,
