@@ -1414,6 +1414,13 @@ namespace System.Windows.Forms
 			roots.Sort((a, b) =>
 			{
 				if (a == firstRoot != (b == firstRoot)) return a == firstRoot ? -1 : 1;
+				// A popup is over everything: that is what makes it a popup, and it is how the
+				// compositor draws one -- the host puts every window no form's subtree contains after
+				// its own. This list decides who is POINTED AT as well, and it did not agree: a menu was
+				// drawn on top and hit-tested underneath, so moving over an item asked the page behind
+				// it instead and no item ever took the highlight.
+				bool pa = IsPopupWindow(a), pb = IsPopupWindow(b);
+				if (pa != pb) return pa ? 1 : -1;
 				return PaintKey(a).CompareTo(PaintKey(b));
 			});
 			var outl = new List<IntPtr>();
