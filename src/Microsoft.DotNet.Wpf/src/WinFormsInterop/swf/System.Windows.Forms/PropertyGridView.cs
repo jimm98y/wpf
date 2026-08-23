@@ -785,6 +785,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 						}
 						dropdown_list.Items.Clear ();
 						dropdown_list.BorderStyle = BorderStyle.FixedSingle;
+						// A row of the list is a row of the grid. Left to size itself from the font it came out
+						// four pixels shorter than the rows the list drops out of, so the values sat cramped
+						// against one another and the list stood shorter than the space it had claimed.
+						dropdown_list.ItemHeight = row_height;
 						int selected_index = 0;
 						int i = 0;
 						string valueText = entry.ValueText;

@@ -214,7 +214,7 @@ namespace System.Windows.Forms
                 Form form;
                 lock (s_lock) s_forms.TryGetValue(host, out form);
                 if (form != null && form.InvokeRequired) continue;   // another thread drives this one
-                if (form == null || form.IsDisposed || !form.Visible)
+                if (form == null || form.IsDisposed)
                 {
                     // The form closed itself (an OK button, not the window close box): take its
                     // window down with it, or a dead dialog would stay on screen for ever.
@@ -222,6 +222,15 @@ namespace System.Windows.Forms
                     Detach(host);
                     continue;
                 }
+
+                // Hidden is not closed. A drop-down is hidden between uses and shown again -- the
+                // property grid keeps one and reuses it -- so destroying its window here took the whole
+                // application down with it: this is called from inside the drop-down's own nested
+                // message loop, and detaching the last host makes Tick answer "every window has gone",
+                // which ends the loop that was pumping the window underneath. The window follows the
+                // form on and off screen by itself; there is nothing to do here but leave it alone.
+                if (!form.Visible)
+                    continue;
                 host.Present();
                 if (!host.Pump()) Detach(host);
             }

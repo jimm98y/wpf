@@ -122,6 +122,10 @@
     <_Proj Include="$(_Src)WgpuInterop/Browser/WgpuInterop.Browser.csproj" Condition="'$(SkipBrowser)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/System.Windows.Forms.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/System.Drawing.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- ...and the assembly identity that forwards to it, which is what a library built against
+         .NET Framework actually names. -->
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade/System.Drawing.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade-design/System.Drawing.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <!-- ElementHost / WindowsFormsHost. This is the WebGPU flavour, built against the two projects
          above; the Arcade build produces a same-named assembly from the Windows-only original, and
          that one references the real System.Windows.Forms v10.0.0.0 so it cannot bind to the Mono
@@ -136,6 +140,7 @@
          Exists()-guarded like its siblings, so leaving it unbuilt would ship a package whose
          WinForms carries 55 [Designer] attributes pointing at an assembly that is not there. -->
     <_Proj Include="$(_Src)WinFormsInterop/System.Design.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/swfdesign-facade/System.Windows.Forms.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
 
     <!-- The cross-platform WebView2 stand-ins, carrying the real package's strong-name identity so
          an app that references Microsoft.Web.WebView2 binds to these instead. Sdk.targets references

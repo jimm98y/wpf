@@ -200,15 +200,30 @@
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll') and !Exists('$(PublishDir)System.Windows.Forms.dll')" />
+    <!-- And the System.Drawing identity, for the same reason: whatever conflict resolution makes
+         of a file with a framework assembly's name, the app needs ours beside it. -->
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Drawing.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)Mono.System.Drawing.dll')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Drawing.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll')" />
   </Target>
 
   <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider; evict the framework
-       System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433. -->
+       System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433.
+
+       NOT ours. lib/wpf-winforms/System.Drawing.dll is the assembly IDENTITY every library built
+       against .NET Framework names, forwarding to Mono.System.Drawing; matching on the file name
+       alone threw it out with the framework copies, so that identity went on binding to the inbox
+       facade and resolved to System.Drawing.Common's types instead of the ones this WinForms
+       draws with. -->
   <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
           Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
-                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+                     Condition="('%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives')
+                                and !$([System.String]::new('%(FullPath)').Contains('wpf-winforms'))" />
     </ItemGroup>
   </Target>
 

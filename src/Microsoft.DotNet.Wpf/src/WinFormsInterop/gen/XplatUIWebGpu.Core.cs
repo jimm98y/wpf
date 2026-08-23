@@ -369,7 +369,8 @@ namespace System.Windows.Forms
 
 		// Rubber-band rectangles, in this driver's screen space, with the width of the line each
 		// was asked for.
-		private readonly List<(Rectangle Rect, int Width)> _reversible = new List<(Rectangle, int)>();
+		private readonly List<(IntPtr Owner, Rectangle Rect, int Width)> _reversible =
+			new List<(IntPtr, Rectangle, int)>();
 
 		internal void ToggleReversible(IntPtr handle, Rectangle rect, int lineWidth)
 		{
@@ -383,12 +384,21 @@ namespace System.Windows.Forms
 			{
 				int at = _reversible.FindIndex(r => r.Rect == rect && r.Width == lineWidth);
 				if (at >= 0) _reversible.RemoveAt(at);
-				else _reversible.Add((rect, lineWidth));
+				else _reversible.Add((handle, rect, lineWidth));
 			}
 			// Nothing invalidates for a rubber band -- it is not part of any window's content -- so
 			// the frame has to be asked for directly, or it appears only when something else
 			// happens to repaint.
 			BumpPaintVersion();
+		}
+
+		private void ClearReversible(IntPtr handle)
+		{
+			lock (_reversible)
+			{
+				if (_reversible.RemoveAll(r => r.Owner == handle) > 0)
+					BumpPaintVersion();
+			}
 		}
 
 		/// <summary>The rubber bands to draw over the finished frame, as {x, y, width, height,
@@ -404,7 +414,7 @@ namespace System.Windows.Forms
 				var outl = new long[_reversible.Count * 5];
 				for (int i = 0; i < _reversible.Count; i++)
 				{
-					var (r, w) = _reversible[i];
+					var (_, r, w) = _reversible[i];
 					outl[i * 5] = r.X; outl[i * 5 + 1] = r.Y;
 					outl[i * 5 + 2] = r.Width; outl[i * 5 + 3] = r.Height;
 					outl[i * 5 + 4] = w;
@@ -645,6 +655,12 @@ namespace System.Windows.Forms
 
 		internal override void Invalidate(IntPtr handle, Rectangle rc, bool clear)
 		{
+			// A rubber band is scribbled ON TOP of a window, and the caller's way of taking it back is
+			// to repaint underneath -- Splitter ends a drag with Parent.Refresh and a comment saying so.
+			// With an XOR pen on a real screen that works; a band the compositor draws over the finished
+			// frame outlives any repaint, so the splitter left a line behind at every position it had
+			// been dropped at. Repainting the window they belong to is what clears them.
+			ClearReversible(handle);
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			T($"Invalidate h=0x{handle.ToInt64():x} visible={hwnd?.visible} rc={rc}");
 			if (hwnd == null || !hwnd.visible) return;
