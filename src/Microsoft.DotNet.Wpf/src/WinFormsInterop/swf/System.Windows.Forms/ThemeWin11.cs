@@ -1167,6 +1167,37 @@ namespace System.Windows.Forms
 		private const double SweepWidth = 0.36;       // half-width, of the fill
 		private static readonly Color SweepCrest = Color.FromArgb (52, 170, 52);
 		private static readonly Color SweepEdge = Color.FromArgb (128, 198, 128);
+		private static readonly object SweepKey = new object ();
+
+		/// <summary>The strip of a progress bar the highlight is crossing just now, widened by one
+		/// frame's travel in each direction so the band it is about to leave is repainted too.
+		/// Empty while the highlight is between passes, when nothing is changing at all.</summary>
+		private static Rectangle SweepBand (ProgressBar ctrl)
+		{
+			Rectangle bounds = ctrl.ClientRectangle;
+			if (bounds.Width <= 2 || bounds.Height <= 2)
+				return Rectangle.Empty;
+			int range = ctrl.Maximum - ctrl.Minimum;
+			if (range <= 0)
+				return Rectangle.Empty;
+			double fraction = (double) (ctrl.Value - ctrl.Minimum) / range;
+			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
+			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
+			if (fill.Width <= 0)
+				return Rectangle.Empty;
+
+			double phase = Animation.Value (ctrl, SweepKey);
+			if (phase > SweepTravel)
+				return Rectangle.Empty;
+			int half = Math.Max (1, (int) Math.Round (SweepWidth * fill.Width));
+			int crest = fill.X - half + (int) Math.Round (phase / SweepTravel * (fill.Width + 2 * half));
+			// One frame of travel, so the trailing edge is cleaned up as the crest moves on.
+			int step = Math.Max (2, (int) Math.Round ((fill.Width + 2 * half) * 16.0 / (SweepPeriod * SweepTravel)));
+			int left = Math.Max (bounds.X, crest - half - step);
+			int right = Math.Min (bounds.Right, crest + half + step);
+			return right <= left ? Rectangle.Empty
+				    : new Rectangle (left, bounds.Y, right - left, bounds.Height);
+		}
 		private static readonly Color SweepNear = Color.FromArgb (63, 185, 63);
 
 		// #0F7B0F, read off a stock progress bar. Ours was a brighter, yellower green.
@@ -1200,7 +1231,11 @@ namespace System.Windows.Forms
 
 			// A highlight sweeps along the fill and repeats, which is why a stock progress bar whose
 			// value never changes is still not a static image.
-			double phase = (Environment.TickCount % SweepPeriod) / (double) SweepPeriod;
+			// The same clock the scroll bars fade on. Asking for it here keeps the bar repainting for
+			// as long as it is drawn, and stops the moment it is not -- and only the band the highlight
+			// is passing over is repainted, not the whole bar.
+			Animation.Loop (ctrl, SweepKey, SweepPeriod, () => SweepBand (ctrl));
+			double phase = Animation.Value (ctrl, SweepKey);
 			if (phase > SweepTravel)
 				return;                                         // the pause between passes
 
@@ -1227,39 +1262,158 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>A Windows 11 scroll bar. At rest it is a thin line and nothing else -- no
+		/// track, no arrows. When the pointer arrives the track fades in, the line grows into a
+		/// rounded thumb and the arrows appear; when it leaves, all of that fades back out. The
+		/// fade is driven by the shared animation clock, which is also what carries the progress
+		/// bar's highlight along.</summary>
 		private void DrawModernScrollBar (Graphics dc, ScrollBar bar, Rectangle client,
-						  Rectangle first, Rectangle second, Rectangle thumb)
+					  Rectangle first, Rectangle second, Rectangle thumb)
 		{
-			dc.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), client);
-			DrawScrollArrow (dc, first, bar.vert ? ArrowDirection.Up : ArrowDirection.Left, bar.Enabled);
-			DrawScrollArrow (dc, second, bar.vert ? ArrowDirection.Down : ArrowDirection.Right, bar.Enabled);
+			// How far open the bar is. The bar itself decides when to open and shut -- see its mouse
+			// enter and leave -- and the theme only draws whatever that has arrived at.
+			double open = Animation.Value (bar, ScrollBar.HoverKey);
+			if (bar.Capture)
+				open = 1.0;                                     // dragging holds it open
+
+			// The track only exists once the bar has begun to open.
+			if (open > 0.01)
+				dc.FillRectangle (ResPool.GetSolidBrush (Blend (ColorWindow, ScrollTrack, open)), client);
+
+			if (open > 0.01) {
+				DrawScrollArrow (dc, first, bar.vert ? ArrowDirection.Up : ArrowDirection.Left,
+						  bar.Enabled, open);
+				DrawScrollArrow (dc, second, bar.vert ? ArrowDirection.Down : ArrowDirection.Right,
+						  bar.Enabled, open);
+			}
 
 			if (!bar.Enabled || thumb.Width <= 0 || thumb.Height <= 0)
 				return;
 
-			// A slim bar centred in the channel, which is what Windows draws now -- not a raised
-			// button filling the whole width.
+			// Two pixels at rest, seven when open, and rounded at both ends either way.
+			int thickness = (int) Math.Round (ScrollRestThickness
+				 + (ScrollOpenThickness - ScrollRestThickness) * open);
 			Rectangle slim = thumb;
 			if (bar.vert) {
-				int inset = Math.Max (0, (thumb.Width - 6) / 2);
+				int inset = Math.Max (0, (thumb.Width - thickness) / 2);
 				slim.X += inset;
-				slim.Width = Math.Max (2, thumb.Width - inset * 2);
+				slim.Width = Math.Max (1, thumb.Width - inset * 2);
 			} else {
-				int inset = Math.Max (0, (thumb.Height - 6) / 2);
+				int inset = Math.Max (0, (thumb.Height - thickness) / 2);
 				slim.Y += inset;
-				slim.Height = Math.Max (2, thumb.Height - inset * 2);
+				slim.Height = Math.Max (1, thumb.Height - inset * 2);
 			}
-			dc.FillRectangle (ResPool.GetSolidBrush (ScrollThumb), slim);
+			FillCapsule (dc, slim, Blend (ScrollThumbRest, ScrollThumb, open),
+				     Blend (ColorWindow, ScrollTrack, open));
+		}
+
+		private const int ScrollRestThickness = 2;
+		private const int ScrollOpenThickness = 7;
+		private static readonly Color ScrollThumbRest = Color.FromArgb (194, 194, 194);
+
+		/// <summary>Mix two colours, <paramref name="t"/> of the way from the first to the
+		/// second.</summary>
+		private static Color Blend (Color from, Color to, double t)
+		{
+			if (t <= 0) return from;
+			if (t >= 1) return to;
+			return Color.FromArgb (
+				(int) Math.Round (from.R + (to.R - from.R) * t),
+				(int) Math.Round (from.G + (to.G - from.G) * t),
+				(int) Math.Round (from.B + (to.B - from.B) * t));
+		}
+
+		/// <summary>A rectangle with semicircular ends -- the shape of a modern scroll thumb.
+		/// Drawn a row at a time: a path here is flattened into unjoined segments and a stroked
+		/// arc fringes outside its own bounds.</summary>
+		/// <summary>Fill whatever <paramref name="inside"/> describes, softening its edges by how
+		/// much of each pixel the shape actually covers.
+		/// <para>This recorder antialiases nothing of its own for these shapes -- a path is
+		/// flattened into unjoined segments and a stroked arc fringes outside its own bounds -- so
+		/// they have been drawn a whole pixel at a time, and a diagonal came out as a staircase.
+		/// Sixteen samples a pixel is enough to read as a smooth edge at these sizes.</para></summary>
+		private void FillAntialiased (Graphics dc, Rectangle bounds, Color colour, Color behind,
+					        Func<double, double, bool> inside)
+		{
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.None;
+			const int Samples = 4;
+			for (int y = bounds.Y; y < bounds.Bottom; y++) {
+				for (int x = bounds.X; x < bounds.Right; x++) {
+					int hits = 0;
+					for (int sy = 0; sy < Samples; sy++)
+						for (int sx = 0; sx < Samples; sx++)
+							if (inside (x + (sx + 0.5) / Samples, y + (sy + 0.5) / Samples))
+								hits++;
+					if (hits == 0)
+						continue;
+					Color c = hits == Samples * Samples
+						? colour
+						: Blend (behind, colour, hits / (double) (Samples * Samples));
+					dc.FillRectangle (ResPool.GetSolidBrush (c), x, y, 1, 1);
+				}
+			}
+			dc.SmoothingMode = old;
+		}
+
+		private void FillCapsule (Graphics dc, Rectangle r, Color colour)
+		{
+			FillCapsule (dc, r, colour, ColorWindow);
+		}
+
+		/// <summary>A rectangle with semicircular ends -- the shape of a modern scroll thumb.</summary>
+		private void FillCapsule (Graphics dc, Rectangle r, Color colour, Color behind)
+		{
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+			bool vertical = r.Height >= r.Width;
+			double radius = (vertical ? r.Width : r.Height) / 2.0;
+			if (radius < 0.5) {
+				dc.FillRectangle (ResPool.GetSolidBrush (colour), r);
+				return;
+			}
+
+			// The two centres the end caps turn about; between them the shape is a plain rectangle.
+			double ax = vertical ? r.X + radius : r.X + radius;
+			double ay = vertical ? r.Y + radius : r.Y + radius;
+			double bx = vertical ? ax : r.Right - radius;
+			double by = vertical ? r.Bottom - radius : ay;
+			FillAntialiased (dc, r, colour, behind, (px, py) => {
+				if (vertical) {
+					if (py >= ay && py <= by)
+						return px >= r.X && px <= r.Right;
+					double cy = py < ay ? ay : by;
+					double dx = px - ax, dy = py - cy;
+					return dx * dx + dy * dy <= radius * radius;
+				}
+				if (px >= ax && px <= bx)
+					return py >= r.Y && py <= r.Bottom;
+				double cx2 = px < ax ? ax : bx;
+				double ddx = px - cx2, ddy = py - ay;
+				return ddx * ddx + ddy * ddy <= radius * radius;
+			});
 		}
 
 		private void DrawScrollArrow (Graphics dc, Rectangle area, ArrowDirection direction, bool enabled)
 		{
-			if (area.Width <= 0 || area.Height <= 0)
+			DrawScrollArrow (dc, area, direction, enabled, 1.0);
+		}
+
+		/// <summary>The arrow at one end of a scroll bar, faded in by <paramref name="open"/> as the
+		/// bar opens under the pointer. It has no arrows at all at rest.</summary>
+		private void DrawScrollArrow (Graphics dc, Rectangle area, ArrowDirection direction, bool enabled,
+					      double open)
+		{
+			if (area.Width <= 0 || area.Height <= 0 || open <= 0.01)
 				return;
 			int cx = area.X + area.Width / 2;
 			int cy = area.Y + area.Height / 2;
 			int r = Math.Max (2, Math.Min (4, Math.Min (area.Width, area.Height) / 4));
-			Color ink = enabled ? ScrollArrow : ColorGrayText;
+			// Fading toward the track rather than toward white, so the arrow dissolves into the bar
+			// it sits on instead of flashing pale against it.
+			Color ink = Blend (ScrollTrack, enabled ? ScrollArrow : ColorGrayText, open);
 
 			Point [] arrow;
 			switch (direction) {
@@ -1277,10 +1431,22 @@ namespace System.Windows.Forms
 				break;
 			}
 
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.AntiAlias;
-			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
-			dc.SmoothingMode = old;
+			// Sampled rather than handed to FillPolygon: this recorder gives a filled path no
+			// antialiasing, and a small triangle drawn that way is all staircase.
+			Point a = arrow[0], b = arrow[1], c = arrow[2];
+			var box = new Rectangle (
+				Math.Min (a.X, Math.Min (b.X, c.X)) - 1, Math.Min (a.Y, Math.Min (b.Y, c.Y)) - 1,
+				Math.Max (a.X, Math.Max (b.X, c.X)) - Math.Min (a.X, Math.Min (b.X, c.X)) + 3,
+				Math.Max (a.Y, Math.Max (b.Y, c.Y)) - Math.Min (a.Y, Math.Min (b.Y, c.Y)) + 3);
+			FillAntialiased (dc, box, ink, ScrollTrack, (px, py) => {
+				// Inside when the point falls on the same side of all three edges.
+				double d1 = (px - b.X) * (a.Y - b.Y) - (a.X - b.X) * (py - b.Y);
+				double d2 = (px - c.X) * (b.Y - c.Y) - (b.X - c.X) * (py - c.Y);
+				double d3 = (px - a.X) * (c.Y - a.Y) - (c.X - a.X) * (py - a.Y);
+				bool negative = d1 < 0 || d2 < 0 || d3 < 0;
+				bool positive = d1 > 0 || d2 > 0 || d3 > 0;
+				return !(negative && positive);
+			});
 		}
 
 		// Windows washes a column header with a pale tint of the accent under the pointer, and

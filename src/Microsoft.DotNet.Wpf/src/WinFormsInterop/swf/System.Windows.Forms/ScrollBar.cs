@@ -619,6 +619,35 @@ namespace System.Windows.Forms
 				return base.GetScaledBounds (bounds, factor, (specified & BoundsSpecified.Width) | (specified & BoundsSpecified.Location));
 		}
 		
+		/// <summary>Identifies this bar's open/shut animation to the shared clock. A Windows 11
+		/// scroll bar is a thin line until the pointer arrives, then widens into a thumb with
+		/// arrows, and narrows again when it leaves.</summary>
+		internal static readonly object HoverKey = new object ();
+
+		// The transition belongs here rather than in the theme. A theme only runs while something
+		// is being painted, and the pointer arriving is not by itself a reason to paint -- so a
+		// theme that started the fade would never be asked to, and the bar would only ever change
+		// when something else happened to repaint it.
+		protected override void OnMouseEnter (EventArgs e)
+		{
+			base.OnMouseEnter (e);
+			Animation.To (this, HoverKey, 1.0, Animation.HoverMilliseconds);
+			Invalidate ();
+		}
+
+		protected override void OnMouseLeave (EventArgs e)
+		{
+			base.OnMouseLeave (e);
+			Animation.To (this, HoverKey, 0.0, Animation.HoverMilliseconds);
+			Invalidate ();
+		}
+
+		protected override void OnHandleDestroyed (EventArgs e)
+		{
+			Animation.Forget (this);
+			base.OnHandleDestroyed (e);
+		}
+
 		protected override void OnEnabledChanged (EventArgs e)
 		{
 			base.OnEnabledChanged (e);

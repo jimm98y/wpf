@@ -1531,6 +1531,15 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>How far the header and item areas sit inside the control, so the frame drawn
+		/// around it stays visible. This driver models no non-client area -- a window and its client
+		/// are the same rectangle -- so the border is painted on the control's own outer edge, and
+		/// children laid out at the origin composite straight over it. That is why the list view was
+		/// the one control with no frame at all.</summary>
+		internal int BorderInset {
+			get { return InternalBorderStyle == BorderStyle.None ? 0 : 1; }
+		}
+
 		int GetDetailsItemHeight ()
 		{
 			int item_height;
@@ -1744,7 +1753,7 @@ namespace System.Windows.Forms
 			header_control.Visible = false;
 			header_control.Size = Size.Empty;
 			item_control.Visible = true;
-			item_control.Location = Point.Empty;
+			item_control.Location = new Point (BorderInset, BorderInset);
 			ItemSize = item_size; // Cache item size
 			this.x_spacing = x_spacing;
 			this.y_spacing = y_spacing;
@@ -1892,6 +1901,7 @@ namespace System.Windows.Forms
 				header_control.Size = Size.Empty;
 				layout_wd = ClientRectangle.Width;
 			} else {
+				header_control.Location = new Point (BorderInset, BorderInset);
 				header_control.Width = x;
 				header_control.Height = columns.Count > 0 ? columns [0].Ht : ThemeEngine.Current.ListViewGetHeaderHeight (this, Font);
 				header_control.Visible = true;
@@ -1910,8 +1920,8 @@ namespace System.Windows.Forms
 			}
 
 			item_control.Visible = true;
-			item_control.Location = Point.Empty;
-			item_control.Width = ClientRectangle.Width;
+			item_control.Location = new Point (BorderInset, BorderInset);
+			item_control.Width = Math.Max (0, ClientRectangle.Width - BorderInset * 2);
 			AdjustChildrenZOrder ();
 
 			int item_height = GetDetailsItemHeight ();
