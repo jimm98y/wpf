@@ -312,7 +312,11 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                     Frame();
                 }
                 return IntPtr.Zero;
-            case 0x0200: MouseMove(lParam); Frame(); return IntPtr.Zero;        // WM_MOUSEMOVE
+            // WM_MOUSEMOVE: deliver the move, then set the cursor. Doing it here rather than
+            // waiting for WM_SETCURSOR means the control under the pointer has already had its
+            // chance to ask for a shape -- a list view's header asks for the double arrow from
+            // its own MouseMove -- so the answer is never a move behind.
+            case 0x0200: MouseMove(lParam); ApplyCursor(); Frame(); return IntPtr.Zero;
             // WM_SETCURSOR: the window class carries a plain arrow, so without answering this
             // the pointer stayed an arrow no matter what a control asked for -- no I-beam over
             // text, no double arrow over a column divider. Only the client area is ours; the

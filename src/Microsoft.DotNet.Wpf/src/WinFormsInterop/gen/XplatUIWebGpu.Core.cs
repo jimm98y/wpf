@@ -1343,6 +1343,28 @@ namespace System.Windows.Forms
 		internal static int CursorIdFromHandle(IntPtr cursor)
 			=> cursor == IntPtr.Zero ? -1 : (int)cursor - 1;
 
+		/// <summary>Which standard shape a cursor is, or -1 if it is not one of them.
+		/// <para>Not every cursor comes from DefineStdCursor: Cursors.VSplit and a couple of others
+		/// are built from a .cur resource, and this driver hands out no handle for those -- there is
+		/// no GDI here to make one from -- so their handle is zero and the shape was unidentifiable.
+		/// That is why a list view's column divider never showed the double arrow however well the
+		/// rest of the path worked. Every one of them names itself, and the names are the StdCursor
+		/// names, so fall back to that.</para></summary>
+		private static int ShapeOf(Cursor cursor)
+		{
+			int std = CursorIdFromHandle(cursor.handle);
+			if (std >= 0) return std;
+			if (string.IsNullOrEmpty(cursor.name)) return -1;
+			try
+			{
+				return (int)(StdCursor)Enum.Parse(typeof(StdCursor), cursor.name, false);
+			}
+			catch (Exception)
+			{
+				return -1;
+			}
+		}
+
 		internal override void SetCursor(IntPtr hwnd, IntPtr cursor)
 		{
 			int id = CursorIdFromHandle(cursor);
@@ -1369,7 +1391,7 @@ namespace System.Windows.Forms
 					// so the first control that answers settles it.
 					if (c != null && c.Cursor != null)
 					{
-						int std = CursorIdFromHandle(c.Cursor.handle);
+						int std = ShapeOf(c.Cursor);
 						if (std >= 0) return std;
 					}
 				}

@@ -2675,6 +2675,7 @@ namespace System.Windows.Forms
 						DrawListViewItem (dc, control, item);
 						if (control.View == View.Details)
 							DrawListViewSubItems (dc, control, item);
+						DrawListViewItemFocus (dc, control, item);
 					}
 				}
 			}	
@@ -2891,6 +2892,26 @@ namespace System.Windows.Forms
 			return true;
 		}
 
+		/// <summary>The dotted rectangle that says which row has the focus, drawn once the whole row
+		/// is on screen so the columns painted after the item cannot cover it.</summary>
+		protected virtual void DrawListViewItemFocus (Graphics dc, ListView control, ListViewItem item)
+		{
+			if (!item.Focused || !control.Focused || !control.ShowFocusCues)
+				return;
+			Rectangle focus_rect = item.GetBounds (ItemBoundsPortion.Label);
+			if (control.FullRowSelect && control.View == View.Details) {
+				int width = 0;
+				foreach (ColumnHeader col in control.Columns)
+					width += col.Width;
+				Rectangle full_rect = item.GetBounds (ItemBoundsPortion.Entire);
+				focus_rect = new Rectangle (0, full_rect.Y, width, full_rect.Height);
+			}
+			if (item.Selected)
+				CPDrawFocusRectangle (dc, focus_rect, ColorHighlightText, ColorHighlight);
+			else
+				CPDrawFocusRectangle (dc, focus_rect, control.ForeColor, control.BackColor);
+		}
+
 		protected virtual void DrawListViewItem (Graphics dc, ListView control, ListViewItem item)
 		{				
 			Rectangle rect_checkrect = item.CheckRectReal;
@@ -3038,21 +3059,9 @@ namespace System.Windows.Forms
 					dc.DrawString (item.Text, font, textBrush, text_rect, format);
 			}
 
-			if (item.Focused && control.Focused) {				
-				Rectangle focus_rect = highlight_rect;
-				if (control.FullRowSelect && control.View == View.Details) {
-					int width = 0;
-					foreach (ColumnHeader col in control.Columns)
-						width += col.Width;
-					focus_rect = new Rectangle (0, full_rect.Y, width, full_rect.Height);
-				}
-				if (control.ShowFocusCues) {
-					if (item.Selected)
-						CPDrawFocusRectangle (dc, focus_rect, ColorHighlightText, ColorHighlight);
-					else
-						CPDrawFocusRectangle (dc, focus_rect, control.ForeColor, control.BackColor);
-				}
-			}
+			// The focus rectangle is drawn once the whole row is on screen, not here: this method
+			// paints only the item's own column and DrawListViewSubItems paints the rest straight
+			// over it, so a rectangle drawn here survived across the first column and nowhere else.
 
 			format.Dispose ();
 		}
