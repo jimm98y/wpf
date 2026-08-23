@@ -861,6 +861,20 @@ namespace System.Windows.Forms
 		#region DataGridViewRowHeaderCell
 		public abstract bool DataGridViewRowHeaderCellDrawBackground (DataGridViewRowHeaderCell cell, Graphics g, Rectangle bounds);
 		public abstract bool DataGridViewRowHeaderCellDrawSelectionBackground (DataGridViewRowHeaderCell cell);
+
+		/// <summary>What a data grid rules its cells with.</summary>
+		public virtual Color DataGridViewGridColor {
+			get { return Color.FromKnownColor (KnownColor.ControlDark); }
+		}
+
+		/// <summary>The ink for a row header's arrow and its text. The classic theme turns both
+		/// white when the row is selected, because it fills the header with the selection colour;
+		/// a theme that only washes the header keeps them dark.</summary>
+		public virtual Color DataGridViewRowHeaderCellForeColor (DataGridViewRowHeaderCell cell,
+									  DataGridViewCellStyle style, bool selected)
+		{
+			return selected ? style.SelectionForeColor : style.ForeColor;
+		}
 		public abstract bool DataGridViewRowHeaderCellDrawBorder (DataGridViewRowHeaderCell cell, Graphics g, Rectangle bounds);
 		#endregion
 		#region DataGridViewColumnHeaderCell

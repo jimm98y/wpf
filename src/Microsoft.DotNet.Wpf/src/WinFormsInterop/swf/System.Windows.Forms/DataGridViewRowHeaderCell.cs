@@ -193,7 +193,7 @@ namespace System.Windows.Forms {
 
 			// Paint content background
 			if ((paintParts & DataGridViewPaintParts.ContentBackground) == DataGridViewPaintParts.ContentBackground) {
-				Color color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
+				Color color = ThemeEngine.Current.DataGridViewRowHeaderCellForeColor (this, cellStyle, Selected);
 				Pen p = ThemeEngine.Current.ResPool.GetPen (color);
 				int x = cellBounds.Left + 6;
 
@@ -208,7 +208,7 @@ namespace System.Windows.Forms {
 
 			// Paint content
 			if ((paintParts & DataGridViewPaintParts.ContentForeground) == DataGridViewPaintParts.ContentForeground) {
-				Color color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
+				Color color = ThemeEngine.Current.DataGridViewRowHeaderCellForeColor (this, cellStyle, Selected);
 
 				TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl;
 

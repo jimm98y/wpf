@@ -85,7 +85,7 @@ namespace System.Windows.Forms {
 		private int firstDisplayedScrollingColumnHiddenWidth;
 		private int firstDisplayedScrollingColumnIndex;
 		private int firstDisplayedScrollingRowIndex;
-		private Color gridColor = Color.FromKnownColor(KnownColor.ControlDark);
+		private Color gridColor = ThemeEngine.Current.DataGridViewGridColor;
 		private int horizontalScrollingOffset;
 		private DataGridViewCell hover_cell = null;
 		private bool isCurrentCellDirty;
@@ -4184,6 +4184,12 @@ namespace System.Windows.Forms {
 			// To add focus rectangle if needed
 			if (currentCell != null && ShowFocusCues)
 				InvalidateCell (currentCell);
+
+			// The current row's header is marked only while the grid has the keyboard, so it has to
+			// be redrawn when that changes -- repainting the current cell alone left the mark behind
+			// on a grid that had lost focus.
+			if (CurrentRow != null)
+				InvalidateRow (CurrentRow.Index);
 		}
 
 		protected override void OnFontChanged (EventArgs e)
@@ -4264,6 +4270,12 @@ namespace System.Windows.Forms {
 			// To remove focus rectangle if needed
 			if (currentCell != null && ShowFocusCues)
 				InvalidateCell (currentCell);
+
+			// The current row's header is marked only while the grid has the keyboard, so it has to
+			// be redrawn when that changes -- repainting the current cell alone left the mark behind
+			// on a grid that had lost focus.
+			if (CurrentRow != null)
+				InvalidateRow (CurrentRow.Index);
 		}
 
 		protected override void OnMouseClick (MouseEventArgs e)

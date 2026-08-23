@@ -551,6 +551,9 @@ namespace System.Windows.Forms
 		protected override Padding DefaultPadding { get { return new Padding (0, 0, 1, 0); } }
 		protected virtual bool DefaultShowItemToolTips { get { return true; } }
 		protected override Size DefaultSize { get { return new Size (100, 25); } }
+		/// <summary>The size this kind of strip is by default, for the layout engine to floor its
+		/// height at. A strip never shrinks below it however small its items are.</summary>
+		internal Size DefaultSizeInternal { get { return DefaultSize; } }
 		protected internal virtual ToolStripItemCollection DisplayedItems { get { return this.displayed_items; } }
 		protected internal virtual Size MaxItemSize {
 			get { return new Size (Width - (GripStyle == ToolStripGripStyle.Hidden ? 1 : 8), Height); }

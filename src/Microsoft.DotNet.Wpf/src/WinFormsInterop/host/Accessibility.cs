@@ -337,6 +337,179 @@ namespace WinFormsWebGpu.Accessibility
             if (edit != null && !edit.ReadOnly)
                 edit.Text = value;
         }
+
+        // ---- scrolling ----------------------------------------------------------------------
+        //
+        // A page taller than its window is reachable only by scrolling it, and a client with no
+        // pointer -- an assistive technology, or a test driving the application through the
+        // accessibility tree -- has no other way to bring a control into view. Windows answers that
+        // with two patterns: the container says how far along it is and can be moved, and any
+        // element can ask to be scrolled into view.
+
+        /// <summary>The scrollable container itself: a panel with AutoScroll whose contents do not
+        /// fit. A container that fits its contents is not scrollable and says so.</summary>
+        internal static bool CanScroll(Control c)
+        {
+            bool h, v;
+            return ScrollExtent(c, out h, out v) && (h || v);
+        }
+
+        private static bool ScrollExtent(Control c, out bool horizontal, out bool vertical)
+        {
+            horizontal = vertical = false;
+            var panel = c as ScrollableControl;
+            if (panel == null || !panel.AutoScroll)
+                return false;
+            try
+            {
+                Rectangle display = panel.DisplayRectangle;
+                Size client = panel.ClientSize;
+                horizontal = display.Width > client.Width;
+                vertical = display.Height > client.Height;
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        internal static bool ScrollInfo(Control c, out double horizontalPercent, out double verticalPercent,
+            out double horizontalViewSize, out double verticalViewSize,
+            out bool horizontallyScrollable, out bool verticallyScrollable)
+        {
+            horizontalPercent = verticalPercent = NoScroll;
+            horizontalViewSize = verticalViewSize = 100;
+            if (!ScrollExtent(c, out horizontallyScrollable, out verticallyScrollable))
+                return false;
+            var panel = (ScrollableControl) c;
+            Rectangle display = panel.DisplayRectangle;
+            Size client = panel.ClientSize;
+            // AutoScrollPosition reads back negated -- that is how the property is defined -- so the
+            // distance actually scrolled is its magnitude.
+            Point at = panel.AutoScrollPosition;
+            if (horizontallyScrollable)
+            {
+                horizontalPercent = Percent(-at.X, display.Width - client.Width);
+                horizontalViewSize = Percent(client.Width, display.Width);
+            }
+            if (verticallyScrollable)
+            {
+                verticalPercent = Percent(-at.Y, display.Height - client.Height);
+                verticalViewSize = Percent(client.Height, display.Height);
+            }
+            return true;
+        }
+
+        /// <summary>What an axis reports when it does not scroll at all.</summary>
+        internal const double NoScroll = -1.0;
+
+        private static double Percent(int part, int whole)
+        {
+            if (whole <= 0)
+                return 0;
+            return Clamp(part * 100.0 / whole);
+        }
+
+        private static double Clamp(double percent)
+        {
+            return percent < 0 ? 0 : percent > 100 ? 100 : percent;
+        }
+
+        /// <summary>Move the container to a position given as a percentage of its range, leaving an
+        /// axis where it is when that axis is given NoScroll.</summary>
+        internal static void SetScrollPercent(Control c, double horizontalPercent, double verticalPercent)
+        {
+            bool h, v;
+            if (!ScrollExtent(c, out h, out v))
+                return;
+            var panel = (ScrollableControl) c;
+            Rectangle display = panel.DisplayRectangle;
+            Size client = panel.ClientSize;
+            Point at = panel.AutoScrollPosition;
+            int x = -at.X, y = -at.Y;
+            if (h && horizontalPercent >= 0)
+                x = (int) Math.Round((display.Width - client.Width) * Clamp(horizontalPercent) / 100.0);
+            if (v && verticalPercent >= 0)
+                y = (int) Math.Round((display.Height - client.Height) * Clamp(verticalPercent) / 100.0);
+            panel.AutoScrollPosition = new Point(x, y);
+        }
+
+        /// <summary>Step the container the way a scroll bar's arrows and its track do. The amounts
+        /// are the ScrollAmount enumeration: 0 large decrement, 1 small decrement, 2 nothing,
+        /// 3 large increment, 4 small increment.</summary>
+        internal static void ScrollBy(Control c, int horizontalAmount, int verticalAmount)
+        {
+            bool h, v;
+            if (!ScrollExtent(c, out h, out v))
+                return;
+            var panel = (ScrollableControl) c;
+            Point at = panel.AutoScrollPosition;
+            Size client = panel.ClientSize;
+            int x = -at.X + Step(horizontalAmount, client.Width);
+            int y = -at.Y + Step(verticalAmount, client.Height);
+            panel.AutoScrollPosition = new Point(x, y);
+        }
+
+        private static int Step(int amount, int page)
+        {
+            int small = Math.Max(1, page / 10);
+            switch (amount)
+            {
+                case 0: return -page;
+                case 1: return -small;
+                case 3: return page;
+                case 4: return small;
+                default: return 0;
+            }
+        }
+
+        /// <summary>Bring an element into view by scrolling whatever contains it. Walks outwards, so
+        /// a control nested several panels deep still surfaces.</summary>
+        internal static void ScrollIntoView(object element)
+        {
+            Control c = element as Control;
+            if (c == null)
+            {
+                // An item has no control of its own; bringing its owner into view is as close as
+                // this gets, and is what a client asking for it actually wants to see.
+                c = A11yItems.OwnerOf(element);
+                if (c == null)
+                    return;
+            }
+            try
+            {
+                for (Control parent = c.Parent; parent != null; parent = parent.Parent)
+                {
+                    bool h, v;
+                    if (!ScrollExtent(parent, out h, out v) || (!h && !v))
+                        continue;
+                    var panel = (ScrollableControl) parent;
+                    Rectangle target = parent.RectangleToClient(c.RectangleToScreen(c.ClientRectangle));
+                    Point at = panel.AutoScrollPosition;
+                    Size client = panel.ClientSize;
+                    int x = -at.X, y = -at.Y;
+                    if (v)
+                    {
+                        if (target.Top < 0)
+                            y += target.Top;
+                        else if (target.Bottom > client.Height)
+                            y += Math.Min(target.Top, target.Bottom - client.Height);
+                    }
+                    if (h)
+                    {
+                        if (target.Left < 0)
+                            x += target.Left;
+                        else if (target.Right > client.Width)
+                            x += Math.Min(target.Left, target.Right - client.Width);
+                    }
+                    panel.AutoScrollPosition = new Point(x, y);
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
     }
 
     /// <summary>What a platform host has to supply: which window owns the tree, which form is in it,

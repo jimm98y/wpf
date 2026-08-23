@@ -284,7 +284,11 @@ namespace System.Windows.Forms
 					if (tsi.Available) {
 						Size tsi_preferred = tsi.GetPreferredSize (Size.Empty);
 						new_size.Width += tsi_preferred.Width + tsi.Margin.Left + tsi.Margin.Right;
-						new_size.Height = Math.Min (new_size.Height, tsi_preferred.Height + tsi.Margin.Vertical);
+						// The tallest item, not the shortest. Taking the smaller of the two starting from an
+						// empty size left the answer at zero every time, so a horizontal strip fell through to
+						// whatever height it happened to be given and never sized itself to its contents -- a
+						// tool strip laid out in a row of its own stayed as tall as the row.
+						new_size.Height = Math.Max (new_size.Height, tsi_preferred.Height + tsi.Margin.Vertical);
 					}
 
 				new_size.Width += (ts.GripRectangle.Width + ts.GripMargin.Horizontal + 4);
@@ -294,6 +298,8 @@ namespace System.Windows.Forms
 
 				if (ts is StatusStrip)
 					new_size.Height = Math.Max (new_size.Height, 22);
+				else
+					new_size.Height = Math.Max (new_size.Height, ts.DefaultSizeInternal.Height);
 
 				return new_size;
 			}

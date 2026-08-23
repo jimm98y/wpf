@@ -77,6 +77,27 @@ namespace WinFormsWebGpu.Accessibility
         int ExpandCollapseState { get; }
     }
 
+    // The order the members are declared in IS the vtable, so these follow the published
+    // interfaces exactly: methods first, then the properties in their documented order.
+    [ComImport, Guid("b38b8077-1fc3-42a5-8cae-d40c2215055a"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IScrollProvider
+    {
+        void Scroll(int horizontalAmount, int verticalAmount);
+        void SetScrollPercent(double horizontalPercent, double verticalPercent);
+        double HorizontalScrollPercent { get; }
+        double VerticalScrollPercent { get; }
+        double HorizontalViewSize { get; }
+        double VerticalViewSize { get; }
+        bool HorizontallyScrollable { get; }
+        bool VerticallyScrollable { get; }
+    }
+
+    [ComImport, Guid("2360c714-4bf1-4b26-ba65-9b21316127eb"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IScrollItemProvider
+    {
+        void ScrollIntoView();
+    }
+
     [ComImport, Guid("56d00bd0-c4f4-433c-a836-1a52a57e0892"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IToggleProvider
     {
@@ -105,6 +126,8 @@ namespace WinFormsWebGpu.Accessibility
         internal const int ValuePattern = 10002;
         internal const int TogglePattern = 10015;
         internal const int ExpandCollapsePattern = 10005;
+        internal const int ScrollPattern = 10004;
+        internal const int ScrollItemPattern = 10017;
 
         // UiaAppendRuntimeId: prefixes the host window's own id, so ids only have to be unique
         // within this tree.
@@ -191,7 +214,7 @@ namespace WinFormsWebGpu.Accessibility
     /// "a new element".</summary>
     [ComVisible(true)]
     internal class UiaProvider : IRawElementProviderFragment, IInvokeProvider, IValueProvider, IToggleProvider,
-        IExpandCollapseProvider
+        IExpandCollapseProvider, IScrollProvider, IScrollItemProvider
     {
         // Keyed on the element itself -- a Control, or the object a control already keeps for an
         // item (a ToolStripItem, a ListViewItem, a TreeNode) -- because those are stable across
@@ -385,7 +408,8 @@ namespace WinFormsWebGpu.Accessibility
         public object GetPatternProvider(int patternId)
         {
             if (Control == null)
-                return patternId == Uia.InvokePattern && A11yItems.CanInvoke(Element) ? this : null;
+                return patternId == Uia.InvokePattern && A11yItems.CanInvoke(Element) ? this :
+                    patternId == Uia.ScrollItemPattern ? this : null;
 
             switch (patternId)
             {
@@ -393,11 +417,71 @@ namespace WinFormsWebGpu.Accessibility
                 case Uia.ValuePattern: return A11y.HasValue(Control) ? this : null;
                 case Uia.TogglePattern: return A11y.CanToggle(Control) ? this : null;
                 case Uia.ExpandCollapsePattern: return A11y.CanExpand(Control) ? this : null;
+                case Uia.ScrollPattern: return A11y.CanScroll(Control) ? this : null;
+                // Anything at all can be asked to scroll itself into view; it is its container that
+                // does the work, and an element with no scrollable ancestor simply stays put.
+                case Uia.ScrollItemPattern: return this;
             }
             return null;
         }
 
         // ---- patterns -----------------------------------------------------------------------------
+
+        public void ScrollIntoView()
+        {
+            A11y.ScrollIntoView(Element);
+        }
+
+        public void Scroll(int horizontalAmount, int verticalAmount)
+        {
+            A11y.ScrollBy(Control, horizontalAmount, verticalAmount);
+        }
+
+        public void SetScrollPercent(double horizontalPercent, double verticalPercent)
+        {
+            A11y.SetScrollPercent(Control, horizontalPercent, verticalPercent);
+        }
+
+        private void Scrolling(out double hp, out double vp, out double hv, out double vv,
+            out bool hs, out bool vs)
+        {
+            if (!A11y.ScrollInfo(Control, out hp, out vp, out hv, out vv, out hs, out vs))
+            {
+                hp = vp = A11y.NoScroll;
+                hv = vv = 100;
+                hs = vs = false;
+            }
+        }
+
+        public double HorizontalScrollPercent
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return hp; }
+        }
+
+        public double VerticalScrollPercent
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return vp; }
+        }
+
+        public double HorizontalViewSize
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return hv; }
+        }
+
+        public double VerticalViewSize
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return vv; }
+        }
+
+        public bool HorizontallyScrollable
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return hs; }
+        }
+
+        public bool VerticallyScrollable
+        {
+            get { double hp, vp, hv, vv; bool hs, vs; Scrolling(out hp, out vp, out hv, out vv, out hs, out vs); return vs; }
+        }
 
         public void Invoke()
         {

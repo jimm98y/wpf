@@ -64,14 +64,16 @@ namespace System.Windows.Forms
 		public override Color MenuItemPressedGradientMiddle => Selected;
 		public override Color MenuItemPressedGradientEnd => Selected;
 
-		// Flat, not graduated. Windows stopped shading tool strips with a vertical gradient at the
-		// same time it stopped bevelling them; leaving the Office 2003 gradient in place was the
-		// remaining thing that made a tool bar look shaded next to a stock one.
 		private static Color Surface => SystemColors.Control;
 
-		public override Color ToolStripGradientBegin => Surface;
-		public override Color ToolStripGradientMiddle => Surface;
-		public override Color ToolStripGradientEnd => Surface;
+		// Windows does still shade a tool strip, gently: measured down a stock one it runs from
+		// #FCFCFC at the top to about #F0F0F0 at the foot, with a #F2F2F2 rule along the bottom.
+		// Reporting one colour at both ends was what left ours a flat grey band. The renderer takes
+		// only the two ends, so the middle just names the average.
+		public override Color ToolStripGradientBegin => Color.FromArgb (252, 252, 252);
+		public override Color ToolStripGradientMiddle => Color.FromArgb (246, 246, 246);
+		public override Color ToolStripGradientEnd => Color.FromArgb (240, 240, 240);
+		public override Color ToolStripBorder => Color.FromArgb (242, 242, 242);
 		public override Color ToolStripPanelGradientBegin => Surface;
 		public override Color ToolStripPanelGradientEnd => Surface;
 		public override Color ToolStripContentPanelGradientBegin => Surface;
@@ -888,12 +890,47 @@ namespace System.Windows.Forms
 			return cell.DataGridView != null;
 		}
 
+		/// <summary>A grid's headers. Flat and white like a list view's, but ruled with the grid's
+		/// own colour from edge to edge: the list view's separator stops three pixels short at each
+		/// end, which down a column of row headers reads as a dashed line rather than a rule.
+		/// <para>A row header on a selected row takes a light wash instead of the full selection
+		/// colour, which is what lets its arrow stay black.</para></summary>
 		private bool DrawHeaderCell (DataGridViewHeaderCell cell, Graphics g, Rectangle bounds)
 		{
-			if (cell == null || cell.DataGridView == null)
+			DataGridView grid = cell == null ? null : cell.DataGridView;
+			if (grid == null || bounds.Width <= 0 || bounds.Height <= 0)
 				return false;
-			DrawModernHeaderCell (g, bounds, false);
+			// The current row -- the one carrying the arrow -- and only while the grid has the
+			// keyboard, which is exactly when Windows washes it. Not the cell's own Selected: a header
+			// cell is never itself selected, so asking it gave every header the plain face.
+			bool marked = cell is DataGridViewRowHeaderCell && grid.Focused
+				&& grid.CurrentRow != null && grid.CurrentRow.Index == cell.RowIndex;
+			g.FillRectangle (ResPool.GetSolidBrush (marked ? HeaderMarkedFace : ColorWindow), bounds);
+			Pen pen = ResPool.GetPen (grid.GridColor);
+			g.DrawLine (pen, bounds.Right - 1, bounds.Y, bounds.Right - 1, bounds.Bottom - 1);
+			g.DrawLine (pen, bounds.X, bounds.Bottom - 1, bounds.Right - 1, bounds.Bottom - 1);
 			return true;
+		}
+
+		/// <summary>The wash over a row header whose row is selected.</summary>
+		private static readonly Color HeaderMarkedFace = Color.FromArgb (188, 220, 244);
+
+		// Measured down a stock grid: every rule, header and cell alike, is this one grey.
+		public override Color DataGridViewGridColor {
+			get { return Color.FromArgb (100, 100, 100); }
+		}
+
+		public override Color DataGridViewRowHeaderCellForeColor (DataGridViewRowHeaderCell cell,
+									  DataGridViewCellStyle style, bool selected)
+		{
+			// The header is washed, not filled, so its ink never turns white.
+			return style.ForeColor;
+		}
+
+		public override bool DataGridViewRowHeaderCellDrawSelectionBackground (DataGridViewRowHeaderCell cell)
+		{
+			// Already washed by the background above; the classic fill would bury it.
+			return cell != null && cell.DataGridView != null;
 		}
 
 		// ---- scroll bar metrics ------------------------------------------------------
