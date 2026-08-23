@@ -3942,6 +3942,13 @@ namespace System.Windows.Forms
 			return -1;
 		}
 
+		/// <summary>The text of a day number. Centring "1" and "11" in the same cell leaves the
+		/// units out of line down the column; Windows keeps them lined up.</summary>
+		protected virtual string MonthCalendarDayText (MonthCalendar mc, DateTime date)
+		{
+			return date.Day.ToString ();
+		}
+
 		/// <summary>How a day number sits in its cell. Windows ranges them right so the units line
 		/// up down each column; the classic theme centres them.</summary>
 		protected virtual StringFormat MonthCalendarDateFormat (MonthCalendar mc)

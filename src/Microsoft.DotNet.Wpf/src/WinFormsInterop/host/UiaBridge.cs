@@ -69,6 +69,14 @@ namespace WinFormsWebGpu.Accessibility
         bool IsReadOnly { get; }
     }
 
+    [ComImport, Guid("d847d3a5-cab0-4a98-8c32-ecb45c59ad24"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IExpandCollapseProvider
+    {
+        void Expand();
+        void Collapse();
+        int ExpandCollapseState { get; }
+    }
+
     [ComImport, Guid("56d00bd0-c4f4-433c-a836-1a52a57e0892"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IToggleProvider
     {
@@ -96,6 +104,7 @@ namespace WinFormsWebGpu.Accessibility
         internal const int InvokePattern = 10000;
         internal const int ValuePattern = 10002;
         internal const int TogglePattern = 10015;
+        internal const int ExpandCollapsePattern = 10005;
 
         // UiaAppendRuntimeId: prefixes the host window's own id, so ids only have to be unique
         // within this tree.
@@ -177,7 +186,8 @@ namespace WinFormsWebGpu.Accessibility
     /// the same runtime id both times -- which is what lets it tell "the same element again" from
     /// "a new element".</summary>
     [ComVisible(true)]
-    internal class UiaProvider : IRawElementProviderFragment, IInvokeProvider, IValueProvider, IToggleProvider
+    internal class UiaProvider : IRawElementProviderFragment, IInvokeProvider, IValueProvider, IToggleProvider,
+        IExpandCollapseProvider
     {
         private static readonly ConditionalWeakTable<Control, UiaProvider> s_cache = new ConditionalWeakTable<Control, UiaProvider>();
         private static int s_nextId = 1;
@@ -316,6 +326,7 @@ namespace WinFormsWebGpu.Accessibility
                 case Uia.InvokePattern: return A11y.CanInvoke(Control) ? this : null;
                 case Uia.ValuePattern: return A11y.HasValue(Control) ? this : null;
                 case Uia.TogglePattern: return A11y.CanToggle(Control) ? this : null;
+                case Uia.ExpandCollapsePattern: return A11y.CanExpand(Control) ? this : null;
             }
             return null;
         }
@@ -331,6 +342,12 @@ namespace WinFormsWebGpu.Accessibility
         public bool IsReadOnly { get { return A11y.IsReadOnly(Control); } }
 
         public void Toggle() { A11y.Toggle(Control); }
+
+        public void Expand() { A11y.SetExpanded(Control, true); }
+
+        public void Collapse() { A11y.SetExpanded(Control, false); }
+
+        public int ExpandCollapseState { get { return A11y.IsExpanded(Control) ? 1 : 0; } }
 
         public int ToggleState
         {

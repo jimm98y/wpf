@@ -286,6 +286,26 @@ namespace WinFormsWebGpu.Accessibility
                 check.Checked = !check.Checked;
         }
 
+        /// <summary>A drop-down that can be opened and shut. An assistive technology has no
+        /// other way to reach a combo box's list.</summary>
+        internal static bool CanExpand(Control c)
+        {
+            return c is ComboBox;
+        }
+
+        internal static bool IsExpanded(Control c)
+        {
+            var combo = c as ComboBox;
+            return combo != null && combo.DroppedDown;
+        }
+
+        internal static void SetExpanded(Control c, bool expanded)
+        {
+            var combo = c as ComboBox;
+            if (combo != null)
+                combo.DroppedDown = expanded;
+        }
+
         internal static bool HasValue(Control c)
         {
             return c is TextBoxBase;

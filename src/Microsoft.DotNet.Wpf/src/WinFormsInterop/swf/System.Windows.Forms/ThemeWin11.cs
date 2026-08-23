@@ -111,6 +111,41 @@ namespace System.Windows.Forms
 		private static readonly Color RaisedBorder = Color.FromArgb (173, 173, 173);
 		private static readonly Color EtchedBorder = Color.FromArgb (223, 223, 223);
 
+		// Measured off a stock combo box with its list down: the field carries a pale #CCE4F7 with
+		// the accent round it, while the list below highlights its selected row in the full #0078D7.
+		// Ours used the selection colour for both, so the closed field came out as a solid blue
+		// slab. The list's own frame is #646464, not the light grey a plain bordered control gets.
+		private static readonly Color ComboFieldOpenFace = Color.FromArgb (204, 228, 247);
+		private static readonly Color ComboListSelection = Color.FromArgb (0, 120, 215);
+		private static readonly Color PopupBorder = Color.FromArgb (100, 100, 100);
+
+		public override void DrawComboBoxItem (ComboBox ctrl, DrawItemEventArgs e)
+		{
+			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+			if (!selected) {
+				base.DrawComboBoxItem (ctrl, e);
+				return;
+			}
+
+			// The field and the list say "selected" differently.
+			bool inField = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
+			Color back = inField ? ComboFieldOpenFace : ComboListSelection;
+			Color fore = inField ? ColorControlText : ColorHighlightText;
+			if (!ctrl.Enabled)
+				fore = ColorInactiveCaptionText;
+
+			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back), e.Bounds);
+			if (e.Index != -1) {
+				var format = new StringFormat {
+					FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.NoWrap,
+					LineAlignment = StringAlignment.Center,
+				};
+				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+						       ResPool.GetSolidBrush (fore), e.Bounds, format);
+				format.Dispose ();
+			}
+		}
+
 		public override void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style)
 		{
 			if (!comboBox.Enabled)
@@ -456,7 +491,11 @@ namespace System.Windows.Forms
 		/// </summary>
 		public override Color ComboBoxDropDownButtonBackColor (ComboBox comboBox)
 		{
-			return comboBox.Enabled ? comboBox.BackColor : ColorControl;
+			if (!comboBox.Enabled)
+				return ColorControl;
+			// With the list down the whole field takes the pale accent, chevron and all. Leaving the
+			// button on the control's own background left a white notch at the end of a blue field.
+			return comboBox.DroppedDown ? ComboFieldOpenFace : comboBox.BackColor;
 		}
 
 		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much
@@ -568,6 +607,54 @@ namespace System.Windows.Forms
 		private static readonly Color InputFrameLight = Color.FromArgb (236, 236, 236);
 		private static readonly Color InputUnderline = Color.FromArgb (131, 131, 131);
 		private static readonly Color ListFrame = Color.FromArgb (130, 135, 144);
+		// A spin box keeps one even frame all round rather than the input's light sides and dark
+		// underline; measured off a stock NumericUpDown.
+		private static readonly Color SpinnerFrame = Color.FromArgb (171, 173, 179);
+
+		private static bool IsSpinner (Control control)
+		{
+			for (Type t = control?.GetType (); t != null; t = t.BaseType)
+				if (t.Name == "UpDownBase") return true;
+			return false;
+		}
+
+		/// <summary>The dotted one-pixel outline that says where the focus is. The classic theme
+		/// draws it with a HatchBrush, which this stack's recorder has no notion of, so nothing
+		/// appeared at all -- no button, check box or radio button ever showed its focus. Every
+		/// other pixel, painted one at a time, needs nothing but a solid fill.</summary>
+		public override void CPDrawFocusRectangle (Graphics dc, Rectangle rectangle, Color foreColor, Color backColor)
+		{
+			if (rectangle.Width <= 1 || rectangle.Height <= 1)
+				return;
+			// An empty background is the common case -- ControlPaint.DrawFocusRectangle (g, rect)
+			// passes no colours at all -- and Color.Empty reports a brightness of zero, which chose
+			// white dots on a white control: the rectangle was drawn but invisible, except where it
+			// happened to cross dark text.
+			bool light = backColor.IsEmpty || backColor.GetBrightness () >= 0.5;
+			Color dot = light ? Color.Black : Color.White;
+			Brush brush = ResPool.GetSolidBrush (dot);
+			int right = rectangle.Right - 1, bottom = rectangle.Bottom - 1;
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.None;
+			for (int x = rectangle.X; x <= right; x++)
+				if (((x - rectangle.X) & 1) == 0) {
+					dc.FillRectangle (brush, x, rectangle.Y, 1, 1);
+					dc.FillRectangle (brush, x, bottom, 1, 1);
+				}
+			for (int y = rectangle.Y; y <= bottom; y++)
+				if (((y - rectangle.Y) & 1) == 0) {
+					dc.FillRectangle (brush, rectangle.X, y, 1, 1);
+					dc.FillRectangle (brush, right, y, 1, 1);
+				}
+			dc.SmoothingMode = old;
+		}
+
+		/// <summary>A drop-down's list, which Windows frames like a menu rather than like a
+		/// control.</summary>
+		private static bool IsPopupList (Control control)
+		{
+			return control != null && control.GetType ().Name == "ComboListBox";
+		}
 
 		/// <summary>Whether this is something you type into, as opposed to a list you pick from.
 		/// Windows frames the two differently.</summary>
@@ -577,7 +664,6 @@ namespace System.Windows.Forms
 				switch (t.Name) {
 					case "TextBoxBase":
 					case "ComboBox":
-					case "UpDownBase":
 					case "DateTimePicker":
 						return true;
 				}
@@ -660,7 +746,9 @@ namespace System.Windows.Forms
 
 			// A list, tree or grid keeps a single even frame; only its colour moves with the state.
 			Color edge;
-			if (!sunken)
+			if (IsPopupList (control))
+				edge = PopupBorder;
+			else if (!sunken)
 				edge = RaisedBorder;
 			else if (control != null && !control.Enabled)
 				edge = ButtonBorderDisabled;
@@ -669,7 +757,7 @@ namespace System.Windows.Forms
 			else if (control != null && control.Entered)
 				edge = GlyphBorder;
 			else
-				edge = ListFrame;
+				edge = IsSpinner (control) ? SpinnerFrame : ListFrame;
 			DrawRoundedOutline (dc, frame, edge);
 		}
 
@@ -697,9 +785,15 @@ namespace System.Windows.Forms
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.None;
 			g.FillRectangle (ResPool.GetSolidBrush (face), box.X, box.Y, box.Width + 1, box.Height + 1);
-			DrawRoundedOutline (g, box, Color.FromArgb (210, 210, 210));
-			g.DrawLine (ResPool.GetPen (Color.FromArgb (188, 188, 188)),
-					    box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
+			// Under the pointer the button is outlined in the accent, which is what separates it from
+			// the field behind it; at rest it keeps the hairline and its darker bottom edge.
+			if (hot || pushed) {
+				DrawRoundedOutline (g, box, ButtonBorderHover);
+			} else {
+				DrawRoundedOutline (g, box, Color.FromArgb (210, 210, 210));
+				g.DrawLine (ResPool.GetPen (Color.FromArgb (188, 188, 188)),
+						     box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
+			}
 
 			// Three solid rows, one/three/five pixels wide, apex away from the middle. Drawn as
 			// rows rather than a filled path: a path is flattened into unjoined segments here and
@@ -905,6 +999,13 @@ namespace System.Windows.Forms
 		}
 
 		// The marker's right edge lines up with the third column's, which is where Windows puts it.
+		// A no-break space in front of a single digit, so the units sit under each other.
+		protected override string MonthCalendarDayText (MonthCalendar mc, DateTime date)
+		{
+			string day = date.Day.ToString ();
+			return day.Length < 2 ? " " + day : day;
+		}
+
 		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
 		{
 			return margin + 2 * cell.Width;
