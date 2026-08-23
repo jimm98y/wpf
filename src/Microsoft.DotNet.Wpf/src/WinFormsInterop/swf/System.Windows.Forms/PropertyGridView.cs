@@ -1043,7 +1043,15 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				XplatUI.TranslateMessage (ref msg);
 				XplatUI.DispatchMessage (ref msg);
 			}
-			XplatUI.EndLoop (Thread.CurrentThread);			
+			XplatUI.EndLoop (Thread.CurrentThread);
+
+			// However the loop ended -- a value picked, a click elsewhere, the window deactivated --
+			// the drop-down is finished with. CloseDropDown is only one of the ways out, and the form
+			// is reused, so a control left parented to it would still be there the next time one
+			// opened.
+			if (dropdown_form.Visible)
+				dropdown_form.Hide ();
+			dropdown_form.Controls.Clear ();
 		}
 
 		private void RepositionInScreenWorkingArea (Form form)

@@ -201,6 +201,22 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// drop-down between uses -- kept its window: it stayed on screen holding the keyboard, so
     /// once a picker had been closed the window underneath took no further input, and opening the
     /// picker again showed nothing because the window was already there.</summary>
+    /// <summary>Look away from a popup and it is finished with: click the window it dropped out of,
+    /// or another application altogether. Windows dismisses a menu on exactly this, and says so in
+    /// three different ways depending on what the click landed on -- so all three are taken.
+    /// <para>Nothing told the popup before. It is a window of its own, and a click elsewhere is not
+    /// a message the driver ever sees, so a picker clicked away from stayed open behind the window
+    /// with its nested message loop still spinning, and the application took no further
+    /// input.</para></summary>
+    private void DismissPopup(string why)
+    {
+        if (FormGone || _form.FormBorderStyle != FormBorderStyle.None || !_form.Visible)
+            return;
+        if (s_tracePresent)
+            Console.Error.WriteLine($"popup dismissed by {why}");
+        _form.Hide();
+    }
+
     private void OnFormVisibleChanged(object sender, EventArgs e)
     {
         if (s_tracePresent)
@@ -371,6 +387,12 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     // pressed/hover animation and caret updates show immediately (like the Cocoa pump).
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // WF_TRACE_WINDOWS=1 shows what a POPUP window is actually told, which is the only way to
+        // know why one is not dismissing itself.
+        if (s_tracePresent && !FormGone && _form.FormBorderStyle == FormBorderStyle.None
+            && msg != 0x0200 && msg != 0x0084 && msg != 0x0020 && msg != 0x000F)
+            Console.Error.WriteLine($"popup msg 0x{msg:x4} w=0x{(long)wParam:x} l=0x{(long)lParam:x}");
+
         switch (msg)
         {
             // Take the keyboard back on a click in the WinForms area. Without this, a hosted child
@@ -384,6 +406,20 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 MouseAt(lParam, _down); Frame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
             case 0x0202: Trace("WM_LBUTTONUP", lParam); ReleaseCapture();
                 MouseAt(lParam, _up); Frame(); return IntPtr.Zero;                  // WM_LBUTTONUP
+            // WM_ACTIVATE. A popup is dismissed by looking away from it: clicking the window it dropped
+            // out of, or another application altogether. Nothing told it so -- it is a window of its own,
+            // and a click elsewhere is not a message the driver ever sees -- so a colour picker that was
+            // clicked away from stayed open behind the window, and the nested loop it runs in went on
+            // spinning: the application took no further input. Windows closes a menu on exactly this.
+            case 0x0006:                                   // WM_ACTIVATE: this window lost it
+                if (((long)wParam & 0xFFFF) == 0) DismissPopup("WM_ACTIVATE");
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            case 0x0008:                                   // WM_KILLFOCUS: the keyboard went elsewhere
+                DismissPopup("WM_KILLFOCUS");
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            case 0x001C:                                   // WM_ACTIVATEAPP: another application entirely
+                if (wParam == IntPtr.Zero) DismissPopup("WM_ACTIVATEAPP");
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
             // WM_MOUSEWHEEL carries SCREEN coordinates and the notch count in the wParam high word.
             // Nothing forwarded it, so the wheel did nothing anywhere -- no list, grid or text box
             // scrolled.
