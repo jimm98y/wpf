@@ -594,6 +594,21 @@ namespace System.Windows.Forms
 					}
 				}
 			}
+			else
+			{
+				// Win32 sends WM_SHOWWINDOW when a window is HIDDEN as well, and Control's handler is
+				// what raises VisibleChanged: SetVisibleCore does not raise it itself on the way down.
+				// Sending it only on the way up meant Visible = false was never announced to anybody --
+				// so a host watching for its form to go away never heard, and a drop-down that had been
+				// closed left its window on screen, behind everything, still holding the keyboard.
+				SendMessage(handle, Msg.WM_SHOWWINDOW, IntPtr.Zero, IntPtr.Zero);
+
+				// What it was covering has to be repainted: those windows' own visible flags did not
+				// change, so nothing else would ask.
+				Hwnd parent = hwnd.parent;
+				if (parent != null)
+					Invalidate(parent.Handle, new Rectangle(0, 0, parent.width, parent.height), false);
+			}
 			return true;
 		}
 

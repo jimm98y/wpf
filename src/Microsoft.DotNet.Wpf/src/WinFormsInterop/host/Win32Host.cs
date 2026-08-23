@@ -203,6 +203,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// picker again showed nothing because the window was already there.</summary>
     private void OnFormVisibleChanged(object sender, EventArgs e)
     {
+        if (s_tracePresent)
+            Console.Error.WriteLine($"visible[{(FormGone ? "gone" : _form.GetType().Name)}] -> " +
+                (FormGone ? "?" : _form.Visible.ToString()) + $" hwnd=0x{_hwnd.ToInt64():x}");
         if (_hwnd == IntPtr.Zero || FormGone)
             return;
         if (_form.Visible)
