@@ -114,7 +114,10 @@ namespace System.Windows.Forms
 			help_panel = new Panel();
 			help_panel.Dock = DockStyle.Bottom;
 			//help_panel.DockPadding.All = 3;
-			help_panel.Height = 50;
+			// The description pane is 59 high in Windows -- a title line and two lines of text, plus
+			// its margins. At fifty it was a line short, which is the whole of why a stock grid has
+			// more space under its rows than ours did.
+			help_panel.Height = 59;
 			help_panel.BackColor = SystemColors.Control;
 
 
@@ -165,7 +168,8 @@ namespace System.Windows.Forms
 			toolbar.ImageList = toolbar_imagelist;
 			toolbar.Location = new System.Drawing.Point(0, 0);
 			toolbar.ShowToolTips = true;
-			toolbar.Size = new System.Drawing.Size(256, 27);
+			// Twenty-five, measured across a stock grid's button row.
+			toolbar.Size = new System.Drawing.Size(256, 25);
 			toolbar.TabIndex = 0;
 
 			toolbar.Items.AddRange (new ToolStripItem [] {categorized_toolbarbutton,

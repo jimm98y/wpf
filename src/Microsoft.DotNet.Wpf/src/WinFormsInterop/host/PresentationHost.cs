@@ -132,6 +132,18 @@ namespace System.Windows.Forms
             }
         }
 
+        /// <summary>The host putting <paramref name="form"/> on screen, or null when it has none.
+        /// A popup needs it to work out where on the real screen its owner's client area landed.
+        /// </summary>
+        internal static IWinFormsHost HostOf(Form form)
+        {
+            if (form == null) return null;
+            lock (s_lock)
+                foreach (var pair in s_forms)
+                    if (ReferenceEquals(pair.Value, form)) return pair.Key;
+            return null;
+        }
+
         internal static void Detach(IWinFormsHost host)
         {
             if (host == null) return;

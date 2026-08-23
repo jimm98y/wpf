@@ -219,6 +219,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		protected override void OnMouseDown (MouseEventArgs e) 
 		{
 			base.OnMouseDown (e);
+			// Clicking in the grid is what puts the keyboard in it, and the row's value field only
+			// appears once it is there.
+			if (CanSelect && !ContainsFocus)
+				Focus ();
 			last_click = e.Location;
 			if (this.RootGridItem == null)
 				return;
@@ -602,7 +606,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				font = bold_font;
 				brush = ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.CategoryForeColor);
 
-				pevent.Graphics.DrawString (grid_item.Label, font, brush, rect.X + 1, rect.Y + ENTRY_SPACING);
+				// The label itself is drawn once, below, along with every other kind of row. Drawing it
+				// here as well laid the same text down twice a pixel apart, and two passes of antialiased
+				// bold text on top of one another is what made a category heading look smeared and barely
+				// legible.
 				if (grid_item == this.SelectedGridItem) {
 					SizeF size = pevent.Graphics.MeasureString (grid_item.Label, font);
 					ControlPaint.DrawFocusRectangle (pevent.Graphics, new Rectangle (rect.X + 1, rect.Y+ENTRY_SPACING, (int)size.Width, (int)size.Height));
@@ -615,9 +622,16 @@ namespace System.Windows.Forms.PropertyGridInternal {
 						highlight.X -= V_INDENT;
 						highlight.Width += V_INDENT;
 					}
-					pevent.Graphics.FillRectangle (SystemBrushes.Highlight, highlight);
-					// Label
-					brush = SystemBrushes.HighlightText;
+					// The selection colour only while the grid has the keyboard. Windows marks the row of a
+					// grid that is not being worked in with its rule colour instead -- a pale band rather
+					// than a block of blue, which is what made ours look as though a row had been clicked
+					// when nothing had been.
+					bool active = Focused || ContainsFocus;
+					pevent.Graphics.FillRectangle (
+						active ? SystemBrushes.Highlight
+							 : ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.LineColor),
+						highlight);
+					brush = active ? SystemBrushes.HighlightText : SystemBrushes.ControlText;
 				}
 				else {
 					brush = grid_item.IsReadOnly ? inactive_text_brush : SystemBrushes.ControlText;
@@ -831,6 +845,23 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				entry.ToggleValue ();
 		}
 
+		protected override void OnGotFocus (EventArgs e)
+		{
+			base.OnGotFocus (e);
+			UpdateItem (this.SelectedGridItem);
+			Invalidate ();
+		}
+
+		protected override void OnLostFocus (EventArgs e)
+		{
+			base.OnLostFocus (e);
+			// Only when the keyboard has left the grid altogether -- the value field is a child of
+			// this control, so focus moving into it is not focus leaving.
+			if (!ContainsFocus)
+				UpdateItem (this.SelectedGridItem);
+			Invalidate ();
+		}
+
 		internal void UpdateItem (GridEntry entry)
 		{
 			if (entry == null || entry.GridItemType == GridItemType.Category || 
@@ -840,7 +871,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				return;
 			}
 
-			if (this.SelectedGridItem == entry) {
+			// Nothing to edit with until the grid has the keyboard: Windows shows the field and its
+			// button on the row being worked on, not on whatever happens to be selected in a grid
+			// nobody has touched.
+			if (this.SelectedGridItem == entry && (Focused || ContainsFocus)) {
 				SuspendLayout ();
 				grid_textbox.Visible = false;
 				if (entry.IsResetable || !entry.HasDefaultValue)
@@ -975,6 +1009,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			Form owner = FindForm ();
 			owner.AddOwnedForm (dropdown_form);
 			dropdown_form.Show ();
+			if (Environment.GetEnvironmentVariable ("WF_TRACE_EDITOR") == "1")
+				Console.Error.WriteLine ("[editor] dropdown control=" + control.GetType ().Name + " " +
+					       control.Size + " form=" + dropdown_form.Bounds + " visible=" +
+					       dropdown_form.Visible + " work=" + Screen.PrimaryScreen.WorkingArea);
 			if (dropdown_form.Location != location)
 				dropdown_form.Location = location;
 

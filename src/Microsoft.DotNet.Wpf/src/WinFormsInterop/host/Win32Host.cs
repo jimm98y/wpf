@@ -129,6 +129,17 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// cascade them as it does for every other application.</summary>
     private (int, int) StartLocation()
     {
+        // A popup -- a drop-down, a menu, a tooltip -- is positioned by whatever opened it, and
+        // in the driver's coordinates rather than the screen's. Win32 ignores CW_USEDEFAULT for
+        // a WS_POPUP window for the same reason: nobody wants a menu cascaded into the corner of
+        // the desktop. Ours took the default, so a property grid's colour picker opened wherever
+        // Windows felt like putting it instead of under the row it belongs to.
+        if (_form.FormBorderStyle == FormBorderStyle.None)
+        {
+            if (TryMapPopup(_form.Left, _form.Top, out int px, out int py)) return (px, py);
+            return (_form.Left, _form.Top);
+        }
+
         switch (_form.StartPosition)
         {
             case FormStartPosition.Manual:
@@ -146,6 +157,43 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 return (CW_USEDEFAULT, CW_USEDEFAULT);
         }
     }
+
+    /// <summary>Turn a point in the driver's screen space into a real screen point, using the
+    /// host that owns the window this popup drops out of. Its client area is where the driver's
+    /// origin actually landed.</summary>
+    private bool TryMapPopup(int driverX, int driverY, out int screenX, out int screenY)
+    {
+        screenX = screenY = 0;
+        var anchor = (PresentationHost.HostOf(_form.Owner) ?? PresentationHost.Current) as Win32Host;
+        if (anchor == null || ReferenceEquals(anchor, this) || anchor._hwnd == IntPtr.Zero)
+            return false;
+        var origin = new POINT { x = 0, y = 0 };
+        if (!ClientToScreen(anchor._hwnd, ref origin))
+            return false;
+        screenX = origin.x + (int)Math.Round((driverX - anchor._ox) * anchor._scale);
+        screenY = origin.y + (int)Math.Round((driverY - anchor._oy) * anchor._scale);
+        return true;
+    }
+
+    /// <summary>A popup that is moved after it is up -- the property grid nudges its drop-down
+    /// back into place once it knows how big it came out -- has to take its window with it.
+    /// Nothing followed the form before, so the second position was simply lost.</summary>
+    private void OnFormMoved(object sender, EventArgs e)
+    {
+        if (_hwnd == IntPtr.Zero || _movingSelf || _form.FormBorderStyle != FormBorderStyle.None)
+            return;
+        if (!TryMapPopup(_form.Left, _form.Top, out int px, out int py))
+            return;
+        _movingSelf = true;
+        try
+        {
+            SetWindowPos(_hwnd, IntPtr.Zero, px, py, 0, 0,
+                0x0001 | 0x0004 | 0x0010);          // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        }
+        finally { _movingSelf = false; }
+    }
+
+    private bool _movingSelf;
 
     public void Show()
     {
@@ -190,6 +238,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
         // scale now that both exist. Inert when nothing is embedded.
         EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
+        _form.LocationChanged += OnFormMoved;
         Present();
     }
 

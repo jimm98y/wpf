@@ -393,8 +393,11 @@ namespace System.Windows.Forms.PropertyGridInternal
 									 this.Value);
 					string error = null;
 					return SetValue (value, out error);
-				} catch { //(Exception e) {
-					// property_grid.ShowError (e.Message + Environment.NewLine + e.StackTrace);
+				} catch (Exception e) {
+					// An editor that throws leaves the value alone. Silently, unless asked: this catch hid
+					// every fault inside an editor, including the reason a picker never appeared.
+					if (Environment.GetEnvironmentVariable ("WF_TRACE_EDITOR") == "1")
+						Console.Error.WriteLine ("[editor] " + e);
 				}
 			}
 			return false;
@@ -402,14 +405,54 @@ namespace System.Windows.Forms.PropertyGridInternal
 
 		private UITypeEditor GetEditor ()
 		{
-			if (PropertyDescriptor != null) {
-				try { // can happen, because we are missing some editors
-					if (PropertyDescriptor != null)
-						return (UITypeEditor) PropertyDescriptor.GetEditor (typeof (UITypeEditor));
-				} catch {
-					// property_grid.ShowError ("Unable to load UITypeEditor for property '" + PropertyDescriptor.Name + "'.");
-				}
+			if (PropertyDescriptor == null)
+				return null;
+			try {
+				UITypeEditor declared = (UITypeEditor) PropertyDescriptor.GetEditor (typeof (UITypeEditor));
+				if (declared != null)
+					return declared;
+			} catch {
+				// A property can name an editor that is not here; fall through to what we do have.
 			}
+			return BuiltInEditor (PropertyDescriptor.PropertyType);
+		}
+
+		/// <summary>The editors this assembly carries, for types that do not name one themselves.
+		/// <para>Windows registers these from its designer assembly, which an ordinary application
+		/// never references -- so a colour property fell back to its type converter's list of names,
+		/// with no swatch and no picker. Keeping the table here means the grid behaves the same
+		/// wherever it runs.</para></summary>
+		private static UITypeEditor BuiltInEditor (Type type)
+		{
+			if (type == null)
+				return null;
+			lock (built_in_editors) {
+				UITypeEditor found;
+				if (built_in_editors.TryGetValue (type, out found))
+					return found;
+				found = MakeBuiltInEditor (type);
+				built_in_editors[type] = found;
+				return found;
+			}
+		}
+
+		private static readonly System.Collections.Generic.Dictionary<Type, UITypeEditor> built_in_editors
+			= new System.Collections.Generic.Dictionary<Type, UITypeEditor> ();
+
+		private static UITypeEditor MakeBuiltInEditor (Type type)
+		{
+			if (type == typeof (System.Drawing.Color))
+				return new System.Drawing.Design.ColorEditor ();
+			if (type == typeof (System.Drawing.Font))
+				return new System.Drawing.Design.FontEditor ();
+			if (type == typeof (System.Drawing.ContentAlignment))
+				return new System.Drawing.Design.ContentAlignmentEditor ();
+			if (type == typeof (Cursor))
+				return new System.Drawing.Design.CursorEditor ();
+			if (type == typeof (System.Drawing.Icon))
+				return new System.Drawing.Design.IconEditor ();
+			if (typeof (System.Drawing.Image).IsAssignableFrom (type))
+				return new System.Drawing.Design.ImageEditor ();
 			return null;
 		}
 
@@ -696,9 +739,13 @@ namespace System.Windows.Forms.PropertyGridInternal
 			UITypeEditor editor = GetEditor ();
 			if (editor != null) {
 				try {
-					editor.PaintValue (this.ValueText, gfx, rect);
-				} catch {
-					// Some of our Editors throw NotImplementedException
+					// The value, not the text of it. An editor paints what the property holds -- a colour
+					// swatch, an image thumbnail -- and handing it the string it was formatted into meant
+					// every editor saw the wrong type and drew nothing, leaving an empty box.
+					editor.PaintValue (this.Value, gfx, rect);
+				} catch (Exception e) {
+					if (Environment.GetEnvironmentVariable ("WF_TRACE_EDITOR") == "1")
+						Console.Error.WriteLine ("[editor] paint: " + e);
 				}
 			}
 		}

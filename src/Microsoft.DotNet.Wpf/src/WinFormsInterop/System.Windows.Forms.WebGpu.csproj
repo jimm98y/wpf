@@ -51,6 +51,7 @@
          helpers; the DllImports never run (XplatUI selects our WebGPU driver). -->
     <Compile Include="swf/System.Windows.Forms/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.Design/**/*.cs" />
+    <Compile Include="swf/System.Drawing.Design/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.Layout/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.VisualStyles/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.PropertyGridInternal/**/*.cs" />
