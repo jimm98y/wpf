@@ -702,6 +702,8 @@ namespace System.Windows.Forms
 						return true;
 					case "PictureBox":
 					case "Panel":
+					// Windows never themed a rich text box's frame either; it keeps the carved one.
+					case "RichTextBox":
 						return false;
 				}
 			}
@@ -751,7 +753,9 @@ namespace System.Windows.Forms
 			if (IsPopupList (control))
 				edge = PopupBorder;
 			else if (!sunken)
-				edge = RaisedBorder;
+				// A plain WS_BORDER -- what a panel with FixedSingle asks for -- is black in Windows,
+				// not the light grey a themed frame gets.
+				edge = ColorWindowText;
 			else if (control != null && !control.Enabled)
 				edge = ButtonBorderDisabled;
 			else
@@ -834,6 +838,15 @@ namespace System.Windows.Forms
 			DrawModernScrollBar (dc, bar, client, first, second, thumb);
 		}
 
+
+		/// <summary>The room a tab leaves round its label. One pixel more above and below than the
+		/// classic metric, which is what makes the row of tabs the height Windows draws it: the
+		/// tabs stood two pixels short, and since the row's height is what the page is laid out
+		/// below, padding it here moves the page down with it rather than leaving the two to
+		/// disagree.</summary>
+		public override Point TabControlDefaultPadding {
+			get { return new Point (6, 4); }
+		}
 
 		public override void DrawTabControl (Graphics dc, Rectangle area, TabControl tab)
 		{
@@ -1222,6 +1235,12 @@ namespace System.Windows.Forms
 		private static readonly Color ProgressFill = Color.FromArgb (15, 123, 15);
 		private static readonly Color TabPaneFace = Color.FromArgb (249, 249, 249);
 		private static readonly Color TabItemFace = Color.FromArgb (240, 240, 240);
+		/// <summary>A tab that is not the one on show. Just off the control's own grey, so the row
+		/// of tabs reads as a row rather than as part of the form behind it.</summary>
+		private static readonly Color TabRestFace = Color.FromArgb (243, 243, 243);
+		private static readonly Color TabEdge = Color.FromArgb (229, 229, 229);
+		/// <summary>How far the tab on show stands above its neighbours.</summary>
+		private const int TabRise = 2;
 		private static readonly Color HairLine = Color.FromArgb (217, 217, 217);
 
 		private void DrawModernProgressBar (Graphics dc, ProgressBar ctrl)
@@ -1512,32 +1531,82 @@ namespace System.Windows.Forms
 			if (tab.TabCount == 0)
 				return;
 
-			Rectangle pane = tab.DisplayRectangle;
-			pane.Inflate (2, 2);
-			dc.FillRectangle (ResPool.GetSolidBrush (TabPaneFace), pane);
-			dc.DrawRectangle (ResPool.GetPen (HairLine), pane.X, pane.Y, pane.Width - 1, pane.Height - 1);
+			Pen edge = ResPool.GetPen (TabEdge);
 
-			for (int i = 0; i < tab.TabCount; i++) {
-				bool selected = i == tab.SelectedIndex;
-				Rectangle bounds = tab.GetTabRect (i);
-				if (bounds.Width <= 0 || bounds.Height <= 0)
+			// Where the row of tabs sits. Measured from one that is not on show: the rectangle the
+			// control keeps for the selected tab is already nudged outwards, so measuring the row from
+			// that one put the body a pixel below the others' feet and left a seam of bare control
+			// between the two.
+			Rectangle row = tab.GetTabRect (0);
+			bool measured = false;
+			for (int i = 0; i < tab.TabCount && !measured; i++) {
+				if (i == tab.SelectedIndex)
 					continue;
-				if (selected)
-					bounds.Inflate (2, 0);
+				row = tab.GetTabRect (i);
+				measured = true;
+			}
+			if (!measured)
+				// Nothing but the tab on show to go by, so take its nudge back off.
+				row = new Rectangle (row.X, row.Y + TabRise, row.Width, Math.Max (1, row.Height - TabRise));
 
-				dc.FillRectangle (ResPool.GetSolidBrush (selected ? TabPaneFace : TabItemFace), bounds);
-				dc.DrawRectangle (ResPool.GetPen (HairLine), bounds.X, bounds.Y,
-						  bounds.Width - 1, bounds.Height - 1);
+			// The body is the whole control below the row of tabs, framed on all four sides, and its top
+			// edge is the very line the tabs stand on -- one line, not one each. It is the control's own
+			// rectangle and not its display rectangle: the display rectangle is where the page goes,
+			// already inset by the padding the frame and its margin take up, so framing that drew the
+			// border a couple of pixels in from the edge it belongs on.
+			int shoulder = Math.Max (area.Y, row.Bottom - 1);
+			var body = new Rectangle (area.X, shoulder, area.Width, Math.Max (0, area.Bottom - shoulder));
+			if (body.Width > 0 && body.Height > 0) {
+				dc.FillRectangle (ResPool.GetSolidBrush (TabPaneFace), body);
+				dc.DrawRectangle (edge, body.X, body.Y, body.Width - 1, body.Height - 1);
+			}
 
-				TabPage page = tab.TabPages[i];
-				var format = new StringFormat {
-					Alignment = StringAlignment.Center,
-					LineAlignment = StringAlignment.Center,
-					HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
-					FormatFlags = StringFormatFlags.NoWrap,
-				};
-				Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
-				dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore), bounds, format);
+			// The others first and the one on show last, so it covers its neighbour's edge rather than
+			// being covered by it. It also stands a little taller and opens straight onto the body --
+			// no line along its foot -- which is what makes it read as the front of the page rather
+			// than another button in the row.
+			for (int pass = 0; pass < 2; pass++) {
+				for (int i = 0; i < tab.TabCount; i++) {
+					bool selected = i == tab.SelectedIndex;
+					if (selected != (pass == 1))
+						continue;
+					Rectangle bounds = tab.GetTabRect (i);
+					if (bounds.Width <= 0 || bounds.Height <= 0)
+						continue;
+
+					// The one on show stands a little taller and reaches down past the body's edge, so the
+					// two run into one another; the rest stand on that edge.
+					Rectangle face = selected
+						? Rectangle.FromLTRB (bounds.X, row.Y - TabRise, bounds.Right,
+									Math.Min (area.Bottom, body.Y + 2))
+						: new Rectangle (bounds.X, row.Y, bounds.Width, row.Height);
+					if (face.Right > area.Right)
+						face.Width = Math.Max (0, area.Right - face.X);
+					if (face.Width <= 0)
+						continue;
+
+					dc.FillRectangle (ResPool.GetSolidBrush (selected ? TabPaneFace : TabRestFace), face);
+					if (selected) {
+						dc.DrawLine (edge, face.X, face.Y, face.Right - 1, face.Y);
+						dc.DrawLine (edge, face.X, face.Y, face.X, face.Bottom - 1);
+						dc.DrawLine (edge, face.Right - 1, face.Y, face.Right - 1, face.Bottom - 1);
+					} else {
+						dc.DrawRectangle (edge, face.X, face.Y, face.Width - 1, face.Height - 1);
+					}
+
+					TabPage page = tab.TabPages[i];
+					var format = new StringFormat {
+						Alignment = StringAlignment.Center,
+						LineAlignment = StringAlignment.Center,
+						HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
+						FormatFlags = StringFormatFlags.NoWrap,
+					};
+					// In the tab's own rectangle rather than the face just drawn, so the label sits at the
+					// same height whether or not its tab is the one standing proud.
+					Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
+					dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
+						       new Rectangle (bounds.X, row.Y, bounds.Width, row.Height), format);
+				}
 			}
 		}
 

@@ -73,6 +73,30 @@ namespace System.Windows.Forms
             To(owner, key, target, milliseconds, null);
         }
 
+        /// <summary>Run from one value to another, whatever the animation was doing before.
+        /// <para>To is the wrong tool for starting a run over: it declines when it is already
+        /// heading where it is asked to go, which is what makes it safe to call on every paint.
+        /// Told to go to zero and then straight back to one, it can see the second call as a
+        /// request it has already satisfied and decline it, and the run never happens at
+        /// all.</para></summary>
+        internal static void Run(Control owner, object key, double from, double to, int milliseconds)
+        {
+            if (owner == null || owner.IsDisposed)
+                return;
+            lock (s_tracks)
+            {
+                Track track = Find(owner, key, true);
+                track.From = from;
+                track.To = to;
+                track.Start = Now;
+                track.Duration = Math.Max(1, milliseconds);
+                track.Looping = false;
+                track.Region = null;
+                track.Settled = false;
+                Wake();
+            }
+        }
+
         internal static void To(Control owner, object key, double target, int milliseconds,
             Func<Rectangle> region)
         {

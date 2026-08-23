@@ -365,6 +365,19 @@ namespace System.Windows.Forms {
 					display_rectangle = base.DisplayRectangle;
 				}
 
+				// Inside the frame. This driver models no non-client area -- a window and its client are
+				// the same rectangle -- so a border is painted on the control's own outer edge, and
+				// anything laid out at the origin sits on top of it. A label in a table layout panel
+				// overlapped the frame above it for exactly that reason.
+				if (border_style != BorderStyle.None) {
+					int edge = border_style == BorderStyle.FixedSingle
+						? 1 : ThemeEngine.Current.Border3DSize.Width;
+					display_rectangle.X += edge;
+					display_rectangle.Y += edge;
+					display_rectangle.Width = Math.Max (0, display_rectangle.Width - edge * 2);
+					display_rectangle.Height = Math.Max (0, display_rectangle.Height - edge * 2);
+				}
+
 				// DockPadding is the same as Padding (according to documentation) but is
 				// calculated lazily, so we use Padding here instead.
 				if (Padding != Padding.Empty) {

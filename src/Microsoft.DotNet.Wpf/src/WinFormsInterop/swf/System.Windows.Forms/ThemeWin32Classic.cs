@@ -3632,14 +3632,16 @@ namespace System.Windows.Forms
 						    (int) Math.Round ((target.Y - grid.Y) * t));
 				mc.date_cell_size = new Size (Math.Max (1, (int) Math.Round (saved_cell.Width * shrink)),
 						        Math.Max (1, (int) Math.Round (saved_cell.Height * shrink)));
-				mc.title_size = new Size (Math.Max (1, (int) Math.Round (saved_title.Width * shrink)),
-						     Math.Max (1, (int) Math.Round (saved_title.Height * shrink)));
 				zoom_font = ScaledFont (mc.Font, shrink);
 				date_cell_size = mc.date_cell_size;
+				// The grid alone travels. A heading that shrank would take its arrows with it, and the
+				// today marker below is no part of the view being left either -- both stay where they
+				// are while the days gather themselves up between them.
+				zoom_offset = collapse_at;
 			}
 
-			int x_offset = margin + collapse_at.X;
-			int y_offset = margin + collapse_at.Y;
+			int x_offset = margin;
+			int y_offset = margin;
 			// adjust for the position of the specific month
 			for (int i=0; i < mc.CalendarDimensions.Height; i++) 
 			{
@@ -3672,6 +3674,13 @@ namespace System.Windows.Forms
 				}
 			}
 			
+			if (mc.ZoomCollapsing) {
+				mc.date_cell_size = saved_cell;
+				zoom_font = saved_font;
+				date_cell_size = saved_cell;
+				zoom_offset = Point.Empty;
+			}
+
 			Rectangle bottom_rect = new Rectangle (
 						client_rectangle.X,
 						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 3 - margin, 0),
@@ -3759,20 +3768,20 @@ namespace System.Windows.Forms
 				}
 			}
 			
-			// Put back whatever the collapse borrowed, and wash the whole thing out by how far the
-			// transition has run -- a shrinking view that stayed at full strength would read as the
-			// calendar being squashed rather than going away.
-			if (mc.ZoomCollapsing) {
-				mc.date_cell_size = saved_cell;
-				mc.title_size = saved_title;
-				zoom_font = saved_font;
-			}
+			// Wash the grid out by how far the transition has run -- a shrinking view that stayed at
+			// full strength would read as the days being squashed rather than going away. Only the
+			// grid: the heading and the today row are not going anywhere.
 			double faded = MonthCalendarFadeAmount (mc);
 			if (faded > 0.01) {
+				Rectangle grid_area = new Rectangle (
+					client_rectangle.X + margin,
+					client_rectangle.Y + margin + mc.title_size.Height,
+					Math.Max (0, client_rectangle.Width - margin * 2),
+					7 * date_cell_size.Height);
 				Color wash = mc.BackColor;
 				int alpha = (int) Math.Round (Math.Min (1.0, faded) * 255);
 				using (var brush = new SolidBrush (Color.FromArgb (alpha, wash.R, wash.G, wash.B)))
-					dc.FillRectangle (brush, client_rectangle);
+					dc.FillRectangle (brush, grid_area);
 			}
 
 			// draw the drop down border if need
@@ -3850,6 +3859,11 @@ namespace System.Windows.Forms
 				}
 			}
 			
+			// Everything from here down is the grid, which a running zoom carries towards the cell it
+			// is collapsing into. Shifting the local copy of the rectangle moves all of it at once and
+			// leaves the heading already drawn above untouched.
+			rectangle.Offset (zoom_offset);
+
 			// Zoomed out, the same grid holds months, years or decades in four columns of three
 			// instead of seven columns of days.
 			if (mc.Zoom != MonthCalendar.ZoomLevel.Days) {
@@ -4028,6 +4042,9 @@ namespace System.Windows.Forms
 		/// outside the range the heading names are greyed.</summary>
 		private StringFormat zoom_cell_format;
 
+		/// <summary>How far a running zoom has carried the grid from where it sits at rest.</summary>
+		private Point zoom_offset;
+
 		protected virtual void DrawMonthCalendarZoomed (Graphics dc, Rectangle clip, Rectangle rectangle,
 					     MonthCalendar mc, Size title_size, Size date_cell_size)
 		{
@@ -4040,16 +4057,6 @@ namespace System.Windows.Forms
 			int cw = grid.Width / MonthCalendar.ZoomColumns;
 			int ch = grid.Height / MonthCalendar.ZoomRows;
 
-			// While the view is arriving it grows out of the cell the previous one occupied, so the
-			// months open from the month you were on and the years from the year. Interpolating the
-			// cell rectangles is how it is done: this recorder can translate what it draws but not
-			// scale it, so the geometry has to be laid out at the size it should appear.
-			double grown = Animation.Value (mc, MonthCalendar.ZoomKey);
-			int origin = mc.ZoomOriginCell;
-			Rectangle from = origin < 0 ? grid
-				   : new Rectangle (grid.X + (origin % MonthCalendar.ZoomColumns) * cw,
-						 grid.Y + (origin / MonthCalendar.ZoomColumns) * ch, cw, ch);
-
 			for (int i = 0; i < MonthCalendar.ZoomColumns * MonthCalendar.ZoomRows; i++) {
 				bool outside, current;
 				string text = mc.ZoomCellText (i, out outside, out current);
@@ -4057,22 +4064,31 @@ namespace System.Windows.Forms
 					continue;
 				var cell = new Rectangle (grid.X + (i % MonthCalendar.ZoomColumns) * cw,
 					       grid.Y + (i / MonthCalendar.ZoomColumns) * ch, cw, ch);
-				if (grown < 1.0)
-					cell = Grow (from, cell, grown);
 				if (cell.Width <= 0 || cell.Height <= 0 || !clip.IntersectsWith (cell))
 					continue;
 				if (current)
 					MonthCalendarDrawZoomedSelection (dc, mc, cell);
 				Color ink = outside ? mc.TrailingForeColor : mc.ForeColor;
-				// A decade arrives over two lines, so this one format has to wrap where the day names
-				// never do.
 				if (zoom_cell_format == null)
 					zoom_cell_format = new StringFormat {
 						Alignment = StringAlignment.Center,
 						LineAlignment = StringAlignment.Center,
 					};
-				dc.DrawString (text, MonthCalendarTitleFont (mc), ResPool.GetSolidBrush (ink), cell,
-					       zoom_cell_format);
+				Brush ink_brush = ResPool.GetSolidBrush (ink);
+				Font cell_font = ZoomScaled (mc.Font);
+				// A decade reads over two lines. Handing both to one DrawString leaves the break to the
+				// device, and this one draws the lines on top of each other; laying out a line at a time
+				// asks nothing of it that a day number does not.
+				string[] cell_lines = text.Split (new string [] { Environment.NewLine }, StringSplitOptions.None);
+				if (cell_lines.Length == 1) {
+					dc.DrawString (text, cell_font, ink_brush, cell, zoom_cell_format);
+				} else {
+					int line_height = cell.Height / cell_lines.Length;
+					for (int l = 0; l < cell_lines.Length; l++)
+						dc.DrawString (cell_lines[l], cell_font, ink_brush,
+							       new Rectangle (cell.X, cell.Y + l * line_height, cell.Width, line_height),
+							       zoom_cell_format);
+				}
 			}
 		}
 

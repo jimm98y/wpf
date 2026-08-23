@@ -1964,8 +1964,7 @@ namespace System.Windows.Forms {
 			zoom_pending = target;
 			zoom_origin = origin;
 			zoom_collapsing = true;
-			Animation.To (this, ZoomKey, 0.0, 1);
-			Animation.To (this, ZoomKey, 1.0, CollapseMilliseconds);
+			Animation.Run (this, ZoomKey, 0.0, 1.0, CollapseMilliseconds);
 			Invalidate ();
 		}
 
@@ -1977,8 +1976,7 @@ namespace System.Windows.Forms {
 				return;
 			zoom = zoom_pending;
 			zoom_collapsing = false;
-			Animation.To (this, ZoomKey, 0.0, 1);
-			Animation.To (this, ZoomKey, 1.0, FadeMilliseconds);
+			Animation.Run (this, ZoomKey, 0.0, 1.0, FadeMilliseconds);
 		}
 
 		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
@@ -2127,6 +2125,31 @@ namespace System.Windows.Forms {
 		}
 
 		/// <summary>What the arrows step by at this zoom: a month, a year, a decade, a century.</summary>
+		/// <summary>Page the view: a month at a time on the days grid, and a year, a decade or a
+		/// century when zoomed out. What the arrows either side of the heading do, and what a
+		/// client invoking them asks for.</summary>
+		internal void InvokeStep (int direction)
+		{
+			if (zoom != ZoomLevel.Days) {
+				ZoomStep (direction);
+				return;
+			}
+			current_month = current_month.AddMonths (direction);
+			Invalidate ();
+		}
+
+		/// <summary>Pick a cell of whatever grid is showing: a day is selected, and anything else
+		/// steps back in a level.</summary>
+		internal void InvokeCell (int index)
+		{
+			if (zoom != ZoomLevel.Days) {
+				ZoomInto (index);
+				return;
+			}
+			DateTime first = GetFirstDateInMonthGrid (new DateTime (current_month.Year, current_month.Month, 1));
+			SetDate (first.AddDays (index));
+		}
+
 		internal void ZoomStep (int direction)
 		{
 			switch (zoom) {

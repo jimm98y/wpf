@@ -443,7 +443,9 @@ namespace WinFormsWebGpu.Accessibility
                 case "calpane":
                 case "caltitle":
                 case "caltable":
-                    return cal.current_month.ToString("MMMM yyyy");
+                    // Whatever the heading says, which is the month only while the days are
+                    // showing -- zoomed out it names the year, the decade or the century.
+                    return cal.ZoomTitle;
                 case "calname":
                 {
                     // Sunday is the 1st of October 2006, which is what the theme counts from.
@@ -690,14 +692,36 @@ namespace WinFormsWebGpu.Accessibility
         /// <summary>Whether pressing the item does something -- a menu entry, a tool bar button.</summary>
         internal static bool CanInvoke(object element)
         {
-            return element is ToolStripItem && !(element is ToolStripSeparator);
+            if (element is ToolStripItem)
+                return !(element is ToolStripSeparator);
+            // A calendar's arrows and its heading are buttons in the tree Windows publishes, so
+            // they answer to being invoked -- the only way anything but a pointer can page a
+            // month or zoom out to the year.
+            var key = element as ItemKey;
+            return key != null && key.Owner is MonthCalendar &&
+                (key.Kind == "calprev" || key.Kind == "calnext" || key.Kind == "caltitle" ||
+                 key.Kind == "calday");
         }
 
         internal static void Invoke(object element)
         {
             var tsi = element as ToolStripItem;
             if (tsi != null)
+            {
                 tsi.PerformClick();
+                return;
+            }
+            var key = element as ItemKey;
+            var calendar = key == null ? null : key.Owner as MonthCalendar;
+            if (calendar == null)
+                return;
+            switch (key.Kind)
+            {
+                case "calprev": calendar.InvokeStep(-1); break;
+                case "calnext": calendar.InvokeStep(1); break;
+                case "caltitle": calendar.ZoomOut(); break;
+                case "calday": calendar.InvokeCell(key.Index); break;
+            }
         }
 
         internal static bool IsEnabled(object element)
