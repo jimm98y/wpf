@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripManager.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -598,6 +598,57 @@ namespace System.Windows.Forms
 		{
 			lock (menu_items)
 				menu_items.Remove (tsmi);
+		}
+
+		// A click somewhere else takes an open menu down. Windows notices that with a mouse hook;
+		// Mono notices it in the filter at the top of Application's message loop. Neither is any
+		// use here: this driver DISPATCHES mouse input rather than posting it, so no filter and no
+		// nested loop ever sees the click, and a menu once open stayed open whatever was clicked --
+		// including the context menu on a text box, which could then only be dismissed by choosing
+		// something from it. The driver announces every press through XplatUI.MousePress instead,
+		// and the rule below is the one that filter applies.
+		static ToolStripManager ()
+		{
+			XplatUI.MousePress += PressedSomewhere;
+		}
+
+		private static void PressedSomewhere (IntPtr window)
+		{
+			ToolStrip captured = Application.KeyboardCapture;
+			if (captured == null)
+				return;
+
+			// Not one of ours at all -- an embedded control, say. Everything closes.
+			Control clicked = Control.FromHandle (window);
+			if (clicked == null) {
+				FireAppClicked ();
+				return;
+			}
+
+			// A click inside the menu itself is the menu's own business.
+			if (Control.IsChild (captured.Handle, window))
+				return;
+
+			// Take down every drop-down the point is not inside, innermost first: clicking a
+			// submenu's owner closes the submenu and leaves the menu it came from standing.
+			Point point = Control.MousePosition;
+			ToolStrip top = captured.GetTopLevelToolStrip ();
+			for (int guard = 0; guard < 32; guard++) {
+				ToolStrip open = Application.KeyboardCapture;
+				if (open == null || open.ClientRectangle.Contains (open.PointToClient (point)))
+					break;
+				open.Dismiss ();
+			}
+
+			// And the menu bar the chain hangs from, unless the click was on it or on one of the
+			// items it owns.
+			if (top == null || ReferenceEquals (clicked, top))
+				return;
+			ToolStripItem owner = (clicked as ToolStripDropDown)?.OwnerItem;
+			while (owner != null && owner.Owner != top)
+				owner = owner.OwnerItem;
+			if (owner == null)
+				top.Dismiss ();
 		}
 
 		internal static void FireAppClicked ()
