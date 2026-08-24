@@ -28,6 +28,7 @@
 
     <_Gallery>$(MSBuildThisFileDirectory)../../../WPF-Samples/Sample Applications/WPFGallery/bin/Release/net10.0</_Gallery>
     <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_Src>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src</_Src>
   </PropertyGroup>
 
   <!--
@@ -53,6 +54,10 @@
     <TrimmerRootAssembly Include="WPFGallery" />
     <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
     <TrimmerRootAssembly Include="PresentationCore" />
+    <!-- Named by a string inside the Fluent theme's BAML, so nothing static points at it. -->
+    <TrimmerRootAssembly Include="System.Windows.Controls.Ribbon" />
+    <!-- Reached by Assembly.Load from PresentationCore, so nothing static points at it either. -->
+    <TrimmerRootAssembly Include="Microsoft.Wpf.DevTools" />
     <TrimmerRootAssembly Include="PresentationFramework" />
     <TrimmerRootAssembly Include="PresentationFramework.Fluent" />
     <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
@@ -113,6 +118,14 @@
     <!-- Theme dictionaries: the gallery sets ThemeMode.System, which loads the Fluent theme. -->
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
     <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+    <!-- The Fluent theme's BAML names the Ribbon assembly, so it is resolved at parse time even
+         by an app that has no ribbon in it. -->
+    <Reference Include="System.Windows.Controls.Ribbon"><HintPath>$(_Art)/System.Windows.Controls.Ribbon/Release/net10.0/System.Windows.Controls.Ribbon.dll</HintPath></Reference>
+    <!-- The CDP visual-tree inspector. Referenced rather than dropped beside the app: an iOS
+         app is a bundle, and the application directory the bootstrap probes has nothing in it
+         that was not packaged. Costs ~18 KB and starts nothing unless WPF_DEVTOOLS is set. -->
+    <Reference Include="Microsoft.Wpf.DevTools">     <HintPath>$(_Src)/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
+
   </ItemGroup>
 
   <!--

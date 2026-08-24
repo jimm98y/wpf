@@ -212,15 +212,44 @@ soft keyboard's own route — so a dispatched key is reported as unsupported. An
 is injected with keysym 0 and its characters, which reaches a text box but not a key that is
 only a keysym (Tab, the arrows); that needs the XKB mapping reconstructed.
 
-**macOS and Android are verified at runtime.** On Android the tree, both targets, wheel
+**macOS, Android and iOS are verified at runtime.** On Android the tree, both targets, wheel
 scrolling and a scrollbar-thumb drag all work over `adb forward tcp:9222 tcp:9222` — and a thumb
 drag is the interesting one, because it needs mouse capture and a device position, which is
 precisely what routed events could not provide. Hover states stay false there, correctly: a
 touch head has no hover.
 
-**Browser, Linux and iOS are not verified.** They are the same shape and compile against the
-same providers, and each handler matches on the `HwndSource.Handle` passed to it — but neither
-of those is proof, as Android showed: it needed two unrelated fixes before it ran at all.
+On iOS the same holds in the simulator, with the wheel working in both directions and
+`IsMouseOver` actually set (Android leaves it false; a touch head has no hover, and the two
+backends differ on that).
+
+**Browser and Linux are not verified.** They are the same shape and compile against the same
+providers, and each handler matches on the `HwndSource.Handle` passed to it — but neither of
+those is proof: Android and iOS were the same shape too, and each needed unrelated fixes before
+it would run at all.
+
+### Running the inspector on a trimmed head
+
+**A trimmed head links the inspector away.** It is reached by `Assembly.Load` and nothing points
+at it statically, which is exactly what trimming removes — so on iOS the app shipped without it
+and the endpoint simply never came up, with no error anywhere. It has to be rooted:
+
+```xml
+<TrimmerRootAssembly Include="Microsoft.Wpf.DevTools" />
+```
+
+`samples/wpf-gallery-ios` does this. The same applies to any head built with `TrimMode=full`,
+which includes the browser.
+
+On iOS the simulator shares the host's loopback, so no port forwarding is needed, and
+`xcrun simctl launch` forwards environment variables as `SIMCTL_CHILD_<VAR>`:
+
+```sh
+SIMCTL_CHILD_WPF_DEVTOOLS=9333 xcrun simctl launch booted com.companyname.WpfGalleryIos
+```
+
+That last point is a trap worth naming: because the simulator and an `adb forward` both land on
+the host's loopback, two heads can answer on the same port. Give each head its own, or you will
+read one head's tree and believe it is another's.
 
 ### Running the inspector on Android
 
