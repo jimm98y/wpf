@@ -771,6 +771,10 @@ namespace System.Windows.Forms
 
 		internal static void RunLoop (bool Modal, ApplicationContext context)
 		{
+			// The message loop is starting, so there is now a form tree to inspect. Starts the
+			// CDP inspector when WPF_DEVTOOLS is set; does nothing at all otherwise.
+			DevToolsBootstrap.EnsureStarted ();
+
 			Queue		toplevels;
 			MSG		msg;
 			Object		queue_id;

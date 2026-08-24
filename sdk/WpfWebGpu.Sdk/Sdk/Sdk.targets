@@ -113,6 +113,18 @@
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-ios/*.dll" Private="true" Condition="'$(_WpfWebGpuIos)' == 'true'" />
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
 
+    <!-- The visual-tree inspector (Documentation/devtools.md). Loaded reflectively by
+         PresentationCore when WPF_DEVTOOLS is set, so it is referenced only to get it COPIED
+         next to the app; nothing binds to it at compile time and an app that drops it just has
+         no inspector. Same managed payload on every head.
+
+         Shipped by default because the whole point is that an unmodified app becomes
+         inspectable by setting one environment variable, with no rebuild. It starts nothing
+         unless WPF_DEVTOOLS is set; set WpfDevTools=false to leave it out of a release drop
+         entirely. -->
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-devtools/*.dll" Private="true"
+               Condition="'$(WpfDevTools)' != 'false'" />
+
     <!-- Support packages WPF needs off the WindowsDesktop framework reference. Identical on every
          head: on Windows they resolve to the real Win32-backed implementations, elsewhere to the
          cross-platform ones (with our shims overlaid where the framework's are throw-only). -->

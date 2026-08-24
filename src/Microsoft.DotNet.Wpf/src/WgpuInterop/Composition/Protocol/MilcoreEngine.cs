@@ -518,6 +518,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Composition targets (HwndTargets) keyed by resource handle.</summary>
         public IReadOnlyDictionary<uint, MilTarget> Targets => _targets;
 
+        /// <summary>
+        /// Every decoded visual, keyed by the DUCE resource handle it was published under.
+        ///
+        /// Exposed for the visual-tree inspector, which shows this graph as its own document
+        /// and needs to label each node with the handle that joins it back to the WPF element
+        /// it came from. SceneVisual.Id cannot serve: it is the hit-test id, set only for
+        /// visuals that participate in hit testing, and it is zero almost everywhere.
+        /// </summary>
+        public IReadOnlyDictionary<uint, SceneVisual> Visuals => _visuals;
+
         /// <summary>Look up a visual by handle (e.g. a target's root).</summary>
         public SceneVisual? VisualByHandle(uint handle) =>
             _visuals.TryGetValue(handle, out SceneVisual? v) ? v : null;

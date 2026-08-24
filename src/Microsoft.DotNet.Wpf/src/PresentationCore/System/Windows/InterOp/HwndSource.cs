@@ -337,6 +337,10 @@ namespace System.Windows.Interop
             }
             AddSource();
 
+            // A top-level source means there is now a tree worth looking at. Starts the CDP
+            // inspector when WPF_DEVTOOLS is set; does nothing at all otherwise.
+            System.Windows.Diagnostics.DevToolsBootstrap.EnsureStarted();
+
             // Register dropable window. OLE drag/drop is COM-based and Windows-only.
             if (_hwndWrapper.Handle != IntPtr.Zero && OperatingSystem.IsWindows())
             {

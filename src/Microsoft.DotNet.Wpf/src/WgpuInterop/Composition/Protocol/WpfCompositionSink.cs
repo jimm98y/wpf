@@ -84,8 +84,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static readonly bool s_perfToConsole =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_PERF_CONSOLE") == "1";
 
+        /// <summary>
+        /// The sink the framework is currently driving, or null when managed composition is
+        /// off. Exists for the visual-tree inspector, which correlates a WPF Visual against the
+        /// SceneVisual this sink's engine decoded for it and has no other way to reach the
+        /// live instance -- DUCE.ManagedComposition constructs it reflectively and keeps the
+        /// only reference privately.
+        /// </summary>
+        public static WpfCompositionSink? Current { get; private set; }
+
         public WpfCompositionSink()
         {
+            Current = this;
             // Resolve WPF glyph runs to real fonts so text renders. The run carries a
             // managed font descriptor (file path + face index + style simulations from
             // GlyphTypeface), so this is fully cross-platform -- no COM / DirectWrite.

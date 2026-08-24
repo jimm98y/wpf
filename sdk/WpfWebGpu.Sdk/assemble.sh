@@ -31,24 +31,38 @@ DOTNET="${DOTNET:-$HOME/.dotnet/dotnet}"
 WGPU_SRC="$HERE/../../src/Microsoft.DotNet.Wpf/src/WgpuInterop"
 
 check_stale() {
-  # $1 = built dll, $2 = project to build, $3 = extra find predicate ("" for none)
-  [ -f "$1" ] || return 0
+  # $1 = source root to scan, $2 = built dll, $3 = project to build,
+  # $4 = extra find predicate ("" for none)
+  [ -f "$2" ] || return 0
   # shellcheck disable=SC2086
-  NEWEST=$(find "$WGPU_SRC" -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' $3 -newer "$1" -print -quit 2>/dev/null || true)
+  NEWEST=$(find "$1" -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' $4 -newer "$2" -print -quit 2>/dev/null || true)
   if [ -n "$NEWEST" ]; then
-    echo "error: $1 is older than its sources (e.g. $NEWEST)." >&2
-    echo "       Packing now would ship a stale renderer. Build it first:" >&2
-    echo "         \"$DOTNET\" build \"$2\" -c Release" >&2
+    echo "error: $2 is older than its sources (e.g. $NEWEST)." >&2
+    echo "       Packing now would ship a stale assembly. Build it first:" >&2
+    echo "         \"$DOTNET\" build \"$3\" -c Release" >&2
     exit 1
   fi
 }
 
 # Desktop/unix flavor: everything except the browser-only sources.
-check_stale "$WGPU_SRC/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" \
+check_stale "$WGPU_SRC" "$WGPU_SRC/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" \
             "$WGPU_SRC/WgpuInterop.csproj" "-not -path */Browser/*"
 # Browser flavor: compiles ..\**\*.cs, so every source counts, Browser/ included.
-check_stale "$WGPU_SRC/Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" \
+check_stale "$WGPU_SRC" "$WGPU_SRC/Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" \
             "$WGPU_SRC/Browser/WgpuInterop.Browser.csproj" ""
+
+# The visual-tree inspector, same guard and same reasoning. It is packed unconditionally rather
+# than under an Exists() condition like the optional per-head payloads: it is one AnyCPU assembly
+# that builds anywhere, so a missing one means the build step was skipped, and saying so here is
+# better than NuGet's NU5019 naming a path.
+DEVTOOLS_SRC="$HERE/../../src/Microsoft.DotNet.Wpf/src/WpfDevTools"
+DEVTOOLS_DLL="$DEVTOOLS_SRC/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll"
+if [ ! -f "$DEVTOOLS_DLL" ]; then
+  echo "error: $DEVTOOLS_DLL is missing. Build it first:" >&2
+  echo "         \"$DOTNET\" build \"$DEVTOOLS_SRC/WpfDevTools.csproj\" -c Release" >&2
+  exit 1
+fi
+check_stale "$DEVTOOLS_SRC" "$DEVTOOLS_DLL" "$DEVTOOLS_SRC/WpfDevTools.csproj" ""
 
 # Refuse to pack STALE SHIMS, for the same reason and with the same failure mode.
 #

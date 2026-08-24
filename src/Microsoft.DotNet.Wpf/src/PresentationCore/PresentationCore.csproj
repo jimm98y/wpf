@@ -438,6 +438,8 @@
     <Compile Include="System\Windows\Automation\Peers\GenericRootAutomationPeer.cs" />
     <Compile Include="System\Windows\Automation\Peers\UIElement3DAutomationPeer.cs" />
     <Compile Include="System\Windows\Automation\Peers\UIElementAutomationPeer.cs" />
+    <Compile Include="System\Windows\Diagnostics\CompositionDiagnostics.cs" />
+    <Compile Include="System\Windows\Diagnostics\DevToolsBootstrap.cs" />
     <Compile Include="System\Windows\Diagnostics\VisualDiagnostics.cs" />
     <Compile Include="System\Windows\Diagnostics\VisualTreeChangeEventArgs.cs" />
     <Compile Include="System\Windows\Diagnostics\XamlSourceInfo.cs" />

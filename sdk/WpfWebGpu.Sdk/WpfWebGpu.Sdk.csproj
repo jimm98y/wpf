@@ -48,6 +48,7 @@
     <WgpuInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/</WgpuInteropDir>
     <WgpuNativeDir>$(WgpuInteropDir)native/</WgpuNativeDir>
     <WinFormsInteropDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WinFormsInterop/</WinFormsInteropDir>
+    <WpfDevToolsDir>$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/WpfDevTools/</WpfDevToolsDir>
 
     <!-- Where WebView2Loader.dll comes from for the Windows heads. It is the one native dependency
          the web view has on Windows (the Edge runtime itself is an OS component, not shipped here).
@@ -73,6 +74,7 @@
     <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" Condition="Exists('$(WgpuInteropDir)Browser/wgpu-interop.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js')" />
+    <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/devtools-bridge.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/devtools-bridge.js')" />
 
     <!-- XAML markup compiler (fork build) + its targets — required by every head. -->
     <None Include="$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll" Pack="true" PackagePath="tools/net10.0/" />
@@ -100,6 +102,15 @@
     <!-- Two whose project name differs from their assembly name. -->
     <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
     <None Include="$(WpfBin)System.Printing.Managed/Release/net10.0/System.Printing.dll" Pack="true" PackagePath="lib/wpf/" />
+  </ItemGroup>
+
+  <!-- ============================== visual-tree inspector ============================== -->
+  <!-- One AnyCPU net10.0 assembly, the same on every head. It gets its own folder rather than
+       riding along in lib/wpf because no head references it at compile time (PresentationCore
+       reaches it by Assembly.Load), and every lib/wpf Reference in Sdk.targets is a glob that
+       would otherwise pick it up. -->
+  <ItemGroup>
+    <None Include="$(WpfDevToolsDir)bin/Release/net10.0/Microsoft.Wpf.DevTools.dll" Pack="true" PackagePath="lib/wpf-devtools/" />
   </ItemGroup>
 
   <!-- ============================ per-flavor managed extras ============================ -->
