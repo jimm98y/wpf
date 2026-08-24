@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripDropDown.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -527,6 +527,11 @@ namespace System.Windows.Forms
 			// The tracker lets us know when the form is clicked or loses focus
 			ToolStripManager.AppClicked += new EventHandler (ToolStripMenuTracker_AppClicked);
 			ToolStripManager.AppFocusChange += new EventHandler (ToolStripMenuTracker_AppFocusChange);
+
+			// One menu at a time, as in Windows: whatever else is open and is not part of the
+			// chain this one hangs on goes now. Without it a right click somewhere else left the
+			// first menu standing and put a second one beside it.
+			ToolStripManager.CloseAllBut (this);
 
 			base.Show ();
 

@@ -630,41 +630,80 @@ namespace System.Windows.Forms
 
 		private static void PressedSomewhere (IntPtr window)
 		{
-			ToolStrip captured = Application.KeyboardCapture;
-			if (captured == null)
-				return;
-
-			// Not one of ours at all -- an embedded control, say. Everything closes.
-			Control clicked = Control.FromHandle (window);
-			if (clicked == null) {
-				FireAppClicked ();
-				return;
-			}
-
-			// A click inside the menu itself is the menu's own business.
-			if (Control.IsChild (captured.Handle, window))
-				return;
-
-			// Take down every drop-down the point is not inside, innermost first: clicking a
-			// submenu's owner closes the submenu and leaves the menu it came from standing.
+			// WHERE the press landed, not which window it was delivered to. An open menu holds
+			// the mouse, so every press while it is up is delivered to the menu whatever it was
+			// aimed at -- and asking whether the press went to the menu therefore answered yes
+			// for a click clean across the form, which is why the menu would not go away and a
+			// second right click simply added another one.
 			Point point = Control.MousePosition;
-			ToolStrip top = captured.GetTopLevelToolStrip ();
-			for (int guard = 0; guard < 32; guard++) {
-				ToolStrip open = Application.KeyboardCapture;
-				if (open == null || open.ClientRectangle.Contains (open.PointToClient (point)))
-					break;
-				open.Dismiss ();
+			CloseThoseNotUnder (point);
+		}
+
+		/// <summary>Take down every open menu the given point is not inside. Innermost first, so
+		/// that clicking a submenu's owner closes the submenu and leaves the menu it came from
+		/// standing; and the strip the chain hangs off last, if the point missed that too.</summary>
+		private static void CloseThoseNotUnder (Point point)
+		{
+			List<ToolStripDropDown> open = OpenDropDowns ();
+			for (int i = open.Count - 1; i >= 0; i--) {
+				ToolStripDropDown drop = open[i];
+				if (!drop.Visible || Contains (drop, point))
+					continue;
+				// A menu the pointer is over one of the SUBMENUS of stays: closing it would take
+				// the submenu the click landed in with it.
+				if (HasOpenChildUnder (drop, point))
+					continue;
+				drop.Dismiss (ToolStripDropDownCloseReason.AppClicked);
 			}
 
-			// And the menu bar the chain hangs from, unless the click was on it or on one of the
-			// items it owns.
-			if (top == null || ReferenceEquals (clicked, top))
-				return;
-			ToolStripItem owner = (clicked as ToolStripDropDown)?.OwnerItem;
-			while (owner != null && owner.Owner != top)
-				owner = owner.OwnerItem;
-			if (owner == null)
-				top.Dismiss ();
+			ToolStrip captured = Application.KeyboardCapture;
+			if (captured != null && !Contains (captured, point)) {
+				ToolStrip top = captured.GetTopLevelToolStrip ();
+				if (top != null && !Contains (top, point))
+					top.Dismiss ();
+			}
+		}
+
+		private static bool Contains (ToolStrip strip, Point screenPoint)
+		{
+			try {
+				return strip.Visible && strip.IsHandleCreated
+					&& strip.ClientRectangle.Contains (strip.PointToClient (screenPoint));
+			} catch (Exception) {
+				return false;
+			}
+		}
+
+		private static bool HasOpenChildUnder (ToolStripDropDown drop, Point point)
+		{
+			foreach (ToolStripItem item in drop.Items) {
+				var parent = item as ToolStripDropDownItem;
+				if (parent == null || !parent.HasDropDownItems || parent.DropDown == null)
+					continue;
+				if (Contains (parent.DropDown, point) || HasOpenChildUnder (parent.DropDown, point))
+					return true;
+			}
+			return false;
+		}
+
+		/// <summary>Close every open menu but the one about to be shown and the chain it hangs
+		/// on. Windows has one menu up at a time; without this a second right click somewhere
+		/// else left the first one standing and put a second beside it.</summary>
+		internal static void CloseAllBut (ToolStripDropDown keep)
+		{
+			foreach (ToolStripDropDown drop in OpenDropDowns ()) {
+				if (ReferenceEquals (drop, keep) || IsAncestorOf (drop, keep))
+					continue;
+				drop.Dismiss (ToolStripDropDownCloseReason.AppClicked);
+			}
+		}
+
+		private static bool IsAncestorOf (ToolStripDropDown maybeParent, ToolStripDropDown drop)
+		{
+			for (ToolStripItem item = drop == null ? null : drop.OwnerItem; item != null; item = item.OwnerItem)
+				if (ReferenceEquals (item.Owner, maybeParent))
+					return true;
+			return false;
 		}
 
 		internal static void FireAppClicked ()
