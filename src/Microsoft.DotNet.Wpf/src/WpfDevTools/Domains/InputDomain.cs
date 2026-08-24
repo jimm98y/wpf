@@ -2,37 +2,35 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// Input: driving the app from the panel, over the screencast.
+// Input: driving the app from the panel, through the platform's own entry point.
 //
-// BE CLEAR ABOUT WHAT THIS IS. It is not operating-system input. WPF's real
-// input path starts at an InputReport raised by the platform head, and both the
-// report types and the heads' injection points are internal to PresentationCore
-// -- which this assembly deliberately cannot reach, because reaching them is
-// what would turn the inspector into a circular reference. There is no public
-// API that injects a mouse event into a running WPF app on macOS.
+// Events go in where a REAL one goes in -- on macOS, CocoaWindow.InjectMouse, which is
+// what AppKit's own reporting calls -- and from there through
+// HwndMouseInputProvider and the InputManager exactly as a physical mouse would.
+// So capture, hover states, Mouse.DirectlyOver, drag, text selection, scrollbar
+// thumbs and hit testing all simply work, because nothing about them is being
+// approximated.
 //
-// So a dispatched event does two things instead:
+// This replaced a pile of simulation: routed events raised by hand, automation
+// peers invoked to make a Button click, thumb drags reconstructed through
+// Track.ValueFromDistance, text selection driven by GetCharacterIndexFromPoint.
+// All of it was working around one fact -- MouseEventArgs.GetPosition and
+// CaptureMouse read the MouseDevice, not the event -- so a handler written the
+// ordinary way (capture on down, GetPosition on move) saw the real cursor,
+// wherever that happened to be. None of that arithmetic has to exist if the
+// device is told where the mouse is, which is what injection does.
 //
-//   1. raises the corresponding ROUTED event on the element under the point, so
-//      an app's own MouseDown/MouseUp/KeyDown handlers and command bindings run;
-//   2. on a click, invokes the element's AUTOMATION PEER, which is the supported
-//      programmatic way to activate a control and the mechanism the a11y bridge
-//      on every head already uses. This is what makes a Button actually click:
-//      ButtonBase raises Click from its own capture handling, which a synthetic
-//      routed MouseUp does not reproduce.
-//
-// What you therefore do NOT get: mouse capture, hover visual states,
-// Mouse.DirectlyOver, drag. Those need the real device. Anything relying on
-// them will not respond, and that is a limit of the seam rather than a bug to
-// be fixed here.
+// The seam is per head, because input entry is. macOS is implemented; the other
+// heads each have their own equivalent (BrowserWindow's queue, the Wayland and
+// UIKit and Android backends) and are one method each. Where there is none, a
+// dispatched event is reported as unsupported rather than half-delivered.
 //
 
 using System;
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Automation.Peers;
-using System.Windows.Automation.Provider;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Wpf.DevTools.Json;
 
@@ -40,7 +38,26 @@ namespace Microsoft.Wpf.DevTools.Domains
 {
     internal sealed class InputDomain : ICdpDomain
     {
+        // Raw NSEventType values, the vocabulary CocoaWindow reports in.
+        private const int NSLeftMouseDown = 1, NSLeftMouseUp = 2;
+        private const int NSRightMouseDown = 3, NSRightMouseUp = 4;
+        private const int NSMouseMoved = 5, NSLeftMouseDragged = 6, NSRightMouseDragged = 7;
+        private const int NSScrollWheel = 22;
+        private const int NSOtherMouseDown = 25, NSOtherMouseUp = 26, NSOtherMouseDragged = 27;
+
+        /// <summary>CDP's buttons bitmask.</summary>
+        private const int LeftButtonHeld = 1, RightButtonHeld = 2, MiddleButtonHeld = 4;
+
+        /// <summary>
+        /// Pixels the frontend reports for one wheel notch. CDP speaks pixels; a Cocoa wheel
+        /// message carries WPF units, 120 to a notch.
+        /// </summary>
+        private const double WheelPixelsPerNotch = 100.0;
+
         private readonly CdpSession _session;
+
+        /// <summary>Where the injected pointer was last put, so a move can precede anything else.</summary>
+        private int _lastX = int.MinValue, _lastY = int.MinValue;
 
         internal InputDomain(CdpSession session)
         {
@@ -79,147 +96,130 @@ namespace Microsoft.Wpf.DevTools.Domains
         private void DispatchMouse(JsonElement p)
         {
             string type = CdpJson.GetString(p, "type") ?? string.Empty;
-            double x = CdpJson.GetDouble(p, "x");
-            double y = CdpJson.GetDouble(p, "y");
+            var point = new Point(CdpJson.GetDouble(p, "x"), CdpJson.GetDouble(p, "y"));
 
-            // The picker takes precedence over clicking. "Select element" driven over the
-            // SCREENCAST arrives here rather than at the real window's mouse events, so a
-            // hover has to highlight and a press has to select -- not press the button that
-            // happens to be under the cursor.
+            // The picker takes precedence: "Select element" driven over the screencast
+            // arrives as mouse events, and a hover there has to highlight rather than reach
+            // the app at all.
             if (_session.Overlay.InspectModeActive)
             {
                 if (type == "mouseMoved")
-                    _session.Overlay.HighlightAt(new Point(x, y));
+                    _session.Overlay.HighlightAt(point);
                 else if (type == "mousePressed")
-                    _session.Overlay.PickAt(new Point(x, y));
+                    _session.Overlay.PickAt(point);
                 return;
             }
 
-            // Only the release is acted on. A press/release pair would otherwise
-            // activate the control twice, and CDP always sends both.
-            if (type != "mousePressed" && type != "mouseReleased")
+            if (!TryResolveTarget(point, out IntPtr view, out int x, out int y))
                 return;
 
-            if (!TryHitTest(new Point(x, y), out UIElement? target) || target == null)
-                return;
+            int buttons = CdpJson.GetInt(p, "buttons");
+            string button = CdpJson.GetString(p, "button") ?? "none";
 
-            MouseButton button = (CdpJson.GetString(p, "button") ?? "left") switch
+            // Put the pointer there first, if it is not there already.
+            //
+            // A real mouse is somewhere before it clicks or scrolls, and WPF relies on that:
+            // Mouse.DirectlyOver is established by movement, and a wheel arriving at a position
+            // the device has never been reported at scrolls nothing. The gallery's own input
+            // self-test opens with a move for the same reason.
+            if (type != "mouseMoved" && (x != _lastX || y != _lastY))
+                MoveTo(view, buttons, x, y);
+
+            switch (type)
             {
-                "right" => MouseButton.Right,
-                "middle" => MouseButton.Middle,
-                _ => MouseButton.Left,
-            };
+                case "mousePressed":
+                    PlatformInput.Mouse(view, DownType(button), ButtonNumber(button), x, y, 0);
+                    break;
 
-            RaiseMouseEvent(target, type, button);
+                case "mouseReleased":
+                    PlatformInput.Mouse(view, UpType(button), ButtonNumber(button), x, y, 0);
+                    break;
 
-            if (type == "mouseReleased" && button == MouseButton.Left)
-                InvokeAutomationPeer(target);
-        }
+                case "mouseMoved":
+                    MoveTo(view, buttons, x, y);
+                    break;
 
-        private static void RaiseMouseEvent(UIElement target, string type, MouseButton button)
-        {
-            try
-            {
-                bool pressed = type == "mousePressed";
-                RoutedEvent preview = pressed ? Mouse.PreviewMouseDownEvent : Mouse.PreviewMouseUpEvent;
-                RoutedEvent bubbling = pressed ? Mouse.MouseDownEvent : Mouse.MouseUpEvent;
-
-                target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button)
-                {
-                    RoutedEvent = preview,
-                    Source = target,
-                });
-
-                target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button)
-                {
-                    RoutedEvent = bubbling,
-                    Source = target,
-                });
-            }
-            catch (Exception ex)
-            {
-                DevToolsServer.Log($"synthetic mouse event failed: {ex.GetType().Name}: {ex.Message}");
+                case "mouseWheel":
+                    int wheel = (int)Math.Round(-CdpJson.GetDouble(p, "deltaY") / WheelPixelsPerNotch
+                                                * Mouse.MouseWheelDeltaForOneLine);
+                    if (wheel != 0)
+                        PlatformInput.Mouse(view, NSScrollWheel, 0, x, y, wheel);
+                    break;
             }
         }
 
         /// <summary>
-        /// Activate the control the supported way. Walks up from the hit visual,
-        /// because a click lands on whatever primitive the template put there
-        /// (a Border, a ContentPresenter) and the peer that can be invoked belongs
-        /// to the control that owns them.
+        /// Move the pointer. A move with a button held is a DRAG, and AppKit says so with a
+        /// distinct event type; reporting it as a plain move loses the drag on anything that
+        /// tells them apart.
         /// </summary>
-        private static void InvokeAutomationPeer(UIElement target)
+        private void MoveTo(IntPtr view, int buttons, int x, int y)
         {
-            DependencyObject? current = target;
-
-            while (current != null)
-            {
-                if (current is UIElement element)
-                {
-                    AutomationPeer? peer = UIElementAutomationPeer.CreatePeerForElement(element);
-                    if (peer != null)
-                    {
-                        try
-                        {
-                            if (peer.GetPattern(PatternInterface.Invoke) is IInvokeProvider invoke)
-                            {
-                                invoke.Invoke();
-                                return;
-                            }
-
-                            if (peer.GetPattern(PatternInterface.Toggle) is IToggleProvider toggle)
-                            {
-                                toggle.Toggle();
-                                return;
-                            }
-
-                            if (peer.GetPattern(PatternInterface.SelectionItem) is ISelectionItemProvider select)
-                            {
-                                select.Select();
-                                return;
-                            }
-
-                            if (peer.GetPattern(PatternInterface.ExpandCollapse) is IExpandCollapseProvider expand)
-                            {
-                                expand.Expand();
-                                return;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            DevToolsServer.Log($"automation invoke failed: {ex.GetType().Name}: {ex.Message}");
-                            return;
-                        }
-                    }
-                }
-
-                current = VisualTreeHelper.GetParent(current);
-            }
+            PlatformInput.Mouse(view, MovedType(buttons), 0, x, y, 0);
+            _lastX = x;
+            _lastY = y;
         }
 
-        private static bool TryHitTest(Point point, out UIElement? target)
+        private static int DownType(string button) => button switch
         {
-            target = null;
+            "right" => NSRightMouseDown,
+            "middle" => NSOtherMouseDown,
+            _ => NSLeftMouseDown,
+        };
+
+        private static int UpType(string button) => button switch
+        {
+            "right" => NSRightMouseUp,
+            "middle" => NSOtherMouseUp,
+            _ => NSLeftMouseUp,
+        };
+
+        private static int MovedType(int buttons)
+        {
+            if ((buttons & LeftButtonHeld) != 0) return NSLeftMouseDragged;
+            if ((buttons & RightButtonHeld) != 0) return NSRightMouseDragged;
+            if ((buttons & MiddleButtonHeld) != 0) return NSOtherMouseDragged;
+            return NSMouseMoved;
+        }
+
+        private static int ButtonNumber(string button) => button switch
+        {
+            "right" => 1,
+            "middle" => 2,
+            _ => 0,
+        };
+
+        /// <summary>
+        /// The window a page-space point belongs to, and that point in the client DEVICE
+        /// pixels the platform reports in. The frontend speaks device-independent pixels; a
+        /// Cocoa message does not, and skipping the conversion puts every event at a fraction
+        /// of where it should be on a scaled display.
+        /// </summary>
+        private static bool TryResolveTarget(Point page, out IntPtr view, out int x, out int y)
+        {
+            view = IntPtr.Zero;
+            x = y = 0;
 
             foreach (Visual root in VisualTreeModel.VisualRoots())
             {
                 try
                 {
-                    HitTestResult result = VisualTreeHelper.HitTest(root, point);
-                    DependencyObject? hit = result?.VisualHit;
-
-                    while (hit != null && (VisualTreeModel.IsInspectorOwned(hit) || hit is not UIElement))
-                        hit = VisualTreeHelper.GetParent(hit);
-
-                    if (hit is UIElement element)
+                    if (PresentationSource.FromVisual(root) is not HwndSource source ||
+                        source.Handle == IntPtr.Zero)
                     {
-                        target = element;
-                        return true;
+                        continue;
                     }
+
+                    Point device = source.CompositionTarget?.TransformToDevice.Transform(page) ?? page;
+
+                    view = source.Handle;
+                    x = (int)Math.Round(device.X);
+                    y = (int)Math.Round(device.Y);
+                    return true;
                 }
                 catch
                 {
-                    // A root mid-teardown; try the next one.
+                    // Mid-teardown; try the next root.
                 }
             }
 
@@ -234,96 +234,43 @@ namespace Microsoft.Wpf.DevTools.Domains
         {
             string type = CdpJson.GetString(p, "type") ?? string.Empty;
 
-            // "char" carries the text; keyDown/keyUp carry the physical key. Text is
-            // the half that actually reaches a TextBox, so it is handled separately.
+            // "char" carries the text, which is the half that reaches a text box.
             if (type == "char")
             {
                 InsertText(CdpJson.GetString(p, "text"));
                 return;
             }
 
-            if (type != "keyDown" && type != "rawKeyDown" && type != "keyUp")
+            bool down = type is "keyDown" or "rawKeyDown";
+            if (!down && type != "keyUp")
                 return;
 
-            IInputElement? focused = Keyboard.FocusedElement;
-            if (focused is not UIElement element)
+            if (!TryResolveWindow(out IntPtr view))
                 return;
 
-            string? key = CdpJson.GetString(p, "key");
-            if (!TryMapKey(key, out Key mapped))
-                return;
-
-            PresentationSource? source = PresentationSource.FromDependencyObject(element);
-            if (source == null)
-                return;
-
-            try
-            {
-                bool down = type != "keyUp";
-                element.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, mapped)
-                {
-                    RoutedEvent = down ? Keyboard.PreviewKeyDownEvent : Keyboard.PreviewKeyUpEvent,
-                });
-                element.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, mapped)
-                {
-                    RoutedEvent = down ? Keyboard.KeyDownEvent : Keyboard.KeyUpEvent,
-                });
-            }
-            catch (Exception ex)
-            {
-                DevToolsServer.Log($"synthetic key event failed: {ex.GetType().Name}: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Text goes in through the Value pattern rather than as characters, for the
-        /// same reason a click goes through Invoke: it is the supported way in, and
-        /// synthetic TextInput does not reach a TextBox's editor.
-        /// </summary>
-        private static void InsertText(string? text)
-        {
+            string? text = CdpJson.GetString(p, "text");
             if (string.IsNullOrEmpty(text))
-                return;
+                text = CdpJson.GetString(p, "key");
 
-            if (Keyboard.FocusedElement is not UIElement element)
-                return;
-
-            AutomationPeer? peer = UIElementAutomationPeer.CreatePeerForElement(element);
-            if (peer?.GetPattern(PatternInterface.Value) is not IValueProvider value || value.IsReadOnly)
-                return;
-
-            try
-            {
-                value.SetValue((value.Value ?? string.Empty) + text);
-            }
-            catch (Exception ex)
-            {
-                DevToolsServer.Log($"insertText failed: {ex.GetType().Name}: {ex.Message}");
-            }
+            PlatformInput.Key(view, down, CdpJson.GetInt(p, "nativeVirtualKeyCode"),
+                              text ?? string.Empty, CdpJson.GetInt(p, "modifiers"));
         }
 
-        /// <summary>
-        /// CDP key names to WPF's Key enum. Single characters and digits map by
-        /// name; everything else is a named key that Enum.TryParse already knows,
-        /// which covers Enter/Tab/Escape/arrows without a table to keep in step.
-        /// </summary>
-        private static bool TryMapKey(string? key, out Key mapped)
+        private void InsertText(string? text)
         {
-            mapped = Key.None;
+            if (string.IsNullOrEmpty(text) || !TryResolveWindow(out IntPtr view))
+                return;
 
-            if (string.IsNullOrEmpty(key))
-                return false;
-
-            if (key.Length == 1)
+            // A key down/up pair carrying the characters, which is how a real typed character
+            // arrives -- the text input provider reads the characters, not the key code.
+            foreach (char c in text)
             {
-                char c = char.ToUpperInvariant(key[0]);
-                if (c is >= 'A' and <= 'Z')
-                    return Enum.TryParse(c.ToString(), out mapped);
-                if (c is >= '0' and <= '9')
-                    return Enum.TryParse("D" + c, out mapped);
+                PlatformInput.Key(view, down: true, keyCode: 0, c.ToString(), modifiers: 0);
+                PlatformInput.Key(view, down: false, keyCode: 0, c.ToString(), modifiers: 0);
             }
-
-            return Enum.TryParse(key, ignoreCase: true, out mapped) && mapped != Key.None;
         }
+
+        private static bool TryResolveWindow(out IntPtr view)
+            => TryResolveTarget(new Point(0, 0), out view, out _, out _);
     }
 }

@@ -2157,6 +2157,31 @@ namespace MS.Internal.Interop
         public static event Action<CocoaMouseMessage> MouseInput;
 
         // NSEventType values we translate.
+        /// <summary>
+        /// Deliver a mouse event as if AppKit had reported it.
+        ///
+        /// This is the ONLY way to drive a WPF app from outside without a real mouse. Raising
+        /// routed events by hand does not work for anything that matters: MouseEventArgs.GetPosition
+        /// reads the position from the MouseDevice, not from the event, and CaptureMouse works on
+        /// the device too -- so a drag handler written the ordinary way (capture on down, read
+        /// GetPosition on move) sees the real cursor, wherever that happens to be. Going in here
+        /// instead reaches HwndMouseInputProvider, which is the path a real event takes, so the
+        /// device's position and capture state update and every gesture behaves normally.
+        ///
+        /// Coordinates are client DEVICE PIXELS with a top-left origin, matching CocoaMouseMessage.
+        /// nsType is a raw NSEventType (1 left-down, 2 left-up, 5 moved, 6 left-dragged, 22 wheel).
+        /// </summary>
+        internal static void InjectMouse(IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel)
+        {
+            MouseInput?.Invoke(new CocoaMouseMessage(view, nsType, buttonNumber, x, y, wheel, Environment.TickCount));
+        }
+
+        /// <summary>Deliver a key event as if AppKit had reported it. See InjectMouse.</summary>
+        internal static void InjectKey(CocoaKeyMessage message)
+        {
+            KeyInput?.Invoke(message);
+        }
+
         private const ulong NSLeftMouseDown = 1, NSLeftMouseUp = 2, NSRightMouseDown = 3, NSRightMouseUp = 4,
                             NSMouseMoved = 5, NSLeftMouseDragged = 6, NSRightMouseDragged = 7,
                             NSScrollWheel = 22, NSOtherMouseDown = 25, NSOtherMouseUp = 26, NSOtherMouseDragged = 27;

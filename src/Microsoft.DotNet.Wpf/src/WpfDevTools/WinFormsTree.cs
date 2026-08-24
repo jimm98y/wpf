@@ -163,6 +163,47 @@ namespace Microsoft.Wpf.DevTools
             }
         }
 
+        /// <summary>
+        /// The deepest visible control containing a point, in the same window space the
+        /// bounds are reported in. Null when the point is over no hosted control.
+        ///
+        /// Needed because a hosted control tree is NOT in the WPF visual tree:
+        /// VisualTreeHelper.HitTest over the window finds the hosting element and stops, so
+        /// without this a click over a WinForms card lands on the host and goes nowhere.
+        /// </summary>
+        internal static object? HitTest(Point point)
+        {
+            Probe();
+
+            foreach (object root in Roots())
+            {
+                object? hit = Descend(root, point);
+                if (hit != null)
+                    return hit;
+            }
+
+            return null;
+
+            static object? Descend(object control, Point point)
+            {
+                if (!TryGetBounds(control, out Rect bounds) || !bounds.Contains(point))
+                    return null;
+
+                // Children are drawn over their parent, so the deepest hit wins.
+                foreach (object child in Children(control))
+                {
+                    if (!Bool(s_visible, child, fallback: true))
+                        continue;
+
+                    object? deeper = Descend(child, point);
+                    if (deeper != null)
+                        return deeper;
+                }
+
+                return control;
+            }
+        }
+
         internal static string? NameOf(object node)
         {
             string? name = s_name?.GetValue(node) as string;
@@ -195,13 +236,39 @@ namespace Microsoft.Wpf.DevTools
                 if (width <= 0 || height <= 0)
                     return false;
 
+                // Position within the owning Form, by summing Left/Top up the parent chain.
                 int x = 0, y = 0;
-                object? current = node;
-                while (current != null && s_parent?.GetValue(current) is object parent)
+                object? form = node;
+                for (object? current = node; current != null; current = s_parent?.GetValue(current))
                 {
+                    form = current;
+                    if (s_parent?.GetValue(current) is null)
+                        break;
+
                     x += Int(s_left, current);
                     y += Int(s_top, current);
-                    current = parent;
+                }
+
+                // ...plus wherever that Form is inside the WPF window, when it is hosted.
+                //
+                // Form-relative alone is right for a standalone WinForms app and wrong the
+                // moment the form is hosted: the whole control tree then reports as if it
+                // began at the window's top-left, so every highlight lands in the corner.
+                //
+                // Control.PointToScreen cannot supply the offset -- a hosted form has no OS
+                // window of its own, and it answers with driver-space numbers that are not
+                // screen coordinates (measured: y=-58 for a form sitting at y=140).
+                if (TryFindHostOrigin(form, out Point origin))
+                {
+                    x += (int)origin.X;
+                    y += (int)origin.Y;
+                }
+                else if (VisualTreeModel.VisualRoots().Count > 0)
+                {
+                    // Hosted, but the host could not be located. Reporting form-relative
+                    // coordinates here would put the highlight somewhere confidently wrong;
+                    // no box at least says "not known".
+                    return false;
                 }
 
                 bounds = new Rect(x, y, width, height);
@@ -209,6 +276,63 @@ namespace Microsoft.Wpf.DevTools
             }
             catch
             {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Where a hosted Form's client origin sits in the WPF window.
+        ///
+        /// The hosting element's client area IS the form's client area on this stack -- the
+        /// host places the form there and maps input through the same correspondence -- so
+        /// the element's origin is the offset wanted. It is found by matching an element
+        /// whose type is a host and whose rendered size is the form's, because nothing public
+        /// exposes the pairing: IWinFormsHost carries no placement, and the WPF side keeps the
+        /// offset in a private field.
+        ///
+        /// False when no such element is found, which the caller treats as "unknown" rather
+        /// than assuming zero.
+        /// </summary>
+        private static bool TryFindHostOrigin(object? form, out Point origin)
+        {
+            origin = default;
+
+            if (form == null)
+                return false;
+
+            int width = Int(s_width, form);
+            int height = Int(s_height, form);
+            if (width <= 0 || height <= 0)
+                return false;
+
+            foreach (System.Windows.Media.Visual root in VisualTreeModel.VisualRoots())
+            {
+                if (Search(root, width, height, out origin))
+                    return true;
+            }
+
+            return false;
+
+            static bool Search(DependencyObject node, int width, int height, out Point origin)
+            {
+                origin = default;
+
+                if (node is FrameworkElement element &&
+                    element.GetType().Name.EndsWith("Host", StringComparison.Ordinal) &&
+                    Math.Abs(element.RenderSize.Width - width) < 1.0 &&
+                    Math.Abs(element.RenderSize.Height - height) < 1.0 &&
+                    VisualTreeModel.TryGetBounds(element, out Rect bounds))
+                {
+                    origin = bounds.Location;
+                    return true;
+                }
+
+                foreach (object child in VisualTreeModel.Children(node))
+                {
+                    if (child is DependencyObject d && Search(d, width, height, out origin))
+                        return true;
+                }
+
                 return false;
             }
         }

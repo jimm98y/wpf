@@ -391,6 +391,11 @@ namespace Microsoft.Wpf.DevTools
         /// </summary>
         internal static object? HitTest(Point point)
         {
+            // Hosted content first: it is drawn OVER the element hosting it, and it is not in
+            // the visual tree at all, so a WPF hit test would find the host and stop there.
+            if (WinFormsTree.Available && WinFormsTree.HitTest(point) is object control)
+                return control;
+
             foreach (Visual root in VisualRoots())
             {
                 try

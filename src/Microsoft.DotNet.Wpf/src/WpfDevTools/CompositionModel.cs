@@ -66,6 +66,7 @@ namespace Microsoft.Wpf.DevTools
         private static MethodInfo? s_visualByHandle;
         private static MethodInfo? s_dumpOps;
         private static MethodInfo? s_dumpState;
+        private static MethodInfo? s_captureComposed;
         private static Type? s_sceneVisualType;
         private static Type? s_primitiveType;
         private static PropertyInfo? s_sceneChildren;
@@ -405,6 +406,46 @@ namespace Microsoft.Wpf.DevTools
         /// </summary>
         internal static string OpHistogram() => Invoke(s_dumpOps);
 
+        /// <summary>
+        /// The frame as the renderer composes it -- WPF plus any hosted scenes. Null when
+        /// there is no renderer, which leaves the caller to re-render the visual tree instead
+        /// and accept that hosted content will be missing from it.
+        /// </summary>
+        internal static byte[]? CaptureComposedFrame(out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            Probe();
+
+            object? sink = null;
+            try
+            {
+                sink = s_current?.GetValue(null);
+            }
+            catch
+            {
+            }
+
+            if (sink == null || s_captureComposed == null)
+                return null;
+
+            try
+            {
+                object?[] args = new object?[] { 0, 0 };
+                byte[]? rgba = s_captureComposed.Invoke(sink, args) as byte[];
+                if (rgba == null)
+                    return null;
+
+                width = args[0] is int w ? w : 0;
+                height = args[1] is int h ? h : 0;
+                return width > 0 && height > 0 ? rgba : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>Resource-table counts: visuals, geometries, brushes, pens, transforms.</summary>
         internal static string State() => Invoke(s_dumpState);
 
@@ -471,6 +512,7 @@ namespace Microsoft.Wpf.DevTools
                 s_visuals = engineType.GetProperty("Visuals", Instance);
                 s_dumpOps = engineType.GetMethod("DumpOps", Instance, null, Type.EmptyTypes, null);
                 s_dumpState = engineType.GetMethod("DumpState", Instance, null, Type.EmptyTypes, null);
+                s_captureComposed = sinkType.GetMethod("CaptureComposed", Instance);
                 s_visualByHandle = engineType.GetMethod("VisualByHandle", Instance, null, new[] { typeof(uint) }, null);
 
                 s_sceneVisualType = s_visualByHandle?.ReturnType ?? s_root?.PropertyType;

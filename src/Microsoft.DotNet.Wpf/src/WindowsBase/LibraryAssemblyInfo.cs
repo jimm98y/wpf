@@ -18,6 +18,13 @@ using System.Runtime.CompilerServices;
 // The inspector ITSELF uses only public API and needs no grant.
 [assembly: InternalsVisibleTo("Wpf.DevTools.Tests, PublicKey=00000000000000000400000000000000")]
 
+// The CDP inspector itself (src/WpfDevTools). It drives a running app from the DevTools
+// screencast, and the only way to do that faithfully is CocoaWindow.InjectMouse/InjectKey --
+// the path a real AppKit event takes. Synthesised routed events cannot substitute: GetPosition
+// and CaptureMouse both read the MouseDevice, so a drag handler written the ordinary way sees
+// the real cursor rather than the one in the panel.
+[assembly: InternalsVisibleTo("Microsoft.Wpf.DevTools, PublicKey=00000000000000000400000000000000")]
+
 // The cross-platform printing tests (tests/CrossPlatform/Wpf.Printing.Tests). They install a stand-in
 // print backend through PlatformPrint, which is the only way to exercise the printing stack on a
 // machine that has no printers -- and the only way to assert on what a backend is HANDED, which is

@@ -29,7 +29,7 @@ The mapping is close to exact, and in one place it is better than what Windows g
 | box model | `RenderSize` + `Margin`/`BorderThickness`/`Padding` |
 | hover highlight | an `Adorner` on the real window |
 | element picker | `VisualTreeHelper.HitTest` |
-| screencast | `RenderTargetBitmap` over the root visual |
+| screencast | the renderer's composed frame (`RenderTargetBitmap` as fallback) |
 
 The Styles pane is the part worth the trouble. `DependencyPropertyHelper.GetValueSource`
 says where a value came from — Local, Style, ParentTemplate, StyleTrigger, Inherited — and
@@ -80,6 +80,42 @@ The renderer is reached by reflection, deliberately — PresentationCore loads i
 too, so an app running with `WPF_USE_WEBGPU_COMPOSITION=0` still gets an inspector, just
 without this section.
 
+### The composition target
+
+The endpoint advertises **two** targets, because there are two trees and they answer different
+questions:
+
+```
+wpf          WPF Gallery          ws://127.0.0.1:9222/devtools/page/wpf
+composition  MILCMD scene graph   ws://127.0.0.1:9222/devtools/page/composition
+```
+
+Attach to `composition` and the decoded graph is an ordinary Elements panel of its own —
+`SceneVisual`s with their transforms and clips, and **drawing primitives as child nodes**
+(`GeometryFill`, `GeometryDrawing`, `GlyphRunDraw`), so "what does the compositor actually draw
+for this element" is something you expand into rather than a count:
+
+```
+Composition targets=1 visuals=577 renderData=218 solidBrushes=24 geometries=70 pens=3
+  SceneVisual id=0x5  element=MainWindow  Offset=<0 0> Opacity=1
+    SceneVisual id=0x6  element=Border
+      GeometryFill  BaselineAnchor=<0 12> IsGlyph=True
+```
+
+Select the `Composition` root and read Computed for the **MILCMD op histogram**: every command,
+record and resource kind the decoder has seen, with counts. That is what distinguishes "WPF
+never sent the command" from "the decoder ignored it", which no per-node view can answer.
+
+The two trees are joined by the DUCE handle, both ways — an element reports its handle, and a
+scene node reports the `element` it was decoded from and borrows that element's bounds so it can
+be highlighted and picked. `SceneVisual.Id` is NOT that handle: it is the hit-test id, zero
+almost everywhere, and using it left every node anonymous. The handles come from the engine's
+own table (`MilcoreEngine.Visuals`).
+
+Scene-node properties are reflected generically rather than per type — a `GlyphRunDraw` and a
+`GeometryStroke` share only a base class, and the renderer grows new primitive kinds — so new
+kinds appear without this being taught about them.
+
 ## Editing
 
 Edit an **attribute** on a node in the Elements panel and the live dependency property
@@ -89,6 +125,23 @@ attribute calls `ClearValue`, restoring whatever was underneath.
 
 The **Styles** pane is read-only. Its editor needs source ranges in a document it can
 rewrite, and there is no such document behind a dependency property.
+
+## Screencast frames
+
+Frames come from the renderer's own composed render — the WPF scene WITH any hosted scenes
+merged in — not from `RenderTargetBitmap`. RTB re-renders the WPF *visual tree*, and a hosted
+control tree is a separate `SceneVisual` graph merged in at render time, so a `WindowsFormsHost`
+card simply does not appear in an RTB capture, with nothing to say why.
+
+That composed frame covers the CLIENT area, which is not the root visual's box: the root's
+`RenderSize` includes WindowChrome's non-client band (measured 3840x1049 against a 3850x1087
+root). Same origin, smaller extent — so the page size reported in the metadata is the FRAME's
+extent, not the root's. Reporting the root's would put the frontend's click mapping out by the
+difference, silently.
+
+Frames are flattened onto opaque white, because that non-client band is transparent and the
+frontend composites onto black, so it otherwise arrives as a border painted round the picture.
+Flattening rather than cropping keeps the image's extent equal to the page's.
 
 ## Frontend behaviour worth knowing
 
@@ -118,16 +171,38 @@ second delivery makes it rebuild that subtree under fresh node objects while the
 drawing still holds the first set, so every later expansion lands on nodes nothing is
 showing. Send them in the `getDocument` response instead.
 
+## Input
+
+Input goes in where a real event goes in. `Input.dispatchMouseEvent` and
+`dispatchKeyEvent` are delivered through the platform head's own entry point — on macOS
+`CocoaWindow.InjectMouse`, which is what AppKit's reporting calls — so they travel the same
+path as a physical mouse. Capture, hover states, `Mouse.DirectlyOver`, drag, text selection
+and scrollbar thumbs all behave normally, because none of it is being approximated.
+
+This is the only arrangement that works. `MouseEventArgs.GetPosition` and
+`UIElement.CaptureMouse` read the `MouseDevice`, never the event, so routed events raised by
+hand leave a drag handler written the ordinary way (capture on down, `GetPosition` on move)
+looking at the real cursor wherever it happens to be. An earlier version of this simulated
+its way around that — automation peers to make a `Button` click, `Track.ValueFromDistance`
+to reconstruct a thumb drag, `GetCharacterIndexFromPoint` for text selection — and every one
+of those went away when the events started arriving properly.
+
+Two things the real path needs and simulation did not. A move has to PRECEDE a click or a
+wheel: a real mouse is somewhere before it acts, `Mouse.DirectlyOver` is established by
+movement, and a wheel at a position the device was never told about scrolls nothing. And a
+move with a button held is a distinct event type (`NSLeftMouseDragged`, not `NSMouseMoved`) —
+reporting it as a plain move loses the drag on anything that tells them apart.
+
+The seam is per head, because input entry is: `PlatformInput` is one method each. **macOS is
+implemented**; the browser, Wayland, UIKit and Android backends each have an equivalent entry
+point and are one method away. Where there is none, a dispatched event is reported as
+unsupported rather than half-delivered.
+
+While the element picker is armed, mouse events go to the picker instead — that is how
+"Select element" works when driven over the screencast rather than over the real window.
+
 ## What does not work, and why
 
-- **Input is not OS-level input.** WPF's real input path starts at an `InputReport` raised by
-  the platform head, and both the report types and the heads' injection points are internal to
-  PresentationCore — which the inspector deliberately cannot reference. `Input.dispatchMouseEvent`
-  therefore raises the routed events *and* invokes the element's automation peer, which is what
-  makes a `Button` actually click. You do not get mouse capture, hover visual states,
-  `Mouse.DirectlyOver`, or drag. While the element picker is armed, mouse events go to the
-  picker instead — that is how "Select element" works when driven over the screencast rather
-  than over the real window.
 - **Live tree deltas are opt-in.** Subscribing to `VisualDiagnostics.VisualTreeChanged` arms
   `VerifyVisualTreeChange` inside PresentationCore, which makes re-entrant tree mutation throw
   in an app that was working fine until someone opened the inspector. The default is a polled
@@ -167,8 +242,18 @@ WinForms is reached entirely by reflection. This assembly is one AnyCPU build sh
 head and most never deploy a `System.Windows.Forms`; a compile-time reference would make the
 inspector fail to load on a plain WPF app.
 
-**Editing and highlighting are WPF-only.** A WinForms property is an ordinary CLR member with
-no `ClearValue` and no dependency-property contract, and the highlight is an `Adorner`.
+Hosted controls are hit-tested and highlighted like anything else. Their bounds are summed
+from `Left`/`Top` up to the owning `Form` and then anchored on the hosting element's box — the
+host places the form there, so the element's origin IS the form's client origin. `PointToScreen`
+cannot supply that offset: a hosted form has no OS window and answers with driver-space numbers.
+When no host can be located in a process that has WPF, a control reports NO bounds rather than
+form-relative ones, because a confidently-wrong highlight is worse than none.
+
+Input reaches hosted controls through the host's own forwarding, so nothing special is needed
+for a click to land on a WinForms button.
+
+**Editing is WPF-only.** A WinForms property is an ordinary CLR member with no `ClearValue` and
+no dependency-property contract.
 
 **A WinForms app that deploys no WPF cannot load the inspector at all.** `Microsoft.Wpf.DevTools`
 references `PresentationFramework`, and an SDK-built `UseWindowsForms`-only app gets no WPF
