@@ -8,4 +8,7 @@
   <!-- Referenced by PresentationCore / WindowsBase; kept whole so mono-aot-cross can resolve them. -->
   <assembly fullname="System.Private.Windows.Core" preserve="all" />
   <assembly fullname="System.Security.Cryptography.Xml" preserve="all" />
+  <!-- The CDP visual-tree inspector. Reached by Assembly.Load with nothing pointing at it
+       statically, so trimming removes it and the endpoint silently never comes up. -->
+  <assembly fullname="Microsoft.Wpf.DevTools" preserve="all" />
 </linker>

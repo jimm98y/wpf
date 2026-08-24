@@ -202,6 +202,7 @@
     <Reference Include="DirectWriteForwarder"><HintPath>..\..\artifacts\bin\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Aero2"><HintPath>..\..\artifacts\bin\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.DevTools"><HintPath>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
     <Reference Include="PresentationFramework.Classic"><HintPath>..\..\artifacts\bin\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI"><HintPath>..\..\artifacts\bin\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
     <!-- The api-cycle System.Printing lacks XpsDocumentWriter, which mono-wasm resolves
@@ -217,7 +218,14 @@
          PackageReferences (System.IO.Packaging / System.Windows.Extensions /
          System.Configuration.ConfigurationManager) as FRAMEWORK-provided — so they'd be dropped from the
          app bundle (the browser-wasm runtime pack doesn't ship them) and WPF fails to boot. -->
-    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <!-- The path must be the BUILT implementation, as the mac head uses. It previously pointed at a
+         WinFormsInterop\lib\ directory that does not exist, and a HintPath that misses is not an
+         error: RAR quietly falls back, and here it fell back to microsoft.windowsdesktop.app.ref,
+         whose Accessibility.dll is a reference assembly with no method bodies. That is what got
+         webcil'd into the bundle, so System.Windows.Forms.Control could not build its base chain and
+         every WinForms card died with "Could not set up parent class ... Could not load file or
+         assembly 'Accessibility'". The only warning was one MSB3245 in a long build log. -->
+    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
     <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the shared WinFormsHost card). The
          browser WinForms driver is not yet proven, so the card is guarded (CreateDemoCardOrFallback);
          these are here so the shared gallery sources compile and the card can attempt to init. -->
@@ -295,12 +303,62 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
 
+  <!-- Swap the fork's shims in for the framework's browser stubs, exactly as
+       _WpfWebGpuBrowserOverlayShims does for SDK-built browser heads. This sample predates the
+       packaged SDK and references artifacts/bin directly, so it inherits none of that and was
+       shipping the stubs.
+
+       The framework's browser build of these assemblies throws PlatformNotSupportedException from
+       every member, and their identities beat a plain Reference, so substituting on the publish
+       item list is the only thing that takes: assemblies are webcil'd into _framework rather than
+       copied from disk.
+
+       The hook is ResolvedFileToPublish, NOT the SDK's WasmAssembliesToBundle: that item belongs to
+       the wasm-tools workload and is only populated for native-relink/AOT builds, so an
+       AfterTargets="_GetDefaultWasmAssembliesToBundle" target simply never fires in this head's
+       default (interpreter) publish. Substituting on ResolvedFileToPublish is what
+       _ForcePublishVendoredReflectiveDeps above already does, and it is the list the webcil
+       conversion reads from.
+
+       This was not theoretical. Microsoft.Win32.Registry's stub made MS.Internal.RegistryKeys
+       .ReadLocalMachineBool throw once per automation peer per layout pass, from
+       ContextLayoutManager.fireAutomationEvents: roughly 1400 exceptions in 25 seconds of idle
+       gallery, each one caught and logged by the browser dispatcher's pump. The app kept running and
+       the console was unusable.
+
+       Microsoft.Win32.SystemEvents, which the SDK also swaps, is deliberately absent here: nothing
+       in this head's bundle references it, and Include-ing it would ADD an assembly rather than
+       replace one. -->
+  <Target Name="OverlayBrowserShims" AfterTargets="ComputeResolvedFilesToPublishList" BeforeTargets="ProcessPublishFilesForWasm">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+          Condition="'%(FileName)' == 'Microsoft.Win32.Registry' or '%(FileName)' == 'System.Diagnostics.Process'" />
+      <!-- RelativePath is written out LITERALLY on purpose. Using %(FileName)%(Extension) here, as the
+           vendored-deps target above does, makes MSBuild batch the Include over every bucket of the
+           ResolvedFileToPublish list and add each file once per bucket. The copy task tolerates that;
+           GenerateWasmBootJson does not, and fails with "An item with the same key has already been
+           added" naming the webcil output. -->
+      <ResolvedFileToPublish Include="..\..\artifacts\bin\Microsoft.Win32.Registry\Release\net10.0\Microsoft.Win32.Registry.dll">
+        <RelativePath>Microsoft.Win32.Registry.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="..\..\artifacts\bin\System.Diagnostics.Process\Release\net10.0\System.Diagnostics.Process.dll">
+        <RelativePath>System.Diagnostics.Process.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.
        Must run before static-web-asset discovery (stale integrity hashes otherwise). -->
   <Target Name="CopyWpfInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-window.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-media.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <!-- The inspector's bridge belongs on this list for the same reason as the others. It was not,
+         so wwwroot held a hand-made copy, and edits to the real module (the relay connector among
+         them) simply never reached the page. -->
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\devtools-bridge.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- Stage the bundled fonts and record what was staged, mirroring WpfWebGpuScaffoldWeb in the

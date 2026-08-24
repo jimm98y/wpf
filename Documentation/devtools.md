@@ -212,9 +212,136 @@ soft keyboard's own route — so a dispatched key is reported as unsupported. An
 is injected with keysym 0 and its characters, which reaches a text box but not a key that is
 only a keysym (Tab, the arrows); that needs the XKB mapping reconstructed.
 
-**Only macOS is verified at runtime.** The other four are the same shape, compile against the
-same providers, and each handler matches on the `HwndSource.Handle` that is passed to it — but
-none has been exercised on its own head from here.
+**macOS, Android, iOS and the browser are verified at runtime.** On Android the tree, both targets, wheel
+scrolling and a scrollbar-thumb drag all work over `adb forward tcp:9222 tcp:9222` — and a thumb
+drag is the interesting one, because it needs mouse capture and a device position, which is
+precisely what routed events could not provide. Hover states stay false there, correctly: a
+touch head has no hover.
+
+On iOS the same holds in the simulator, with the wheel working in both directions and
+`IsMouseOver` actually set (Android leaves it false; a touch head has no hover, and the two
+backends differ on that).
+
+The browser head is verified too, message port and all: 591 nodes, a wheel that scrolls and a
+thumb drag that moves the offset from 48 to 1820.
+
+### Attaching a frontend to the browser head
+
+A page cannot accept a connection, so unlike every other head the browser one is a message port
+rather than a server. There are two ways at it.
+
+**With a real Elements panel**, via the relay, which puts a socket in front of the port so the
+target appears in `chrome://inspect` like any other head:
+
+```sh
+python3 -m http.server                      # serve the published wwwroot
+python3 eng/devtools-relay.py               # loopback, port 9223
+# open the app with BOTH switches:  index.html?devtools=1&relay=9223
+# then chrome://inspect -> Configure -> add localhost:9223 -> Inspect
+```
+
+The page dials the relay, the frontend dials the relay, and it pumps between them. Both sides
+reconnect, so the relay and the page can be started in either order and a reload just re-attaches.
+`?relay` alone does nothing without `?devtools`: the port does not exist until the inspector
+starts.
+
+**Without any relay**, driving the port directly — enough for a script, and what the automated
+verification uses, since it needs no second process:
+
+```sh
+chrome --remote-debugging-port=9444 --headless=new --enable-unsafe-webgpu
+# then, over Chrome's OWN CDP: Runtime.evaluate -> __wpfDevTools.send({id, method, params})
+```
+
+or by hand in the page console:
+
+```js
+__wpfDevTools.onmessage = m => console.log(JSON.parse(m));
+__wpfDevTools.send({ id: 1, method: 'DOM.getDocument', params: { depth: -1 } });
+```
+
+Note that the browser's own F12 DevTools inspect the *page* — its DOM, its JS, its wasm. They
+know nothing about the WPF visual tree living inside the canvas. The inspector is a separate CDP
+endpoint and needs its own frontend, attached by one of the routes above.
+
+Two things the browser head needs, both of which fail silently without them: the inspector must
+be a **trimmer root** (`wasm-roots.xml`), and the host page must register the module AND hand
+over the managed exports before `runMain` — the inspector calls back into the module as it
+starts, which is inside `Main`. `samples/wpf-webgpu-gallery-wasm` does both, behind `?devtools`.
+
+**The screencast on this head comes off the canvas, not the renderer.** Both of the sources the
+desktop heads use need a synchronous GPU readback, and WebGPU only maps buffers asynchronously, so
+the composed-frame path returns nothing and the `RenderTargetBitmap` fallback produces a correctly
+sized sheet of white — a pane that looks switched on and shows nothing. The canvas already holds
+the composed image, hosted content included, so `devtools-bridge.js` captures from there.
+
+Two things that path has to get right, both measured rather than assumed:
+
+- **When.** The canvas is readable synchronously, from `setTimeout`, and in the first
+  `requestAnimationFrame` — but *not* in the frame after, which is where the app clears its
+  drawing buffer and where `CompositionTarget.Rendering` fires. Reading on demand therefore
+  captured a blank frame every time. The snapshot is taken on a timer instead and the managed side
+  gets the most recent one, one frame late. A 64x64 downsample rejects the ~7% of captures that
+  still land mid-redraw, so the panel never flickers, and skipping their encode costs nothing.
+- **What format.** Encoding PNG regardless of what was asked for dropped the app itself to about
+  1 fps, because `toDataURL` runs on the thread the WPF pump runs on. Honouring the requested
+  format and quality (a frontend asks for JPEG by default) gives 8.7 fps of screencast with the
+  app still at ~39 fps.
+
+**Only the composition target is out of reach there.** The bridge is a single port and reports
+one target, so the MILCMD scene-graph document cannot be attached to in the browser; the visual
+tree can.
+
+**Linux is not verified** — it needs a Linux box. It is the same shape as the four that are, and
+its handler matches on the `HwndSource.Handle` passed to it, but that was true of the others and
+each still needed unrelated fixes before it would run.
+
+### Running the inspector on a trimmed head
+
+**A trimmed head links the inspector away.** It is reached by `Assembly.Load` and nothing points
+at it statically, which is exactly what trimming removes — so on iOS the app shipped without it
+and the endpoint simply never came up, with no error anywhere. It has to be rooted:
+
+```xml
+<TrimmerRootAssembly Include="Microsoft.Wpf.DevTools" />
+```
+
+`samples/wpf-gallery-ios` does this. The same applies to any head built with `TrimMode=full`,
+which includes the browser.
+
+On iOS the simulator shares the host's loopback, so no port forwarding is needed, and
+`xcrun simctl launch` forwards environment variables as `SIMCTL_CHILD_<VAR>`:
+
+```sh
+SIMCTL_CHILD_WPF_DEVTOOLS=9333 xcrun simctl launch booted com.companyname.WpfGalleryIos
+```
+
+That last point is a trap worth naming: because the simulator and an `adb forward` both land on
+the host's loopback, two heads can answer on the same port. Give each head its own, or you will
+read one head's tree and believe it is another's.
+
+### Running the inspector on Android
+
+Two things differ from a desktop head, and both fail in ways that do not name themselves:
+
+- **An environment variable cannot be handed to the app at launch.** `adb shell setprop
+  debug.mono.env` is ignored for a non-debuggable build, which is every Release build, so the
+  variable has to be baked in with an `AndroidEnvironment` file. `samples/wpf-gallery-android`
+  does this behind `-p:WpfDevToolsEnv=true` rather than always.
+- **Binding a socket needs the `INTERNET` permission**, even for a listener on loopback that
+  nothing off the device can reach. Without it the inspector starts and then reports
+  `could not listen on 127.0.0.1:9222: SocketException: Permission denied`. The same sample adds
+  it through an `AndroidManifestOverlay` under the same condition.
+
+```sh
+dotnet build samples/wpf-gallery-android/WpfGalleryAndroid.csproj -c Release -p:WpfDevToolsEnv=true
+adb install -r .../net.dot.wpf.gallery-Signed.apk
+adb shell am start -n net.dot.wpf.gallery/crc64c4055fd6c1ce9b55.MainActivity
+adb forward tcp:9222 tcp:9222
+```
+
+An Android app also has to REFERENCE the inspector to get it, since assemblies are packaged into
+the APK — dropping it beside the app, which is enough on a desktop head, has nowhere to go.
 
 While the element picker is armed, mouse events go to the picker instead — that is how
 "Select element" works when driven over the screencast rather than over the real window.

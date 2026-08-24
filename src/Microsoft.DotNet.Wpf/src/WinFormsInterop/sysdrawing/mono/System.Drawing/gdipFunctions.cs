@@ -161,7 +161,20 @@ namespace System.Drawing
 
 		static public bool RunningOnWindows ()
 		{
-			return !UseX11Drawable && !UseCarbonDrawable && !UseCocoaDrawable;
+			// Ask the OS instead of INFERRING Windows from "no unix drawable was detected".
+			//
+			// On the browser none of the three unix backends get set: there is no X11, no Carbon and
+			// no Cocoa, and the cctor above never even reaches its uname fallback because
+			// Environment.OSVersion.Platform on wasm is not one of the PlatformID values it tests for.
+			// The old expression therefore concluded "Windows" in a browser, and every caller took a
+			// native Win32 path. KnownColors' cctor is the one that bites: it P/Invoked
+			// user32!GetSysColor, threw DllNotFoundException, and surfaced as a
+			// TypeInitializationException that killed the first WinForms control constructed.
+			//
+			// Every other caller guards Windows-only native work too (GDI+ handles, HBITMAP, metafiles),
+			// so the honest answer is the safe one. This changes nothing on Windows, macOS or Linux,
+			// where the inferred answer already matched the real one.
+			return OperatingSystem.IsWindows ();
 		}
 
 		static public bool RunningOnUnix ()

@@ -3086,6 +3086,7 @@ namespace System.Drawing
 
 		public CompositingQuality CompositingQuality {
 			get {
+                                if (nativeObject == IntPtr.Zero) return CompositingQuality.Default;   // recording-only
                                 CompositingQuality quality;
 
                                 Status status = GDIPlus.GdipGetCompositingQuality (nativeObject, out quality);
@@ -3123,6 +3124,7 @@ namespace System.Drawing
 
 		public InterpolationMode InterpolationMode {
 			get {				
+                                if (nativeObject == IntPtr.Zero) return InterpolationMode.Default;   // recording-only
                                 InterpolationMode imode = InterpolationMode.Invalid;
         			Status status = GDIPlus.GdipGetInterpolationMode (nativeObject, out imode);
 				CheckDrawStatus (status);
@@ -3137,6 +3139,7 @@ namespace System.Drawing
 
 		public bool IsClipEmpty {
 			get {
+                                if (nativeObject == IntPtr.Zero) return false;   // recording-only
                                 bool isEmpty = false;
 
         			Status status = GDIPlus.GdipIsClipEmpty (nativeObject, out isEmpty);
@@ -3147,6 +3150,7 @@ namespace System.Drawing
 
 		public bool IsVisibleClipEmpty {
 			get {
+                                if (nativeObject == IntPtr.Zero) return false;   // recording-only
                                 bool isEmpty = false;
 
         			Status status = GDIPlus.GdipIsVisibleClipEmpty (nativeObject, out isEmpty);
@@ -3157,6 +3161,7 @@ namespace System.Drawing
 
 		public float PageScale {
 			get {
+                                if (nativeObject == IntPtr.Zero) return 1f;   // recording-only
                                 float scale;
 
         			Status status = GDIPlus.GdipGetPageScale (nativeObject, out scale);
@@ -3172,6 +3177,7 @@ namespace System.Drawing
 
 		public GraphicsUnit PageUnit {
 			get {
+                                if (nativeObject == IntPtr.Zero) return GraphicsUnit.Display;   // recording-only
                                 GraphicsUnit unit;
                                 
                                 Status status = GDIPlus.GdipGetPageUnit (nativeObject, out unit);
@@ -3188,6 +3194,7 @@ namespace System.Drawing
 		[MonoTODO ("This property does not do anything when used with libgdiplus.")]
 		public PixelOffsetMode PixelOffsetMode {
 			get {
+                                if (nativeObject == IntPtr.Zero) return PixelOffsetMode.Default;   // recording-only
 			        PixelOffsetMode pixelOffset = PixelOffsetMode.Invalid;
                                 
                                 Status status = GDIPlus.GdipGetPixelOffsetMode (nativeObject, out pixelOffset);
@@ -3203,6 +3210,7 @@ namespace System.Drawing
 
 		public Point RenderingOrigin {
 			get {
+                                if (nativeObject == IntPtr.Zero) return Point.Empty;   // recording-only
                                 int x, y;
 				Status status = GDIPlus.GdipGetRenderingOrigin (nativeObject, out x, out y);
 				CheckDrawStatus (status);
@@ -3218,6 +3226,7 @@ namespace System.Drawing
 
 		public SmoothingMode SmoothingMode {
 			get {
+                                if (nativeObject == IntPtr.Zero) return SmoothingMode.Default;   // recording-only
                                 SmoothingMode mode = SmoothingMode.Invalid;
 
 				Status status = GDIPlus.GdipGetSmoothingMode (nativeObject, out mode);
@@ -3235,6 +3244,7 @@ namespace System.Drawing
 		[MonoTODO ("This property does not do anything when used with libgdiplus.")]
 		public int TextContrast {
 			get {	
+                                if (nativeObject == IntPtr.Zero) return 4;   // recording-only
                                 int contrast;
 					
                                 Status status = GDIPlus.GdipGetTextContrast (nativeObject, out contrast);
@@ -3251,6 +3261,7 @@ namespace System.Drawing
 
 		public TextRenderingHint TextRenderingHint {
 			get {
+                                if (nativeObject == IntPtr.Zero) return TextRenderingHint.SystemDefault;   // recording-only
                                 TextRenderingHint hint;
 
                                 Status status = GDIPlus.GdipGetTextRenderingHint (nativeObject, out hint);

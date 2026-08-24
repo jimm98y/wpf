@@ -479,8 +479,12 @@ namespace Wpf.DevTools.Tests
                 double pageWidth = metadata.GetProperty("deviceWidth").GetDouble();
                 double pageHeight = metadata.GetProperty("deviceHeight").GetDouble();
 
-                Assert.True(pageWidth >= width, $"page width {pageWidth} < image width {width}");
-                Assert.True(pageHeight >= height, $"page height {pageHeight} < image height {height}");
+                Assert.True(pageWidth > 0 && pageHeight > 0, "the page size was not reported");
+
+                // NOT "the image is no larger than the page": the composed frame is in DEVICE
+                // pixels, so on a 2x display it is twice the page's size in device-independent
+                // ones. That assertion held only by accident on a 1x display and failed the
+                // moment the test ran on a scaled one -- 390 page against a 780 image.
                 // Scaling preserves aspect, so a click maps back linearly in both axes.
                 //
                 // The page size is the FRAME's extent, not the root visual's: the composed
