@@ -202,6 +202,7 @@
     <Reference Include="DirectWriteForwarder"><HintPath>..\..\artifacts\bin\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Aero2"><HintPath>..\..\artifacts\bin\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.DevTools"><HintPath>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
     <Reference Include="PresentationFramework.Classic"><HintPath>..\..\artifacts\bin\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationUI"><HintPath>..\..\artifacts\bin\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
     <!-- The api-cycle System.Printing lacks XpsDocumentWriter, which mono-wasm resolves

@@ -212,7 +212,7 @@ soft keyboard's own route — so a dispatched key is reported as unsupported. An
 is injected with keysym 0 and its characters, which reaches a text box but not a key that is
 only a keysym (Tab, the arrows); that needs the XKB mapping reconstructed.
 
-**macOS, Android and iOS are verified at runtime.** On Android the tree, both targets, wheel
+**macOS, Android, iOS and the browser are verified at runtime.** On Android the tree, both targets, wheel
 scrolling and a scrollbar-thumb drag all work over `adb forward tcp:9222 tcp:9222` — and a thumb
 drag is the interesting one, because it needs mouse capture and a device position, which is
 precisely what routed events could not provide. Hover states stay false there, correctly: a
@@ -222,10 +222,28 @@ On iOS the same holds in the simulator, with the wheel working in both direction
 `IsMouseOver` actually set (Android leaves it false; a touch head has no hover, and the two
 backends differ on that).
 
-**Browser and Linux are not verified.** They are the same shape and compile against the same
-providers, and each handler matches on the `HwndSource.Handle` passed to it — but neither of
-those is proof: Android and iOS were the same shape too, and each needed unrelated fixes before
-it would run at all.
+The browser head is verified too, message port and all: 591 nodes, a wheel that scrolls and a
+thumb drag that moves the offset from 48 to 1820. It is driven by evaluating JavaScript in the
+page through Chrome's OWN CDP endpoint, which needs no relay and no Node:
+
+```sh
+python3 -m http.server            # serve the published wwwroot
+chrome --remote-debugging-port=9444 --headless=new --enable-unsafe-webgpu
+# then, over Chrome's CDP: Runtime.evaluate -> __wpfDevTools.send({id, method, params})
+```
+
+Two things the browser head needs, both of which fail silently without them: the inspector must
+be a **trimmer root** (`wasm-roots.xml`), and the host page must register the module AND hand
+over the managed exports before `runMain` — the inspector calls back into the module as it
+starts, which is inside `Main`. `samples/wpf-webgpu-gallery-wasm` does both, behind `?devtools`.
+
+**Only the composition target is out of reach there.** The bridge is a single port and reports
+one target, so the MILCMD scene-graph document cannot be attached to in the browser; the visual
+tree can.
+
+**Linux is not verified** — it needs a Linux box. It is the same shape as the four that are, and
+its handler matches on the `HwndSource.Handle` passed to it, but that was true of the others and
+each still needed unrelated fixes before it would run.
 
 ### Running the inspector on a trimmed head
 

@@ -5,6 +5,7 @@ import { dotnet } from './_framework/dotnet.js'
 import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserWindow from './browser-window.js'
 import * as wpfBrowserMedia from './browser-media.js'
+import * as wpfDevTools from './devtools-bridge.js'
 
 const status = document.getElementById('wpf-status');
 
@@ -43,6 +44,10 @@ try {
         .withEnvironmentVariable('WPF_USE_WEBGPU_COMPOSITION', '1')
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
+    // ?devtools[=port] turns the CDP visual-tree inspector on. There is no socket in a browser,
+    // so it is a message port -- see devtools-bridge.js for how to drive it.
+    if (params.has('devtools'))
+        builder = builder.withEnvironmentVariable('WPF_DEVTOOLS', params.get('devtools') || '1');
     // AOT-profile collection: only meaningful in a -p:CollectAotProfile=true build (the mono AOT
     // profiler is linked in there). Point its write-at-method at our AotProfiling.Stop trigger.
     if (params.has('aotprofile'))
@@ -71,6 +76,18 @@ try {
     setModuleImports('wgpuInterop', wgpuInterop);
     setModuleImports('wpfBrowserWindow', wpfBrowserWindow);
     setModuleImports('wpfBrowserMedia', wpfBrowserMedia);
+    setModuleImports('wpfDevTools', wpfDevTools);
+
+    // The bridge cannot reach the managed exports by itself, and they have to be in place
+    // BEFORE runMain: the inspector starts when the app creates its first window, which is
+    // inside Main, and its first act is to call back into this module.
+    if (params.has('devtools')) {
+        try {
+            globalThis.__wpfDevToolsExports = await runtime.getAssemblyExports('Microsoft.Wpf.DevTools');
+        } catch (e) {
+            console.error('devtools exports unavailable (is the assembly trimmed away?):', e);
+        }
+    }
 
     // Mount the bundled fonts into the wasm VFS where WPF's managed font catalog
     // scans on the browser (SystemFontCatalog: /fonts).
