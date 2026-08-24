@@ -642,8 +642,37 @@ namespace System.Windows.Forms
 				Hwnd parent = hwnd.parent;
 				if (parent != null)
 					Invalidate(parent.Handle, new Rectangle(0, 0, parent.width, parent.height), false);
+				else
+					RepaintUnder(hwnd);
 			}
 			return true;
+		}
+
+		/// <summary>Repaint whatever a window that has just been hidden was covering.
+		/// <para>A window with a parent is dealt with by repainting the parent. A window WITHOUT
+		/// one -- a menu, a drop-down, a tooltip: they are top-level windows of this driver --
+		/// has no parent to repaint, and nothing else has any reason to: the windows underneath
+		/// it never changed. So the pixels stayed exactly as they were and a menu that had been
+		/// closed went on being drawn -- gone as far as the application was concerned, still
+		/// there as far as anyone looking at the screen was, and the next menu opened beside
+		/// it.</para></summary>
+		private void RepaintUnder(Hwnd gone)
+		{
+			Point at = ScreenLocation(gone);
+			var covered = new Rectangle(at.X, at.Y, gone.width, gone.height);
+			if (covered.Width <= 0 || covered.Height <= 0) return;
+
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				Hwnd other = Hwnd.ObjectFromHandle(k);
+				if (other == null || other == gone || !EffectivelyVisible(other)) continue;
+				Point p = ScreenLocation(other);
+				var overlap = Rectangle.Intersect(covered,
+					new Rectangle(p.X, p.Y, other.width, other.height));
+				if (overlap.Width <= 0 || overlap.Height <= 0) continue;
+				Invalidate(k, new Rectangle(overlap.X - p.X, overlap.Y - p.Y,
+					overlap.Width, overlap.Height), false);
+			}
 		}
 
 		internal override bool IsVisible(IntPtr handle)
