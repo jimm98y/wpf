@@ -6,7 +6,7 @@
     <NoWarn>$(NoWarn);0618</NoWarn>
     <EnablePInvokeAnalyzer>false</EnablePInvokeAnalyzer>
     <ProjectGuid>{FA69991B-9696-42D0-A5C7-F5E73F0DEE9E}</ProjectGuid>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
     <!--
       Disable CLS compliance warning so interop can be generated to match native types.
     -->
@@ -269,6 +269,61 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\CopyOnWriteList.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceList.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceEnumerator.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\MacClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\Wl.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlProtocols.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlDecor.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WlXkb.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDisplay.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandTablet.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\AtSpiBridge.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\AtSpiRoles.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AutomationTreeSource.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaAccessibility.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitAccessibility.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserAccessibility.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidAccessibility.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitTextInput.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandCursor.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\DBusLite.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\LinuxDesktopSettings.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\PortalDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformClipboard.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WindowsPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\CupsResolver.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\ObjCBlock.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidDragDrop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformTouch.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformGesture.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndSubclass.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapper.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Win32\HwndWrapperHook.cs" />
@@ -295,6 +350,7 @@
     <Compile Include="System\Windows\Threading\DispatcherProcessingDisabled.cs" />
     <Compile Include="System\Windows\Threading\DispatcherObject.cs" />
     <Compile Include="System\Windows\Threading\DispatcherFrame.cs" />
+    <Compile Include="System\Windows\Threading\DispatcherRunLoop.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperation.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperationStatus.cs" />
     <Compile Include="System\Windows\Threading\DispatcherOperationTaskMapping.cs" />
@@ -367,16 +423,17 @@
        TXT files they consume and the tools (which are not compiled, simply scripts).
        The output files are automatically added as source files to the Compile task.
    -->
-  <Target Name="GenerateSources" BeforeTargets="CoreCompile" Inputs="MS\Internal\IO\Packaging\PackageXmlNamespaces.txt;MS\Internal\IO\Packaging\PackageXmlStrings.txt;" Outputs="$(IntermediateOutputPath)\PackageXmlStringTable.cs">
-    <Error Condition="!Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
+  <Target Name="GenerateSources" BeforeTargets="CoreCompile" Inputs="MS\Internal\IO\Packaging\PackageXmlNamespaces.txt;MS\Internal\IO\Packaging\PackageXmlStrings.txt;" Outputs="$(IntermediateOutputPath)/PackageXmlStringTable.cs">
+    <!-- Only validated on Windows: there PerlCommand is a restored file path. On macOS/Linux
+         it's the bare "perl" command resolved via PATH, which Exists() can't check. -->
+    <Error Condition="'$(OS)' == 'Windows_NT' and !Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
     <MakeDir Condition="!Exists('$(IntermediateOutputPath)')" Directories="$(IntermediateOutputPath)" />
-    <Exec Command="$(PerlCommand) $(GenXmlStringTable) -o $(IntermediateOutputPath)\PackageXmlStringTable.cs -n MS\Internal\IO\Packaging\PackageXmlNamespaces.txt -x MS\Internal\IO\Packaging\PackageXmlStrings.txt -e MS.Internal.IO.Packaging.PackageXmlEnum -c MS.Internal.IO.Packaging.PackageXmlStringTable" StandardOutputImportance="normal" Outputs="$(IntermediateOutputPath)\PackageXmlStringTable.cs">
+    <Exec Command="$(PerlCommand) $(GenXmlStringTable) -o $(IntermediateOutputPath)/PackageXmlStringTable.cs -n MS/Internal/IO/Packaging/PackageXmlNamespaces.txt -x MS/Internal/IO/Packaging/PackageXmlStrings.txt -e MS.Internal.IO.Packaging.PackageXmlEnum -c MS.Internal.IO.Packaging.PackageXmlStringTable" StandardOutputImportance="normal" Outputs="$(IntermediateOutputPath)/PackageXmlStringTable.cs">
       <Output TaskParameter="Outputs" ItemName="Compile" />
     </Exec>
   </Target>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
     <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
   </ItemGroup>
 

@@ -2,7 +2,7 @@
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
-    <Platforms>x64;x86;arm64</Platforms>
+    <Platforms>AnyCPU;x64;x86;arm64</Platforms>
     <RootNamespace />
     <TargetFramework Condition="!$(TargetFramework.Contains('windows'))">$(TargetFramework)-windows</TargetFramework>
     <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
@@ -26,9 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
+    <!-- The managed stub, same as PresentationCore references. The C++/CLI DirectWriteForwarder
+         needs an MSVC toolchain and wraps a DirectWrite this port does not use on any platform. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" />
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
     <ProjectReference Include="$(WpfSourceDir)PresentationFramework\PresentationFramework.csproj" />
     <!-- <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj" /> -->

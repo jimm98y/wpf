@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WinFormsHost</AssemblyName>
+    <!-- EnableUnixSupport + libgdiplus make System.Drawing work off-Windows (see README); silence
+         the "Windows only" analyzer noise it would otherwise emit. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- The repo-root Directory.Build.props turns style analyzers into build errors; this sample
+         compiles the host sources as-is (same as the WPF gallery samples). -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The Mono System.Windows.Forms build (managed controls + our XplatUIWebGpu driver). -->
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WinFormsInterop/System.Windows.Forms.WebGpu.csproj" />
+    <!-- Shared WebGPU present path (surface + WgpuSceneRenderer); internals exposed via
+         InternalsVisibleTo("WinFormsHost") in WgpuInterop/AssemblyInfo.cs. -->
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/WgpuInterop.csproj" />
+    <!-- Our own vendored System.Drawing (flows in via the S.W.F project ref too; referenced here so
+         the host's own Bitmap/Graphics usage binds to the same assembly). -->
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WinFormsInterop/sysdrawing/System.Drawing.WebGpu.csproj" />
+  </ItemGroup>
+  <!-- wgpu-native backend, per OS, copied next to the host so the DllImport resolves. Only the
+       osx-arm64 lib is downloaded in this fork; a Windows/Linux run needs the matching native lib
+       dropped under WgpuInterop/native/<rid>/lib (wgpu_native.dll / libwgpu_native.so). -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib">
+      <Link>libwgpu_native.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll')">
+    <None Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll">
+      <Link>wgpu_native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- Strip the framework System.Drawing.Common/Primitives (dragged in transitively) so our own
+       System.Drawing is the sole provider of System.Drawing.* types (avoids CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+</Project>

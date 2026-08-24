@@ -64,6 +64,13 @@ namespace System.Windows.Media.Imaging
                 ImagingCache.RemoveFromDecoderCache(bitmapUri);
             }
 
+            // See the stream constructor below: the typed decoders come through here too.
+            if (TryInitializeManaged(bitmapUri, null, createOptions, cacheOption))
+            {
+                GC.SuppressFinalize(this);
+                return;
+            }
+
             BitmapDecoder decoder = CheckCache(bitmapUri, out clsId);
             if (decoder != null)
             {
@@ -115,6 +122,15 @@ namespace System.Windows.Media.Imaging
             bool isOriginalWritable = false;
 
             ArgumentNullException.ThrowIfNull(bitmapStream);
+
+            // The typed decoders (PngBitmapDecoder, JpegBitmapDecoder, ...) chain here rather than
+            // through CreateFromUriOrStream, so they need the managed route of their own. A constructor
+            // cannot hand back a different object, so the frames are decoded straight into this one.
+            if (TryInitializeManaged(null, bitmapStream, createOptions, cacheOption))
+            {
+                GC.SuppressFinalize(this);
+                return;
+            }
 
             _decoderHandle = SetupDecoderFromUriOrStream(
                 null,
@@ -225,6 +241,21 @@ namespace System.Windows.Media.Imaging
             bool insertInDecoderCache
             )
         {
+            // Decode with the port's own codecs first, on every platform. The native route below reaches
+            // wpfgfx_cor3.dll (the MIL factory and the IStream thunk), which this port ships nowhere --
+            // Windows included -- so on Windows it used to throw DllNotFoundException the moment a XAML
+            // file referenced a PNG. A null means the managed codecs did not recognise the image, and
+            // the native path below is left to report that in its own way.
+            ManagedBitmapDecoder managed = ManagedBitmapDecoder.TryCreate(
+                uri is not null && baseUri is not null
+                    ? System.Windows.Navigation.BaseUriHelper.GetResolvedUri(baseUri, uri)
+                    : uri,
+                stream);
+            if (managed is not null)
+            {
+                return managed;
+            }
+
             Guid clsId = Guid.Empty;
             bool isOriginalWritable = false;
             SafeMILHandle decoderHandle = null;
@@ -1018,8 +1049,10 @@ namespace System.Windows.Media.Imaging
                     // This code path executes only for pack web requests
                     if (string.Equals(uri.Scheme, PackUriHelper.UriSchemePack, StringComparison.OrdinalIgnoreCase))
                     {
-                        WebResponse response = WpfWebRequestHelper.CreateRequestAndGetResponse(uri);
-                        bitmapStream = response.GetResponseStream();
+                        // Stream rather than WebResponse: the response object is not needed past
+                        // its stream, and this overload can satisfy pack: uris without WebRequest
+                        // (which is unavailable in the browser).
+                        bitmapStream = WpfWebRequestHelper.CreateRequestAndGetResponseStream(uri);
                         uriStream = bitmapStream;
                     }
                 }
@@ -1476,6 +1509,42 @@ namespace System.Windows.Media.Imaging
         /// <summary>
         /// Checks if the decoder is builtin. If not, throw exception
         /// </summary>
+        /// <summary>
+        /// Decode with the managed codecs into THIS instance, for the constructors that cannot return a
+        /// different object. Returns false if the managed codecs do not recognise the image, leaving the
+        /// caller to take its normal path.
+        /// </summary>
+        private bool TryInitializeManaged(Uri uri, Stream stream, BitmapCreateOptions createOptions, BitmapCacheOption cacheOption)
+        {
+            List<BitmapSource> decoded;
+            try
+            {
+                // DecodeAll, not Decode: GifBitmapDecoder and TiffBitmapDecoder are constructed
+                // precisely when an app wants the frames of an animation or the pages of a
+                // document, and keeping only the first would answer that with a still image.
+                decoded = ManagedImageDecoder.DecodeAll(uri, stream);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                return false;
+            }
+
+            if (decoded is null || decoded.Count == 0) return false;
+
+            _isBuiltInDecoder = true;
+            _frames = new List<BitmapFrame>(decoded.Count);
+            foreach (BitmapSource source in decoded)
+            {
+                _frames.Add(BitmapFrame.Create(source));
+            }
+            _readOnlyFrames = new ReadOnlyCollection<BitmapFrame>(_frames);
+            _uri = uri;
+            _stream = stream;
+            _createOptions = createOptions;
+            _cacheOption = cacheOption;
+            return true;
+        }
+
         private void EnsureBuiltInDecoder()
         {
             if (!_isBuiltInDecoder)

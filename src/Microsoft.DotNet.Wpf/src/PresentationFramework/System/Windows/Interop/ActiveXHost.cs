@@ -80,7 +80,14 @@ namespace System.Windows.Interop
         internal ActiveXHost(Guid clsid, bool fTrusted ) : base( fTrusted )
         {
             // What if the control is marked as free-threaded?
-            if (Thread.CurrentThread.GetApartmentState() is not ApartmentState.STA)
+            //
+            // Only meaningful on Windows: apartments are a COM concept, and off Windows
+            // GetApartmentState answers Unknown for every thread, which would make this throw on
+            // the one dispatcher thread the application has. Both hosting paths still need an STA
+            // where the concept exists -- the ActiveX one for OLE, the modern one because WebView2
+            // is an STA server (it fails creation with RPC_E_CHANGED_MODE otherwise).
+            if (OperatingSystem.IsWindows() &&
+                Thread.CurrentThread.GetApartmentState() is not ApartmentState.STA)
             {
                 throw new ThreadStateException(SR.Format(SR.AxRequiresApartmentThread, clsid.ToString()));
             }
@@ -90,6 +97,40 @@ namespace System.Windows.Interop
             // hookup so we are notified when loading is finished.
             Initialized += new EventHandler(OnInitialized);
         }
+
+        /// <summary>
+        /// Whether this host drives a real ActiveX control through OLE in-place activation, or hosts
+        /// a modern web engine through <see cref="MS.Internal.Interop.WebView.IWebViewBackend"/>.
+        /// </summary>
+        /// <remarks>
+        /// The ActiveX path is Windows-only three times over -- COM activation, the OLE state
+        /// machine, and SetParent on a child HWND -- and the engine behind it (the IE WebOC) is
+        /// deprecated. Every head therefore takes the modern path by default, INCLUDING Windows, so
+        /// that a WebBrowser behaves the same everywhere.
+        ///
+        /// Applications that genuinely need the old behaviour -- overwhelmingly, those that cast
+        /// WebBrowser.Document to an mshtml interface, which nothing outside Windows can provide --
+        /// opt back in with:
+        ///
+        ///     AppContext.SetSwitch("Switch.System.Windows.Controls.WebBrowser.UseLegacyActiveX", true);
+        ///
+        /// The switch is honoured only on Windows; elsewhere there is no shdocvw to host.
+        /// </remarks>
+        internal static bool UseLegacyActiveX
+        {
+            get
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
+                return AppContext.TryGetSwitch(LegacyActiveXSwitch, out bool enabled) && enabled;
+            }
+        }
+
+        internal const string LegacyActiveXSwitch =
+            "Switch.System.Windows.Controls.WebBrowser.UseLegacyActiveX";
 
 
         #endregion Constructors and Finalizers
@@ -134,6 +175,11 @@ namespace System.Windows.Interop
         {
             this.ParentHandle = hwndParent;
 
+            if (!UseLegacyActiveX)
+            {
+                return BuildOverlayWindowCore(hwndParent);
+            }
+
             //BuildWindowCore should only be called if visible. Bug 1236445 tracks this.
             TransitionUpTo(ActiveXHelper.ActiveXState.InPlaceActive);
 
@@ -162,6 +208,19 @@ namespace System.Windows.Interop
             //Its okay to process this if we the control is not yet created
 
             _boundRect = bounds;
+
+            if (!UseLegacyActiveX)
+            {
+                // Let HwndHost move the overlay's host window -- that is what buys the clipping,
+                // the ancestor tracking and the DPI transition handling for free -- and then have
+                // the engine fill it edge to edge. The engine is never told where the control sits
+                // on screen, only how big its own window is.
+                base.OnWindowPositionChanged(bounds);
+
+                _webViewBackend?.SetBounds(
+                    0, 0, (int)bounds.Width, (int)bounds.Height, GetBackingScale());
+                return;
+            }
 
             //These are already transformed to client co-ordinate/device units for high dpi also
             _bounds.left    = (int) bounds.X;
@@ -218,6 +277,102 @@ namespace System.Windows.Interop
 
         #endregion Framework Related
 
+        #region Web view (modern) hosting
+
+        /// <summary>
+        /// The engine backing this host when it is NOT hosting a real ActiveX control. Null until
+        /// the window is built, and on a head with no web engine at all.
+        /// </summary>
+        internal MS.Internal.Interop.WebView.IWebViewBackend WebViewBackend => _webViewBackend;
+
+        /// <summary>
+        /// Completes once the engine is ready to navigate. Callers queue work behind this rather
+        /// than failing, because HwndHost builds the window only when the element is first shown --
+        /// so a Source set in a constructor legitimately arrives before there is anything to
+        /// navigate.
+        /// </summary>
+        internal System.Threading.Tasks.Task WebViewReady => _webViewReady;
+
+        /// <summary>
+        /// Create the empty child window the engine fills, and start it. See WebViewHostWindow for
+        /// why the engine gets a window of its own rather than being parented to the WPF window.
+        /// </summary>
+        private HandleRef BuildOverlayWindowCore(HandleRef hwndParent)
+        {
+            _webViewBackend = MS.Internal.Interop.WebView.WebViewBackendFactory.Create();
+
+            if (_webViewBackend is null)
+            {
+                // Nothing on this platform can host web content. Say so: an empty rectangle that
+                // never loads anything is worse than a failure the developer can act on.
+                throw new PlatformNotSupportedException(SR.WebBrowserNoEngine);
+            }
+
+            IntPtr host = MS.Internal.Interop.WebView.WebViewHostWindow.Create(
+                hwndParent.Handle,
+                (int)Math.Max(1, _boundRect.Width),
+                (int)Math.Max(1, _boundRect.Height));
+
+            if (host == IntPtr.Zero)
+            {
+                _webViewBackend.Dispose();
+                _webViewBackend = null;
+                throw new PlatformNotSupportedException(SR.WebBrowserNoEngine);
+            }
+
+            _webViewHostWindow = new HandleRef(this, host);
+            _webViewReady = _webViewBackend.AttachAsync(host);
+
+            OnWebViewAttaching(_webViewBackend, _webViewReady);
+
+            return _webViewHostWindow;
+        }
+
+        /// <summary>
+        /// Called as soon as the engine exists, with the task that completes when it is usable.
+        /// Derived classes wire their events here rather than after the await, so that nothing that
+        /// happens during start-up is missed.
+        /// </summary>
+        internal virtual void OnWebViewAttaching(
+            MS.Internal.Interop.WebView.IWebViewBackend backend,
+            System.Threading.Tasks.Task ready)
+        {
+        }
+
+        /// <summary>The window's backing scale, for engines that lay out in points.</summary>
+        private double GetBackingScale()
+        {
+            try
+            {
+                return GetDpi().DpiScaleX;
+            }
+            catch
+            {
+                // A host that has not been through a DPI transition yet has no scale to report;
+                // 1.0 is the right answer and is what every non-Retina head uses anyway.
+                return 1.0;
+            }
+        }
+
+        private void DisposeWebView()
+        {
+            if (_webViewBackend is not null)
+            {
+                _webViewBackend.Dispose();
+                _webViewBackend = null;
+            }
+
+            if (_webViewHostWindow.Handle != IntPtr.Zero)
+            {
+                MS.Internal.Interop.WebView.WebViewHostWindow.Destroy(_webViewHostWindow.Handle);
+                _webViewHostWindow = new HandleRef(this, IntPtr.Zero);
+            }
+
+            _webViewReady = null;
+        }
+
+        #endregion Web view (modern) hosting
+
         #region ActiveX Related
 
         protected override void Dispose(bool disposing)
@@ -226,7 +381,15 @@ namespace System.Windows.Interop
             {
                 if ((disposing) && (!_isDisposed))
                 {
-                    TransitionDownTo(ActiveXHelper.ActiveXState.Passive);
+                    if (UseLegacyActiveX)
+                    {
+                        TransitionDownTo(ActiveXHelper.ActiveXState.Passive);
+                    }
+                    else
+                    {
+                        DisposeWebView();
+                    }
+
                     _isDisposed = true;
                 }
             }
@@ -871,6 +1034,13 @@ namespace System.Windows.Interop
         {
             ActiveXHost axhost = sender as ActiveXHost;
 
+            // The modern path has no OLE state machine to drive: the engine's own native window is
+            // focused by the platform when the host window is, so there is nothing to forward.
+            if (axhost != null && !UseLegacyActiveX)
+            {
+                return;
+            }
+
             if (axhost != null)
             {
                 Invariant.Assert(axhost.ActiveXState >= ActiveXHelper.ActiveXState.InPlaceActive, "Should at least be InPlaceActive when getting focus");
@@ -886,6 +1056,12 @@ namespace System.Windows.Interop
         private static void OnLostFocus(object sender, KeyboardFocusChangedEventArgs e)
         {
             ActiveXHost axhost = sender as ActiveXHost;
+
+            // See OnGotFocus: nothing to deactivate on the modern path.
+            if (axhost != null && !UseLegacyActiveX)
+            {
+                return;
+            }
 
             if (axhost != null)
             {
@@ -1042,6 +1218,12 @@ namespace System.Windows.Interop
         private ActiveXHelper.ActiveXState  _axState        = ActiveXHelper.ActiveXState.Passive;
 
         private ActiveXSite                 _axSite;
+
+        // The modern (non-ActiveX) hosting path: the engine, the empty child window it fills, and
+        // the task that completes once it can be navigated.
+        private MS.Internal.Interop.WebView.IWebViewBackend _webViewBackend;
+        private HandleRef                   _webViewHostWindow;
+        private System.Threading.Tasks.Task _webViewReady;
 
         private ActiveXContainer            _axContainer;
 

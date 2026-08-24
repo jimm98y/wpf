@@ -1,0 +1,88 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds Mono's managed System.Design on net10 against our Mono System.Windows.Forms, so the
+    WinForms *designer host* (DesignSurface, DesignerHost, the CodeDom serializers, UndoEngine,
+    ControlDesigner) exists on this stack. Without it a design-time host such as SharpDevelop's
+    FormsDesigner has nothing to run on: Microsoft's System.Design/System.Windows.Forms.Design are
+    welded to the private WinForms substrate (System.Private.Windows.Core, .Primitives,
+    .GdiPlus) and to System.Drawing.Common, none of which exist here.
+
+    Mono's WinForms was built expecting this assembly — its controls carry 570 [Designer]
+    attributes, 55 of them naming System.Windows.Forms.Design.
+
+    The Mono System.Design source is VENDORED under swfdesign/ (self-contained — no external mono
+    checkout), pruned at vendoring time so this project globs with no excludes. Our edits vs
+    upstream are recorded in mono-patches/mono-system-design.patch. See README.md.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Design</AssemblyName>
+    <RootNamespace>System.Design</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- This project shares its directory with System.Windows.Forms.WebGpu.csproj, so the SDK's
+         default globs would otherwise reach into swf/ and embed all 58 Mono WinForms resources
+         (cursors/icons/strings) into System.Design as well - ~88KB of duplicated payload under
+         the same manifest names as the real owner. Same reason the sibling project sets it. -->
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <DefineConstants>MONO;SECURITY_DEP;NET_4_5</DefineConstants>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <!-- Mono-era source: the same warning set System.Windows.Forms.WebGpu.csproj silences.
+         SYSLIB0011 is BinaryFormatter — see the note on CodeDomComponentSerializationService
+         below; it is silenced to COMPILE, which does not make it work at runtime. -->
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661;CS3021;CS1701;SYSLIB0011</NoWarn>
+    <!--
+      Public-signed with the MICROSOFT key (Arcade's StrongNameKeyId=Microsoft -> MSFT.snk),
+      giving "System.Design, Version=4.0.0.0, PublicKeyToken=b03f5f7f11d50a3a" — byte for byte
+      the identity of the real System.Design that every designer host was compiled against.
+      Version differences are tolerated (CS1701); a differing public key never is, so this is
+      what lets an existing binary bind to us.
+
+      NOT the ECMA key the sibling WinForms project uses: that one is b77a5c561934e089, which is
+      correct for System.Windows.Forms and wrong for System.Design. The key ids are easy to
+      transpose - in Arcade, "Microsoft" is b03f5f7f11d50a3a while "MicrosoftShared" is
+      31bf3856ad364e35 (PresentationFramework's).
+
+      PublicSign, not real signing: MSFT.snk is a 160-byte public-key blob with no private half.
+      eng/snk/ holds a verbatim copy of Arcade's, the same way ECMA.snk already is, because these
+      WinFormsInterop projects deliberately do not import the WPF Arcade build customization.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../eng/snk/MSFT.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="swfdesign/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms">
+      <HintPath>$(MSBuildThisFileDirectory)bin/Release/net10.0/System.Windows.Forms.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.System.Drawing">
+      <HintPath>$(MSBuildThisFileDirectory)sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll</HintPath>
+    </Reference>
+    <PackageReference Include="System.CodeDom" Version="10.0.0" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.0" />
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.0" />
+  </ItemGroup>
+
+  <!-- Identical to StripFrameworkDrawing in System.Windows.Forms.WebGpu.csproj: our
+       Mono.System.Drawing must be the sole provider of the System.Drawing.* types, or every
+       Color/Rectangle/Graphics duplicates against the framework's (CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

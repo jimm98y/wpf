@@ -315,6 +315,12 @@ namespace System.Windows.Media.Imaging
         {
             VerifyAccess();
             EnsureBuiltIn();
+
+            // No native WIC on this platform: encoders that have a managed implementation
+            // (currently PNG) encode in managed code; the rest are unsupported.
+            SaveManaged(stream);
+            return;
+
             EnsureUnmanagedEncoder();
 
             // No-op to get rid of build error
@@ -454,6 +460,39 @@ namespace System.Windows.Media.Imaging
 
             _hasSaved = true;
         }
+
+        /// <summary>
+        /// Save path for platforms without native WIC. Validates like the native path, then
+        /// defers to the encoder's managed implementation (see <see cref="TryManagedEncode"/>).
+        /// </summary>
+        private void SaveManaged(System.IO.Stream stream)
+        {
+            ArgumentNullException.ThrowIfNull(stream);
+
+            if (_hasSaved)
+            {
+                throw new InvalidOperationException(SR.Image_OnlyOneSave);
+            }
+
+            if (_frames == null || _frames.Count <= 0)
+            {
+                throw new System.NotSupportedException(SR.Format(SR.Image_NoFrames, null));
+            }
+
+            if (!TryManagedEncode(stream))
+            {
+                throw new PlatformNotSupportedException(
+                    $"{GetType().Name} requires native WIC, which is not available on this platform; PNG, JPEG, BMP, TIFF and GIF encoding are supported.");
+            }
+
+            _hasSaved = true;
+        }
+
+        /// <summary>
+        /// Encodes the frames in managed code, for platforms without native WIC. Encoders
+        /// without a managed implementation return false (Save throws PlatformNotSupported).
+        /// </summary>
+        internal virtual bool TryManagedEncode(System.IO.Stream stream) => false;
 
         #endregion
 

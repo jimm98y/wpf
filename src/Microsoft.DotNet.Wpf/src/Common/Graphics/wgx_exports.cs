@@ -28,126 +28,46 @@ namespace MS.Internal
 
     #region MILMedia
 
+    /// <summary>
+    /// The old native milcore media player (the <c>MILMedia*</c> exports of wpfgfx_cor3.dll), now a shell.
+    /// <para>
+    /// Nothing creates a native media object any more: every platform, Windows included, plays through an
+    /// <see cref="System.Windows.Media.IMediaBackend"/> (Media Foundation, AVFoundation, GStreamer, HTML5
+    /// video) and ships decoded frames to the managed compositor over the SendVideoFrame seam -- see
+    /// MediaPlayerState.CreateMedia. The native pipeline could not be kept even on Windows, because its
+    /// frames were composited inside milcore and the managed WebGPU compositor never received them.
+    /// </para>
+    /// <para>
+    /// The methods survive only because MediaPlayerState still routes through them when it has no backend
+    /// (a platform with no media support, e.g. Android/iOS today). Every one is a no-op returning S_OK and
+    /// leaving out-params at their caller-provided defaults, so a MediaElement there constructs and lays
+    /// out with no audio or video rather than throwing. There is deliberately no P/Invoke left in this
+    /// class: PresentationCore must not load wpfgfx_cor3.dll on any platform.
+    /// </para>
+    /// </summary>
     internal static class MILMedia
     {
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaOpen")]
-        internal static extern int /* HRESULT */ Open(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            [In, MarshalAs(UnmanagedType.BStr)] string /* LPOLESTR */ src
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaStop")]//CASRemoval:
-        internal static extern int /* HRESULT */ Stop(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaClose")]//CASRemoval:
-        internal static extern int /*HRESULT */ Close(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetPosition")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetPosition(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref long pllTime);
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetPosition")]//CASRemoval:
-        internal static extern int /* HRESULT */ SetPosition(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            long llTime);
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetVolume")]//CASRemoval:
-        internal static extern int /* HRESULT */ SetVolume(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            double dblVolume
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetBalance")]
-        internal static extern int /* HRESULT */ SetBalance(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            double dblBalance
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetIsScrubbingEnabled")]
-        internal static extern int /* HRESULT */ SetIsScrubbingEnabled(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            bool isScrubbingEnabled
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaIsBuffering")]//CASRemoval:
-        internal static extern int /* HRESULT */ IsBuffering(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref bool pIsBuffering
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaCanPause")]//CASRemoval:
-        internal static extern int /* HRESULT */ CanPause(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref bool pCanPause
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetDownloadProgress")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetDownloadProgress(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref double pProgress
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetBufferingProgress")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetBufferingProgress(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref double pProgress
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaSetRate")]//CASRemoval:
-        internal static extern int /* HRESULT */ SetRate(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            double dblRate
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaHasVideo")]//CASRemoval:
-        internal static extern int /* HRESULT */ HasVideo(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref bool pfHasVideo
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaHasAudio")]//CASRemoval:
-        internal static extern int /* HRESULT */ HasAudio(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref bool pfHasAudio
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetNaturalHeight")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetNaturalHeight(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref UInt32 puiHeight
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetNaturalWidth")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetNaturalWidth(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref UInt32 puiWidth
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaGetMediaLength")]//CASRemoval:
-        internal static extern int /* HRESULT */ GetMediaLength(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR,
-            ref long pllLength
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaNeedUIFrameUpdate")]
-        internal static extern int /* HRESULT */ NeedUIFrameUpdate(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint="MILMediaShutdown")]//CASRemoval:
-        internal static extern int /* HRESULT */ Shutdown(
-            IntPtr /* IMILMedia */ THIS_PTR
-            );
-
-        [DllImport(DllImport.MilCore, EntryPoint = "MILMediaProcessExitHandler")]
-        internal static extern int /*HRESULT*/ ProcessExitHandler(
-            SafeMediaHandle /* IMILMedia */ THIS_PTR
-            );
+        internal static int Open(SafeMediaHandle THIS_PTR, string src) => 0;
+        internal static int Stop(SafeMediaHandle THIS_PTR) => 0;
+        internal static int Close(SafeMediaHandle THIS_PTR) => 0;
+        internal static int GetPosition(SafeMediaHandle THIS_PTR, ref long pllTime) => 0;
+        internal static int SetPosition(SafeMediaHandle THIS_PTR, long llTime) => 0;
+        internal static int SetVolume(SafeMediaHandle THIS_PTR, double dblVolume) => 0;
+        internal static int SetBalance(SafeMediaHandle THIS_PTR, double dblBalance) => 0;
+        internal static int SetIsScrubbingEnabled(SafeMediaHandle THIS_PTR, bool isScrubbingEnabled) => 0;
+        internal static int IsBuffering(SafeMediaHandle THIS_PTR, ref bool pIsBuffering) => 0;
+        internal static int CanPause(SafeMediaHandle THIS_PTR, ref bool pCanPause) => 0;
+        internal static int GetDownloadProgress(SafeMediaHandle THIS_PTR, ref double pProgress) => 0;
+        internal static int GetBufferingProgress(SafeMediaHandle THIS_PTR, ref double pProgress) => 0;
+        internal static int SetRate(SafeMediaHandle THIS_PTR, double dblRate) => 0;
+        internal static int HasVideo(SafeMediaHandle THIS_PTR, ref bool pfHasVideo) => 0;
+        internal static int HasAudio(SafeMediaHandle THIS_PTR, ref bool pfHasAudio) => 0;
+        internal static int GetNaturalHeight(SafeMediaHandle THIS_PTR, ref UInt32 puiHeight) => 0;
+        internal static int GetNaturalWidth(SafeMediaHandle THIS_PTR, ref UInt32 puiWidth) => 0;
+        internal static int GetMediaLength(SafeMediaHandle THIS_PTR, ref long pllLength) => 0;
+        internal static int NeedUIFrameUpdate(SafeMediaHandle THIS_PTR) => 0;
+        internal static int Shutdown(IntPtr THIS_PTR) => 0;
+        internal static int ProcessExitHandler(SafeMediaHandle THIS_PTR) => 0;
     }
     #endregion
 

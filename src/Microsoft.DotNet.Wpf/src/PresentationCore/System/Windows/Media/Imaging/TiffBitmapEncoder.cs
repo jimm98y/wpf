@@ -175,6 +175,24 @@ namespace System.Windows.Media.Imaging
 
         #endregion
 
+        /// <summary>
+        /// Managed encode for platforms without native WIC: baseline uncompressed RGBA, one strip
+        /// per page, EVERY page. See ManagedTiffEncoder.
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            // All of Frames, not just the first: multi-page is what TIFF is for, and dropping the
+            // rest discarded the caller's document without saying so.
+            var sources = new System.Collections.Generic.List<BitmapSource>(Frames.Count);
+            foreach (BitmapFrame frame in Frames)
+            {
+                sources.Add((frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame);
+            }
+
+            ManagedTiffEncoder.Save(sources, stream);
+            return true;
+        }
+
         #region Data Members
 
         private Guid _containerFormat = MILGuidData.GUID_ContainerFormatTiff;

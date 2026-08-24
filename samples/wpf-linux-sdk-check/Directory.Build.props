@@ -1,0 +1,8 @@
+<!--
+  Empty on purpose: it stops MSBuild walking up into the repo's build props.
+
+  This app must build exactly as a consumer OUTSIDE the repo does, through the packaged
+  WpfWebGpu.Sdk and nothing else. Inheriting the repo's output layout defeats that (the first
+  attempt produced obj artifacts and no runnable output at all). Same trick WgpuInterop uses.
+-->
+<Project />

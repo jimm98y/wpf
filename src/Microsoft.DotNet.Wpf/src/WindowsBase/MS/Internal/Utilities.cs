@@ -12,7 +12,21 @@ namespace MS.Internal
     /// </summary>
     internal static class Utilities
     {
-        private static readonly Version _osVersion = Environment.OSVersion.Version;
+        // These gates all mean "is this a Windows new enough to have feature X", and each one guards a
+        // Windows-only path (a dwmapi/uxtheme P/Invoke, or Shell COM). Environment.OSVersion.Version
+        // reports the KERNEL version off-Windows -- Darwin 25.x on macOS, 6.x on Linux -- which sails
+        // past every one of these comparisons and lets those paths run. JumpList.ApplyList was the one
+        // that surfaced it: its downlevel "fail fast" branch was never taken, so a plain
+        // `new JumpList().Apply()` reached the STA verify guarding Shell's ICustomDestinationList and
+        // threw "This operation requires the thread's apartment state to be 'STA'" on the real UI
+        // thread -- apartments being a Windows concept that GetApartmentState answers Unknown for here.
+        //
+        // Answering false off-Windows lets every call site take the downlevel path it already has.
+        // This mirrors the identically-named PresentationFramework copy
+        // (System/Windows/Standard/Utilities.cs), which was already pinned this way; this one was not,
+        // and it is the copy MS.Internal-importing files such as JumpList.cs actually bind to.
+        private static readonly Version _osVersion =
+            OperatingSystem.IsWindows() ? Environment.OSVersion.Version : new Version(0, 0);
 
         internal static bool IsOSVistaOrNewer
         {

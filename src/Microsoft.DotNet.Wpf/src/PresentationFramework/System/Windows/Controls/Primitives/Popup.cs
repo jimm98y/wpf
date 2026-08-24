@@ -16,7 +16,6 @@ using System.Windows.Media;
 using System.Windows.Markup;
 using System.Windows.Threading;
 using System.Text;
-using Accessibility;
 using MS.Internal;
 using MS.Internal.Controls;
 using MS.Internal.KnownBoxes;
@@ -2128,6 +2127,7 @@ namespace System.Windows.Controls.Primitives
 
             childBounds.Offset(bestTranslation);
             screenBounds = GetScreenBounds(targetBounds, placementTargetInterestPoints[(int)InterestPoint.TopLeft]);
+
             Rect intersection = Rect.Intersect(screenBounds, childBounds);
 
             // See if width/height of intersection are less than child's
@@ -2660,6 +2660,17 @@ namespace System.Windows.Controls.Primitives
                 return _secHelper.GetParentWindowRect();
             }
 
+            // Off-Windows there is no Win32 monitor enumeration (MonitorFromRect/GetMonitorInfo).
+            // Return a large screen rect so the popup is placed at its requested location without
+            // monitor-edge clamping. It MUST be centered on the origin (cover negative coordinates):
+            // a display arranged to the left of / above the primary has negative screen coordinates, and
+            // a rect anchored at (0,0) would clamp any popup there back onto the primary monitor -- which
+            // is what made a menu on such a display jump to the primary screen.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return new Rect(-4_000_000, -4_000_000, 8_000_000, 8_000_000);
+            }
+
             NativeMethods.RECT rect = new NativeMethods.RECT(0, 0, 0, 0);
 
             NativeMethods.RECT nativeBounds = PointUtil.FromRect(boundingBox);
@@ -2744,7 +2755,7 @@ namespace System.Windows.Controls.Primitives
             // If there is no mouse cursor, these should be 0
             width = height = hotX = hotY = 0;
 
-            // First, retrieve the mouse cursor
+            // First, retrieve the mouse cursor (off-Windows this returns IntPtr.Zero -> the no-cursor path below).
             IntPtr hCursor = SafeNativeMethods.GetCursor();
             if (hCursor != IntPtr.Zero)
             {
@@ -3346,6 +3357,15 @@ namespace System.Windows.Controls.Primitives
                     {
                         param.ParentWindow = parent;
                     }
+                    else if (!System.OperatingSystem.IsWindows() && parent != IntPtr.Zero)
+                    {
+                        // Off-Windows the popup is still a standalone NSWindow (WS_POPUP, not WS_CHILD), but
+                        // it must know its owner so it can inherit the owner's display/backing scale and open
+                        // on the SAME monitor as the window it belongs to. The macOS/browser window backends
+                        // consume ParentWindow only as an owner handle for that -- it does not reparent the
+                        // popup into a Win32 child. (On Windows this branch is skipped, preserving behavior.)
+                        param.ParentWindow = parent;
+                    }
                 }
 
                 // create popup's window object
@@ -3370,6 +3390,14 @@ namespace System.Windows.Controls.Primitives
 
             private static bool ConnectedToForegroundWindow(IntPtr window)
             {
+                // Off-Windows there is no Win32 GetForegroundWindow/GetParent, and no HWND parent
+                // chain. Report "not connected" so the popup is built as a standalone top-level window
+                // (its own NSWindow), which is the correct model on macOS.
+                if (!System.OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 IntPtr foregroundWindow = UnsafeNativeMethods.GetForegroundWindow();
 
                 while (window != IntPtr.Zero)
@@ -3424,6 +3452,21 @@ namespace System.Windows.Controls.Primitives
             /// </summary>
             internal void ForceMsaaToUiaBridge(PopupRoot popupRoot)
             {
+                // The MSAA->UIA bridge and WinEvent hooks are Windows accessibility infrastructure that
+                // does not exist off-Windows. The actual work references the Accessibility assembly
+                // (IAccessible), so it lives in a separate, non-inlined method that is only JIT-compiled
+                // when actually invoked -- keeping Accessibility.dll from being required off-Windows.
+                if (!System.OperatingSystem.IsWindows())
+                {
+                    return;
+                }
+
+                ForceMsaaToUiaBridgeWindows(popupRoot);
+            }
+
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            private void ForceMsaaToUiaBridgeWindows(PopupRoot popupRoot)
+            {
                 if (Handle != IntPtr.Zero && (UnsafeNativeMethods.IsWinEventHookInstalled(NativeMethods.EVENT_OBJECT_FOCUS) || UnsafeNativeMethods.IsWinEventHookInstalled(NativeMethods.EVENT_OBJECT_STATECHANGE)))
                 {
                     PopupRootAutomationPeer popupRootAutomationPeer = UIElementAutomationPeer.CreatePeerForElement(popupRoot) as PopupRootAutomationPeer;
@@ -3435,14 +3478,17 @@ namespace System.Windows.Controls.Primitives
                         IntPtr lResult = AutomationInteropProvider.ReturnRawElementProvider(Handle, IntPtr.Zero, new IntPtr(NativeMethods.OBJID_CLIENT), RootProviderForHwnd);
                         if (lResult != IntPtr.Zero)
                         {
-                            IAccessible acc = null;
-                            int hr = NativeMethods.S_FALSE;
+                            // Asking for the accessible object is the entire point: it is what makes
+                            // UIAutomationCore connect this popup's HWND to the main window. The
+                            // object itself is of no use to us, so it is taken as a raw interface
+                            // pointer and released immediately -- which also keeps the Accessibility
+                            // interop assembly out of PresentationFramework altogether.
+                            IntPtr acc = IntPtr.Zero;
                             Guid iid = new Guid(MS.Internal.AppModel.IID.Accessible);
-                            hr = UnsafeNativeMethods.ObjectFromLresult(lResult, ref iid, IntPtr.Zero, ref acc);
-                            if (hr == NativeMethods.S_OK && acc != null)
+                            int hr = UnsafeNativeMethods.ObjectFromLresult(lResult, ref iid, IntPtr.Zero, ref acc);
+                            if (hr == NativeMethods.S_OK && acc != IntPtr.Zero)
                             {
-                                // Release IAccessible(acc) object, just trusting the GC
-                                ;
+                                Marshal.Release(acc);
                             }
                         }
                     }

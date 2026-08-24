@@ -1,7 +1,6 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Accessibility;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -46,12 +45,111 @@ namespace MS.Win32
         public static extern int GetCurrentThemeName(StringBuilder pszThemeFileName, int dwMaxNameChars, StringBuilder pszColorBuff, int dwMaxColorChars, StringBuilder pszSizeBuff, int cchMaxSizeChars);
 
 #if !DRT && !UIAUTOMATIONTYPES
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern WindowMessage RegisterWindowMessage(string msg);
+        [DllImport(ExternDll.User32, EntryPoint = "RegisterWindowMessage", CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern WindowMessage RegisterWindowMessageNative(string msg);
+
+        // RegisterWindowMessage is user32-only. Off-Windows there is no Win32 message routing, but
+        // callers still store the returned id and compare against it, so hand out distinct synthetic
+        // ids in the RegisterWindowMessage range with the same "same string -> same id" contract.
+        public static WindowMessage RegisterWindowMessage(string msg)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return RegisterWindowMessageNative(msg);
+            }
+
+            lock (s_registeredMessages)
+            {
+                if (!s_registeredMessages.TryGetValue(msg, out WindowMessage m))
+                {
+                    m = (WindowMessage)(s_nextSyntheticMessage++);
+                    s_registeredMessages[msg] = m;
+                }
+                return m;
+            }
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, WindowMessage> s_registeredMessages = new();
+        private static int s_nextSyntheticMessage = 0xC000; // start of the real RegisterWindowMessage range
 #endif
 
         [DllImport(ExternDll.User32, EntryPoint = "SetWindowPos", ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern bool SetWindowPos(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags);
+        private static extern bool SetWindowPosNative(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags);
+
+        // Off-Windows, forward a resize to the Cocoa window (position/z-order are owned by AppKit).
+        public static bool SetWindowPos(HandleRef hWnd, HandleRef hWndInsertAfter, int x, int y, int cx, int cy, int flags)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetWindowPosNative(hWnd, hWndInsertAfter, x, y, cx, cy, flags);
+            }
+
+            const int SWP_NOSIZE = 0x0001;
+            const int SWP_NOMOVE = 0x0002;
+            const int SWP_SHOWWINDOW = 0x0040;
+            const int SWP_HIDEWINDOW = 0x0080;
+            MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+            if (cocoa != null)
+            {
+                if ((flags & SWP_NOSIZE) == 0)
+                {
+                    // cx/cy arrive in DEVICE PIXELS (WPF computed them via LogicalToDeviceUnits = DIPs *
+                    // DPI). Hand the device size to the platform window, which converts to its own content
+                    // units. macOS keeps fractional points so an odd pixel width round-trips exactly at
+                    // Retina scale -- rounding to whole points here would drop a popup's right 1px column.
+                    cocoa.SetContentSizePixels(cx, cy);
+                }
+
+                // Move only popups (borderless windows) to their requested screen position; normal
+                // top-level windows are placed by AppKit (and their x/y here are CW_USEDEFAULT-ish).
+                // Move whatever WPF asks to move. This used to be popups only, on the grounds that a
+                // top-level window's x/y "are CW_USEDEFAULT-ish" -- and they were, but only because
+                // GetWindowRect answered (0,0) for every window, so WPF's idea of where the window
+                // was came back as the corner and it asked for the corner. With the real origin
+                // reported, the position WPF sends while showing a window is the position the window
+                // is already at (a no-op move), and the position it sends afterwards is the one the
+                // application asked for. Restricting this to popups is what made Window.Left and
+                // Window.Top silently do nothing.
+                if ((flags & SWP_NOMOVE) == 0)
+                {
+                    cocoa.SetFrameOrigin(x, y);
+                }
+
+                // Topmost arrives here and nowhere else: Window.OnTopmostChanged calls SetWindowPos
+                // with hWndInsertAfter set to HWND_TOPMOST (-1) or HWND_NOTOPMOST (-2) and every
+                // other instruction suppressed. Dropping the argument -- which is what "z-order is
+                // owned by AppKit" amounted to -- made Window.Topmost do nothing whatsoever.
+                const int SWP_NOZORDER = 0x0004;
+                if ((flags & SWP_NOZORDER) == 0)
+                {
+                    nint insertAfter = hWndInsertAfter.Handle;
+                    if (insertAfter == -1) cocoa.SetTopmost(true);
+                    else if (insertAfter == -2) cocoa.SetTopmost(false);
+                }
+
+                // SetWindowPos is ALSO how WPF shows and hides a window, not just how it moves one, and
+                // ignoring these two flags left those windows stuck in whatever state they were last in.
+                // Window.ShowHelper routes a TOPMOST window's show through SWP_SHOWWINDOW rather than
+                // ShowWindow(SW_SHOW) -- and every docking adorner is topmost -- so once such a window
+                // had been hidden it could never come back. SWP_HIDEWINDOW is the matching path, used
+                // when ShowInTaskbar changes.
+                if ((flags & SWP_HIDEWINDOW) != 0)
+                {
+                    cocoa.SetVisible(false);
+                }
+                else if ((flags & SWP_SHOWWINDOW) != 0)
+                {
+                    // SWP_NOACTIVATE carries WPF's "show this without giving it focus": Popup always
+                    // sets it, Window.ShowHelper sets it only for ShowActivated=false. Dropping it
+                    // meant a transparent top-level window (WS_EX_LAYERED, so indistinguishable from a
+                    // popup by chrome alone) could never take focus, hence never activate and never
+                    // deactivate -- a command palette that closes on Deactivated stayed up for good.
+                    const int SWP_NOACTIVATE = 0x0010;
+                    cocoa.SetVisible(true, (flags & SWP_NOACTIVATE) == 0);
+                }
+            }
+            return true;
+        }
 
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern IntPtr GetWindow(HandleRef hWnd, int uCmd);
@@ -89,8 +187,60 @@ namespace MS.Win32
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern int GetBitmapBits(HandleRef hbmp, int cbBuffer, byte[] lpvBits);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool ShowWindow(HandleRef hWnd, int nCmdShow);
+        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "ShowWindow")]
+        private static extern bool ShowWindowNative(HandleRef hWnd, int nCmdShow);
+
+        // The window is already ordered-front when created, so the FIRST show is a no-op off-Windows.
+        // Everything else routed through here is not:
+        //   * the STATE changes -- Window.WindowState = Minimized/Maximized -- which returning true
+        //     without doing anything is why they silently did nothing off-Windows;
+        //   * and SW_HIDE, plus the show that follows it. Window.Hide(), Visibility=Collapsed and
+        //     Popup teardown all arrive as SW_HIDE, and with no platform call behind it a window
+        //     could only ever be destroyed, never taken off the screen and put back. Anything that
+        //     reuses a hidden window then leaked one per use: the docking adorners are shown and
+        //     hidden on every drag, so a few drags left a stack of dead overlay windows on screen
+        //     that nothing would ever close.
+        public static bool ShowWindow(HandleRef hWnd, int nCmdShow)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return ShowWindowNative(hWnd, nCmdShow);
+            }
+
+            MS.Internal.Interop.IPlatformWindow window =
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+            if (window is null)
+            {
+                return true;
+            }
+
+            bool show = ShowsWindow(nCmdShow);
+            window.SetVisible(show, ActivatesWindow(nCmdShow));
+
+            if (show)
+            {
+                window.SetWindowState(nCmdShow);
+            }
+
+            return true;
+        }
+
+        // SW_HIDE is the only value that hides. EVERY other SW_* shows -- including the
+        // minimize/maximize ones, which is what this used to get wrong: they were treated as state
+        // changes on a window that was already on screen, and skipped. A Window created with
+        // WindowState=Maximized is shown by WPF with SW_SHOWMAXIMIZED and nothing else, so it was
+        // never made visible at all -- built, surfaced, composited into a window the window server
+        // was never told to display. It reported onscreen=0 with correct bounds, and the renderer
+        // sat in "no drawable" for as long as it ran.
+        internal static bool ShowsWindow(int nCmdShow) => nCmdShow != NativeMethods.SW_HIDE;
+
+        // SW_SHOWNA / SW_SHOWNOACTIVATE mean "show but do not take focus" -- how WPF shows every
+        // Popup, and any Window with ShowActivated=false. SW_SHOWMINNOACTIVE says the same of a
+        // minimized one. The rest activate.
+        internal static bool ActivatesWindow(int nCmdShow) =>
+            nCmdShow != NativeMethods.SW_SHOWNA &&
+            nCmdShow != NativeMethods.SW_SHOWNOACTIVATE &&
+            nCmdShow != NativeMethods.SW_SHOWMINNOACTIVE;
 
         public static void DeleteObject(HandleRef hObject)
         {
@@ -215,8 +365,17 @@ namespace MS.Win32
         public static extern IntPtr DispatchMessage([In] ref System.Windows.Interop.MSG msg);
 #endif
 
+        // The out parameter is a raw interface pointer rather than Accessibility.IAccessible.
+        //
+        // Stock WPF typed it as IAccessible, and that single signature was the only thing dragging
+        // the Accessibility interop assembly into WindowsBase, PresentationCore and
+        // PresentationFramework -- an assembly this port does not build and must not take from the
+        // Windows Desktop framework. Nothing on this path ever calls a method on the object: the one
+        // caller (Popup's MSAA-to-UIA bridge) wants the side effect of asking for it and drops it
+        // again. An IntPtr expresses that exactly, and the caller releases it explicitly instead of
+        // leaving an RCW to the finalizer.
         [DllImport("oleacc.dll")]
-        internal static extern int ObjectFromLresult(IntPtr lResult, ref Guid iid, IntPtr wParam, [In, Out] ref IAccessible ppvObject);
+        internal static extern int ObjectFromLresult(IntPtr lResult, ref Guid iid, IntPtr wParam, [In, Out] ref IntPtr ppvObject);
 
         [DllImport("user32.dll")]
         internal static extern bool IsWinEventHookInstalled(int winevent);
@@ -229,8 +388,13 @@ namespace MS.Win32
             return IntOleInitialize(IntPtr.Zero);
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool EnumThreadWindows(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam);
+        [DllImport(ExternDll.User32, EntryPoint = "EnumThreadWindows", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool EnumThreadWindowsNative(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam);
+
+        // Off-Windows there is no HWND thread-window list; enumerate nothing (no callback invoked). Used by
+        // Window.ShowDialog to collect/disable sibling windows for modality -- harmless to skip off-Windows.
+        public static bool EnumThreadWindows(int dwThreadId, NativeMethods.EnumThreadWindowsCallback lpfn, HandleRef lParam)
+            => OperatingSystem.IsWindows() ? EnumThreadWindowsNative(dwThreadId, lpfn, lParam) : true;
 
         [DllImport(ExternDll.Ole32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern int OleUninitialize();
@@ -279,6 +443,12 @@ namespace MS.Win32
 
         public static bool EnableWindow(HandleRef hWnd, bool enable)
         {
+            // Win32 window enable/disable (used by modal dialog ownership) has no off-Windows analog;
+            // the Cocoa/browser window drivers manage modality themselves. Treat as a no-op.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             bool result = NativeMethodsSetLastError.EnableWindow(hWnd, enable);
             if (!result)
             {
@@ -296,6 +466,10 @@ namespace MS.Win32
         {
             // This method is not throwing because the caller don't want to fail after calling this.
             // If the window was not previously disabled, the return value is zero, else it is non-zero.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             return NativeMethodsSetLastError.EnableWindow(hWnd, enable);
         }
 
@@ -324,6 +498,26 @@ namespace MS.Win32
 
         internal static bool TryGetCursorPos(ref NativeMethods.POINT pt)
         {
+            // user32-only. On Wayland there is no "where is the pointer" query either, but the
+            // backend already tracks it: pointer events are surface-local, and the window's virtual
+            // origin turns them into the same virtual screen space WPF uses everywhere else. That is
+            // what WindowStartupLocation.CenterMouse and cursor-relative ContextMenu placement want.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                if (System.OperatingSystem.IsLinux() && !System.OperatingSystem.IsAndroid() &&
+                    MS.Internal.Interop.Wayland.WaylandWindow.TryGetPointerPosition(out int px, out int py))
+                {
+                    pt.x = px;
+                    pt.y = py;
+                    return true;
+                }
+
+                // Elsewhere: report failure, which callers treat as "unknown" and fall back on.
+                pt.x = 0;
+                pt.y = 0;
+                return false;
+            }
+
             bool returnValue = IntTryGetCursorPos(ref pt);
 
             // Sometimes Win32 will fail this call, such as if you are
@@ -475,6 +669,11 @@ namespace MS.Win32
 
         internal static IntPtr GetParent(HandleRef hWnd)
         {
+            // Win32 parent-window concept; off-Windows WPF top-level windows have no HWND parent.
+            if (!OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
             IntPtr retVal = NativeMethodsSetLastError.GetParent(hWnd);
             int errorCode = Marshal.GetLastWin32Error();
 
@@ -743,24 +942,215 @@ namespace MS.Win32
         internal static extern bool FreeLibrary([In] IntPtr hModule);
 
 #if !DRT && !UIAUTOMATIONTYPES
-        [DllImport(ExternDll.User32)]
-        public static extern int GetSystemMetrics(SM nIndex);
+        [DllImport(ExternDll.User32, EntryPoint = "GetSystemMetrics")]
+        private static extern int GetSystemMetricsNative(SM nIndex);
+
+        // GetSystemMetrics is a user32-only call. Off-Windows there is no such API, so this returns
+        // the value Windows uses by default for the metric, letting layout / hit-testing get sane
+        // numbers until a cross-platform windowing backend supplies real ones. This is the single
+        // consolidation point, so callers never need their own platform check.
+        public static int GetSystemMetrics(SM nIndex)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return GetSystemMetricsNative(nIndex);
+            }
+
+            return NonWindowsSystemMetric(nIndex);
+        }
+
+        private static int NonWindowsSystemMetric(SM nIndex)
+        {
+            switch (nIndex)
+            {
+                // Screen geometry, from the displays that are actually attached. This used to be a
+                // flat 1920x1080 desktop with one monitor at the origin -- so SystemParameters
+                // .PrimaryScreenWidth, .FullPrimaryScreenWidth, .MaximizedPrimaryScreenWidth and the
+                // whole VirtualScreen family reported a screen nobody had, and an application could
+                // bind to those from XAML through SystemResourceKey and lay itself out to fit it.
+                //
+                // The virtual screen's ORIGIN mattered most: it was zero, which is wrong the moment a
+                // display sits left of or above the primary -- where a second monitor usually goes.
+                case SM.CXSCREEN: return PrimaryMetric(PrimaryAxis.MonitorWidth, 1920);
+                case SM.CYSCREEN: return PrimaryMetric(PrimaryAxis.MonitorHeight, 1080);
+
+                // FULLSCREEN is the client area a full-screen window gets and MAXIMIZED the size of a
+                // maximized one: both the WORK area rather than the whole monitor, which is what makes
+                // them different from CXSCREEN and why they are not lumped in with it.
+                case SM.CXFULLSCREEN: case SM.CXMAXIMIZED: return PrimaryMetric(PrimaryAxis.WorkWidth, 1920);
+                case SM.CYFULLSCREEN: case SM.CYMAXIMIZED: return PrimaryMetric(PrimaryAxis.WorkHeight, 1080);
+
+                case SM.XVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Left, 0);
+                case SM.YVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Top, 0);
+                case SM.CXVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Width, 1920);
+                case SM.CYVIRTUALSCREEN: return VirtualMetric(VirtualAxis.Height, 1080);
+
+                case SM.CMONITORS:
+                {
+                    int monitors = MS.Internal.Interop.PlatformWindow.GetMonitorCount();
+                    return monitors > 0 ? monitors : 1;
+                }
+
+                // Double-click / drag thresholds (Windows defaults).
+                case SM.CXDOUBLECLK: case SM.CYDOUBLECLK: case SM.CXDRAG: case SM.CYDRAG: return 4;
+
+                // Scrollbars, borders, edges, frames.
+                case SM.CXVSCROLL: case SM.CYHSCROLL: case SM.CYVSCROLL: case SM.CXHSCROLL: return 17;
+                case SM.CXBORDER: case SM.CYBORDER: case SM.CXFOCUSBORDER: case SM.CYFOCUSBORDER: return 1;
+                case SM.CXEDGE: case SM.CYEDGE: return 2;
+                case SM.CXFRAME: case SM.CYFRAME: case SM.CXFIXEDFRAME: case SM.CYFIXEDFRAME: return 4;
+
+                // Caption / menu.
+                case SM.CYCAPTION: return 23;
+                case SM.CYSMCAPTION: return 19;
+                case SM.CYMENU: return 20;
+
+                // Icons / cursors.
+                case SM.CXICON: case SM.CYICON: case SM.CXCURSOR: case SM.CYCURSOR: return 32;
+                case SM.CXSMICON: case SM.CYSMICON: return 16;
+
+                // Mouse.
+                case SM.CMOUSEBUTTONS: return 3;
+                case SM.MOUSEPRESENT: case SM.MOUSEWHEELPRESENT: return 1;
+
+                // Everything else (IMMENABLED, SWAPBUTTON, REMOTESESSION, TABLETPC, ...) defaults off/zero.
+                default: return 0;
+            }
+        }
+
+        private enum PrimaryAxis { MonitorWidth, MonitorHeight, WorkWidth, WorkHeight }
+        private enum VirtualAxis { Left, Top, Width, Height }
+
+        /// <summary>One dimension of the primary display, or <paramref name="fallback"/> if it cannot say.</summary>
+        private static int PrimaryMetric(PrimaryAxis axis, int fallback)
+        {
+            if (!MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                    out int ml, out int mt, out int mr, out int mb,
+                    out int wl, out int wt, out int wr, out int wb))
+            {
+                return fallback;
+            }
+
+            int value = axis switch
+            {
+                PrimaryAxis.MonitorWidth => mr - ml,
+                PrimaryAxis.MonitorHeight => mb - mt,
+                PrimaryAxis.WorkWidth => wr - wl,
+                _ => wb - wt,
+            };
+            return value > 0 ? value : fallback;
+        }
+
+        /// <summary>One dimension of the virtual screen, or <paramref name="fallback"/> if it cannot say.</summary>
+        private static int VirtualMetric(VirtualAxis axis, int fallback)
+        {
+            if (!MS.Internal.Interop.PlatformWindow.GetVirtualScreenPixels(
+                    out int left, out int top, out int width, out int height))
+            {
+                return fallback;
+            }
+
+            // Left and Top are legitimately negative and legitimately zero, so they are returned as
+            // they come; only the sizes fall back when the answer is nonsense.
+            return axis switch
+            {
+                VirtualAxis.Left => left,
+                VirtualAxis.Top => top,
+                VirtualAxis.Width => width > 0 ? width : fallback,
+                _ => height > 0 ? height : fallback,
+            };
+        }
 #endif
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate);
+        // SystemParametersInfo is user32-only. Off-Windows each overload returns success with a
+        // sensibly-populated result (a plain "false" return would make SystemParameters throw a
+        // Win32Exception), so the whole SystemParameters/SystemFonts surface works from defaults
+        // until a cross-platform system-settings backend is wired in. All platform decisions live
+        // here rather than at the ~100 SystemParameters call sites.
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.RECT rc, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref rc, nUpdate);
+            }
+            // SPI_GETWORKAREA and friends: report the default desktop work area.
+            rc = new NativeMethods.RECT(0, 0, 1920, 1080);
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref int value, int ignore);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref int value, int ignore);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref int value, int ignore)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref value, ignore);
+            }
+            // SPI_GETCARETWIDTH: report the Windows default caret width (1 device pixel).
+            // The caller seeds this with 0; leaving it there makes CaretElement draw a
+            // zero-width (invisible) caret, so the text-box blinking cursor disappears.
+            if (nAction == NativeMethods.SPI_GETCARETWIDTH)
+            {
+                value = 1;
+            }
+            // Otherwise leave the caller-provided value in place and report success.
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref bool value, int ignore);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref bool value, int ignore);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref bool value, int ignore)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref value, ignore);
+            }
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, ref NativeMethods.HIGHCONTRAST_I rc, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, ref rc, nUpdate);
+            }
+            // High contrast is off by default.
+            rc.dwFlags = 0;
+            rc.lpszDefaultScheme = IntPtr.Zero;
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
-        public static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate);
+        public static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.NONCLIENTMETRICS metrics, int nUpdate)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, metrics, nUpdate);
+            }
+
+            // Populate the non-client metrics with reasonable defaults, including the system fonts
+            // (their LOGFONTs are null by default, which SystemFonts would dereference).
+            metrics.iBorderWidth = 1;
+            metrics.iScrollWidth = 17;
+            metrics.iScrollHeight = 17;
+            metrics.iCaptionWidth = 23;
+            metrics.iCaptionHeight = 23;
+            metrics.iSmCaptionWidth = 19;
+            metrics.iSmCaptionHeight = 19;
+            metrics.iMenuWidth = 20;
+            metrics.iMenuHeight = 20;
+            metrics.lfCaptionFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfSmCaptionFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfMenuFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfStatusFont = NativeMethods.LOGFONT.CreateDefault();
+            metrics.lfMessageFont = NativeMethods.LOGFONT.CreateDefault();
+            return true;
+        }
 
         [DllImport(ExternDll.Kernel32, CharSet = CharSet.Auto, ExactSpelling = true)]
         public static extern bool GetSystemPowerStatus(ref NativeMethods.SYSTEM_POWER_STATUS systemPowerStatus);
@@ -770,14 +1160,34 @@ namespace MS.Win32
 
         public static void ClientToScreen(HandleRef hWnd, ref NativeMethods.POINT pt)
         {
+            // Off-Windows, add the window's client-area origin on screen so the point becomes a true
+            // screen coordinate (device pixels, top-left). This is what places popups correctly and
+            // keeps mouse hit-testing consistent (ScreenToClient subtracts the same offset).
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (cocoa != null)
+                {
+                    cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
+                    pt.x += ox;
+                    pt.y += oy;
+                }
+                return;
+            }
+
             if (IntClientToScreen(hWnd, ref pt) == 0)
             {
                 throw new Win32Exception();
             }
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern IntPtr GetDesktopWindow();
+        [DllImport(ExternDll.User32, EntryPoint = "GetDesktopWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern IntPtr GetDesktopWindowNative();
+
+        // Off-Windows there is no desktop HWND; return zero so callers (e.g. Window.ShowDialog's owner
+        // top-level resolution) skip the desktop special-case instead of P/Invoking the missing user32.
+        public static IntPtr GetDesktopWindow() =>
+            OperatingSystem.IsWindows() ? GetDesktopWindowNative() : IntPtr.Zero;
 
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern IntPtr GetForegroundWindow();
@@ -813,8 +1223,17 @@ namespace MS.Win32
         internal static extern bool TryPostMessage(HandleRef hwnd, WindowMessage msg, IntPtr wparam, IntPtr lparam);
 #endif
 #if BASE_NATIVEMETHODS || CORE_NATIVEMETHODS
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern void NotifyWinEvent(int winEvent, HandleRef hwnd, int objType, int objID);
+        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, EntryPoint = "NotifyWinEvent")]
+        private static extern void NotifyWinEventNative(int winEvent, HandleRef hwnd, int objType, int objID);
+
+        // UI Automation WinEvents are a user32 accessibility facility; no-op off-Windows.
+        public static void NotifyWinEvent(int winEvent, HandleRef hwnd, int objType, int objID)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                NotifyWinEventNative(winEvent, hwnd, objType, objID);
+            }
+        }
 #endif
         [DllImport(ExternDll.User32, ExactSpelling = true, EntryPoint = "BeginPaint", CharSet = CharSet.Auto)]
         private static extern IntPtr IntBeginPaint(HandleRef hWnd, [In, Out] ref NativeMethods.PAINTSTRUCT lpPaint);
@@ -857,18 +1276,52 @@ namespace MS.Win32
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, CharSet = CharSet.Auto)]
         public static extern int GetDeviceCaps(HandleRef hDC, int nIndex);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern IntPtr GetActiveWindow();
+        [DllImport(ExternDll.User32, EntryPoint = "GetActiveWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern IntPtr GetActiveWindowNative();
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool SetForegroundWindow(HandleRef hWnd);
+        // Off-Windows there is no thread-attached active-window concept; callers fall back to
+        // the application's parking window (dialog ownership), which works on all platforms.
+        public static IntPtr GetActiveWindow() =>
+            OperatingSystem.IsWindows() ? GetActiveWindowNative() : IntPtr.Zero;
+
+        [DllImport(ExternDll.User32, EntryPoint = "SetForegroundWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool SetForegroundWindowNative(HandleRef hWnd);
+
+        // Off-Windows this was a raw user32 P/Invoke on a platform with no user32: Window.Activate()
+        // threw DllNotFoundException rather than activating anything. Route it to the platform window,
+        // which knows how to take focus (and how to refuse, for a popup).
+        public static bool SetForegroundWindow(HandleRef hWnd)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetForegroundWindowNative(hWnd);
+            }
+
+            MS.Internal.Interop.IPlatformWindow window =
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+            window?.Activate();
+            return window != null;
+        }
 
         [return: MarshalAs(UnmanagedType.Bool)]
         [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         public static extern unsafe bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, NativeMethods.POINT* pptDst, NativeMethods.POINT* pSizeDst, IntPtr hdcSrc, NativeMethods.POINT* pptSrc, int crKey, ref NativeMethods.BLENDFUNCTION pBlend, int dwFlags);
 
-        [DllImport(ExternDll.User32, SetLastError = true)]
-        public static extern IntPtr SetActiveWindow(HandleRef hWnd);
+        [DllImport(ExternDll.User32, EntryPoint = "SetActiveWindow", SetLastError = true)]
+        private static extern IntPtr SetActiveWindowNative(HandleRef hWnd);
+
+        // Off-Windows, hand the request to the platform window rather than dropping it: returning zero
+        // without acting meant Window.Activate() silently did nothing.
+        public static IntPtr SetActiveWindow(HandleRef hWnd)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return SetActiveWindowNative(hWnd);
+            }
+
+            MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.Activate();
+            return IntPtr.Zero;
+        }
 
         //Refactor shared native methods so that parser dependency
         // is in separate file. 
@@ -981,8 +1434,13 @@ namespace MS.Win32
             return hIcon;
         }
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool IsWindow(HandleRef hWnd);
+        [DllImport(ExternDll.User32, EntryPoint = "IsWindow", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool IsWindowNative(HandleRef hWnd);
+
+        // Off-Windows there is no user32 HWND validity check; a non-zero handle is a live platform
+        // window (Window.ShowDialog uses this to validate the dialog owner handle).
+        public static bool IsWindow(HandleRef hWnd)
+            => OperatingSystem.IsWindows() ? IsWindowNative(hWnd) : hWnd.Handle != IntPtr.Zero;
 
 #if BASE_NATIVEMETHODS
         [DllImport(ExternDll.Gdi32, SetLastError = true, ExactSpelling = true, EntryPoint = "DeleteDC", CharSet = CharSet.Auto)]
@@ -1033,6 +1491,13 @@ namespace MS.Win32
 
         public static IntPtr WindowFromPoint(int x, int y)
         {
+            // Off-Windows resolve the point to one of our Cocoa windows (client==screen coordinates
+            // there); used by mouse hit-testing to find the window under the cursor.
+            if (!OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Interop.PlatformWindow.HitTest(x, y);
+            }
+
             POINT ps = new POINT(x, y);
             return IntWindowFromPoint(ps);
         }

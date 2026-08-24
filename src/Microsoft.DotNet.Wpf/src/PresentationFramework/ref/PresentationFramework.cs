@@ -13,6 +13,8 @@ namespace Microsoft.Win32
         protected abstract bool RunDialog(System.IntPtr hwndOwner);
         public virtual bool? ShowDialog() { throw null; }
         public bool? ShowDialog(System.Windows.Window owner) { throw null; }
+        public virtual System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public virtual System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
     }
     public abstract partial class CommonItemDialog : Microsoft.Win32.CommonDialog
     {
@@ -30,6 +32,8 @@ namespace Microsoft.Win32
         protected virtual void OnItemOk(System.ComponentModel.CancelEventArgs e) { }
         protected override bool RunDialog(System.IntPtr hwndOwner) { throw null; }
         public override void Reset() { }
+        public override System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public override System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
         public override string ToString() { throw null; }
     }
     public abstract partial class FileDialog : Microsoft.Win32.CommonItemDialog
@@ -108,6 +112,7 @@ namespace Microsoft.Win32
         public bool CreatePrompt { get { throw null; } set { } }
         public bool CreateTestFile { get { throw null; } set { } }
         public bool OverwritePrompt { get { throw null; } set { } }
+        public System.Threading.Tasks.Task<bool> CommitAsync() { throw null; }
         public System.IO.Stream OpenFile() { throw null; }
         public override void Reset() { }
     }
@@ -969,6 +974,18 @@ namespace System.Windows
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
         public static System.Windows.MessageBoxResult Show(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult) { throw null; }
+        public static System.Threading.Tasks.Task<System.Windows.MessageBoxResult> ShowAsync(System.Windows.Window owner, string messageBoxText, string caption, System.Windows.MessageBoxButton button, System.Windows.MessageBoxImage icon, System.Windows.MessageBoxResult defaultResult, System.Windows.MessageBoxOptions options) { throw null; }
     }
     public enum MessageBoxButton
     {
@@ -2128,6 +2145,8 @@ namespace System.Windows
         protected internal sealed override void OnVisualParentChanged(System.Windows.DependencyObject oldParent) { }
         public void Show() { }
         public bool? ShowDialog() { throw null; }
+        public System.Threading.Tasks.Task<bool?> ShowDialogAsync() { throw null; }
+        public System.Threading.Tasks.Task<bool?> ShowDialogAsync(System.Windows.Window owner) { throw null; }
     }
     public sealed partial class WindowCollection : System.Collections.ICollection, System.Collections.IEnumerable
     {
@@ -11351,6 +11370,13 @@ namespace System.Windows.Interop
         public override bool TryInvokeMember(System.Dynamic.InvokeMemberBinder binder, object[] args, out object result) { throw null; }
         public override bool TrySetIndex(System.Dynamic.SetIndexBinder binder, object[] indexes, object value) { throw null; }
         public override bool TrySetMember(System.Dynamic.SetMemberBinder binder, object value) { throw null; }
+    }
+    public static partial class HwndHostForeignContent
+    {
+        public static System.Func<System.Windows.Interop.HwndHost, System.IntPtr, bool> Attach { get { throw null; } set { } }
+        public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr> Detach { get { throw null; } set { } }
+        public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr, int, int, int, int> SetBounds { get { throw null; } set { } }
+        public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr, bool> SetVisible { get { throw null; } set { } }
     }
     public abstract partial class HwndHost : System.Windows.FrameworkElement, System.IDisposable, System.Windows.Interop.IKeyboardInputSink, System.Windows.Interop.IWin32Window
     {

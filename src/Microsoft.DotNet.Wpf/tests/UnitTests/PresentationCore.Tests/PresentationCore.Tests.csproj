@@ -5,7 +5,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <Nullable>enable</Nullable>
-    <Platforms>x64;x86;arm64</Platforms>
+    <Platforms>AnyCPU;x64;x86;arm64</Platforms>
     <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
     <!-- SYSLIB5005: System.Formats.Nrbf is experimental -->
     <NoWarn>$(NoWarn);SYSLIB5005</NoWarn>
@@ -15,9 +15,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
+    <!-- The managed stub, same as PresentationCore references. The C++/CLI DirectWriteForwarder
+         needs an MSVC toolchain and wraps a DirectWrite this port does not use on any platform. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" />
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />

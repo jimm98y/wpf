@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    Intentionally empty. Its presence stops MSBuild from walking further up the
+    directory tree and importing the WPF Arcade SDK Directory.Build.props, the
+    same way WgpuInterop/Directory.Build.props does. This assembly is a plain
+    SDK-style project built against the fork's *outputs* (artifacts/bin), not a
+    member of the Arcade solution: it references PresentationFramework, which
+    Arcade builds, so it can only be built after them.
+  -->
+</Project>

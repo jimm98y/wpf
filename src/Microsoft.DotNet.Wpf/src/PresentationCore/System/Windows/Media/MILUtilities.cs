@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -150,7 +150,7 @@ namespace System.Windows.Media
             out MilRectF prcDestRect); 
 
         [DllImport(DllImport.MilCore, EntryPoint = "MilUtility_CopyPixelBuffer", PreserveSig = false)]
-        internal static extern unsafe void MILCopyPixelBuffer(
+        private static extern unsafe void MILCopyPixelBufferNative(
             byte *  pOutputBuffer,
             uint    outputBufferSize,
             uint    outputBufferStride,
@@ -163,34 +163,163 @@ namespace System.Windows.Media
             uint    copyWidthInBits
             );
 
+        internal static unsafe void MILCopyPixelBuffer(
+            byte* pOutputBuffer,
+            uint outputBufferSize,
+            uint outputBufferStride,
+            uint outputBufferOffsetInBits,
+            byte* pInputBuffer,
+            uint inputBufferSize,
+            uint inputBufferStride,
+            uint inputBufferOffsetInBits,
+            uint height,
+            uint copyWidthInBits
+            )
+        {
+            // A row is a BIT stream, most-significant bit first -- the packing every sub-byte WPF
+            // format uses (BlackWhite, Indexed1/2/4, Gray2/4), and the same order ManagedPixelConverter
+            // reads and writes. Offsets and width are in bits because a rectangle of an Indexed4 image
+            // starts and ends mid-byte whenever its X or Width is odd.
+            //
+            // The last byte a row touches is the one holding its last bit, so the extent to validate
+            // depends on the offset as well as the width. With both offsets zero and a whole-byte
+            // width this reduces to the plain row length, which is what the aligned path below copies.
+            uint inputRowBytes = (inputBufferOffsetInBits + copyWidthInBits + 7) >> 3;
+            uint outputRowBytes = (outputBufferOffsetInBits + copyWidthInBits + 7) >> 3;
+
+            if (height > 0 &&
+                ((ulong)(height - 1) * outputBufferStride + outputRowBytes > outputBufferSize ||
+                 (ulong)(height - 1) * inputBufferStride + inputRowBytes > inputBufferSize))
+            {
+                throw new ArgumentException("The pixel copy does not fit within the supplied buffers.");
+            }
+
+            // Whole bytes on both sides: every format above 8bpp, and any sub-byte copy that happens
+            // to land on byte boundaries. Worth keeping separate -- it is the overwhelmingly common
+            // case and a row of it is one memmove rather than a loop over bytes.
+            if (outputBufferOffsetInBits == 0 && inputBufferOffsetInBits == 0 && (copyWidthInBits & 7) == 0)
+            {
+                uint rowBytes = copyWidthInBits >> 3;
+                for (uint y = 0; y < height; y++)
+                {
+                    new ReadOnlySpan<byte>(pInputBuffer + y * inputBufferStride, (int)rowBytes)
+                        .CopyTo(new Span<byte>(pOutputBuffer + y * outputBufferStride, (int)rowBytes));
+                }
+                return;
+            }
+
+            for (uint y = 0; y < height; y++)
+            {
+                CopyBits(pOutputBuffer + y * outputBufferStride, outputBufferOffsetInBits,
+                         pInputBuffer + y * inputBufferStride, inputBufferOffsetInBits,
+                         copyWidthInBits);
+            }
+        }
+
+        /// <summary>
+        /// Copy <paramref name="count"/> bits, MSB first, leaving every bit outside that range in the
+        /// destination untouched -- which is the whole point: a 4bpp copy starting at an odd X shares
+        /// its first byte with a pixel the caller did not ask to overwrite.
+        /// </summary>
+        /// <remarks>
+        /// Moves up to eight bits per step, so it costs roughly one iteration per byte. A same-phase
+        /// copy (source and destination misaligned by the same amount) could memmove its middle and
+        /// only fiddle the two ends, but sub-byte formats are small and rare -- the aligned path above
+        /// already takes every ordinary bitmap -- and a second algorithm here would be more code to be
+        /// wrong in than the case justifies.
+        /// </remarks>
+        private static unsafe void CopyBits(byte* dst, uint dstBit, byte* src, uint srcBit, uint count)
+        {
+            dst += dstBit >> 3; dstBit &= 7;
+            src += srcBit >> 3; srcBit &= 7;
+
+            while (count > 0)
+            {
+                // Never cross a destination byte: one masked read-modify-write per byte touched.
+                uint chunk = Math.Min(8 - dstBit, count);
+
+                uint bits = ReadBits(src, srcBit, chunk);
+                WriteBits(dst, dstBit, chunk, bits);
+
+                dstBit += chunk;
+                dst += dstBit >> 3; dstBit &= 7;
+
+                srcBit += chunk;
+                src += srcBit >> 3; srcBit &= 7;
+
+                count -= chunk;
+            }
+        }
+
+        /// <summary>Read <paramref name="count"/> (1..8) bits at a bit offset of 0..7, right-aligned.</summary>
+        private static unsafe uint ReadBits(byte* p, uint bitOffset, uint count)
+        {
+            // The window can straddle two bytes; the second is only read when it is really needed, so
+            // this never touches a byte past the end of the copied range.
+            uint window = (uint)p[0] << 8;
+            if (bitOffset + count > 8) window |= p[1];
+
+            int shift = 16 - (int)bitOffset - (int)count;
+            return (window >> shift) & ((1u << (int)count) - 1);
+        }
+
+        /// <summary>Write <paramref name="count"/> (1..8) right-aligned bits into one byte at a bit offset.</summary>
+        private static unsafe void WriteBits(byte* p, uint bitOffset, uint count, uint bits)
+        {
+            int shift = 8 - (int)bitOffset - (int)count;
+            uint mask = ((1u << (int)count) - 1) << shift;
+            p[0] = (byte)((p[0] & ~mask) | ((bits << shift) & mask));
+        }
+
         internal static Rect ProjectBounds(
-            ref Matrix3D viewProjMatrix, 
+            ref Matrix3D viewProjMatrix,
             ref Rect3D originalBox)
         {
-            D3DMATRIX viewProjFloatMatrix = CompositionResourceManager.Matrix3DToD3DMATRIX(viewProjMatrix);
-            MILRect3D originalBoxFloat = new MILRect3D(ref originalBox);
-            MilRectF outRect = new MilRectF();
+            return ProjectBoundsManaged(ref viewProjMatrix, ref originalBox);
+        }
 
-            HRESULT.Check(
-                MIL3DCalcProjected2DBounds(
-                    ref viewProjFloatMatrix, 
-                    ref originalBoxFloat, 
-                    out outRect));
+        // Managed replacement for the native MIL3DCalcProjected2DBounds (wpfgfx). Projects the eight
+        // corners of the 3D box through the (row-vector) view-projection matrix, does the perspective
+        // divide, and returns the 2D bounding rectangle. Corners at/behind the camera (w <= 0) are
+        // clamped to a tiny positive w so the resulting bound stays conservative (a superset) rather
+        // than dividing by zero; for content fully in front of the camera the result is exact.
+        private static Rect ProjectBoundsManaged(ref Matrix3D m, ref Rect3D box)
+        {
+            double x0 = box.X, y0 = box.Y, z0 = box.Z;
+            double x1 = x0 + box.SizeX, y1 = y0 + box.SizeY, z1 = z0 + box.SizeZ;
 
-            if (outRect.Left == outRect.Right || 
-                outRect.Top == outRect.Bottom)
+            double left = double.PositiveInfinity, top = double.PositiveInfinity;
+            double right = double.NegativeInfinity, bottom = double.NegativeInfinity;
+            bool any = false;
+
+            for (int c = 0; c < 8; c++)
+            {
+                double x = (c & 1) == 0 ? x0 : x1;
+                double y = (c & 2) == 0 ? y0 : y1;
+                double z = (c & 4) == 0 ? z0 : z1;
+
+                // [x y z 1] * M   (WPF Matrix3D is row-major / row-vector).
+                double px = x * m.M11 + y * m.M21 + z * m.M31 + m.OffsetX;
+                double py = x * m.M12 + y * m.M22 + z * m.M32 + m.OffsetY;
+                double pw = x * m.M14 + y * m.M24 + z * m.M34 + m.M44;
+
+                if (pw < 1e-6) pw = 1e-6;
+                double sx = px / pw;
+                double sy = py / pw;
+
+                if (double.IsNaN(sx) || double.IsNaN(sy)) continue;
+                any = true;
+                if (sx < left) left = sx;
+                if (sx > right) right = sx;
+                if (sy < top) top = sy;
+                if (sy > bottom) bottom = sy;
+            }
+
+            if (!any || left == right || top == bottom)
             {
                 return Rect.Empty;
             }
-            else
-            {
-                return new Rect(
-                    outRect.Left, 
-                    outRect.Top, 
-                    outRect.Right - outRect.Left, 
-                    outRect.Bottom - outRect.Top
-                    );
-            }
+            return new Rect(left, top, right - left, bottom - top);
         }
     }
 }

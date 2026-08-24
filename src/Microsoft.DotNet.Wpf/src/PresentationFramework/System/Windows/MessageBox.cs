@@ -324,6 +324,120 @@ namespace System.Windows
         }
         #endregion
 
+        #region ShowAsync
+        //
+        // Identical to Show in every respect except how the caller waits: the same message box is
+        // shown, and the result is the same value Show would have returned. One overload per Show
+        // overload, deliberately -- a partial set would send anyone who needs the missing shape back
+        // to Show, which is exactly the call that cannot work on the heads this exists for.
+        //
+        // On Windows, macOS and Linux these complete synchronously, so a single piece of awaiting
+        // code is correct on every head and no caller has to branch on the platform.
+        //
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon,
+            MessageBoxResult defaultResult,
+            MessageBoxOptions options)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, caption, button, icon, defaultResult, options);
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon,
+            MessageBoxResult defaultResult)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, caption, button, icon, defaultResult, 0);
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, caption, button, icon, 0, 0);
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, caption, button, MessageBoxImage.None, 0, 0);
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            string messageBoxText, string caption)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, caption, MessageBoxButton.OK, MessageBoxImage.None, 0, 0);
+
+        /// <summary>Shows a message box and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(string messageBoxText)
+            => ShowCoreAsync(IntPtr.Zero, messageBoxText, String.Empty, MessageBoxButton.OK, MessageBoxImage.None, 0, 0);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            Window owner,
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon,
+            MessageBoxResult defaultResult,
+            MessageBoxOptions options)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, caption, button, icon, defaultResult, options);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            Window owner,
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon,
+            MessageBoxResult defaultResult)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, caption, button, icon, defaultResult, 0);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            Window owner,
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, caption, button, icon, 0, 0);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            Window owner,
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, caption, button, MessageBoxImage.None, 0, 0);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(
+            Window owner, string messageBoxText, string caption)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, caption, MessageBoxButton.OK, MessageBoxImage.None, 0, 0);
+
+        /// <summary>Shows a message box owned by <paramref name="owner"/> and awaits the user's answer.</summary>
+        public static System.Threading.Tasks.Task<MessageBoxResult> ShowAsync(Window owner, string messageBoxText)
+            => ShowCoreAsync(OwnerHandle(owner), messageBoxText, String.Empty, MessageBoxButton.OK, MessageBoxImage.None, 0, 0);
+
+        /// <summary>
+        /// The owner's window handle. Null is rejected here rather than inside WindowInteropHelper so
+        /// the argument is named, and so the three heads that ignore the owner (their prompt covers
+        /// the screen) still reject a null one -- ignoring a value is not the same as accepting
+        /// anything. Mirrors CommonDialog.ShowDialogAsync(Window).
+        /// </summary>
+        private static IntPtr OwnerHandle(Window owner)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            return new WindowInteropHelper(owner).Handle;
+        }
+        #endregion
+
         private static int DefaultResultToButtonNumber(MessageBoxResult result, MessageBoxButton button)
         {
             if (result == 0) return DEFAULT_BUTTON1;
@@ -405,6 +519,13 @@ namespace System.Windows
                 }
             }
 
+            // Off-Windows there is no user32 MessageBox. On macOS show a real in-process
+            // NSAlert; on other platforms fall back to the default result (no native UI).
+            if (!OperatingSystem.IsWindows())
+            {
+                return ShowPortable(messageBoxText, caption, button, icon, defaultResult);
+            }
+
             int style = (int) button | (int) icon | (int) DefaultResultToButtonNumber(defaultResult, button) | (int) options;
 
             // modal dialog notification?
@@ -417,6 +538,154 @@ namespace System.Windows
             //Application.EndModalMessageLoop();
 
             return result;
+        }
+
+        // Buttons for each MessageBoxButton, in NSAlert display order (first = default), paired
+        // with the MessageBoxResult each returns. AppKit lists buttons trailing-to-leading, so
+        // the first entry is the rightmost/default button -- matching Win32's default-button-1.
+        private static (string Label, MessageBoxResult Result)[] PortableButtons(MessageBoxButton button)
+        {
+            return button switch
+            {
+                MessageBoxButton.OK => new[] { ("OK", MessageBoxResult.OK) },
+                MessageBoxButton.OKCancel => new[] { ("OK", MessageBoxResult.OK), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.YesNo => new[] { ("Yes", MessageBoxResult.Yes), ("No", MessageBoxResult.No) },
+                MessageBoxButton.YesNoCancel => new[] { ("Yes", MessageBoxResult.Yes), ("No", MessageBoxResult.No), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.RetryCancel => new[] { ("Retry", MessageBoxResult.Retry), ("Cancel", MessageBoxResult.Cancel) },
+                MessageBoxButton.AbortRetryIgnore => new[] { ("Abort", MessageBoxResult.Abort), ("Retry", MessageBoxResult.Retry), ("Ignore", MessageBoxResult.Ignore) },
+                MessageBoxButton.CancelTryContinue => new[] { ("Cancel", MessageBoxResult.Cancel), ("Try Again", MessageBoxResult.TryAgain), ("Continue", MessageBoxResult.Continue) },
+                _ => new[] { ("OK", MessageBoxResult.OK) },
+            };
+        }
+
+        /// <summary>
+        /// The heads whose run loop belongs to the host and cannot be re-entered, so no nested
+        /// dispatcher frame -- and therefore no synchronous modal -- is possible. See
+        /// Dispatcher.PushFrameImpl, which is where the constraint actually lives.
+        /// </summary>
+        /// <remarks>
+        /// Written as three positive tests rather than "not Windows and not macOS and not Linux",
+        /// because Android also satisfies OperatingSystem.IsLinux() and iOS also satisfies
+        /// IsMacOS(): the negative spelling classifies the two desktop heads as unable to block and
+        /// breaks them, which is the mistake this predicate exists to make once instead of at every
+        /// call site.
+        /// </remarks>
+        internal static bool CannotBlock =>
+            OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsBrowser();
+
+        internal static System.Threading.Tasks.Task<MessageBoxResult> ShowCoreAsync(
+            IntPtr owner,
+            string messageBoxText,
+            string caption,
+            MessageBoxButton button,
+            MessageBoxImage icon,
+            MessageBoxResult defaultResult,
+            MessageBoxOptions options)
+        {
+            // Validate identically to ShowCore, and before branching, so a bad enum is rejected the
+            // same way on every head rather than only where a prompt can actually be drawn.
+            if (!IsValidMessageBoxButton(button))
+            {
+                throw new InvalidEnumArgumentException("button", (int)button, typeof(MessageBoxButton));
+            }
+            if (!IsValidMessageBoxImage(icon))
+            {
+                throw new InvalidEnumArgumentException("icon", (int)icon, typeof(MessageBoxImage));
+            }
+            if (!IsValidMessageBoxResult(defaultResult))
+            {
+                throw new InvalidEnumArgumentException("defaultResult", (int)defaultResult, typeof(MessageBoxResult));
+            }
+            if (!IsValidMessageBoxOptions(options))
+            {
+                throw new InvalidEnumArgumentException("options", (int)options, typeof(MessageBoxOptions));
+            }
+
+            // Already-completed on the heads that can block, so save-then-prompt code written once
+            // with await runs everywhere and does not have to branch on the platform. Same principle
+            // as CommonDialog.CommitAsync, which succeeds trivially on desktop for the same reason.
+            if (!CannotBlock)
+            {
+                return System.Threading.Tasks.Task.FromResult(
+                    ShowCore(owner, messageBoxText, caption, button, icon, defaultResult, options));
+            }
+
+            return ManagedMessageBox.ShowAsync(
+                messageBoxText, caption, PortableButtons(button), icon, defaultResult);
+        }
+
+        private static MessageBoxResult ShowPortable(string messageBoxText, string caption,
+            MessageBoxButton button, MessageBoxImage icon, MessageBoxResult defaultResult)
+        {
+            (string Label, MessageBoxResult Result)[] buttons = PortableButtons(button);
+
+            if (OperatingSystem.IsMacOS())
+            {
+                try
+                {
+                    // NSAlertStyle: Error/Stop/Hand -> critical (2); Warning/Exclamation -> warning (0);
+                    // everything else -> informational (1).
+                    int style = icon switch
+                    {
+                        MessageBoxImage.Error => 2,   // == Stop == Hand
+                        MessageBoxImage.Warning => 0, // == Exclamation
+                        _ => 1,
+                    };
+                    string[] labels = Array.ConvertAll(buttons, b => b.Label);
+                    int clicked = MS.Internal.Interop.CocoaDialogs.ShowAlert(messageBoxText, caption, labels, style);
+                    return buttons[clicked].Result;
+                }
+                catch
+                {
+                    // AppKit unavailable (e.g. headless) -> fall through to the default result.
+                }
+            }
+
+            // No native message box on this platform (Linux has none, and xdg-desktop-portal does
+            // not provide one) -- so draw one with WPF. Viable because the desktop heads keep the
+            // blocking dispatcher loop, hence a real nested frame; see ManagedMessageBox.
+            if (!CannotBlock)
+            {
+                try
+                {
+                    return ManagedMessageBox.Show(messageBoxText, caption, buttons, icon, defaultResult);
+                }
+                catch (Exception)
+                {
+                    // No dispatcher / no windowing (a headless process): fall through rather than
+                    // turning a diagnostic prompt into a crash.
+                }
+            }
+            else
+            {
+                // Refuse rather than answer on the user's behalf.
+                //
+                // This used to fall through to the line below and hand back a result nobody had
+                // chosen, having displayed nothing. The danger is not that it was unhelpful, it is
+                // that the fabricated answer is indistinguishable from a real one AND is frequently
+                // the affirmative: every overload but one defaults defaultResult to None, no button
+                // matches None, so the fallback takes buttons[0] -- which for YesNo is Yes. An app
+                // asking "Delete this permanently?" on iOS, Android or the browser was told yes.
+                //
+                // Nothing here can block (see Dispatcher.PushFrameImpl), so there is no synchronous
+                // answer to give; ShowAsync puts up the identical prompt and awaits it. Same
+                // reasoning, same remedy, as CommonDialog.ShowDialog -> ShowDialogAsync.
+                throw new NotSupportedException(
+                    "MessageBox.Show cannot show a message box on this platform, because its run " +
+                    "loop cannot be re-entered to wait for an answer. Use MessageBox.ShowAsync, " +
+                    "which shows the same message box and awaits the result.");
+            }
+
+            // Nothing can be shown: return the caller's declared default (or the safest choice for
+            // the button set) without blocking.
+            foreach ((string _, MessageBoxResult result) in buttons)
+            {
+                if (result == defaultResult)
+                {
+                    return defaultResult;
+                }
+            }
+            return buttons[0].Result;
         }
 
         private static bool IsValidMessageBoxButton(MessageBoxButton value)

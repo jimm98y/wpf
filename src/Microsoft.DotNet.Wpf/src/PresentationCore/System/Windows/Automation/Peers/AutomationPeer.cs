@@ -312,6 +312,11 @@ namespace System.Windows.Automation.Peers
                 return;
             }
 
+            // Off Windows the listener is a native screen reader rather than a UIA client, reached
+            // through the platform bridge. It is notified from here, before the provider work below,
+            // because ProviderFromPeer builds a COM-shaped wrapper that only uiacore ever consumes.
+            MS.Internal.Automation.AutomationBridge.NotifyEvent(this, eventId);
+
             IRawElementProviderSimple provider = ProviderFromPeer(this);
             if (provider != null)
             {
@@ -331,10 +336,19 @@ namespace System.Windows.Automation.Peers
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public void RaisePropertyChangedEvent(AutomationProperty property, object oldValue, object newValue)
         {
+            // ClientsAreListening answers for UIA, which exists only on Windows; off Windows the
+            // listener is a native screen reader attached through the platform bridge, and without
+            // this second term every property change would be dropped before it reached one.
+            if (MS.Internal.Automation.AutomationBridge.IsActive)
+            {
+                MS.Internal.Automation.AutomationBridge.NotifyPropertyChanged(this, property);
+            }
+
             // Only send the event if there are listeners for this property change
             if (AutomationInteropProvider.ClientsAreListening)
             {
-                RaisePropertyChangedInternal(ProviderFromPeer(this), property,oldValue,newValue);
+                RaisePropertyChangedInternal(ProviderFromPeer(this), property, oldValue, newValue,
+                                             notifyBridge: false);
             }
         }
 
@@ -1868,8 +1882,22 @@ namespace System.Windows.Automation.Peers
         private void RaisePropertyChangedInternal(IRawElementProviderSimple provider,
                                                              AutomationProperty propertyId,
                                                              object oldValue,
-                                                             object newValue)
+                                                             object newValue,
+                                                             bool notifyBridge = true)
         {
+            // UpdateSubtree finds most property changes by DIFFING, not by being told: a TextBlock
+            // whose text changed raises nothing itself, and its new name is discovered here on the
+            // next layout pass. Off Windows that made those changes invisible to a screen reader,
+            // because the only notification below goes to UIA -- and it is additionally gated on a
+            // provider, which is a COM-shaped wrapper nothing off Windows consumes.
+            //
+            // RaisePropertyChangedEvent passes false: it has already told the bridge, and its call
+            // here is gated on ClientsAreListening, so the two paths must not both report.
+            if (notifyBridge && MS.Internal.Automation.AutomationBridge.IsActive)
+            {
+                MS.Internal.Automation.AutomationBridge.NotifyPropertyChanged(this, propertyId);
+            }
+
             // Callers have only checked if automation clients are present so filter for any interest in this particular event.
             if (  provider != null
                && EventMap.HasRegisteredEvent(AutomationEvents.PropertyChanged) )
@@ -1949,6 +1977,9 @@ namespace System.Windows.Automation.Peers
                 else
                     flags = StructureChangeType.ChildrenInvalidated;
 
+                MS.Internal.Automation.AutomationBridge.Notify(
+                    this, MS.Internal.Interop.AutomationChangeKind.ChildrenChanged);
+
                 IRawElementProviderSimple provider = ProviderFromPeerNoDelegation(this);
                 if(provider != null)
                 {
@@ -1961,6 +1992,31 @@ namespace System.Windows.Automation.Peers
             }
             else
             {
+                // Off Windows these per-child changes are the ONLY structure notification a screen
+                // reader gets for the ordinary case -- a list gaining a row, a menu opening -- since
+                // the bulk arm above only runs past invalidateLimit. They are reported before the UIA
+                // work below for the same reason RaiseAutomationEvent does it in that order.
+                if (MS.Internal.Automation.AutomationBridge.IsActive)
+                {
+                    if (hs != null)
+                    {
+                        foreach (AutomationPeer removedChild in hs)
+                        {
+                            MS.Internal.Automation.AutomationBridge.NotifyChildChanged(
+                                this, removedChild, added: false, index: -1);
+                        }
+                    }
+                    if (addedChildren != null)
+                    {
+                        foreach (AutomationPeer addedChild in addedChildren)
+                        {
+                            MS.Internal.Automation.AutomationBridge.NotifyChildChanged(
+                                this, addedChild, added: true,
+                                index: _children == null ? -1 : _children.IndexOf(addedChild));
+                        }
+                    }
+                }
+
                 if (removedCount > 0)
                 {
                     //for children removed, provider is the parent

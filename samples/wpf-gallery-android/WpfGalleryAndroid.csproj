@@ -1,0 +1,226 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The WPF Gallery (dotnet/wpf-samples) running on Android.
+
+    The gallery itself is NOT rebuilt here. It is a XAML app, and its markup is already compiled to
+    BAML inside WPFGallery.dll by its own net10.0 build (via WpfWebGpu.Sdk) - so this head just
+    REFERENCES that assembly and calls its public static App.Main(), exactly as the iOS head does.
+    That keeps markup compilation on the one TFM the SDK supports and leaves this project as pure
+    Android scaffolding: Activity -> FrameLayout -> SurfaceView -> WPF.
+
+    Shorter than the iOS twin, because Android can load a third-party shared library: the binding
+    keeps its normal DllImport("wgpu_native") against the libwgpu_native.so packed below, so there
+    is no static-link flavour, no dead-stripping problem and no NativeReference/ForceLoad dance.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationId>net.dot.wpf.gallery</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AssemblyName>WpfGalleryAndroid</AssemblyName>
+    <RootNamespace>WpfGalleryAndroid</RootNamespace>
+    <!-- The gallery + WPF are full of [Obsolete]/platform-guarded API; this is a host, not a lint target. -->
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+
+    <_Gallery>$(MSBuildThisFileDirectory)../../../WPF-Samples/Sample Applications/WPFGallery/bin/Release/net10.0</_Gallery>
+    <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_Src>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src</_Src>
+  </PropertyGroup>
+
+  <!-- The Android windowing head (SurfaceView + Choreographer pump), shared verbatim
+       with the spike; see the file's own remarks for why it lives beside AndroidWindow.cs. -->
+  <ItemGroup>
+    <Compile Include="../../src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidHost.cs" Link="AndroidHost.cs" />
+  </ItemGroup>
+
+  <!-- The same fonts the iOS and browser heads bundle. Android's /system/fonts has no Segoe
+       Fluent Icons / MDL2 substitute, so without Symbols.ttf every glyph icon renders as a box;
+       Liberation/DejaVu additionally keep text metrics identical to the other heads.
+       Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
+  <ItemGroup>
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <!-- Same collection, same reason as the other heads. Android is the one platform that also
+         has Noto CJK in /system/fonts, so this is a second copy there; it is bundled anyway so
+         that every head resolves CJK through the same font instead of an OEM image's. -->
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- wgpu-native, packed into the APK under lib/<abi>/. Fetch with eng/fetch-wgpu.ps1 -Rid
+       android-arm64 (the tree is gitignored). -->
+  <ItemGroup>
+    <AndroidNativeLibrary Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/android-arm64/lib/libwgpu_native.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+  <!--
+    The gallery and the libraries it needs that are not on NuGet for this TFM, STAGED into lib/.
+    Referencing them straight out of the gallery's output directory does not work: that folder also
+    contains its own copies of WindowsBase/PresentationCore/..., and assembly resolution prefers a
+    sibling of the reference it is resolving - so the fork's WindowsBase would lose to the one next
+    door. lib/ holds ONLY these assemblies, so nothing competes.
+  -->
+  <ItemGroup>
+    <Reference Include="WPFGallery">              <HintPath>lib/WPFGallery.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Xaml.Behaviors"><HintPath>lib/Microsoft.Xaml.Behaviors.dll</HintPath></Reference>
+    <Reference Include="CommunityToolkit.Mvvm">   <HintPath>lib/CommunityToolkit.Mvvm.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <Target Name="StageGalleryAssemblies" BeforeTargets="ResolveAssemblyReferences"
+          Condition="Exists('$(_Gallery)/WPFGallery.dll')">
+    <Copy SourceFiles="$(_Gallery)/WPFGallery.dll;$(_Gallery)/Microsoft.Xaml.Behaviors.dll;$(_Gallery)/CommunityToolkit.Mvvm.dll"
+          DestinationFolder="$(MSBuildThisFileDirectory)lib" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Microsoft.Extensions.* (the gallery hosts a generic-host container). Same versions its own
+       csproj pins; these are netstandard/net8.0 packages, so they resolve for net10.0-android. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- The from-source WPF fork, as built artifacts (eng/build-sdk.sh). Referenced rather than
+       ProjectReference'd because these build through the Arcade SDK, which does not participate in
+       the Android build. -->
+  <!-- Turn the visual-tree inspector on for a run: build with -p:WpfDevToolsEnv=true.
+       An Android app cannot be handed an environment variable at launch the way a desktop one
+       can (adb's debug.mono.env is ignored for a non-debuggable build, which is every Release
+       build), so it has to be baked in, and this keeps that opt-in rather than always on. -->
+  <ItemGroup Condition="'$(WpfDevToolsEnv)' == 'true'">
+    <AndroidEnvironment Include="devtools.env" />
+    <AndroidManifestOverlay Include="devtools.manifest.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="WindowsBase">                <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">                <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">           <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework">      <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">       <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">             <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">             <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">          <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">       <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <!-- The CDP visual-tree inspector, so WPF_DEVTOOLS works on this head too. An Android app
+         is packaged into an APK, so it has to be REFERENCED to be deployed. Dropping the
+         assembly beside the app, which is enough on a desktop head, has nowhere to go here. -->
+    <Reference Include="Microsoft.Wpf.DevTools">     <HintPath>$(_Src)/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
+    <!-- Theme dictionaries: the gallery sets ThemeMode.System, which loads the Fluent theme. -->
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+    <!-- The Fluent theme's BAML names the Ribbon assembly, so it is resolved at parse time even
+         by an app that has no ribbon in it. Without it the gallery dies during App.Main with
+         "IO_FileName_Name, System.Windows.Controls.Ribbon" and never shows a window. -->
+    <Reference Include="System.Windows.Controls.Ribbon"><HintPath>$(_Art)/System.Windows.Controls.Ribbon/Release/net10.0/System.Windows.Controls.Ribbon.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!--
+    The fork's cross-platform Microsoft.Win32.SystemEvents / Microsoft.Win32.Registry shims. The
+    framework copies are throw-only stubs off Windows, and the gallery subscribes to
+    SystemEvents.UserPreferenceChanged from HeaderTile, MainWindow and several pages, so DashboardPage
+    failed to construct with PlatformNotSupportedException wrapped in a XamlParseException and the app
+    came up BLACK. ExcludeAssets=all neutralises the transitive packages so ours is the only copy.
+  -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!-- Assemblies the WPF closure names but no Android path reaches. They still have to RESOLVE for
+       the build to complete. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <!-- The REAL assembly, not the WindowsDesktop reference: mono-aot-cross reads signatures out of
+         it while compiling PresentationCore, and a reference assembly answers with the wrong
+         identity. See WpfStageAotResolvableRefs below. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Windows-only assemblies WindowsBase/PresentationCore reference from code paths Android never
+         executes. The REFERENCE assemblies are enough: the runtime never loads them. -->
+    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!--
+    Keep the Windows-only shim assemblies out of AOT.
+
+    The authoritative copy of this is WpfWebGpuExcludeWindowsShimsFromAot in the packaged SDK
+    (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets). This sample references the fork by PATH rather than through
+    that SDK, so like the font deployment above it has to repeat the work itself.
+
+    mono-aot-cross has to RESOLVE every reference in an assembly it compiles, and this closure is
+    full of edges that only exist on Windows: PresentationUI names System.Windows.Forms,
+    System.Private.Windows.Core names System.Formats.Nrbf, and so on. Those reference assemblies are
+    here to satisfy the compiler, not to run, so AOT fails on them ("Could not load file or assembly
+    ... System.Windows.Forms") and takes the whole build with it. Nothing on an Android code path
+    reaches any of them.
+
+    Excluding an assembly from AOT is not excluding it from the app: it ships as IL and Mono runs it
+    under the JIT if anything ever does call into it. This is the same answer the iOS head gives
+    (MtouchInterpreter, in WpfGalleryIos.csproj) for the same assemblies and the same reason; Android
+    has no equivalent property, so the AOT input list is filtered directly.
+  -->
+  <Target Name="WpfExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Put System.Formats.Nrbf where mono-aot-cross can find it.
+
+    PresentationCore's DataObject serialisation path names the type, so AOT has to resolve the
+    assembly to read a signature while compiling PresentationCore - even though nothing on Android
+    calls it. It never arrives on its own: the identity is a WindowsDesktop one that no package
+    reference or trim setting produces here, which is the same wall the wasm head hit (see
+    _AddVendoredAotSearchPath in WpfWebGpuGalleryWasm.csproj).
+
+    mono-aot-cross has no search-path option, resolving instead beside the assembly it is compiling,
+    so the REFERENCE assembly is staged into linked/ for it to find. Signatures are all AOT reads,
+    and this copy is not a publish input, so nothing ships.
+  -->
+  <Target Name="WpfStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation">
+    <ItemGroup>
+      <_WpfAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true" Condition="'@(_WpfAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
+
+</Project>

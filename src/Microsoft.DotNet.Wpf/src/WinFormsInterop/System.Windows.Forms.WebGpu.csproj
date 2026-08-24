@@ -1,0 +1,149 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds Mono's managed System.Windows.Forms (fully-managed control painting) on net10 with our
+    cross-platform XplatUIWebGpu driver (gen/), so legacy WinForms apps run on the WebGPU stack.
+    The Mono S.W.F source is VENDORED under swf/ (self-contained — no external mono checkout). The
+    native platform drivers (X11/Carbon), Mono WebBrowser, and NUnit tests were pruned when
+    vendoring; our edits vs upstream Mono are recorded in mono-patches/mono-swf.patch. See README.md.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Windows.Forms</AssemblyName>
+    <RootNamespace>System.Windows.Forms</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- The vendored swf/resources/*.resx now live inside the project dir; stop the SDK from
+         auto-including them (Resources.targets includes them explicitly with the right LogicalName). -->
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <DefineConstants>MONO;SECURITY_DEP;NET_4_5</DefineConstants>
+    <NoWarn>$(NoWarn);SYSLIB0011;CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0114;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661</NoWarn>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!--
+      Public-signed with the ECMA key, which is what makes this assembly's identity
+      "System.Windows.Forms, Version=4.0.0.0, PublicKeyToken=b77a5c561934e089" — byte for byte the
+      identity every WinForms library on nuget.org was compiled against (.NET Core 3.x kept WinForms
+      at 4.0.0.0, and .NET signs it with the ECMA key). Unsigned, the simple name matched but the key
+      did not, and the compiler refuses to unify across a differing public key: referencing e.g.
+      Microsoft.Web.WebView2.WinForms failed with CS0012 "the type 'Control' is defined in an
+      assembly that is not referenced", naming an assembly that was in fact sitting right there.
+      Version differences ARE tolerated (CS1701), so this one identity covers the whole ecosystem.
+
+      PublicSign, not real signing: the ECMA key is public and has no private half. Same pattern the
+      CrossPlatform test projects already use — see eng/snk/ECMA.snk.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
+    <!-- Mono.System.Drawing and the raster helper are not strong-named; a signed assembly may
+         reference them, the compiler just says so. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RunAnalyzers>false</RunAnalyzers>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Vendored Mono managed WinForms sources (swf/). The native X11/Carbon drivers, Mono
+         WebBrowser, and test files were removed during vendoring, so no Compile Remove is needed.
+         XplatUIWin32.cs is KEPT (compile-only): cross-platform files call its static P/Invoke
+         helpers; the DllImports never run (XplatUI selects our WebGPU driver). -->
+    <Compile Include="swf/System.Windows.Forms/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Design/**/*.cs" />
+    <Compile Include="swf/System.Drawing.Design/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Layout/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.VisualStyles/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.PropertyGridInternal/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Internal/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.RTF/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.Theming/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.WebBrowserDialogs/**/*.cs" />
+    <!-- ResXResourceReader/Writer, ResXDataNode and their handlers. Pruned with the rest of
+         the non-managed tree when swf/ was vendored, but they are pure managed XML handling
+         and consumers do use them (SharpDevelop's ResXConverter does not compile without). -->
+    <Compile Include="swf/System.Resources/**/*.cs" />
+    <!-- ResXResourceSet derives from ResourceSet and drives its protected Reader/Table
+         members, which modern .NET no longer exposes. Nothing needs the set type - consumers
+         use the reader and writer directly - so it is left out rather than rewritten. -->
+    <Compile Remove="swf/System.Resources/ResXResourceSet.cs" />
+    <Compile Include="swf/Assembly/**/*.cs" />
+
+    <!-- Two Mono commons that lived outside the S.W.F tree (vendored into swf/common/), plus our
+         generated driver/consts + shims. -->
+    <Compile Include="swf/common/MonoTODOAttribute.cs" />
+    <Compile Include="swf/common/MonoToolsLocator.cs" />
+    <Compile Include="gen/Consts.cs" />
+    <Compile Include="gen/XplatUIWebGpu.cs" />
+    <Compile Include="gen/XplatUIWebGpu.Core.cs" />
+    <Compile Include="gen/XplatUIWebGpu.DragDrop.cs" />
+    <Compile Include="gen/XplatUIWebGpu.Clipboard.cs" />
+    <Compile Include="gen/XplatUIWebGpu.FileDialogBridge.cs" />
+    <Compile Include="shims/*.cs" />
+
+    <!-- The WebBrowser control and its HtmlDocument object model. OUTSIDE swf/ on purpose: that
+         tree is vendored Mono source kept pristine so it can be refreshed from upstream, and this is
+         ours. Mono's own WebBrowser (which drove Gecko) was pruned at vendoring; the event args,
+         WebBrowserReadyState and the dialog forms it left behind are reused by these. -->
+    <Compile Include="web/*.cs" />
+
+    <!-- The cross-platform engine seam, compiled in by source. Internal, and never crossing an
+         assembly boundary, which is why PresentationFramework and Microsoft.Web.WebView2.Core each
+         compile the same files into themselves: the three cannot reference one another. -->
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewTypes.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/IWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewScript.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewBackendFactory.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewHostWindow.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewInterop.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/MacWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/IOSWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/BrowserWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/AndroidWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/AndroidWebViewRegistration.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/LinuxWebViewRegistration.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/LinuxWebViewBackend.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/ObjCBlock.cs" />
+
+    <!-- On-screen presentation: the per-OS window + event pump and the shared WebGPU present path.
+         This belongs to the WinForms assembly, not to a host app: real WinForms puts its own windows
+         on screen, so Application.Run(form) has to work for an app that references nothing else.
+         (These files used to live in the winforms-webgpu-gallery sample, which is why every sample
+         had to hand-roll its own message loop.) -->
+    <Compile Include="host/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- UITypeEditor is provided by our shim (shims/DrawingDesignShim.cs). Accessibility
+         (IAccessible) comes from the fork's own build. It used to be a WindowsDesktop copy vendored
+         as a binary under lib/; the repo builds the assembly from source now
+         (src/Microsoft.DotNet.Wpf/src/Accessibility), so no head carries a framework assembly. -->
+    <Reference Include="Accessibility">
+      <HintPath>$(MSBuildThisFileDirectory)../../../../artifacts/bin/Accessibility/Release/net10.0/Accessibility.dll</HintPath>
+    </Reference>
+    <!-- Our own vendored Mono System.Drawing (the GPU-raster backend target), replacing the
+         System.Drawing.Common 6.0.0 NuGet package. -->
+    <ProjectReference Include="sysdrawing/System.Drawing.WebGpu.csproj" />
+    <!-- host/ presents through the shared WebGPU scene renderer; internals are exposed to this
+         assembly by name in WgpuInterop/AssemblyInfo.cs. -->
+    <ProjectReference Include="../WgpuInterop/WgpuInterop.csproj" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
+    <PackageReference Include="System.CodeDom" Version="10.0.0" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.0" />
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.0" />
+  </ItemGroup>
+
+  <!-- System.Security.Permissions transitively drags in System.Drawing.Common + System.Drawing.
+       Primitives, which duplicate every type our own System.Drawing provides (Color/Rectangle/
+       Graphics/…) → CS0433. Strip those two resolved references so our System.Drawing is the sole
+       provider of the System.Drawing.* types. -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <Import Project="gen/Resources.targets" />
+</Project>

@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The legacy MSAA interop assembly, built from source.
+
+    This exists so that nothing in the port has to take Accessibility.dll from the Microsoft
+    WindowsDesktop framework (or from the Microsoft.Private.Winforms transport package that
+    delivers the same assembly). It is a one-interface assembly, and stock WPF depended on it only
+    because tlbimp had already produced one; there is no reason the fork cannot own it, and every
+    reason it should - the Windows head is meant to be self-contained.
+  -->
+  <PropertyGroup>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="IAccessible.cs" />
+  </ItemGroup>
+
+</Project>

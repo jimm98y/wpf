@@ -163,21 +163,12 @@ namespace MS.Win32.PresentationCore
                 uint cbCmd
                 );
 
-            [DllImport(DllImport.MilCore)]
-            internal static extern unsafe int MilGlyphRun_GetGlyphOutline(
-                IntPtr pFontFace,
-                ushort glyphIndex, 
-                bool sideways, 
-                double renderingEmSize,
-                out byte* pPathGeometryData,
-                out UInt32 pSize,
-                out FillRule pFillRule
-                );
-
-            [DllImport(DllImport.MilCore)]
-            internal static extern unsafe int MilGlyphRun_ReleasePathGeometryData(
-                byte* pPathGeometryData
-                );
+            // MilGlyphRun_GetGlyphOutline and MilGlyphRun_ReleasePathGeometryData used to sit here.
+            // They were the only way to get a glyph's contours and they took a DirectWrite font
+            // face, so on a port that ships neither wpfgfx nor DirectWrite they could do nothing
+            // but throw -- which is what GlyphRun.BuildGeometry and FormattedText.BuildGeometry did
+            // on every platform. GlyphTypeface.ComputeGlyphOutline now reads 'glyf' and 'CFF '
+            // directly, in managed code, so there is nothing left to declare.
 
             [DllImport(DllImport.MilCore, EntryPoint = "MilCreateReversePInvokeWrapper")]
             internal static extern unsafe /*HRESULT*/ int MilCreateReversePInvokeWrapper(
@@ -502,39 +493,67 @@ namespace MS.Win32.PresentationCore
                 );
 }
 
-        internal static class MILUnknown
+        /// <summary>
+        /// IUnknown, called straight through the object's own vtable.
+        /// <para>
+        /// These used to bind to wpfgfx_cor3.dll's MILAddRef/MILRelease/MILQueryInterface, which were
+        /// never more than thin forwarders to the vtable -- but they meant that merely RELEASING a COM
+        /// pointer needed WPF's native DLL. That is a dependency nothing can avoid: a SafeMILHandle
+        /// finalizer runs whether or not the code that created the handle was on a native path, so with
+        /// the DLL gone the app died on the GC's finalizer thread, far from anything that caused it.
+        /// </para>
+        /// <para>
+        /// Calling the vtable directly is what the forwarders did anyway, works for any COM object from
+        /// any provider (WIC included), and needs no library at all. This is plain function-pointer
+        /// dispatch over the IUnknown ABI -- no [ComImport], no runtime COM marshalling.
+        /// </para>
+        /// </summary>
+        internal static unsafe class MILUnknown
         {
-            [DllImport(DllImport.MilCore, EntryPoint = "MILAddRef")]
-            internal static extern UInt32 AddRef(SafeMILHandle pIUnkown);
+            // IUnknown vtable: 0 QueryInterface, 1 AddRef, 2 Release.
+            private static uint AddRefPtr(IntPtr pIUnknown) =>
+                pIUnknown == IntPtr.Zero
+                    ? 0
+                    : ((delegate* unmanaged[Stdcall]<IntPtr, uint>)(*(void***)pIUnknown)[1])(pIUnknown);
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILAddRef")]
-            internal static extern UInt32 AddRef(SafeReversePInvokeWrapper pIUnknown);
+            internal static UInt32 AddRef(SafeMILHandle pIUnkown) => AddRefPtr(pIUnkown.DangerousGetHandle());
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILRelease")]
+            internal static UInt32 AddRef(SafeReversePInvokeWrapper pIUnknown) => AddRefPtr(pIUnknown.DangerousGetHandle());
 
-            internal static extern int Release(IntPtr pIUnkown);
+            internal static int Release(IntPtr pIUnkown) =>
+                pIUnkown == IntPtr.Zero
+                    ? 0
+                    : (int)((delegate* unmanaged[Stdcall]<IntPtr, uint>)(*(void***)pIUnkown)[2])(pIUnkown);
 
             internal static void ReleaseInterface(ref IntPtr ptr)
             {
                 if (ptr != IntPtr.Zero)
                 {
                     // Return value ignored on purpose.
-                    UnsafeNativeMethods.MILUnknown.Release(ptr);
+                    Release(ptr);
                     ptr = IntPtr.Zero;
                 }
             }
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILQueryInterface")]
-            internal static extern int /* HRESULT */ QueryInterface(
+            internal static int /* HRESULT */ QueryInterface(
                 IntPtr pIUnknown,
                 ref Guid guid,
-                out IntPtr ppvObject);
+                out IntPtr ppvObject)
+            {
+                ppvObject = IntPtr.Zero;
+                if (pIUnknown == IntPtr.Zero) return unchecked((int)0x80004003);   // E_POINTER
 
-            [DllImport(DllImport.MilCore, EntryPoint = "MILQueryInterface")]
-            internal static extern int /* HRESULT */ QueryInterface(
+                fixed (Guid* g = &guid)
+                fixed (IntPtr* pp = &ppvObject)
+                {
+                    return ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)(*(void***)pIUnknown)[0])(pIUnknown, g, pp);
+                }
+            }
+
+            internal static int /* HRESULT */ QueryInterface(
                 SafeMILHandle pIUnknown,
                 ref Guid guid,
-                out IntPtr ppvObject);
+                out IntPtr ppvObject) => QueryInterface(pIUnknown.DangerousGetHandle(), ref guid, out ppvObject);
         }
 
         internal static class WICStream
