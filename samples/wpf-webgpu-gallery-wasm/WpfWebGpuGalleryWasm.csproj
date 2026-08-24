@@ -310,7 +310,7 @@
   <Target Name="CopyWpfFonts" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
     <ItemGroup>
       <!-- .ttc too: the CJK font is a collection, and a *.ttf glob drops it silently. -->
-      <_GalleryFonts Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\*.ttf;..\..\sdk\WpfWebGpu.Sdk\web\fonts\*.ttc" />
+      <_GalleryFonts Include="..\..\sdk\WpfWebGpu.Fonts\fonts\*.ttf;..\..\sdk\WpfWebGpu.Fonts\fonts\*.ttc" />
     </ItemGroup>
     <Copy SourceFiles="@(_GalleryFonts)" DestinationFolder="wwwroot\fonts" SkipUnchangedFiles="true" />
     <PropertyGroup>

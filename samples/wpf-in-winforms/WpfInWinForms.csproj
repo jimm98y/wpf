@@ -94,9 +94,9 @@
        Fluent theme's glyph icons and TwemojiMozilla the COLR emoji face. A glob matching nothing is
        inert, so this is harmless on Windows where the system fonts cover it. -->
   <ItemGroup>
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 

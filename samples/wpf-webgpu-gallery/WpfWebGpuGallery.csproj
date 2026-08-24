@@ -96,13 +96,13 @@
 
   <!-- App-local fonts, as the SDK deploys for any desktop app on this stack. -->
   <ItemGroup>
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\NotoSansCJK-Regular.ttc" Link="fonts\NotoSansCJK-Regular.ttc"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\NotoSansCJK-Regular.ttc" Link="fonts\NotoSansCJK-Regular.ttc"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="..\..\sdk\WpfWebGpu.Sdk\web\fonts\CascadiaCode-Regular.ttf" Link="fonts\CascadiaCode-Regular.ttf"
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\CascadiaCode-Regular.ttf" Link="fonts\CascadiaCode-Regular.ttf"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
