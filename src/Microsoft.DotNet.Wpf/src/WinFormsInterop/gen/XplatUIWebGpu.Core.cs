@@ -478,6 +478,15 @@ namespace System.Windows.Forms
 		internal void InjectMouseUp(int screenX, int screenY)
 			=> InjectMouse(screenX, screenY, Msg.WM_LBUTTONUP, 0);
 
+		/// <summary>The right button, delivered to the window under the pointer exactly as the
+		/// left one is. Nothing carried it in from a host, so no control anywhere ever saw a
+		/// right click: a context menu could be built, and asked for, and shown by hand, but
+		/// clicking with the right button did nothing at all.</summary>
+		internal void InjectRightDown(int screenX, int screenY)
+			=> InjectMouse(screenX, screenY, Msg.WM_RBUTTONDOWN, MK_RBUTTON);
+		internal void InjectRightUp(int screenX, int screenY)
+			=> InjectMouse(screenX, screenY, Msg.WM_RBUTTONUP, 0);
+
 		/// <summary>Route a mouse-wheel notch to the window under the cursor. WM_MOUSEWHEEL carries the
 		/// signed delta (multiples of WHEEL_DELTA=120, positive = scroll up) in the wParam high word and
 		/// SCREEN coordinates in lParam — matching what ScrollableControl/ListBox expect.</summary>

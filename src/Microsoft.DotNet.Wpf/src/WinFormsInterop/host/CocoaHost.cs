@@ -1,4 +1,4 @@
-// Minimal on-screen host for the WinForms port on macOS: an NSWindow whose content is an
+﻿// Minimal on-screen host for the WinForms port on macOS: an NSWindow whose content is an
 // NSImageView showing the driver's composited window bitmap, with a poll loop that drains
 // NSEvents and routes left-clicks back through the driver (hit-test + WM_LBUTTON dispatch).
 // Objective-C runtime P/Invoke, same style as the WPF fork's CocoaWindow. Presentation is a
@@ -16,7 +16,7 @@ internal sealed class CocoaHost : IWinFormsHost
 {
     private readonly Form _form;
     private readonly object _driver;
-    private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion;
+    private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _rightDown, _rightUp;
     private IntPtr _window, _imageView;
     private WgpuPresenter _wgpu;   // when non-null, present through WebGPU instead of CoreGraphics
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
@@ -37,6 +37,8 @@ internal sealed class CocoaHost : IWinFormsHost
         _injectClick = dt.GetMethod("InjectClick", BindingFlags.NonPublic | BindingFlags.Instance);
         _down = dt.GetMethod("InjectMouseDown", BindingFlags.NonPublic | BindingFlags.Instance);
         _up = dt.GetMethod("InjectMouseUp", BindingFlags.NonPublic | BindingFlags.Instance);
+        _rightDown = dt.GetMethod("InjectRightDown", BindingFlags.NonPublic | BindingFlags.Instance);
+        _rightUp = dt.GetMethod("InjectRightUp", BindingFlags.NonPublic | BindingFlags.Instance);
         _move = dt.GetMethod("InjectMouseMove", BindingFlags.NonPublic | BindingFlags.Instance);
         _char = dt.GetMethod("InjectChar", BindingFlags.NonPublic | BindingFlags.Instance);
         _keyDown = dt.GetMethod("InjectKeyDown", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -329,8 +331,9 @@ internal sealed class CocoaHost : IWinFormsHost
             if (evt == IntPtr.Zero) break;
 
             nint type = (nint)Send(evt, Sel("type"));
-            // NSEventType: LeftMouseDown=1, LeftMouseUp=2, MouseMoved=5, LeftMouseDragged=6.
-            if (type == 1 || type == 2 || type == 5 || type == 6)
+            // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
+            // MouseMoved=5, LeftMouseDragged=6.
+            if (type >= 1 && type <= 6)
             {
                 NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
                 int cx = (int)loc.x;
@@ -339,6 +342,8 @@ internal sealed class CocoaHost : IWinFormsHost
                 {
                     case 1: _down.Invoke(_driver, new object[] { cx, cy }); break;
                     case 2: _up.Invoke(_driver, new object[] { cx, cy }); break;
+                    case 3: _rightDown.Invoke(_driver, new object[] { cx, cy }); break;
+                    case 4: _rightUp.Invoke(_driver, new object[] { cx, cy }); break;
                     case 5: _move.Invoke(_driver, new object[] { cx, cy, false }); break;
                     case 6: _move.Invoke(_driver, new object[] { cx, cy, true }); break;
                 }

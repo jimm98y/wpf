@@ -30,7 +30,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// present and must not be touched.</summary>
     private bool FormGone => _form == null || _form.IsDisposed;
     private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar;
+    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar, _rightDown, _rightUp;
     private readonly MethodInfo _getRubberBands;
     private readonly MethodInfo _isPopup;
     private readonly MethodInfo _getCursor;
@@ -65,6 +65,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
         _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
+        _rightDown = M("InjectRightDown"); _rightUp = M("InjectRightUp");
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _getRubberBands = M("GetReversibleRects");
@@ -416,6 +417,13 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 MouseAt(lParam, _down); Frame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
             case 0x0202: Trace("WM_LBUTTONUP", lParam); ReleaseCapture();
                 MouseAt(lParam, _up); Frame(); return IntPtr.Zero;                  // WM_LBUTTONUP
+            // The right button. Focus follows it, as it does in Windows -- the menu it raises
+            // acts on the control that has the keyboard -- but no capture: the menu takes its
+            // own. WinForms turns the release into WM_CONTEXTMENU itself.
+            case 0x0204: Trace("WM_RBUTTONDOWN", lParam); SetFocus(hwnd);
+                MouseAt(lParam, _rightDown); Frame(); return IntPtr.Zero;           // WM_RBUTTONDOWN
+            case 0x0205: Trace("WM_RBUTTONUP", lParam);
+                MouseAt(lParam, _rightUp); Frame(); return IntPtr.Zero;             // WM_RBUTTONUP
             // WM_ACTIVATE. A popup is dismissed by looking away from it: clicking the window it dropped
             // out of, or another application altogether. Nothing told it so -- it is a window of its own,
             // and a click elsewhere is not a message the driver ever sees -- so a colour picker that was
