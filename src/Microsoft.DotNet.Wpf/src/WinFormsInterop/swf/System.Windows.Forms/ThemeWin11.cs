@@ -96,6 +96,16 @@ namespace System.Windows.Forms
 
 	/// <summary>The same colours, without the shading along a tool strip's background. A button row
 	/// embedded in another control -- the property grid's -- is flat in Windows.</summary>
+	/// <summary>The colours Windows draws an old-style menu in. It draws those itself rather
+	/// than leaving them to the application, and it draws them lighter than the ones it gives a
+	/// strip menu: a #E5E5E5 hairline round a #F9F9F9 body, where a strip menu gets a #808080
+	/// line round #FDFDFD. Measured off both, side by side.</summary>
+	internal class SystemMenuColorTable : ModernProfessionalColorTable
+	{
+		public override Color MenuBorder => Color.FromArgb (229, 229, 229);
+		public override Color ToolStripDropDownBackground => Color.FromArgb (249, 249, 249);
+	}
+
 	internal class FlatSurfaceColorTable : ModernProfessionalColorTable
 	{
 		public override Color ToolStripGradientBegin => SystemColors.Control;
@@ -121,6 +131,15 @@ namespace System.Windows.Forms
 		}
 
 		private readonly ProfessionalColorTable flat_color_table = new FlatSurfaceColorTable ();
+
+		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own
+		/// lighter colours rather than the ones it gives a strip menu.</summary>
+		public override ToolStripRenderer CreateSystemMenuRenderer ()
+		{
+			return new ToolStripProfessionalRenderer (system_menu_color_table);
+		}
+
+		private readonly ProfessionalColorTable system_menu_color_table = new SystemMenuColorTable ();
 
 		// Windows draws a single hairline around an input, not a carved bevel. These are the two
 		// greys it uses: #7A7A7A around something you type in, #ADADAD around something you press.

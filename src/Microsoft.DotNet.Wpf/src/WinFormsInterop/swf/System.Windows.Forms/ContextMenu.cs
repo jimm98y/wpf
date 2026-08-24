@@ -144,6 +144,14 @@ namespace System.Windows.Forms
 				strip.Dispose ();
 			}
 			strip = new ToolStripDropDownMenu ();
+			// A menu of this vintage is drawn by Windows itself, and Windows draws a plain one:
+			// no strip down the left for icons, because an old-style entry has none to put there.
+			// The strip menus keep theirs -- an application that uses them puts icons in it.
+			strip.ShowImageMargin = false;
+			ToolStripRenderer renderer = ThemeEngine.Current.CreateSystemMenuRenderer ();
+			if (renderer != null)
+				strip.Renderer = renderer;
+			strip.ShowCheckMargin = AnyChecked (MenuItems);
 			// The entries are read afresh every time: an old-style menu is built and rebuilt by
 			// the application, often in the Popup handler that has just run.
 			Mirror (MenuItems, strip.Items);
@@ -169,6 +177,10 @@ namespace System.Windows.Forms
 				}
 
 				var copy = new ToolStripMenuItem (item.Text);
+				// Windows leaves more air around an entry in one of its own menus than a strip menu
+				// leaves around one of its: measured against a stock "Go to today", the box is about
+				// twenty pixels wider than the caption on each side.
+				copy.Padding = new Padding (11, 1, 11, 1);
 				copy.Enabled = item.Enabled;
 				copy.Checked = item.Checked;
 				copy.ShortcutKeys = ShortcutKeysOf (item);
@@ -179,6 +191,16 @@ namespace System.Windows.Forms
 					Mirror (item.MenuItems, copy.DropDownItems);
 				into.Add (copy);
 			}
+		}
+
+		/// <summary>Whether anything in the menu is ticked. Only then is the room for a tick
+		/// worth taking: Windows leaves none in a menu that has nothing to show there.</summary>
+		private static bool AnyChecked (Menu.MenuItemCollection items)
+		{
+			foreach (MenuItem item in items)
+				if (item.Checked)
+					return true;
+			return false;
 		}
 
 		private static Keys ShortcutKeysOf (MenuItem item)

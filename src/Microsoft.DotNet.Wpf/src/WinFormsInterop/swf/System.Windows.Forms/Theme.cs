@@ -322,6 +322,13 @@ namespace System.Windows.Forms
 		/// <summary>The renderer a tool bar of the given appearance should draw itself with.
 		/// Controls that build their own tool bar -- the property grid does -- ask here rather than
 		/// hard-coding one, so the answer follows the theme.</summary>
+		/// <summary>The renderer for a menu of the old kind -- one Windows would draw itself.
+		/// The classic theme draws it like any other menu.</summary>
+		public virtual ToolStripRenderer CreateSystemMenuRenderer ()
+		{
+			return null;
+		}
+
 		public virtual ToolStripRenderer CreateToolBarRenderer (ToolBarAppearance appearance)
 		{
 			if (appearance == ToolBarAppearance.Flat)
