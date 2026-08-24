@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -3824,7 +3824,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // colours -- so the batch is flushed first and they are drawn in order on top.
                 var batch = new List<PathFigure>();
                 var colorFont = font as Text.IColorGlyphFont;
-                float pen = run.Origin.X;
+                // The pen starts on a whole pixel and moves by whole pixels, which is how Windows
+                // lays a string out: each glyph's advance is rounded to a pixel before the next glyph
+                // is placed. Carrying the fractions along instead left every run a shade narrower than
+                // the same run in Windows, and put its glyphs on fractional positions, which is what
+                // softens them. (WPF's own text does not come through here -- it arrives as glyph
+                // outlines already positioned -- so this is the string runs, which is WinForms.)
+                float pen = MathF.Round(run.Origin.X);
 
                 void FlushBatch()
                 {
@@ -3859,7 +3865,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                  world, opacity, clip, width, height, format, data);
                     }
 
-                    pen += g.Advance * scale;
+                    pen += MathF.Round(g.Advance * scale);
                 }
 
                 FlushBatch();
@@ -3867,7 +3873,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
 
             float a = (float)Math.Clamp(run.Color.A * opacity, 0.0, 1.0);
-            float penX = run.Origin.X;
+            float penX = MathF.Round(run.Origin.X);
             float baseline = run.Origin.Y;
 
             foreach (Text.ShapedGlyph sg in _shapeScratch)
@@ -3894,7 +3900,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     data.HasText = true;
                 }
 
-                penX += sg.Advance * scale;
+                penX += MathF.Round(sg.Advance * scale);
             }
         }
 
