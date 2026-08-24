@@ -294,7 +294,27 @@ namespace MS.Internal.Interop
         }
 
         public static event Action<BrowserMouseMessage> MouseInput;
+
+        /// <summary>
+        /// Deliver a mouse event as if the platform had reported it. See CocoaWindow.InjectMouse
+        /// for why the visual-tree inspector goes in here rather than raising routed events:
+        /// GetPosition and CaptureMouse read the MouseDevice, not the event.
+        /// </summary>
+        /// <param name="kind">0 move, 1 down, 2 up, 3 wheel.</param>
+        /// <param name="button">DOM button index: 0 left, 1 middle, 2 right.</param>
+        internal static void InjectMouse(IntPtr window, int kind, int button, int x, int y, int wheel)
+        {
+            MouseInput?.Invoke(new BrowserMouseMessage(kind, window, button, x, y, wheel, Environment.TickCount));
+        }
         public static event Action<BrowserKeyMessage> KeyInput;
+
+        /// <summary>Deliver a key event as if the DOM had reported it. See InjectMouse.</summary>
+        internal static void InjectKey(IntPtr window, bool isDown, string code, string key,
+                                       bool ctrl, bool shift, bool alt, bool meta)
+        {
+            KeyInput?.Invoke(new BrowserKeyMessage(window, isDown, code, key, isRepeat: false,
+                                                   ctrl, shift, alt, meta, Environment.TickCount));
+        }
 
         /// <summary>Completes on the next animation frame (display-aligned pacing for the
         /// dispatcher pump; falls back to a 250ms timeout when the tab is hidden).</summary>

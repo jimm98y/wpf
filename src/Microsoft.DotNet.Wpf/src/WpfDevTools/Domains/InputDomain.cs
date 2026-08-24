@@ -38,13 +38,6 @@ namespace Microsoft.Wpf.DevTools.Domains
 {
     internal sealed class InputDomain : ICdpDomain
     {
-        // Raw NSEventType values, the vocabulary CocoaWindow reports in.
-        private const int NSLeftMouseDown = 1, NSLeftMouseUp = 2;
-        private const int NSRightMouseDown = 3, NSRightMouseUp = 4;
-        private const int NSMouseMoved = 5, NSLeftMouseDragged = 6, NSRightMouseDragged = 7;
-        private const int NSScrollWheel = 22;
-        private const int NSOtherMouseDown = 25, NSOtherMouseUp = 26, NSOtherMouseDragged = 27;
-
         /// <summary>CDP's buttons bitmask.</summary>
         private const int LeftButtonHeld = 1, RightButtonHeld = 2, MiddleButtonHeld = 4;
 
@@ -128,11 +121,11 @@ namespace Microsoft.Wpf.DevTools.Domains
             switch (type)
             {
                 case "mousePressed":
-                    PlatformInput.Mouse(view, DownType(button), ButtonNumber(button), x, y, 0);
+                    PlatformInput.Mouse(view, InjectedMouse.Down, Button(button), buttons, x, y, 0);
                     break;
 
                 case "mouseReleased":
-                    PlatformInput.Mouse(view, UpType(button), ButtonNumber(button), x, y, 0);
+                    PlatformInput.Mouse(view, InjectedMouse.Up, Button(button), buttons, x, y, 0);
                     break;
 
                 case "mouseMoved":
@@ -143,57 +136,34 @@ namespace Microsoft.Wpf.DevTools.Domains
                     int wheel = (int)Math.Round(-CdpJson.GetDouble(p, "deltaY") / WheelPixelsPerNotch
                                                 * Mouse.MouseWheelDeltaForOneLine);
                     if (wheel != 0)
-                        PlatformInput.Mouse(view, NSScrollWheel, 0, x, y, wheel);
+                        PlatformInput.Mouse(view, InjectedMouse.Wheel, InjectedButton.Left, buttons, x, y, wheel);
                     break;
             }
         }
 
+        private static InjectedButton Button(string button) => button switch
+        {
+            "right" => InjectedButton.Right,
+            "middle" => InjectedButton.Middle,
+            _ => InjectedButton.Left,
+        };
+
         /// <summary>
-        /// Move the pointer. A move with a button held is a DRAG, and AppKit says so with a
-        /// distinct event type; reporting it as a plain move loses the drag on anything that
-        /// tells them apart.
+        /// Move the pointer. Where a head distinguishes a drag from a hover, the held buttons
+        /// decide which it is; PlatformInput does that translation.
         /// </summary>
         private void MoveTo(IntPtr view, int buttons, int x, int y)
         {
-            PlatformInput.Mouse(view, MovedType(buttons), 0, x, y, 0);
+            PlatformInput.Mouse(view, InjectedMouse.Move, InjectedButton.Left, buttons, x, y, 0);
             _lastX = x;
             _lastY = y;
         }
 
-        private static int DownType(string button) => button switch
-        {
-            "right" => NSRightMouseDown,
-            "middle" => NSOtherMouseDown,
-            _ => NSLeftMouseDown,
-        };
-
-        private static int UpType(string button) => button switch
-        {
-            "right" => NSRightMouseUp,
-            "middle" => NSOtherMouseUp,
-            _ => NSLeftMouseUp,
-        };
-
-        private static int MovedType(int buttons)
-        {
-            if ((buttons & LeftButtonHeld) != 0) return NSLeftMouseDragged;
-            if ((buttons & RightButtonHeld) != 0) return NSRightMouseDragged;
-            if ((buttons & MiddleButtonHeld) != 0) return NSOtherMouseDragged;
-            return NSMouseMoved;
-        }
-
-        private static int ButtonNumber(string button) => button switch
-        {
-            "right" => 1,
-            "middle" => 2,
-            _ => 0,
-        };
-
         /// <summary>
         /// The window a page-space point belongs to, and that point in the client DEVICE
-        /// pixels the platform reports in. The frontend speaks device-independent pixels; a
-        /// Cocoa message does not, and skipping the conversion puts every event at a fraction
-        /// of where it should be on a scaled display.
+        /// pixels every head reports in. The frontend speaks device-independent pixels; a
+        /// platform event does not, and skipping the conversion puts every event at a
+        /// fraction of where it should be on a scaled display.
         /// </summary>
         private static bool TryResolveTarget(Point page, out IntPtr view, out int x, out int y)
         {
@@ -252,7 +222,7 @@ namespace Microsoft.Wpf.DevTools.Domains
             if (string.IsNullOrEmpty(text))
                 text = CdpJson.GetString(p, "key");
 
-            PlatformInput.Key(view, down, CdpJson.GetInt(p, "nativeVirtualKeyCode"),
+            PlatformInput.Key(view, down, CdpJson.GetString(p, "key") ?? string.Empty,
                               text ?? string.Empty, CdpJson.GetInt(p, "modifiers"));
         }
 
@@ -265,8 +235,8 @@ namespace Microsoft.Wpf.DevTools.Domains
             // arrives -- the text input provider reads the characters, not the key code.
             foreach (char c in text)
             {
-                PlatformInput.Key(view, down: true, keyCode: 0, c.ToString(), modifiers: 0);
-                PlatformInput.Key(view, down: false, keyCode: 0, c.ToString(), modifiers: 0);
+                PlatformInput.Key(view, down: true, key: c.ToString(), characters: c.ToString(), modifiers: 0);
+                PlatformInput.Key(view, down: false, key: c.ToString(), characters: c.ToString(), modifiers: 0);
             }
         }
 

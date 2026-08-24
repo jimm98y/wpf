@@ -193,10 +193,28 @@ movement, and a wheel at a position the device was never told about scrolls noth
 move with a button held is a distinct event type (`NSLeftMouseDragged`, not `NSMouseMoved`) —
 reporting it as a plain move loses the drag on anything that tells them apart.
 
-The seam is per head, because input entry is: `PlatformInput` is one method each. **macOS is
-implemented**; the browser, Wayland, UIKit and Android backends each have an equivalent entry
-point and are one method away. Where there is none, a dispatched event is reported as
-unsupported rather than half-delivered.
+The seam is per head, because input entry is — each backend reports in its own vocabulary and
+has a static event the framework's input providers already subscribe to. `PlatformInput` holds
+one translation each and the domains speak a neutral vocabulary, so adding a head is a case in
+two switches:
+
+| head | entry point | vocabulary |
+|---|---|---|
+| macOS | `CocoaWindow.InjectMouse` / `InjectKey` | raw NSEventTypes |
+| browser | `BrowserWindow.InjectMouse` / `InjectKey` | DOM kinds, DOM button indices |
+| Linux | `WaylandInput.InjectMouse` / `InjectKey` | `WaylandMouseKind`, evdev codes |
+| iOS | `UIKitWindow.InjectMouse` | touch kinds |
+| Android | `AndroidWindow.InjectMouse` | touch kinds |
+
+Two gaps, both stated rather than papered over. **iOS and Android have no key path at all** —
+`HwndKeyboardInputProvider` does not subscribe to one there, because text arrives through the
+soft keyboard's own route — so a dispatched key is reported as unsupported. And on Linux a key
+is injected with keysym 0 and its characters, which reaches a text box but not a key that is
+only a keysym (Tab, the arrows); that needs the XKB mapping reconstructed.
+
+**Only macOS is verified at runtime.** The other four are the same shape, compile against the
+same providers, and each handler matches on the `HwndSource.Handle` that is passed to it — but
+none has been exercised on its own head from here.
 
 While the element picker is armed, mouse events go to the picker instead — that is how
 "Select element" works when driven over the screencast rather than over the real window.
