@@ -269,6 +269,25 @@ be a **trimmer root** (`wasm-roots.xml`), and the host page must register the mo
 over the managed exports before `runMain` — the inspector calls back into the module as it
 starts, which is inside `Main`. `samples/wpf-webgpu-gallery-wasm` does both, behind `?devtools`.
 
+**The screencast on this head comes off the canvas, not the renderer.** Both of the sources the
+desktop heads use need a synchronous GPU readback, and WebGPU only maps buffers asynchronously, so
+the composed-frame path returns nothing and the `RenderTargetBitmap` fallback produces a correctly
+sized sheet of white — a pane that looks switched on and shows nothing. The canvas already holds
+the composed image, hosted content included, so `devtools-bridge.js` captures from there.
+
+Two things that path has to get right, both measured rather than assumed:
+
+- **When.** The canvas is readable synchronously, from `setTimeout`, and in the first
+  `requestAnimationFrame` — but *not* in the frame after, which is where the app clears its
+  drawing buffer and where `CompositionTarget.Rendering` fires. Reading on demand therefore
+  captured a blank frame every time. The snapshot is taken on a timer instead and the managed side
+  gets the most recent one, one frame late. A 64x64 downsample rejects the ~7% of captures that
+  still land mid-redraw, so the panel never flickers, and skipping their encode costs nothing.
+- **What format.** Encoding PNG regardless of what was asked for dropped the app itself to about
+  1 fps, because `toDataURL` runs on the thread the WPF pump runs on. Honouring the requested
+  format and quality (a frontend asks for JPEG by default) gives 8.7 fps of screencast with the
+  app still at ~39 fps.
+
 **Only the composition target is out of reach there.** The bridge is a single port and reports
 one target, so the MILCMD scene-graph document cannot be attached to in the browser; the visual
 tree can.

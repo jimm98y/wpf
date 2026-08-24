@@ -22,10 +22,10 @@
 // is deployment, it differs per setup, and inventing one would add a moving part
 // to a diagnostic whose value is that it has none.
 //
-// UNLIKE THE SOCKET TRANSPORT, THIS IS UNVERIFIED. It is written against the
-// same JS interop shape the browser windowing head already uses
-// (BrowserWindow.Js / browser-window.js), but the browser head cannot be
-// exercised from a terminal here, so treat it as untested code that compiles.
+// This is verified now: the browser head serves a 599-node document and a working screencast,
+// driven either from the console or through eng/devtools-relay.py, which is the relay described
+// above and which IS shipped -- driving the port by hand turned out to be no substitute for an
+// Elements panel the moment anyone wanted to walk the tree.
 //
 
 using System;
@@ -114,6 +114,34 @@ namespace Microsoft.Wpf.DevTools
             }
         }
 
+        /// <summary>
+        /// One frame of the app as an encoded PNG, read off the page's canvas.
+        ///
+        /// The screencast's usual sources both need a synchronous GPU readback, which a browser
+        /// does not offer, so on this head they yield a blank frame. The canvas already holds the
+        /// composed image, hosted content included, so it is both the only source available here
+        /// and the most faithful one.
+        /// </summary>
+        internal static bool TryCaptureCanvas(int maxWidth, int maxHeight, string format, int quality, out byte[] png)
+        {
+            png = Array.Empty<byte>();
+
+            try
+            {
+                string? base64 = Js.CaptureCanvas(maxWidth, maxHeight, format, quality);
+                if (string.IsNullOrEmpty(base64))
+                    return false;
+
+                png = Convert.FromBase64String(base64);
+                return png.Length > 0;
+            }
+            catch (Exception ex)
+            {
+                DevToolsServer.Log($"browser capture failed: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+        }
+
         internal static partial class Js
         {
             /// <summary>Tells the page the inspector is up and its exports are callable.</summary>
@@ -123,6 +151,10 @@ namespace Microsoft.Wpf.DevTools
             /// <summary>One reply or event, as JSON.</summary>
             [JSImport("receive", Module)]
             internal static partial void Receive(string json);
+
+            /// <summary>The canvas contents, encoded and scaled to fit, or null.</summary>
+            [JSImport("captureCanvas", Module)]
+            internal static partial string? CaptureCanvas(int maxWidth, int maxHeight, string format, int quality);
         }
     }
 }

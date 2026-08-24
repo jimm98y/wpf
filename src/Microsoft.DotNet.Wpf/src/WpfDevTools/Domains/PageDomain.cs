@@ -369,6 +369,20 @@ namespace Microsoft.Wpf.DevTools.Domains
             int width = Math.Max(1, (int)Math.Round(bounds.Width * scale));
             int height = Math.Max(1, (int)Math.Round(bounds.Height * scale));
 
+            // The browser has no synchronous GPU readback, so BOTH paths below come back empty
+            // there -- the composed frame as null, and RenderTargetBitmap as a correctly sized
+            // sheet of white. Its canvas already holds the composed image, so take it from there.
+            //
+            // pageWidth/pageHeight stay the ROOT's, deliberately: the canvas is in device pixels
+            // and the frontend maps clicks through these two numbers, which have to stay in the
+            // same units the hit test works in.
+            if (OperatingSystem.IsBrowser() &&
+                BrowserTransport.TryCaptureCanvas(_maxWidth, _maxHeight, _format, _quality, out byte[] canvasPng))
+            {
+                data = canvasPng;
+                return true;
+            }
+
             // The renderer's own composed frame first: it is what is actually on screen,
             // including any hosted (WindowsFormsHost) scene. RenderTargetBitmap re-renders the
             // WPF VISUAL TREE, and hosted content is not in it -- a WinForms card simply does
