@@ -149,6 +149,7 @@ namespace WinFormsWebGpu.Accessibility
                 case A11yRole.Image: return 50006;
                 case A11yRole.ListItem: return 50007;
                 case A11yRole.List: return 50008;
+                case A11yRole.Menu: return 50009;
                 case A11yRole.MenuBar: return 50010;
                 case A11yRole.MenuItem: return 50011;
                 case A11yRole.ProgressBar: return 50012;

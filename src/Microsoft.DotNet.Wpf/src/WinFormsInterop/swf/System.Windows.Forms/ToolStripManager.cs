@@ -448,6 +448,22 @@ namespace System.Windows.Forms
 			set { activated_by_keyboard = value; }
 		}
 		
+		/// <summary>Every drop-down that is open, in the order they were opened. An open menu is a
+		/// window of its own rather than part of any form's tree, so nothing walking a form can
+		/// find one -- and a menu that cannot be found cannot be read out or driven. This is how
+		/// whoever is describing the screen gets at it.</summary>
+		internal static List<ToolStripDropDown> OpenDropDowns ()
+		{
+			var open = new List<ToolStripDropDown> ();
+			lock (toolstrips)
+				foreach (WeakReference wr in toolstrips) {
+					var drop = wr.Target as ToolStripDropDown;
+					if (drop != null && drop.Visible && !drop.IsDisposed)
+						open.Add (drop);
+				}
+			return open;
+		}
+
 		internal static void AddToolStrip (ToolStrip ts)
 		{
 			lock (toolstrips)

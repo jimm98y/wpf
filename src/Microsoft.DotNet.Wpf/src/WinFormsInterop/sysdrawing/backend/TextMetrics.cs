@@ -1,8 +1,9 @@
-// Managed text measurement for the GPU-raster path — no libgdiplus. It shapes the run with the SAME
+﻿// Managed text measurement for the GPU-raster path — no libgdiplus. It shapes the run with the SAME
 // font/shaper the WebGPU renderer draws with (so measured width == rendered width, making centred
 // button/label text exact) and sums glyph advances. This replaces the libgdiplus MeasureString the
 // DrawString alignment used, which is also a prerequisite for the browser (no libgdiplus in-browser).
 
+using System;
 using System.Collections.Generic;
 using Microsoft.Wpf.Interop.WebGpu.Composition.Text;
 
@@ -51,9 +52,14 @@ namespace System.Drawing.WebGpuBackend
                 lock (Buf)
                 {
                     Shaper.Shape((IShapingFont)font, line, Buf);
-                    float baseWidth = 0f;
-                    foreach (ShapedGlyph g in Buf) baseWidth += g.Advance;
-                    lineWidth = baseWidth * emPx / font.PixelsPerEm;
+                    // A whole pixel per glyph, as Windows lays a string out: it advances the pen by
+                    // each glyph's width rounded to a pixel, so a run is the SUM of rounded widths and
+                    // not the rounded sum. Adding the fractions up first and rounding once made every
+                    // run come out a shade narrower than the same run in Windows -- a couple of pixels
+                    // over a sentence, which is enough to fit text where Windows clips it.
+                    float scale = emPx / font.PixelsPerEm;
+                    lineWidth = 0f;
+                    foreach (ShapedGlyph g in Buf) lineWidth += (float)Math.Round(g.Advance * scale);
                 }
                 if (lineWidth > width) width = lineWidth;
             }
