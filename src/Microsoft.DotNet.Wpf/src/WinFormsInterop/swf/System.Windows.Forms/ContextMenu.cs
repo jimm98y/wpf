@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -118,11 +118,76 @@ namespace System.Windows.Forms
 			SourceControl = control;
 			OnPopup (EventArgs.Empty);
 
-			pos = control.PointToScreen (pos);
-			MenuTracker.TrackPopupMenu (this, pos);
-			
-			SourceControl = null;
-			OnCollapse (EventArgs.Empty);
+			// Shown through the strip machinery rather than the old tracker.
+			//
+			// The old one puts up a window of its own and then sits in a message loop pumping
+			// for the click that will dismiss it. On this driver that loop waits for ever:
+			// mouse input is DISPATCHED to the window under the pointer, not posted to a queue,
+			// so nothing a nested loop is waiting for ever arrives. The menu came up, took no
+			// notice of the pointer, could not be dismissed, and the next right click stacked
+			// another on top of it -- five of them, in the calendar this was first seen in.
+			//
+			// The strips do not need a loop of their own: they are dismissed by the driver's
+			// own account of where a press landed. So an old-style menu is mirrored into one and
+			// shown, which also gets it the hover, the placement, and the place in the
+			// automation tree that the strips have. Unlike the old call this one returns at
+			// once, as ContextMenuStrip.Show does.
+			ShowAsStrip (control, pos);
+		}
+
+		private ToolStripDropDownMenu strip;
+
+		private void ShowAsStrip (Control control, Point pos)
+		{
+			if (strip != null) {
+				strip.Close ();
+				strip.Dispose ();
+			}
+			strip = new ToolStripDropDownMenu ();
+			// The entries are read afresh every time: an old-style menu is built and rebuilt by
+			// the application, often in the Popup handler that has just run.
+			Mirror (MenuItems, strip.Items);
+			strip.Closed += delegate {
+				SourceControl = null;
+				OnCollapse (EventArgs.Empty);
+			};
+			if (strip.Items.Count > 0)
+				strip.Show (control, pos);
+		}
+
+		/// <summary>Copy a run of old-style entries into a strip's, submenus and all. The entry
+		/// itself is what runs when the copy is clicked, so an application's handlers, its
+		/// Select and its Popup events all fire as they always did.</summary>
+		private static void Mirror (Menu.MenuItemCollection from, ToolStripItemCollection into)
+		{
+			foreach (MenuItem item in from) {
+				if (!item.Visible)
+					continue;
+				if (item.Text == "-") {
+					into.Add (new ToolStripSeparator ());
+					continue;
+				}
+
+				var copy = new ToolStripMenuItem (item.Text);
+				copy.Enabled = item.Enabled;
+				copy.Checked = item.Checked;
+				copy.ShortcutKeys = ShortcutKeysOf (item);
+				copy.ShowShortcutKeys = item.ShowShortcut;
+				MenuItem clicked = item;
+				copy.Click += delegate { clicked.PerformClick (); };
+				if (item.MenuItems.Count > 0)
+					Mirror (item.MenuItems, copy.DropDownItems);
+				into.Add (copy);
+			}
+		}
+
+		private static Keys ShortcutKeysOf (MenuItem item)
+		{
+			try {
+				return item.Shortcut == Shortcut.None ? Keys.None : (Keys) item.Shortcut;
+			} catch (Exception) {
+				return Keys.None;
+			}
 		}
 
 		public void Show (Control control, Point pos, LeftRightAlignment alignment)
@@ -140,6 +205,8 @@ namespace System.Windows.Forms
 
 		internal void Hide ()
 		{
+			if (strip != null)
+				strip.Close ();
 			tracker.Deactivate ();
 			SourceControl = null;
 		}
