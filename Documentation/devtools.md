@@ -212,9 +212,38 @@ soft keyboard's own route — so a dispatched key is reported as unsupported. An
 is injected with keysym 0 and its characters, which reaches a text box but not a key that is
 only a keysym (Tab, the arrows); that needs the XKB mapping reconstructed.
 
-**Only macOS is verified at runtime.** The other four are the same shape, compile against the
-same providers, and each handler matches on the `HwndSource.Handle` that is passed to it — but
-none has been exercised on its own head from here.
+**macOS and Android are verified at runtime.** On Android the tree, both targets, wheel
+scrolling and a scrollbar-thumb drag all work over `adb forward tcp:9222 tcp:9222` — and a thumb
+drag is the interesting one, because it needs mouse capture and a device position, which is
+precisely what routed events could not provide. Hover states stay false there, correctly: a
+touch head has no hover.
+
+**Browser, Linux and iOS are not verified.** They are the same shape and compile against the
+same providers, and each handler matches on the `HwndSource.Handle` passed to it — but neither
+of those is proof, as Android showed: it needed two unrelated fixes before it ran at all.
+
+### Running the inspector on Android
+
+Two things differ from a desktop head, and both fail in ways that do not name themselves:
+
+- **An environment variable cannot be handed to the app at launch.** `adb shell setprop
+  debug.mono.env` is ignored for a non-debuggable build, which is every Release build, so the
+  variable has to be baked in with an `AndroidEnvironment` file. `samples/wpf-gallery-android`
+  does this behind `-p:WpfDevToolsEnv=true` rather than always.
+- **Binding a socket needs the `INTERNET` permission**, even for a listener on loopback that
+  nothing off the device can reach. Without it the inspector starts and then reports
+  `could not listen on 127.0.0.1:9222: SocketException: Permission denied`. The same sample adds
+  it through an `AndroidManifestOverlay` under the same condition.
+
+```sh
+dotnet build samples/wpf-gallery-android/WpfGalleryAndroid.csproj -c Release -p:WpfDevToolsEnv=true
+adb install -r .../net.dot.wpf.gallery-Signed.apk
+adb shell am start -n net.dot.wpf.gallery/crc64c4055fd6c1ce9b55.MainActivity
+adb forward tcp:9222 tcp:9222
+```
+
+An Android app also has to REFERENCE the inspector to get it, since assemblies are packaged into
+the APK — dropping it beside the app, which is enough on a desktop head, has nowhere to go.
 
 While the element picker is armed, mouse events go to the picker instead — that is how
 "Select element" works when driven over the screencast rather than over the real window.

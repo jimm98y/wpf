@@ -32,6 +32,7 @@
 
     <_Gallery>$(MSBuildThisFileDirectory)../../../WPF-Samples/Sample Applications/WPFGallery/bin/Release/net10.0</_Gallery>
     <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_Src>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src</_Src>
   </PropertyGroup>
 
   <!-- The Android windowing head (SurfaceView + Choreographer pump), shared verbatim
@@ -93,6 +94,15 @@
   <!-- The from-source WPF fork, as built artifacts (eng/build-sdk.sh). Referenced rather than
        ProjectReference'd because these build through the Arcade SDK, which does not participate in
        the Android build. -->
+  <!-- Turn the visual-tree inspector on for a run: build with -p:WpfDevToolsEnv=true.
+       An Android app cannot be handed an environment variable at launch the way a desktop one
+       can (adb's debug.mono.env is ignored for a non-debuggable build, which is every Release
+       build), so it has to be baked in, and this keeps that opt-in rather than always on. -->
+  <ItemGroup Condition="'$(WpfDevToolsEnv)' == 'true'">
+    <AndroidEnvironment Include="devtools.env" />
+    <AndroidManifestOverlay Include="devtools.manifest.xml" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="WindowsBase">                <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
     <Reference Include="System.Xaml">                <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
@@ -104,9 +114,17 @@
     <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath></Reference>
     <Reference Include="UIAutomationTypes">          <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
     <Reference Include="UIAutomationProvider">       <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <!-- The CDP visual-tree inspector, so WPF_DEVTOOLS works on this head too. An Android app
+         is packaged into an APK, so it has to be REFERENCED to be deployed. Dropping the
+         assembly beside the app, which is enough on a desktop head, has nowhere to go here. -->
+    <Reference Include="Microsoft.Wpf.DevTools">     <HintPath>$(_Src)/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
     <!-- Theme dictionaries: the gallery sets ThemeMode.System, which loads the Fluent theme. -->
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
     <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+    <!-- The Fluent theme's BAML names the Ribbon assembly, so it is resolved at parse time even
+         by an app that has no ribbon in it. Without it the gallery dies during App.Main with
+         "IO_FileName_Name, System.Windows.Controls.Ribbon" and never shows a window. -->
+    <Reference Include="System.Windows.Controls.Ribbon"><HintPath>$(_Art)/System.Windows.Controls.Ribbon/Release/net10.0/System.Windows.Controls.Ribbon.dll</HintPath></Reference>
   </ItemGroup>
 
   <!--
