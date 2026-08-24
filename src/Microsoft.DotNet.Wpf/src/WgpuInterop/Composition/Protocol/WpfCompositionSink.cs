@@ -705,6 +705,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             wgpuTextureRelease(surfaceTexture.texture);
         }
 
+        /// <summary>
+        /// Render what is currently on screen -- the WPF scene WITH any hosted scenes composed
+        /// in -- to straight RGBA, at the target's pixel size.
+        ///
+        /// Exposed for the visual-tree inspector's screencast, which otherwise re-renders the
+        /// WPF visual tree through RenderTargetBitmap and therefore cannot show a
+        /// WindowsFormsHost at all: a hosted control tree is a SceneVisual graph of its own,
+        /// merged in by EmbeddedContent.Compose at render time, and it never passes through
+        /// WPF's visual tree. Anything else composited outside that tree is invisible to an
+        /// RTB capture for the same reason.
+        ///
+        /// This is the same call VerifyOffscreen makes, so it is a real render of the real
+        /// composed scene rather than a readback of the swapchain -- which would need CopySrc
+        /// usage declared at surface creation and so cannot be turned on after the fact.
+        /// </summary>
+        /// <returns>RGBA bytes, or null when there is no window target to render.</returns>
+        public byte[]? CaptureComposed(out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            try
+            {
+                if (_renderer == null)
+                    return null;
+
+                foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
+                {
+                    MilTarget t = kv.Value;
+                    if (t.IsBitmap || t.Width <= 0 || t.Height <= 0)
+                        continue;
+
+                    SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
+                    if (root == null)
+                        continue;
+
+                    width = t.Width;
+                    height = t.Height;
+                    return _renderer.RenderToRgba(
+                        EmbeddedContent.Compose(root, (IntPtr)t.Hwnd),
+                        t.Width, t.Height, t.ClearColor, srgbOutput: true);
+                }
+            }
+            catch
+            {
+                // A diagnostic capture must never take the frame loop with it.
+            }
+
+            return null;
+        }
+
         // Read back the REAL swapchain texture (the exact presented pixels) and write a PNG. Unlike
         // VerifyOffscreen (a separate offscreen render), this proves what the surface actually shows —
         // including any drawable-size / scale mismatch between t.Width and the CAMetalLayer.

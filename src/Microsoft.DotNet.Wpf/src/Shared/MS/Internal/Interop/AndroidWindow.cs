@@ -519,6 +519,17 @@ namespace MS.Internal.Interop
         /// <summary>Raised on the UI thread as Android delivers touches; consumed by HwndMouseInputProvider.</summary>
         public static event Action<TouchMessage> MouseInput;
 
+        /// <summary>
+        /// Deliver a mouse event as if the platform had reported it. See CocoaWindow.InjectMouse
+        /// for why the visual-tree inspector goes in here rather than raising routed events:
+        /// GetPosition and CaptureMouse read the MouseDevice, not the event.
+        /// </summary>
+        /// <param name="kind">0 move, 1 down, 2 up, 3 wheel (drag-to-scroll).</param>
+        internal static void InjectMouse(IntPtr window, int kind, int x, int y, int wheel)
+        {
+            MouseInput?.Invoke(new TouchMessage(window, kind, x, y, Environment.TickCount, wheel));
+        }
+
         // Same tuning as UIKitWindow, and for the same reasons documented there: below the threshold a
         // touch is a tap rather than a pan; ScrollViewer ignores the wheel MAGNITUDE (any wheel event
         // scrolls SystemParameters.WheelScrollLines * 16px), so distance becomes NOTCHES rather than a

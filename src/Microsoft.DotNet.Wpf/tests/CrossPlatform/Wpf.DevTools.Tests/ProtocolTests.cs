@@ -482,6 +482,11 @@ namespace Wpf.DevTools.Tests
                 Assert.True(pageWidth >= width, $"page width {pageWidth} < image width {width}");
                 Assert.True(pageHeight >= height, $"page height {pageHeight} < image height {height}");
                 // Scaling preserves aspect, so a click maps back linearly in both axes.
+                //
+                // The page size is the FRAME's extent, not the root visual's: the composed
+                // frame covers the client area, and the root's box includes WindowChrome's
+                // non-client band. Asserting the frame against the ROOT's aspect pins a click
+                // mapping that is out by the difference.
                 Assert.Equal(pageWidth / pageHeight, (double)width / height, 2);
             }
             finally
@@ -683,6 +688,122 @@ namespace Wpf.DevTools.Tests
             }
 
             Assert.Contains(deep, delivered);
+        }
+
+        /// <summary>
+        /// Scrolling over the screencast. Raised as a real routed MouseWheel event, so
+        /// whatever would have scrolled does -- no simulation, and it works for any scrollable
+        /// thing rather than just the ones this code knows about.
+        /// </summary>
+        [Fact]
+        public void WheelEventsScrollTheContentUnderThem()
+        {
+            Assert.SkipUnless(TestApp.DisplayAvailable, "requires a display server");
+            int port = TestApp.Start();
+            Assert.SkipWhen(port == 0, "the endpoint did not bind");
+            Assert.SkipUnless(TestApp.EnsureScrollable(), "no scrollable content to test with");
+
+            using var client = new CdpClient(port);
+            double before = UiThread.Invoke(() => TestApp.Scroller!.VerticalOffset);
+
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mouseWheel",
+                x = (int)TestApp.ScrollerCentre.X,
+                y = (int)TestApp.ScrollerCentre.Y,
+                deltaX = 0,
+                deltaY = 300,
+            });
+
+            Assert.True(UiThread.WaitUntil(() => TestApp.Scroller!.VerticalOffset > before),
+                        $"the wheel did not scroll; offset stayed at {UiThread.Invoke(() => TestApp.Scroller!.VerticalOffset)}");
+        }
+
+        /// <summary>
+        /// Dragging the scrollbar thumb. A Thumb works by capturing the mouse and there is no
+        /// public way to hand a synthetic device capture, so press/move/release delivered as
+        /// routed events makes it do nothing at all. The drag is therefore simulated -- but
+        /// through Track.ValueFromDistance, the same conversion the real drag uses, so the
+        /// thumb tracks the cursor rather than approximating it.
+        /// </summary>
+        [Fact]
+        public void DraggingTheScrollbarThumbScrolls()
+        {
+            Assert.SkipUnless(TestApp.DisplayAvailable, "requires a display server");
+            int port = TestApp.Start();
+            Assert.SkipWhen(port == 0, "the endpoint did not bind");
+            Assert.SkipUnless(TestApp.EnsureScrollable(), "no scrollable content to test with");
+
+            using var client = new CdpClient(port);
+            UiThread.Invoke(() => TestApp.Scroller!.ScrollToVerticalOffset(0));
+            Assert.True(UiThread.WaitUntil(() => TestApp.Scroller!.VerticalOffset == 0));
+
+            Point thumb = UiThread.Invoke(() => TestApp.VerticalThumbCentre());
+            Assert.SkipWhen(thumb.X <= 0 && thumb.Y <= 0, "no vertical scrollbar is realised");
+
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mousePressed", x = (int)thumb.X, y = (int)thumb.Y, button = "left", clickCount = 1,
+            });
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mouseMoved", x = (int)thumb.X, y = (int)thumb.Y + 40, button = "left",
+            });
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mouseReleased", x = (int)thumb.X, y = (int)thumb.Y + 40, button = "left", clickCount = 1,
+            });
+
+            Assert.True(UiThread.WaitUntil(() => TestApp.Scroller!.VerticalOffset > 0),
+                        "dragging the thumb did not scroll");
+        }
+
+        /// <summary>
+        /// Dragging across text selects it. Capture-driven like the thumb, so simulated -- but
+        /// through GetCharacterIndexFromPoint, the control's own point-to-character mapping,
+        /// so the selection ends where a real drag would end it rather than near it.
+        /// </summary>
+        [Fact]
+        public void DraggingAcrossTextSelectsIt()
+        {
+            Assert.SkipUnless(TestApp.DisplayAvailable, "requires a display server");
+            int port = TestApp.Start();
+            Assert.SkipWhen(port == 0, "the endpoint did not bind");
+            Assert.True(UiThread.WaitUntil(() => TestApp.Text!.ActualWidth > 0), "the text box never laid out");
+
+            using var client = new CdpClient(port);
+            UiThread.Invoke(() => TestApp.Text!.Select(0, 0));
+
+            Point from = UiThread.Invoke(() => TestApp.TextPointAt(0.10));
+            Point to = UiThread.Invoke(() => TestApp.TextPointAt(0.60));
+
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mousePressed", x = (int)from.X, y = (int)from.Y, button = "left", clickCount = 1,
+            });
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mouseMoved", x = (int)to.X, y = (int)to.Y, button = "left",
+            });
+            client.Call("Input.dispatchMouseEvent", new
+            {
+                type = "mouseReleased", x = (int)to.X, y = (int)to.Y, button = "left", clickCount = 1,
+            });
+
+            Assert.True(UiThread.WaitUntil(() => TestApp.Text!.SelectionLength > 0),
+                        "the drag selected nothing");
+
+            // And it selected the RIGHT run -- one out of the middle, bounded at both ends.
+            // Simply asserting "something is selected" would pass just as well if the drag
+            // had selected everything, which is what a mapping that ignored the points would do.
+            (int start, int length, string selected, int total) = UiThread.Invoke(() =>
+                (TestApp.Text!.SelectionStart, TestApp.Text.SelectionLength,
+                 TestApp.Text.SelectedText, TestApp.Text.Text.Length));
+
+            Assert.True(start > 0, $"selection began at {start}; the drag started a tenth of the way in");
+            Assert.True(start + length < total,
+                        $"selection ran to {start + length} of {total}; the drag ended well short of the end");
+            Assert.Equal(length, selected.Length);
         }
 
         // ------------------------------------------------------------------

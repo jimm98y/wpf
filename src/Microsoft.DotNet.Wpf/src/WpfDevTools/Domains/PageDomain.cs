@@ -283,6 +283,45 @@ namespace Microsoft.Wpf.DevTools.Domains
         /// Flattening rather than cropping keeps the image's extent equal to the page's,
         /// which is what the click mapping depends on.
         /// </summary>
+        /// <summary>
+        /// Device pixels per device-independent pixel for this visual's window, so a
+        /// composed frame's pixel extent can be reported as the page size the frontend maps
+        /// clicks through.
+        /// </summary>
+        private static double DeviceScale(Visual root)
+        {
+            try
+            {
+                PresentationSource? source = PresentationSource.FromVisual(root);
+                double scale = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+                return scale > 0 ? scale : 1.0;
+            }
+            catch
+            {
+                return 1.0;
+            }
+        }
+
+        /// <summary>
+        /// Wrap straight RGBA as a bitmap. The renderer hands back R,G,B,A in that order;
+        /// WPF's 32-bit formats are B,G,R,A, so the two outer channels swap.
+        /// </summary>
+        private static BitmapSource FromRgba(byte[] rgba, int width, int height)
+        {
+            int stride = width * 4;
+            var pixels = new byte[stride * height];
+
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = rgba[i + 2];
+                pixels[i + 1] = rgba[i + 1];
+                pixels[i + 2] = rgba[i];
+                pixels[i + 3] = 255;      // the composed frame is opaque by construction
+            }
+
+            return BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
+        }
+
         private static BitmapSource Flatten(RenderTargetBitmap bitmap, int width, int height)
         {
             int stride = width * 4;
@@ -330,11 +369,40 @@ namespace Microsoft.Wpf.DevTools.Domains
             int width = Math.Max(1, (int)Math.Round(bounds.Width * scale));
             int height = Math.Max(1, (int)Math.Round(bounds.Height * scale));
 
-            var bitmap = new RenderTargetBitmap(width, height, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
-            bitmap.Render(root);
+            // The renderer's own composed frame first: it is what is actually on screen,
+            // including any hosted (WindowsFormsHost) scene. RenderTargetBitmap re-renders the
+            // WPF VISUAL TREE, and hosted content is not in it -- a WinForms card simply does
+            // not appear, with nothing to say why.
+            BitmapSource frame;
+            byte[]? composed = CompositionModel.CaptureComposedFrame(out int pixelWidth, out int pixelHeight);
+            if (composed != null && composed.Length >= pixelWidth * pixelHeight * 4)
+            {
+                frame = FromRgba(composed, pixelWidth, pixelHeight);
+
+                // The composed frame covers the CLIENT area, which is not the root visual's
+                // box: the root's RenderSize includes WindowChrome's non-client band (measured
+                // 3850x1087 against a 3840x1049 surface). Same origin, smaller extent.
+                //
+                // So the page size reported has to be the FRAME's extent, not the root's.
+                // Leaving it as the root's would put the frontend's click mapping out by the
+                // difference -- about 3.5% vertically here, and silently.
+                double deviceScale = DeviceScale(root);
+                pageWidth = pixelWidth / deviceScale;
+                pageHeight = pixelHeight / deviceScale;
+
+                double fit = Math.Min(1.0, Math.Min((double)_maxWidth / pixelWidth, (double)_maxHeight / pixelHeight));
+                if (fit < 1.0)
+                    frame = new TransformedBitmap(frame, new ScaleTransform(fit, fit));
+            }
+            else
+            {
+                var bitmap = new RenderTargetBitmap(width, height, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                bitmap.Render(root);
+                frame = Flatten(bitmap, width, height);
+            }
 
             using var stream = new MemoryStream();
-            Encoder(Flatten(bitmap, width, height)).Save(stream);
+            Encoder(frame).Save(stream);
             data = stream.ToArray();
             return data.Length > 0;
 

@@ -107,7 +107,25 @@ namespace MS.Internal.Interop.Wayland
         private const uint WL_POINTER_AXIS_HORIZONTAL_SCROLL = 1;
 
         public static event Action<WaylandMouseMessage>? MouseInput;
+
+        /// <summary>
+        /// Deliver a mouse event as if the platform had reported it. See CocoaWindow.InjectMouse
+        /// for why the visual-tree inspector goes in here rather than raising routed events:
+        /// GetPosition and CaptureMouse read the MouseDevice, not the event.
+        /// </summary>
+        /// <param name="button">An evdev code: BTN_LEFT 0x110, BTN_RIGHT 0x111, BTN_MIDDLE 0x112.</param>
+        internal static void InjectMouse(IntPtr surface, WaylandMouseKind kind, int button, int x, int y, int wheel)
+        {
+            MouseInput?.Invoke(new WaylandMouseMessage(surface, kind, button, x, y, wheel, 0, Environment.TickCount));
+        }
         public static event Action<WaylandKeyMessage>? KeyInput;
+
+        /// <summary>Deliver a key event as if the compositor had reported it. See InjectMouse.</summary>
+        internal static void InjectKey(IntPtr surface, bool isDown, uint keysym, string? characters)
+        {
+            KeyInput?.Invoke(new WaylandKeyMessage(surface, isDown, keysym, scancode: 0, characters,
+                                                   isRepeat: false, default, Environment.TickCount));
+        }
 
         private static IntPtr s_seat, s_pointer, s_keyboard, s_touch;
         private static IntPtr* s_pointerListener;

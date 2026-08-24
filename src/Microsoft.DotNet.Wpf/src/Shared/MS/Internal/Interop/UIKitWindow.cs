@@ -517,6 +517,17 @@ namespace MS.Internal.Interop
         public static event Action<TouchMessage> MouseInput;
 
         /// <summary>
+        /// Deliver a mouse event as if the platform had reported it. See CocoaWindow.InjectMouse
+        /// for why the visual-tree inspector goes in here rather than raising routed events:
+        /// GetPosition and CaptureMouse read the MouseDevice, not the event.
+        /// </summary>
+        /// <param name="kind">0 move, 1 down, 2 up, 3 wheel (drag-to-scroll).</param>
+        internal static void InjectMouse(IntPtr view, int kind, int x, int y, int wheel)
+        {
+            MouseInput?.Invoke(new TouchMessage(view, kind, x, y, Environment.TickCount, wheel));
+        }
+
+        /// <summary>
         /// Test seam: raises a touch as if UIKit had delivered it, in device pixels relative to the
         /// view. Neither simctl nor the simulator offers any touch-injection API, so this is the only
         /// way to exercise the input path (mapping, hit test, click synthesis) automatically. It does
