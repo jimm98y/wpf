@@ -132,6 +132,15 @@ namespace System.Windows.Forms
 
 		private readonly ProfessionalColorTable flat_color_table = new FlatSurfaceColorTable ();
 
+		/// <summary>Measured against a stock "Go to today": Windows makes its own menu 79 pixels
+		/// wide where the same caption in a strip menu comes to 64. Asking for the whole fifteen
+		/// does not get it -- the drop-down's layout takes about ten of them and stops, for a
+		/// reason not yet found -- so this asks for more than it needs and lands a few pixels
+		/// short rather than a dozen.</summary>
+		public override int SystemMenuExtraWidth {
+			get { return 30; }
+		}
+
 		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own
 		/// lighter colours rather than the ones it gives a strip menu.</summary>
 		public override ToolStripRenderer CreateSystemMenuRenderer ()

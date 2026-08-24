@@ -322,6 +322,13 @@ namespace System.Windows.Forms
 		/// <summary>The renderer a tool bar of the given appearance should draw itself with.
 		/// Controls that build their own tool bar -- the property grid does -- ask here rather than
 		/// hard-coding one, so the answer follows the theme.</summary>
+		/// <summary>How much wider Windows makes a menu it draws itself than the same entries in a
+		/// strip menu. It leaves more air round a caption than the strips do. None in the
+		/// classic look, which draws every menu alike.</summary>
+		public virtual int SystemMenuExtraWidth {
+			get { return 0; }
+		}
+
 		/// <summary>The renderer for a menu of the old kind -- one Windows would draw itself.
 		/// The classic theme draws it like any other menu.</summary>
 		public virtual ToolStripRenderer CreateSystemMenuRenderer ()

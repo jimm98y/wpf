@@ -148,6 +148,7 @@ namespace System.Windows.Forms
 			// no strip down the left for icons, because an old-style entry has none to put there.
 			// The strip menus keep theirs -- an application that uses them puts icons in it.
 			strip.ShowImageMargin = false;
+			strip.ExtraWidth = ThemeEngine.Current.SystemMenuExtraWidth;
 			ToolStripRenderer renderer = ThemeEngine.Current.CreateSystemMenuRenderer ();
 			if (renderer != null)
 				strip.Renderer = renderer;

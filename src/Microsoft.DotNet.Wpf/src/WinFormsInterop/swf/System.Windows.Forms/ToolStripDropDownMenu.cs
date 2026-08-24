@@ -109,6 +109,11 @@ namespace System.Windows.Forms
 			base.OnFontChanged (e);
 		}
 
+		/// <summary>Extra width this menu is to be given, on top of what its entries and margins
+		/// come to. An old-style menu is drawn by Windows itself and drawn wider; mirrored into
+		/// one of these it would otherwise come out narrower than the menu it stands for.</summary>
+		internal int ExtraWidth { get; set; }
+
 		protected override void OnLayout (LayoutEventArgs e)
 		{
 			// Find the widest menu item
@@ -126,7 +131,7 @@ namespace System.Windows.Forms
 			int x = this.Padding.Left;
 			
 			widest += ThemeEngine.Current.ToolStripDropDownMenuMargin (show_check_margin || show_image_margin)
-				- this.Padding.Horizontal;
+				+ ExtraWidth - this.Padding.Horizontal;
 			
 			int y = this.Padding.Top;
 
