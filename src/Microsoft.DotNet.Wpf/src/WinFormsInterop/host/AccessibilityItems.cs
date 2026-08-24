@@ -57,6 +57,25 @@ namespace WinFormsWebGpu.Accessibility
             }
         }
 
+        /// <summary>The form an open menu dropped out of: the control it was raised over, or the
+        /// item it hangs under, whichever it has.</summary>
+        private static Form FormBehind(ToolStripDropDown drop)
+        {
+            try
+            {
+                var context = drop as ContextMenuStrip;
+                if (context != null && context.SourceControl != null)
+                    return context.SourceControl.FindForm();
+                for (ToolStripItem item = drop.OwnerItem; item != null; item = item.OwnerItem)
+                    if (item.Owner != null)
+                        return item.Owner.FindForm();
+            }
+            catch (Exception)
+            {
+            }
+            return null;
+        }
+
         /// <summary>The control an item belongs to, for anything that is not a Control itself.</summary>
         internal static Control OwnerOf(object element)
         {
@@ -160,6 +179,19 @@ namespace WinFormsWebGpu.Accessibility
 
             try
             {
+                // An open menu is a window of its own rather than a child of anything, so a walk
+                // of a form's controls never reaches it -- and a menu nothing can find is a menu
+                // nothing can read out or drive. Windows publishes it as a window a client can
+                // still get to; hanging it under the form it dropped out of is the nearest thing
+                // to that here, where a menu has no window of its own to be found by.
+                var form = control as Form;
+                if (form != null)
+                {
+                    foreach (ToolStripDropDown open in ToolStripManager.OpenDropDowns())
+                        if (ReferenceEquals(FormBehind(open), form))
+                            list.Add(open);
+                }
+
                 var strip = control as ToolStrip;
                 if (strip != null)
                 {
@@ -444,7 +476,9 @@ namespace WinFormsWebGpu.Accessibility
                 A11yRole given = FromAccessibleRole(tsi.AccessibleRole);
                 if (given != A11yRole.Unknown)
                     return given;
-                return tsi.Owner is MenuStrip ? A11yRole.MenuItem
+                // An entry in a menu bar or in any menu that drops out of one is a menu item; a
+                // label in the status bar is text; anything else on a strip is a button.
+                return tsi.Owner is MenuStrip || tsi.Owner is ToolStripDropDown ? A11yRole.MenuItem
                      : tsi.Owner is StatusStrip ? A11yRole.Text
                      : A11yRole.Button;
             }

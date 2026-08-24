@@ -28,8 +28,8 @@ namespace WinFormsWebGpu.Accessibility
     {
         Unknown, Window, Pane, Group, Button, CheckBox, RadioButton, Text, Link, ComboBox, Edit,
         Document, List, ListItem, Table, Calendar, Spinner, ProgressBar, Slider, ScrollBar, Tree,
-        TreeItem, Tab, TabItem, MenuBar, MenuItem, StatusBar, ToolBar, DataGrid, Image, Separator,
-        Header, DataItem, Thumb, Custom,
+        TreeItem, Tab, TabItem, Menu, MenuBar, MenuItem, StatusBar, ToolBar, DataGrid, Image,
+        Separator, Header, DataItem, Thumb, Custom,
     }
 
     /// <summary>Three states, because a check box has three.</summary>
@@ -268,6 +268,12 @@ namespace WinFormsWebGpu.Accessibility
                     case "TabControl": return A11yRole.Tab;
                     case "TabPage": return A11yRole.Pane;
                     case "DataGridView": return A11yRole.DataGrid;
+                    // An open menu, before the strip it may hang off: a context menu and a
+                    // drop-down are menus, not tool bars, and that is what a client is told
+                    // about the one it is reading out.
+                    case "ContextMenuStrip":
+                    case "ToolStripDropDownMenu":
+                    case "ToolStripDropDown": return A11yRole.Menu;
                     case "MenuStrip": return A11yRole.MenuBar;
                     case "StatusStrip": return A11yRole.StatusBar;
                     case "ToolStrip": return A11yRole.ToolBar;
