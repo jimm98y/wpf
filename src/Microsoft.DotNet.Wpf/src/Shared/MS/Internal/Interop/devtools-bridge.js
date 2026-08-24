@@ -19,8 +19,10 @@
 //       ws.onmessage = e => __wpfDevTools.send(e.data);
 //       __wpfDevTools.onmessage = m => ws.send(m);
 //
-// The relay is not shipped: it is deployment, it differs per setup, and the
-// inspector is worth more with no moving parts than with one nobody asked for.
+// A relay IS shipped now, because driving the port by hand is fine for a script and no way to
+// walk a tree: eng/devtools-relay.py puts a socket in front of this port so chrome://inspect
+// finds the target like it does on every other head. It stays opt in -- the host page sets
+// globalThis.__wpfDevToolsRelay before runMain and connectRelay() does the rest.
 //
 // The host page registers this module the same way it registers the windowing
 // one, and additionally hands over the managed exports, because a JS module
@@ -76,7 +78,57 @@ export function ready() {
         get onmessage() {
             return onmessage;
         },
+
+        /** Forward this port to a relay so a real DevTools frontend can attach. */
+        connectRelay,
     };
+
+    // The host page sets this before runMain, because the port does not exist until now
+    // and it has no other moment to hook. Nothing happens without it.
+    if (globalThis.__wpfDevToolsRelay) {
+        connectRelay(globalThis.__wpfDevToolsRelay);
+    }
+}
+
+/**
+ * Pump this port to and from a WebSocket relay (eng/devtools-relay.py), which puts a socket in
+ * front of it so chrome://inspect can attach. Retries, because the usual order of events is that
+ * the page is reloaded while the relay keeps running -- and, less often, the reverse.
+ */
+function connectRelay(url, attempt = 0) {
+    let ws;
+    try {
+        ws = new WebSocket(url);
+    } catch (e) {
+        console.error('[wpf-devtools] relay URL rejected:', url, e);
+        return;
+    }
+
+    ws.onopen = () => {
+        console.log(`[wpf-devtools] relay connected: ${url}`);
+        // Assigning onmessage hands over the backlog, so anything the inspector said
+        // before the socket opened reaches the frontend rather than being dropped.
+        globalThis.__wpfDevTools.onmessage = (m) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(m);
+            }
+        };
+    };
+    ws.onmessage = (e) => {
+        try {
+            globalThis.__wpfDevTools.send(e.data);
+        } catch (err) {
+            console.error('[wpf-devtools] command failed:', err);
+        }
+    };
+    ws.onclose = () => {
+        globalThis.__wpfDevTools.onmessage = null;
+        // Back off to a second, then keep trying at that rate: a relay started after the
+        // page should still pick it up, without a tight loop while it is absent.
+        const delay = Math.min(1000, 100 * (attempt + 1));
+        setTimeout(() => connectRelay(url, attempt + 1), delay);
+    };
+    ws.onerror = () => ws.close();
 }
 
 /** One reply or event from the inspector, as a JSON string. */

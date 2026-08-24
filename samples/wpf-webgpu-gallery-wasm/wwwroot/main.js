@@ -87,6 +87,14 @@ try {
         } catch (e) {
             console.error('devtools exports unavailable (is the assembly trimmed away?):', e);
         }
+
+        // ?relay[=port] forwards the inspector's message port to eng/devtools-relay.py, which puts
+        // a socket in front of it so a real DevTools frontend can attach. Set before runMain: the
+        // port is created during Main, and the bridge reads this the moment it exists.
+        if (params.has('relay')) {
+            const relayPort = params.get('relay') || '9223';
+            globalThis.__wpfDevToolsRelay = `ws://127.0.0.1:${relayPort}/app`;
+        }
     }
 
     // Mount the bundled fonts into the wasm VFS where WPF's managed font catalog

@@ -223,14 +223,46 @@ On iOS the same holds in the simulator, with the wheel working in both direction
 backends differ on that).
 
 The browser head is verified too, message port and all: 591 nodes, a wheel that scrolls and a
-thumb drag that moves the offset from 48 to 1820. It is driven by evaluating JavaScript in the
-page through Chrome's OWN CDP endpoint, which needs no relay and no Node:
+thumb drag that moves the offset from 48 to 1820.
+
+### Attaching a frontend to the browser head
+
+A page cannot accept a connection, so unlike every other head the browser one is a message port
+rather than a server. There are two ways at it.
+
+**With a real Elements panel**, via the relay, which puts a socket in front of the port so the
+target appears in `chrome://inspect` like any other head:
 
 ```sh
-python3 -m http.server            # serve the published wwwroot
-chrome --remote-debugging-port=9444 --headless=new --enable-unsafe-webgpu
-# then, over Chrome's CDP: Runtime.evaluate -> __wpfDevTools.send({id, method, params})
+python3 -m http.server                      # serve the published wwwroot
+python3 eng/devtools-relay.py               # loopback, port 9223
+# open the app with BOTH switches:  index.html?devtools=1&relay=9223
+# then chrome://inspect -> Configure -> add localhost:9223 -> Inspect
 ```
+
+The page dials the relay, the frontend dials the relay, and it pumps between them. Both sides
+reconnect, so the relay and the page can be started in either order and a reload just re-attaches.
+`?relay` alone does nothing without `?devtools`: the port does not exist until the inspector
+starts.
+
+**Without any relay**, driving the port directly — enough for a script, and what the automated
+verification uses, since it needs no second process:
+
+```sh
+chrome --remote-debugging-port=9444 --headless=new --enable-unsafe-webgpu
+# then, over Chrome's OWN CDP: Runtime.evaluate -> __wpfDevTools.send({id, method, params})
+```
+
+or by hand in the page console:
+
+```js
+__wpfDevTools.onmessage = m => console.log(JSON.parse(m));
+__wpfDevTools.send({ id: 1, method: 'DOM.getDocument', params: { depth: -1 } });
+```
+
+Note that the browser's own F12 DevTools inspect the *page* — its DOM, its JS, its wasm. They
+know nothing about the WPF visual tree living inside the canvas. The inspector is a separate CDP
+endpoint and needs its own frontend, attached by one of the routes above.
 
 Two things the browser head needs, both of which fail silently without them: the inspector must
 be a **trimmer root** (`wasm-roots.xml`), and the host page must register the module AND hand
