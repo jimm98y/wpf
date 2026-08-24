@@ -218,7 +218,14 @@
          PackageReferences (System.IO.Packaging / System.Windows.Extensions /
          System.Configuration.ConfigurationManager) as FRAMEWORK-provided — so they'd be dropped from the
          app bundle (the browser-wasm runtime pack doesn't ship them) and WPF fails to boot. -->
-    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <!-- The path must be the BUILT implementation, as the mac head uses. It previously pointed at a
+         WinFormsInterop\lib\ directory that does not exist, and a HintPath that misses is not an
+         error: RAR quietly falls back, and here it fell back to microsoft.windowsdesktop.app.ref,
+         whose Accessibility.dll is a reference assembly with no method bodies. That is what got
+         webcil'd into the bundle, so System.Windows.Forms.Control could not build its base chain and
+         every WinForms card died with "Could not set up parent class ... Could not load file or
+         assembly 'Accessibility'". The only warning was one MSB3245 in a long build log. -->
+    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
     <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the shared WinFormsHost card). The
          browser WinForms driver is not yet proven, so the card is guarded (CreateDemoCardOrFallback);
          these are here so the shared gallery sources compile and the card can attempt to init. -->
@@ -348,6 +355,10 @@
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-window.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-media.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <!-- The inspector's bridge belongs on this list for the same reason as the others. It was not,
+         so wwwroot held a hand-made copy, and edits to the real module (the relay connector among
+         them) simply never reached the page. -->
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\devtools-bridge.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- Stage the bundled fonts and record what was staged, mirroring WpfWebGpuScaffoldWeb in the

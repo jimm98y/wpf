@@ -90,6 +90,7 @@ namespace System.Drawing
 		[MonoLimitation ("Libgdiplus doesn't use this property for rendering")]
 		public PenAlignment Alignment {
 			get {
+				if (nativeObject == IntPtr.Zero) return PenAlignment.Center;   // recording-only
 				PenAlignment retval;
                                 Status status = GDIPlus.GdipGetPenMode (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -214,6 +215,7 @@ namespace System.Drawing
                 public DashCap DashCap {
 
                         get {
+				if (nativeObject == IntPtr.Zero) return Drawing2D.DashCap.Flat;   // recording-only
                                 DashCap retval;
                                 Status status = GDIPlus.GdipGetPenDashCap197819 (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -235,6 +237,7 @@ namespace System.Drawing
                 public float DashOffset {
 
                         get {
+				if (nativeObject == IntPtr.Zero) return 0f;   // recording-only
                                 float retval;
                                 Status status = GDIPlus.GdipGetPenDashOffset (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -289,6 +292,7 @@ namespace System.Drawing
 
 		public DashStyle DashStyle {
 			get {
+				if (nativeObject == IntPtr.Zero) return DashStyle.Solid;   // recording-only
 				DashStyle retval;
                                 Status status = GDIPlus.GdipGetPenDashStyle (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -309,6 +313,7 @@ namespace System.Drawing
 
 		public LineCap StartCap {
 			get {
+				if (nativeObject == IntPtr.Zero) return LineCap.Flat;   // recording-only
 				LineCap retval;
 				Status status = GDIPlus.GdipGetPenStartCap (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -330,6 +335,7 @@ namespace System.Drawing
  
 		public LineCap EndCap {
 			get {
+				if (nativeObject == IntPtr.Zero) return LineCap.Flat;   // recording-only
 				LineCap retval;
 				Status status = GDIPlus.GdipGetPenEndCap (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -352,6 +358,7 @@ namespace System.Drawing
                 public LineJoin LineJoin {
 
                         get {
+				if (nativeObject == IntPtr.Zero) return LineJoin.Miter;   // recording-only
                                 LineJoin result;
                                 Status status = GDIPlus.GdipGetPenLineJoin (nativeObject, out result);
 				GDIPlus.CheckStatus (status);
@@ -374,6 +381,7 @@ namespace System.Drawing
                 public float MiterLimit {
 
                         get {
+				if (nativeObject == IntPtr.Zero) return 10f;   // recording-only
                                 float result;
                                 Status status = GDIPlus.GdipGetPenMiterLimit (nativeObject, out result);
 				GDIPlus.CheckStatus (status);
@@ -392,6 +400,7 @@ namespace System.Drawing
 
                 public PenType PenType {
                         get {
+				if (nativeObject == IntPtr.Zero) return PenType.SolidColor;   // recording-only
 				PenType type;
 				Status status = GDIPlus.GdipGetPenFillType (nativeObject, out type);
 				GDIPlus.CheckStatus (status);
@@ -403,6 +412,7 @@ namespace System.Drawing
                 public Matrix Transform {
 
                         get {
+				if (nativeObject == IntPtr.Zero) return new Matrix ();   // recording-only
 				Matrix matrix = new Matrix ();
 				Status status = GDIPlus.GdipGetPenTransform (nativeObject, matrix.nativeMatrix);
 				GDIPlus.CheckStatus (status);
