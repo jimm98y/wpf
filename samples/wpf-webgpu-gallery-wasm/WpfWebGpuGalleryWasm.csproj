@@ -296,6 +296,52 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
   </ItemGroup>
 
+  <!-- Swap the fork's shims in for the framework's browser stubs, exactly as
+       _WpfWebGpuBrowserOverlayShims does for SDK-built browser heads. This sample predates the
+       packaged SDK and references artifacts/bin directly, so it inherits none of that and was
+       shipping the stubs.
+
+       The framework's browser build of these assemblies throws PlatformNotSupportedException from
+       every member, and their identities beat a plain Reference, so substituting on the publish
+       item list is the only thing that takes: assemblies are webcil'd into _framework rather than
+       copied from disk.
+
+       The hook is ResolvedFileToPublish, NOT the SDK's WasmAssembliesToBundle: that item belongs to
+       the wasm-tools workload and is only populated for native-relink/AOT builds, so an
+       AfterTargets="_GetDefaultWasmAssembliesToBundle" target simply never fires in this head's
+       default (interpreter) publish. Substituting on ResolvedFileToPublish is what
+       _ForcePublishVendoredReflectiveDeps above already does, and it is the list the webcil
+       conversion reads from.
+
+       This was not theoretical. Microsoft.Win32.Registry's stub made MS.Internal.RegistryKeys
+       .ReadLocalMachineBool throw once per automation peer per layout pass, from
+       ContextLayoutManager.fireAutomationEvents: roughly 1400 exceptions in 25 seconds of idle
+       gallery, each one caught and logged by the browser dispatcher's pump. The app kept running and
+       the console was unusable.
+
+       Microsoft.Win32.SystemEvents, which the SDK also swaps, is deliberately absent here: nothing
+       in this head's bundle references it, and Include-ing it would ADD an assembly rather than
+       replace one. -->
+  <Target Name="OverlayBrowserShims" AfterTargets="ComputeResolvedFilesToPublishList" BeforeTargets="ProcessPublishFilesForWasm">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+          Condition="'%(FileName)' == 'Microsoft.Win32.Registry' or '%(FileName)' == 'System.Diagnostics.Process'" />
+      <!-- RelativePath is written out LITERALLY on purpose. Using %(FileName)%(Extension) here, as the
+           vendored-deps target above does, makes MSBuild batch the Include over every bucket of the
+           ResolvedFileToPublish list and add each file once per bucket. The copy task tolerates that;
+           GenerateWasmBootJson does not, and fails with "An item with the same key has already been
+           added" naming the webcil output. -->
+      <ResolvedFileToPublish Include="..\..\artifacts\bin\Microsoft.Win32.Registry\Release\net10.0\Microsoft.Win32.Registry.dll">
+        <RelativePath>Microsoft.Win32.Registry.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="..\..\artifacts\bin\System.Diagnostics.Process\Release\net10.0\System.Diagnostics.Process.dll">
+        <RelativePath>System.Diagnostics.Process.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.
        Must run before static-web-asset discovery (stale integrity hashes otherwise). -->
   <Target Name="CopyWpfInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
