@@ -144,11 +144,13 @@ namespace System.Windows.Forms
 				strip.Dispose ();
 			}
 			strip = new ToolStripDropDownMenu ();
-			// A menu of this vintage is drawn by Windows itself, and Windows draws a plain one:
-			// no strip down the left for icons, because an old-style entry has none to put there.
-			// The strip menus keep theirs -- an application that uses them puts icons in it.
-			strip.ShowImageMargin = false;
+			// A menu of this vintage is drawn by Windows itself. It keeps the column down the left
+			// -- measured on a stock one, the caption starts 38 pixels in, which is that column
+			// plus the usual inset -- but it does not shade it: the colours below paint it in the
+			// menu's own background, so the room is there and nothing is drawn in it. Taking the
+			// column away instead left the caption hard against the frame.
 			strip.ExtraWidth = ThemeEngine.Current.SystemMenuExtraWidth;
+			strip.ExtraRowHeight = ThemeEngine.Current.SystemMenuExtraRowHeight;
 			ToolStripRenderer renderer = ThemeEngine.Current.CreateSystemMenuRenderer ();
 			if (renderer != null)
 				strip.Renderer = renderer;

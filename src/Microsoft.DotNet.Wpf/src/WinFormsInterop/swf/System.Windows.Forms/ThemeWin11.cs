@@ -102,8 +102,20 @@ namespace System.Windows.Forms
 	/// line round #FDFDFD. Measured off both, side by side.</summary>
 	internal class SystemMenuColorTable : ModernProfessionalColorTable
 	{
+		private static readonly Color Body = Color.FromArgb (249, 249, 249);
+
 		public override Color MenuBorder => Color.FromArgb (229, 229, 229);
-		public override Color ToolStripDropDownBackground => Color.FromArgb (249, 249, 249);
+		public override Color ToolStripDropDownBackground => Body;
+
+		// The column down the left is kept -- a menu of this kind reserves it whether or not
+		// anything is in it -- but Windows does not shade it, so it is painted in the body's
+		// own colour and simply is not seen.
+		public override Color ToolStripGradientBegin => Body;
+		public override Color ToolStripGradientMiddle => Body;
+		public override Color ToolStripGradientEnd => Body;
+		public override Color ImageMarginGradientBegin => Body;
+		public override Color ImageMarginGradientMiddle => Body;
+		public override Color ImageMarginGradientEnd => Body;
 	}
 
 	internal class FlatSurfaceColorTable : ModernProfessionalColorTable
@@ -132,13 +144,17 @@ namespace System.Windows.Forms
 
 		private readonly ProfessionalColorTable flat_color_table = new FlatSurfaceColorTable ();
 
-		/// <summary>Measured against a stock "Go to today": Windows makes its own menu 79 pixels
-		/// wide where the same caption in a strip menu comes to 64. Asking for the whole fifteen
-		/// does not get it -- the drop-down's layout takes about ten of them and stops, for a
-		/// reason not yet found -- so this asks for more than it needs and lands a few pixels
-		/// short rather than a dozen.</summary>
+		/// <summary>The same stock menu is 28 pixels tall for its one entry where a strip menu is
+		/// 26: two more, which also puts the caption on the line Windows puts it on.</summary>
+		public override int SystemMenuExtraRowHeight {
+			get { return 2; }
+		}
+
+		/// <summary>Measured against a stock "Go to today", which comes to 160 pixels wide where
+		/// the same entries in a strip menu come to 151: Windows leaves a little more room after
+		/// the caption than the strips do.</summary>
 		public override int SystemMenuExtraWidth {
-			get { return 30; }
+			get { return 9; }
 		}
 
 		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own

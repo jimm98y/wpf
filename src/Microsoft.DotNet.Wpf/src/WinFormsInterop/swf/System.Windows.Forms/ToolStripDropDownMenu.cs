@@ -114,6 +114,9 @@ namespace System.Windows.Forms
 		/// one of these it would otherwise come out narrower than the menu it stands for.</summary>
 		internal int ExtraWidth { get; set; }
 
+		/// <summary>Extra height each row is to be given, for the same reason.</summary>
+		internal int ExtraRowHeight { get; set; }
+
 		protected override void OnLayout (LayoutEventArgs e)
 		{
 			// Find the widest menu item
@@ -150,7 +153,7 @@ namespace System.Windows.Forms
 				else if (tsi is ToolStripSeparator)
 					height = 7;
 				else
-					height = 22;
+					height = 22 + ExtraRowHeight;
 
 				tsi.SetBounds (new Rectangle (x, y, widest, height));
 				y += height + tsi.Margin.Bottom;
