@@ -338,6 +338,12 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
+		/// <summary>Windows 11 does not push a button in: held down, it changes colour and its
+		/// caption stays exactly where it was.</summary>
+		protected override bool ButtonTextMovesWhenPressed {
+			get { return false; }
+		}
+
 		protected override void ButtonBase_DrawButton (ButtonBase button, Graphics dc)
 		{
 			// A check box or radio button rendered AS a button, and the flat styles, keep the base
@@ -1426,13 +1432,17 @@ namespace System.Windows.Forms
 								 bool is_previous)
 		{
 			bool clicked = is_previous ? mc.is_previous_clicked : mc.is_next_clicked;
+			// Sixteen pixels square, three in from the end of the header: measured off a stock
+			// calendar, whose arrow sits in a smaller button nearer the edge than the one the
+			// classic layout hands us -- twenty-two wide and five in, which put the arrow eight
+			// pixels further into the header than Windows puts it.
+			const int Side = 16, Inset = 0;
+			// And a little above the middle of the heading, which is where Windows puts it: level
+			// with the month's name rather than with the strip the name sits in.
+			int top = rectangle.Y + ((title_size.Height - Side) / 2) - 2;
 			Rectangle button = is_previous
-				? new Rectangle (rectangle.X + 1 + x_offset,
-						 rectangle.Y + 1 + ((title_size.Height - button_size.Height) / 2),
-						 Math.Max (button_size.Width - 1, 0), Math.Max (button_size.Height - 1, 0))
-				: new Rectangle (rectangle.Right - 1 - x_offset - button_size.Width,
-						 rectangle.Y + 1 + ((title_size.Height - button_size.Height) / 2),
-						 Math.Max (button_size.Width - 1, 0), Math.Max (button_size.Height - 1, 0));
+				? new Rectangle (rectangle.X + Inset, top, Side, Side)
+				: new Rectangle (rectangle.Right - Inset - Side, top, Side, Side);
 			if (button.Width <= 0 || button.Height <= 0)
 				return;
 
@@ -1441,8 +1451,9 @@ namespace System.Windows.Forms
 
 			int cx = button.X + button.Width / 2;
 			int cy = button.Y + button.Height / 2;
-			int h = Math.Max (3, Math.Min (5, button.Height / 3));
-			int w = Math.Max (2, h - 1);
+			// Four across and seven down, which is the glyph Windows draws. Ours was six by eleven:
+			// the same shape, half again as big.
+			int h = 3, w = 4;
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.AntiAlias;
 			// Blue under the pointer and while held, the way the heading beside it goes blue.

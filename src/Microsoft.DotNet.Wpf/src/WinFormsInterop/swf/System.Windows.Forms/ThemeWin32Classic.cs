@@ -384,7 +384,7 @@ namespace System.Windows.Forms
 
 					// Image is dependent on ImageAlign
 					if (image == null) {
-						if (button.Pressed)
+						if (button.Pressed && ButtonTextMovesWhenPressed)
 							textRectangle.Offset (1, 1);
 						return;
 					}
@@ -872,12 +872,19 @@ namespace System.Windows.Forms
 			}
 		}
 		
+		/// <summary>Whether a button's caption moves a pixel down and to the right while the
+		/// button is held. A carved button is pushed INTO the surface and everything on its face
+		/// goes with it; a flat one is not pushed anywhere, it only changes colour.</summary>
+		protected virtual bool ButtonTextMovesWhenPressed {
+			get { return true; }
+		}
+
 		protected virtual void ButtonBase_DrawText(ButtonBase button, Graphics dc)
 		{
 			Rectangle buttonRectangle = button.ClientRectangle;
 			Rectangle text_rect = Rectangle.Inflate(buttonRectangle, -4, -4);
 			
-			if (button.is_pressed) {
+			if (button.is_pressed && ButtonTextMovesWhenPressed) {
 				text_rect.X++;
 				text_rect.Y++;
 			}
