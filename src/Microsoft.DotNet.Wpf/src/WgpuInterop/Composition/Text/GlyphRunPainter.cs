@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -93,6 +93,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </param>
         public static void Paint(IGlyphOutlineFont font, IColorGlyphFont? colorFont, IBitmapGlyphFont? bitmapFont,
                                  int glyphId, float scale, float gx, float gy, List<GlyphFill> into)
+            => Paint(font, colorFont, bitmapFont, glyphId, scale, gx, gy, into, hintedPixelsPerEm: 0f);
+
+        /// <param name="hintedPixelsPerEm">
+        /// When greater than zero, the size in DEVICE pixels the glyph will be drawn at, and the face
+        /// is asked to grid-fit it to that size instead of handing over the outline as drawn. The
+        /// fitted outline comes back in device pixels, so <paramref name="scale"/> is then only what
+        /// takes device pixels back into the caller's own space (1 when it draws in device pixels).
+        /// Colour artwork -- a COLR layer, a bitmap emoji -- is never fitted: fitting is about making
+        /// a stem land on a column, and artwork has no stems.
+        /// </param>
+        /// <inheritdoc cref="Paint(IGlyphOutlineFont, IColorGlyphFont?, IBitmapGlyphFont?, int, float, float, float, List{GlyphFill})"/>
+        public static void Paint(IGlyphOutlineFont font, IColorGlyphFont? colorFont, IBitmapGlyphFont? bitmapFont,
+                                 int glyphId, float scale, float gx, float gy, List<GlyphFill> into,
+                                 float hintedPixelsPerEm)
         {
             if (font is null) return;
 
@@ -109,6 +123,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         continue;
                     into.Add(new GlyphFill(ScaleFigures(lf, scale, gx, gy), layer.Color, isColorLayer: true));
                 }
+                return;
+            }
+
+            if (hintedPixelsPerEm > 0f && font is IHintedGlyphFont hinted
+                && hinted.TryGetHintedOutline(glyphId, hintedPixelsPerEm, out List<PathFigure> fitted)
+                && fitted.Count > 0)
+            {
+                into.Add(new GlyphFill(ScaleFigures(fitted, scale, gx, gy), null, isColorLayer: false));
                 return;
             }
 

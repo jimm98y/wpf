@@ -222,11 +222,39 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>Absolute (screen) top-left of a window, walking up the parent chain.</summary>
+		/// <remarks>
+		/// A window is positioned against its parent's CLIENT origin, and on Windows a plain border is
+		/// non-client -- so a child of a bordered container starts one pixel in from the container's
+		/// outer edge. This driver models no non-client area, so that pixel has to be added back here;
+		/// without it everything inside a bordered Panel sat a pixel up and left of Windows'.
+		/// </remarks>
 		internal Point ScreenLocation(Hwnd hwnd)
 		{
 			int x = 0, y = 0;
-			for (Hwnd h = hwnd; h != null; h = h.parent) { x += h.x; y += h.y; }
+			for (Hwnd h = hwnd; h != null; h = h.parent)
+			{
+				x += h.x; y += h.y;
+				if (h.parent != null)
+				{
+					Size inset = ClientOrigin(h.parent);
+					x += inset.Width; y += inset.Height;
+				}
+			}
 			return new Point(x, y);
+		}
+
+		/// <summary>How far a window's client area starts in from its own top-left.</summary>
+		/// <remarks>
+		/// Only the plain WS_BORDER counts. WS_EX_CLIENTEDGE is deliberately excluded even though
+		/// Windows draws that outside the client too: the controls that ask for it (ComboBox,
+		/// UpDownBase, TextBoxBase, ...) already place their own internal children against the outer
+		/// edge, and insetting here as well would move every one of them twice.
+		/// </remarks>
+		private static Size ClientOrigin(Hwnd h)
+		{
+			if (h == null || (h.initial_style & WindowStyles.WS_BORDER) == 0) return Size.Empty;
+			// A top-level window's frame belongs to the host, as in DrawWindowBorder.
+			return Control.FromHandle(h.Handle) is Form ? Size.Empty : new Size(1, 1);
 		}
 
 		/// <summary>Input hook: the deepest visible window whose absolute rect contains the screen

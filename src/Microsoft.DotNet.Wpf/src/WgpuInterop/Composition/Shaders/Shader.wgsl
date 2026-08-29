@@ -24,6 +24,37 @@ fn fs_text(in : VSOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color.rgb * a, a);              // premultiplied brush colour
 }
 
+// ---- ClearType -------------------------------------------------------------------------------
+//
+// Subpixel text needs a DIFFERENT COVERAGE PER CHANNEL, and ordinary blending cannot express that:
+// the destination factor is one number, and here red, green and blue each need their own. There is a
+// blend factor that would do it in one pass (dual-source, OneMinusSrc1) but it is an optional
+// feature these bindings do not declare and the browser cannot provide at all.
+//
+// So the quad is drawn TWICE over the same vertices:
+//
+//   dst = dst * (1 - cov)          the multiply pass, blend (Zero, OneMinusSrc)
+//   dst = dst + colour * cov       the add pass, blend (One, One)
+//
+// which together are exactly dst = colour*cov + dst*(1-cov), per channel, with no feature to ask
+// for. The mask is RGBA: one coverage per lamp, and their mean in alpha for the destination's own
+// alpha to be blended by.
+
+@fragment
+fn fs_text_subpixel_multiply(in : VSOut) -> @location(0) vec4<f32> {
+    let cov = textureSample(tex, samp, in.uv);
+    // The brush's alpha scales how much of the destination is taken out, so that half-transparent
+    // text dims what is behind it by half as much.
+    return vec4<f32>(cov.rgb * in.color.a, cov.a * in.color.a);
+}
+
+@fragment
+fn fs_text_subpixel_add(in : VSOut) -> @location(0) vec4<f32> {
+    let cov = textureSample(tex, samp, in.uv);
+    let a = in.color.a;
+    return vec4<f32>(in.color.rgb * cov.rgb * a, cov.a * a);
+}
+
 @fragment
 fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
     // The layer texture is already premultiplied; scale it by the group opacity.

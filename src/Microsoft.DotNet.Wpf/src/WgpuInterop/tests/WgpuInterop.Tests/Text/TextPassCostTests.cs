@@ -74,22 +74,27 @@ namespace WgpuInterop.Tests.Text
 
             WgpuSceneRenderer renderer = NewRenderer();
 
+            // Counted in RASTERIZATIONS, not in render passes. The two used to be the same thing for
+            // text, and are not any more: subpixel glyphs are rasterized on the CPU, so a first frame
+            // of them costs no GPU pass per glyph at all. Passes were only ever a proxy -- what this
+            // test is really about is whether the SAME GLYPH IS BUILT TWICE, and that is what the
+            // coverage counter says, whichever rasterizer does the building.
             WgpuSceneRenderer.PerfReset();
             renderer.RenderToRgba(scene, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
-            int first = WgpuSceneRenderer.PerfPasses;
+            int first = WgpuSceneRenderer.PerfCoverage;
 
             WgpuSceneRenderer.PerfReset();
             renderer.RenderToRgba(scene, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
-            int second = WgpuSceneRenderer.PerfPasses;
+            int second = WgpuSceneRenderer.PerfCoverage;
 
-            // First frame: a mask apiece, plus the pass that composites them.
-            Assert.True(first > glyphs,
-                $"a first frame of {glyphs} new glyphs took only {first} passes; the mask-per-glyph " +
+            // First frame: a mask apiece.
+            Assert.True(first >= glyphs,
+                $"a first frame of {glyphs} new glyphs built only {first} masks; the mask-per-glyph " +
                 "shape this test describes has changed and its premise needs rechecking");
 
-            // Second frame: the coverage cache answers every one of them.
-            Assert.True(second * 4 < first,
-                $"a repeat frame of the same text took {second} passes against the first frame's " +
+            // Second frame: the coverage cache answers every one of them, and builds nothing.
+            Assert.True(second == 0,
+                $"a repeat frame of the same text built {second} masks against the first frame's " +
                 $"{first}. The per-shape coverage cache is what makes text affordable here, and it " +
                 "looks like it has stopped serving these glyphs.");
         }

@@ -732,6 +732,16 @@ namespace System.Windows.Forms
 		protected override void OnLayout (LayoutEventArgs e)
 		{
 			base.OnLayout(e);
+
+			// The spin button sits ONE pixel inside the control on every side -- not two, which is
+			// what docking it inside a Fixed3D display rectangle gives it. Windows puts it at
+			// {99,1,16,21} in a 116x23 spin box while leaving the EDIT inset by two, so the two do
+			// not come out of one rectangle. Placed here rather than by widening the display area:
+			// that moved the text along with it, and the text was already where Windows has it.
+			if (spnSpinner != null && ClientSize.Width > 18 && ClientSize.Height > 2) {
+				int w = spnSpinner.Width;
+				spnSpinner.SetBounds (ClientSize.Width - 1 - w, 1, w, ClientSize.Height - 2);
+			}
 		}
 
 		protected override void OnMouseDown (MouseEventArgs e)

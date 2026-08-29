@@ -107,9 +107,30 @@ namespace System.Windows.Forms {
 			set { use_visual_style_back_color = value; }
 		}
 
+		private bool back_color_set;
+
 		public override Color BackColor {
-			get { return base.BackColor; }
-			set { use_visual_style_back_color = false; base.BackColor = value; }
+			get {
+				// A page paints itself OVER the tab body the theme just drew, so which grey it uses
+				// decides what the whole page area looks like. The application chooses, through
+				// UseVisualStyleBackColor, and the default is FALSE: an ordinary tab page comes out
+				// the control face, not the body's.
+				//
+				// Measured against a real Windows window, which is the only way to settle it: the page
+				// area of a stock TabControl reads 240,240,240 -- the control face -- and ours read
+				// 249, the body's. It had been made to follow the body on the strength of a
+				// DrawToBitmap comparison, where Windows' page came back 249; that reference is
+				// unreliable for this control (its page is not painted into the bitmap at all, so the
+				// theme's body shows through and reads as the page's own colour). A window on the
+				// screen is the ground truth and it says otherwise.
+				if (!back_color_set && use_visual_style_back_color) {
+					Color themed = ThemeEngine.Current.TabPageBackColor (this);
+					if (!themed.IsEmpty)
+						return themed;
+				}
+				return base.BackColor;
+			}
+			set { use_visual_style_back_color = false; back_color_set = true; base.BackColor = value; }
 		}
 		#endregion
 

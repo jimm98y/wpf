@@ -387,7 +387,10 @@ namespace System.Windows.Forms
 			GroupBox group_box_copies = new GroupBox ();
 			group_box_copies.Location = new Point (265, 155);
 			group_box_copies.Text = "Copies";
-			group_box_copies.Size = new Size (165, 100);
+			// MEASURED off the real dialog: its Copies group spans 180 and puts the spin box 120 in.
+			// At 165 and 105 the label 'Number of copies:' ran under the spin box and 'Collate' wrapped
+			// onto two lines -- both plainly visible, and both only because the box was too small.
+			group_box_copies.Size = new Size (180, 100);
 
 			// Accept button
 			accept_button = new Button ();
@@ -516,7 +519,7 @@ namespace System.Windows.Forms
 
 			updown_copies = new NumericUpDown ();
 			updown_copies.TabIndex = 31;
-			updown_copies.Location = new Point (105, 18);
+			updown_copies.Location = new Point (120, 18);
 			updown_copies.Minimum = 1;
 			group_box_copies.Controls.Add (updown_copies);
 			updown_copies.ValueChanged += new System.EventHandler (OnUpDownValueChanged);
@@ -530,9 +533,9 @@ namespace System.Windows.Forms
 
 			chkbox_collate = new CheckBox ();
 			chkbox_collate.TabIndex = 32;
-			chkbox_collate.Location = new Point (105, 55);
+			chkbox_collate.Location = new Point (120, 55);
 			chkbox_collate.Text = "C&ollate";
-			chkbox_collate.Width = 58;
+			chkbox_collate.Width = 72;
 			chkbox_collate.CheckedChanged += new EventHandler(chkbox_collate_CheckedChanged);
 		
 			group_box_copies.Controls.Add (chkbox_collate);
@@ -548,7 +551,9 @@ namespace System.Windows.Forms
 			printer_combo = new ComboBox ();
 			printer_combo.DropDownStyle = ComboBoxStyle.DropDownList;
 			printer_combo.Location = new Point (80, 32);
-			printer_combo.Width = 220;
+			// Wide enough for a real printer name. A modern one runs to forty characters and the
+			// old width cut this machine's off mid-word, inside a group box with 120 pixels spare.
+			printer_combo.Width = 240;
 			printer_combo.SelectedIndexChanged += new EventHandler (OnPrinterSelectedIndexChanged);
 
 			default_printer_settings = new PrinterSettings ();
@@ -590,16 +595,28 @@ namespace System.Windows.Forms
 
 		private void SetPrinterDetails ()
 		{
+			// PRINTING IS NOT CONDITIONAL ON THE DESCRIPTION. Enabling OK only after the status
+			// text was read meant one failure took the whole dialog with it -- and it always failed:
+			// the type was looked up by the assembly name "System.Drawing", and this port's assembly
+			// is called Mono.System.Drawing, so the lookup returned null, the NullReference was
+			// swallowed by the catch, and every print dialog came up with Status, Type and Where
+			// blank and OK GREYED OUT. There was no way to print from it at all.
+			accept_button.Enabled = printer_combo.SelectedItem != null;
+
+			string port = string.Empty, type = string.Empty;
+			string status = string.Empty, comment = string.Empty;
 			try
 			{
-				string printer, port = string.Empty, type = string.Empty;
-				string status = string.Empty, comment = string.Empty;
-				Type sysprn = Type.GetType ("System.Drawing.Printing.SysPrn, System.Drawing");
-				MethodInfo dlg_info = sysprn.GetMethod ("GetPrintDialogInfo", BindingFlags.Static | BindingFlags.NonPublic);
+				// Asked for through the assembly that actually defines PrinterSettings rather than
+				// by a name, so renaming the assembly cannot quietly break it again.
+				Type sysprn = typeof (System.Drawing.Printing.PrinterSettings).Assembly
+					.GetType ("System.Drawing.Printing.SysPrn");
+				MethodInfo dlg_info = sysprn?.GetMethod ("GetPrintDialogInfo",
+					BindingFlags.Static | BindingFlags.NonPublic);
 
-				printer = (string) printer_combo.SelectedItem;
+				string printer = (string) printer_combo.SelectedItem;
 
-				if (printer != null) {
+				if (printer != null && dlg_info != null) {
 					object[] args  = new object [5];
 					args[0] = printer;
 					args[1] = port;
@@ -612,17 +629,15 @@ namespace System.Windows.Forms
 					status = (string) args[3];
 					comment = (string) args[4];
 				}
-
-				label_status.Text = status;
-				label_type.Text = type;
-				label_where.Text = port;
-				label_comment.Text = comment;
-
-				accept_button.Enabled = true;
 			}
 			catch  {
-				accept_button.Enabled = false;
+				// A printer that will not describe itself is still a printer to print to.
 			}
+
+			label_status.Text = status;
+			label_type.Text = type;
+			label_where.Text = port;
+			label_comment.Text = comment;
 		}
 
 		private void chkbox_collate_CheckedChanged(object sender, EventArgs e) {

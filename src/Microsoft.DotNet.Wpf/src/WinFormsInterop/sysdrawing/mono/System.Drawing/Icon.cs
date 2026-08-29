@@ -120,13 +120,14 @@ namespace System.Drawing
 		private Icon (IntPtr handle)
 		{
 			this.handle = handle;
+			// FromHicon keeps the ALPHA; FromHbitmap does not. This used to build the alpha-correct
+			// bitmap and then throw it away on Windows in favour of the icon's colour bitmap alone,
+			// which turns every 32-bit icon -- and every icon Windows itself hands out is one -- into
+			// the same picture on an opaque black square. GetIconInfo is still worth asking, but only
+			// for the SIZE.
 			bitmap = Bitmap.FromHicon (handle);
 			iconSize = new Size (bitmap.Width, bitmap.Height);
-			if (GDIPlus.RunningOnUnix ()) {
-				bitmap = Bitmap.FromHicon (handle);
-				iconSize = new Size (bitmap.Width, bitmap.Height);
-				// FIXME: we need to convert the bitmap into an icon
-			} else {
+			if (!GDIPlus.RunningOnUnix ()) {
 				IconInfo ii;
 				GDIPlus.GetIconInfo (handle, out ii);
 				if (!ii.IsIcon)
@@ -134,7 +135,6 @@ namespace System.Drawing
 
 				// If this structure defines an icon, the hot spot is always in the center of the icon
 				iconSize = new Size (ii.xHotspot * 2, ii.yHotspot * 2);
-				bitmap = (Bitmap) Image.FromHbitmap (ii.hbmColor);
 			}
 			undisposable = true;
 		}

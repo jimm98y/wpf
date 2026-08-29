@@ -169,7 +169,7 @@ namespace System.Windows.Forms.Theming.Default
 				e.Graphics.Clear (e.BackColor);
 
 			if (e.ToolStrip is StatusStrip)
-				e.Graphics.DrawLine (Pens.White, e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
+				e.Graphics.DrawLine (System.Windows.Forms.ThemeEngine.Current.ResPool.GetPen (System.Windows.Forms.ThemeEngine.Current.StatusStripTopEdgeColor), e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
 		}
 
 		public virtual void OnRenderToolStripBorder (ToolStripRenderEventArgs e)

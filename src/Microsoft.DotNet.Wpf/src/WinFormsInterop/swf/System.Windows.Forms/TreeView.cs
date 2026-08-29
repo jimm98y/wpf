@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -284,7 +284,7 @@ namespace System.Windows.Forms {
 		public int ItemHeight {
 			get {
 				if (item_height == -1)
-					return FontHeight + 3;
+					return TextLineHeight + 3;
 				return item_height;
 			}
 			set {
@@ -767,6 +767,7 @@ namespace System.Windows.Forms {
 
 		private TreeNode GetNodeAtUseX (int x, int y) {
 			TreeNode node = GetNodeAt (y);
+			x -= BorderInset;
 			if (node == null || !(IsTextArea (node, x) || full_row_select))
 				return null;
 			return node;
@@ -1187,6 +1188,22 @@ namespace System.Windows.Forms {
 			return null;
 		}
 
+		/// <summary>How far the rows sit inside the control, so the frame drawn around it stays
+		/// visible. This stack paints a control's border into its own client area -- there is no
+		/// non-client area to put it in -- so a control that ignores it draws its first row over
+		/// the frame: measured against a stock tree, every row came out two pixels high and two
+		/// pixels to the left. A sunken frame is two pixels thick, a single line one. The list view
+		/// has the same property for the same reason.</summary>
+		internal int BorderInset {
+			get {
+				switch (InternalBorderStyle) {
+				case BorderStyle.None: return 0;
+				case BorderStyle.FixedSingle: return 1;
+				default: return 2;
+				}
+			}
+		}
+
 	        internal Rectangle ViewportRectangle {
 			get {
 				Rectangle res = ClientRectangle;
@@ -1202,6 +1219,10 @@ namespace System.Windows.Forms {
 		private TreeNode GetNodeAt (int y)
 		{
 			if (nodes.Count <= 0)
+				return null;
+
+			y -= BorderInset;                       // the rows begin inside the frame
+			if (y < 0)
 				return null;
 
 			OpenTreeNodeEnumerator o = new OpenTreeNodeEnumerator (TopNode);
@@ -1426,6 +1447,14 @@ namespace System.Windows.Forms {
 			if (dash == null)
 				CreateDashPen ();
 
+			// The rows live inside the frame; a node's own coordinates start at the row area's
+			// corner, which is where the two hit tests below put the pointer as well.
+			int inset = BorderInset;
+			if (inset > 0) {
+				dc.TranslateTransform (inset, inset);
+				clip.Offset (-inset, -inset);
+			}
+
 			Rectangle viewport = ViewportRectangle;
 			Rectangle original_clip = clip;
 			if (clip.Bottom > viewport.Bottom)
@@ -1445,6 +1474,9 @@ namespace System.Windows.Forms {
 
 				DrawTreeNode (current, dc, clip);
 			}
+
+			if (inset > 0)
+				dc.ResetTransform ();
 
 			if (hbar.Visible && vbar.Visible) {
 				Rectangle corner = new Rectangle (hbar.Right, vbar.Bottom, vbar.Width, hbar.Height);
@@ -1487,33 +1519,37 @@ namespace System.Windows.Forms {
 
 		private void DrawNodeLines (TreeNode node, Graphics dc, Rectangle clip, Pen dash, int x, int y,	int middle)
 		{
-			int ladjust = 9;
+			// THIRTEEN, not nine, wherever there are expander boxes: the lines hang from the centre
+			// of that box, and it sits four pixels further in than the classic layout assumed.
+			// Measured against a stock tree, whose vertical run stands on the parent box's centre
+			// plus one indent -- ours stood four pixels to the left of it, at every depth.
+			int ladjust = show_plus_minus ? 13 : 9;
 			int radjust = 0;
 
-			if (node.nodes.Count > 0 && show_plus_minus)
-				ladjust = 13;
 			if (checkboxes)
 				radjust = 3;
 
+			// The connector hangs from the CENTRE OF THE EXPANDER BOX, and that is one row below
+			// `middle`: the box is drawn from middle - 3 and is nine rows tall (see
+			// TreeViewDrawNodePlusMinus), so its centre is middle + 1. A dashed stroke inks the row
+			// above the coordinate it is given -- a one-pixel stroke is centred half a pixel back so
+			// that it fills one row instead of two -- so middle + 2 is what puts it on that centre.
+			// Measured against a stock tree: ours ran two rows above the box it hangs from, and three
+			// pixels short of the label it points at.
 			if (show_root_lines || node.Parent != null)
-				dc.DrawLine (dash, x - indent + ladjust, middle, x + radjust, middle);
+				dc.DrawLine (dash, x - indent + ladjust, middle + 2, x + radjust + 3, middle + 2);
 
 			if (node.PrevNode != null || node.Parent != null) {
-				ladjust = 9;
 				dc.DrawLine (dash, x - indent + ladjust, node.Bounds.Top,
 						x - indent + ladjust, middle - (show_plus_minus && node.Nodes.Count > 0 ? 4 : 0));
 			}
 
 			if (node.NextNode != null) {
-				ladjust = 9;
 				dc.DrawLine (dash, x - indent + ladjust, middle + (show_plus_minus && node.Nodes.Count > 0 ? 4 : 0),
 						x - indent + ladjust, node.Bounds.Bottom);
-				
 			}
 
-			ladjust = 0;
-			if (show_plus_minus)
-				ladjust = 9;
+			ladjust = show_plus_minus ? 13 : 0;
 			TreeNode parent = node.Parent;
 			while (parent != null) {
 				if (parent.NextNode != null) {
@@ -1640,7 +1676,10 @@ namespace System.Windows.Forms {
 			Font font = node.NodeFont;
 			if (node.NodeFont == null)
 				font = Font;
-			return (int)TextRenderer.MeasureString (node.Text, font, 0, string_format).Width + 3;
+			// Measured against a stock tree: its node rectangle is three pixels narrower than the
+			// measurement, and starts three pixels further in (see TreeNode.GetX) -- the same three
+			// pixels at each end of the padding GDI leaves around a run.
+			return Math.Max (0, (int)TextRenderer.MeasureString (node.Text, font, 0, string_format).Width - 3);
 		}
 
 		private void DrawSelectionAndFocus(TreeNode node, Graphics dc, Rectangle r)
@@ -1709,9 +1748,6 @@ namespace System.Windows.Forms {
 			}
 
 			if (draw_mode == TreeViewDrawMode.Normal || draw_mode == TreeViewDrawMode.OwnerDrawText) {
-				if ((show_root_lines || node.Parent != null) && show_plus_minus && child_count > 0)
-					ThemeEngine.Current.TreeViewDrawNodePlusMinus (this, node, dc, node.GetLinesX () - Indent + 5, middle);
-
 				if (checkboxes && state_image_list == null)
 					DrawNodeCheckBox (node, dc, CheckBoxLeft (node) - 3, middle);
 
@@ -1723,6 +1759,12 @@ namespace System.Windows.Forms {
 
 				if (show_lines)
 					DrawNodeLines (node, dc, clip, dash, node.GetLinesX (), y, middle);
+
+				// After the lines, not before: the button stands ON the line that runs into it, and Windows
+				// draws the line up to the box and no further. Drawn first, the dotted line was laid
+				// straight across the inside of the box.
+				if ((show_root_lines || node.Parent != null) && show_plus_minus && child_count > 0)
+					ThemeEngine.Current.TreeViewDrawNodePlusMinus (this, node, dc, node.GetLinesX () - Indent + 5, middle);
 
 				if (ImageList != null)
 					DrawNodeImage (node, dc, clip, node.GetImageX (), y);

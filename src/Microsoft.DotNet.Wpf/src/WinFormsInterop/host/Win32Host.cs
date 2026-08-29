@@ -367,8 +367,15 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         {
             _savedGpu = true;
             byte[] rgba = _wgpu.RenderScenesToRgba(scenes, caret);
-            CocoaHost.SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, save);
-            Console.WriteLine($"saved GPU-rendered frame -> {save}");
+            // One file per WINDOW. Every host writes once, and with a dialog on screen there are at
+            // least two of them -- sharing one name meant whichever presented last silently replaced
+            // the one that was wanted, which is indistinguishable from the wanted one never rendering.
+            string named = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(save)),
+                System.IO.Path.GetFileNameWithoutExtension(save) + "-" + _form.Text.Replace(' ', '_')
+                    + System.IO.Path.GetExtension(save));
+            CocoaHost.SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, named);
+            Console.WriteLine($"saved GPU-rendered frame -> {named}");
         }
     }
 

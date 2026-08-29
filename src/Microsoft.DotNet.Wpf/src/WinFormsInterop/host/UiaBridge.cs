@@ -98,6 +98,24 @@ namespace WinFormsWebGpu.Accessibility
         void ScrollIntoView();
     }
 
+    [ComImport, Guid("fb8b03af-3bdf-48d4-bd36-1a65793be168"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ISelectionProvider
+    {
+        [return: MarshalAs(UnmanagedType.SafeArray, SafeArraySubType = VarEnum.VT_UNKNOWN)] object[] GetSelection();
+        bool CanSelectMultiple { get; }
+        bool IsSelectionRequired { get; }
+    }
+
+    [ComImport, Guid("2acad808-b2d4-452d-a407-91ff1ad167b2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ISelectionItemProvider
+    {
+        void Select();
+        void AddToSelection();
+        void RemoveFromSelection();
+        bool IsSelected { get; }
+        IRawElementProviderSimple SelectionContainer { get; }
+    }
+
     [ComImport, Guid("56d00bd0-c4f4-433c-a836-1a52a57e0892"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IToggleProvider
     {
@@ -123,6 +141,8 @@ namespace WinFormsWebGpu.Accessibility
         internal const int IsOffscreenProperty = 30022;
 
         internal const int InvokePattern = 10000;
+        internal const int SelectionPattern = 10001;
+        internal const int SelectionItemPattern = 10010;
         internal const int ValuePattern = 10002;
         internal const int TogglePattern = 10015;
         internal const int ExpandCollapsePattern = 10005;
@@ -215,7 +235,7 @@ namespace WinFormsWebGpu.Accessibility
     /// "a new element".</summary>
     [ComVisible(true)]
     internal class UiaProvider : IRawElementProviderFragment, IInvokeProvider, IValueProvider, IToggleProvider,
-        IExpandCollapseProvider, IScrollProvider, IScrollItemProvider
+        IExpandCollapseProvider, IScrollProvider, IScrollItemProvider, ISelectionProvider, ISelectionItemProvider
     {
         // Keyed on the element itself -- a Control, or the object a control already keeps for an
         // item (a ToolStripItem, a ListViewItem, a TreeNode) -- because those are stable across
@@ -433,6 +453,8 @@ namespace WinFormsWebGpu.Accessibility
             if (Control == null)
                 return patternId == Uia.InvokePattern && A11yItems.CanInvoke(Element) ? this :
                     patternId == Uia.ExpandCollapsePattern && A11yItems.CanExpand(Element) ? this :
+                    patternId == Uia.SelectionItemPattern && A11yItems.CanSelect(Element) ? this :
+                    patternId == Uia.ValuePattern && A11yItems.HasValue(Element) ? this :
                     patternId == Uia.ScrollItemPattern ? this : null;
 
             switch (patternId)
@@ -442,6 +464,8 @@ namespace WinFormsWebGpu.Accessibility
                 case Uia.TogglePattern: return A11y.CanToggle(Control) ? this : null;
                 case Uia.ExpandCollapsePattern: return A11y.CanExpand(Control) ? this : null;
                 case Uia.ScrollPattern: return A11y.CanScroll(Control) ? this : null;
+                case Uia.SelectionPattern: return A11y.HasSelection(Control) ? this : null;
+                case Uia.SelectionItemPattern: return A11y.CanSelect(Control) ? this : null;
                 // Anything at all can be asked to scroll itself into view; it is its container that
                 // does the work, and an element with no scrollable ancestor simply stays put.
                 case Uia.ScrollItemPattern: return this;
@@ -512,11 +536,71 @@ namespace WinFormsWebGpu.Accessibility
             if (Control != null) A11y.Invoke(Control); else A11yItems.Invoke(Element);
         }
 
-        public void SetValue(string value) { A11y.SetValue(Control, value); }
+        // ---- selection ----------------------------------------------------------------------------
+        //
+        // Both halves of it: a list, a tree or a tab strip says what is picked out, and each row,
+        // node or page says whether it is the one -- and can be asked to become it, which is how
+        // anything that is not a pointer moves a selection.
 
-        public string Value { get { return A11y.ValueOf(Control); } }
+        public void Select()
+        {
+            if (Control != null) A11y.Select(Control); else A11yItems.SetSelected(Element, true);
+        }
 
-        public bool IsReadOnly { get { return A11y.IsReadOnly(Control); } }
+        // The same thing: on a control that picks one item there is nothing to add to, and on one
+        // that picks several a Select adds -- which is what Windows itself answers here.
+        public void AddToSelection()
+        {
+            if (Control != null) A11y.Select(Control); else A11yItems.SetSelected(Element, true);
+        }
+
+        public void RemoveFromSelection()
+        {
+            if (Control == null) A11yItems.SetSelected(Element, false);
+        }
+
+        public bool IsSelected
+        {
+            get { return Control != null ? A11y.IsSelected(Control) : A11yItems.IsSelected(Element); }
+        }
+
+        public IRawElementProviderSimple SelectionContainer
+        {
+            get
+            {
+                return For(Site, Control != null
+                    ? A11y.SelectionContainerOf(Control)
+                    : A11yItems.OwnerOf(Element));
+            }
+        }
+
+        public object[] GetSelection()
+        {
+            IList<object> picked = A11y.SelectionOf(Control);
+            var providers = new object[picked.Count];
+            for (int i = 0; i < picked.Count; i++)
+                providers[i] = For(Site, picked[i]);
+            return providers;
+        }
+
+        public bool CanSelectMultiple { get { return A11y.CanSelectMultiple(Control); } }
+
+        public bool IsSelectionRequired { get { return A11y.IsSelectionRequired(Control); } }
+
+        public void SetValue(string value)
+        {
+            if (Control != null) A11y.SetValue(Control, value); else A11yItems.SetValue(Element, value);
+        }
+
+        public string Value
+        {
+            get { return Control != null ? A11y.ValueOf(Control) : A11yItems.ValueOf(Element); }
+        }
+
+        public bool IsReadOnly
+        {
+            get { return Control != null ? A11y.IsReadOnly(Control) : A11yItems.IsReadOnly(Element); }
+        }
 
         public void Toggle() { A11y.Toggle(Control); }
 

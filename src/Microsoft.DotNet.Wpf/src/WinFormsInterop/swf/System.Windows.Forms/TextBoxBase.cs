@@ -1996,6 +1996,12 @@ namespace System.Windows.Forms
 				document.OffsetX = TextFrameWidth;
 			}
 
+			// The frame is as thick at the top as it is at the side, and only the side was being
+			// allowed for: the first line of every text box sat two rows above the one Windows
+			// draws, with its left edge in the right place. The document honours OffsetY exactly
+			// as it honours OffsetX -- nothing had ever assigned it.
+			document.OffsetY = TextFrameWidth;
+
 			document.ViewPortWidth = canvas_width;
 			document.ViewPortHeight = canvas_height;
 		}

@@ -131,6 +131,20 @@ namespace System.Windows.Forms
 		}
 		#endregion
 
+		// A status strip is never SHORTER than its default height, even when the items in it want
+		// less. Windows keeps the 22 pixels and stretches the labels into them (a label whose
+		// preferred height is 15 is given 17); letting the strip shrink to the items instead made
+		// ours 20 tall, which moved the whole strip -- and every pixel in it -- two rows up.
+		internal override Size GetPreferredSizeCore (Size proposedSize)
+		{
+			Size size = base.GetPreferredSizeCore (proposedSize);
+			if (Orientation == Orientation.Horizontal)
+				size.Height = Math.Max (size.Height, DefaultSize.Height);
+			else
+				size.Width = Math.Max (size.Width, DefaultSize.Width);
+			return size;
+		}
+
 		#region Protected Methods
 		protected override AccessibleObject CreateAccessibilityInstance ()
 		{

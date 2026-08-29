@@ -493,8 +493,12 @@ namespace System.Windows.Forms {
 		[RefreshProperties (RefreshProperties.Repaint)]
 		public char PasswordChar {
 			get {
+				// The SYSTEM password character, which is what UseSystemPasswordChar asks for, and on
+				// Windows that is U+25CF BLACK CIRCLE. Mono answered with an asterisk, which is what
+				// the system character was on Windows 95 and has not been since: every password box
+				// in the application came out a row of stars beside a row of dots.
 				if (use_system_password_char) {
-					return '*';
+					return '●';
 				}
 				return password_char;
 			}

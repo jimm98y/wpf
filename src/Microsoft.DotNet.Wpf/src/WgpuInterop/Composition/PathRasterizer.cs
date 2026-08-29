@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -40,7 +40,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     internal static class PathRasterizer
     {
         private const int VerticalSamples = 4;       // subsamples per pixel row
-
         private readonly struct Edge
         {
             public readonly float X0, Y0, X1, Y1;
@@ -336,6 +335,323 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return new CoverageMask(bytes, width, height, originX, originY);
         }
 
+        // ---- subpixel (ClearType) coverage ---------------------------------------------------------
+        //
+        // A screen's pixel is three lamps in a row, not one dot, and ClearType lights them separately:
+        // a stem that covers the left third of a pixel lights that pixel's RED lamp and leaves the
+        // other two dark. It buys three times the horizontal resolution and costs a colour fringe,
+        // which the filter below is what tames.
+        //
+        // The coverage this rasterizer already computes is ANALYTIC in x -- exact area per column --
+        // so there is nothing to invent: scale the outline three times in x, rasterize into a buffer
+        // three times as wide, and every column IS a subpixel's coverage.
+
+        /// <summary>How many samples across a pixel: one per lamp.</summary>
+        internal const int SubpixelsPerPixel = 3;
+
+        /// <summary>The filter each lamp's coverage is spread over, so that a stem lighting one lamp
+        /// does not read as a coloured line. Essentially a flat average over the pixel's own three
+        /// lamps, with a little leaked to the neighbours either side.
+        ///
+        /// <para>ITS WIDTH IS THE KNOB THAT CONTROLS COLOUR, and it is easy to set too wide. The
+        /// classic five-tap [1,2,3,2,1]/9 sat here first: it reaches two subpixels either side, which
+        /// is two thirds of a pixel of smearing, and it carried only 0.89 of Windows' colour. Side by
+        /// side our text read as GREY where Windows' was crisp.</para>
+        ///
+        /// <para>Measured over the whole repertoire in all four faces at every size from ten pixels
+        /// an em to twenty, against GDI's own ClearType, the trade is monotone -- wider is better
+        /// geometry and worse colour:</para>
+        /// <code>
+        ///   [0,1,1,1,0]      939+32 px wrong   mean 30.7   colour 0.982
+        ///   [4,80,88,80,4]       939 px wrong   mean 27.6   colour 0.970   &lt;- here
+        ///   [8,77,86,77,8]       916 px wrong   mean 27.4   colour 0.955
+        ///   [1,2,3,2,1]          882 px wrong   mean 32.9   colour 0.892
+        ///   [0,0,1,0,0]         2058 px wrong   mean  ---   colour 1.112
+        /// </code>
+        /// <para>RE-SWEPT 2026-08-28 after two of the instruments were corrected, and the answer did
+        /// not change -- but the reasoning above did, so here is what actually holds. The colour
+        /// column had been measured by summing the GREEN LAMP ALONE, and a subpixel filter does not
+        /// conserve one lamp: ink that moves sideways into a neighbour's red or blue vanishes from
+        /// the total, and the wider the filter the more vanishes. Weighed across ALL THREE lamps
+        /// (TheWholeRepertoire_CarriesAsMuchInkAsWindows), the ink cost of widening nearly
+        /// disappears -- mean deviation 1.14%, 1.12%, 1.13%, 1.36%, 2.02% down the list -- so the
+        /// 0.982/0.970/0.955/0.892 spread above was mostly an artefact. Structural accuracy, meanwhile,
+        /// improves monotonically with width: 598, 574, 559, 521, 1440.</para>
+        ///
+        /// <para>On those two numbers alone the five-tap [1,2,3,2,1]/9 wins. It is NOT what to use.
+        /// Measured against a live stock window -- the authority, and the thing the numbers are proxies
+        /// for -- widening makes it WORSE, and steeply: this filter 2,750,289, [8,77,86,77,8]
+        /// 2,765,426, [1,2,3,2,1] 2,883,886, with position 365,527 / 376,617 / 471,685. The two
+        /// instruments genuinely disagree in direction, because the parity suite's structural count
+        /// compares one lamp's coverage while the window compares all three: a wider filter
+        /// DESATURATES, which the one-lamp count cannot see and the eye and the window both can.
+        /// Do not widen this to chase the structural number.</para>
+        ///
+        /// <para>A stock stem measured on screen carries the subpixel profile
+        /// {0.286, 0.6, 1.0, 0.6, 0.286} -- a three-tap box with a darkening gamma of about 0.88 over
+        /// it, not the classic five-tap.</para>
+        ///
+        /// <para>IT IS NOW THE BOX, [0,1,1,1,0]/3, and the reason is a COUNT rather than a sweep.
+        /// GDI's ClearType output holds exactly seven distinct levels (k/6). Three-valued lamps
+        /// through a three-tap box produce exactly seven levels; through any wider filter they
+        /// produce many more. So the box is not a tuning choice, it is the filter that makes our
+        /// output live in the same value SET as GDI's -- and once the lamps became three-valued
+        /// (see SubpixelLevels) the old five-tap had nothing left to win. Measured after that
+        /// change: the parity harness calls them a tie (274 against 277 structural, ink 0.89% against
+        /// 0.86%), and the live window prefers the box, 2,483,331 against 2,491,739, almost all of it
+        /// weight. Gamma was re-swept over it and stays at 1.15.</para>
+        ///
+        /// <para>The paragraph above about widening still stands and is not contradicted by this:
+        /// [1,2,3,2,1]/9 reaches TWO subpixels either side and desaturates; the box reaches none
+        /// beyond the pixel's own three lamps. Narrower and wider are not the same axis.</para>
+        /// </summary>
+        /// <remarks>WPF_SUBPIXEL_FILTER overrides it with a comma-separated set of weights
+        /// (normalized here), which is what made the re-sweep above cheap. Kept for the next one.
+        /// </remarks>
+        /// <summary>A curve to put through the lamps BEFORE they are filtered, or null to leave them
+        /// alone. The renderer owns the curve and decides the order; this is only where it lands.
+        /// </summary>
+        internal static byte[]? PreFilterLut;
+
+        private static readonly float[] SubpixelFilter = LoadFilter();
+
+        private static float[] LoadFilter()
+        {
+            string? s = Environment.GetEnvironmentVariable("WPF_SUBPIXEL_FILTER");
+            if (!string.IsNullOrWhiteSpace(s))
+            {
+                string[] parts = s!.Split(',');
+                var w = new float[parts.Length];
+                float total = 0f;
+                for (int i = 0; i < parts.Length; i++) { w[i] = float.Parse(parts[i], System.Globalization.CultureInfo.InvariantCulture); total += w[i]; }
+                if (total > 0f) { for (int i = 0; i < w.Length; i++) w[i] /= total; return w; }
+            }
+            return new[] { 0f, 1f / 3f, 1f / 3f, 1f / 3f, 0f };
+        }
+
+        /// <summary>Per-channel coverage: one byte each for the red, green and blue lamp of every
+        /// pixel, plus the average in alpha for the compositor to blend the destination with.</summary>
+        internal readonly struct SubpixelMask
+        {
+            public readonly byte[] Rgba;
+            public readonly int Width;
+            public readonly int Height;
+            public readonly float OriginX;
+            public readonly float OriginY;
+
+            public SubpixelMask(byte[] rgba, int width, int height, float originX, float originY)
+            {
+                Rgba = rgba; Width = width; Height = height; OriginX = originX; OriginY = originY;
+            }
+
+            public bool IsEmpty => Width <= 0 || Height <= 0;
+        }
+
+        /// <summary>The same outline this would rasterize to a grey mask, resolved onto the three
+        /// lamps of each pixel instead.</summary>
+        /// <summary>Vertical samples for the run being drawn, or 0 to use <see cref="SubpixelRows"/>.
+        /// <para>Set by the renderer from the face's 'gasp' for the size in hand -- symmetric
+        /// smoothing is a per-size property of the FACE, not a global choice. Ambient rather than a
+        /// parameter for the same reason <see cref="PreFilterLut"/> is: the rasterization is reached
+        /// through the generic shape path, which knows nothing about fonts.</para></summary>
+        internal static int SubpixelRowsForRun;
+
+        public static SubpixelMask RasterizeSubpixel(PathGeometry path,
+                                                     float tolerance = CurveFlattener.DefaultTolerance)
+        {
+            List<List<Vector2>> contours = Flatten(path, tolerance);
+            if (contours.Count == 0) return default;
+
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            int pointCount = 0;
+            foreach (List<Vector2> c in contours)
+                foreach (Vector2 p in c)
+                {
+                    minX = MathF.Min(minX, p.X); minY = MathF.Min(minY, p.Y);
+                    maxX = MathF.Max(maxX, p.X); maxY = MathF.Max(maxY, p.Y);
+                    pointCount++;
+                }
+            if (pointCount == 0) return default;
+
+            // Two pixels of padding either side rather than one: the filter reaches two subpixels
+            // beyond the ink, so a glyph rasterized to its own bounds would have its outermost lamp
+            // filtered against nothing and lose the fringe that belongs there.
+            int originX = (int)MathF.Floor(minX) - 2;
+            int originY = (int)MathF.Floor(minY) - 1;
+            int width = (int)MathF.Ceiling(maxX) + 2 - originX;
+            int height = (int)MathF.Ceiling(maxY) + 1 - originY;
+            if (width <= 0 || height <= 0) return default;
+
+            // Three times as wide -- or HalfLamps times that again, when a lamp is to be built the
+            // way GDI builds one -- and the outline stretched to match.
+            int scale = SubpixelsPerPixel * HalfLamps;
+            foreach (List<Vector2> c in contours)
+                for (int i = 0; i < c.Count; i++)
+                    c[i] = new Vector2(c[i].X * scale, c[i].Y);
+
+            int subWidth = width * SubpixelsPerPixel;
+            byte[] samples = FillCoverage(contours, path.FillRule, originX * scale, originY,
+                                          subWidth * HalfLamps, height,
+                                          SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows,
+                                          MinStemSubpixels * HalfLamps);
+            samples = HalfLamps > 1 ? CollapseHalfLamps(samples, subWidth, height) : samples;
+            Quantize(samples);
+            // The contrast curve, if it is to be applied to the RAW LAMPS rather than to the filtered
+            // result. Set by the renderer, which owns the curve; null means correct afterwards as
+            // before. See WgpuSceneRenderer.s_correctBeforeFilter.
+            if (PreFilterLut is byte[] pre)
+                for (int i = 0; i < samples.Length; i++) samples[i] = pre[samples[i]];
+
+            return new SubpixelMask(FilterSubpixels(samples, width, height), width, height, originX, originY);
+        }
+
+        /// <summary>How many BILEVEL samples a lamp is averaged from, or 1 to keep the exact area.
+        /// <para>The description of ClearType everyone repeats -- six times horizontal oversampling,
+        /// two samples per lamp -- is a sampling rule, and quantizing an exact area to three levels
+        /// is only an approximation of it. They agree on a vertical edge and part company on a
+        /// slanted one, where the area says "half" and the two samples say which half.
+        /// WPF_SUBPIXEL_HALFLAMPS switches between them so the difference is a measurement rather
+        /// than an argument.</para>
+        /// <para>MEASURED, and the approximation WINS: 1 (exact area, then quantized) leaves the live
+        /// window at 2,491,739 where 2 half-lamps gives 2,533,593 and 3 gives 2,616,561. Note that
+        /// three half-lamps is BETTER on the parity harness (structural 239 against 277) and clearly
+        /// worse on the window -- when those two disagree the window is the authority, because the
+        /// harness weighs one arrangement of glyphs and the window weighs every control. So the
+        /// literal sampling story is not what to implement, even though it is what GDI's OUTPUT
+        /// LEVELS say; reproducing the levels is what matters, and the area does that better.</para>
+        /// </summary>
+        private static readonly int HalfLamps =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_HALFLAMPS"), out int hl) && hl > 0
+                ? hl : 1;
+
+        /// <summary>Threshold each half-lamp sample and average them back down to one value per lamp.
+        /// </summary>
+        private static byte[] CollapseHalfLamps(byte[] fine, int subWidth, int height)
+        {
+            var outp = new byte[subWidth * height];
+            for (int y = 0; y < height; y++)
+            {
+                int fineRow = y * subWidth * HalfLamps;
+                int row = y * subWidth;
+                for (int x = 0; x < subWidth; x++)
+                {
+                    int lit = 0;
+                    for (int k = 0; k < HalfLamps; k++)
+                        if (fine[fineRow + x * HalfLamps + k] >= 128) lit++;
+                    outp[row + x] = (byte)(lit * 255 / HalfLamps);
+                }
+            }
+            return outp;
+        }
+
+        /// <summary>How many levels a single lamp's coverage is allowed before it is filtered.
+        /// <para>MEASURED, not guessed: dump GDI's own ClearType output for a run and count the
+        /// distinct values in it. There are SIX (0, 58, 102, 144, 182, 219) plus paper -- seven
+        /// levels, which is k/6 -- where ours produced 151. Seven levels out of a three-tap filter is
+        /// what you get when each lamp carries one of {0, 1/2, 1}, i.e. two BILEVEL samples averaged,
+        /// which is the six-times-horizontal oversampling ClearType has always been described as
+        /// doing. We compute exact area instead, which is why a stem GDI puts in one solid column we
+        /// spread across two -- and why no curve over the result has ever helped: the scatter of
+        /// GDI's value against ours at the same pixel has a standard deviation of 47-79 out of a
+        /// range of 120, so our value simply does not predict theirs.</para>
+        /// <para>Swept against both instruments, and they agree for once. Structural disagreement with
+        /// GDI over the whole repertoire: 574 at exact area, 885 bilevel, 367 at three levels, 846 at
+        /// four, 390 at five. In the live window three levels takes position 352,297 -> 343,332 and
+        /// weight 2,030,177 -> 2,002,709. Bilevel being far the worst is why the earlier attempt at
+        /// "threshold each subpixel" failed and was recorded as a dead end -- it is one level short of
+        /// the model, not one too many.</para>
+        /// <para>WPF_SUBPIXEL_QUANT overrides it: 0 or 1 leaves the exact area alone, 2 makes each
+        /// lamp bilevel, 3 is the model above.</para></summary>
+        private static readonly int SubpixelLevels =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_QUANT"), out int q) ? q : 3;
+
+        /// <summary>Vertical samples a LAMP is built from. ONE -- the scanline centre -- because
+        /// GDI's ClearType has no vertical antialiasing at all: its seven output levels say each
+        /// lamp is two bilevel samples averaged, which leaves nowhere to put a partial row. Our
+        /// four-sample vertical integration softened every horizontal edge GDI renders hard.
+        /// Measured (WPF_SUBPIXEL_ROWS sweeps it): parity structural 367/332/277 for 4/2/1 rows,
+        /// and the live WinForms window 2,689,806 -> 2,609,923 -> 2,555,219, improving BOTH its
+        /// position and its weight halves. The grey path keeps VerticalSamples: shapes are not
+        /// hinted onto the pixel grid, so they do need the vertical coverage.</summary>
+        private static readonly int SubpixelRows =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_ROWS"), out int r) ? r : 1;
+
+        /// <summary>The narrowest a vertical stem may be RENDERED, in lamps (3 = one whole pixel),
+        /// or 0 to render it as the outline gives it.
+        /// <para>This is the one difference left between us and GDI at small sizes, and it took
+        /// ruling out everything else to see it. At 11 pixels an em the lamps under an 'l' are GDI's
+        /// 73/153/255/197/111/36 against our 32/114/206/206/114/32: the run spans the same 85 columns
+        /// on both sides, so the scale and the advances agree, but a three-tap box can only reach 255
+        /// from a stem at least three lamps wide -- GDI's stem is a whole pixel where our smoothly
+        /// scaled outline gives 0.81 of one. GDI inks 75 columns of that run to our 69.</para>
+        /// <para>It has to be applied to the SPAN and not as a dilation, because a dilation widens
+        /// every stem and the thick ones do not need it: emboldening by 0.30 of a lamp brings the
+        /// regular face at 11ppem from 0.920 to 0.996 and takes BOLD from 1.007 to 1.056 with it.
+        /// A minimum only touches what is under it.</para>
+        /// <para>WPF_MIN_STEM sets it, in hundredths of a lamp. IT IS OFF, and the reason is the
+        /// window. It does what it was built to do -- at one whole pixel the regular face at 11ppem
+        /// goes 0.920 -> 0.981 while BOLD moves only 1.007 -> 1.012, which no dilation can manage --
+        /// but the live WinForms window gets worse at every setting: 2,453,109 -> 2,463,512 ->
+        /// 2,465,957 -> 2,509,718 for 0 / 2.40 / 2.70 / 3.00 lamps, in BOTH its position and its
+        /// weight halves.</para>
+        /// <para>That disagreement is the finding. The parity harness says our regular face at 12ppem
+        /// carries 0.964 of GDI's ink; the live window's own regions say 0.985, and adding the
+        /// difference overshoots. So the harness's per-size ink ratio is NOT a proxy for the window,
+        /// and the weight still in the window is not a systematic lightness that more ink would fix.
+        /// Anything aimed at the "regular face tilt" has to be confirmed against the window before it
+        /// is believed.</para></summary>
+        private static readonly float MinStemSubpixels =
+            (int.TryParse(Environment.GetEnvironmentVariable("WPF_MIN_STEM"), out int ms) ? ms : 0) / 100f;
+
+        private static void Quantize(byte[] samples)
+        {
+            if (SubpixelLevels < 2) return;
+            int steps = SubpixelLevels - 1;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                int level = (samples[i] * steps + 127) / 255;          // nearest of `steps` bands
+                samples[i] = (byte)(level * 255 / steps);
+            }
+        }
+
+        /// <summary>Spread each lamp's coverage over its neighbours and pack the three into a pixel.
+        /// </summary>
+        private static byte[] FilterSubpixels(byte[] samples, int width, int height)
+        {
+            var rgba = new byte[width * height * 4];
+            int subWidth = width * SubpixelsPerPixel;
+            int radius = SubpixelFilter.Length / 2;
+
+            for (int y = 0; y < height; y++)
+            {
+                int sampleRow = y * subWidth;
+                int outRow = y * width * 4;
+                for (int x = 0; x < width; x++)
+                {
+                    int outIndex = outRow + x * 4;
+                    int total = 0;
+                    for (int lamp = 0; lamp < SubpixelsPerPixel; lamp++)
+                    {
+                        int centre = x * SubpixelsPerPixel + lamp;
+                        float sum = 0f;
+                        for (int t = -radius; t <= radius; t++)
+                        {
+                            int s = centre + t;
+                            if (s < 0 || s >= subWidth) continue;   // off the mask is bare paper
+                            sum += samples[sampleRow + s] * SubpixelFilter[t + radius];
+                        }
+                        int value = Math.Clamp((int)MathF.Round(sum), 0, 255);
+                        rgba[outIndex + lamp] = (byte)value;
+                        total += value;
+                    }
+                    // Alpha is what the destination is dimmed by where the three disagree; the mean of
+                    // the lamps is what the pixel's brightness comes to.
+                    rgba[outIndex + 3] = (byte)(total / SubpixelsPerPixel);
+                }
+            }
+            return rgba;
+        }
+
         /// <summary>
         /// Rasterizes the path into a fixed-size coverage buffer aligned to device
         /// pixels (origin 0,0). Used to build a full-target clip mask.
@@ -355,7 +671,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return FillCoverage(contours, path.FillRule, originX, originY, width, height);
         }
 
-        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height)
+        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height, int verticalSamples = VerticalSamples, float minSpan = 0f)
         {
             var bytes = new byte[width * height];
             if (width <= 0 || height <= 0 || contours.Count == 0) return bytes;
@@ -377,15 +693,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int area = width * height;
             float[] coverage = System.Buffers.ArrayPool<float>.Shared.Rent(area);
             Array.Clear(coverage, 0, area);
-            float weight = 1f / VerticalSamples;
+            if (verticalSamples < 1) verticalSamples = 1;
+            float weight = 1f / verticalSamples;
             var crossings = new List<(float X, int Dir)>();
 
             for (int py = 0; py < height; py++)
             {
                 int rowBase = py * width;
-                for (int s = 0; s < VerticalSamples; s++)
+                for (int s = 0; s < verticalSamples; s++)
                 {
-                    float sampleY = originY + py + (s + 0.5f) / VerticalSamples;
+                    float sampleY = originY + py + (s + 0.5f) / verticalSamples;
                     crossings.Clear();
                     foreach (Edge e in edges)
                     {
@@ -406,14 +723,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         {
                             winding += crossings[i].Dir;
                             if (winding != 0)
-                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight);
+                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan);
                         }
                     }
                     else // EvenOdd
                     {
                         for (int i = 0; i < crossings.Count - 1; i++)
                             if ((i & 1) == 0)
-                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight);
+                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan);
                     }
                 }
             }
@@ -424,9 +741,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bytes;
         }
 
-        private static void AddSpan(float[] cov, int rowBase, int width, int originX, float xs, float xe, float weight)
+        private static void AddSpan(float[] cov, int rowBase, int width, int originX, float xs, float xe, float weight,
+                                    float minSpan = 0f)
         {
             if (xe <= xs) return;
+
+            // A MINIMUM STEM WIDTH, and only where it bites. A scanline span narrower than this is a
+            // vertical stem crossed by this row -- a horizontal bar or a bowl gives a wide one and is
+            // untouched -- so widening it about its own centre leaves bold and large sizes exactly as
+            // they were, which is the whole reason this belongs here and not in a filter. See
+            // MinStemSubpixels for the measurement.
+            if (minSpan > 0f && xe - xs < minSpan)
+            {
+                float mid = (xs + xe) * 0.5f;
+                xs = mid - minSpan * 0.5f;
+                xe = mid + minSpan * 0.5f;
+            }
+
             float left = xs - originX;   // pixel-space
             float right = xe - originX;
             int p0 = Math.Max(0, (int)MathF.Floor(left));

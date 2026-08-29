@@ -210,6 +210,15 @@ namespace System.Windows.Forms
 			if (button.Font != null && button.Font.Height > 0)
 				textBounds.Height = Math.Max (textBounds.Height, button.Font.Height);
 
+			// Windows centres a button caption in a box ONE PIXEL NARROWER than the text rectangle.
+			// Measured, not assumed: over button widths 92..103 its pen sits at
+			// floor((w - 1 - textWidth) / 2) where a plain centring gives floor((w - textWidth) / 2).
+			// The two agree wherever the leftover is odd and differ by one where it is even -- which
+			// is what the live window showed in a single button: "Disabled" (leftover 47) matched
+			// Windows column for column while "Button" (leftover 56) sat one pixel to its right.
+			if ((button.TextFormatFlags & TextFormatFlags.HorizontalCenter) != 0)
+				textBounds.Width -= 1;
+
 			if (button.Enabled)
 				TextRenderer.DrawTextInternal (g, button.Text, button.Font, textBounds, button.ForeColor, button.TextFormatFlags, button.UseCompatibleTextRendering);
 			else
@@ -971,6 +980,11 @@ namespace System.Windows.Forms
 				DrawStringDisabled20 (g, cb.Text, cb.Font, textBounds, cb.BackColor, cb.TextFormatFlags, cb.UseCompatibleTextRendering);
 		}
 
+		/// <summary>What Windows adds to a measured caption to get the cell it centres in a check
+		/// box or radio button: four pixels, from stock's own PreferredSize (19) against the
+		/// MeasureText both stacks agree on (15).</summary>
+		const int CheckBoxTextCellPadding = 4;
+
 		public override void CalculateCheckBoxTextAndImageLayout (ButtonBase button, Point p, out Rectangle glyphArea, out Rectangle textRectangle, out Rectangle imageRectangle)
 		{
 			int check_size = CheckSize;
@@ -1052,11 +1066,28 @@ namespace System.Windows.Forms
 
 			switch (button.TextImageRelation) {
 				case TextImageRelation.Overlay:
-					// Text is centered vertically, and 2 pixels to the right. Centred means centred:
-					// the pixel that used to be taken off the top left every check box's and radio
-					// button's caption riding high against the same caption in Windows.
-					textRectangle.X = content_rect.Left + 2;
-					textRectangle.Y = button.PaddingClientRectangle.Top + ((content_rect.Height - text_size.Height) / 2);
+					// Text is centred vertically and sits two pixels to the right.
+					//
+					// The extra row back off the top is MEASURED, and it belongs to the CAPTION alone.
+					// Against the live stock window a check box's and a radio button's GLYPH land on
+					// Windows' rows exactly -- both span the same thirteen -- while their captions sat
+					// one row below Windows': ours 7..15 where stock draws 6..14. The glyph got its own
+					// correction when it was measured (ThemeWin11.DrawCheckBoxGlyph offsets by -1) and
+					// the caption never followed it, which is what the comment this replaces was about.
+					// ONE pixel in, not two: measured against the live stock window, a check box's and a
+					// radio button's GLYPH start on Windows' exact column while their captions started
+					// one to the right of Windows' -- ours at 33 where stock draws 32.
+					textRectangle.X = content_rect.Left + 1;
+					// Centre the CELL Windows centres, not the bare glyph box. Measured on both
+					// stacks for the same check box (104x24 client, MeasureText 15 tall): stock's
+					// PreferredSize is 19 tall where ours reports 24, and stock draws its caption
+					// with the text top at 2 -- which is (24 - 19) / 2 exactly. Centring the 15-tall
+					// measurement instead gives 4, and the "- 1" that used to sit here was pulling
+					// that back towards the right answer a row at a time while an unconditional lift
+					// in TextRenderer took the other row. Both are gone; this is the rule.
+					int cell = text_size.Height + CheckBoxTextCellPadding;
+					textRectangle.Y = button.PaddingClientRectangle.Top
+					                + ((content_rect.Height - cell) / 2);
 					textRectangle.Size = text_size;
 
 					// Image is dependent on ImageAlign
@@ -1572,6 +1603,14 @@ namespace System.Windows.Forms
 		{
 			Color back_color, fore_color;
 			Rectangle text_draw = e.Bounds;
+			// The closed edit of a DropDownList combo box. DrawString leaves a margin of its own
+			// inside whatever rectangle it is given, and the frame's inset is already inside that
+			// margin: Windows starts this caption on the same column as the edit control of the
+			// editable combo box beside it, and passing the inset rectangle straight through put ours
+			// two pixels to the right of both. Only the text moves -- the background stays where the
+			// frame put it, so a focused list still fills inside its border.
+			if ((e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit)
+				text_draw.X -= 2;
 			StringFormat string_format = new StringFormat ();
 			string_format.FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.NoWrap;
 			string_format.LineAlignment = StringAlignment.Center;   // vertically centre the item text in its row
@@ -2474,7 +2513,10 @@ namespace System.Windows.Forms
 							text_rect.X = date_area_rect.X;
 						}
 						text_rect.Y = DateTimePickerTextTop (dtp, (int) text_rect.Height);
-						text_rect.Inflate (1, 0);
+						// No inflation: parts abut. Widening each one by a pixel either side pushed every part
+						// after it along, and the drift showed as a gap before the year that Windows does not
+						// have.
+
 						fd.drawing_rectangle = text_rect;
 					}
 				}
@@ -2604,7 +2646,10 @@ namespace System.Windows.Forms
 			Region prev_clip = dc.Clip;
 			dc.SetClip (new Rectangle (10, 0, width, box.Font.Height), CombineMode.Exclude);
 			/* Draw group box*/
-			CPDrawBorder3D (dc, new Rectangle (0, y, box.Width, box.Height - y), Border3DStyle.Etched, Border3DSide.Left | Border3DSide.Right | Border3DSide.Top | Border3DSide.Bottom, box.BackColor);
+			// ONE ROW SHORT of the control's own bottom. Measured against a live stock group box, whose
+			// left, right and top edges land on our exact rows while its bottom sits a row ABOVE ours --
+			// Windows leaves the last row of the control clear.
+			CPDrawBorder3D (dc, new Rectangle (0, y, box.Width, Math.Max (1, box.Height - y - 1)), Border3DStyle.Etched, Border3DSide.Left | Border3DSide.Right | Border3DSide.Top | Border3DSide.Bottom, box.BackColor);
 			dc.Clip = prev_clip;
 
 			/* Text */
@@ -2652,9 +2697,15 @@ namespace System.Windows.Forms
 
 			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back_color), e.Bounds);
 
+			// The caption starts a column left of the rectangle the row occupies. DrawString leaves a
+			// margin of its own inside whatever it is given, and Windows begins its rows one pixel
+			// inside that margin. Only the TEXT moves: the background, and so the selection band,
+			// keeps the row's own rectangle.
+			Rectangle caption = e.Bounds;
+			caption.X -= 1;
 			e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 					       ResPool.GetSolidBrush (fore_color),
-					       e.Bounds, ctrl.StringFormat);
+					       caption, ctrl.StringFormat);
 					
 			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
 				CPDrawFocusRectangle (e.Graphics, e.Bounds, fore_color, back_color);
@@ -2758,8 +2809,11 @@ namespace System.Windows.Forms
 				
 			// border is drawn directly in the Paint method
 			if (details && control.HeaderStyle != ColumnHeaderStyle.None) {				
-				dc.FillRectangle (SystemBrushes.Control,
-						  0, 0, control.TotalWidth, control.Font.Height + 5);
+				// The header's own face, not the control colour: past the last column Windows carries the
+				// header on to the edge of the list, where a grey strip stood out against the white.
+				dc.FillRectangle (ResPool.GetSolidBrush (ListViewHeaderStripColor),
+						  0, 0, Math.Max (control.TotalWidth, control.ClientRectangle.Width),
+						  control.Font.Height + 5);
 				if (control.Columns.Count > 0) {
 					foreach (ColumnHeader col in control.Columns) {
 						Rectangle rect = col.Rect;
@@ -2929,7 +2983,13 @@ namespace System.Windows.Forms
 			Rectangle rect_checkrect = item.CheckRectReal;
 			Rectangle icon_rect = item.GetBounds (ItemBoundsPortion.Icon);
 			Rectangle full_rect = item.GetBounds (ItemBoundsPortion.Entire);
-			Rectangle text_rect = item.GetBounds (ItemBoundsPortion.Label);			
+			Rectangle text_rect = item.GetBounds (ItemBoundsPortion.Label);
+			// In Details view the first column's label is inset the same three pixels its sub-items
+			// are (see DrawListViewSubItem). Its bounds already carry two of them, so the third has to
+			// be added here: measured against a stock list, whose header and second column land on our
+			// columns exactly while the first column's caption sat one pixel to the left of Windows'.
+			if (control.View == View.Details)
+				text_rect.X += 1;
 
 			// Tile view doesn't support CheckBoxes
 			if (control.CheckBoxes && control.View != View.Tile) {
@@ -3024,6 +3084,11 @@ namespace System.Windows.Forms
 
 			Rectangle highlight_rect = text_rect;
 			if (control.View == View.Details) { // Adjustments for Details view
+				// The band starts a pixel inside the label's own rectangle and stops on the same column:
+				// measured against a stock list, whose selected row is one narrower than the row it lays
+				// its text in.
+				highlight_rect.X += 1;
+				highlight_rect.Width = Math.Max (highlight_rect.Width - 1, 0);
 				Size text_size = Size.Ceiling (dc.MeasureString (item.Text, item.Font));
 
 				if (!control.FullRowSelect) // Selection shouldn't be outside the item bounds
@@ -3715,23 +3780,35 @@ namespace System.Windows.Forms
 					int today_left = today_offset;
 					if (mc.ShowTodayCircle) 
 					{
+						// The box Windows OUTLINES, which is smaller than the day cell it stands in: a pixel
+						// in from the left, two down from the top, and three narrower and shorter. Measured
+						// against a stock calendar.
 						Rectangle today_circle_rect = new Rectangle (
-							client_rectangle.X + today_left,
-							Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2 - margin, 0),
-							date_cell_size.Width,
-							date_cell_size.Height);
+							client_rectangle.X + today_left + 1,
+							Math.Max(client_rectangle.Bottom - date_cell_size.Height - margin, 0),
+							Math.Max (date_cell_size.Width - 3, 0),
+							Math.Max (date_cell_size.Height - 3, 0));
 							DrawTodayCircle (dc, today_circle_rect);
-						today_offset += date_cell_size.Width + 5;
+								// The marker's cell exactly. With the typographic format above the run starts where
+						// it is put, and a pixel past the cell put every glyph of this caption one right of
+						// Windows' -- measured against a stock calendar, whose marker box lands on our exact
+						// columns while the date beside it did not.
+						today_offset += date_cell_size.Width;
 					}
-					// draw today's date
-					StringFormat text_format = new StringFormat();
+					// draw today's date. TYPOGRAPHIC: the default format leaves a wide margin inside the
+					// rectangle before the first glyph, which put this caption twelve pixels right of where
+					// the arithmetic above says it goes -- and so twelve right of Windows'. With the
+					// typographic format the run starts where it is put, and the offset below is the whole
+					// story.
+					StringFormat text_format = new StringFormat (StringFormat.GenericTypographic);
 					text_format.LineAlignment = StringAlignment.Center;
 					text_format.Alignment = StringAlignment.Near;
+					text_format.FormatFlags |= StringFormatFlags.NoWrap;
 					Rectangle today_rect = new Rectangle (
 							today_offset + client_rectangle.X,
-							// The same row the marker occupies. Two pixels lower left the text hanging
-						// below the marker instead of reading as one line with it.
-						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2 - margin, 0),
+							// The same row the marker occupies -- and the marker moved down one, so this does
+						// too. Two rows up left the caption above the line Windows sets it on.
+						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 1 - margin, 0),
 							Math.Max(client_rectangle.Width - today_offset, 0),
 							date_cell_size.Height);
 					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
@@ -3907,7 +3984,30 @@ namespace System.Windows.Forms
 						day_name_rect.Y,
 						date_cell_size.Width,
 						date_cell_size.Height);
-					dc.DrawString (sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd"), ZoomScaled (mc.Font), ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), day_rect, mc.centered_format);
+					// Centred on the GDI measurement Windows centres on rather than GDI+'s. The two
+					// disagree by a pixel or two on some names, and centring on the wrong one put
+					// "Tue" and "Wed" one and two pixels right of the columns Windows draws them in
+					// while the other five happened to land.
+					string day_name = sunday.AddDays (i + (int) first_day_of_week).ToString ("ddd");
+					Font day_font = ZoomScaled (mc.Font);
+					int day_name_width = TextRenderer.MeasureText (day_name, day_font,
+					                                              new Size (int.MaxValue, int.MaxValue),
+					                                              TextFormatFlags.NoPadding).Width;
+					Rectangle name_rect = day_rect;
+					// A row higher than a plain vertical centring puts it. The rule under this row lands
+					// where Windows draws it, so the row itself is right and it is the name inside it that
+					// sat low -- all seven of them, which is most of what this band was costing.
+					name_rect.Y -= 1;
+					if (day_name_width > 0 && day_name_width < day_rect.Width) {
+						// Centred in a box the width GDI makes the name, which is what Windows centres on.
+						// GDI+ measures a run wider than GDI does by about the overhang it also draws, so
+						// centring its own measurement in this box lands the ink on the box's left edge.
+						// Laying the run out from that edge instead does NOT work -- it adds the overhang
+						// back and puts every name three pixels right.
+						name_rect.X = day_rect.X + (day_rect.Width - day_name_width) / 2;
+						name_rect.Width = day_name_width;
+					}
+					dc.DrawString (day_name, day_font, ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), name_rect, mc.centered_format);
 				}
 				
 				// draw the vertical divider
@@ -5034,7 +5134,9 @@ namespace System.Windows.Forms
 
 			// Pad the result
 			ret_size.Height += (rb.Padding.Vertical);
-			ret_size.Width += (rb.Padding.Horizontal) + 15;
+			// 14, where a CheckBox adds 15: the radio glyph is a pixel narrower than the check box,
+			// and measuring it as equal made every auto-sized radio button one pixel wide of Windows.
+			ret_size.Width += (rb.Padding.Horizontal) + 14;
 
 			// There seems to be a minimum height
 			if (ret_size.Height == rb.Padding.Vertical)
@@ -5046,6 +5148,11 @@ namespace System.Windows.Forms
 		public override void CalculateRadioButtonTextAndImageLayout (ButtonBase b, Point offset, out Rectangle glyphArea, out Rectangle textRectangle, out Rectangle imageRectangle)
 		{
 			CalculateCheckBoxTextAndImageLayout (b, offset, out glyphArea, out textRectangle, out imageRectangle);
+			// A radio button's caption stands ONE PIXEL FURTHER OUT than a check box's, and the two
+			// really do differ in Windows: with both glyphs starting on Windows' exact column, a stock
+			// check box draws its caption at 32 and a stock radio button draws its at 44 where the
+			// shared arithmetic gives 43. Moving both together fixed the check box and broke this.
+			textRectangle.X += 1;
 		}
 		#endregion	// RadioButton
 
@@ -7756,7 +7863,11 @@ namespace System.Windows.Forms
 			}
 		}
 
-		private void DrawStringDisabled20 (Graphics g, string s, Font font, Rectangle layoutRectangle, Color color, TextFormatFlags flags, bool useDrawString)
+		/// <summary>Disabled text, EMBOSSED: a light copy offset by one and the real one on top of it.
+		/// That is how Windows drew it in 1995 and the classic theme still should. Overridable because
+		/// Windows 11 does not emboss any more -- it draws one flat grey pass, and two passes came out
+		/// a quarter heavier than stock's.</summary>
+		protected virtual void DrawStringDisabled20 (Graphics g, string s, Font font, Rectangle layoutRectangle, Color color, TextFormatFlags flags, bool useDrawString)
 		{
 			CPColor cpcolor = ResPool.GetCPColor (color);
 

@@ -45,10 +45,27 @@ namespace System.Windows.Forms
 		internal class MessageBoxForm : Form
 		{
 			#region MessageBoxFrom Local Variables
+			// MEASURED off three real Windows message boxes (a warning with Yes/No/Cancel, an
+			// information with OK, and one with no icon at all), because the shape of this dialog is
+			// not the shape of a form full of controls: Windows gives it a WHITE message area with a
+			// grey FOOTER under it, and right-aligns the buttons in that footer.
+			//
+			// The three agreed on every one of these: the footer is 42 tall whatever is above it, the
+			// buttons are 73x21 sitting 11 down from the top of the footer, the last one ends 16 from
+			// the right edge, they are pitched 83 apart, and the icon is a 32x32 box 21 in from the
+			// left, centred in the white area. Client sizes 371x120, 206x120 and 195x101 fall out of
+			// those numbers rather than being fitted to.
 			const int space_border = 10;
-			const int button_width = 86;
-			const int button_height = 23;
-			const int button_space = 5;
+			const int button_width = 73;
+			const int button_height = 21;
+			const int button_space = 10;              // gap between buttons: pitch is width + this
+			const int button_right_margin = 16;       // from the last button's right edge to the frame
+			const int footer_height = 42;
+			const int button_top_in_footer = 11;
+			const int icon_left = 21;
+			const int icon_box = 32;
+			const int icon_text_gap = 12;
+			const int white_pad = 23;                 // above and below the message area's content
 			const int space_image_text= 10;
 
 			string			msgbox_text;
@@ -200,10 +217,17 @@ namespace System.Windows.Forms
 
 			internal override void OnPaintInternal (PaintEventArgs e)
 			{
+				// The message sits on WHITE and the buttons on the form's own grey; the join is what
+				// makes this look like a Windows message box rather than a small grey form.
+				int white = ClientSize.Height - footer_height;
+				if (white > 0)
+					e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (Color.White),
+					                          0, 0, ClientSize.Width, white);
+
 				e.Graphics.DrawString (msgbox_text, this.Font, ThemeEngine.Current.ResPool.GetSolidBrush (SystemColors.ControlText), text_rect);
-				if (icon_image != null) {
-					e.Graphics.DrawIcon(icon_image, space_border, space_border);
-				}
+				if (icon_image != null)
+					e.Graphics.DrawIcon (icon_image, new Rectangle (icon_left, (white - icon_box) / 2,
+					                                               icon_box, icon_box));
 			}
 
 			private void InitFormsSize ()
@@ -224,26 +248,31 @@ namespace System.Windows.Forms
 				// First we have to know the size of text + image
 				int iconImageWidth = 0;
 				if (icon_image != null)
-					iconImageWidth = icon_image.Width + 10;
-				Drawing.SizeF tsize = TextRenderer.MeasureText (msgbox_text, this.Font, new Size (max_width - iconImageWidth, int.MaxValue), TextFormatFlags.WordBreak);
-				text_rect = new RectangleF ();
-				text_rect.Height = tsize.Height;
+					iconImageWidth = icon_left + icon_box + icon_text_gap;
+				// NoPadding: MeasureText otherwise adds a margin of its own, and this measurement is used to
+				// SIZE the dialog -- so that margin lands on top of the padding the layout already adds
+				// and every message box comes out wider than Windows' by it.
+				Drawing.SizeF tsize = TextRenderer.MeasureText (msgbox_text, this.Font, new Size (max_width - iconImageWidth, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
-				if (icon_image != null) {
-					tsize.Width += iconImageWidth;
-					if(icon_image.Height > tsize.Height) {
-						// Place text middle-right
-						text_rect.Location = new Point (icon_image.Width + space_image_text + space_border, (int)((icon_image.Height/2)-(tsize.Height/2)) + space_border);
-					} else {
-						text_rect.Location = new Point (icon_image.Width + space_image_text + space_border, 2 + space_border);
-					}
-					if (tsize.Height < icon_image.Height)
-						tsize.Height = icon_image.Height;
-				} else {
-					text_rect.Location = new Point (space_border + button_space, space_border);
-				}
-				tsize.Height += space_border * 2;
-				text_rect.Height += space_border;
+				// The MESSAGE AREA is one block -- icon beside text -- centred in its own white band,
+				// which is what Windows does and what the old arithmetic did not: it pinned the text to
+				// the top and dropped the icon below it. Keep the raw text height; padding is added
+				// once, here, rather than folded into the measurement and then added again.
+				float raw_text_h = tsize.Height;
+				int content_h = Math.Max (icon_image != null ? icon_box : 0, (int) raw_text_h);
+				int white_h = content_h + white_pad * 2;
+
+				text_rect = new RectangleF ();
+				text_rect.Height = raw_text_h;
+				text_rect.X = icon_image != null ? icon_left + icon_box + icon_text_gap : white_pad;
+				text_rect.Y = (white_h - raw_text_h) / 2f;
+
+				// The WIDTH the message needs is where the text starts plus the text plus the same
+				// padding on the right. Adding a separate border afterwards, as this used to, does not
+				// know where the text was actually put -- which is how the no-icon box came out
+				// narrower than its own text and clipped the last two words off it.
+				tsize.Width = text_rect.X + tsize.Width + white_pad;
+				tsize.Height = white_h;
 
 				// Now we want to know the amount of buttons
 				int buttoncount;
@@ -280,8 +309,10 @@ namespace System.Windows.Forms
 				if (show_help)
 					buttoncount ++;
 				
-				// Calculate the width based on amount of buttons 
-				tb_width = (button_width + button_space) * buttoncount;  
+				// Calculate the width based on amount of buttons: the pitch for all but the last,
+				// then the last one's own width and the margin on either side of the group.
+				tb_width = (button_width + button_space) * buttoncount - button_space
+				           + button_right_margin * 2;
 
 				// The form caption can also make us bigger
 				SizeF caption = TextRenderer.MeasureString (Text, new Font (DefaultFont, FontStyle.Bold));
@@ -290,16 +321,20 @@ namespace System.Windows.Forms
 				// or the text size, up to 60% of the screen (max_size)
 				Size new_size = new SizeF (Math.Min (Math.Max (caption.Width + 40, tsize.Width), max_width), tsize.Height).ToSize ();
 				
-				// Now we choose the good size for the form
-				if (new_size.Width > tb_width)
-					this.ClientSize = new Size (new_size.Width + (space_border * 2), Height = new_size.Height + (space_border * 4));
-				else
-					this.ClientSize = new Size (tb_width + (space_border * 2), Height = new_size.Height + (space_border * 4));
+				this.ClientSize = new Size (Math.Max (new_size.Width, tb_width), white_h + footer_height);
 
-				text_rect.Width = new_size.Width - iconImageWidth;
+				// SIZED from the unpadded measurement, DRAWN with the padded one. They are different
+				// numbers and each is right for its own job: sizing to the padded width makes every
+				// box wider than Windows', and drawing into the unpadded width clips the last word.
+				text_rect.Width = ClientSize.Width - text_rect.X - white_pad
+				                  + (TextRenderer.MeasureText (msgbox_text, this.Font).Width
+				                     - TextRenderer.MeasureText (msgbox_text, this.Font,
+				                           new Size (int.MaxValue, int.MaxValue),
+				                           TextFormatFlags.NoPadding).Width);
 
-				// Now we set the left of the buttons
-				button_left = (this.ClientSize.Width / 2) - (tb_width / 2) + 5;
+				// The LAST button ends button_right_margin from the frame; the rest step back from it.
+				button_left = this.ClientSize.Width - button_right_margin
+				              - (button_width + button_space) * buttoncount + button_space;
 				AddButtons ();
 				size_known = true;
 
@@ -442,8 +477,10 @@ namespace System.Windows.Forms
 				button.Text = Locale.GetText(text);
 				button.Width = button_width;
 				button.Height = button_height;
-				button.Top = this.ClientSize.Height - button.Height - space_border;
-				button.Left =  ((button_width + button_space) * left) + button_left;
+				// Right-aligned in the footer, counting back from the last one. The old arithmetic
+				// centred them, which is what a grey form does and not what Windows does.
+				button.Top = this.ClientSize.Height - footer_height + button_top_in_footer;
+				button.Left = button_left + (button_width + button_space) * left;
 				
 				if (click_event != null)
 					button.Click += click_event;

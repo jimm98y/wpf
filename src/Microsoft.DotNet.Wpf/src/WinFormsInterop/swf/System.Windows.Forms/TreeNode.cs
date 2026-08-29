@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -259,7 +259,8 @@ namespace System.Windows.Forms
 			if (!TreeView.CheckBoxes && StateImage != null)
 				cb = 19;
 			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + 3 : 0);
-			return ((indent_level + roots) * TreeView.Indent) + cb + imgs - TreeView.hbar_offset;
+			// The three pixels are Windows': a stock node's rectangle starts that far past the indent.
+			return ((indent_level + roots) * TreeView.Indent) + cb + imgs + 3 - TreeView.hbar_offset;
 		}
 
 		internal int GetLinesX ()

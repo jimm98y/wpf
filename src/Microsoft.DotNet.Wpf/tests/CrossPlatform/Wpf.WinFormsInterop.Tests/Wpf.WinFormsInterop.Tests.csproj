@@ -55,6 +55,30 @@
     <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
   </ItemGroup>
 
+  <!--
+    The Windows half of the control comparison. Built alongside but NOT referenced: it binds the real
+    System.Windows.Forms, which declares the same types as the fork's, and referencing it here would
+    put both in one compilation. The test starts it as a process and reads the pixels it leaves
+    behind. ReferenceOutputAssembly=false is what says "build this, do not link it".
+
+    Windows-only: on any other OS there is no Microsoft.WindowsDesktop.App to build it against, and
+    the test that drives it skips itself.
+  -->
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true' And $([MSBuild]::IsOSPlatform('Windows'))">
+    <ProjectReference Include="ControlParity/StockRenderer/StockRenderer.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false"
+                      SetTargetFramework="TargetFramework=net10.0-windows" />
+  </ItemGroup>
+
+  <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <Compile Remove="ControlParity/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <Compile Remove="ControlParity/StockRenderer/**/*.cs" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
     <Reference Include="WindowsBase"><HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationCore"><HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
@@ -75,6 +99,18 @@
 
   <Target Name="WarnIfForkNotBuilt" BeforeTargets="Build" Condition="'$(_ForkBuilt)' != 'true'">
     <Warning Text="The WPF fork is not built, so the WinForms interop tests are excluded. Run eng/build-sdk.sh to enable them." />
+  </Target>
+
+  <!-- Our vendored System.Drawing declares Point, Size, Rectangle, Color and SystemColors, and so
+       does the framework's System.Drawing.Primitives, which arrives transitively. With both in scope
+       every one of those names is ambiguous (CS0433). The fork's is the one the controls are built
+       against, so the framework's goes. The samples that reference the fork do the same. -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_ForkBuilt)' == 'true'">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
   </Target>
 
   <!-- Copy the fork's assemblies next to the test binary; conflict resolution drops framework-named

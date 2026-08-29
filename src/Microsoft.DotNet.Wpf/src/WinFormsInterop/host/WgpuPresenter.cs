@@ -62,6 +62,18 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         _width = width;
         _height = height;
         _scale = (float)(scale > 0 ? scale : 1.0);
+        // A GAMMA-SPACE compositor hands the surface colours that are ALREADY sRGB-encoded, so the
+        // surface has to be a plain UNORM one that presents them byte for byte. Asking for an sRGB
+        // surface makes the hardware decode on read and encode on write, and for an OPAQUE fill that
+        // round trip is the identity -- which is why every background matched Windows exactly and this
+        // went unnoticed for so long. It is NOT the identity for a BLEND: it makes every one of them a
+        // linear-light blend. Text is nothing but blends, and a glyph edge at 0.72 coverage over white
+        // came out at 145 where GDI, which blends in gamma space, puts it at 72. Measured against a
+        // live stock window, our text carried about a quarter less ink than Windows' everywhere it
+        // appeared -- while the same renderer read back through RenderToRgba was within a few percent,
+        // because RenderToRgba already forces UNORM in this mode. This is that same rule, on the path
+        // that reaches a screen.
+        if (WgpuSceneRenderer.s_gammaComposite) srgb = false;
         _srgb = srgb;
         _format = ChooseFormat(surface, ctx.Adapter, srgb);
         Configure();
@@ -134,6 +146,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // recorder, positioned in form space) plus the caret into ONE root scene and render it in a single
     // pass to the surface. No per-control readback / re-upload — the scenes go straight to the GPU on
     // this one device. `scenes` items are (boxed SceneVisual, x, y) in the driver's paint order.
+    private static readonly bool s_tracePresentStatus =
+        Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1";
+
     internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret, int surfaceW, int surfaceH)
         => PresentScenes(scenes, caret, null, surfaceW, surfaceH);
 
@@ -155,7 +170,14 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
         _renderer.RenderSceneToView(root, view, _format, DeviceWidth, DeviceHeight, ClearColor);
-        bool ok = wgpuSurfacePresent(_surface) == WGPUStatus.Success;
+        WGPUStatus presented = wgpuSurfacePresent(_surface);
+        bool ok = presented == WGPUStatus.Success;
+        // A window that shows the CLEAR COLOUR and nothing else looks exactly like a renderer that
+        // drew nothing, and it is not: the scenes can all be built and rendered correctly and still
+        // never reach the glass. Say which of the two happened rather than leaving it to be guessed.
+        if (s_tracePresentStatus)
+            Console.WriteLine($"surface: acquire={st.status} present={presented} "
+                              + $"{DeviceWidth}x{DeviceHeight} format={_format}");
         wgpuTextureViewRelease(view);
         wgpuTextureRelease(st.texture);
         return ok;

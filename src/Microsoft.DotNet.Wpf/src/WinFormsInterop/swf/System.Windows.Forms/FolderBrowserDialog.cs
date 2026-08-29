@@ -274,7 +274,7 @@ namespace System.Windows.Forms {
 		{
 			// Use the platform's folder browser where there is one -- see FileDialog.RunDialog.
 			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
-			if (bridge != null) {
+			if (bridge != null && bridge.SupportsFolder) {
 				string picked;
 				if (!bridge.ShowFolder (descriptionLabel.Text, selectedPath, out picked))
 					return false;

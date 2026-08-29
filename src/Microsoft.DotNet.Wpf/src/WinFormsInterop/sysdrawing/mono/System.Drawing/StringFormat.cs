@@ -241,6 +241,17 @@ namespace System.Drawing {
 		/// <summary>Whether this is the typographic format, which asks for the text to be laid
 		/// out with no margin around it -- a caller placing glyphs itself wants exactly the run
 		/// it asked for, and nothing either side of it.</summary>
+		/// <summary>Set only on StringFormat.GenericTypographic itself, and NOT carried by the copy
+		/// constructor -- so `new StringFormat (StringFormat.GenericTypographic)` comes out
+		/// NON-typographic and keeps the layout margin, which is the one thing that format exists to
+		/// remove. Two callers write exactly that: the group box's caption and MonthCalendar's
+		/// centered_format.
+		/// <para>Carrying it is the correct behaviour and was tried, twice, deterministically
+		/// (2026-08-28): the group box caption improved by 9.8k and the month calendar lost 1.1M. The
+		/// calendar DEPENDS on the margin -- its day numbers are drawn align=Far, where the placement
+		/// is `rect.Width - textWidth - overhang`, so zeroing the overhang moves every one of them
+		/// three pixels right. Fixing this means re-tuning MonthCalendarDateBounds by the same amount
+		/// first; it is not a free correctness fix.</para></summary>
 		internal bool IsTypographic;
 
 		public static StringFormat GenericTypographic {

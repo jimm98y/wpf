@@ -43,11 +43,31 @@ namespace System.Windows.Forms
         bool ShowSave(FileDialogRequest request, out string[] fileNames, out int filterIndex);
 
         bool ShowFolder(string description, string initialPath, out string selectedPath);
+
+        /// <summary>Whether ShowFolder is worth calling at all.
+        /// <para>Needed because "the user cancelled" and "this bridge has no folder browser" are both
+        /// false from ShowFolder, and they must not lead to the same place: a bridge that does files
+        /// and not folders would otherwise make every FolderBrowserDialog return Cancel without ever
+        /// showing anything. The managed tree is the fallback and it has to stay reachable.</para>
+        /// </summary>
+        bool SupportsFolder { get; }
     }
 
     internal partial class XplatUIWebGpu : XplatUIDriver
     {
-        /// <summary>The platform file dialogs, or null when nothing installed them.</summary>
-        internal static IFileDialogBridge FileDialogBridge;
+        /// <summary>The platform file dialogs, or null when there are none to call.
+        /// <para>A host that brings its own still wins -- the WPF integration layer installs one so a
+        /// mixed application shows ONE browser rather than two. With nothing installed the platform's
+        /// own is used where there is one, so a plain WinForms application on Windows gets the dialog
+        /// Windows shows every other program rather than Mono's 2000-era stand-in. Where there is no
+        /// common dialog to call (X11, the headless tests) this stays null and the managed dialog
+        /// runs exactly as before.</para></summary>
+        internal static IFileDialogBridge FileDialogBridge
+        {
+            get => s_fileDialogBridge ?? Win32FileDialogBridge.Default;
+            set => s_fileDialogBridge = value;
+        }
+
+        private static IFileDialogBridge s_fileDialogBridge;
     }
 }

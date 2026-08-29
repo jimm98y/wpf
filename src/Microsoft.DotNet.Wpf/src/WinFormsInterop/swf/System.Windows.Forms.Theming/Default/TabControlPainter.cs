@@ -178,12 +178,16 @@ namespace System.Windows.Forms.Theming.Default
 			
 			colSpacing = 0;
 
-			minimumTabWidth = 42;
+			// 48, the floor Windows puts under a tab: "Text" measures 21 and "Media" 33, and both
+			// come out of comctl32 exactly 48 wide.
+			minimumTabWidth = 48;
 			scrollerWidth = 17;
 			focusRectSpacing = new Point (2, 2);
 			tabPanelOffset = new Point (4, 0);
 			flatButtonSpacing = 8;
-			tabPageSpacing = new Rectangle (4, 2, 3, 4);
+			// Four on the right, not three: Windows leaves the page the same margin either side, and
+			// the odd one made our page a pixel wider than the one beside it.
+			tabPageSpacing = new Rectangle (4, 2, 4, 4);
 
 			imagePadding = new Point (2, 3);
 
@@ -236,7 +240,11 @@ namespace System.Windows.Forms.Theming.Default
 				return res;
 
 			int spacing = RowSpacing (tab).Height;
-			int tabOffset = (tab.ItemSize.Height + spacing - selectedTabDelta.Height) * tab.RowCount + selectedTabDelta.Y;
+			// The row is as tall as ItemSize says, so the page starts below all of it. Taking the
+			// selected tab's extra height off here as well used to make up for tab heights that had
+			// already had it removed; they no longer do, and subtracting it twice put the page three
+			// rows above Windows'.
+			int tabOffset = (tab.ItemSize.Height + spacing) * tab.RowCount + selectedTabDelta.Y;
 			switch (tab.Alignment) {
 				case TabAlignment.Top:
 					res.Y += tabOffset;

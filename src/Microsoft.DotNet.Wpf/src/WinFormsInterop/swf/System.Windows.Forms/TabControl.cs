@@ -1145,24 +1145,40 @@ namespace System.Windows.Forms {
 			if (item_size_manual)
 				return;
 
-			SizeF size;
+			// The row a tab sits in is as tall as the caption plus the padding either side, LESS ONE:
+			// measured against Windows at eight, nine, eleven, twelve and fourteen point, where the
+			// row comes to the caption's height plus five with the default vertical padding of three.
+			// (Ten point is the one reading that does not fit, and its caption measures taller than
+			// the font it is in, so the odd number is in the measurement rather than the rule.)
+			Size size;
 			if (tab_pages.Count > 0) {
 				// .Net uses the first tab page if available.
-				size = TextRenderer.MeasureString (tab_pages [0].Text, Font);
-
+				size = TabCaptionSize (tab_pages [0].Text);
 			} else {
-				size = TextRenderer.MeasureString ("a", Font);
+				size = TabCaptionSize ("a");
 				size.Width = 0;
 			}
 
 			if (size_mode == TabSizeMode.Fixed)
 				size.Width = 96;
-			if (size.Width < MinimumTabWidth)
-				size.Width = MinimumTabWidth;
+			// The floor is on the tab a reader sees, which is the caption plus its padding -- and the
+			// padding is added by the ItemSize property, not stored here.
+			if (size.Width + Padding.X * 2 < MinimumTabWidth)
+				size.Width = MinimumTabWidth - Padding.X * 2;
 			if (image_list != null && image_list.ImageSize.Height > size.Height)
 				size.Height = image_list.ImageSize.Height;
 
-			item_size = size.ToSize ();
+			item_size = size;
+		}
+
+		/// <summary>A caption measured the way a tab is sized around it: its OWN extent, with no
+		/// room left either side for a DrawText that is not happening. The PADDING is not added here
+		/// -- the ItemSize property adds it, and adding it in both places counted it twice.</summary>
+		private Size TabCaptionSize (string text)
+		{
+			Size s = TextRenderer.MeasureText (text, Font, new Size (int.MaxValue, int.MaxValue),
+			                                  TextFormatFlags.NoPadding);
+			return new Size (s.Width, s.Height - 1);
 		}
 
 		private int BottomRow {
@@ -1283,8 +1299,12 @@ namespace System.Windows.Forms {
 			if (SizeMode == TabSizeMode.Fixed) {
 				width = item_size.Width;
 			} else {			
-				width = MeasureStringWidth (DeviceContext, page.Text, Font);
-				width += (Padding.X * 2) + 2;
+				// The caption's OWN extent, not the padded one a DrawText would leave room for:
+				// Windows sizes a tab to the run plus its own padding either side, and measuring the
+				// padded width made every tab seven pixels wide of the one beside it. Nothing is
+				// added on top of the padding -- the two extra pixels that used to be here are not
+				// in Windows' arithmetic.
+				width = TabCaptionSize (page.Text).Width + Padding.X * 2;
 
 				if (ImageList != null && page.ImageIndex >= 0) {
 					width += ImageList.ImageSize.Width + ThemeEngine.Current.TabControlImagePadding.X;
@@ -1298,8 +1318,10 @@ namespace System.Windows.Forms {
 					width = MinimumTabWidth;
 			}
 
-			// Use ItemSize property to recover the padding info as well.
-			height = ItemSize.Height - ThemeEngine.Current.TabControlSelectedDelta.Height; // full height only for selected tab
+			// A tab is exactly as tall as the row. Taking the SELECTED tab's extra height off every
+			// other tab left them three pixels short of the ones Windows draws, and the page below
+			// them starting a row too low -- the row height is what the page is laid out under.
+			height = ItemSize.Height;
 
 			if (i == SelectedIndex)
 				width += ThemeEngine.Current.TabControlSelectedSpacing;

@@ -167,7 +167,10 @@ namespace System.Windows.Forms {
 			autoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
 			autoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
 			backColor = Control.DefaultBackColor;
-			backgroundColor = SystemColors.AppWorkspace;
+			// ControlDark, not AppWorkspace: read off a stock grid, whose BackgroundColor comes back
+			// A0A0A0 where ours came back ABABAB. It is the colour of everything past the last column
+			// and below the last row, so the difference covered a good part of the control.
+			backgroundColor = SystemColors.ControlDark;
 			borderStyle = BorderStyle.FixedSingle;
 			cellBorderStyle = DataGridViewCellBorderStyle.Single;
 			clipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithAutoHeaderText;

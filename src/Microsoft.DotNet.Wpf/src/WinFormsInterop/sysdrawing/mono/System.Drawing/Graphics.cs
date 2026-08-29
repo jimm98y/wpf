@@ -1293,7 +1293,7 @@ namespace System.Drawing
 				if (RecordDash (pen, out float [] dash))
 					GpuRecorder.DrawDashedLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen), pen.Width, dash);
 				else
-					GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen));
+					GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen), pen.Width);
 				return;
 			}
                         Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen,
@@ -1309,7 +1309,7 @@ namespace System.Drawing
 				if (RecordDash (pen, out float [] dash))
 					GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
 				else
-					GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen));
+					GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width);
 				return;
 			}
 			Status status = GDIPlus.GdipDrawLineI (nativeObject, pen.NativePen, x1, y1, x2, y2);
@@ -1326,7 +1326,7 @@ namespace System.Drawing
 					if (RecordDash (pen, out float [] dash))
 						GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
 					else
-						GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen));
+						GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width);
 					return;
 				}
 				Status status = GDIPlus.GdipDrawLine (nativeObject, pen.NativePen, x1, y1, x2, y2);
@@ -1343,7 +1343,7 @@ namespace System.Drawing
 			if (RecordPen (pen)) {
 				int c = ArgbOf (pen);
 				for (int i = 1; i < points.Length; i++)
-					GpuRecorder.DrawLine (points[i-1].X, points[i-1].Y, points[i].X, points[i].Y, c);
+					GpuRecorder.DrawLine (points[i-1].X, points[i-1].Y, points[i].X, points[i].Y, c, pen.Width);
 				return;
 			}
 			Status status = GDIPlus.GdipDrawLines (nativeObject, pen.NativePen, points, points.Length);
@@ -1359,7 +1359,7 @@ namespace System.Drawing
 			if (RecordPen (pen)) {
 				int c = ArgbOf (pen);
 				for (int i = 1; i < points.Length; i++)
-					GpuRecorder.DrawLine (points[i-1].X, points[i-1].Y, points[i].X, points[i].Y, c);
+					GpuRecorder.DrawLine (points[i-1].X, points[i-1].Y, points[i].X, points[i].Y, c, pen.Width);
 				return;
 			}
 			Status status = GDIPlus.GdipDrawLinesI (nativeObject, pen.NativePen, points, points.Length);
@@ -1380,10 +1380,10 @@ namespace System.Drawing
 						if (dash != null)
 							GpuRecorder.DrawDashedLine (sub [i - 1].X, sub [i - 1].Y, sub [i].X, sub [i].Y, c, pen.Width, dash);
 						else
-							GpuRecorder.DrawLine (sub [i - 1].X, sub [i - 1].Y, sub [i].X, sub [i].Y, c);
+							GpuRecorder.DrawLine (sub [i - 1].X, sub [i - 1].Y, sub [i].X, sub [i].Y, c, pen.Width);
 					// A flattened closed figure does not repeat its first point; join it up.
 					if (sub.Length > 2 && sub [0] != sub [sub.Length - 1])
-						GpuRecorder.DrawLine (sub [sub.Length - 1].X, sub [sub.Length - 1].Y, sub [0].X, sub [0].Y, c);
+						GpuRecorder.DrawLine (sub [sub.Length - 1].X, sub [sub.Length - 1].Y, sub [0].X, sub [0].Y, c, pen.Width);
 				}
 				return;
 			}
@@ -1434,7 +1434,7 @@ namespace System.Drawing
 				int c = ArgbOf (pen);
 				for (int i = 0; i < points.Length; i++) {
 					var a = points[i]; var b = points[(i + 1) % points.Length];   // closed
-					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c);
+					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c, pen.Width);
 				}
 				return;
 			}
@@ -1452,7 +1452,7 @@ namespace System.Drawing
 				int c = ArgbOf (pen);
 				for (int i = 0; i < points.Length; i++) {
 					var a = points[i]; var b = points[(i + 1) % points.Length];   // closed
-					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c);
+					GpuRecorder.DrawLine (a.X, a.Y, b.X, b.Y, c, pen.Width);
 				}
 				return;
 			}
@@ -1480,10 +1480,10 @@ namespace System.Drawing
 					GpuRecorder.DrawDashedLine (x + width, y, x + width, y + height, c, pen.Width, dash);
 					return;
 				}
-				GpuRecorder.DrawLine (x, y, x + width, y, c);
-				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c);
-				GpuRecorder.DrawLine (x, y, x, y + height, c);
-				GpuRecorder.DrawLine (x + width, y, x + width, y + height, c);
+				GpuRecorder.DrawLine (x, y, x + width, y, c, pen.Width);
+				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c, pen.Width);
+				GpuRecorder.DrawLine (x, y, x, y + height, c, pen.Width);
+				GpuRecorder.DrawLine (x + width, y, x + width, y + height, c, pen.Width);
 				return;
 			}
 			Status status = GDIPlus.GdipDrawRectangle (nativeObject, pen.NativePen, x, y, width, height);
@@ -1503,10 +1503,10 @@ namespace System.Drawing
 					GpuRecorder.DrawDashedLine (x + width, y, x + width, y + height, c, pen.Width, dash);
 					return;
 				}
-				GpuRecorder.DrawLine (x, y, x + width, y, c);
-				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c);
-				GpuRecorder.DrawLine (x, y, x, y + height, c);
-				GpuRecorder.DrawLine (x + width, y, x + width, y + height, c);
+				GpuRecorder.DrawLine (x, y, x + width, y, c, pen.Width);
+				GpuRecorder.DrawLine (x, y + height, x + width, y + height, c, pen.Width);
+				GpuRecorder.DrawLine (x, y, x, y + height, c, pen.Width);
+				GpuRecorder.DrawLine (x + width, y, x + width, y + height, c, pen.Width);
 				return;
 			}
 			Status status = GDIPlus.GdipDrawRectangleI (nativeObject, pen.NativePen, x, y, width, height);
@@ -1649,6 +1649,24 @@ namespace System.Drawing
 		/// format asks for none -- that is what it is for.</summary>
 		/// <summary>How far below the baseline the line box reaches, truncated as Windows
 		/// truncates it.</summary>
+		/// <summary>Whether this drawing is standing in for GDI rather than GDI+ -- set while
+		/// TextRenderer draws through here, since the two align a line of text differently.</summary>
+		internal bool gdi_text_metrics;
+
+		/// <summary>Draw a string the way GDI would place it. TextRenderer means GDI, and the only
+		/// difference that reaches this far is which box a centred line is centred in.</summary>
+		internal void DrawStringGdi (string s, Font font, Brush brush, RectangleF layoutRectangle,
+					     StringFormat format)
+		{
+			bool saved = gdi_text_metrics;
+			gdi_text_metrics = true;
+			try {
+				DrawString (s, font, brush, layoutRectangle, format);
+			} finally {
+				gdi_text_metrics = saved;
+			}
+		}
+
 		static float Descent (Font font, float emPx)
 		{
 			FontFamily family = font.FontFamily;
@@ -1754,8 +1772,26 @@ namespace System.Drawing
 				float baseline = Ascent (font, emPx) - 0.8f * emPx;
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
-					float totalH = lineHeight * lines.Length;
-					if (format.LineAlignment == StringAlignment.Center) ty += (layoutRectangle.Height - totalH) / 2f;
+					// What is being aligned depends on which drawing this is standing in for. GDI+ centres its
+					// LINE SPACING -- the leading included, rounded up -- and that is what a caller of DrawString
+					// gets. GDI centres the box the GLYPHS occupy, the ascent and the descent each truncated,
+					// which is a pixel shorter; every caption drawn through TextRenderer (a menu title, a tool
+					// bar button, a grid cell) came out a pixel above Windows' until this told the two apart.
+					// Extra lines step by the spacing either way.
+					float firstLine = gdi_text_metrics ? Ascent (font, emPx) + Descent (font, emPx) : lineHeight;
+					float totalH = firstLine + lineHeight * (lines.Length - 1);
+					// AND THE OFFSET IS TRUNCATED, exactly as the horizontal one below is and for the
+					// same reason: DT_VCENTER is integer arithmetic on whole pixels, where this
+					// carried the fraction and let the renderer round it. Half the rectangles in an
+					// application leave an odd number of pixels over, and every one of those put its
+					// caption a pixel below Windows'. It was hidden for a long time by an
+					// unconditional "lift everything by a row" in TextRenderer, which cancelled it
+					// for the odd cases and broke the even ones (the status strip's caption sat a row
+					// high). GDI+ does centre in float, so only the GDI-metric path truncates.
+					if (format.LineAlignment == StringAlignment.Center) {
+						float voff = (layoutRectangle.Height - totalH) / 2f;
+						ty += gdi_text_metrics ? MathF.Floor (voff) : voff;
+					}
 					else if (format.LineAlignment == StringAlignment.Far) ty += layoutRectangle.Height - totalH;
 				}
 				for (int i = 0; i < lines.Length; i++) {
@@ -1765,7 +1801,17 @@ namespace System.Drawing
 					if (format != null && layoutRectangle.Width > 0 && format.Alignment != StringAlignment.Near) {
 						// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
 						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float mw, out float mh);
-						if (format.Alignment == StringAlignment.Center) tx += (layoutRectangle.Width - mw) / 2f;
+						// GDI TRUNCATES the centring offset -- DT_CENTER is integer arithmetic on whole
+						// pixels -- where this carried the fraction and let the renderer round it. Half
+						// the strings in an application round up, and every one of those sat a pixel to
+						// the right of the same caption in Windows: a button's "Button" started at 15
+						// where stock starts it at 14. GDI+ does centre in float, so only the GDI-metric
+						// path (TextRenderer, which is what every control caption goes through) rounds
+						// the same way GDI does.
+						if (format.Alignment == StringAlignment.Center) {
+							float off = (layoutRectangle.Width - mw) / 2f;
+							tx += gdi_text_metrics ? MathF.Floor (off) : off;
+						}
 						else tx += layoutRectangle.Width - mw - overhang;
 					} else {
 						tx += overhang;
@@ -1799,10 +1845,17 @@ namespace System.Drawing
 						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float rw, out float _);
 						if (rw > 0f) {
 							float top = ty + i * lineHeight + baseline;
-							if (font.Underline)
-								GpuRecorder.DrawLine (tx, top + emPx, tx + rw, top + emPx, argb);
-							if (font.Strikeout)
-								GpuRecorder.DrawLine (tx, top + emPx * 0.55f, tx + rw, top + emPx * 0.55f, argb);
+							// ON a pixel row, and on its CENTRE. A rule left at whatever fraction the
+							// arithmetic lands on is spread over two rows and fills neither, which came
+							// out as a pale line a row below the solid one Windows draws.
+							if (font.Underline) {
+								float uy = MathF.Floor (top + emPx) - 1f;
+								GpuRecorder.DrawLine (tx, uy, tx + rw, uy, argb);
+							}
+							if (font.Strikeout) {
+								float sy = MathF.Floor (top + emPx * 0.55f);
+								GpuRecorder.DrawLine (tx, sy, tx + rw, sy, argb);
+							}
 						}
 					}
 				}

@@ -1,4 +1,4 @@
-// The GPU-rasterization seam inside System.Drawing. When a Graphics has a recorder attached, its
+﻿// The GPU-rasterization seam inside System.Drawing. When a Graphics has a recorder attached, its
 // core drawing verbs (the ~20 the WinForms themes actually use) append primitives to a WebGPU scene
 // instead of calling libgdiplus — so real control drawing is rasterized by WGSL. The interface lives
 // in namespace System.Drawing (so Graphics.cs sees it with no extra dependency); the implementation
@@ -31,7 +31,10 @@ namespace System.Drawing
         void FillHatch(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
                        byte[] tileRgba, int tileW, int tileH, float tileSize);
         void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
-        void DrawLine(float x1, float y1, float x2, float y2, int argb);
+        /// <summary>A stroked line. <paramref name="width"/> is the pen's, in the same units
+        /// as the coordinates: a line is not always one pixel, and a theme that asks for half a
+        /// one (a check box's tick) or two used to get exactly one either way.</summary>
+        void DrawLine(float x1, float y1, float x2, float y2, int argb, float width = 1f);
 
         /// <summary>A line stroked with a dash pattern. <paramref name="dashPattern"/> is in
         /// GDI+ units -- multiples of the pen width -- alternating on/off.</summary>

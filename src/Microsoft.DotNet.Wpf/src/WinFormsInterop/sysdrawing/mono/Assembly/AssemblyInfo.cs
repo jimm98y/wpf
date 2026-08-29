@@ -1,4 +1,4 @@
-//
+﻿//
 // AssemblyInfo.cs
 //
 // Author:
@@ -49,6 +49,11 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyInformationalVersion (Consts.FxFileVersion)]
 
 [assembly: NeutralResourcesLanguage ("en-US")]
+
+// WinForms stands in for GDI as well as GDI+ -- TextRenderer is the GDI half -- and the two place
+// a line of text differently. The seam that says which is being emulated is internal to this
+// assembly rather than public: it is an implementation detail of the pair, not of System.Drawing.
+[assembly: InternalsVisibleTo ("System.Windows.Forms")]
 
 [assembly: ComVisible (false)]
 [assembly: ComCompatibleVersion (1, 0, 3300, 0)]

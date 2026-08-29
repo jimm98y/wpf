@@ -19,7 +19,19 @@ fn fs_shape(in : VSOut) -> @location(0) vec4<f32> {
         let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
         d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
     }
-    let fw = max(fwidth(d), 1e-6);
+    // The width of the antialiasing band: the PIXEL'S SIZE in the shape's own units, taken from the
+    // derivatives of the local position -- not fwidth(d).
+    //
+    // d is a first-order distance, so for an exact SDF the two agree. For the ellipse they do not:
+    // its gradient vanishes at the centre, d swings to a huge magnitude there, and fwidth(d) reports
+    // a number to match. Coverage = 0.5 - d/fw then collapses towards a half in the middle of the
+    // disc, which showed as two spurious grey pixels in the centre of every filled ellipse -- on the
+    // seam between the quad's two triangles, because that is where the derivative quad straddles the
+    // singularity. p is a linear function of screen position, so its derivatives are constant across
+    // the primitive and have no singularity anywhere.
+    let px = length(vec2<f32>(dpdx(p.x), dpdy(p.x)));
+    let py = length(vec2<f32>(dpdx(p.y), dpdy(p.y)));
+    let fw = max(0.5 * (px + py), 1e-6);
     var cov : f32;
     if (sh < 0.0) {
         cov = clamp(0.5 - d / fw, 0.0, 1.0);                 // filled

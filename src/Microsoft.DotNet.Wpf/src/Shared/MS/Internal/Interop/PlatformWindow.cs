@@ -531,6 +531,37 @@ namespace MS.Internal.Interop
                 return Wayland.WaylandWindow.GetPrimaryScreenPixels(
                     out monLeft, out monTop, out monRight, out monBottom,
                     out workLeft, out workTop, out workRight, out workBottom);
+
+            // WINDOWS. This head fell through to the 1920x1080 below and returned false, so
+            // SystemParameters.PrimaryScreen* and everything built on it -- window centring, maximized
+            // bounds, Screen.PrimaryScreen -- answered with a made-up display. It went unnoticed
+            // because the value is a plausible one: it is only wrong on a machine that is not
+            // 1920x1080, and it took a desktop of 1710x1073 to make the virtual-screen test say so.
+            // The monitor enumeration right above has always read the real thing; this asks the same
+            // API for the display flagged primary.
+            if (OperatingSystem.IsWindows())
+            {
+                int count = GetMonitorCount();
+                for (int i = 0; i < count; i++)
+                {
+                    if (GetMonitorPixels(i, out monLeft, out monTop, out monRight, out monBottom,
+                                         out workLeft, out workTop, out workRight, out workBottom,
+                                         out bool isPrimary) && isPrimary)
+                    {
+                        return true;
+                    }
+                }
+
+                // No display claimed to be primary (a remote session mid-reconnect can look like
+                // this). The first one that answered is a better guess than a constant.
+                if (count > 0 &&
+                    GetMonitorPixels(0, out monLeft, out monTop, out monRight, out monBottom,
+                                     out workLeft, out workTop, out workRight, out workBottom, out _))
+                {
+                    return true;
+                }
+            }
+
             monLeft = monTop = workLeft = workTop = 0;
             monRight = workRight = 1920;
             monBottom = workBottom = 1080;

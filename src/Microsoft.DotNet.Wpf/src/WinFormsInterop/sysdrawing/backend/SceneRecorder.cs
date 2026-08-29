@@ -1,4 +1,4 @@
-// Implements the GPU-rasterization seam as PURE SCENE DATA: records System.Drawing.Graphics verbs
+﻿// Implements the GPU-rasterization seam as PURE SCENE DATA: records System.Drawing.Graphics verbs
 // (via IGpuSceneRecorder) into a WgpuInterop SceneVisual. NO GPU work happens here — no device, no
 // readback. The driver keeps each window's recorded scene; the WebGPU present path composites all of
 // them in ONE render pass on ONE device (no per-control readback / re-upload). Glyph rasterization
@@ -20,6 +20,7 @@ namespace System.Drawing.WebGpuBackend
         internal SceneVisual Scene => _root;
 
         public SceneRecorder() { _stack = new List<SceneVisual> { _root }; }
+
 
         private SceneVisual Target => _stack[_stack.Count - 1];
 
@@ -143,17 +144,33 @@ namespace System.Drawing.WebGpuBackend
             Add(new GeometryFill(new PolygonGeometry(pts), Rgba(argb)));
         }
 
-        public void DrawLine(float x1, float y1, float x2, float y2, int argb)
+        public void DrawLine(float x1, float y1, float x2, float y2, int argb, float width = 1f)
         {
             RgbaColor c = Rgba(argb);
-            if (y1 == y2)        // horizontal 1px
-                Add(new GeometryFill(new RectangleGeometry(new Rect(Min(x1, x2), y1, Abs(x2 - x1) + 1, 1)), c));
-            else if (x1 == x2)   // vertical 1px
-                Add(new GeometryFill(new RectangleGeometry(new Rect(x1, Min(y1, y2), 1, Abs(y2 - y1) + 1)), c));
-            else                 // diagonal: a thin quad along the segment
+
+            // One pixel is the overwhelming case, and it is drawn as the exact integer rectangle the
+            // line covers -- crisp, and identical to what GDI+ puts down. Anything else is stroked to
+            // its real width: a pen thinner than a pixel comes out as partial coverage, which is how
+            // a tick or a hairline is meant to read, and a wider one actually gets wider.
+            bool hairline = width > 0.99f && width < 1.01f;
+            float half = System.Math.Max(width, 0.01f) * 0.5f;
+
+            if (y1 == y2)        // horizontal
+            {
+                float y = hairline ? y1 : y1 + 0.5f - half;
+                Add(new GeometryFill(new RectangleGeometry(
+                    new Rect(Min(x1, x2), y, Abs(x2 - x1) + 1, hairline ? 1 : width)), c));
+            }
+            else if (x1 == x2)   // vertical
+            {
+                float x = hairline ? x1 : x1 + 0.5f - half;
+                Add(new GeometryFill(new RectangleGeometry(
+                    new Rect(x, Min(y1, y2), hairline ? 1 : width, Abs(y2 - y1) + 1)), c));
+            }
+            else                 // diagonal: a quad along the segment
             {
                 float dx = x2 - x1, dy = y2 - y1, len = (float)System.Math.Sqrt(dx * dx + dy * dy);
-                float nx = -dy / len * 0.5f, ny = dx / len * 0.5f;
+                float nx = -dy / len * half, ny = dx / len * half;
                 Add(new GeometryFill(new PolygonGeometry(new[]
                 {
                     new Vector2(x1 + nx, y1 + ny), new Vector2(x2 + nx, y2 + ny),
@@ -175,15 +192,41 @@ namespace System.Drawing.WebGpuBackend
             }
 
             float w = width <= 0 ? 1f : width;
+
+            // A one-pixel stroke is centred on the line it is given, so an axis-aligned one at a
+            // whole coordinate lands half in each of two pixels and fills neither -- a tree view's
+            // connectors came out two faint columns wide where Windows draws one solid. Half a pixel
+            // back puts it inside a single row or column. The solid path above does not need this:
+            // it collapses to a filled rectangle rather than a stroke.
+            if (w <= 1.5f)
+            {
+                if (x1 == x2) { x1 -= 0.5f; x2 -= 0.5f; }
+                else if (y1 == y2) { y1 -= 0.5f; y2 -= 0.5f; }
+            }
+
             var dashes = new double[dashPattern.Length];
             for (int i = 0; i < dashPattern.Length; i++)
                 dashes[i] = dashPattern[i];      // stroke dashes are in multiples of thickness, as in GDI+
+
+            // The pattern is anchored to the DEVICE GRID, not to where this particular line starts.
+            // GDI's dotted pen is a brush pinned to the surface, so two dotted lines that meet end to
+            // end carry on the same dots; ours restarted the pattern per call, and a tree view's
+            // connector -- drawn as two segments, one either side of the node -- changed phase in the
+            // middle of what reads as a single line.
+            double period = 0.0;
+            foreach (double d in dashes) period += d;
+            double offset = 0.0;
+            if (period > 0.0 && w > 0f && (x1 == x2 || y1 == y2))
+            {
+                offset = ((x1 == x2 ? y1 : x1) / w) % period;
+                if (offset < 0.0) offset += period;
+            }
 
             var fig = new PathFigure(new Vector2(x1, y1)) { Closed = false };
             fig.Segments.Add(new LineSegment(new Vector2(x2, y2)));
             var geo = new PathGeometry(FillRule.NonZero, new List<PathFigure> { fig });
             Add(new GeometryStroke(geo, Rgba(argb),
-                new StrokeStyle(w, LineCap.Butt, LineJoin.Miter, 10.0, dashes)));
+                new StrokeStyle(w, LineCap.Butt, LineJoin.Miter, 10.0, dashes, offset)));
         }
 
         // Arc as a stroked path sampled along the ellipse (handles the full-circle radio/checkbox
@@ -216,14 +259,30 @@ namespace System.Drawing.WebGpuBackend
             // at present time by the renderer that owns the font.
             => Add(new GlyphRunDraw(text, new Vector2(x, y + emPx * 0.8f), emPx, Rgba(argb), simulations, fontFamily));
 
-        // ARGB int -> RgbaColor, converting colour channels sRGB->LINEAR: the scene renders to an sRGB
-        // surface and the renderer treats RgbaColor as linear (the hardware re-encodes to sRGB on
-        // write), so without this the fills come out washed-out. Alpha stays linear.
+        // A colour as WinForms states it. WHICH SPACE depends on the one the compositor blends in,
+        // and the two have to agree or every blend is wrong.
+        //
+        // This used to linearise unconditionally, pairing with the sRGB surface the host always asked
+        // for -- a linear pipeline, hardware-encoded on write. It matched Windows on every opaque fill
+        // and lost to it on every BLEND, because a linear blend is not what GDI does. GDI works on
+        // encoded bytes, and so does this renderer in its default gamma mode (its gradient Lerp
+        // already treats stops as sRGB-encoded, and RenderToRgba already forces a UNORM target).
+        // WinForms was the odd one out, and text paid for it: a glyph edge at 0.72 coverage over white
+        // came out at 145 where GDI puts it at 72, and our text carried about a quarter less ink than
+        // Windows' across the whole window.
+        //
+        // The linear branch is not dead: the sink turns gamma mode OFF for backends that cannot
+        // present a pre-encoded UNORM swapchain faithfully (ANGLE, notably), and there the surface
+        // stays sRGB and the colours have to be linear to match it. WgpuPresenter picks the surface
+        // format off the same switch.
         private static RgbaColor Rgba(int argb)
-            => new RgbaColor(SrgbToLinear(((argb >> 16) & 0xff) / 255f),
-                             SrgbToLinear(((argb >> 8) & 0xff) / 255f),
-                             SrgbToLinear((argb & 0xff) / 255f),
-                             ((argb >> 24) & 0xff) / 255f);
+        {
+            float r = ((argb >> 16) & 0xff) / 255f, g = ((argb >> 8) & 0xff) / 255f, b = (argb & 0xff) / 255f;
+            float a = ((argb >> 24) & 0xff) / 255f;
+            return WgpuSceneRenderer.s_gammaComposite
+                 ? new RgbaColor(r, g, b, a)
+                 : new RgbaColor(SrgbToLinear(r), SrgbToLinear(g), SrgbToLinear(b), a);
+        }
 
         private static float SrgbToLinear(float c)
             => c <= 0.04045f ? c / 12.92f : (float)System.Math.Pow((c + 0.055) / 1.055, 2.4);

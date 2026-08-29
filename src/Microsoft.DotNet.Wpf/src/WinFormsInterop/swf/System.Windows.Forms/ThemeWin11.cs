@@ -100,6 +100,45 @@ namespace System.Windows.Forms
 	/// than leaving them to the application, and it draws them lighter than the ones it gives a
 	/// strip menu: a #E5E5E5 hairline round a #F9F9F9 body, where a strip menu gets a #808080
 	/// line round #FDFDFD. Measured off both, side by side.</summary>
+	/// <summary>The strip renderer for this theme. Everything is the professional renderer's
+	/// except the border around a tool bar: Windows runs a soft edge down its right-hand side,
+	/// pale at the top and grey at the bottom, and rounds the two corners it meets by leaving
+	/// them unpainted. The professional renderer draws a flat line of one colour instead, and in
+	/// this theme's palette that colour is the strip's own background -- so a tool bar had no
+	/// edge at all.</summary>
+	internal class ModernToolStripRenderer : ToolStripProfessionalRenderer
+	{
+		internal ModernToolStripRenderer (ProfessionalColorTable table) : base (table)
+		{
+		}
+
+		// Measured off a stock tool bar: the edge runs from three pixels down to two short of the
+		// bottom, ramping from #F5F5F5 to #ACACAC.
+		private static readonly Color EdgeTop = Color.FromArgb (245, 245, 245);
+		private static readonly Color EdgeBottom = Color.FromArgb (172, 172, 172);
+
+		protected override void OnRenderToolStripBorder (ToolStripRenderEventArgs e)
+		{
+			if (e.ToolStrip is ToolStripDropDown || e.ToolStrip is MenuStrip || e.ToolStrip is StatusStrip) {
+				base.OnRenderToolStripBorder (e);
+				return;
+			}
+
+			int x = e.ToolStrip.Width - 1;
+			int top = 3, bottom = e.ToolStrip.Height - 3;
+			if (bottom <= top)
+				return;
+			for (int y = top; y <= bottom; y++) {
+				double t = (y - top) / (double) (bottom - top);
+				Color c = Color.FromArgb (
+					(int) Math.Round (EdgeTop.R + (EdgeBottom.R - EdgeTop.R) * t),
+					(int) Math.Round (EdgeTop.G + (EdgeBottom.G - EdgeTop.G) * t),
+					(int) Math.Round (EdgeTop.B + (EdgeBottom.B - EdgeTop.B) * t));
+				e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (c), x, y, 1, 1);
+			}
+		}
+	}
+
 	internal class SystemMenuColorTable : ModernProfessionalColorTable
 	{
 		private static readonly Color Body = Color.FromArgb (249, 249, 249);
@@ -159,6 +198,11 @@ namespace System.Windows.Forms
 
 		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own
 		/// lighter colours rather than the ones it gives a strip menu.</summary>
+		public override ToolStripRenderer CreateToolStripRenderer ()
+		{
+			return new ModernToolStripRenderer (ColorTable);
+		}
+
 		public override ToolStripRenderer CreateSystemMenuRenderer ()
 		{
 			return new ToolStripProfessionalRenderer (system_menu_color_table);
@@ -171,9 +215,54 @@ namespace System.Windows.Forms
 		// Measured off Windows: a text box or a list is outlined #838383, a combo box the lighter
 		// #BCBCBC. One colour for all of them was wrong in both directions at once.
 		private static readonly Color ComboBorder = Color.FromArgb (188, 188, 188);
+		// A combo box you can only PICK from is a button in Windows 11, and is drawn like one: a
+		// #FDFDFD face, #D2D2D2 down the sides and top, and the darker #BCBCBC along the bottom --
+		// the same three the push buttons above it use. Measured against a live stock window, where
+		// ours drew a white face inside a flat #BCBCBC ring. An EDITABLE one is a text field instead
+		// and keeps its white face, which is why only the list style is treated this way.
+		private static readonly Color ComboListFrame = Color.FromArgb (210, 210, 210);
+		// A FIELD you can type into -- an editable combo box, a date picker -- is framed in a much
+		// darker grey than either of those: #8D8D8D, even all the way round, with no lighter sides and
+		// no underline. Measured on all four edges of a stock editable combo (where ours drew the
+		// #BCBCBC ring it gave every combo box) and of a stock date picker (where ours drew the
+		// #838383 hairline this theme flattens a sunken bevel to, ten shades too dark).
+		private static readonly Color EditFieldFrame = Color.FromArgb (141, 141, 141);
+
+		/// <summary>Disabled text is ONE FLAT GREY PASS in Windows 11, not the classic emboss.
+		/// <para>The base draws it twice -- a light copy offset by (1,1) and the real one on top --
+		/// which is how a 1995 button looked. Measured against a live stock window, that came out a
+		/// quarter heavier than Windows': our darkest pixel on a disabled button's caption was 132
+		/// where stock's is 160, and the region carried 1.26 times stock's ink. #A0A0A0, once.</para>
+		/// </summary>
+		protected override void DrawStringDisabled20 (Graphics g, string s, Font font,
+							      Rectangle layoutRectangle, Color color,
+							      TextFormatFlags flags, bool useDrawString)
+		{
+			TextRenderer.DrawTextInternal (g, s, font, layoutRectangle, TextDisabled, flags, useDrawString);
+		}
+
+		private static readonly Color TextDisabled = Color.FromArgb (160, 160, 160);
+
+		/// <summary>A date picker is a FIELD, and Windows frames it exactly as it frames an editable
+		/// combo box: one even #8D8D8D ring. The base draws it through CPDrawBorder3D, which this
+		/// theme flattens a sunken bevel to a #838383 hairline -- ten shades too dark, on all four
+		/// edges. Measured against a live stock picker.</summary>
+		protected override void DateTimePickerDrawBorder (DateTimePicker dateTimePicker, Graphics g,
+								  Rectangle clippingArea)
+		{
+			Rectangle frame = dateTimePicker.ClientRectangle;
+			frame.Width -= 1;
+			frame.Height -= 1;
+			if (frame.Width <= 0 || frame.Height <= 0)
+				return;
+			DrawRoundedOutline (g, frame,
+					    dateTimePicker.Enabled ? EditFieldFrame : ButtonBorderDisabled);
+		}
 		private static readonly Color InputBorder = Color.FromArgb (131, 131, 131);
 		private static readonly Color RaisedBorder = Color.FromArgb (173, 173, 173);
-		private static readonly Color EtchedBorder = Color.FromArgb (223, 223, 223);
+		// #DCDCDC. Measured on a live stock group box, all four of whose edges read 220 where ours
+		// read 223 -- a shade too light over the ~690 pixels of frame a group box draws.
+		private static readonly Color EtchedBorder = Color.FromArgb (220, 220, 220);
 
 		// Measured off a stock combo box with its list down: the field carries a pale #CCE4F7 with
 		// the accent round it, while the list below highlights its selected row in the full #0078D7.
@@ -207,8 +296,18 @@ namespace System.Windows.Forms
 					FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.NoWrap,
 					LineAlignment = StringAlignment.Center,
 				};
+				// DrawString leaves a margin of its own inside the rectangle it is given, and the
+				// frame's inset is already inside that margin: Windows starts this caption on the same
+				// column as the edit control of the editable combo box beside it, and drawing into the
+				// inset rectangle put ours two pixels right of both. The BACKGROUND keeps the rectangle
+				// the frame gave it.
+				Rectangle caption = e.Bounds;
+				// ONE, not two. The editable combo box beside this one draws its caption through its own
+				// edit control and lands on Windows' exact column; measured against that, two pixels put
+				// this one a column LEFT of stock's.
+				if (inField) caption.X -= 1;
 				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
-						       ResPool.GetSolidBrush (fore), e.Bounds, format);
+						       ResPool.GetSolidBrush (fore), caption, format);
 				format.Dispose ();
 			}
 		}
@@ -225,8 +324,14 @@ namespace System.Windows.Forms
 		{
 			if (!comboBox.Enabled)
 				return ColorControl;
-			return comboBox.DroppedDown || comboBox.PointerOver
-				? ComboFieldOpenFace : comboBox.BackColor;
+			if (comboBox.DroppedDown || comboBox.PointerOver)
+				return ComboFieldOpenFace;
+			// A combo box you can only PICK from is a BUTTON in Windows 11, face and all: #FDFDFD,
+			// not the white its BackColor reports. An EDITABLE one is a text field and keeps the
+			// white. Measured against a live stock window, where ours drew both of them white.
+			if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList)
+				return ButtonFaceNormal;
+			return comboBox.BackColor;
 		}
 
 		public override void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style)
@@ -254,7 +359,12 @@ namespace System.Windows.Forms
 				Rectangle border = comboBox.TextArea;
 				border.Width -= 1;
 				border.Height -= 1;
-				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover : ComboBorder);
+				bool list = comboBox.DropDownStyle == ComboBoxStyle.DropDownList;
+				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover
+								     : list ? ComboListFrame : EditFieldFrame);
+				if (list && !comboBox.Focused && border.Width > 2)
+					g.DrawLine (ResPool.GetPen (ComboBorder), border.X + 1, border.Bottom,
+						    border.Right - 1, border.Bottom);
 			}
 		}
 
@@ -272,13 +382,23 @@ namespace System.Windows.Forms
 		// #E1E1E1 was the XP-era face and made every button look pressed beside the real thing --
 		// and the accent is #005FB8, not the #0078D7 of a decade ago.
 		private static readonly Color ButtonFaceNormal = Color.FromArgb (253, 253, 253);
-		private static readonly Color ButtonBorderNormal = Color.FromArgb (209, 209, 209);
+		private static readonly Color ButtonBorderNormal = Color.FromArgb (208, 208, 208);
 		private static readonly Color ButtonFaceHover = Color.FromArgb (224, 238, 249);
 		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 95, 184);
+
+		/// <summary>The ring around the button that has the focus. Measured off a stock one: the
+		/// accent proper (#0078D4), a shade lighter than the #005FB8 the glyphs are drawn in.
+		/// </summary>
+		private static readonly Color ButtonBorderFocus = Color.FromArgb (0, 120, 212);
 		private static readonly Color ButtonFacePressed = Color.FromArgb (204, 228, 247);
 		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 76, 148);
 		private static readonly Color ButtonFaceDisabled = Color.FromArgb (249, 249, 249);
 		private static readonly Color ButtonBorderDisabled = Color.FromArgb (205, 205, 205);
+		// A disabled PUSH BUTTON's frame alone: #E9E9E9, measured on a live stock window, where ours
+		// read 205 -- dark enough that the frame carried 1.7 times Windows' ink round that button.
+		// Only the push button: giving the same lightening to the disabled radio and check box, which
+		// share ButtonBorderDisabled, cost the group box 3k of what the button gained 19k.
+		private static readonly Color ButtonFrameDisabled = Color.FromArgb (233, 233, 233);
 		// An unchecked box is not white: Windows fills it #F3F3F3 and outlines it #626262, both
 		// measured off its own rendering. White with a pale border read as the greyer of the two
 		// even though it was the lighter one.
@@ -287,54 +407,27 @@ namespace System.Windows.Forms
 
 		private const int ButtonCornerRadius = 3;
 
-		/// <summary>Paint a rounded rectangle without a GraphicsPath. The recorder flattens a path
-		/// into unjoined line segments, which at these radii turns the corners inside out -- they
-		/// came out cut on one side and bulging on the other. Deciding per pixel whether it is inside
-		/// the corner's quarter circle is exact, needs no antialiasing, and looks the same every
-		/// time.</summary>
-		/// <param name="surround">What is behind the control, painted back over the corners the
-		/// rounding cuts away.</param>
-		private void PaintRoundedRect (Graphics g, Rectangle r, int radius, Color face, Color border,
-					       Color surround)
+		/// <summary>Paint a rounded rectangle: the border is the ring left between the shape and the
+		/// same shape a pixel in, so the two fills together are the whole of it.
+		/// <para>Nothing is painted outside the shape, which is the point. What this did instead was
+		/// fill a square and then paint the four corners back in a colour the caller passed as "what
+		/// is behind" -- a guess, and wrong wherever the control does not stand on a plain stretch of
+		/// that colour, where it showed as four pale corners.</para></summary>
+		private void PaintRoundedRect (Graphics g, Rectangle r, int radius, Color face, Color border)
 		{
 			if (r.Width <= 1 || r.Height <= 1)
 				return;
-			if (radius < 1 || r.Width <= radius * 2 || r.Height <= radius * 2) {
-				g.FillRectangle (ResPool.GetSolidBrush (face), r);
-				g.DrawRectangle (ResPool.GetPen (border), r);
-				return;
-			}
 
+			// r is a DrawRectangle rectangle -- its width is the span between the outermost pixel
+			// centres -- so the shape it stands for is one pixel wider and taller.
+			float w = r.Width + 1, h = r.Height + 1;
 			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.None;
-			g.FillRectangle (ResPool.GetSolidBrush (face), r);
-
-			// The straight runs, each stopping where its corner begins.
-			Pen pen = ResPool.GetPen (border);
-			g.DrawLine (pen, r.X + radius, r.Y, r.Right - radius, r.Y);
-			g.DrawLine (pen, r.X + radius, r.Bottom, r.Right - radius, r.Bottom);
-			g.DrawLine (pen, r.X, r.Y + radius, r.X, r.Bottom - radius);
-			g.DrawLine (pen, r.Right, r.Y + radius, r.Right, r.Bottom - radius);
-
-			// The four corners, a pixel at a time: outside the quarter circle goes back to the
-			// surround, on it takes the border colour, inside keeps the face.
-			Brush outside = ResPool.GetSolidBrush (surround);
-			Brush edge = ResPool.GetSolidBrush (border);
-			float limit = radius - 0.5f;
-			for (int dy = 0; dy < radius; dy++) {
-				for (int dx = 0; dx < radius; dx++) {
-					float ox = limit - dx, oy = limit - dy;
-					double dist = Math.Sqrt (ox * ox + oy * oy);
-					Brush use = dist > limit + 0.5 ? outside
-						  : dist > limit - 0.5 ? edge : null;
-					if (use == null)
-						continue;
-					g.FillRectangle (use, r.X + dx, r.Y + dy, 1, 1);
-					g.FillRectangle (use, r.Right - dx, r.Y + dy, 1, 1);
-					g.FillRectangle (use, r.X + dx, r.Bottom - dy, 1, 1);
-					g.FillRectangle (use, r.Right - dx, r.Bottom - dy, 1, 1);
-				}
-			}
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			using (GraphicsPath shape = RoundedGlyph (r.X, r.Y, w, h, radius))
+				g.FillPath (ResPool.GetSolidBrush (border), shape);
+			if (face != border)
+				using (GraphicsPath inner = RoundedGlyph (r.X + 1, r.Y + 1, w - 2, h - 2, radius - 1))
+					g.FillPath (ResPool.GetSolidBrush (face), inner);
 			g.SmoothingMode = old;
 		}
 
@@ -356,7 +449,7 @@ namespace System.Windows.Forms
 
 			Color face, border;
 			if (!button.Enabled) {
-				face = ButtonFaceDisabled; border = ButtonBorderDisabled;
+				face = ButtonFaceDisabled; border = ButtonFrameDisabled;
 			} else if (button.Pressed) {
 				face = ButtonFacePressed; border = ButtonBorderPressed;
 			} else if (button.Entered) {
@@ -364,7 +457,7 @@ namespace System.Windows.Forms
 			} else {
 				face = ButtonFaceNormal;
 				// The default button, and a focused one, are outlined in the accent colour.
-				border = button.IsDefault || button.Focused ? ButtonBorderHover : ButtonBorderNormal;
+				border = button.IsDefault || button.Focused ? ButtonBorderFocus : ButtonBorderNormal;
 			}
 
 			// Windows insets the button's frame by a pixel all round rather than painting it hard
@@ -375,8 +468,16 @@ namespace System.Windows.Forms
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 
-			Color behind = button.Parent != null ? button.Parent.BackColor : ColorControl;
-			PaintRoundedRect (dc, r, ButtonCornerRadius, face, border, behind);
+			PaintRoundedRect (dc, r, ButtonCornerRadius, face, border);
+
+			// The dotted rectangle a focused button carries, two pixels inside its frame -- Windows
+			// draws one and this did not, so the only sign that a button had the focus was the colour
+			// of its outline.
+			if (button.Focused && button.ShowFocusCues) {
+				Rectangle focus = Rectangle.Inflate (r, -2, -2);
+				if (focus.Width > 0 && focus.Height > 0)
+					CPDrawFocusRectangle (dc, focus, button.ForeColor, face);
+			}
 		}
 
 		public override void DrawButtonBackground (Graphics g, Button button, Rectangle clipArea)
@@ -412,55 +513,32 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
-		/// <summary>Round a filled glyph's corners with partial coverage, so the curve reads as a
-		/// curve. Clearing whole corner pixels was the previous attempt and it showed: four hard
-		/// light squares where Windows has a smooth arc. A pixel's colour is the fill and the
-		/// surround mixed by how much of it falls inside the corner's quarter circle -- which is what
-		/// antialiasing is, done where we can control it rather than left to the renderer.</summary>
-		/// <summary>Rounds the corners of a box that has already been filled and outlined.
-		/// <para>Only two kinds of pixel are touched: one that falls outside the rounded rectangle,
-		/// which becomes the surround, and one the arc passes through, which becomes the border
-		/// colour blended by how much of it the arc covers. Pixels inside are left exactly as the
-		/// fill left them.</para>
-		/// <para>Painting a blend of the border and the surround across the whole corner instead --
-		/// which is what this did -- overwrites the fill near the corners with a pale wash. On an
-		/// unchecked box the fill is nearly white and it passed unnoticed; on a checked one the fill
-		/// is the accent colour, and the corners came out with the colour missing.</para></summary>
-		private void RoundGlyphCorners (Graphics g, Rectangle box, Color border, Color surround, int radius)
+		/// <summary>How far a check box's corner is rounded. Measured against a stock box by how far
+		/// its top row is inset from the box's own edge: a radius of three rounded a pixel more than
+		/// Windows does.</summary>
+		private const float Radius = 2.5f;
+
+		/// <summary>A rounded rectangle in float coordinates, built from four arcs -- the shape a
+		/// modern check box, and anything else with softened corners, is drawn as.</summary>
+		private static GraphicsPath RoundedGlyph (float x, float y, float w, float h, float radius)
 		{
-			if (radius < 1 || box.Width < radius * 2 || box.Height < radius * 2)
-				return;
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.None;
-			for (int dy = 0; dy < radius; dy++) {
-				for (int dx = 0; dx < radius; dx++) {
-					// Distance from the arc's centre to this pixel's centre.
-					double ox = radius - (dx + 0.5), oy = radius - (dy + 0.5);
-					double dist = Math.Sqrt (ox * ox + oy * oy);
-					Color paint;
-					if (radius - dist >= 0.5)
-						continue;                               // well inside: the fill already has it
-					if (dist > radius) {
-						paint = surround;                       // its centre falls outside the arc
-					} else {
-						double t = 0.5 + (radius - dist);       // how much of the arc covers it
-						paint = Color.FromArgb (
-							(int) Math.Round (surround.R + (border.R - surround.R) * t),
-							(int) Math.Round (surround.G + (border.G - surround.G) * t),
-							(int) Math.Round (surround.B + (border.B - surround.B) * t));
-					}
-					Brush brush = ResPool.GetSolidBrush (paint);
-					g.FillRectangle (brush, box.X + dx, box.Y + dy, 1, 1);
-					g.FillRectangle (brush, box.Right - dx, box.Y + dy, 1, 1);
-					g.FillRectangle (brush, box.X + dx, box.Bottom - dy, 1, 1);
-					g.FillRectangle (brush, box.Right - dx, box.Bottom - dy, 1, 1);
-				}
+			radius = Math.Max (0f, Math.Min (radius, Math.Min (w, h) / 2f));
+			float d = radius * 2f;
+			var path = new GraphicsPath ();
+			if (d <= 0f) {
+				path.AddRectangle (new RectangleF (x, y, w, h));
+				return path;
 			}
-			g.SmoothingMode = old;
+			path.AddArc (x, y, d, d, 180f, 90f);
+			path.AddArc (x + w - d, y, d, d, 270f, 90f);
+			path.AddArc (x + w - d, y + h - d, d, d, 0f, 90f);
+			path.AddArc (x, y + h - d, d, d, 90f, 90f);
+			path.CloseFigure ();
+			return path;
 		}
 
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot, Color surround)
+					      bool enabled, bool hot)
 		{
 			Color fill, border;
 			if (!enabled) {
@@ -471,23 +549,41 @@ namespace System.Windows.Forms
 				fill = GlyphFace; border = hot ? ButtonBorderHover : GlyphBorder;
 			}
 
-			// Explicitly unsmoothed: a one-pixel outline drawn with antialiasing on spreads half its
-			// ink onto the pixel outside the box, which showed up as a pale halo around the corners.
+			// A rounded rectangle, filled and outlined as one shape with antialiasing on, so a pixel
+			// the curve only partly covers is BLENDED WITH WHATEVER IS BEHIND IT. The previous
+			// version filled a square and then painted the four corners in a colour the caller
+			// passed as "the surround" -- which is a guess, and wrong wherever the glyph does not
+			// stand on a plain stretch of that colour: the primitive passed the window colour, so a
+			// box on any other background showed four pale corners. A shape that simply is not
+			// painted outside its own outline cannot get that wrong.
 			SmoothingMode boxMode = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.None;
-			g.FillRectangle (ResPool.GetSolidBrush (fill), box);
-			g.DrawRectangle (ResPool.GetPen (border), box);
-			// The BORDER colour, not the fill: a corner pixel sits on the outline, and blending the
-			// fill there erased the outline where it curved -- on a checked box the two are the same
-			// colour so it went unnoticed, on an unchecked one the box came out with open corners.
-			// Three, measured off a stock box: its corner ramps over three pixels, and at two the
-			// curve is too tight to read as one.
-			RoundGlyphCorners (g, box, border, surround, 3);
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			// box.Width is the span between the outermost pixel CENTRES, so the shape it stands for is
+			// one pixel wider. Two FILLS rather than a fill and a stroke: the outline is the ring left
+			// between the shape and the same shape a pixel in, which is exact geometry, where stroking
+			// a path put a quarter of a pixel of ink on the row BELOW the box -- a stroke is widened
+			// about its own line, and that line is only as well placed as the widening is.
+			float bw = box.Width + 1, bh = box.Height + 1;
+			using (GraphicsPath shape = RoundedGlyph (box.X, box.Y, bw, bh, Radius))
+				g.FillPath (ResPool.GetSolidBrush (border), shape);
+			if (fill != border)
+				using (GraphicsPath inner = RoundedGlyph (box.X + 1, box.Y + 1, bw - 2, bh - 2, Radius - 1))
+					g.FillPath (ResPool.GetSolidBrush (fill), inner);
 			g.SmoothingMode = boxMode;
 
 			if (mixed) {
-				var inner = Rectangle.Inflate (box, -3, -3);
-				g.FillRectangle (ResPool.GetSolidBrush (enabled ? ColorWindow : ColorControlDark), inner);
+				// A DASH, not the classic filled square. Windows marks the indeterminate state with a
+				// single row of white across the middle of the box, a little over half its width --
+				// measured off a stock check box, where that row sits at three quarters coverage and
+				// the two pixels either end of it are barely touched. A filled square is what the
+				// classic theme draws and it reads as a different control altogether.
+				SmoothingMode dashMode = g.SmoothingMode;
+				g.SmoothingMode = SmoothingMode.AntiAlias;
+				using (var dash = new Pen (enabled ? ColorWindow : ColorControlDark, 0.7f)) {
+					float cy = box.Y + box.Height / 2f;
+					g.DrawLine (dash, box.X + 3f, cy, box.X + box.Width - 3f, cy);
+				}
+				g.SmoothingMode = dashMode;
 				return;
 			}
 			if (!ticked)
@@ -500,15 +596,30 @@ namespace System.Windows.Forms
 			// as a different mark rather than the same one drawn a little off.
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 1.1f)) {
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 0.44f)) {
 				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
 				g.DrawLines (pen, new PointF [] {
-					new PointF (x + w * 0.22f, y + h * 0.47f),
-					new PointF (x + w * 0.40f, y + h * 0.66f),
-					new PointF (x + w * 0.76f, y + h * 0.28f),
+					new PointF (x + w * 0.30f, y + h * 0.56f),
+					new PointF (x + w * 0.48f, y + h * 0.75f),
+					new PointF (x + w * 0.84f, y + h * 0.37f),
 				});
 			}
 			g.SmoothingMode = old;
+		}
+
+		/// <summary>Where the caption goes beside the glyph. The classic rule is kept and the result
+		/// nudged: measured against stock, our caption's ink starts a pixel to the right of Windows'
+		/// and a pixel above it -- and a radio button's, which the classic rule spaces further from
+		/// its glyph, a pixel further again.</summary>
+		public override void CalculateCheckBoxTextAndImageLayout (ButtonBase button, Point p,
+				        out Rectangle glyphArea, out Rectangle textRectangle, out Rectangle imageRectangle)
+		{
+			base.CalculateCheckBoxTextAndImageLayout (button, p, out glyphArea, out textRectangle,
+					          out imageRectangle);
+			if (button is RadioButton)
+				textRectangle.Offset (1, 2);
+			else if (button is CheckBox)
+				textRectangle.Offset (2, 1);
 		}
 
 		public override void DrawCheckBoxGlyph (Graphics g, CheckBox cb, Rectangle glyphArea)
@@ -519,14 +630,18 @@ namespace System.Windows.Forms
 			}
 
 			Rectangle box = CentredGlyph (glyphArea);
+			// One row higher than centring in the control puts it: Windows lines a check box up with
+			// the line of text beside it, which sits a pixel above the middle of the control. The
+			// radio button, which comes through the same helper, already lands where Windows draws it,
+			// so this belongs to the check box and not to the centring.
+			box.Offset (0, -1);
 			box.Width = Math.Max (box.Width - 1, 0);
 			box.Height = Math.Max (box.Height - 1, 0);
 			if (box.Width <= 0 || box.Height <= 0)
 				return;
 			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
 			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
-					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered,
-					 cb.Parent != null ? cb.Parent.BackColor : ColorControl);
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered);
 		}
 
 		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
@@ -561,8 +676,12 @@ namespace System.Windows.Forms
 			// colours being swapped.
 			Color face = !rb.Enabled ? ColorControl
 				   : rb.Checked ? border : ColorWindow;
-			g.FillEllipse (ResPool.GetSolidBrush (face), circle);
-			g.DrawEllipse (ResPool.GetPen (border), circle);
+			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
+			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
+			// across -- which is what made this one look cut off against the control's left edge.
+			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
+			if (face != border)
+				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
 
 			if (rb.Checked) {
 				// Five pixels across in a thirteen pixel disc, measured off a stock radio button.
@@ -590,6 +709,46 @@ namespace System.Windows.Forms
 				? ComboFieldOpenFace : comboBox.BackColor;
 		}
 
+		// ---- tree view ----------------------------------------------------------------
+
+		/// <summary>The button that opens and shuts a branch, measured off a stock tree: a nine-pixel
+		/// grey box with its corners softened, a five-pixel mark inside it in a blue-grey, sitting
+		/// flush against the right of the indent cell and one pixel below the row's centre.
+		/// <para>The classic theme centres a black-on-white box in the cell instead and is left alone:
+		/// an application that asks for the classic look asks for that one.</para></summary>
+		public override void TreeViewDrawNodePlusMinus (TreeView treeView, TreeNode node, Graphics dc,
+					        int x, int middle)
+		{
+			const int Side = 9;
+			// x arrives five pixels into the indent cell (see TreeView.DrawTreeNode), so the cell's
+			// right edge is that far back plus the indent.
+			int right = x - 5 + treeView.Indent;
+			var box = new Rectangle (right - Side - 2, middle - 3, Side - 1, Side - 1);
+
+			SmoothingMode old = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.None;
+			dc.FillRectangle (ResPool.GetSolidBrush (treeView.BackColor), box.X, box.Y,
+					     box.Width + 1, box.Height + 1);
+			dc.DrawRectangle (ResPool.GetPen (ExpanderFrame), box);
+			// The four corners come back to a paler grey, which is all the rounding there is room for.
+			Brush corner = ResPool.GetSolidBrush (ExpanderCorner);
+			dc.FillRectangle (corner, box.X, box.Y, 1, 1);
+			dc.FillRectangle (corner, box.Right, box.Y, 1, 1);
+			dc.FillRectangle (corner, box.X, box.Bottom, 1, 1);
+			dc.FillRectangle (corner, box.Right, box.Bottom, 1, 1);
+
+			Pen mark = ResPool.GetPen (ExpanderMark);
+			int cx = box.X + box.Width / 2, cy = box.Y + box.Height / 2;
+			dc.DrawLine (mark, cx - 2, cy, cx + 2, cy);
+			if (!node.IsExpanded)
+				dc.DrawLine (mark, cx, cy - 2, cx, cy + 2);
+			dc.SmoothingMode = old;
+		}
+
+		private static readonly Color ExpanderFrame = Color.FromArgb (145, 145, 145);
+		private static readonly Color ExpanderCorner = Color.FromArgb (186, 187, 188);
+		private static readonly Color ExpanderMark = Color.FromArgb (75, 99, 167);
+
 		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much
 		/// older shell.</summary>
 		public override void DrawPropertyGridExpander (Graphics dc, Rectangle bounds, bool expanded, bool category, Color foreColor)
@@ -597,10 +756,17 @@ namespace System.Windows.Forms
 			// Same 8x8 cell the boxed glyph occupied, so nothing around it has to move.
 			int cx = bounds.X + bounds.Width / 2;
 			int cy = bounds.Y + bounds.Height / 2;
-			Point [] chevron = expanded
-				? new Point [] { new Point (cx - 3, cy - 1), new Point (cx + 3, cy - 1), new Point (cx, cy + 3) }
-				: new Point [] { new Point (cx - 1, cy - 3), new Point (cx + 3, cy),     new Point (cx - 1, cy + 3) };
-			dc.FillPolygon (ResPool.GetSolidBrush (foreColor), chevron);
+			// A STROKE, not a filled triangle: Windows draws a two-pixel chevron nine wide and six
+			// tall, and a solid arrowhead in its place reads as a different mark altogether.
+			SmoothingMode old_mode = dc.SmoothingMode;
+			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			using (var pen = new Pen (foreColor, 1.6f)) {
+				PointF [] chevron = expanded
+					? new PointF [] { new PointF (cx - 4, cy - 1.5f), new PointF (cx, cy + 2.5f), new PointF (cx + 4, cy - 1.5f) }
+					: new PointF [] { new PointF (cx - 1.5f, cy - 4), new PointF (cx + 2.5f, cy), new PointF (cx - 1.5f, cy + 4) };
+				dc.DrawLines (pen, chevron);
+			}
+			dc.SmoothingMode = old_mode;
 		}
 
 		public override void CPDrawComboButton (Graphics graphics, Rectangle rectangle, ButtonState state)
@@ -624,9 +790,16 @@ namespace System.Windows.Forms
 		{
 			// A thin chevron. Windows stopped drawing the filled triangle a long time ago, and it
 			// is the single most recognisable thing about a modern combo box.
-			int cx = rectangle.X + rectangle.Width / 2;
-			int cy = rectangle.Y + rectangle.Height / 2;
-			int reach = Math.Max (2, Math.Min (4, rectangle.Height / 5));
+			// Centre rounded UP. Where the button has an odd number of pixels to give, truncating puts
+			// the chevron a pixel up and left of the one Windows draws.
+			// And one column further right again, which the round-up alone cannot reach on an EVEN
+			// width: measured on both combo boxes of a live stock window, whose chevron spans columns
+			// 18..25 where ours spanned 17..24 -- the same eight pixels, one column over.
+			int cx = rectangle.X + (rectangle.Width + 1) / 2 + 1;
+			int cy = rectangle.Y + (rectangle.Height + 1) / 2;
+			// A quarter of the button, not a fifth: measured against a stock combo box, whose chevron
+			// is eight pixels across and four deep where a fifth gave six and three.
+			int reach = Math.Max (2, Math.Min (4, rectangle.Height / 4));
 			SmoothingMode old = graphics.SmoothingMode;
 			graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			using (var pen = new Pen (color, 1.3f))
@@ -834,6 +1007,11 @@ namespace System.Windows.Forms
 					    : control != null && control.Focused ? ButtonBorderHover
 					    : InputUnderline;
 				DrawRoundedOutline (dc, frame, sides);
+				// And a second, paler ring one pixel inside it. On a white field the two are a shade
+				// apart and nothing shows; on a read-only field, whose face is the control colour, the
+				// missing ring left a visible gap between the frame and the content that Windows fills.
+				if (frame.Width > 2 && frame.Height > 2)
+					DrawRoundedOutline (dc, Rectangle.Inflate (frame, -1, -1), InputFrameInner);
 				dc.DrawLine (ResPool.GetPen (under), frame.X + 1, frame.Bottom, frame.Right - 1, frame.Bottom);
 				return;
 			}
@@ -845,9 +1023,10 @@ namespace System.Windows.Forms
 			if (IsPopupList (control))
 				edge = PopupBorder;
 			else if (!sunken)
-				// A plain WS_BORDER -- what a panel with FixedSingle asks for -- is black in Windows,
-				// not the light grey a themed frame gets.
-				edge = ColorWindowText;
+				// A plain WS_BORDER -- what a panel with FixedSingle asks for -- is the window frame
+				// colour, not the light grey a themed frame gets and not black either: Windows moved
+				// COLOR_WINDOWFRAME off black years ago and a stock panel measures #646464.
+				edge = ColorWindowFrame;
 			else if (control != null && !control.Enabled)
 				edge = ButtonBorderDisabled;
 			else
@@ -899,12 +1078,27 @@ namespace System.Windows.Forms
 				    : hot || pushed ? ButtonBorderHover
 				    : Color.FromArgb (26, 26, 26);
 			Brush brush = ResPool.GetSolidBrush (glyph);
-			int cx = box.X + box.Width / 2 + 1;
-			int cy = box.Y + box.Height / 2;
-			for (int i = 0; i < 3; i++) {
-				int half = top ? i : 2 - i;
-				g.FillRectangle (brush, cx - half, cy - 1 + i, half * 2 + 1, 1);
-			}
+			// Centred on the box, and each arrow a row nearer the seam between the two buttons than the
+			// middle of its own: measured off a stock spin box, where the pair sits two rows closer
+			// together than centring each in its own button puts them, and a column left.
+			int cx = box.X + box.Width / 2;
+			int cy = box.Y + box.Height / 2 + (top ? 1 : -1);
+
+			// A real TRIANGLE, antialiased, rather than three solid rows. The slanted edges carry part
+			// coverage in Windows -- six percent at the base corners, half way up the sides -- and rows
+			// cannot express that. The geometry is read off a stock spin box: the base edge sits two
+			// rows past the centre, the apex three point eight rows back from it, and the base is six
+			// pixels across.
+			float ax = cx + 0.5f;
+			float baseY = top ? cy + 2f : cy - 1f;
+			float apexY = top ? cy - 1.8f : cy + 2.8f;
+			const float HalfBase = 3.0f;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			g.FillPolygon (brush, new PointF [] {
+				new PointF (ax, apexY),
+				new PointF (ax - HalfBase, baseY),
+				new PointF (ax + HalfBase, baseY),
+			});
 			g.SmoothingMode = old;
 		}
 
@@ -931,13 +1125,19 @@ namespace System.Windows.Forms
 		}
 
 
-		/// <summary>The room a tab leaves round its label. One pixel more above and below than the
-		/// classic metric, which is what makes the row of tabs the height Windows draws it: the
-		/// tabs stood two pixels short, and since the row's height is what the page is laid out
-		/// below, padding it here moves the page down with it rather than leaving the two to
-		/// disagree.</summary>
+		/// <summary>The room a tab leaves round its label: three above and below, which is what
+		/// Windows uses. This was once four, to make up for a row that came out two pixels short --
+		/// the shortfall was really TabControl measuring the caption padded and then taking the
+		/// selected tab's extra height off every other tab, and both are fixed there now.</summary>
+		/// <summary>215 grey, measured: Windows rules a status strip off from the form above it
+		/// rather than highlighting it, and the white line the classic theme draws was the whole
+		/// width of the window in the wrong colour.</summary>
+		public override Color ListViewHeaderStripColor => ColorWindow;
+
+		public override Color StatusStripTopEdgeColor => Color.FromArgb (215, 215, 215);
+
 		public override Point TabControlDefaultPadding {
-			get { return new Point (6, 4); }
+			get { return new Point (6, 3); }
 		}
 
 		public override void DrawTabControl (Graphics dc, Rectangle area, TabControl tab)
@@ -947,6 +1147,18 @@ namespace System.Windows.Forms
 				return;
 			}
 			DrawModernTabControl (dc, area, tab);
+		}
+
+		/// <summary>The page takes the same face as the body it sits in, exactly as it does on
+		/// Windows -- and only for the tab controls this theme actually draws that way, so a
+		/// bottom-aligned or button-appearance one keeps the classic control face it is drawn on.
+		/// </summary>
+		public override Color TabPageBackColor (TabPage page)
+		{
+			TabControl tab = page?.Parent as TabControl;
+			if (tab == null || tab.Alignment != TabAlignment.Top || tab.Appearance != TabAppearance.Normal)
+				return Color.Empty;
+			return TabPaneFace;
 		}
 
 		// ---- data grid -------------------------------------------------------------
@@ -1003,16 +1215,28 @@ namespace System.Windows.Forms
 			}
 			g.FillRectangle (ResPool.GetSolidBrush (marked ? HeaderMarkedFace : ColorWindow), bounds);
 			Pen pen = ResPool.GetPen (grid.GridColor);
-			g.DrawLine (pen, bounds.Right - 1, bounds.Y, bounds.Right - 1, bounds.Bottom - 1);
-			g.DrawLine (pen, bounds.X, bounds.Bottom - 1, bounds.Right - 1, bounds.Bottom - 1);
+			// ON the boundary, not one inside it -- the same rule the body cells follow (see
+			// DataGridViewCell.PaintBorder), so a hundred-pixel column measures a hundred pixels from
+			// one line to the next in the header as well as below it.
+			g.DrawLine (pen, bounds.Right, bounds.Y, bounds.Right, bounds.Bottom - 1);
+			g.DrawLine (pen, bounds.X, bounds.Bottom - 1, bounds.Right, bounds.Bottom - 1);
 			// The grid is ruled on all four sides, so the headers along its top and down its left
 			// carry the outer lines too. Windows draws them, and against the control's own border they
 			// read as a two-pixel edge -- which is why leaving them out made ours look a pixel thin all
 			// the way round the first row and the first column.
-			if (cell is DataGridViewRowHeaderCell || cell is DataGridViewTopLeftHeaderCell)
-				g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bounds.Bottom - 1);
-			if (cell is DataGridViewColumnHeaderCell)
-				g.DrawLine (pen, bounds.X, bounds.Y, bounds.Right - 1, bounds.Y);
+			// Every header draws its own left edge, because the header to its right is filled after
+			// this one and paints over the line this one drew on their shared boundary.
+			g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bounds.Bottom - 1);
+			if (cell is DataGridViewColumnHeaderCell) {
+				g.DrawLine (pen, bounds.X, bounds.Y, bounds.Right, bounds.Y);
+				// A paler rule just inside the grid's own, along the top of the header and down the
+				// left of its first column. Windows finishes the header off with it; without it ours
+				// met the grid line with bare white.
+				Pen inner = ResPool.GetPen (HeaderInnerEdge);
+				g.DrawLine (inner, bounds.X, bounds.Y + 1, bounds.Right, bounds.Y + 1);
+				if (cell.ColumnIndex == 0)
+					g.DrawLine (inner, bounds.X + 1, bounds.Y + 1, bounds.X + 1, bounds.Bottom - 1);
+			}
 			return true;
 		}
 
@@ -1129,6 +1353,12 @@ namespace System.Windows.Forms
 		/// <summary>How far along the slider its point runs.</summary>
 		private const int PointerTip = 4;
 
+		/// <summary>NINETEEN rows, one down from where the layout puts it -- not the twenty-one hard
+		/// against it. Measured on a live stock track bar, whose slider inks rows 4..22 of the control
+		/// where ours inked 3..23: same centre, a row proud at each end.</summary>
+		private static Rectangle HorizontalThumb (Rectangle thumb_pos)
+			=> new Rectangle (thumb_pos.X, thumb_pos.Y + 1, 11, 19);
+
 		private Color ThumbColour (TrackBar bar)
 		{
 			return bar != null && !bar.Enabled ? ColorGrayText : ColorHighlight;
@@ -1138,7 +1368,7 @@ namespace System.Windows.Forms
 									   Brush br_thumb, Rectangle clippingArea,
 									   TrackBar trackBar)
 		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.Bottom,
+			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.Bottom,
 				     ThumbColour (trackBar), trackBar.BackColor);
 		}
 
@@ -1146,7 +1376,7 @@ namespace System.Windows.Forms
 									Brush br_thumb, Rectangle clippingArea,
 									TrackBar trackBar)
 		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.Top,
+			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.Top,
 				     ThumbColour (trackBar), trackBar.BackColor);
 		}
 
@@ -1154,7 +1384,7 @@ namespace System.Windows.Forms
 								     Brush br_thumb, Rectangle clippingArea,
 								     TrackBar trackBar)
 		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 11, 21), TrackBarTip.None,
+			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.None,
 				     ThumbColour (trackBar), trackBar.BackColor);
 		}
 
@@ -1200,6 +1430,16 @@ namespace System.Windows.Forms
 
 			public void Paint (float x1, float y1, float x2, float y2)
 			{
+				if (x1 == x2)
+				{
+					// A tick under a HORIZONTAL bar. SNAP IT TO A COLUMN: left on a fraction the
+					// recorder spreads a hairline over two columns -- ours read 200 and 236 side
+					// by side where Windows draws one solid 196. And two rows up, which is where
+					// a stock bar puts them: rows 388..390 of the client against our 390..392.
+					float x = (float) System.Math.Round (x1);
+					g.DrawLine (pen, x, y1 - 2f, x, y2 - 2f);
+					return;
+				}
 				g.DrawLine (pen, x1, y1, x2, y2);
 			}
 		}
@@ -1255,6 +1495,17 @@ namespace System.Windows.Forms
 			get { return 1; }
 		}
 
+		/// <summary>Past the last column Windows carries the header's own face to the edge of the list:
+		/// no separator, and no button. The classic theme draws a raised BUTTON there, which showed as
+		/// a grey block with a bevel in the top corner of every list in the window.</summary>
+		protected override void ListViewDrawUnusedHeaderBackground (ListView listView, Graphics g,
+									    Rectangle area, Rectangle clippingArea)
+		{
+			if (area.Width <= 0 || area.Height <= 0)
+				return;
+			g.FillRectangle (ResPool.GetSolidBrush (ColorWindow), area);
+		}
+
 		protected override void ListViewDrawColumnHeaderBackground (ListView listView, ColumnHeader columnHeader,
 									    Graphics g, Rectangle area, Rectangle clippingArea)
 		{
@@ -1284,8 +1535,7 @@ namespace System.Windows.Forms
 			if (box.Width <= 0 || box.Height <= 0)
 				return;
 			DrawModernCheck (dc, box, (state & ButtonState.Checked) != 0, false,
-					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0,
-					 ColorWindow);
+					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0);
 		}
 
 		// ---- month calendar ----------------------------------------------------------
@@ -1300,6 +1550,13 @@ namespace System.Windows.Forms
 		// The grey Windows fills a selected day with, measured off its own calendar.
 		private static readonly Color CalendarSelection = Color.FromArgb (217, 217, 217);
 
+		/// <summary>The "Today:" line is set in the calendar's own weight. The classic look puts it in
+		/// bold; Windows does not.
+		/// <para>It was briefly made bold here on the strength of a pixel measurement -- a stock
+		/// line's stems read as two pixels wide against our one. That reading was wrong: Windows
+		/// draws this text with ClearType, which spreads a stem over three subpixels, and measuring
+		/// the result in greyscale makes every stem look heavier than it is. Do not conclude "bold"
+		/// from a greyscale stem width again.</para></summary>
 		protected override Font MonthCalendarTodayFont (MonthCalendar mc) => mc.Font;
 
 		protected override Font MonthCalendarTitleFont (MonthCalendar mc) => mc.Font;
@@ -1369,7 +1626,9 @@ namespace System.Windows.Forms
 
 		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
 		{
-			return margin + 2 * cell.Width;
+			// Two columns in, less seven: measured against a stock calendar, whose marker starts a
+			// little before the third column rather than on it.
+			return margin + 2 * cell.Width - 7;
 		}
 
 		// Windows colours the day under the pointer rather than shading behind it: the number
@@ -1451,9 +1710,16 @@ namespace System.Windows.Forms
 
 			int cx = button.X + button.Width / 2;
 			int cy = button.Y + button.Height / 2;
-			// Four across and seven down, which is the glyph Windows draws. Ours was six by eleven:
-			// the same shape, half again as big.
-			int h = 3, w = 4;
+			// Four across and seven down, which is the glyph Windows draws -- and now actually four
+			// and seven. The points below said `h = 3, w = 4` and then built the triangle from
+			// `cx - w` to `cx + w / 2` and `cy - h` to `cy + h`, which is SIX across and SIX down:
+			// the comment described the intent and the arithmetic did something else. Measured on a
+			// live stock calendar, whose arrow inks 4 columns by 7 rows where ours inked 5 by 6.
+			// Half-pixel edges because seven rows about a centre is an odd span.
+			// Kept from the original: the apex four back from the centre, which put our LEFT edge on
+			// Windows' exact column. Only the flat edge and the depth were wrong -- it reached one
+			// column too far right and stopped one row short.
+			const float Apex = 3f, Flat = 1f, Top = 3f, Bottom = 4f, Mid = 0.5f;
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.AntiAlias;
 			// Blue under the pointer and while held, the way the heading beside it goes blue.
@@ -1461,9 +1727,9 @@ namespace System.Windows.Forms
 			Color ink = !mc.Enabled ? ColorGrayText
 				  : clicked || hovered ? ButtonBorderHover
 				  : ColorControlText;
-			Point [] arrow = is_previous
-				? new Point [] { new Point (cx + w / 2, cy - h), new Point (cx + w / 2, cy + h), new Point (cx - w, cy) }
-				: new Point [] { new Point (cx - w / 2, cy - h), new Point (cx - w / 2, cy + h), new Point (cx + w, cy) };
+			PointF [] arrow = is_previous
+				? new PointF [] { new PointF (cx + Flat, cy - Top), new PointF (cx + Flat, cy + Bottom), new PointF (cx - Apex, cy + Mid) }
+				: new PointF [] { new PointF (cx - Flat, cy - Top), new PointF (cx - Flat, cy + Bottom), new PointF (cx + Apex, cy + Mid) };
 			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
 			dc.SmoothingMode = old;
 		}
@@ -1488,11 +1754,11 @@ namespace System.Windows.Forms
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
-			// The same rectangle the selected-day fill occupies: this method is handed the cell less
-			// one pixel while the fill gets it inset by one on every side, so a frame drawn on the rect
-			// as given sat inside the fill and the grey showed past it on two edges.
-			var box = new Rectangle (rectangle.X + 1, rectangle.Y + 1,
-						   Math.Max (rectangle.Width - 1, 0), Math.Max (rectangle.Height - 1, 0));
+			// The ring IS the rectangle it is given -- both callers hand over the box Windows outlines.
+			// Insetting it here put the selected day's ring a pixel inside Windows' on the top and the
+			// left while the other two edges agreed.
+			var box = new Rectangle (rectangle.X, rectangle.Y,
+						   Math.Max (rectangle.Width, 0), Math.Max (rectangle.Height, 0));
 			if (box.Width <= 1 || box.Height <= 1)
 				return;
 
@@ -1570,6 +1836,9 @@ namespace System.Windows.Forms
 		/// <summary>How far the tab on show stands above its neighbours.</summary>
 		private const int TabRise = 2;
 		private static readonly Color HairLine = Color.FromArgb (217, 217, 217);
+		private static readonly Color HeaderSeparator = Color.FromArgb (229, 229, 229);
+		private static readonly Color HeaderInnerEdge = Color.FromArgb (241, 241, 241);
+		private static readonly Color InputFrameInner = Color.FromArgb (254, 254, 254);
 
 		private void DrawModernProgressBar (Graphics dc, ProgressBar ctrl)
 		{
@@ -1646,6 +1915,14 @@ namespace System.Windows.Forms
 			// and go. Fading the track out to the control's own colour left it white where a stock one
 			// is grey.
 			dc.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), client);
+			// A white rule along the LEADING edge -- the top of a horizontal bar, the left of a vertical
+			// one. Windows separates the channel from whatever it runs alongside with it; without it the
+			// track met the form in one flat grey.
+			Pen lead = ResPool.GetPen (ColorWindow);
+			if (bar.vert)
+				dc.DrawLine (lead, client.X, client.Y, client.X, client.Bottom - 1);
+			else
+				dc.DrawLine (lead, client.X, client.Y, client.Right - 1, client.Y);
 
 			// Nothing at all below a twentieth: the last few per cent of a fade are still a visible
 			// grey against the track, and left there they read as an arrow that never went away.
@@ -1816,22 +2093,11 @@ namespace System.Windows.Forms
 				break;
 			}
 
-			// Sampled rather than handed to FillPolygon: this recorder gives a filled path no
-			// antialiasing, and a small triangle drawn that way is all staircase.
-			Point a = arrow[0], b = arrow[1], c = arrow[2];
-			var box = new Rectangle (
-				Math.Min (a.X, Math.Min (b.X, c.X)) - 1, Math.Min (a.Y, Math.Min (b.Y, c.Y)) - 1,
-				Math.Max (a.X, Math.Max (b.X, c.X)) - Math.Min (a.X, Math.Min (b.X, c.X)) + 3,
-				Math.Max (a.Y, Math.Max (b.Y, c.Y)) - Math.Min (a.Y, Math.Min (b.Y, c.Y)) + 3);
-			FillAntialiased (dc, box, ink, ScrollTrack, (px, py) => {
-				// Inside when the point falls on the same side of all three edges.
-				double d1 = (px - b.X) * (a.Y - b.Y) - (a.X - b.X) * (py - b.Y);
-				double d2 = (px - c.X) * (b.Y - c.Y) - (b.X - c.X) * (py - c.Y);
-				double d3 = (px - a.X) * (c.Y - a.Y) - (c.X - a.X) * (py - a.Y);
-				bool negative = d1 < 0 || d2 < 0 || d3 < 0;
-				bool positive = d1 > 0 || d2 > 0 || d3 > 0;
-				return !(negative && positive);
-			});
+			// Plainly filled: a polygon with a sloped edge is rasterized with coverage antialiasing
+			// now, so the hand-rolled sampler this used to need is gone -- with it goes its one real
+			// fault, that it blended the edge against a background it had been TOLD about (the track)
+			// rather than the one actually under the arrow.
+			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
 		}
 
 		// Windows washes a column header with a pale tint of the accent under the pointer, and
@@ -1861,8 +2127,13 @@ namespace System.Windows.Forms
 			// Flat and white, separated by a hairline -- no raised bevel.
 			Color face = pressed ? TabItemFace : hot ? HeaderHotFace : ColorWindow;
 			g.FillRectangle (ResPool.GetSolidBrush (face), area);
-			Pen pen = ResPool.GetPen (HairLine);
-			g.DrawLine (pen, area.Right - 1, area.Y + 3, area.Right - 1, area.Bottom - 4);
+			// Lighter than the hairline the rest of this theme rules with: measured off a stock list,
+			// whose column separator comes out 229 on the white header where ours drew 217.
+			Pen pen = ResPool.GetPen (HeaderSeparator);
+			// The FULL height of the header. Stopping three pixels short at each end is the ListView
+			// convention this was written from; Windows rules the column separator from the top of the
+			// header to the bottom.
+			g.DrawLine (pen, area.Right - 1, area.Y, area.Right - 1, area.Bottom - 1);
 			if (bottomRule)
 				g.DrawLine (pen, area.X, area.Bottom - 1, area.Right - 1, area.Bottom - 1);
 		}
@@ -1946,8 +2217,20 @@ namespace System.Windows.Forms
 					// In the tab's own rectangle rather than the face just drawn, so the label sits at the
 					// same height whether or not its tab is the one standing proud.
 					Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
+					// Centred in the caption's OWN box -- its extent plus the tab's padding either side --
+					// and not in the whole tab. Where a tab has been widened to the minimum Windows puts
+					// under it, the extra room goes on the RIGHT: a short caption like "Text" sits six
+					// pixels from the tab's left edge, where centring it in the widened tab put it thirteen.
+					int capBox = TextRenderer.MeasureText (page.Text, tab.Font,
+					                                       new Size (int.MaxValue, int.MaxValue),
+					                                       TextFormatFlags.NoPadding).Width + tab.Padding.X * 2;
+					// From the tab's BASE left edge: the selected one is drawn standing proud, two pixels
+					// wider to the left, and its caption does not move with the decoration.
+					int capX = bounds.X + (selected ? TabControlSelectedDelta.X : 0);
 					dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
-						       new Rectangle (bounds.X, row.Y, bounds.Width, row.Height), format);
+						       new Rectangle (capX, row.Y + (selected ? -1 : 1),
+						                      Math.Min (capBox, bounds.Width), row.Height),
+						       format);
 				}
 			}
 		}
@@ -1963,8 +2246,10 @@ namespace System.Windows.Forms
 			// itself already begins inside the frame.
 			const int Indent = 1;
 			// The text is laid out with a margin of its own -- see Graphics.Overhang -- so the gap
-			// asked for here is only what is wanted beyond that.
-			const int Gap = 2;
+			// asked for here is only what is wanted beyond that. Three, not two: measured against a
+			// stock list, whose check box lands on exactly the same columns as ours and whose caption
+			// then starts one further in.
+			const int Gap = 3;
 
 			Rectangle item = e.Bounds;
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
@@ -1989,8 +2274,7 @@ namespace System.Windows.Forms
 			if (box.Width > 0 && box.Height > 0)
 				DrawModernCheck (e.Graphics, box,
 						 (e.State & DrawItemState.Checked) == DrawItemState.Checked, false,
-						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false,
-						 e.BackColor);
+						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false);
 
 			if (text.Width > 0)
 				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
@@ -2045,7 +2329,10 @@ namespace System.Windows.Forms
 		public override int DateTimePickerTextTop (DateTimePicker dateTimePicker, int textHeight)
 		{
 			Rectangle area = DateTimePickerGetDateArea (dateTimePicker);
-			return area.Y + Math.Max (0, (area.Height - textHeight) / 2);
+			// Rounded up, not down. Where the leftover is odd -- which it is for the shell font in a
+			// standard-height picker -- truncating puts the whole date a row above the one Windows
+			// draws, and a row out is every pixel of it.
+			return area.Y + Math.Max (0, (area.Height - textHeight + 1) / 2);
 		}
 
 		public override bool DateTimePickerDropDownButtonHasHotElementStyle {
@@ -2069,7 +2356,9 @@ namespace System.Windows.Forms
 			int want = glyph.Width + 8;
 			if (rect.Width <= want + 2)
 				return base.DateTimePickerGetDropDownButtonArea (dateTimePicker);
-			rect.X = rect.Right - want - 2;
+			// Three in from the right, not two: Windows leaves the calendar glyph seven pixels clear of
+			// the field's right edge and this rectangle is what centres it.
+			rect.X = rect.Right - want - 3;
 			rect.Width = want;
 			rect.Inflate (0, -2);
 			return rect;
@@ -2101,7 +2390,9 @@ namespace System.Windows.Forms
 				return;
 			}
 			int x = r.X + (r.Width - glyph.Width) / 2;
-			int y = r.Y + (r.Height - glyph.Height) / 2;
+			// Rounded up, not down: the button is an even number of pixels taller than the glyph only
+			// half the time, and truncating left ours a row above the one Windows draws.
+			int y = r.Y + (r.Height - glyph.Height + 1) / 2;
 			if (dateTimePicker.Enabled)
 				g.DrawImage (glyph, x, y);
 			else

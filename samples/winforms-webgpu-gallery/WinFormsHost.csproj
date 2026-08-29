@@ -35,8 +35,19 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll')">
-    <None Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll">
+  <!-- By the architecture the machine IS, not the one Windows most often is. Copying the x64 library
+       onto an arm64 machine builds and deploys perfectly happily, then throws BadImageFormatException
+       out of wgpuCreateInstance the moment a window is shown, which reads like the WebGPU backend
+       being broken and is really a file of the wrong shape. The WPF gallery next door chooses this
+       way; this one did not, so the WinForms head could not run on arm64 at all. -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <None Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-arm64/lib/wgpu_native.dll"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64' And Exists('../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-arm64/lib/wgpu_native.dll')">
+      <Link>wgpu_native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64' And Exists('../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/win-x64/lib/wgpu_native.dll')">
       <Link>wgpu_native.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -44,7 +44,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         bool TryGetGlyphOutline(int glyphId, out List<PathFigure> figures);
     }
 
-    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont
+    /// <summary>A face that can fit a glyph to a particular size before handing it over: the outline
+    /// comes back in DEVICE PIXELS with its stems and its horizontal features standing on whole ones.
+    /// <para>Separate from <see cref="IGlyphOutlineFont"/> because the two answer different questions.
+    /// That one is asked for the shape and knows nothing about how big it will be drawn; this one
+    /// cannot answer at all without being told, since the whole of the difference is which pixel grid
+    /// the shape is being fitted to.</para></summary>
+    internal interface IHintedGlyphFont
+    {
+        /// <summary>The glyph at <paramref name="pixelsPerEm"/>, baseline at y=0, y-down, grid-fitted.
+        /// False when the glyph is blank or the face cannot be measured.</summary>
+        bool TryGetHintedOutline(int glyphId, float pixelsPerEm, out List<PathFigure> figures);
+
+        /// <summary>The whole-pixel advance the FACE gives this glyph at this size, if it ships one.
+        /// False when the face has no table for the size, and the advance has to be computed.</summary>
+        bool TryGetDeviceAdvance(int glyphId, float pixelsPerEm, out float advance);
+
+        /// <summary>Whether the face asks to be smoothed in BOTH directions at this size.</summary>
+        bool WantsSymmetricSmoothing(float pixelsPerEm);
+    }
+
+    internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont,
+                                         IHintedGlyphFont
     {
         // Glyphs are rasterized with the em square at this many pixels; the
         // renderer scales the atlas quad to the requested EmSize.
@@ -53,7 +74,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly byte[] _data;
         private readonly int _sfntBase;         // offset of this face's sfnt header (non-zero inside a .ttc)
         private readonly float _scale;          // font units -> base pixels
+        private readonly int _unitsPerEm;       // the design grid the outlines are drawn on
         private readonly int _numGlyphs;
+        private int _hmtxOffset = -1;
+        private Dictionary<string, int> _tableLengths = new();
+        private int _fontProgramTable = -1, _controlProgramTable = -1, _controlValueTable = -1;
+        private int _maxpOffset = -1;
+        private TrueTypeInterpreter? _interpreter;
+        private bool _interpreterTried;
+        private int _hdmxOffset = -1;   // first device-metrics row, or -1 when the face ships none
+        private int _hdmxStride;        // bytes per row
+        private int _hdmxRecords;       // how many rows
         private readonly int _glyfOffset;
         private readonly uint[] _loca;          // numGlyphs+1 glyph data offsets
         private readonly ushort[] _advanceWidths;
@@ -97,6 +128,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int hhea = Require(tables, "hhea");
             int hmtx = Require(tables, "hmtx");
             int cmap = Require(tables, "cmap");
+            _gasp = tables.TryGetValue("gasp", out int gasp) ? gasp : -1;
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -127,10 +159,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             int unitsPerEm = U16(head + 18);
             int indexToLocFormat = (short)U16(head + 50);
+            _unitsPerEm = unitsPerEm;
             _scale = BaseEmPixels / (float)unitsPerEm;
             _numGlyphs = U16(maxp + 4);
             _numHMetrics = U16(hhea + 34);
 
+            _hmtxOffset = hmtx;
             _advanceWidths = new ushort[_numHMetrics];
             for (int i = 0; i < _numHMetrics; i++)
                 _advanceWidths[i] = (ushort)U16(hmtx + i * 4);
@@ -140,6 +174,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _loca[i] = indexToLocFormat == 0 ? (uint)U16(loca + i * 2) * 2 : U32(loca + i * 4);
 
             _cmap = new CmapTable(_data, cmap);
+
+            // The face's own hinting: three streams of bytecode and a table of the designer's
+            // reference measurements. Running them is what puts our glyphs where Windows puts its
+            // own; without them the outline is fitted by analysis instead. See TrueTypeInterpreter.
+            _fontProgramTable = tables.TryGetValue("fpgm", out int fpgm) ? fpgm : -1;
+            _controlProgramTable = tables.TryGetValue("prep", out int prep) ? prep : -1;
+            _controlValueTable = tables.TryGetValue("cvt ", out int cvt) ? cvt : -1;
+            _maxpOffset = maxp;
+
+            // 'hdmx' is the face's OWN answer to "how wide is this glyph at this pixel size", one
+            // row per size, worked out by the designer from the hinted outline. Windows spaces text
+            // with it, so text spaced any other way drifts against Windows' -- rounding each advance
+            // arithmetically loses up to half a pixel per letter and a six-letter word came out two
+            // pixels short of the same word beside it.
+            if (tables.TryGetValue("hdmx", out int hdmx) && U16(hdmx) == 0)
+            {
+                int records = (short)U16(hdmx + 2);
+                int stride = (int)U32(hdmx + 4);
+                // Each row is a size, a maximum, then one byte per glyph; a row too short for this
+                // face's glyphs is a damaged table and is better ignored than read past.
+                if (records > 0 && stride >= _numGlyphs + 2)
+                {
+                    _hdmxOffset = hdmx + 8;
+                    _hdmxStride = stride;
+                    _hdmxRecords = records;
+                }
+            }
 
             // Font variations. Asking the font for the weight or slant it was DESIGNED with beats
             // faking one from the default master, so the simulation flags become an instance request
@@ -256,6 +317,517 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _outlineCache[glyphId] = figures;
             return figures.Count > 0;
         }
+
+        // ---- grid fitting ------------------------------------------------------------------------
+        //
+        // What a face needs measuring for -- where its lines of the alphabet are, how wide its stems
+        // are drawn -- costs several glyph reads, so it is done once, on the first glyph anyone asks
+        // to have fitted, and never for a face nothing is drawn in.
+        private HintMetrics? _hintMetrics;
+        private bool _hintMetricsTried;
+
+        // Fitted outlines, by glyph and by size. A run of text asks for the same handful of glyphs at
+        // one size over and over, and fitting is the expensive part of drawing them; the size is held
+        // to a sixteenth of a pixel so that a smooth zoom does not fill this with near-duplicates.
+        private readonly Dictionary<(int Glyph, int Size), List<PathFigure>> _hintedCache = new();
+        private const int HintedCacheLimit = 4096;
+
+        /// <summary>The design grid this face's outlines are drawn on, for a caller that wants to
+        /// measure it the way the fitting does.</summary>
+        internal int UnitsPerEmForHinting => _unitsPerEm;
+
+        /// <summary>One glyph's contours in font units, y up -- what the fitting works on.</summary>
+        internal List<(Vector2[] Pts, bool[] On)>? ContoursForHinting(int glyphId)
+        {
+            List<Contour> contours = ReadGlyphContours(glyphId, 0);
+            if (contours.Count == 0) return null;
+            var copy = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
+            foreach (Contour contour in contours)
+                copy.Add(((Vector2[])contour.Points.Clone(), contour.OnCurve));
+            return copy;
+        }
+
+        private HintMetrics? HintMetricsOfFace()
+        {
+            if (_hintMetricsTried)
+                return _hintMetrics;
+            _hintMetricsTried = true;
+            try
+            {
+                _hintMetrics = GlyphHinter.Measure(_unitsPerEm, c =>
+                {
+                    int gid = _cmap.Map(c);
+                    if (gid <= 0) return null;
+                    List<Contour> contours = ReadGlyphContours(gid, 0);
+                    if (contours.Count == 0) return null;
+                    var copy = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
+                    foreach (Contour contour in contours)
+                        copy.Add(((Vector2[])contour.Points.Clone(), contour.OnCurve));
+                    return copy;
+                });
+            }
+            catch (Exception)
+            {
+                _hintMetrics = null;     // a face this cannot be measured on is drawn unfitted
+            }
+            return _hintMetrics;
+        }
+
+        /// <summary>The face's own hinting machine, built once. Null when the face carries no
+        /// hints, or when its tables are unreadable -- either way the outline is fitted by analysis
+        /// instead, which is what a face without hints has always had.</summary>
+        private TrueTypeInterpreter? Interpreter()
+        {
+            if (_interpreterTried) return _interpreter;
+            _interpreterTried = true;
+
+            if (_glyfOffset < 0 || _maxpOffset < 0) return null;
+
+            // 'maxp' version 1.0 is the one carrying the limits; 0.5 belongs to a CFF face, which
+            // has no TrueType hinting to run in the first place.
+            if (U32(_maxpOffset) != 0x00010000) return null;
+
+            byte[] fontProgram = TableBytes("fpgm", _fontProgramTable);
+            byte[] controlProgram = TableBytes("prep", _controlProgramTable);
+            if (fontProgram.Length == 0 && controlProgram.Length == 0) return null;
+
+            int cvtLength = _controlValueTable >= 0 && _tableLengths.TryGetValue("cvt ", out int cl) ? cl : 0;
+            var controlValues = new short[cvtLength / 2];
+            for (int i = 0; i < controlValues.Length; i++)
+                controlValues[i] = (short)U16(_controlValueTable + i * 2);
+
+            var interpreter = new TrueTypeInterpreter(
+                _data, _unitsPerEm, fontProgram, controlProgram, controlValues,
+                maxStorage: U16(_maxpOffset + 18),
+                maxFunctionDefs: U16(_maxpOffset + 20),
+                maxStack: U16(_maxpOffset + 24),
+                twilightPoints: U16(_maxpOffset + 16));
+
+            return _interpreter = interpreter.IsUsable ? interpreter : null;
+        }
+
+        private byte[] TableBytes(string tag, int offset)
+        {
+            if (offset < 0 || !_tableLengths.TryGetValue(tag, out int length)) return Array.Empty<byte>();
+            if (length <= 0 || offset + length > _data.Length) return Array.Empty<byte>();
+            var bytes = new byte[length];
+            Array.Copy(_data, offset, bytes, 0, length);
+            return bytes;
+        }
+
+        /// <summary>IHintedGlyphFont: the whole-pixel advance this glyph is spaced by at this size.
+        /// </summary>
+        /// <remarks>
+        ///  Two sources, in the order Windows consults them. 'hdmx' is the designer's own table of
+        ///  device widths, and where it has a row for the size it is the answer. It does NOT have a
+        ///  row for every size -- Segoe UI carries 11, 12, 13, 15, 16, 17, 19, 21 and up, and no
+        ///  10, 14, 18 or 20 -- and at the sizes it skips the advance is whatever the face's own
+        ///  program leaves between the phantom points, which is what the rasterizer running that
+        ///  program ends up with.
+        ///  <para>Rounding the scaled design advance instead, which is what this used to do at those
+        ///  sizes, is a third answer that agrees with neither. It is wrong by less than a pixel per
+        ///  letter, and that is exactly what makes it bad: the error is the same sign every time, so
+        ///  it accumulates along the line. Thirteen letters of Segoe UI Italic at fourteen pixels an
+        ///  em drifted far enough that every glyph after the first landed on different pixels from
+        ///  Windows' -- a hundred and forty-two of them -- while the first one was exact.</para>
+        /// </remarks>
+        public bool TryGetDeviceAdvance(int glyphId, float pixelsPerEm, out float advance)
+        {
+            advance = 0f;
+            if (glyphId < 0 || glyphId >= _numGlyphs || pixelsPerEm <= 0f) return false;
+
+            // Both sources are written for whole pixel sizes. Anything between two of them is a size
+            // nothing was measured at, and the caller's own rounding is as good an answer as any.
+            int ppem = (int)MathF.Round(pixelsPerEm);
+            if (MathF.Abs(pixelsPerEm - ppem) > 0.01f || ppem <= 0 || ppem > 255) return false;
+
+            if (TryGetHdmxAdvance(glyphId, ppem, out advance)) return true;
+
+            return TryGetHintedAdvance(glyphId, pixelsPerEm, out advance);
+        }
+
+        /// <summary>The advance the FACE ships for this size, read straight from 'hdmx'.
+        /// <para>Separate from TryGetDeviceAdvance because that one falls back to HINTING the glyph
+        /// to find out how wide it is -- which is fine for a caller measuring text and fatal for a
+        /// caller inside the hinter: compatible widths asked for the advance from within
+        /// HintedProgram and the recursion quietly produced glyphs with no ink at all. The parity
+        /// total "improved" from 3,629,242 to 637,342 because most of the repertoire had stopped
+        /// drawing (GDI's inked pixel count fell with it, 275,589 -> 29,609, which is the tell).</para>
+        /// </summary>
+        private bool TryGetHdmxAdvance(int glyphId, int ppem, out float advance)
+        {
+            advance = 0f;
+            if (_hdmxOffset < 0) return false;
+            for (int i = 0; i < _hdmxRecords; i++)
+            {
+                int row = _hdmxOffset + i * _hdmxStride;
+                if (_data[row] != ppem) continue;
+                advance = _data[row + 2 + glyphId];
+                return advance > 0f;
+            }
+            return false;
+        }
+
+        // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of
+        // text asks for the same handful of glyphs over and over.
+        private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
+
+        /// <summary>The distance the face's own program leaves between the two horizontal phantom
+        /// points -- the advance the glyph is actually drawn with. False when there is no program to
+        /// run, or the glyph has no outline for one to run on.</summary>
+        private bool TryGetHintedAdvance(int glyphId, float pixelsPerEm, out float advance)
+        {
+            // Keyed by the hinting MODE too: a glyph fitted for grey and one fitted for subpixel are
+            // different shapes, and sharing a cache entry hands one draw the other one's outline.
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f) * 2 + (SubpixelFitting ? 1 : 0));
+            if (_hintedAdvances.TryGetValue(key, out advance)) return advance > 0f;
+
+            advance = 0f;
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is not null)
+            {
+                GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
+                if (glyph is not null)
+                {
+                    int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
+                    if (span > 0) advance = MathF.Round(span / 64f);
+                }
+            }
+
+            if (_hintedAdvances.Count > HintedCacheLimit) _hintedAdvances.Clear();
+            _hintedAdvances[key] = advance;
+            return advance > 0f;
+        }
+
+        /// <summary>IHintedGlyphFont: the glyph fitted to a pixel grid of the given size.</summary>
+        public bool TryGetHintedOutline(int glyphId, float pixelsPerEm, out List<PathFigure> figures)
+        {
+            figures = s_noFigures;
+            if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs)
+                return false;
+
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f) * 2 + (SubpixelFitting ? 1 : 0));
+            if (_hintedCache.TryGetValue(key, out List<PathFigure>? cached))
+            {
+                figures = cached;
+                return figures.Count > 0;
+            }
+
+            // A zoom asks for every size it passes through, so this cannot grow for ever. Text sits
+            // at a handful of sizes; anything past that is an animation, and starting again costs one
+            // frame of fitting rather than a growing heap.
+            if (_hintedCache.Count > HintedCacheLimit)
+                _hintedCache.Clear();
+
+            // THE FACE'S OWN HINTS FIRST. Where the designer wrote a program for this glyph, it
+            // is the answer -- it is what GDI runs, so it is what Windows' pixels come from. Only a
+            // face that carries none, or one whose program will not run, falls through to fitting
+            // the outline by analysis.
+            // THE FACE'S OWN ANSWER FIRST, and it governs BOTH fitters. Skipping only the face's
+            // program still left the analysis fitter running, which is our own invention and fits
+            // just as hard -- at 7ppem it took Segoe UI from 88,963 of ink to 136,090 where GDI, told
+            // the same thing by the same table, stays at 89,485. Where the designer says do not fit,
+            // the outline as drawn is the answer.
+            if (!FaceWantsGridFit(pixelsPerEm))
+            {
+                // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
+                // are promised a device-pixel outline and scale everything else by the reciprocal of
+                // the device scale; answering "no fitting available" sends them to the unfitted
+                // outline in the face's own base pixels, which they then scale as if it were device
+                // pixels. That is a factor of ppem/48 in the wrong direction and it showed: the
+                // finished ClearType ink went to eighteen times GDI's.
+                if (!TryGetGlyphOutline(glyphId, out List<PathFigure> plain))
+                    return false;
+                float k = pixelsPerEm / PixelsPerEm;
+                var scaled = new List<PathFigure>(plain.Count);
+                foreach (PathFigure f in plain)
+                {
+                    var copy = new PathFigure(new Vector2(f.Start.X * k, f.Start.Y * k)) { Closed = f.Closed };
+                    foreach (PathSegment seg in f.Segments)
+                        switch (seg)
+                        {
+                            case LineSegment l:
+                                copy.Segments.Add(new LineSegment(new Vector2(l.Point.X * k, l.Point.Y * k)));
+                                break;
+                            case QuadraticBezierSegment q:
+                                copy.Segments.Add(new QuadraticBezierSegment(
+                                    new Vector2(q.Control.X * k, q.Control.Y * k),
+                                    new Vector2(q.Point.X * k, q.Point.Y * k)));
+                                break;
+                            case CubicBezierSegment c:
+                                copy.Segments.Add(new CubicBezierSegment(
+                                    new Vector2(c.Control1.X * k, c.Control1.Y * k),
+                                    new Vector2(c.Control2.X * k, c.Control2.Y * k),
+                                    new Vector2(c.Point.X * k, c.Point.Y * k)));
+                                break;
+                        }
+                    scaled.Add(copy);
+                }
+                _hintedCache[key] = scaled;
+                figures = scaled;
+                return scaled.Count > 0;
+            }
+
+            List<PathFigure>? hinted = RunFaceHints(glyphId, pixelsPerEm);
+            if (hinted is not null && !FitIsPlausible(glyphId, pixelsPerEm, hinted))
+            {
+                hinted = null;
+                System.Threading.Interlocked.Increment(ref s_implausibleFits);
+                if (s_traceFits)
+                    Console.Error.WriteLine($"[fit] rejected gid={glyphId} at {pixelsPerEm}ppem");
+            }
+            if (hinted is not null)
+            {
+                _hintedCache[key] = hinted;
+                figures = hinted;
+                return hinted.Count > 0;
+            }
+
+            if (!TryGetFittedOutline(glyphId, pixelsPerEm, out figures)) return false;
+            _hintedCache[key] = figures;
+            return figures.Count > 0;
+        }
+
+        private static int s_implausibleFits;
+
+        private static readonly bool s_traceFits =
+            Environment.GetEnvironmentVariable("WPF_FIT_TRACE") == "1";
+
+        /// <summary>How many times a face's own fitting has been thrown away as implausible since
+        /// the process started. Counted so the interpreter's accuracy is a NUMBER that a test can
+        /// hold to rather than something noticed when a screenshot looks wrong.</summary>
+        internal static int ImplausibleFits => System.Threading.Volatile.Read(ref s_implausibleFits);
+
+        internal static void ResetImplausibleFits() => System.Threading.Interlocked.Exchange(ref s_implausibleFits, 0);
+
+        private int _gasp = -1;
+
+        private const int GaspGridfit = 0x0001;
+        private const int GaspSymmetricSmoothing = 0x0008;
+
+        /// <summary>Whether the face asks for SYMMETRIC SMOOTHING at this size -- antialiasing in
+        /// both directions rather than along the lamps only.
+        /// <para>This is the whole of the 7-8ppem anomaly, and it was sitting in a table we already
+        /// read. Segoe UI's 'gasp' says DOGRAY+SYMMETRIC_SMOOTHING at 8ppem and below, plain
+        /// GRIDFIT+SYMMETRIC_GRIDFIT from 9 to 19, and symmetric smoothing again above that.
+        /// Consolas moves the same boundary to 10. So GDI antialiases vertically at the small sizes
+        /// and NOT in the middle band -- where we sampled one row at the scanline centre at every
+        /// size, which is right for 9-19 and wrong below and above.</para>
+        /// <para>It shows up as colour: measured over the whole repertoire, our lamp spread against
+        /// GDI's is 1.193 at 7ppem and 1.153 at 8 -- we fringe far harder than GDI -- while 11-19ppem
+        /// sit at 0.97-1.04. A vertical sample softens a horizontal edge without moving ink sideways,
+        /// which is exactly the difference. No filter can produce it: filter width moves every size
+        /// together, and this is a DIFFERENCE between sizes.</para></summary>
+        public bool WantsSymmetricSmoothing(float pixelsPerEm) => GaspFlags(pixelsPerEm, GaspSymmetricSmoothing);
+
+        private bool GaspFlags(float pixelsPerEm, int want)
+        {
+            if (_gasp < 0) return false;
+            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ranges = U16(_gasp + 2);
+            int at = _gasp + 4;
+            for (int i = 0; i < ranges; i++, at += 4)
+                if (ppem <= U16(at))
+                    return (U16(at + 2) & want) != 0;
+            return false;
+        }
+
+        /// <summary>Whether the face asks to be GRID-FITTED at this size.
+        /// <para>The 'gasp' table is the designer saying at which sizes fitting helps and at which it
+        /// does harm, and GDI obeys it. We did not read it at all, and the cost is measurable: Segoe
+        /// UI asks for no gridfit at 8 pixels an em and below, where GDI's rendering carries 89,485
+        /// of ink against its own unfitted 88,956 -- that is, it does not fit -- while ours fitted the
+        /// same glyphs to 139,345. Half as much ink again, at the sizes where a fitting has the least
+        /// room to be right.</para>
+        /// <para>A face with no 'gasp' is fitted at every size, which is what a rasterizer does with
+        /// one and what we did with all of them.</para></summary>
+        private bool FaceWantsGridFit(float pixelsPerEm)
+        {
+            if (_gasp < 0) return true;
+
+            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ranges = U16(_gasp + 2);
+            int at = _gasp + 4;
+            for (int i = 0; i < ranges; i++, at += 4)
+            {
+                // Ranges are listed in ascending order and the last one ends at 0xFFFF, so the first
+                // whose limit is not below this size is the one that applies.
+                if (ppem <= U16(at))
+                    return (U16(at + 2) & GaspGridfit) != 0;
+            }
+            return true;
+        }
+
+        /// <summary>Whether a fitted glyph is scaled back onto the bi-level advance.
+        /// <para>OFF. It implements what the paper calls compatible widths -- "the glyphs for this
+        /// font size will be adjusted post hinting in order to return advance widths that are exactly
+        /// the same as bi-level rendering" -- as a proportional scale of x onto the hdmx advance, and
+        /// MEASURED that is not the mechanism: parity gets worse with the fitting kept (3,776,437
+        /// against 3,629,242) and the live window does not move at all, 2,479,813 either way, so it
+        /// does nothing about the doubled POSITION half it was written to explain.</para>
+        /// <para>A proportional scale is only the simplest reading of "adjusted". Whatever GDI does
+        /// there, it is not this. WPF_CT_COMPATWIDTH=1 turns it on.</para></summary>
+        internal static readonly bool CompatibleWidths =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH") == "1";
+
+        /// <summary>Whether a fitted outline is still the glyph it started as.
+        /// <para>GRID FITTING MOVES EDGES TO THE GRID -- by definition less than a pixel, plus a
+        /// little for a stem that gets rounded outwards. It does not change a letter's size. So a
+        /// fitted box that has drifted far from the scaled outline's box is not a fitting, it is a
+        /// program this interpreter ran wrongly, and the unhinted outline is the better answer.</para>
+        /// <para>This is a GUARD, not a fix, and it was earned: with it absent, text in most faces
+        /// came out garbled while Segoe UI -- the only face the hinter was ever measured against --
+        /// was perfect. At 16 pixels an em Arial fitted its 'I' and 'l' to a height of 2 where the
+        /// outline asks for 11.5, its 'Y' to 4 and its 'B' to 8, and pushed 'b' nine pixels below
+        /// the baseline; Segoe UI's worst glyph at the same size is within half a pixel. The real
+        /// fix is to find the instruction being mis-run -- WPF_HINT_TRACE and the
+        /// FaceOutlines_AreWholeGlyphs report are the way in -- and this guard should get quieter as
+        /// that happens, never louder.</para></summary>
+        private bool FitIsPlausible(int glyphId, float pixelsPerEm, List<PathFigure> fitted)
+        {
+            if (!TryGetGlyphOutline(glyphId, out List<PathFigure> raw) || raw.Count == 0)
+                return true;                       // nothing to compare against
+
+            Box(raw, out float rx0, out float ry0, out float rx1, out float ry1);
+            Box(fitted, out float fx0, out float fy0, out float fx1, out float fy1);
+            if (rx1 <= rx0 && ry1 <= ry0) return true;
+
+            // The raw outline is in the face's base pixels; bring it to the size being fitted.
+            float k = pixelsPerEm / PixelsPerEm;
+            rx0 *= k; ry0 *= k; rx1 *= k; ry1 *= k;
+
+            // Two pixels on any edge. One is what fitting is allowed to move; two leaves room for a
+            // stem rounded outwards at both ends and for the flattening tolerance, and is still far
+            // inside the collapses this exists to catch.
+            const float Slack = 2f;
+            return MathF.Abs(fx0 - rx0) <= Slack && MathF.Abs(fy0 - ry0) <= Slack
+                && MathF.Abs(fx1 - rx1) <= Slack && MathF.Abs(fy1 - ry1) <= Slack;
+        }
+
+        private static void Box(List<PathFigure> figures,
+                                out float x0, out float y0, out float x1, out float y1)
+        {
+            float ax0 = float.MaxValue, ay0 = float.MaxValue, ax1 = float.MinValue, ay1 = float.MinValue;
+
+            void Take(Vector2 v)
+            {
+                if (v.X < ax0) ax0 = v.X;
+                if (v.Y < ay0) ay0 = v.Y;
+                if (v.X > ax1) ax1 = v.X;
+                if (v.Y > ay1) ay1 = v.Y;
+            }
+
+            foreach (PathFigure f in figures)
+            {
+                Take(f.Start);
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: Take(l.Point); break;
+                        case QuadraticBezierSegment q: Take(q.Control); Take(q.Point); break;
+                        case CubicBezierSegment c: Take(c.Control1); Take(c.Control2); Take(c.Point); break;
+                    }
+            }
+
+            x0 = ax0; y0 = ay0; x1 = ax1; y1 = ay1;
+        }
+
+        /// <summary>The outline fitted by ANALYSIS -- GlyphHinter -- with the face's own hinting
+        /// left out of it. What a face carrying no hints gets, and what the tests that cover the
+        /// analysis have to call to be testing the analysis.</summary>
+        internal bool TryGetFittedOutline(int glyphId, float pixelsPerEm, out List<PathFigure> figures)
+        {
+            figures = s_noFigures;
+            if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs) return false;
+
+            HintMetrics? metrics = HintMetricsOfFace();
+            if (metrics is null || !metrics.IsUsable)
+                return false;
+
+            List<Contour> contours = ReadGlyphContours(glyphId, 0);
+            var working = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
+            foreach (Contour contour in contours)
+            {
+                if (contour.Points.Length < 2) continue;
+                working.Add(((Vector2[])contour.Points.Clone(), contour.OnCurve));
+            }
+
+            if (working.Count > 0)
+            {
+                GlyphHinter.Fit(working, metrics, pixelsPerEm);
+
+                // The simulated styles are applied AFTER fitting and in pixels: emboldening a fitted
+                // outline keeps the stems on the grid they were just put on, where fitting a
+                // thickened one would fit a shape the face does not contain.
+                if (_emboldenStrength > 0f)
+                    Embolden(working, _emboldenStrength * pixelsPerEm / BaseEmPixels);
+                foreach ((Vector2[] pts, _) in working)
+                    for (int i = 0; i < pts.Length; i++)
+                        pts[i] = new Vector2(pts[i].X - _shear * pts[i].Y, -pts[i].Y);   // y-down
+            }
+
+            var built = new List<PathFigure>(working.Count);
+            foreach ((Vector2[] pts, bool[] on) in working)
+                built.Add(BuildContourFigure(pts, on));
+
+            figures = built;
+            return built.Count > 0;
+        }
+
+        /// <summary>Whether the face's own hinting ran for this glyph, as opposed to the outline
+        /// being fitted by analysis. Diagnostic: a glyph that quietly fell back looks like a hinting
+        /// bug and is not one.</summary>
+        internal bool FaceHintsGlyph(int glyphId, float pixelsPerEm)
+            => RunFaceHints(glyphId, pixelsPerEm) is not null;
+
+        /// <summary>Run the face's own hinting over one glyph, and turn what comes back into
+        /// contours. Null when there is nothing to run or the program faulted.</summary>
+        private List<PathFigure>? RunFaceHints(int glyphId, float pixelsPerEm)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null) return null;
+
+            GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
+            if (glyph is null) return null;
+
+            // Back out as contours, in pixels. The machine works in 26.6 fixed point with y up; the
+            // rest of the stack wants floating point with y down.
+            var working = new List<(Vector2[] Pts, bool[] On)>(glyph.EndPoints.Length);
+            int first = 0;
+            foreach (int last in glyph.EndPoints)
+            {
+                int n = last - first + 1;
+                if (n >= 2)
+                {
+                    var pts = new Vector2[n];
+                    var on = new bool[n];
+                    for (int k = 0; k < n; k++)
+                    {
+                        pts[k] = new Vector2(glyph.X[first + k] / 64f, glyph.Y[first + k] / 64f);
+                        on[k] = glyph.OnCurve[first + k];
+                    }
+                    working.Add((pts, on));
+                }
+                first = last + 1;
+            }
+            if (working.Count == 0) return null;
+
+            // The simulated styles go on AFTER hinting and in pixels, for the same reason they do
+            // on the fitted path: thickening a hinted outline keeps its stems on the grid the face
+            // just put them on.
+            if (_emboldenStrength > 0f)
+                Embolden(working, _emboldenStrength * pixelsPerEm / BaseEmPixels);
+            foreach ((Vector2[] pts, _) in working)
+                for (int i = 0; i < pts.Length; i++)
+                    pts[i] = new Vector2(pts[i].X - _shear * pts[i].Y, -pts[i].Y);
+
+            var built = new List<PathFigure>(working.Count);
+            foreach ((Vector2[] pts, bool[] on) in working)
+                built.Add(BuildContourFigure(pts, on));
+            return built;
+        }
+
+        private static readonly List<PathFigure> s_noFigures = new();
 
         /// <summary>
         ///  Turns the bold/oblique simulation flags into a point in the font's own design space.
@@ -427,6 +999,585 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 contourStart = contourEnd + 1;
             }
             return contours;
+        }
+
+        /// <summary>A glyph as the hinting machine wants it: every point of every contour in ONE
+        /// array with the contour ends beside it, the four phantom points after them, and the
+        /// glyph's own instructions. Null for a glyph with no outline, or a composite -- a composite
+        /// is assembled from components that were hinted in their own right, and re-running the
+        /// container's program over the result needs the component machinery this does not have.
+        /// </summary>
+        /// <summary>One glyph, hinted by the face's own program, with its points left in 26.6 pixels.
+        /// The recursive step of the whole business: an accented letter is assembled out of glyphs
+        /// that come back through here, each already fitted.</summary>
+        /// <summary>Fit the glyph the way a rasterizer with three lamps to a pixel fits it: the
+        /// vertical hinting runs in full, and x keeps the PLAIN SCALED value the outline was drawn
+        /// with -- no grid, no thirds, no rounding at all.
+        /// <para>The comment here used to say "x on a grid three times finer" and point at
+        /// TrueTypeInterpreter.RoundToThirds. That method no longer exists and the code below keeps
+        /// the scaled x, so the claim it carried -- that stem POSITION reproduces GDI exactly -- was
+        /// unsupported, and it had been steering the text investigation. Measured 2026-08-28: our
+        /// kept x sits on average 0.286 px from a pixel boundary, which is what arbitrary fractions
+        /// look like.</para>
+        /// <para>Rounding it was then swept against all three instruments and NONE is right:</para>
+        /// <code>
+        ///   x round   outline-vs-GDI-box   rendered coverage   mean ink
+        ///   none                    1034                 574      1.12%   &lt;- here
+        ///   third                    842                 678      1.33%
+        ///   whole                     265                2684      1.73%
+        /// </code>
+        /// <para>Whole-pixel rounding makes our OUTLINES agree with GDI's hinted metrics four times
+        /// better and the RENDERED pixels nearly five times worse, and that contradiction is the
+        /// answer: GetGlyphOutline(GGO_METRICS) reports GDI's default x+y hinting, while ClearType
+        /// renders from a y-only fitting that keeps natural x. The metrics are a reference for the
+        /// wrong mode. Rendered coverage is the one to trust, and it says leave x alone -- which is
+        /// also what "GDI keeps natural widths" has said all along.</para></summary>
+        internal static bool SubpixelFitting { get; set; }
+
+        /// <summary>What to do with the x the face's own program produces, when subpixel fitting is on.
+        /// <para>0 -- DISCARD it and keep the scaled outline's x (the default, and what GDI's rendered
+        /// output has always looked like). 1 -- KEEP it, with x distances rounded on a THIRD-pixel
+        /// grid. 2 -- keep it with the program's own rounding, which is whole pixels.</para>
+        /// <para>Mode 1 exists because of a measurement, not a theory. At 11 pixels an em our stems
+        /// carry 0.905 of GDI's ink and at 14 they carry 1.02, uniformly across every glyph and every
+        /// ROW of every glyph -- so the outlines are the same height and our stems are simply
+        /// narrower at small sizes and wider at large. GDI's own stem widths, measured, are multiples
+        /// of a third of a pixel that HOLD across several sizes before stepping (1.67, 2.00, 2.00,
+        /// 2.00, 1.67 ...), which is what a control value rounded on a third-pixel grid does and what
+        /// a smoothly scaled outline never does. Modes rounding to a WHOLE pixel and to nothing at all
+        /// have both been measured before and were far too heavy (ink 1.247 and 1.244); a third of a
+        /// pixel is the granularity those measured GDI widths actually sit on and had never been
+        /// tried. WPF_X_HINT selects it.</para>
+        /// <para>MEASURED, AND IT FAILS -- like both attempts before it, and for the same reason.
+        /// Mode 1 gives ink 1.10/1.20/1.25/1.19 at 11/12/14/19 and structural 2598 against 274; mode 2
+        /// gives 1.09/1.18/1.26/1.20 and 5470. MIRP applies the control value's distance and makes a
+        /// stem far wider than GDI's however finely the result is rounded, so the granularity was
+        /// never the problem.</para>
+        /// <para>AND THE OBSERVATION THAT MOTIVATED ALL THREE ATTEMPTS WAS AN ARTEFACT. "GDI's stem
+        /// widths are multiples of a third of a pixel" was measured off a three-lamp rendering, where
+        /// any support measured from lamp coverage is quantized to thirds BY CONSTRUCTION. It is not
+        /// evidence of third-pixel fitting and never was. GDI leaves x alone; do not spend a fourth
+        /// attempt on this.</para></summary>
+        /// <summary>What to do with the x fitting. FIVE: keep what the program produced.
+        /// <para>It was 0 -- throw the x movement away -- for a long time, and every attempt to keep
+        /// it measured far worse. That was real, and the reason was that our x fitting was WRONG: we
+        /// ran the face's instructions as a bi-level rasterizer would. Microsoft's "TrueType and
+        /// ClearType" paper spells out what changes in the ClearType direction (a virtual grid of
+        /// sixteen lines per pixel for the rounding instructions, a cut-in reduced to a sixteenth, a
+        /// minimum distance halved, the cut-in honoured even by an un-rounded MIRP, and physical-grid
+        /// rounding inside the pre-program). With those in, keeping the fitting stops being a loss
+        /// and becomes the best thing available:</para>
+        /// <para>parity SUM|d|, x discarded 4,071,456 -> 3,894,842; x kept 7,404,226 -> 3,629,242.
+        /// Keeping it now BEATS discarding it, which had never happened before.</para>
+        /// <para>It is still 0 here, because the live window disagrees: keeping the fitting takes it
+        /// 2,254,974 -> 2,479,813 and DOUBLES its position half. The character maps say why -- with
+        /// the fitting kept, Segoe UI's 'H' at 12ppem puts its stems on Windows' own columns and is
+        /// then a pixel too NARROW (ours 3..8 against Windows' 3..9), because the reduced cut-in
+        /// fires on the inter-stem spacing as well as on the stem width. The paper says to honour the
+        /// cut-in always; it does not say the spacing should collapse to the outline, so something in
+        /// how we apply it is still too broad. Fix that before flipping this to 5.</para></summary>
+        internal static readonly int XHintMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 0;
+
+
+        /// <summary>How many parts of a pixel the natural x may land on, or 0 to leave it alone.
+        /// <para>Measured against GDI, a stem lands in ONE SATURATED COLUMN plus a fringe where ours
+        /// straddles two: 'H' at 12ppem comes back 2295/543/255/255/255/255/2295/324 from GDI and
+        /// 1908/591/255/255/255/1271/1143 from us. Splitting a stem across two columns costs ink,
+        /// because the contrast curve is convex and pulls both halves down further than it pulls one
+        /// whole -- which is the regular face's size tilt, seen directly.</para>
+        /// <para>WPF_X_GRID sets the divisor: 3 puts every stem edge on a LAMP boundary, which is
+        /// where GDI's measured third-pixel positions sit and what makes a lamp saturate.</para>
+        /// <para>IT IS OFF, because it was measured and it does not work -- structural disagreement
+        /// 274 natural, 412 on thirds, 447 on halves, 294 on sixths, 2240 on whole pixels, and none
+        /// of them lifts the regular face's tilt (regular@11 goes 0.920 -> 0.908 on thirds, the wrong
+        /// way). Snapping every point moves a stem's two edges INDEPENDENTLY, so it fixes the
+        /// positions the earlier investigation measured and mangles the widths at the same time.
+        /// This is the second time the third-pixel grid has been tried and rejected -- the first was
+        /// under the old coverage model, so it was worth re-testing, and now it is not.</para>
+        /// <para>The observation that prompted it is still true and still unexplained: GDI's 'l' at
+        /// 12ppem carries 2619 of ink against our 2295 while its 'I' carries 2295 against our 2286.
+        /// GDI keeps a width difference between those two stems that we do not -- so whatever it
+        /// does to x, it is not a grid, and it is not nothing.</para>
+        /// </summary>
+        private static readonly int XGrid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_GRID"), out int xg) && xg > 0 ? xg : 0;
+
+        /// <summary>Round a 26.6 x onto that grid. Symmetric about zero: rounding toward negative
+        /// infinity biases every left side bearing one way and is how a run drifts.</summary>
+        private static int SnapX(int f26d6)
+        {
+            if (XGrid <= 0) return f26d6;
+            float step = 64f / XGrid;
+            return (int)MathF.Round(MathF.Round(f26d6 / step) * step);
+        }
+
+        private GlyphProgram? HintedProgram(TrueTypeInterpreter interpreter, int gid, float pixelsPerEm,
+                                            int depth)
+        {
+            // A component that references its own composite is a font that would hang us. Five deep
+            // is more than any real face needs -- a letter, its accent, and the accent's own parts.
+            if (depth > 5 || _glyfOffset < 0 || gid < 0 || gid >= _numGlyphs || _loca.Length == 0)
+                return null;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return null;                       // a blank: nothing to hint
+
+            GlyphProgram? glyph = (short)U16(_glyfOffset + (int)start) >= 0
+                ? ReadGlyphProgram(gid)
+                : ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
+            if (glyph is null) return null;
+
+            // Where x is not being hinted, keep the scaled outline's own x and let the program have
+            // the y. Taken BEFORE the program runs, because after it they are the hinted ones, and
+            // scaled here because a simple glyph arrives in font units (a composite is already in
+            // pixels and its components were dealt with one level down).
+            // Subpixel text keeps the x the scaled outline gives it. Taken BEFORE the program runs,
+            // because after it they are the hinted ones, and scaled here because a simple glyph
+            // arrives in font units (a composite is already in pixels, one level down).
+            int[]? plainX = null;
+            if (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16 && !glyph.Composite
+                && interpreter.PrepareForSize(pixelsPerEm))
+            {
+                plainX = new int[glyph.X.Length];
+                for (int i = 0; i < plainX.Length; i++)
+                    plainX[i] = SnapX(interpreter.ScaleToPixels(glyph.X[i]));
+            }
+
+            // FIT IN GDI'S CLEARTYPE SPACE: triple x, run the program, divide back. Stage D reads
+            // that space out of GDI through a stretched MAT2, and what it shows is that GDI puts
+            // each STEM on a lamp -- our 'm' at 12ppem carries its second and third stems a third of
+            // a pixel right of GDI's -- which no whole-glyph offset can repair (sliding ours along
+            // the lamp grid doubles the disagreement either way).
+            bool space3x = SubpixelFitting && XHintMode == 11 && !glyph.Composite;
+            if (space3x)
+                for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] *= 3;
+
+            if (!interpreter.Hint(glyph, pixelsPerEm)) return null;
+
+            // COMPATIBLE WIDTHS. "Compatible Width ClearType ... the glyphs for this font size will
+            // be adjusted POST HINTING in order to return advance widths that are exactly the same as
+            // bi-level rendering" -- Microsoft, TrueType and ClearType. We answer that GETINFO
+            // selector and never did the adjustment, and the cost is visible the moment the x fitting
+            // is kept: our advances already equal GDI's exactly, but the fitted INK moves inside the
+            // advance box and nothing pulls it back, so the error accumulates along a run. The live
+            // window's POSITION half doubles, 280,803 -> 479,090.
+            if (CompatibleWidths && plainX is null && !glyph.Composite
+                && glyph.X.Length > glyph.PointCount + 1)
+            {
+                int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
+                int fitted = p1 - p0;
+                int ppemI = (int) MathF.Round(pixelsPerEm);
+                if (fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    // hdmx if the face ships it, else the scaled advance rounded to a pixel, which is
+                    // what a bi-level rasterizer would have produced. NEVER TryGetDeviceAdvance --
+                    // it hints the glyph to answer, and we are inside the hinter.
+                    float wanted = TryGetHdmxAdvance(gid, ppemI, out float hd)
+                        ? hd
+                        : MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+                    int target = (int) MathF.Round(wanted * 64f);
+                    if (target > 0 && target != fitted)
+                    {
+                        for (int i = 0; i < glyph.X.Length; i++)
+                            glyph.X[i] = p0 + (int) MathF.Round((glyph.X[i] - p0) * (target / (float) fitted));
+                    }
+                }
+            }
+
+            if (space3x)
+                for (int i = 0; i < glyph.X.Length; i++)
+                    glyph.X[i] = (int) MathF.Round(glyph.X[i] / 3f);
+
+            if (plainX is not null)
+            {
+                // The two phantom points keep what the program made of them: they are the side
+                // bearings, which is spacing rather than shape, and a run has to keep landing where
+                // the advances say it does.
+                //
+                // But the program moves the LEFT phantom point as well, and that is not spacing -- it
+                // is where the glyph's origin ended up, so the outline belongs at the same offset. We
+                // restored the outline to its unhinted absolute x and kept a hinted origin, which
+                // leaves the ink a fraction of a pixel from where the side bearing says it is.
+                // Measured at 11 pixels an em, the lamps under an 'l' are ours 0/32/114/206/206/114/
+                // 32 against GDI's 0/0/73/153/255/197/111/36 -- a quarter of a pixel apart, with GDI
+                // saturating a lamp where we straddle two. Carrying the origin's movement across was
+                // MEASURED and changes nothing: the program does not move that phantom point in x, so
+                // the shift is zero for every glyph. A pure x offset was swept too, over a third of a
+                // pixel either way, and moves the regular face at 11ppem by at most 1.2% -- ink is
+                // conserved by every linear step, so position reaches the total only through the
+                // contrast curve, and barely. Neither earns a knob.
+                if (XHintMode == 4)
+                {
+                    // KEEP THE FINE ADJUSTMENT, DROP THE GRID SNAP.
+                    //
+                    // Fitting x does two things at once: it adjusts a stem's WIDTH by a fraction
+                    // of a pixel, and it SLIDES the stem onto a whole pixel. The evidence says to
+                    // keep the first and refuse the second. With the curve calibrated where no
+                    // fitting happens (gamma 1.35 at 7-8ppem, exact on both), GDI's finished ink
+                    // at 11ppem implies a fitted geometry of 283,730 against our x+y fitting's
+                    // 283,952 -- the same ink to within a tenth of a percent. So GDI is not
+                    // keeping less ink than a full fitting, it is putting the same ink in a
+                    // different PLACE: keeping every whole-pixel move (WPF_X_HINT=3) leaves the
+                    // total right and the finished pixels 6% heavy, because ink snapped onto whole
+                    // columns saturates lamps and a convex curve pays more for that.
+                    //
+                    // So each point keeps only the sub-pixel part of what the program moved it.
+                    const int Pixel = 64;                    // 26.6
+                    for (int i = 0; i < glyph.PointCount; i++)
+                    {
+                        int moved = glyph.X[i] - plainX[i];
+                        int snap = (int) MathF.Round(moved / (float) Pixel) * Pixel;
+                        glyph.X[i] = plainX[i] + (moved - snap);
+                    }
+                }
+                else if (XHintMode == 3)
+                {
+                    // WIDTHS from the fitting, POSITION from the outline. Discarding x movement
+                    // altogether is what costs the ink: our y-only fitted glyphs carry about 0.85
+                    // of what our x+y fitted ones do, and the finished ClearType pixels need that
+                    // 15% back (with the curve at the value the no-gridfit sizes measure, 1.35,
+                    // the fitted sizes come out at 0.86-0.91). Fitting x snaps a stem to whole
+                    // pixels, which mostly WIDENS it; that width is what GDI keeps. What it does
+                    // not keep is the sideways shift, so the glyph is slid back to where the
+                    // unhinted outline put it and only the shape it gained is retained.
+                    int hintedMin = int.MaxValue, plainMin = int.MaxValue;
+                    for (int i = 0; i < glyph.PointCount; i++)
+                    {
+                        if (glyph.X[i] < hintedMin) hintedMin = glyph.X[i];
+                        if (plainX[i] < plainMin) plainMin = plainX[i];
+                    }
+                    if (hintedMin != int.MaxValue)
+                    {
+                        int shift = plainMin - hintedMin;
+                        for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < glyph.PointCount; i++)
+                        glyph.X[i] = plainX[i];
+
+                    if (XHintMode == 9)
+                    {
+                        // SNAP THE GLYPH TO THE LAMP GRID, without touching its shape.
+                        //
+                        // Sliding our whole page along the lamp grid and scoring it against GDI's
+                        // says the two grids ARE aligned -- offset 0 wins at every size -- but the
+                        // minimum is deep at 16ppem (433,676 against 1,097,818 a lamp over) and
+                        // nearly flat at 11 (511,039 against 531,403, four percent). So at small
+                        // sizes our glyphs sit about half a lamp left of where GDI puts them, which
+                        // is a PLACEMENT error, and the evidence has been saying placement for a
+                        // while: the signed error is +0.60 against an absolute 25.41, so the ink is
+                        // the right amount in the wrong place.
+                        //
+                        // A translation is the one correction that cannot distort the glyph, which
+                        // separates it from every x-fitting attempt: those all moved points relative
+                        // to each other and all made the solid band worse.
+                        const int Lamp = 64;                    // thirds of a 26.6 pixel, below
+                        int minX = int.MaxValue;
+                        for (int i = 0; i < glyph.PointCount; i++)
+                            if (glyph.X[i] < minX) minX = glyph.X[i];
+                        if (minX != int.MaxValue)
+                        {
+                            int thirds = (int) MathF.Round(minX * 3f / Lamp);
+                            int shift = (int) MathF.Round(thirds * Lamp / 3f) - minX;
+                            for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift;
+                        }
+                    }
+                }
+            }
+            return glyph;
+        }
+
+        /// <summary>An accented letter, put together out of its parts and ready for its own program.
+        /// </summary>
+        /// <remarks>
+        ///  Each component is hinted FIRST, on its own, and arrives here already standing on the
+        ///  pixel grid; this places it and hands the assembly back for the composite's own program to
+        ///  nudge. That order is what the face's designers wrote against -- an 'e' is fitted as an
+        ///  'e' whether it is alone or under an acute, and the composite's program exists to move the
+        ///  accent clear of it, not to fit either one from scratch.
+        ///  <para>Doing it the other way round -- assembling in font units and fitting the result --
+        ///  would fit a shape the face never measured, and the letter under the accent would come out
+        ///  a different weight from the same letter beside it in the same word.</para>
+        /// </remarks>
+        private GlyphProgram? ReadCompositeProgram(TrueTypeInterpreter interpreter, int gid,
+                                                   float pixelsPerEm, int depth)
+        {
+            const int ARG_1_AND_2_ARE_WORDS = 0x0001;
+            const int ARGS_ARE_XY_VALUES = 0x0002;
+            const int ROUND_XY_TO_GRID = 0x0004;
+            const int WE_HAVE_A_SCALE = 0x0008;
+            const int MORE_COMPONENTS = 0x0020;
+            const int WE_HAVE_AN_X_AND_Y_SCALE = 0x0040;
+            const int WE_HAVE_A_TWO_BY_TWO = 0x0080;
+            const int WE_HAVE_INSTRUCTIONS = 0x0100;
+            const int USE_MY_METRICS = 0x0200;
+            const int SCALED_COMPONENT_OFFSET = 0x0800;
+
+            // The size has to be prepared before a component offset can be scaled, and the first
+            // thing that would have done it is hinting a component -- which happens after.
+            if (!interpreter.PrepareForSize(pixelsPerEm)) return null;
+
+            int header = _glyfOffset + (int)_loca[gid];
+            int xMin = (short)U16(header + 2);
+            int p = header + 10;
+
+            var xs = new List<int>();
+            var ys = new List<int>();
+            var onCurve = new List<bool>();
+            var ends = new List<int>();
+
+            // USE_MY_METRICS: the composite is spaced as one of its components is, so that a letter
+            // and its accented form keep the same sidebearings.
+            bool borrowedMetrics = false;
+            int borrowedOrigin = 0, borrowedAdvance = 0;
+
+            int flags = 0;
+            bool more = true;
+            for (int component = 0; more; component++)
+            {
+                if (component > 64) return null;            // a component list this long is damage
+                flags = U16(p); p += 2;
+                int componentGid = U16(p); p += 2;
+
+                int arg1, arg2;
+                if ((flags & ARG_1_AND_2_ARE_WORDS) != 0)
+                {
+                    arg1 = (short)U16(p); p += 2;
+                    arg2 = (short)U16(p); p += 2;
+                }
+                else { arg1 = (sbyte)_data[p++]; arg2 = (sbyte)_data[p++]; }
+
+                float a = 1f, b = 0f, c = 0f, d = 1f;
+                if ((flags & WE_HAVE_A_SCALE) != 0) { a = d = F2Dot14(p); p += 2; }
+                else if ((flags & WE_HAVE_AN_X_AND_Y_SCALE) != 0) { a = F2Dot14(p); p += 2; d = F2Dot14(p); p += 2; }
+                else if ((flags & WE_HAVE_A_TWO_BY_TWO) != 0)
+                {
+                    a = F2Dot14(p); p += 2; b = F2Dot14(p); p += 2;
+                    c = F2Dot14(p); p += 2; d = F2Dot14(p); p += 2;
+                }
+
+                more = (flags & MORE_COMPONENTS) != 0;
+
+                GlyphProgram? part = HintedProgram(interpreter, componentGid, pixelsPerEm, depth + 1);
+                if (part is null) continue;                 // a blank component places nothing
+
+                int count = part.PointCount;
+                var px = new int[count + 2];
+                var py = new int[count + 2];
+                for (int i = 0; i < count + 2; i++)         // the two horizontal phantoms travel too
+                {
+                    float fx = part.X[i], fy = part.Y[i];
+                    px[i] = (int)MathF.Round(a * fx + c * fy);
+                    py[i] = (int)MathF.Round(b * fx + d * fy);
+                }
+
+                int dx, dy;
+                if ((flags & ARGS_ARE_XY_VALUES) != 0)
+                {
+                    dx = interpreter.ScaleToPixels(arg1);
+                    dy = interpreter.ScaleToPixels(arg2);
+
+                    // Whether the offset goes through the component's transform is the font's to
+                    // say, and the default -- what every face that says nothing means -- is that it
+                    // does not.
+                    if ((flags & SCALED_COMPONENT_OFFSET) != 0)
+                    {
+                        int tx = (int)MathF.Round(a * dx + c * dy);
+                        dy = (int)MathF.Round(b * dx + d * dy);
+                        dx = tx;
+                    }
+
+                    // ROUND_XY_TO_GRID is why an accent sits on a whole pixel above a letter that is
+                    // already on one, instead of half a pixel above it and grey on both rows.
+                    if ((flags & ROUND_XY_TO_GRID) != 0)
+                    {
+                        dx = TrueTypeInterpreter.RoundToPixel(dx);
+                        dy = TrueTypeInterpreter.RoundToPixel(dy);
+                    }
+                }
+                else
+                {
+                    // The other way of saying where a component goes: line THIS point of what has
+                    // been assembled up with THAT point of the component.
+                    if (arg1 < 0 || arg1 >= xs.Count || arg2 < 0 || arg2 >= count) return null;
+                    dx = xs[arg1] - px[arg2];
+                    dy = ys[arg1] - py[arg2];
+                }
+
+                int baseIndex = xs.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    xs.Add(px[i] + dx);
+                    ys.Add(py[i] + dy);
+                    onCurve.Add(part.OnCurve[i]);
+                }
+                foreach (int last in part.EndPoints) ends.Add(last + baseIndex);
+
+                if ((flags & USE_MY_METRICS) != 0)
+                {
+                    borrowedMetrics = true;
+                    borrowedOrigin = px[count] + dx;
+                    borrowedAdvance = px[count + 1] + dx;
+                }
+            }
+
+            if (xs.Count == 0 || ends.Count == 0) return null;
+
+            // The composite's own program, which follows the component list when there is one.
+            var instructions = Array.Empty<byte>();
+            if ((flags & WE_HAVE_INSTRUCTIONS) != 0)
+            {
+                int length = U16(p); p += 2;
+                if (length > 0 && p + length <= _data.Length)
+                {
+                    instructions = new byte[length];
+                    Array.Copy(_data, p, instructions, 0, length);
+                }
+            }
+
+            int points = xs.Count;
+            var X = new int[points + 4];
+            var Y = new int[points + 4];
+            var On = new bool[points + 4];
+            for (int i = 0; i < points; i++) { X[i] = xs[i]; Y[i] = ys[i]; On[i] = onCurve[i]; }
+
+            // The phantom points, in pixels like everything else here -- a composite is not scaled
+            // again on the way in, so nothing else will convert them.
+            if (borrowedMetrics)
+            {
+                X[points] = borrowedOrigin;
+                X[points + 1] = borrowedAdvance;
+            }
+            else
+            {
+                int origin = xMin - MetricsLeftSideBearing(gid);
+                X[points] = interpreter.ScaleToPixels(origin);
+                X[points + 1] = interpreter.ScaleToPixels(origin + RawAdvanceWidth(gid));
+            }
+            return new GlyphProgram
+            {
+                X = X,
+                Y = Y,
+                OnCurve = On,
+                EndPoints = ends.ToArray(),
+                Instructions = instructions,
+                PointCount = points,
+                Composite = true,
+            };
+        }
+
+        private GlyphProgram? ReadGlyphProgram(int gid)
+        {
+            if (_glyfOffset < 0 || gid < 0 || gid >= _numGlyphs || _loca.Length == 0) return null;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return null;
+
+            int p = _glyfOffset + (int)start;
+            int numContours = (short)U16(p);
+            if (numContours <= 0) return null;
+            int xMin = (short)U16(p + 2);
+            p += 10;
+
+            var endPts = new int[numContours];
+            for (int i = 0; i < numContours; i++) { endPts[i] = U16(p); p += 2; }
+            int numPoints = endPts[numContours - 1] + 1;
+            if (numPoints <= 0) return null;
+
+            int instructionLength = U16(p); p += 2;
+            var instructions = new byte[instructionLength];
+            Array.Copy(_data, p, instructions, 0, instructionLength);
+            p += instructionLength;
+
+            var flags = new byte[numPoints];
+            for (int i = 0; i < numPoints;)
+            {
+                byte f = _data[p++];
+                flags[i++] = f;
+                if ((f & 0x08) != 0)
+                {
+                    int repeat = _data[p++];
+                    while (repeat-- > 0 && i < numPoints) flags[i++] = f;
+                }
+            }
+
+            var xs = new int[numPoints + 4];
+            int x = 0;
+            for (int i = 0; i < numPoints; i++)
+            {
+                byte f = flags[i];
+                if ((f & 0x02) != 0) { int dx = _data[p++]; x += (f & 0x10) != 0 ? dx : -dx; }
+                else if ((f & 0x10) == 0) { x += (short)U16(p); p += 2; }
+                xs[i] = x;
+            }
+            var ys = new int[numPoints + 4];
+            int y = 0;
+            for (int i = 0; i < numPoints; i++)
+            {
+                byte f = flags[i];
+                if ((f & 0x04) != 0) { int dy = _data[p++]; y += (f & 0x20) != 0 ? dy : -dy; }
+                else if ((f & 0x20) == 0) { y += (short)U16(p); p += 2; }
+                ys[i] = y;
+            }
+
+            // The phantom points. A program aligns a glyph's left edge by reading the first of
+            // them, so where it sits matters: it is the glyph's ORIGIN, which is its bounding box
+            // less its side bearing -- zero for a well-formed face, and not zero for one whose
+            // 'hmtx' and 'glyf' disagree. Putting the side bearing there instead moves the origin
+            // into the middle of the letter and everything measured from it with it.
+            int origin = xMin - LeftSideBearing(gid, xs, numPoints);
+            xs[numPoints] = origin;
+            xs[numPoints + 1] = origin + RawAdvanceWidth(gid);
+
+            var onCurve = new bool[numPoints + 4];
+            for (int i = 0; i < numPoints; i++) onCurve[i] = (flags[i] & 0x01) != 0;
+
+            return new GlyphProgram
+            {
+                X = xs,
+                Y = ys,
+                OnCurve = onCurve,
+                EndPoints = endPts,
+                Instructions = instructions,
+                PointCount = numPoints,
+            };
+        }
+
+        /// <summary>Where the glyph's ink starts relative to its origin. 'hmtx' carries it, and a
+        /// program that lines a stem up against the left edge reads the phantom point that holds
+        /// it -- so getting it wrong moves every hinted glyph sideways.</summary>
+        private int LeftSideBearing(int gid, int[] xs, int numPoints)
+        {
+            if (TryMetricsLeftSideBearing(gid, out int bearing)) return bearing;
+
+            int min = int.MaxValue;
+            for (int i = 0; i < numPoints; i++) min = Math.Min(min, xs[i]);
+            return min == int.MaxValue ? 0 : min;
+        }
+
+        /// <summary>The side bearing 'hmtx' records, for a caller with no points to fall back on --
+        /// a composite, whose points are already in pixels and cannot be measured in font units.
+        /// </summary>
+        private int MetricsLeftSideBearing(int gid)
+            => TryMetricsLeftSideBearing(gid, out int bearing) ? bearing : 0;
+
+        private bool TryMetricsLeftSideBearing(int gid, out int bearing)
+        {
+            bearing = 0;
+            if (_hmtxOffset < 0) return false;
+
+            if (gid < _numHMetrics)
+            {
+                bearing = (short)U16(_hmtxOffset + gid * 4 + 2);
+                return true;
+            }
+
+            // Past the last full metric the table holds bearings only, one per glyph.
+            int at = _hmtxOffset + _numHMetrics * 4 + (gid - _numHMetrics) * 2;
+            if (at + 1 >= _data.Length) return false;
+            bearing = (short)U16(at);
+            return true;
         }
 
         private ushort RawAdvanceWidth(int gid)
@@ -721,12 +1872,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // are absolute file offsets (so they stay valid for a face inside a .ttc).
             int numTables = U16(_sfntBase + 4);
             var tables = new Dictionary<string, int>(numTables);
+            _tableLengths = new Dictionary<string, int>(numTables);
             int p = _sfntBase + 12;
             for (int i = 0; i < numTables; i++)
             {
                 string tag = System.Text.Encoding.ASCII.GetString(_data, p, 4);
                 int offset = (int)U32(p + 8);
                 tables[tag] = offset;
+                // The hinting tables are byte streams, not structures, so their LENGTH is the only
+                // thing that says where they stop.
+                _tableLengths[tag] = (int)U32(p + 12);
                 p += 16;
             }
             return tables;

@@ -365,15 +365,20 @@ namespace System.Windows.Forms {
 					display_rectangle = base.DisplayRectangle;
 				}
 
-				// Inside the frame. This driver models no non-client area -- a window and its client are
-				// the same rectangle -- so a border is painted on the control's own outer edge, and
-				// anything laid out at the origin sits on top of it. A label in a table layout panel
-				// overlapped the frame above it for exactly that reason.
+				// Inside the frame. A border eats room a docked child cannot have, so the size comes off
+				// here whichever kind it is. The ORIGIN only moves for a 3D edge: this driver models no
+				// non-client area, and it puts the plain border's pixel back when it places a child
+				// (XplatUIWebGpu.ScreenLocation), so moving the origin here too would move it twice.
+				// Shifting it here reached a docked child and no other -- one positioned by Location sat
+				// on the frame regardless, which is what put every control in a bordered Panel a pixel
+				// up and left of Windows'.
 				if (border_style != BorderStyle.None) {
 					int edge = border_style == BorderStyle.FixedSingle
 						? 1 : ThemeEngine.Current.Border3DSize.Width;
-					display_rectangle.X += edge;
-					display_rectangle.Y += edge;
+					if (border_style != BorderStyle.FixedSingle) {
+						display_rectangle.X += edge;
+						display_rectangle.Y += edge;
+					}
 					display_rectangle.Width = Math.Max (0, display_rectangle.Width - edge * 2);
 					display_rectangle.Height = Math.Max (0, display_rectangle.Height - edge * 2);
 				}

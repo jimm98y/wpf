@@ -1498,6 +1498,9 @@ namespace System.Windows.Forms
 			if (align == ContentAlignment.TopCenter || align == ContentAlignment.TopLeft || align == ContentAlignment.TopRight)
 				y = outer.Y;
 			else if (align == ContentAlignment.MiddleCenter || align == ContentAlignment.MiddleLeft || align == ContentAlignment.MiddleRight)
+				// Truncated, which is what stock produces -- read off both stacks through a renderer
+				// that prints the rectangle it is handed (Probe.Spy): a menu item is outer 20 inner
+				// 15 and stock says Y=2.
 				y = outer.Y + (outer.Height - inner.Height) / 2;
 			else if (align == ContentAlignment.BottomCenter || align == ContentAlignment.BottomRight || align == ContentAlignment.BottomLeft)
 				y = outer.Bottom - inner.Height;

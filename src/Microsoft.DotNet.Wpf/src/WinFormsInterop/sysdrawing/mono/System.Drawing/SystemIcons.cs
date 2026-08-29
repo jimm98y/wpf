@@ -54,6 +54,51 @@ namespace System.Drawing {
 			icons [Exclamation_Warning] = new Icon ("Warning.ico", true);
 			icons [Question_] = new Icon ("Question.ico", true);
 			icons [Shield_] = new Icon ("Shield.ico", true);
+
+			// On WINDOWS, prefer the icons Windows itself puts in its message boxes. The bundled
+			// artwork is Mono's and is a different drawing entirely -- a red-outlined triangle where
+			// Windows shows a solid yellow one, a lightbulb where Windows shows a blue circled 'i' --
+			// so a message box built from it cannot look like the one beside it however exactly the
+			// rest of the dialog is laid out. Everywhere else the bundled set is still the answer.
+			if (OperatingSystem.IsWindows ()) {
+				TryLoadShared (Error_Hand, IDI_HAND);
+				TryLoadShared (Asterisk_Information, IDI_INFORMATION);
+				TryLoadShared (Exclamation_Warning, IDI_WARNING);
+				TryLoadShared (Question_, IDI_QUESTION);
+				TryLoadShared (Application_Winlogo, IDI_APPLICATION);
+			}
+		}
+
+		// The stock icon identifiers, passed as pseudo-pointers exactly as LoadImage expects them.
+		private static readonly IntPtr IDI_APPLICATION = new IntPtr (32512);
+		private static readonly IntPtr IDI_HAND = new IntPtr (32513);
+		private static readonly IntPtr IDI_QUESTION = new IntPtr (32514);
+		private static readonly IntPtr IDI_WARNING = new IntPtr (32515);
+		private static readonly IntPtr IDI_INFORMATION = new IntPtr (32516);
+
+		[System.Runtime.InteropServices.DllImport ("user32.dll", SetLastError = true)]
+		private static extern IntPtr LoadImage (IntPtr instance, IntPtr name, uint type,
+		                                        int cx, int cy, uint load);
+
+		/// <summary>Replace one bundled icon with the system's own, and keep the bundled one if the
+		/// system will not give it up -- a missing icon must not be the reason an application cannot
+		/// put up a message box.</summary>
+		private static void TryLoadShared (int slot, IntPtr id)
+		{
+			// Ask for a LARGE one. These stock icons carry several sizes and they are not the same
+			// drawing: the 32-pixel entry is the old shaded artwork with a ring round it, while the
+			// big entry is the flat one Windows' own message boxes show. Taking the big one and
+			// letting the dialog scale it down is what puts the same picture on the screen.
+			const uint IMAGE_ICON = 1, LR_SHARED = 0x8000;
+			try {
+				IntPtr h = LoadImage (IntPtr.Zero, id, IMAGE_ICON, 256, 256, LR_SHARED);
+				if (h == IntPtr.Zero)
+					h = LoadImage (IntPtr.Zero, id, IMAGE_ICON, 0, 0, LR_SHARED | 0x0040);
+				if (h != IntPtr.Zero)
+					icons [slot] = Icon.FromHandle (h);
+			} catch {
+				// keep the bundled icon
+			}
 		}
 
 		private SystemIcons ()

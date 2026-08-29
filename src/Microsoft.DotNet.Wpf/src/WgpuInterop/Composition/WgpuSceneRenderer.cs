@@ -55,6 +55,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // (WPF likewise drops ClearType/text-gamma on layered windows).
         private bool _transparentTarget;
 
+        /// <summary>Whether the run being drawn asked for symmetric smoothing (see the face's
+        /// 'gasp'); it costs vertical samples, so it is per run and folded into the mask key.</summary>
+        private bool _symmetricSmoothing;
+
+        /// <summary>Vertical samples to use when the face asks for symmetric smoothing.
+        /// <para>TWO, swept (WPF_SYM_ROWS): the parity suite totals 4,140,193 with the flag ignored,
+        /// 4,111,685 at two samples and 4,173,135 at four, and the size that actually changes there
+        /// -- 20ppem, where Segoe UI's gasp turns symmetric smoothing back on -- goes 225,559 ->
+        /// 198,640 -> 209,354. Four over-softens. The grey path's four samples are for unhinted
+        /// shapes and are not the right number here.</para></summary>
+        private static readonly int SymmetricRows =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 2;
+
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
         /// <summary>Draws routed to the local-space (resampled) coverage cache rather than the exact device-space path.</summary>
@@ -100,6 +113,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private sealed class CachedMask
         {
             public IntPtr Tex, View, BindGroup;
+            // Subpixel text is drawn twice over one quad, and an auto-layout bind group belongs to one
+            // pipeline, so the second pass needs its own. Null for an ordinary grey mask.
+            public IntPtr BindGroupAdd;
+            public bool Subpixel;
             // An auto-layout bind group is exclusive to ONE pipeline, and CompositingMode.SourceCopy
             // is a separate pipeline (no blend) for the same FillKind. So a cached mask needs a group
             // per blend variant; this one is built on first source-copy use and usually stays null.
@@ -108,6 +125,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public WGPUTextureFormat Format;     // ... and against the same pass format
             public int Ox, Oy, W, H;
             public int LastFrame;
+            /// <summary>Whether Tex came from RentMaskTexture, and so may go back to that pool.
+            /// <para>False for the masks the CPU path uploads (CreateR8Texture / CreateRgbaTexture):
+            /// those carry CopyDst|TextureBinding and NOT RenderAttachment, because nothing ever draws
+            /// into them. Handing one back to the pool let a later coverage pass rent it as a render
+            /// target, and wgpu rejects that in a way that ABORTS the process -- it panics across the
+            /// FFI boundary rather than throwing. Intermittent because the sizes have to match exactly
+            /// and the entry has to have been evicted first.</para></summary>
+            public bool Pooled;
         }
 
         // The cached mask's bind group for the compositing mode in effect at this draw.
@@ -144,6 +169,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public IntPtr SubTex, SubView;     // sharp content layer (owned)
             public IntPtr BlurTex, BlurView;   // blurred layer for blur/shadow (owned; Zero if none)
             public IntPtr MaskTex, MaskView;   // R8 mask for clip-geometry/opacity-mask (owned; Zero if none)
+            // Whether MaskTex came from the pool, and so may go back to it. Same trap as
+            // CachedMask.Pooled: the CPU fallbacks here upload a sampling-only texture.
+            public bool MaskPooled;
             public int Rx, Ry, Rw, Rh;
             public int Mode;                   // 0=opacity 1=blur 2=shadow 3=clip-geometry 4=opacity-mask
             public RgbaColor ShadowColor;
@@ -191,7 +219,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
                     ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
                     if (c.BlurTex != IntPtr.Zero) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
-                    if (c.MaskTex != IntPtr.Zero) ReturnMaskTexture(c.MaskTex, c.MaskView, c.Rw, c.Rh);
+                    if (c.MaskTex != IntPtr.Zero)
+                    {
+                        if (c.MaskPooled) ReturnMaskTexture(c.MaskTex, c.MaskView, c.Rw, c.Rh);
+                        else { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
+                    }
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
             }
@@ -256,8 +288,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 (dead ??= new List<long>()).Add(kv.Key);
                 CachedMask c = kv.Value;
                 wgpuBindGroupRelease(c.BindGroup);
+                if (c.BindGroupAdd != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupAdd);
                 if (c.BindGroupCopy != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupCopy);
-                ReturnMaskTexture(c.Tex, c.View, c.W, c.H);
+                // Only a POOL texture goes back to the pool. The CPU path's masks carry no
+                // RenderAttachment usage, and renting one out as a coverage target aborts the process.
+                if (c.Pooled) ReturnMaskTexture(c.Tex, c.View, c.W, c.H);
+                else { wgpuTextureViewRelease(c.View); wgpuTextureRelease(c.Tex); }
             }
             if (dead != null) foreach (long k in dead) _maskCache.Remove(k);
         }
@@ -347,7 +383,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -580,6 +616,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // factor and says nothing about the display.
         private static readonly bool s_textLog =
             Environment.GetEnvironmentVariable("WPF_TEXT_LOG") == "1";
+
+        // Grid fitting, on by default. WPF_TEXT_HINTING=0 draws the outlines as the face contains
+        // them, which is what this did before there was a hinter -- kept because the two are worth
+        // being able to put side by side when text looks wrong, not because either is optional.
+        private static readonly bool s_hintText =
+            Environment.GetEnvironmentVariable("WPF_TEXT_HINTING") != "0";
 
         private const float TextGamma = 2.2f;
         private static readonly byte[] s_textGammaLut = BuildTextGammaLut();
@@ -851,7 +893,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Render off-screen and read back RGBA8. <paramref name="srgbOutput"/> selects an
         /// sRGB target (display-ready, gamma-encoded once) for screenshots / layered popups; the
         /// default linear target is used by tests, which validate compositing independent of gamma.</summary>
-        public byte[] RenderToRgba(SceneVisual root, int width, int height, RgbaColor background, bool srgbOutput = false)
+        /// <summary>Whether glyph coverage is corrected for a gamma-space blend before it is
+        /// composited. On for anything going to a screen. Off for measuring the GEOMETRY the
+        /// hinting produced -- the correction is a curve on the shade, and a test that thresholds
+        /// coverage to ask which pixels the ink covers would be reading the curve instead.</summary>
+        internal bool TextBlendCorrection { get; set; } = true;
+
+        /// <param name="transparentTarget">Render as a LAYERED WINDOW does: onto something that is
+        /// itself see-through. It changes what the compositor may do -- subpixel text is dropped, as
+        /// WPF drops ClearType there -- so without a way to ask for it from here that branch could
+        /// not be tested at all. RenderSceneToView has taken the same argument all along.</param>
+        public byte[] RenderToRgba(SceneVisual root, int width, int height, RgbaColor background,
+                                   bool srgbOutput = false, bool transparentTarget = false)
         {
             try
             {
@@ -862,7 +915,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool srgb = srgbOutput && !s_gammaComposite;
                 WGPUTextureFormat outFormat = srgb ? OffscreenFormat : ReadbackFormat;
                 _srgbOutput = srgb;
-                _transparentTarget = false;
+                _transparentTarget = transparentTarget;
                 List<LayerPass> plan = _plan; plan.Clear();
                 _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
@@ -1427,6 +1480,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (s_gpuRaster)
                 {
                     (cl.MaskTex, cl.MaskView) = GpuRasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
+                    cl.MaskPooled = true;
                 }
                 else
                 {
@@ -1444,6 +1498,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     byte[] maskBytes = RasterizeOpacityMask(opacityMask, world, rw, rh, rx, ry);
                     (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
                 }
+                else cl.MaskPooled = true;
                 cl.Mode = 4;
             }
             else if (v.Effect is BlurEffect b)
@@ -2670,6 +2725,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return false;
         }
 
+        /// <summary>Whether any of a polygon's edges is neither horizontal nor vertical -- i.e.
+        /// whether it has an edge that needs antialiasing to look like anything but a staircase.</summary>
+        private static bool HasSlopedEdge(PolygonGeometry poly)
+        {
+            Vector2[] pts = poly.Points;
+            for (int i = 0; i < pts.Length; i++)
+            {
+                Vector2 a = pts[i], b = pts[(i + 1) % pts.Length];
+                if (MathF.Abs(a.X - b.X) > 1e-4f && MathF.Abs(a.Y - b.Y) > 1e-4f) return true;
+            }
+            return false;
+        }
+
         private void EmitFill(GeometryFill fill, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
         {
@@ -2680,6 +2748,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (fill.Geometry is PathGeometry pathGeom)
             {
                 EmitPath(fill, pathGeom, world, opacity, clip, width, height, format, data);
+                return;
+            }
+
+            // A polygon is flat-tessellated further down, which gives its edges no antialiasing at
+            // all. That is right for one that is really a rectangle and wrong for everything else a
+            // theme draws with FillPolygon -- arrows, chevrons, sort marks -- and it is why a
+            // DIAGONAL LINE came out as a dotted row of fully opaque pixels: a line is widened into
+            // a thin quad, and a quad half a pixel wide has no pixel it covers completely, so flat
+            // tessellation either took a pixel whole or not at all. Anything with a sloped edge goes
+            // through the same analytic-AA coverage path a path fill takes.
+            // (A GPU-live content brush is the exception the mesh path below documents: it has no
+            // pixels for the CPU rasterizer to sample.)
+            if (fill.Geometry is PolygonGeometry poly && HasSlopedEdge(poly)
+                && !(fill.Brush is ImageBrush polyIb && polyIb.SourceVisual != null))
+            {
+                EmitCoverageMask(GeometryToPath(fill.Geometry, LocalTolerance(world)), fill.Brush,
+                                 world, opacity, clip, width, height, format, data);
                 return;
             }
 
@@ -2848,7 +2933,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
         private void EmitPath(GeometryFill fill, PathGeometry path, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
-            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph, fill.BaselineAnchor);
+            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph,
+                                fill.BaselineAnchor, fill.PixelAligned);
 
         // Fills a geometry and/or strokes its outline in one primitive (the fill
         // first, then the stroke on top), reusing the fill and stroke paths.
@@ -3158,7 +3244,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false,
-            Vector2? baselineAnchor = null)
+            Vector2? baselineAnchor = null, bool pixelAligned = false)
         {
             if (clip.IsEmpty) return;
 
@@ -3187,7 +3273,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Still dropped on transparent targets (layered windows), matching WPF dropping ClearType
             // there. Note _srgbOutput can only be true when s_gammaComposite is false (see the two
             // assignment sites), so this single term expresses "this pass blends linearly".
-            bool gamma = isGlyph && !_transparentTarget && _srgbOutput;
+            // Glyph runs fitted to the pixel grid are WinForms text, and WinForms text is drawn
+            // by GDI, which composites in LINEAR LIGHT. On an sRGB target ours already does -- the
+            // GPU decodes on read and encodes on write -- so the right correction is none at all.
+            //
+            // The LUT below is not for that. It exists to make text land where WPF's own GAMMA-SPACE
+            // blend puts it, and applied to WinForms text it is a correction toward the wrong
+            // answer: it takes a pixel of 0.47 coverage to 0.42 displayed darkness where GDI shows
+            // 0.23, and every glyph edge is such a pixel, so the page reads as bold. Measured
+            // against ClearType, dropping it puts that pixel at 0.246.
+            bool hintedText = TextBlendCorrection && isGlyph && pixelAligned;
+            bool gamma = isGlyph && !_transparentTarget && _srgbOutput && !hintedText;
+
+            // Glyph runs that were fitted to the pixel grid are composited the way Windows
+            // composites text: in LINEAR LIGHT. Our pipeline blends in gamma space, where half
+            // coverage over white gives a pixel half way between black and white in encoded units
+            // -- much darker than half the light. Every glyph edge is a partly covered pixel, so
+            // the whole page comes out heavier than the same text beside it, which is what "the
+            // normal font looks like bold" was. See the coverage shader for the measurement.
+            // And where the compositor blends in GAMMA space instead, coverage has to be squared
+            // to land in the same place -- half coverage over white is half the LIGHT, not a value
+            // half way between the two encoded colours.
+            bool textBlend = hintedText && !_transparentTarget && !_srgbOutput;
+
+            // Coverage stays EXACT AREA, including for text that has been through the face's own
+            // hinting -- and it is worth saying why, because matching Windows exactly argues the
+            // other way and is wrong here.
+            //
+            // GDI's greyscale does not measure area: it counts sixteen point samples and resolves
+            // them through a ladder of greys that is far from linear (eight of sixteen comes out at
+            // 101, not 128). Doing the same makes our text match GDI's ANTIALIASED_QUALITY output
+            // almost pixel for pixel -- the average disagreement over the alphabet drops from 36/255
+            // to 12/255. It also makes it EIGHTEEN PER CENT LIGHTER than the application beside it,
+            // because what is on the screen beside it is not ANTIALIASED_QUALITY, it is ClearType,
+            // which lays ink on all three subpixels and is heavier than either. Measured on one
+            // label: stock 78.8 units of ink, exact area 86.7, GDI's ladder 64.9. The ladder wins
+            // the comparison it was measured against and loses the one anybody is looking at.
+            //
+            // So the ladder is not used. The parity test measures GEOMETRY -- which pixels the ink
+            // covers -- and expects the shades to differ.
 
             // Solid coverage (text, icons, rounded rects, ellipses, strokes) is rasterized in
             // DEVICE space so the mask isn't upscaled by the world transform -- this keeps text
@@ -3217,7 +3341,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // frames of a 1-degree spin, versus 1 with the cache). There the mask would be
                 // thrown away next frame regardless, so the resample buys a 60x cut for a blur
                 // that is on a moving object for one frame at a time.
-                if (s_localCoverageCache && !IsAxisAligned(world)
+                if (s_localCoverageCache && !pixelAligned && !IsAxisAligned(world)
                     && IsLinearAnimating(NormalizedHashCached(coverageGeometry, 0f, 0f), world))
                 {
                     EmitLocalSpaceCoverage(coverageGeometry, solid.Color, world, opacity, clip, width, height, format, data, gamma);
@@ -3238,6 +3362,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // hash the shape at its local origin — so the same glyph shape at any position shares ONE
                 // mask (≤4 phase variants) instead of one mask per instance.
                 GeometryMinCached(coverageGeometry, out float gminX, out float gminY);
+
+                // Geometry that is already ON the grid is re-seated by a WHOLE number of units, so
+                // its edges stay where they were put. Taking its own bounding box as the origin
+                // instead shifts everything by whatever fraction of a pixel that box begins at -- and
+                // a stem narrowed to exactly one pixel and then moved a third of one is fainter than
+                // the unfitted outline it replaced. That is what made fitted text look thin.
+                if (pixelAligned)
+                {
+                    gminX = MathF.Floor(gminX);
+                    gminY = MathF.Floor(gminY);
+                }
+
                 float dx = world.M11 * gminX + world.M21 * gminY + world.M31;
                 float dy = world.M12 * gminX + world.M22 * gminY + world.M32;
                 float qx = MathF.Round(dx * 2f) * 0.5f;
@@ -3299,7 +3435,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M22);
                 key = key * 31 + phase;
-                key = (key * 397 ^ (long)format) * 4 + (_aliasedEdges ? 2 : 0) + (gamma ? 1 : 0);
+                // Subpixel text is a DIFFERENT MASK of the same shape -- three channels instead of
+                // one -- so it needs its own key, or a run drawn once with ClearType and once without
+                // (a rotated copy, a layered window) would be handed the other one's texture.
+                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world);
+                key = (key * 397 ^ (long)format) * 32 + (_symmetricSmoothing && subpixel ? 16 : 0)
+                      + (_aliasedEdges ? 8 : 0) + (gamma ? 4 : 0)
+                      + (textBlend ? 2 : 0) + (subpixel ? 1 : 0);
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
@@ -3312,15 +3454,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     phased.M32 = phaseY;
                     IntPtr tex, view;
                     int mox, moy, mw, mh;
+                    if (subpixel)
+                    {
+                        // Rasterized on the CPU even where the GPU rasterizer is on: the subpixel
+                        // mask is three times as wide before it is filtered down, and the coverage
+                        // shader has no notion of that. Glyph masks are cached by shape, so this is
+                        // paid once per glyph per size, not once per frame.
+                        PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? SymmetricRows : 0;
+                        PathRasterizer.SubpixelMask sm;
+                        try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased)); }
+                        finally { PathRasterizer.SubpixelRowsForRun = 0; }
+                        if (sm.IsEmpty) return;
+                        // Corrected AFTER the filter, and it was worth checking which way round:
+                        // correcting the raw lamps first is the tidier story (a linear filter then
+                        // carries corrected ink about unchanged) and measures slightly WORSE on every
+                        // count -- 1307 disagreeing pixels against 1196. It also does not straighten
+                        // the size tilt, which is how we know the tilt is not about this order.
+                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend);
+                        (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
+                        mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
+                        cm = new CachedMask
+                        {
+                            Tex = tex, View = view,
+                            BindGroup = CreateSampledBindGroup(format, FillKind.TextSubpixelMultiply, view, NearestSampler()),
+                            BindGroupAdd = CreateSampledBindGroup(format, FillKind.TextSubpixelAdd, view, NearestSampler()),
+                            Subpixel = true,
+                            Sampler = NearestSampler(), Format = format,
+                            Ox = mox, Oy = moy, W = mw, H = mh,
+                        };
+                        _maskCache[key] = cm;
+                        cm.LastFrame = _frameId;
+                        EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
+                        return;
+                    }
+                    // Only the GPU path's target comes from the mask POOL; the CPU path uploads a
+                    // sampling-only texture. See CachedMask.Pooled.
+                    bool pooled = s_gpuRaster;
                     if (s_gpuRaster)
                     {
                         if (!GpuRasterizeCoverage(TransformGeometry(normGeom, phased), gamma,
-                                out tex, out view, out mox, out moy, out mw, out mh))
+                                out tex, out view, out mox, out moy, out mw, out mh, textBlend))
                             return;
                     }
                     else
                     {
                         CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, phased));
+                        if (textBlend) ApplyTextBlend(m.Coverage);
                         if (m.IsEmpty) return;
                         if (_aliasedEdges) ApplyAliasedEdges(m.Coverage);
                         if (gamma) ApplyTextGamma(m.Coverage);
@@ -3329,7 +3508,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
                     cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = NearestSampler(), Format = format,
-                        Ox = mox, Oy = moy, W = mw, H = mh };
+                        Ox = mox, Oy = moy, W = mw, H = mh, Pooled = pooled };
                     _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
                 }
                 cm.LastFrame = _frameId;
@@ -3349,7 +3528,89 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     EmitGpuImageMask(coverageGeometry, imgBrush, world, opacity, clip, width, height, format, data))
                     return;
             }
+            if (isGlyph && brush is SolidColorBrush subpixelSolid
+                && TryEmitSubpixelGlyph(coverageGeometry, subpixelSolid, world, opacity, clip,
+                                        width, height, format, data))
+                return;
+
             EmitMask(PathRasterizer.Rasterize(coverageGeometry), brush, world, opacity, clip, width, height, format, data, isGlyph);
+        }
+
+        /// <summary>Whether text is resolved onto the three lamps of each pixel rather than to grey.
+        /// <para>On by default wherever it can be done, because it is what the platform does and what
+        /// the application beside ours looks like.</para></summary>
+        internal bool ClearType
+        {
+            get => _clearType;
+            set
+            {
+                _clearType = value;
+                // Subpixel rendering and vertical-only hinting are two halves of one decision, and
+                // the outline has to be fitted the right way before it ever reaches the rasterizer --
+                // so this is set here, where the mode is chosen, not down in the draw where the mask
+                // is made. The glyph caches are keyed by it, so the two modes cannot cross.
+                Text.TrueTypeFont.SubpixelFitting = value;
+            }
+        }
+        private bool _clearType = InitClearType();
+
+        private static bool InitClearType()
+        {
+            Text.TrueTypeFont.SubpixelFitting = true;
+            return true;
+        }
+
+        /// <summary>Draw a glyph run the way ClearType does, or say that this one cannot be.</summary>
+        /// <remarks>
+        ///  Three things have to hold, and each of them is a reason Windows itself turns ClearType off:
+        ///  <list type="bullet">
+        ///  <item>The target must be OPAQUE. Subpixel coverage is a statement about a lamp behind a
+        ///  known colour; composited into something transparent it is a lie, and the fringe surfaces
+        ///  later against whatever the layer lands on. WPF drops ClearType on layered windows for the
+        ///  same reason.</item>
+        ///  <item>The transform must be AXIS-ALIGNED. The three lamps are laid out along the screen's
+        ///  x axis, so a rotated glyph's subpixels are not along its own.</item>
+        ///  <item>The glyph must be on the PIXEL GRID, which for us means it went through the face's
+        ///  hinting. Text placed at a fraction of a pixel gains nothing from three times the
+        ///  horizontal resolution and picks up a fringe that moves as it scrolls.</item>
+        ///  </list>
+        /// </remarks>
+        private bool TryEmitSubpixelGlyph(PathGeometry geometry, SolidColorBrush solid, Matrix3x2 world,
+                                          double opacity, Scissor clip, int width, int height,
+                                          WGPUTextureFormat format, DrawData data)
+        {
+            if (!ClearType || _transparentTarget || !IsAxisAligned(world)) return false;
+
+            PathRasterizer.SubpixelMask mask = PathRasterizer.RasterizeSubpixel(geometry);
+            if (mask.IsEmpty) return false;
+
+            (IntPtr tex, IntPtr view) = CreateRgbaTexture(mask.Rgba, mask.Width, mask.Height);
+            IntPtr multiplyBind = CreateSampledBindGroup(format, FillKind.TextSubpixelMultiply, view, NearestSampler());
+            IntPtr addBind = CreateSampledBindGroup(format, FillKind.TextSubpixelAdd, view, NearestSampler());
+            DeferReleaseSampled(tex, view, multiplyBind);
+            DeferReleaseBindGroup(addBind);
+
+            float r = solid.Color.R, g = solid.Color.G, b = solid.Color.B;
+            float a = (float)Math.Clamp(solid.Color.A * opacity, 0.0, 1.0);
+
+            float x0 = mask.OriginX, y0 = mask.OriginY;
+            float x1 = x0 + mask.Width, y1 = y0 + mask.Height;
+
+            uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y0), world), width, height), r, g, b, a, 0f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y0), world), width, height), r, g, b, a, 1f, 0f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x1, y1), world), width, height), r, g, b, a, 1f, 1f);
+            AddVertex(data.Verts, ToNdc(Vector2.Transform(new Vector2(x0, y1), world), width, height), r, g, b, a, 0f, 1f);
+
+            uint firstIndex = (uint)data.Indices.Count;
+            AddQuadIndices(data.Indices, baseVertex);
+
+            // The SAME quad twice, in this order: take the destination down by the coverage, then add
+            // the ink. Swapping them adds ink to a destination that is then dimmed, which is a
+            // different (and wrong) picture.
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.TextSubpixelMultiply, multiplyBind));
+            data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.TextSubpixelAdd, addBind));
+            return true;
         }
 
         // EdgeMode.Aliased on the CPU rasterizer: same half-covered threshold the coverage
@@ -3362,10 +3623,185 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Re-map glyph coverage through the text-gamma LUT (in place) so text blends
         // with WPF-matching weight on the display-destined sRGB path.
+        /// <summary>Coverage as it has to be for a gamma-space blend to land where a linear-light
+        /// one would. The same correction the coverage shader applies; this is the CPU rasterizer's
+        /// copy of it.</summary>
+        private static void ApplyTextBlend(byte[] coverage)
+        {
+            for (int i = 0; i < coverage.Length; i++)
+                coverage[i] = s_textBlendLut[coverage[i]];
+        }
+
+        private static readonly byte[] s_textBlendLut = BuildTextBlendLut();
+
+        /// <summary>The curve subpixel coverage goes through on its way to the screen, which is NOT
+        /// the one grey text uses.
+        /// <para>Grey text is corrected by squaring, which is a gamma of 2 and is what makes its
+        /// weight land on Windows'. Subpixel text through the same curve comes out far too light,
+        /// because ClearType is not a lighter grey -- it lays ink on three lamps and Windows drives
+        /// them much harder, reaching FULL coverage on subpixels where our grey mask is at three
+        /// quarters.</para>
+        /// <para>1.1 is measured, not derived: swept against GDI's own ClearType. Squaring instead
+        /// (gamma 2, what grey text uses) costs 766 more pixels of disagreement. The curve is a
+        /// stand-in for the contrast enhancement Windows applies, which is a tunable of the machine
+        /// and not a constant we can read off anything.</para>
+        ///
+        /// <para>IT IS CHOSEN FOR THE SIZES PEOPLE READ, and it is worth knowing why it cannot simply
+        /// be chosen for all of them. Our weight against Windows' is not off by a constant, it is
+        /// TILTED: at eleven pixels an em we lay down 0.91 of its ink and at nineteen we lay down
+        /// 1.08. A gamma slides that whole line up and down and cannot rotate it, so no single value
+        /// is right everywhere -- 1.1 puts eleven to fourteen pixels an em, which is where interface
+        /// text lives, closest.</para>
+        ///
+        /// <para>The tilt is NOT a curve problem, and four attempts to make it one all failed: a
+        /// contrast curve applied before the filter instead of after; the face's control values
+        /// allowed to set stem widths, rounded to a whole pixel; the same rounded to a third; and the
+        /// same not rounded at all. Every one of them was measured and every one was worse. Stem
+        /// POSITION was claimed to reproduce GDI exactly, citing a TrueTypeInterpreter.RoundToThirds
+        /// that NO LONGER EXISTS -- see TrueTypeFont.SubpixelFitting, where x is kept at its plain
+        /// scaled value and lands on arbitrary fractions (mean 0.286 px from a pixel boundary). The
+        /// claim was stale. Rounding x was swept in 2026-08-28 and every setting made the rendered
+        /// coverage worse, so leaving it alone is still right -- but "the stems are where GDI puts
+        /// them" is not an argument that can be leaned on.</para>
+        ///
+        /// <para>What is left unexplained is stem WIDTH: ours ramps smoothly with the size where
+        /// Windows' holds and steps. Whatever Windows does about that is not any of the four things
+        /// above.</para>
+        ///
+        /// <para>The exponent itself is not the tilt either, and now there is a number for that too.
+        /// TheWholeRepertoire_CarriesAsMuchInkAsWindows weighs our ink against GDI's over the whole
+        /// repertoire at every size and face; sweeping this constant across 1.0, 1.05, 1.1, 1.15 and
+        /// 1.2 gives mean disagreements of 3.52%, 2.13%, 1.23%, 1.91% and 2.92%. 1.1 is the floor, so
+        /// there is nothing left to win by moving it.</para>
+        ///
+        /// <para>What that measurement DOES say is where the tilt lives: bold, italic and bold-italic
+        /// land within about 1% of GDI at every size from 10 to 20, and the REGULAR face alone misses
+        /// -- 8% light at 11, 3.6% at 12, crossing over to 6% heavy by 19. One face, not the curve,
+        /// and the thinnest stems of the four.</para>
+        ///
+        /// <para>The sweep figures above were taken over the GREEN lamp alone, before that test was
+        /// corrected to weigh all three (a subpixel filter moves ink sideways between lamps, so one
+        /// lamp is not a conserved quantity). The ordering is what matters and it did not change.</para>
+        ///
+        /// <para>RE-SWEPT after PathRasterizer stopped antialiasing text vertically, which changed
+        /// the coverage distribution this curve is applied to and moved the optimum to 1.15. Mean
+        /// ink disagreement across 0.9/1.0/1.05/1.1/1.15/1.2/1.3 is now
+        /// 6.53%/3.83%/2.62%/1.53%/0.86%/1.44%/3.43%, and the live WinForms window agrees
+        /// (2,555,219 -> 2,551,427 -> 2,564,657 for 1.1/1.15/1.2). A curve tuned against one
+        /// coverage model does not stay tuned when the model changes -- re-sweep it after any
+        /// rasteriser change, not just after a change to the curve.</para>
+        /// </summary>
+        private static readonly float SubpixelGamma =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAMMA"),
+                           System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float g) ? g : 1.15f;
+
+        /// <summary>How hard the curve pushes coverage AWAY from the middle, after the gamma.
+        /// <para>A power curve can only slide the whole line up or down, and what is left disagreeing
+        /// with GDI is not a slide. With no correction at all our ink runs 1.02-1.05 of GDI's for
+        /// bold, italic and bold-italic at every size, and for the regular face at 13 pixels an em
+        /// and up -- but 0.97-1.03 for the REGULAR face at 10, 11 and 12, where its stems are about
+        /// one pixel wide. So GDI keeps more ink than the pattern predicts exactly where a stem is
+        /// thin and its lamps are half covered, which is what a CONTRAST curve does and a gamma
+        /// cannot: it darkens what is already more than half covered and leaves the rest.</para>
+        /// <para>WPF_SUBPIXEL_CONTRAST sweeps it; 0 is the plain power curve, and 0 is what it stays.
+        /// MEASURED: k of 0/0.3/0.6 moves the regular face at 11 pixels an em 0.9204/0.9186/0.9158 --
+        /// the wrong way and barely at all, because after the gamma a thin stem's lamps sit BELOW a
+        /// half, where a curve that pushes away from the middle lightens them. Structural does not
+        /// move at all (274 throughout). This is the second curve family to fail, and it fails for the
+        /// reason the first one did: the disagreement is SIZE-dependent and a curve is not. Keep the
+        /// knob, do not keep looking for a shape.</para></summary>
+        private static readonly float SubpixelContrast =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_CONTRAST"),
+                           System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float k) ? k : 0f;
+
+        /// <summary>Whether the contrast curve goes through the lamps BEFORE the filter (which is
+        /// the order GDI's pipeline is described in) or after it (which is what measured better).
+        /// <para>Re-testable rather than re-arguable: WPF_SUBPIXEL_CORRECT=before switches it. The
+        /// order was settled once under the OLD coverage model and the raw lamps have since become
+        /// three-valued, so the arithmetic it was settled on no longer exists.</para>
+        /// <para>RE-MEASURED, and AFTER still wins. Corrected before the filter the curve needs a much
+        /// steeper exponent to do the same work (its best is gamma 1.8, where mean ink disagreement is
+        /// 0.88% against 0.89% -- a tie) but it costs structural accuracy heavily: 684 pixels against
+        /// 274. Correcting three-valued lamps quantizes the curve to three points, and the filter then
+        /// spreads that coarse result instead of a fine one.</para>
+        /// <para>The first attempt at this measurement was WRONG and said "before" was inert. This
+        /// field was declared BELOW s_subpixelLut, and a static field initializer runs in declaration
+        /// order, so BuildSubpixelLut read it as false and never handed the table over: the run was
+        /// measuring no correction at all. A knob that is read too early is indistinguishable from a
+        /// parameter that does nothing -- if a sweep comes back perfectly flat, check the ORDER before
+        /// believing it.</para></summary>
+        private static readonly bool s_correctBeforeFilter =
+            Environment.GetEnvironmentVariable("WPF_SUBPIXEL_CORRECT") == "before";
+
+        private static readonly byte[] s_subpixelLut = BuildSubpixelLut();
+
+        private static byte[] BuildSubpixelLut()
+        {
+            var lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                float c = MathF.Pow(i / 255f, SubpixelGamma);
+                // Symmetric about a half, so it cannot change which side of the middle a value is on
+                // and cannot invert an edge; k = 1 is the full cubic.
+                if (SubpixelContrast != 0f)
+                    c += SubpixelContrast * c * (1f - c) * (2f * c - 1f);
+                lut[i] = (byte)MathF.Round(Math.Clamp(c, 0f, 1f) * 255f);
+            }
+            if (s_correctBeforeFilter) PathRasterizer.PreFilterLut = lut;
+            return lut;
+        }
+
+        private static byte[] BuildTextBlendLut()
+        {
+            var lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                float c = i / 255f;
+                lut[i] = (byte)MathF.Round(c * c * 255f);
+            }
+            return lut;
+        }
+
         private static void ApplyTextGamma(byte[] coverage)
         {
             for (int i = 0; i < coverage.Length; i++)
                 coverage[i] = s_textGammaLut[coverage[i]];
+        }
+
+        /// <summary>Put a subpixel mask's three lamps through the same weight correction a grey mask
+        /// gets, and recompute the alpha from what comes out.
+        /// <para>Alpha is recomputed rather than corrected: it is the MEAN of the three, and the mean
+        /// of three corrected values is not the correction of their mean. Correcting it separately
+        /// left the destination dimmed by a different amount from the ink that replaced it, which
+        /// shows as a pale halo around every glyph.</para></summary>
+        private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend)
+        {
+            // Applied whichever correction the grey path would have wanted, because the reason is the
+            // same one -- coverage is not brightness -- and only the curve differs.
+            if (!gamma && !textBlend) return;
+            if (s_correctBeforeFilter)
+            {
+                // Already put through the curve on the way in (PreFilterLut, handed over when the
+                // table was built -- it has to be in place before the FIRST glyph is rasterized, not
+                // when the first one is corrected); only alpha is still owed.
+                for (int j = 0; j < rgba.Length; j += 4)
+                    rgba[j + 3] = (byte)((rgba[j] + rgba[j + 1] + rgba[j + 2]) / 3);
+                return;
+            }
+            byte[] lut = s_subpixelLut;
+            for (int i = 0; i < rgba.Length; i += 4)
+            {
+                int total = 0;
+                for (int c = 0; c < 3; c++)
+                {
+                    byte v = lut[rgba[i + c]];
+                    rgba[i + c] = v;
+                    total += v;
+                }
+                rgba[i + 3] = (byte)(total / 3);
+            }
         }
 
         // Emit a quad sampling a cached coverage mask, tinted by the solid colour. The mask is
@@ -3382,6 +3818,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
+            if (c.Subpixel)
+            {
+                // Dim the destination by the coverage, then add the ink: source-over written out one
+                // channel at a time, which is the whole reason there are two of them.
+                data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.TextSubpixelMultiply, c.BindGroup));
+                data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.TextSubpixelAdd, c.BindGroupAdd));
+                return;
+            }
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.Text, MaskBindGroup(c), sourceCopy: _srcCopy));
         }
 
@@ -3804,12 +4248,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ? _outlineFont
                 : font as Text.IGlyphOutlineFont;
 
+            // Whether this face, at this size, asks to be smoothed in both directions. The 'gasp'
+            // table says so per size and the answer changes with it -- Segoe UI wants it at 8ppem
+            // and below and again above 19, and not in between -- so it is decided per RUN, not
+            // once for the renderer.
+            _symmetricSmoothing = font is Text.IHintedGlyphFont hf
+                                  && hf.WantsSymmetricSmoothing(run.EmSize * LinearScale(world));
+
             // Shape the run into positioned glyphs (glyph ids + advances/offsets),
             // then lay them out. Advances come from the shaper (so kerning etc.
             // are honoured); the atlas provides each glyph's bitmap and bearings.
             _shaper.Shape(font, run.Text, _shapeScratch);
 
             float scale = run.EmSize / font.PixelsPerEm;
+
+            // Grid fitting: how big this run will be ON THE SCREEN, which is the only size at which
+            // fitting an outline to whole pixels means anything. Skipped where it would be a lie --
+            // a rotated or sheared transform has no pixel columns to fit stems to -- and at sizes
+            // where there is nothing to gain: above a hundred pixels an em, a stem is dozens of
+            // pixels wide and moving its edge by a fraction of one changes nothing anybody can see.
+            float deviceScale = LinearScale(world);
+            bool upright = MathF.Abs(world.M12) < 1e-6f && MathF.Abs(world.M21) < 1e-6f
+                           && MathF.Abs(MathF.Abs(world.M11) - MathF.Abs(world.M22)) < 1e-4f;
+            float hintPpem = s_hintText && upright && deviceScale > 1e-6f
+                             ? run.EmSize * deviceScale : 0f;
+            if (hintPpem < 6f || hintPpem > 100f)
+                hintPpem = 0f;
+            var hinted = hintPpem > 0f ? font as Text.IHintedGlyphFont : null;
+
+            // The fitted outline arrives in DEVICE pixels; the run is drawn in the caller's space, so
+            // it is scaled back by the same factor the world transform will scale it up by.
+            float hintScale = hintPpem > 0f ? 1f / deviceScale : scale;
+
+            // And the run has to LAND on the grid it was fitted to. Fitting puts a stem on one whole
+            // column and, in doing so, makes it a little narrower than the outline drew it; if the run
+            // is then placed half a pixel over, that narrower stem is smeared across two columns and
+            // comes out LIGHTER than the unfitted one would have -- which is exactly what it looked
+            // like. So a fitted run starts on a whole device pixel and steps by whole device pixels.
+            float originX = run.Origin.X, originY = run.Origin.Y;
+            if (hintPpem > 0f)
+            {
+                Vector2 dev = Vector2.Transform(run.Origin, world);
+                originX += (MathF.Round(dev.X) - dev.X) / deviceScale;
+                originY += (MathF.Round(dev.Y) - dev.Y) / deviceScale;
+            }
 
             // Prefer CRISP outline coverage (the same analytic-AA path WPF's glyph fills take) over the
             // fixed-size glyph atlas: the atlas rasterizes at BaseEmPixels (48) and MINIFIES to the run's
@@ -3830,13 +4312,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // the same run in Windows, and put its glyphs on fractional positions, which is what
                 // softens them. (WPF's own text does not come through here -- it arrives as glyph
                 // outlines already positioned -- so this is the string runs, which is WinForms.)
-                float pen = MathF.Round(run.Origin.X);
+                float pen = hintPpem > 0f ? originX : MathF.Round(originX);
 
                 void FlushBatch()
                 {
                     if (batch.Count == 0) return;
                     EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, batch),
-                                              new SolidColorBrush(run.Color), isGlyph: true),
+                                              new SolidColorBrush(run.Color), isGlyph: true)
+                             { PixelAligned = hintPpem > 0f },
                              world, opacity, clip, width, height, format, data);
                     batch = new List<PathFigure>();
                 }
@@ -3844,10 +4327,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 foreach (Text.ShapedGlyph g in _shapeScratch)
                 {
                     float gx = pen + g.XOffset * scale;
-                    float gy = run.Origin.Y + g.YOffset * scale;
+                    float gy = originY + g.YOffset * scale;
 
                     _glyphFills.Clear();
-                    Text.GlyphRunPainter.Paint(outline, colorFont, g.GlyphId, scale, gx, gy, _glyphFills);
+                    Text.GlyphRunPainter.Paint(outline, colorFont, font as Text.IBitmapGlyphFont,
+                                               g.GlyphId, hintPpem > 0f ? hintScale : scale, gx, gy,
+                                               _glyphFills, hintPpem);
 
                     foreach (Text.GlyphFill gf in _glyphFills)
                     {
@@ -3865,7 +4350,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                  world, opacity, clip, width, height, format, data);
                     }
 
-                    pen += MathF.Round(g.Advance * scale);
+                    // The advance is rounded on the DEVICE grid when the glyphs were fitted to it,
+                    // so the next glyph starts on a whole pixel too; in world units otherwise, which
+                    // is how Windows lays a string out when nothing has been fitted.
+                    //
+                    // Where the face ships its own device widths, they are the answer: Windows uses
+                    // them, and rounding the scaled advance instead disagrees with the face by a
+                    // pixel on letters whose true advance sits near a half -- "Shapes" came out two
+                    // pixels narrower than the same word beside it, which reads as squeezed.
+                    float step;
+                    if (hintPpem > 0f)
+                    {
+                        step = hinted is not null
+                               && hinted.TryGetDeviceAdvance(g.GlyphId, hintPpem, out float device)
+                               ? device / deviceScale
+                               : MathF.Round(g.Advance * scale * deviceScale) / deviceScale;
+                    }
+                    else
+                    {
+                        step = MathF.Round(g.Advance * scale);
+                    }
+                    pen += step;
                 }
 
                 FlushBatch();
@@ -4248,7 +4753,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
             FillKind.StrokeDraw or
-            FillKind.ShaderEffect         // group 0 = constants uniform (optional) + input texture + sampler
+            FillKind.ShaderEffect or      // group 0 = constants uniform (optional) + input texture + sampler
+            FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd
                 => d.BindGroup,
 
             // Glyph runs share the atlas bind group; path masks carry their own.
@@ -4635,6 +5141,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 FillKind.Textured => "fs_textured",
                 FillKind.Text => "fs_text",
+                FillKind.TextSubpixelMultiply => "fs_text_subpixel_multiply",
+                FillKind.TextSubpixelAdd => "fs_text_subpixel_add",
                 FillKind.Layer => "fs_layer",
                 FillKind.Blur => "fs_blur",
                 FillKind.Shadow => "fs_shadow",
@@ -4680,6 +5188,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha },
                     alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha },
                 };
+
+                // The two halves of subpixel text. Together they are the ordinary source-over blend
+                // written out per channel, which is the one thing a single blend state cannot say:
+                // its destination factor is one number and here each lamp needs its own.
+                if (kind == FillKind.TextSubpixelMultiply)
+                {
+                    // dst *= (1 - coverage), per channel.
+                    blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrc };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha };
+                }
+                else if (kind == FillKind.TextSubpixelAdd)
+                {
+                    // dst += colour * coverage, per channel.
+                    blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
+                }
                 // Coverage / brush-alpha passes write the mask value directly (single opaque
                 // quad into a cleared R8 target) — no blending. All others blend premultiplied.
                 var colorTarget = new WGPUColorTargetState { format = targetFormat, blend = &blend, writeMask = WGPUColorWriteMask_All };
@@ -5031,7 +5555,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private bool GpuRasterizeCoverage(PathGeometry path, bool gamma,
-            out IntPtr tex, out IntPtr view, out int ox, out int oy, out int w, out int h)
+            out IntPtr tex, out IntPtr view, out int ox, out int oy, out int w, out int h,
+            bool textBlend = false)
         {
             tex = IntPtr.Zero; view = IntPtr.Zero; ox = oy = w = h = 0;
             _edgeScratch.Clear();
@@ -5042,7 +5567,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             w = (int)MathF.Ceiling(maxX) + 1 - ox;
             h = (int)MathF.Ceiling(maxY) + 1 - oy;
             if (w <= 0 || h <= 0) return false;
-            (tex, view) = GpuCoveragePass(segCount, ox, oy, w, h, path.FillRule, gamma);
+            (tex, view) = GpuCoveragePass(segCount, ox, oy, w, h, path.FillRule, gamma, textBlend);
             return true;
         }
 
@@ -5178,7 +5703,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return GpuCoveragePass(segCount, originX, originY, width, height, path.FillRule, gamma: false);
         }
 
-        private (IntPtr Tex, IntPtr View) GpuCoveragePass(int segCount, int ox, int oy, int w, int h, FillRule rule, bool gamma)
+        private (IntPtr Tex, IntPtr View) GpuCoveragePass(int segCount, int ox, int oy, int w, int h,
+            FillRule rule, bool gamma, bool textBlend = false)
         {
             // Rebase segment control points to mask-local coordinates (all x/y pairs; the shader's
             // pixel coords are mask-local via uv).
@@ -5201,7 +5727,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // during a region-sized card bake would render shifted off its own target (and
             // the blank result would be cached). uv = mask-local pixel coords; the flat
             // vertex colour carries (segCount, flags) — matching fs_coverage's decoding.
-            float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f) + (_aliasedEdges ? 4f : 0f);
+            float flags = (rule == FillRule.EvenOdd ? 1f : 0f) + (gamma ? 2f : 0f)
+                          + (_aliasedEdges ? 4f : 0f) + (textBlend ? 8f : 0f);
             DrawData d = RentDrawData();
             AddVertex(d.Verts, new Vector2(-1f, 1f), segCount, flags, 0f, 0f, 0f, 0f);
             AddVertex(d.Verts, new Vector2(1f, 1f), segCount, flags, 0f, 0f, w, 0f);

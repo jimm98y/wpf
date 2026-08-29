@@ -132,6 +132,7 @@ namespace System.Windows.Forms
 			if (text == null || text.Length == 0)
 				return;
 
+
 			// We use MS GDI API's unless told not to, or we aren't on Windows
 			if (!useDrawString && !XplatUI.RunningOnUnix) {
 				if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter || (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom)
@@ -210,12 +211,36 @@ namespace System.Windows.Forms
 
 				Rectangle new_bounds = PadDrawStringRectangle (bounds, font, flags);
 
-				g.DrawString (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new_bounds, sf);
+				g.DrawStringGdi (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new_bounds, sf);
 
 				if (!(dc is Graphics)) {
 					g.Dispose ();
 					dc.ReleaseHdc ();
 				}
+			}
+		}
+
+		/// <summary>How tall GDI makes one line of this font: the ascent and the descent, each
+		/// scaled to the em size and truncated -- the TEXTMETRIC height, which is what a
+		/// DT_CALCRECT measurement comes back with. Not the same as GDI+'s line spacing, which
+		/// includes the line gap and is rounded up.</summary>
+		internal static int GdiLineHeight (Font font)
+		{
+			if (font == null)
+				return 0;
+			try {
+				FontFamily family = font.FontFamily;
+				if (family == null)
+					return 0;
+				int em = family.GetEmHeight (font.Style);
+				if (em <= 0)
+					return 0;
+				float emPx = font.SizeInPoints * 96f / 72f;
+				int ascent = (int) Math.Floor (family.GetCellAscent (font.Style) * emPx / em);
+				int descent = (int) Math.Floor (family.GetCellDescent (font.Style) * emPx / em);
+				return ascent + descent;
+			} catch (Exception) {
+				return 0;
 			}
 		}
 
@@ -275,6 +300,28 @@ namespace System.Windows.Forms
 
 				// MeasureString already leaves the glyph overhang either side of the run, exactly as it
 				// will be drawn, so there is nothing to add here.
+
+				// The HEIGHT, though, is GDI's and not GDI+'s. This method answers for GDI -- it is what
+				// TextRenderer means -- and GDI makes a line as tall as the font's TEXTMETRIC does: the
+				// ascent and the descent, each scaled and TRUNCATED. GDI+ reports its line spacing
+				// instead, rounded up, which for the shell font at nine point is sixteen pixels where
+				// GDI says fifteen. Every control that sizes itself to a line of text asks here, so the
+				// extra pixel came out as a combo box a pixel taller than Windows', a tree row a pixel
+				// taller, and a date picker to match.
+				int gdi = GdiLineHeight (font);
+				if (gdi > 0 && retval.Height > 0) {
+					int spacing = (int) Math.Ceiling (font.GetHeight ());
+					int lines = spacing > 0 ? Math.Max (1, (int) Math.Round (retval.Height / (double) spacing)) : 1;
+					retval.Height = lines * gdi;
+				}
+
+				// NoPadding means the run's own extent, without the space GDI leaves either side of a
+				// DrawText. MeasureString hands back the padded width -- which is what the flag's
+				// ABSENCE asks for, and what the comment above is about -- so the flag has to take it
+				// off again: the same six pixels plus an eighth of the line the GDI path adds. Honouring
+				// the flag nowhere made every tab of a TabControl seven pixels wider than Windows' own.
+				if (retval.Width > 0 && (flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding)
+					retval.Width -= 6 + retval.Height / 8;
 
 				return retval;
 			}
@@ -505,10 +552,14 @@ namespace System.Windows.Forms
 			int left, right;
 			GlyphOverhang (font, flags, out left, out right);
 
+			// The margin either side is NOT added here: DrawString already leaves the glyph overhang
+			// inside the rectangle it is given, exactly as it will draw it (see Graphics.Overhang), and
+			// adding it a second time put every run this way -- a grid cell's text, a tool bar
+			// caption -- three pixels right of the same run in Windows. Only the width is trimmed, so a
+			// run that fills its box still has room for the overhang on the far side.
 			if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
 				r.Width -= right;
 			} else if ((flags & TextFormatFlags.HorizontalCenter) == 0) {
-				r.X += left;
 				r.Width -= left;
 			}
 			if ((flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding) {
@@ -517,9 +568,11 @@ namespace System.Windows.Forms
 			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom) {
 				r.Y += 1;
 			}
-			if (XplatUI.RunningOnUnix) {
-				r.Y -= 1;
-			}
+			// NO LIFT. There used to be an unconditional "r.Y -= 1" here for the GDI+/DrawString
+			// path, and it was a workaround: the vertical placement is decided properly in
+			// Graphics.DrawStringGdi, which lays the baseline on the font's own ascent and centres
+			// the GLYPH box (ascent + descent, each truncated) rather than GDI+'s line spacing.
+			// Every layout that had been fitted around the lift is corrected at its own site.
 
 			return r;
 		}

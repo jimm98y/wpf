@@ -1361,7 +1361,10 @@ namespace System.Windows.Forms
 			item_rect.Y -= first_item_rect.Y;
 			item_rect.Offset (items_area.X, items_area.Y);
 			item_rect.X += ItemLeftMargin;
-			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin - items_area.X, 0);
+			// Only the margin comes off the width. Taking the item AREA'S OWN X off as well shortened
+			// every row by the width of the frame, which showed as a selection band two pixels clear of
+			// the right-hand side that Windows fills.
+			item_rect.Width = Math.Max (item_rect.Width - ItemLeftMargin, 0);
 			
 			// Subtract the checkboxes from the width
 			if (this is CheckedListBox)

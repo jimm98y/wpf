@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -481,7 +481,7 @@ namespace System.Windows.Forms {
 		public int PreferredHeight {
 			get {
 				// Make it proportional
-				return (int) Math.Ceiling (Font.Height * 1.5);
+				return (int) Math.Ceiling (TextLineHeight * 1.5);
 			}
 		}
 

@@ -388,9 +388,13 @@ namespace System.Windows.Forms
 			Size borders_and_paddings = new Size(Padding.Horizontal, Padding.Vertical);
 			Size size;
 
-			if (use_compatible_text_rendering) {
-				borders_and_paddings.Height += border_style == BorderStyle.None ? 3 : 6;
-			}
+			// A BORDER costs height; the text on its own does not. This used to add three pixels even
+			// to a borderless label, on top of a height measured with GDI+ -- which is already a pixel
+			// a line taller than GDI's. Four pixels too tall is enough to matter: every one of these
+			// labels sits directly above a control, and the label paints its own background, so the
+			// surplus was drawn straight over that control's top border.
+			if (use_compatible_text_rendering && border_style != BorderStyle.None)
+				borders_and_paddings.Height += 3;
 
 			if (Text == string.Empty) {
 				size = new Size (0, Font.Height);
@@ -400,8 +404,16 @@ namespace System.Windows.Forms
 				// pixels that used to be added on top of it made every label that sizes itself four
 				// pixels wider than the same label in Windows.
 				size = Size.Ceiling (TextRenderer.MeasureString (Text, Font, proposed_width, string_format));
+
+				// The HEIGHT is GDI's, which is what Windows makes a label: exactly as tall as the
+				// lines of text in it. TextRenderer answers for GDI and already turns GDI+'s line
+				// spacing into GDI's, so ask it rather than repeating the conversion here.
+				Size gdi = TextRenderer.MeasureText (Text, Font, new Size (proposed_width, int.MaxValue),
+				                                    TextFormatFlags.WordBreak);
+				if (gdi.Height > 0)
+					size.Height = gdi.Height;
 			}
-			
+
 			return size + borders_and_paddings;
 		}
 

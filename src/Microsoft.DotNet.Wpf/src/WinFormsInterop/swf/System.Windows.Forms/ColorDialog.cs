@@ -1325,13 +1325,14 @@ namespace System.Windows.Forms {
 				baseColorLabel.Location = new Point (2, 0);
 				baseColorLabel.Size = new Size (200, 12);
 				baseColorLabel.TabIndex = 5;
-				baseColorLabel.Text = Locale.GetText ("Base Colors") + ":";
+				// The words Windows uses, checked against the real dialog beside ours.
+				baseColorLabel.Text = Locale.GetText ("Basic colors:");
 				// userColorLabel
 				userColorLabel.FlatStyle = FlatStyle.System;
 				userColorLabel.Location = new Point (2, 164);
 				userColorLabel.Size = new Size (200, 14);
 				userColorLabel.TabIndex = 104;
-				userColorLabel.Text = Locale.GetText ("User Colors") + ":";
+				userColorLabel.Text = Locale.GetText ("Custom colors:");
 				
 				Controls.Add (userSmallColorControl [7]);
 				Controls.Add (userSmallColorControl [6]);

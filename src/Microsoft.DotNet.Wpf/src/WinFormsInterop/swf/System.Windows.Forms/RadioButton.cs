@@ -108,6 +108,11 @@ namespace System.Windows.Forms {
 			radiobutton_alignment = ContentAlignment.MiddleLeft;
 			TextAlign = ContentAlignment.MiddleLeft;
 			TabStop = false;
+			// Same as CheckBox: an auto-sized radio button SHRINKS to its text. Without this it keeps
+			// GrowOnly and never comes below the 104x24 default, so three radio buttons with three
+			// different captions all measured 104 wide where Windows gives 91, 102 and 70.
+			SetAutoSizeMode (AutoSizeMode.GrowAndShrink);
+			can_cache_preferred_size = true;
 		}
 		#endregion	// Public Constructors
 

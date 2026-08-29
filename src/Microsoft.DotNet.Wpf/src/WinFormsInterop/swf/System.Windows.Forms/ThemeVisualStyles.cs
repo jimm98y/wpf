@@ -677,6 +677,14 @@ namespace System.Windows.Forms
 			if (!RenderClientAreas ||
 				dateTimePicker.ShowUpDown)
 				return base.DateTimePickerGetDateArea (dateTimePicker);
+			// Asking the theme where the date goes needs a device context, and a control that has not
+			// been created yet cannot lend one -- CreateGraphics hands back a Graphics whose GetHdc
+			// throws. Setting Value reads this rectangle, and setting Value on a DateTimePicker before
+			// it is shown is what every designer-generated form does, so the control threw on
+			// construction. The base answer is arithmetic on ClientRectangle and needs no context; the
+			// themed one applies from the moment there is a window to ask about.
+			if (!dateTimePicker.IsHandleCreated)
+				return base.DateTimePickerGetDateArea (dateTimePicker);
 			VisualStyleElement element = VisualStyleElement.DatePicker.DateBorder.Normal;
 			if (!VisualStyleRenderer.IsElementDefined (element))
 				return base.DateTimePickerGetDateArea (dateTimePicker);

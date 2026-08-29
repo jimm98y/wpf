@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -630,7 +630,7 @@ namespace System.Windows.Forms
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		[Browsable (false)]
 		public int PreferredHeight {
-			get { return Font.Height + 8; }
+			get { return TextLineHeight + 8; }
 		}
 
 		[Browsable (false)]
@@ -1418,7 +1418,10 @@ namespace System.Windows.Forms
 
 			if (textbox_ctrl != null) {
 				int text_border = border + 1;
-				textbox_ctrl.Location = new Point (text_area.X + text_border, text_area.Y + text_border);
+				// A row HIGHER than the side inset. Windows draws an editable combo box's text one row
+				// above the caption of the drop-down-list variant beside it, and matching the two put
+				// ours a pixel low. Measured.
+				textbox_ctrl.Location = new Point (text_area.X + text_border, text_area.Y + text_border - 1);
 				textbox_ctrl.Width = text_area.Width - button_area.Width - text_border * 2;
 				textbox_ctrl.Height = text_area.Height - text_border * 2;
 			}

@@ -40,7 +40,12 @@ fn fs_shapebrush(in : VSOut) -> @location(0) vec4<f32> {
         let q = abs(p) - vec2<f32>(hx, hy) + vec2<f32>(cr);
         d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - cr;
     }
-    let fw = max(fwidth(d), 1e-6);
+    // The pixel's size in the shape's own units, for the same reason as in fs_shape: fwidth(d)
+    // explodes where the ellipse's distance field is singular (its centre) and eats two pixels
+    // out of the middle of every disc.
+    let px = length(vec2<f32>(dpdx(p.x), dpdy(p.x)));
+    let py = length(vec2<f32>(dpdx(p.y), dpdy(p.y)));
+    let fw = max(0.5 * (px + py), 1e-6);
     var cov : f32;
     if (sh < 0.0) {
         cov = clamp(0.5 - d / fw, 0.0, 1.0);

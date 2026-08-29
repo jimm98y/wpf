@@ -37,7 +37,7 @@ namespace System.Windows.Forms
 	{
 		// Take the colours from the theme rather than fixing them at construction, so a modern
 		// theme's tool strips are not stuck with the Office 2003 palette the base table carries.
-		private static ToolStripRenderer renderer = new ToolStripProfessionalRenderer (ThemeEngine.Current.ColorTable);
+		private static ToolStripRenderer renderer = ThemeEngine.Current.CreateToolStripRenderer ();
 		private static ToolStripManagerRenderMode render_mode = ToolStripManagerRenderMode.Professional;
 		private static bool visual_styles_enabled = Application.RenderWithVisualStyles;
 		private static List<WeakReference> toolstrips = new List<WeakReference> ();
@@ -77,7 +77,7 @@ namespace System.Windows.Forms
 							ToolStripManager.Renderer = new ToolStripSystemRenderer ();
 							break;
 						case ToolStripManagerRenderMode.Professional:
-							ToolStripManager.Renderer = new ToolStripProfessionalRenderer (ThemeEngine.Current.ColorTable);
+							ToolStripManager.Renderer = ThemeEngine.Current.CreateToolStripRenderer ();
 							break;
 					}
 				}

@@ -45,6 +45,11 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private const char PASSWORD_TEXT_CHAR = '*';
 		private const int V_INDENT = 16;
 		private const int ENTRY_SPACING = 2;
+		/// <summary>How far a row's caption starts past the outline column, measured off a stock
+		/// grid.</summary>
+		private const int LABEL_PAD = 5;
+		/// <summary>The cell the expander is drawn in.</summary>
+		private const int PLUS_MINUS_SIZE = 8;
 		private const int RESIZE_WIDTH = 3;
 		private const int BUTTON_WIDTH = 25;
 		private const int VALUE_PAINT_WIDTH = 19;
@@ -544,7 +549,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		private int SplitterLocation {
 			get {
-				return (int)(splitter_percent*Width);
+				// Against the room the ROWS have, which is the width less the scroll bar -- and less it
+				// whether or not the bar is showing, so the column does not jump the moment a property is
+				// added. Measured against a stock grid: 260 wide, its divider stands at 121, which is half
+				// of what is left after the bar. Taken against the whole width ours stood at 130.
+				int usable = Width - (vbar != null ? vbar.Width : 0);
+				return (int)(splitter_percent * usable);
 			}
 		}
 
@@ -685,8 +695,16 @@ namespace System.Windows.Forms.PropertyGridInternal {
 					brush = grid_item.IsReadOnly ? inactive_text_brush : SystemBrushes.ControlText;
 				}
 			}
+			// LABEL_PAD is Windows': its label starts a good deal further past the outline column than
+			// the single pixel this used, and every caption in the grid sat five pixels left of the same
+			// caption in a stock one.
+			// Centred in the row, less one pixel: measured against a stock grid, whose captions sit
+			// exactly there. Centring in the row less the entry spacing put them a pixel low and
+			// centring in the whole row a pixel high -- the row is an even number of pixels tall and
+			// the line is odd, so there is no arrangement that lands between the two by accident.
 			pevent.Graphics.DrawString (grid_item.Label, font, brush,
-						    new Rectangle (rect.X + 1, rect.Y + ENTRY_SPACING, rect.Width - ENTRY_SPACING, rect.Height - ENTRY_SPACING),
+						    new Rectangle (rect.X + 1 + LABEL_PAD, rect.Y + 1,
+								   Math.Max (0, rect.Width - ENTRY_SPACING - LABEL_PAD), rect.Height),
 						    string_format);
 		}
 
@@ -717,10 +735,15 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				else
 					valueText = grid_item.ValueText;
 			}
+			// The same box the label is drawn in, one column over: a value given two pixels more on the
+			// left and two fewer in height came out three pixels right of Windows' and a pixel below it,
+			// because a shorter box centres the line lower.
+			// The same box the label is drawn in, one column over -- and one pixel nearer the divider
+			// than the entry spacing puts it, which is where a stock grid starts its values.
 			pevent.Graphics.DrawString (valueText, font,
 						    brush,
-						    new RectangleF (xLoc + ENTRY_SPACING, rect.Y + ENTRY_SPACING,
-								    ClientRectangle.Width-(xLoc), row_height - ENTRY_SPACING*2), 
+						    new RectangleF (xLoc - 1, rect.Y + 1,
+								    ClientRectangle.Width - xLoc, row_height),
 						    string_format);
 		}
 
@@ -753,9 +776,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				}				
 				
 				if (grid_item.Expandable) {
-					int y = yLoc + row_height / 2 - ENTRY_SPACING + 1;
-					grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics, (depth - 1) * V_INDENT + ENTRY_SPACING + 1, 
-										   y, grid_item.Expanded, grid_item.GridItemType == GridItemType.Category);
+					// Centred in the row and centred in the outline column, which is where a stock grid puts
+					// it: measured against one, ours sat three pixels low and three pixels left.
+					int y = yLoc + (row_height - PLUS_MINUS_SIZE) / 2;
+					int x = (depth - 1) * V_INDENT + (V_INDENT - PLUS_MINUS_SIZE) / 2 + 2;
+					grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics, x, y,
+										   grid_item.Expanded, grid_item.GridItemType == GridItemType.Category);
 				}
 
 			}
@@ -764,7 +790,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		}
 
 		private Rectangle DrawPlusMinus (Graphics g, int x, int y, bool expanded, bool category) {
-			Rectangle bounds = new Rectangle (x, y, 8, 8);
+			Rectangle bounds = new Rectangle (x, y, PLUS_MINUS_SIZE, PLUS_MINUS_SIZE);
 			ThemeEngine.Current.DrawPropertyGridExpander (g, bounds, expanded, category, property_grid.ViewForeColor);
 			return bounds;
 		}

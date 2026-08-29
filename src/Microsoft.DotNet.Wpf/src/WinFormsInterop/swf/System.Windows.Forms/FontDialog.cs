@@ -99,8 +99,10 @@ namespace System.Windows.Forms
 		
 		private Hashtable fontHash = new Hashtable();
 		
+		// The ladder Windows offers for a scalable face, which begins at EIGHT. Ours began at six,
+		// so every font dialog opened with two sizes Windows does not list.
 		private int[] a_sizes = {
-			6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72
+			8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72
 		};
 		
 		// char set stuff is only here to make me happy :-)
@@ -220,7 +222,9 @@ namespace System.Windows.Forms
 			fontstyleLabel.Location = new Point( 164, 10 );
 			fontstyleLabel.Size = new Size( 100, 16 );
 			fontstyleLabel.TabIndex = 1;
-			fontstyleLabel.Text = "Font Style:";
+			// The words the real dialog uses, read off it: "Font style:", "Sample", "Strikeout",
+			// "Underline". Ours had a capital S, and called the other three something else entirely.
+			fontstyleLabel.Text = "Font style:";
 			// typesizeTextBox
 			fontsizeTextBox.Location = new Point( 284, 26 );
 			fontsizeTextBox.Size = new Size( 52, 21 );
@@ -239,7 +243,7 @@ namespace System.Windows.Forms
 			exampleGroupBox.Size = new Size( 172, 70 );
 			exampleGroupBox.TabIndex = 12;
 			exampleGroupBox.TabStop = false;
-			exampleGroupBox.Text = "Example";
+			exampleGroupBox.Text = "Sample";
 			// fontstyleListBox
 			fontstyleListBox.Location = new Point( 164, 47 );
 			fontstyleListBox.Size = new Size( 112, 95 );
@@ -263,7 +267,7 @@ namespace System.Windows.Forms
 			strikethroughCheckBox.FlatStyle = FlatStyle.System;
 			strikethroughCheckBox.Location = new Point( 8, 16 );
 			strikethroughCheckBox.TabIndex = 0;
-			strikethroughCheckBox.Text = "Strikethrough";
+			strikethroughCheckBox.Text = "Strikeout";
 			// colorComboBox
 			colorComboBox.Location = new Point( 8, 70 );
 			colorComboBox.Size = new Size( 130, 21 );
@@ -305,7 +309,7 @@ namespace System.Windows.Forms
 			underlinedCheckBox.FlatStyle = FlatStyle.System;
 			underlinedCheckBox.Location = new Point( 8, 36 );
 			underlinedCheckBox.TabIndex = 1;
-			underlinedCheckBox.Text = "Underlined";
+			underlinedCheckBox.Text = "Underline";
 			// fontstyleTextBox
 			fontstyleTextBox.Location = new Point( 164, 26 );
 			fontstyleTextBox.Size = new Size( 112, 21 );
@@ -368,6 +372,13 @@ namespace System.Windows.Forms
 			okButton.Click += new EventHandler( OnClickOkButton );
 			applyButton.Click += new EventHandler (OnApplyButton);
 			examplePanel.Paint += new PaintEventHandler( OnPaintExamplePanel );
+			// Windows shows each family IN ITS OWN FACE and each style in that style -- it is how you
+			// pick a font by looking at it rather than by reading its name. Ours drew every line in
+			// the dialog's own font, which is the one thing this list is not for.
+			fontListBox.DrawMode = DrawMode.OwnerDrawFixed;
+			fontListBox.DrawItem += new DrawItemEventHandler( OnDrawItemFontListBox );
+			fontstyleListBox.DrawMode = DrawMode.OwnerDrawFixed;
+			fontstyleListBox.DrawItem += new DrawItemEventHandler( OnDrawItemFontStyleListBox );
 			fontListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedFontListBox );
 			fontsizeListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedSizeListBox );
 			fontstyleListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedFontStyleListBox );
@@ -845,6 +856,67 @@ namespace System.Windows.Forms
 			}
 		}
 		
+		/// <summary>Fonts made for the two lists, kept because a list repaints far more often than it
+		/// changes and building one of these is not free. A family that will not instantiate -- a
+		/// symbol face, a broken installation -- falls back to the dialog's own font rather than
+		/// taking the dialog down with it.</summary>
+		private System.Collections.Generic.Dictionary<string, Font> preview_fonts
+			= new System.Collections.Generic.Dictionary<string, Font> ();
+
+		private Font PreviewFont (string family, FontStyle style)
+		{
+			string key = family + "/" + (int) style;
+			Font f;
+			if (preview_fonts.TryGetValue (key, out f))
+				return f;
+			try {
+				f = new Font (family, this.Font.SizeInPoints, style);
+				// A family that has no such face is silently substituted; if the name did not survive
+				// the round trip it is not the face that was asked for, so do not pretend it is.
+				if (string.Compare (f.FontFamily.Name, family, StringComparison.OrdinalIgnoreCase) != 0)
+					f = null;
+			} catch {
+				f = null;
+			}
+			preview_fonts [key] = f;
+			return f;
+		}
+
+		private void DrawPreviewItem (DrawItemEventArgs e, string text, Font preview)
+		{
+			e.DrawBackground ();
+			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+			Color fore = selected ? SystemColors.HighlightText : SystemColors.WindowText;
+			e.Graphics.DrawString (text, preview ?? this.Font,
+			                       ThemeEngine.Current.ResPool.GetSolidBrush (fore),
+			                       e.Bounds.X, e.Bounds.Y);
+		}
+
+		void OnDrawItemFontListBox (object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= fontListBox.Items.Count)
+				return;
+			string family = fontListBox.Items [e.Index] as string;
+			DrawPreviewItem (e, family, PreviewFont (family, FontStyle.Regular));
+		}
+
+		void OnDrawItemFontStyleListBox (object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || e.Index >= fontstyleListBox.Items.Count)
+				return;
+			string name = fontstyleListBox.Items [e.Index] as string;
+			FontStyle style = FontStyle.Regular;
+			if (name == "Bold") style = FontStyle.Bold;
+			else if (name == "Italic") style = FontStyle.Italic;
+			else if (name == "Bold Italic") style = FontStyle.Bold | FontStyle.Italic;
+
+			// In the SELECTED family, because that is the face the style belongs to.
+			string family = fontListBox.SelectedIndex >= 0
+				? fontListBox.Items [fontListBox.SelectedIndex] as string
+				: this.Font.FontFamily.Name;
+			DrawPreviewItem (e, name, PreviewFont (family, style));
+		}
+
 		void OnCheckedChangedUnderlinedCheckBox( object sender, EventArgs e )
 		{
 			if ( underlinedCheckBox.Checked ) {

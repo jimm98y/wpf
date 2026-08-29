@@ -146,8 +146,13 @@ namespace Wpf.Window.Tests
                 // assumed, or the test passes only on the machine it was written on.
                 double scale = UiThread.Invoke(() =>
                 {
-                    IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window!).Handle;
-                    double s = MS.Internal.Interop.PlatformWindow.FromHandle(handle).GetBackingScale();
+                    // The scale WPF itself is composing this window at. NOT
+                    // MS.Internal.Interop.PlatformWindow.FromHandle: that facade is the NON-WINDOWS
+                    // windowing seam -- its own header says "Windows never reaches these paths" -- so
+                    // on Windows it returns null and this threw an NRE before it could assert
+                    // anything. CompositionTarget answers on every head.
+                    var source = System.Windows.PresentationSource.FromVisual(window!);
+                    double s = source?.CompositionTarget?.TransformToDevice.M11 ?? 0.0;
                     return s > 0 ? s : 1.0;
                 });
                 double expected = 100 * scale;

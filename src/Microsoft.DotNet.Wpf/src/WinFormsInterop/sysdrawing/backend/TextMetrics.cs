@@ -57,9 +57,23 @@ namespace System.Drawing.WebGpuBackend
                     // not the rounded sum. Adding the fractions up first and rounding once made every
                     // run come out a shade narrower than the same run in Windows -- a couple of pixels
                     // over a sentence, which is enough to fit text where Windows clips it.
+                    //
+                    // And ASK THE FACE first, exactly as the renderer does when it lays the same run
+                    // out (WgpuSceneRenderer, TryGetDeviceAdvance). 'hdmx' is the designer's own table
+                    // of device widths and it is what GDI uses where it has a row; rounding the scaled
+                    // design advance is a third answer that agrees with neither, and measuring one way
+                    // while drawing the other put the two out of step with each other as well as with
+                    // Windows. Measured against a live stock window at 9pt Segoe UI: T came out 6 where
+                    // GDI says 7, x 6 where GDI says 5, C 7 against 8 and m 10 against 11, so "Text"
+                    // measured 29 against Windows' 28 and every caption built on it drifted.
                     float scale = emPx / font.PixelsPerEm;
+                    var faced = font as IHintedGlyphFont;
                     lineWidth = 0f;
-                    foreach (ShapedGlyph g in Buf) lineWidth += (float)Math.Round(g.Advance * scale);
+                    foreach (ShapedGlyph g in Buf)
+                        lineWidth += faced is not null
+                                     && faced.TryGetDeviceAdvance(g.GlyphId, emPx, out float device)
+                                     ? device
+                                     : (float)Math.Round(g.Advance * scale);
                 }
                 if (lineWidth > width) width = lineWidth;
             }

@@ -368,6 +368,9 @@ namespace System.Windows.Forms.Integration
         /// </summary>
         private sealed class WpfFileDialogBridge : SWF.IFileDialogBridge
         {
+            // WPF's Microsoft.Win32 dialogs include a folder browser, so this one does folders.
+            public bool SupportsFolder => true;
+
             public bool ShowOpen(SWF.FileDialogRequest request, out string[] fileNames, out int filterIndex)
             {
                 fileNames = null;

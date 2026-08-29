@@ -462,6 +462,97 @@ namespace WinFormsWebGpu.Accessibility
                 check.Checked = !check.Checked;
         }
 
+        // ---- what is picked out of it -------------------------------------------------------------
+
+        /// <summary>A control that holds a set of things and keeps one or more of them picked out: a
+        /// list, a details view, a tree, a tab strip. Windows publishes the set through the container
+        /// and the state through each item, so both halves are answered here.</summary>
+        internal static bool HasSelection(Control c)
+        {
+            return c is ListView || c is ListBox || c is TreeView || c is TabControl;
+        }
+
+        internal static bool CanSelectMultiple(Control c)
+        {
+            var view = c as ListView;
+            if (view != null)
+                return view.MultiSelect;
+            var list = c as ListBox;
+            return list != null && list.SelectionMode != SelectionMode.One
+                && list.SelectionMode != SelectionMode.None;
+        }
+
+        /// <summary>Whether something is always picked out. A tab strip always shows a page; the
+        /// others are content to show nothing selected.</summary>
+        internal static bool IsSelectionRequired(Control c)
+        {
+            return c is TabControl;
+        }
+
+        /// <summary>Whatever is picked out at the moment, as the same objects the tree publishes --
+        /// so a client can match them against the elements it already holds.</summary>
+        internal static IList<object> SelectionOf(Control c)
+        {
+            var picked = new List<object>();
+            try
+            {
+                var view = c as ListView;
+                if (view != null)
+                {
+                    foreach (ListViewItem item in view.SelectedItems)
+                        picked.Add(item);
+                    return picked;
+                }
+                var list = c as ListBox;
+                if (list != null)
+                {
+                    foreach (int index in list.SelectedIndices)
+                        picked.Add(A11yItems.RowKey(list, index));
+                    return picked;
+                }
+                var tree = c as TreeView;
+                if (tree != null)
+                {
+                    if (tree.SelectedNode != null)
+                        picked.Add(tree.SelectedNode);
+                    return picked;
+                }
+                var tabs = c as TabControl;
+                if (tabs != null && tabs.SelectedTab != null)
+                    picked.Add(tabs.SelectedTab);
+            }
+            catch (Exception)
+            {
+            }
+            return picked;
+        }
+
+        /// <summary>A tab page is one of a tab strip's pages as well as a control in its own right,
+        /// so unlike a row or a node it answers the item half of selection itself.</summary>
+        internal static bool CanSelect(Control c)
+        {
+            return c is TabPage && c.Parent is TabControl;
+        }
+
+        internal static bool IsSelected(Control c)
+        {
+            var tabs = c == null ? null : c.Parent as TabControl;
+            return tabs != null && ReferenceEquals(tabs.SelectedTab, c);
+        }
+
+        internal static void Select(Control c)
+        {
+            var tabs = c == null ? null : c.Parent as TabControl;
+            if (tabs != null)
+                try { tabs.SelectedTab = (TabPage) c; } catch (Exception) { }
+        }
+
+        /// <summary>The control whose selection this one belongs to.</summary>
+        internal static Control SelectionContainerOf(Control c)
+        {
+            return CanSelect(c) ? c.Parent : null;
+        }
+
         /// <summary>A drop-down that can be opened and shut. An assistive technology has no
         /// other way to reach a combo box's list.</summary>
         internal static bool CanExpand(Control c)

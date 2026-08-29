@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripSplitStackLayout.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -273,7 +273,9 @@ namespace System.Windows.Forms
 						new_size.Width = Math.Max (new_size.Width, tsi_preferred.Width + tsi.Margin.Horizontal);
 					}
 
-				new_size.Height += (ts.GripRectangle.Height + ts.GripMargin.Vertical + 4);
+				new_size.Height += 2;                            // the same two pixels, down the strip
+				if (ts.GripStyle == ToolStripGripStyle.Visible)
+					new_size.Height += ts.GripRectangle.Height + ts.GripMargin.Vertical;
 
 				if (new_size.Width == 0)
 					new_size.Width = ts.ExplicitBounds.Width;
@@ -291,7 +293,14 @@ namespace System.Windows.Forms
 						new_size.Height = Math.Max (new_size.Height, tsi_preferred.Height + tsi.Margin.Vertical);
 					}
 
-				new_size.Width += (ts.GripRectangle.Width + ts.GripMargin.Horizontal + 4);
+				// Two pixels past the last item, and the grip's width only when there IS a grip. This
+				// used to add the grip's margin whether or not the grip was shown, and four pixels on
+				// top of that: a strip with its grip hidden came out six pixels wider than the same
+				// strip in Windows. (Windows adds the overflow button's width instead when one is
+				// needed; we have no overflow button here, so the two pixels always apply.)
+				new_size.Width += 2;
+				if (ts.GripStyle == ToolStripGripStyle.Visible)
+					new_size.Width += ts.GripRectangle.Width + ts.GripMargin.Horizontal;
 
 				if (new_size.Height == 0)
 					new_size.Height = ts.ExplicitBounds.Height;

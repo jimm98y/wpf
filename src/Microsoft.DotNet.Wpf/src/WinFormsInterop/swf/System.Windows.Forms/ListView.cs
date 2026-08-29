@@ -61,7 +61,10 @@ namespace System.Windows.Forms
 		private bool full_row_select;
 		private bool grid_lines;
 		private ColumnHeaderStyle header_style = ColumnHeaderStyle.Clickable;
-		private bool hide_selection = true;
+		// FALSE, not true: current Windows keeps a selected row visible when the list has no focus
+		// (a grey band instead of the blue one). Defaulting this to true left our selected row
+		// painted plain white while Windows showed the band -- a whole row of pixels, every time.
+		private bool hide_selection;
 		private bool hover_selection;
 		private IComparer item_sorter;
 		private readonly ListViewItemCollection items;
@@ -610,7 +613,7 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[DefaultValue (true)]
+		[DefaultValue (false)]
 		public bool HideSelection {
 			get { return hide_selection; }
 			set {

@@ -14,6 +14,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
 using System.Windows.Forms.PropertyGridInternal;
@@ -1054,6 +1055,8 @@ namespace WinFormsWebGpu.Accessibility
         /// <summary>Whether pressing the item does something -- a menu entry, a tool bar button.</summary>
         internal static bool CanInvoke(object element)
         {
+            if (element is GridItem)
+                return true;
             if (element is ToolStripItem)
                 return !(element is ToolStripSeparator);
             // A calendar's arrows and its heading are buttons in the tree Windows publishes, so
@@ -1067,6 +1070,14 @@ namespace WinFormsWebGpu.Accessibility
 
         internal static void Invoke(object element)
         {
+            // A property grid's row: invoking it is how Windows moves the grid's selection onto it,
+            // and the only way anything but a pointer can pick a property.
+            var grid_item = element as GridItem;
+            if (grid_item != null)
+            {
+                try { grid_item.Select(); } catch (Exception) { }
+                return;
+            }
             var tsi = element as ToolStripItem;
             if (tsi != null)
             {
@@ -1092,18 +1103,34 @@ namespace WinFormsWebGpu.Accessibility
         /// invoked, it responds to being opened.</summary>
         internal static bool CanExpand(object element)
         {
+            var grid_item = element as GridItem;
+            if (grid_item != null)
+            {
+                try { return grid_item.Expandable; } catch (Exception) { return false; }
+            }
             var item = element as ToolStripDropDownItem;
             return item != null && item.HasDropDownItems;
         }
 
         internal static bool IsExpanded(object element)
         {
+            var grid_item = element as GridItem;
+            if (grid_item != null)
+            {
+                try { return grid_item.Expanded; } catch (Exception) { return false; }
+            }
             var item = element as ToolStripDropDownItem;
             return item != null && item.DropDown != null && item.DropDown.Visible;
         }
 
         internal static void SetExpanded(object element, bool expanded)
         {
+            var grid_item = element as GridItem;
+            if (grid_item != null)
+            {
+                try { if (grid_item.Expandable) grid_item.Expanded = expanded; } catch (Exception) { }
+                return;
+            }
             var item = element as ToolStripDropDownItem;
             if (item == null || !item.HasDropDownItems)
                 return;
@@ -1111,6 +1138,144 @@ namespace WinFormsWebGpu.Accessibility
                 item.ShowDropDown();
             else
                 item.HideDropDown();
+        }
+
+        /// <summary>The stand-in for one of a list box's rows, so a caller outside can name the very
+        /// object the tree publishes rather than an equal one.</summary>
+        internal static object RowKey(ListBox list, int index)
+        {
+            return Key(list, "row", index);
+        }
+
+        /// <summary>Whether an item is one of a set its control picks from -- a row in a list, a row
+        /// in a details view, a node in a tree. Windows publishes those as selectable, and it is the
+        /// only way anything but a pointer can put the selection on a particular row.</summary>
+        internal static bool CanSelect(object element)
+        {
+            if (element is ListViewItem || element is TreeNode)
+                return true;
+            var key = element as ItemKey;
+            return key != null && key.Kind == "row" && key.Owner is ListBox;
+        }
+
+        internal static bool IsSelected(object element)
+        {
+            try
+            {
+                var item = element as ListViewItem;
+                if (item != null)
+                    return item.Selected;
+                var node = element as TreeNode;
+                if (node != null)
+                    return node.TreeView != null && ReferenceEquals(node.TreeView.SelectedNode, node);
+                var key = element as ItemKey;
+                var list = key == null ? null : key.Owner as ListBox;
+                return list != null && key.Kind == "row" && list.SelectedIndices.Contains(key.Index);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Put the selection on this item, or take it off.
+        /// <para>Selecting ADDS to whatever is already picked rather than replacing it, because that
+        /// is what Windows does: its list view answers a Select by adding the row to the selected
+        /// indices, its list box by assigning the selected index, its tree by assigning the selected
+        /// node -- so on a control that picks one thing a select replaces, and on one that picks
+        /// several it adds. Clearing first read as the tidier reading of Select, and made the same
+        /// script leave the two applications in different states.</para></summary>
+        internal static void SetSelected(object element, bool selected)
+        {
+            try
+            {
+                var item = element as ListViewItem;
+                if (item != null && item.ListView != null)
+                {
+                    item.Selected = selected;
+                    if (selected)
+                        item.Focused = true;
+                    return;
+                }
+                var node = element as TreeNode;
+                if (node != null && node.TreeView != null)
+                {
+                    node.TreeView.SelectedNode = selected ? node : null;
+                    return;
+                }
+                var key = element as ItemKey;
+                var list = key == null ? null : key.Owner as ListBox;
+                if (list == null || key.Kind != "row")
+                    return;
+                if (list.SelectionMode == SelectionMode.One)
+                    list.SelectedIndex = selected ? key.Index : -1;
+                else
+                    list.SetSelected(key.Index, selected);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>A property grid's row carries a value, and Windows publishes it: the row answers
+        /// with what the property is set to and can be asked to set it. Nothing else among these items
+        /// has a value of its own -- a menu entry or a list row is its own text.</summary>
+        internal static bool HasValue(object element)
+        {
+            var grid_item = element as GridItem;
+            return grid_item != null && grid_item.PropertyDescriptor != null;
+        }
+
+        internal static string ValueOf(object element)
+        {
+            var grid_item = element as GridItem;
+            if (grid_item == null)
+                return null;
+            try
+            {
+                object value = grid_item.Value;
+                PropertyDescriptor property = grid_item.PropertyDescriptor;
+                if (property != null && property.Converter != null
+                    && property.Converter.CanConvertTo(typeof(string)))
+                    return property.Converter.ConvertToString(value);
+                return value == null ? string.Empty : value.ToString();
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        internal static bool IsReadOnly(object element)
+        {
+            var grid_item = element as GridItem;
+            if (grid_item == null || grid_item.PropertyDescriptor == null)
+                return true;
+            try { return grid_item.PropertyDescriptor.IsReadOnly; } catch (Exception) { return true; }
+        }
+
+        internal static void SetValue(object element, string value)
+        {
+            var grid_item = element as GridItem;
+            if (grid_item == null || grid_item.PropertyDescriptor == null)
+                return;
+            try
+            {
+                PropertyDescriptor property = grid_item.PropertyDescriptor;
+                if (property.IsReadOnly || property.Converter == null
+                    || !property.Converter.CanConvertFrom(typeof(string)))
+                    return;
+                grid_item.Select();
+                object parsed = property.Converter.ConvertFromString(value);
+                Control owner = OwnerOf(element);
+                var grid = owner as PropertyGrid;
+                object target = grid != null ? grid.SelectedObject : null;
+                if (target != null)
+                    property.SetValue(target, parsed);
+            }
+            catch (Exception)
+            {
+            }
         }
 
         internal static bool IsEnabled(object element)

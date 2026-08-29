@@ -1,4 +1,4 @@
-//#include _VSOut.wgsl
+﻿//#include _VSOut.wgsl
 
 //#include _VertexCommon.wgsl
 
@@ -78,7 +78,7 @@ fn solve_monotone_cubic(y0 : f32, y1 : f32, y2 : f32, y3 : f32, yTarget : f32) -
 fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     let px = floor(in.uv.x);
     let py = floor(in.uv.y);
-    let flags = u32(in.color.y);          // 1 = even-odd fill, 2 = text gamma, 4 = aliased
+    let flags = u32(in.color.y);          // 1 = even-odd, 2 = text gamma, 4 = aliased, 8 = text blend
     let evenOdd = (flags & 1u) != 0u;
 
     // This fragment's band. Bands are a whole number of pixel rows (the CPU side enforces
@@ -153,5 +153,13 @@ fn fs_coverage(in : VSOut) -> @location(0) vec4<f32> {
     // Text gamma: WPF blends glyph coverage in gamma space; cov^(1/2.2) matches the
     // CPU rasterizer's LUT on the display-destined sRGB path.
     if ((flags & 2u) != 0u) { cov = pow(cov, 1.0 / 2.2); }
+    // Text blended for a GAMMA-SPACE compositor. Half coverage laid on white in gamma space gives a
+    // pixel half way between black and white in ENCODED units, which is far darker than half the
+    // light -- so every partly covered pixel, which is every edge of every glyph, comes out too
+    // heavy and the page reads as bold. Windows composites text in linear light; squaring the
+    // coverage is what that costs here. Measured against ClearType over the alphabet, the digits
+    // and two mixed strings: our ink was 20.4% above Windows and lands within about 2% of it, and
+    // the average per-pixel disagreement falls from 0.155 to 0.122.
+    if ((flags & 8u) != 0u) { cov = cov * cov; }
     return vec4<f32>(cov, 0.0, 0.0, 1.0);
 }

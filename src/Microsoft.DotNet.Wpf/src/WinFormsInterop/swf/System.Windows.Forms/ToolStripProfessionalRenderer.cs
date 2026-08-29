@@ -364,7 +364,7 @@ namespace System.Windows.Forms
 			// Don't clear and fill the background if we already painted an image there
 			if (e.ToolStrip.BackgroundImage != null) {
 				if (e.ToolStrip is StatusStrip)
-					e.Graphics.DrawLine (Pens.White, e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
+					e.Graphics.DrawLine (ThemeEngine.Current.ResPool.GetPen (ThemeEngine.Current.StatusStripTopEdgeColor), e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
 			
 				return;
 			}
@@ -383,7 +383,7 @@ namespace System.Windows.Forms
 					e.Graphics.FillRectangle (b, e.AffectedBounds);
 					
 			if (e.ToolStrip is StatusStrip)
-				e.Graphics.DrawLine (Pens.White, e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
+				e.Graphics.DrawLine (ThemeEngine.Current.ResPool.GetPen (ThemeEngine.Current.StatusStripTopEdgeColor), e.AffectedBounds.Left, e.AffectedBounds.Top, e.AffectedBounds.Right, e.AffectedBounds.Top);
 
 			base.OnRenderToolStripBackground (e);
 		}

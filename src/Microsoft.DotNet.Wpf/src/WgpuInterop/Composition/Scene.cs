@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -401,6 +401,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// bounding box instead scatters baselines by up to half a pixel (some letters sink
         /// ~1px). Null for non-glyph fills, which snap by their own bounds as before.</summary>
         public Vector2? BaselineAnchor { get; }
+
+        /// <summary>True when this geometry has already been fitted to the DEVICE PIXEL GRID and
+        /// must be rasterized where it stands. The coverage path normally re-seats a mask on its own
+        /// bounding box and quantises what is left over to half a pixel, which is right for a shape
+        /// that may be drawn at any offset and wrong for one whose edges were just put on whole
+        /// pixels: the re-seating moves them off again, by whatever fraction the bounding box happens
+        /// to start at, and the fitting is undone.</summary>
+        public bool PixelAligned { get; init; }
 
         public GeometryFill(Geometry geometry, Brush brush, bool isGlyph = false, Vector2? baselineAnchor = null)
         {

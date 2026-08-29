@@ -516,49 +516,64 @@ namespace System.Windows.Forms
 
 		protected override bool ProcessDialogKey (Keys keyData)
 		{
-			if ((keyData & Keys.KeyCode) ==  Keys.Tab) {
-				Select (true, (keyData & Keys.Shift) == 0);
+			// Tab belongs to this label only while it has ANOTHER link to move to. Swallowing it
+			// unconditionally trapped the focus here for ever: the container never saw the key, so
+			// focus could not leave the control and Form.ProcessDialogKey -- which is what reveals
+			// the focus cue -- was never reached either. Measured against a stock window, one Tab
+			// takes it from the LinkLabel to the Button and turns the focus rectangle on.
+			if ((keyData & Keys.KeyCode) == Keys.Tab && TabStop
+			    && FocusNextLink ((keyData & Keys.Shift) == 0))
 				return true;
-			}
+
 			return base.ProcessDialogKey (keyData);
+		}
+
+		/// <summary>Move to the next enabled link within this label, or say there is not one.</summary>
+		private bool FocusNextLink (bool forward)
+		{
+			if (sorted_links == null || sorted_links.Length == 0)
+				return false;
+
+			// The search starts from where the focus IS. Clearing focused_index first and then
+			// searching from it restarts at the first link every time, which is how a label with a
+			// single link kept re-selecting that link instead of letting the focus go.
+			int next = -1;
+			if (forward) {
+				for (int n = focused_index + 1; n < sorted_links.Length; n++)
+					if (sorted_links[n].Enabled) { next = n; break; }
+			} else {
+				for (int n = (focused_index == -1 ? sorted_links.Length : focused_index) - 1; n >= 0; n--)
+					if (sorted_links[n].Enabled) { next = n; break; }
+			}
+
+			if (next == -1)
+				return false;
+
+			if (focused_index != -1)
+				sorted_links[focused_index].Focused = false;
+			sorted_links[next].Focused = true;
+			focused_index = next;
+			Invalidate ();
+			return true;
 		}
 
 		protected override void Select (bool directed, bool forward)
 		{
-			if (directed) {
-				if (focused_index != -1) {
-					sorted_links[focused_index].Focused = false;
-					focused_index = -1;
-				}
+			if (!directed)
+				return;
 
-				if (forward) {
-					for (int n = focused_index + 1; n < sorted_links.Length; n++) {
-						if (sorted_links[n].Enabled) {
-							sorted_links[n].Focused = true;
-							focused_index = n;
-							base.Select (directed, forward);
-							return;
-						}
-					}
-				} else {
-					if (focused_index == -1)
-						focused_index = sorted_links.Length;
-
-					for (int n = focused_index - 1; n >= 0; n--) {
-						if (sorted_links[n].Enabled) {
-							sorted_links[n].Focused = true;
-							focused_index = n;
-							base.Select (directed, forward);
-							return;
-						}
-					}
-				}
-
-				focused_index = -1;
-
-				if (Parent != null)
-					Parent.SelectNextControl (this, forward, false, true, true);
+			if (FocusNextLink (forward)) {
+				base.Select (directed, forward);
+				return;
 			}
+
+			// Out of links: give the focus up rather than hold it.
+			if (focused_index != -1 && sorted_links != null && focused_index < sorted_links.Length)
+				sorted_links[focused_index].Focused = false;
+			focused_index = -1;
+
+			if (Parent != null)
+				Parent.SelectNextControl (this, forward, false, true, true);
 		}
 
 		protected override void SetBoundsCore (int x, int y, int width, int height, BoundsSpecified specified)

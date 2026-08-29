@@ -185,10 +185,27 @@ namespace System.Windows.Forms {
 				Color color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
 
 				TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl;
-
+				// Windows' own margins for a column header: the caption starts six pixels in from the
+				// cell's left edge and sits two pixels lower than a plain vertical centring puts it.
+				// Drawing it flush left and centred instead left every header caption six pixels wide
+				// and two rows high of the same header in Windows.
+				// The FIRST column carries the grid's own left line inside its bounds, so its caption
+				// starts a pixel further in than the others do. Measured: Windows' two captions are
+				// ninety-nine pixels apart where its columns are a hundred.
+				int inset = ColumnIndex == 0 ? 6 : 5;
 				Rectangle contentbounds = cellBounds;
+				contentbounds.X += inset;
+				contentbounds.Width -= inset + 2;
+				// One above and one below, not two above and none. The caption is centred in what is
+				// left, so the pair has to be symmetric or it drags the text down half a pixel and
+				// the rounding makes that a whole row: measured against the live stock window, our
+				// column headers drew on rows 199..207 where stock draws 198..206. (It read as a
+				// data-cell problem for a while -- the rows above are the LABEL over the grid and
+				// the first data row is the shaded one below the separator, so the header is the
+				// band in between. A fill of the rect each painter was handed is what sorted out
+				// which was which.)
+				contentbounds.Y += 1;
 				contentbounds.Height -= 2;
-				contentbounds.Width -= 2;
 
 				if (formattedValue != null)
 					TextRenderer.DrawText (graphics, formattedValue.ToString (), cellStyle.Font, contentbounds, color, flags);

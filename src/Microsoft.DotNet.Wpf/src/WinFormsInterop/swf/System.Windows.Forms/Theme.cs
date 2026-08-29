@@ -200,7 +200,11 @@ namespace System.Windows.Forms
 		private void SetSystemColors (KnownColor kc, Color value)
 		{
 			if (knownColorTable == null) {
-				Type knownColorTableClass = Type.GetType ("System.Drawing.KnownColorTable, " + Consts.AssemblySystem_Drawing);
+				// Through the assembly that defines Color, not by NAME. This port's drawing assembly is
+				// called Mono.System.Drawing, so asking for it as "System.Drawing" returned null and every
+				// setter below became a silent no-op -- the same fault that left PrintDialog unable to
+				// print. Nothing assigns these today, which is the only reason it has not been noticed.
+				Type knownColorTableClass = typeof (Color).Assembly.GetType ("System.Drawing.KnownColorTable");
 				if (knownColorTableClass != null)
 				{
 					MethodInfo ensureMethod = knownColorTableClass.GetMethod ("EnsureColorTable", BindingFlags.Static | BindingFlags.NonPublic);
@@ -337,6 +341,14 @@ namespace System.Windows.Forms
 
 		/// <summary>The renderer for a menu of the old kind -- one Windows would draw itself.
 		/// The classic theme draws it like any other menu.</summary>
+		/// <summary>The renderer every tool strip and menu is drawn with by default. A theme that
+		/// paints its strips differently -- a modern one draws a soft edge down the right of a tool
+		/// bar where the professional renderer draws a flat line -- hands out its own.</summary>
+		public virtual ToolStripRenderer CreateToolStripRenderer ()
+		{
+			return new ToolStripProfessionalRenderer (ColorTable);
+		}
+
 		public virtual ToolStripRenderer CreateSystemMenuRenderer ()
 		{
 			return null;
@@ -1068,6 +1080,13 @@ namespace System.Windows.Forms
 
 		#region TabControl
 		public abstract Size TabControlDefaultItemSize {get; }
+		/// <summary>The hairline along the top of a status strip. The classic theme highlights it in
+		/// white; Windows draws a light grey rule there.</summary>
+		/// <summary>What the header strip is painted with past the last column.</summary>
+		public virtual Color ListViewHeaderStripColor => ColorControl;
+
+		public virtual Color StatusStripTopEdgeColor => Color.White;
+
 		public abstract Point TabControlDefaultPadding {get; }
 		public abstract int TabControlMinimumTabWidth {get; }
 		public abstract Rectangle TabControlSelectedDelta { get; }
@@ -1082,6 +1101,17 @@ namespace System.Windows.Forms
 		public abstract Rectangle TabControlGetPanelRect (TabControl tab);
 		public abstract Size TabControlGetSpacing (TabControl tab);
 		public abstract void DrawTabControl (Graphics dc, Rectangle area, TabControl tab);
+
+		/// <summary>The colour a tab page's own background should be, or Color.Empty for "no
+		/// opinion", which leaves the page inheriting its TabControl's colour as it always did.
+		/// <para>A theme that draws the tab body in a colour of its own has to say so here, because
+		/// the PAGE is a real control that paints itself on top of that body afterwards: the body
+		/// came out right and was then covered over by a page painted the control face, and the tab
+		/// control looked a shade too grey with no code anywhere drawing it that way.</para></summary>
+		public virtual Color TabPageBackColor (TabPage page)
+		{
+			return Color.Empty;
+		}
 		#endregion
 
 		#region TextBoxBase

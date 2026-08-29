@@ -672,7 +672,12 @@ namespace System.Windows.Forms
 
 			CalcButtonSizes ();
 			CalcThumbArea ();
-			UpdateThumbPos (thumb_area.Y + (int)(((float)(position - minimum)) * pixel_per_pos), true, false);
+			// The track starts at thumb_area.Y down a vertical bar but at thumb_area.X along a
+			// horizontal one, and this took the Y either way. A horizontal bar's Y is zero, so its
+			// thumb lost the width of the first arrow and came up short of where the value puts it --
+			// eighteen pixels left of Windows', at a value of thirty out of a hundred.
+			UpdateThumbPos ((vert ? thumb_area.Y : thumb_area.X)
+					+ (int)(((float)(position - minimum)) * pixel_per_pos), true, false);
 		}
 
 		protected virtual void OnScroll (ScrollEventArgs se)
@@ -761,7 +766,10 @@ namespace System.Windows.Forms
 					thumb_size = 0;
 				else {
 					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
-					thumb_size = 1 + (int) (thumb_area.Height * per);
+					// No rounding up: Windows makes the thumb the plain proportion of the track, and the
+					// ThumbMinSize clamp below already keeps it draggable. The extra pixel made every
+					// thumb one longer than the one beside it.
+					thumb_size = (int) (thumb_area.Height * per);
 
 					if (thumb_size < ThumbMinSize)
 						thumb_size = ThumbMinSize;
@@ -784,7 +792,7 @@ namespace System.Windows.Forms
 					thumb_size = 0;
 				else {
 					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
-					thumb_size = 1 + (int) (thumb_area.Width * per);
+					thumb_size = (int) (thumb_area.Width * per);
 
 					if (thumb_size < ThumbMinSize)
 						thumb_size = ThumbMinSize;

@@ -2155,14 +2155,10 @@ namespace System.Windows.Forms {
 				return true;
 			}
 
-			// Handle keyboard cues state.
-			if ((keyData & Keys.Alt) != 0) {
-				Control toplevel = TopLevelControl;
-				if (toplevel != null) {
-					IntPtr param = MakeParam ((int) MsgUIState.UIS_CLEAR, (int) MsgUIState.UISF_HIDEACCEL);
-					XplatUI.SendMessage (toplevel.Handle, Msg.WM_CHANGEUISTATE, param, IntPtr.Zero);
-				}
-			}
+			// Handle keyboard cues state. Alt reveals BOTH cues, as Windows does in a dialog:
+			// the mnemonic underlines and the focus rectangle come up together.
+			if ((keyData & Keys.Alt) != 0)
+				RevealCues (MsgUIState.UISF_HIDEACCEL | MsgUIState.UISF_HIDEFOCUS);
 
 			// Give our menu a shot
 			if (ActiveMenu != null) {
@@ -2209,7 +2205,30 @@ namespace System.Windows.Forms {
 			return base.ProcessDialogChar (charCode);
 		}
 
+		/// <summary>Stop hiding a cue, the way Windows stops hiding it: by telling the whole window,
+		/// so every control repaints and not just the one the key reached.</summary>
+		private void RevealCues (MsgUIState element)
+		{
+			Control toplevel = TopLevelControl;
+			if (toplevel == null)
+				return;
+			IntPtr param = MakeParam ((int) MsgUIState.UIS_CLEAR, (int) element);
+			XplatUI.SendMessage (toplevel.Handle, Msg.WM_CHANGEUISTATE, param, IntPtr.Zero);
+		}
+
 		protected override bool ProcessDialogKey(Keys keyData) {
+			// Navigating with the keyboard is what brings the focus rectangle out. Until then Windows
+			// keeps UISF_HIDEFOCUS set, so a form the user has only clicked on shows no focus cue at
+			// all -- which is why ours drew a rectangle around the first control and Windows did not.
+			// Tab is already covered further down by ProcessTabKey, which has always set the flag;
+			// this is here for the ARROW keys, which navigate through SelectNextControl and would
+			// otherwise move the focus without ever revealing it.
+			switch (keyData & Keys.KeyCode) {
+				case Keys.Left: case Keys.Right: case Keys.Up: case Keys.Down:
+					RevealCues (MsgUIState.UISF_HIDEFOCUS);
+					break;
+			}
+
 			if ((keyData & Keys.Modifiers) == 0) {
 				if (keyData == Keys.Enter) {
 					IntPtr window = XplatUI.GetFocus ();

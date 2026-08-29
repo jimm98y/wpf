@@ -99,8 +99,12 @@ namespace System.Windows.Forms.Theming.Default
 						ThemeEngine.Current.ResPool.GetSolidBrush (color), 
 						client_rect, label.string_format);
 			
-				// Draw focus rectangle
-				if ((piece.link != null) && piece.link.Focused) {
+				// Draw focus rectangle. A LINK being the focused one is not enough -- the CONTROL has
+				// to have the focus and the window has to be showing focus cues at all, which it is
+				// not until the user navigates with the keyboard. Without those two the rectangle is
+				// painted on a form the user has only clicked on, where Windows paints nothing.
+				if ((piece.link != null) && piece.link.Focused
+				    && label.Focused && label.ShowFocusCues) {
 					foreach (RectangleF rect in piece.region.GetRegionScans (dc.Transform))
 						ControlPaint.DrawFocusRectangle (dc, Rectangle.Round (rect), label.ForeColor, label.BackColor);
 				}

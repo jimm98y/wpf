@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -225,9 +225,17 @@ namespace System.Windows.Forms {
 					contentbounds.Width -= cellStyle.Padding.Horizontal;
 					contentbounds.Height -= cellStyle.Padding.Vertical;
 				}
-
-				const int textTopAdditionalPadding = 1;
-				const int textBottomAdditionalPadding = 2;
+				// Windows' own margins for a cell that does not wrap: two above and one below.
+				//
+				// They were 3 and 0 for a while, which is the same TOTAL -- so the centring below is
+				// unchanged -- but a row further down, put there to cancel an unconditional "lift
+				// every run by a row" that used to sit in TextRenderer.PadDrawStringRectangle. That
+				// lift is gone (it was hiding a real placement bug in the status strip), so these go
+				// back to what Windows uses. Measured on the live window: with the lift removed, 3/0
+				// leaves every cell's caption a row BELOW stock's -- ink at rows 199 and 202 where
+				// stock has 198 and 201 -- and 2/1 lands on it.
+				const int textTopAdditionalPadding = 2;
+				const int textBottomAdditionalPadding = 1;
 				const int textLeftAdditionalPadding = 0;
 				const int textRightAdditionalPadding = 2;
 				contentbounds.Offset (textLeftAdditionalPadding, textTopAdditionalPadding);

@@ -434,7 +434,11 @@ namespace System.Windows.Forms {
 		public virtual DataGridViewAdvancedBorderStyle AdjustCellBorderStyle (DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStyleInput,	DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStylePlaceholder, bool singleVerticalBorderAdded, bool singleHorizontalBorderAdded, bool isFirstDisplayedColumn, bool isFirstDisplayedRow) {
 			if (dataGridViewAdvancedBorderStyleInput.All == DataGridViewAdvancedCellBorderStyle.Single) {
 
-				dataGridViewAdvancedBorderStylePlaceholder.Left = (isFirstDisplayedColumn && singleVerticalBorderAdded) ? DataGridViewAdvancedCellBorderStyle.Single : DataGridViewAdvancedCellBorderStyle.None;
+				// EVERY cell draws its own left edge, not just the first. A grid line lives ON the
+				// boundary between two columns -- see PaintBorder, where the right edge goes at the
+				// cell's Right rather than one inside it -- so the cell to the right of a line paints
+				// over the one its neighbour drew and has to put it back.
+				dataGridViewAdvancedBorderStylePlaceholder.Left = DataGridViewAdvancedCellBorderStyle.Single;
 				dataGridViewAdvancedBorderStylePlaceholder.Right = DataGridViewAdvancedCellBorderStyle.Single;
 				dataGridViewAdvancedBorderStylePlaceholder.Top = (isFirstDisplayedRow && singleHorizontalBorderAdded)? DataGridViewAdvancedCellBorderStyle.Single : DataGridViewAdvancedCellBorderStyle.None;
 				dataGridViewAdvancedBorderStylePlaceholder.Bottom = DataGridViewAdvancedCellBorderStyle.Single;
@@ -1255,7 +1259,11 @@ namespace System.Windows.Forms {
 			Pen penLight = ThemeEngine.Current.ResPool.GetPen (cpColor.LightLight);
 
 			int left = bounds.X;
-			int right = bounds.Right - 1;
+			// ON the boundary, not one inside it: Windows puts the line between two columns at the
+			// first column's Right, so a hundred-pixel column measures a hundred pixels from one line
+			// to the next. Drawing at Right - 1 made every column ninety-nine wide on screen and walked
+			// the whole grid a pixel left of Windows' from the second column on.
+			int right = bounds.Right;
 			int top = bounds.Y;
 			int bottom = bounds.Bottom - 1;
 
@@ -1398,7 +1406,7 @@ namespace System.Windows.Forms {
 			TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl;
 			flags |= AlignmentToFlags (style.Alignment);
 			
-			cellBounds.Height -= 2;
+cellBounds.Height -= 2;
 			cellBounds.Width -= 2;
 
 			if (formattedValue != null)

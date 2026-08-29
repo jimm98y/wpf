@@ -926,8 +926,17 @@ namespace System.Windows.Forms
 			tab_stop = true;
 			ime_mode = ImeMode.Inherit;
 			use_compatible_text_rendering = true;
+			// Two different cues, and Windows keeps them apart -- but BOTH start hidden. A window
+			// that was not reached by the keyboard is created with UISF_HIDEACCEL and UISF_HIDEFOCUS
+			// both SET; the underline under a mnemonic appears when Alt is pressed and the dotted
+			// rectangle around the focused control appears when the user navigates with the keyboard.
+			// MEASURED, because this line has been wrong in both directions: a stock WinForms window
+			// beside ours reports Form.ShowFocusCues FALSE on Shown, where ours reported True and
+			// drew a focus rectangle on the LinkLabel that Windows does not draw.
+			// Form.ProcessDialogKey / ProcessCmdKey clear them; see WmUpdateUIState, which was always
+			// able to turn them on and had nothing to turn it on FROM.
 			show_keyboard_cues = false;
-			show_focus_cues = SystemInformation.MenuAccessKeysUnderlined;
+			show_focus_cues = false;
 			use_wait_cursor = false;
 
 			backgroundimage_layout = ImageLayout.Tile;
@@ -3407,6 +3416,17 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>How tall one line of this control's text is to GDI -- the metric every one of
+		/// these controls has a native counterpart that sizes itself by. FontHeight is GDI+'s line
+		/// spacing instead, a pixel taller for the shell font, which made a combo box, a date picker
+		/// and a tree row each a pixel taller than the same control in Windows.</summary>
+		internal int TextLineHeight {
+			get {
+				int gdi = TextRenderer.GdiLineHeight (Font);
+				return gdi > 0 ? gdi : FontHeight;
+			}
+		}
+
 		protected int FontHeight {
 			get {
 				return Font.Height;
@@ -5758,6 +5778,12 @@ namespace System.Windows.Forms
 		}
 
 		private void WmChangeUIState (ref Message m) {
+			// THIS window first, then its children. Windows' DefWindowProc turns a WM_CHANGEUISTATE
+			// into a WM_UPDATEUISTATE for the window itself as well as for everything under it, and
+			// leaving the top level out is not a detail: ShowFocusCues answers out of the FORM's
+			// flag, so a form that never updates its own is a form whose children never see the cue
+			// change at all. That is exactly what happened -- pressing Tab revealed nothing.
+			WmUpdateUIState (ref m);
 			foreach (Control control in Controls) {
 				XplatUI.SendMessage (control.Handle, Msg.WM_UPDATEUISTATE, m.WParam, m.LParam);
 			}
