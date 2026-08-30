@@ -902,6 +902,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_keepTouchedDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "touched";
 
+        /// <summary>WPF_CT_CUTIN_UNROUNDED: shrink the cut-in only for MIRPs that do NOT round --
+        /// the reading in which the sixteenth is about stroke weights and not about spacing.</summary>
+        private static readonly bool s_cutInUnroundedOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_UNROUNDED") == "1";
+
         private static readonly bool s_cutInFull =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_FULL") == "1";
 
@@ -953,6 +958,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     full  2,841,228     /16  2,773,440     /32  2,787,681
             //     /64   2,788,094     /256 2,790,898              (Arial, three styles)
             // Whatever makes GDI's stems vary, it is not this threshold. WPF_CT_CUTIN_DIV sweeps it.
+            //
+            // RE-MEASURED after the baseline, advance, kerning and y-cut-in fixes moved every number
+            // in this file, because a threshold chosen against a broken landscape is not a threshold
+            // that was ever really chosen. All three of the decisions here survive it:
+            //     divisor   /1 3,391,753  /2 3,320,982  /4 2,934,769  /8 2,392,364
+            //               /16 2,197,658 (best)        /32 2,274,459
+            //     stem snap  off 2,197,658   64 3,068,065   96 3,221,476   128 3,392,644
+            //     distances on the physical grid  3,810,559
+            //     narrow reading (unrounded only) 3,319,606 against 2,197,690
+            // Sixteen, no stem snapping, and the broad reading -- by a wide margin in each case.
             // AND ONLY IN THE CLEARTYPE DIRECTION, like the minimum distance below it. Everything
             // in the paragraphs above is about x: the sixteenth is what ClearType does to the cut-in
             // along the axis it oversamples. There is no ClearType in y -- a scan line is a scan
@@ -964,9 +979,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // horizontal stroke in Segoe UI Bold, Tahoma Bold and Verdana Bold came out a pixel too
             // thick. Arial Bold was right, which is what hid it: its program places both crossbar
             // edges explicitly instead of leaning on a control value.
-            int cutIn = (s_cutInFull || BiLevelPass || !InClearTypeDirection
-                             ? _gs.ControlValueCutIn
-                             : _gs.ControlValueCutIn / s_cutInDivisor) * stretch;
+            // WPF_CT_CUTIN_UNROUNDED is the paper's NARROW reading, put back so it can be measured
+            // again: the sixteenth is written about the case where "we may honor a CVT cut-in even
+            // though the round-off flag would require not doing so ... we assume that the context is
+            // a STROKE WEIGHT", which is an UNROUNDED MIRP. A rounded one is spacing, and spacing
+            // would keep the cut-in the face asked for.
+            bool shrink = !s_cutInFull && !BiLevelPass && InClearTypeDirection
+                          && !(s_cutInUnroundedOnly && round);
+            int cutIn = (shrink ? _gs.ControlValueCutIn / s_cutInDivisor
+                                : _gs.ControlValueCutIn) * stretch;
             int minimum = (InClearTypeDirection && !s_fullMinDistance && !BiLevelPass ? _gs.MinimumDistance / 2
                                                 : _gs.MinimumDistance) * stretch;
 
