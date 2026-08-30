@@ -3746,8 +3746,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <para>RE-MEASURED, and AFTER still wins. Corrected before the filter the curve needs a much
         /// steeper exponent to do the same work (its best is gamma 1.8, where mean ink disagreement is
         /// 0.88% against 0.89% -- a tie) but it costs structural accuracy heavily: 684 pixels against
-        /// 274. Correcting three-valued lamps quantizes the curve to three points, and the filter then
-        /// spreads that coarse result instead of a fine one.</para>
+        /// 274.</para>
+        /// <para>Re-measured on the text specimen, which is repeatable to 41 and does not depend on
+        /// the structural metric that reading came from: 841,250 against 759,520. The conclusion
+        /// stands and THE REASON GIVEN FOR IT WAS WRONG. It said correcting three-valued lamps
+        /// quantizes the curve to three points, so the filter spreads a coarse result -- but the
+        /// number does not move when the lamps are given more levels, or none at all: 841,244 at
+        /// thirteen levels and 841,212 unquantized, against 841,250 at seven. The cost is inherent
+        /// to correcting before the filter rather than after it, and has nothing to do with how many
+        /// levels a lamp has.</para>
         /// <para>The first attempt at this measurement was WRONG and said "before" was inert. This
         /// field was declared BELOW s_subpixelLut, and a static field initializer runs in declaration
         /// order, so BuildSubpixelLut read it as false and never handed the table over: the run was
