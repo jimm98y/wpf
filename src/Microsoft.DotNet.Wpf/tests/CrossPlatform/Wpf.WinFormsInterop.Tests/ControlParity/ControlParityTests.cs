@@ -65,7 +65,7 @@ namespace Wpf.WinFormsInterop.Tests
             // Ours draws the value and the spin arrows; Windows' DrawToBitmap draws neither, because
             // they live in CHILD controls that WM_PRINT does not reach. The reference is the thin one
             // here, so this number cannot go to zero and going up would be us drawing LESS.
-            ["numericupdown"] = (2234, 282),
+            ["numericupdown"] = (2232, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control
@@ -95,10 +95,10 @@ namespace Wpf.WinFormsInterop.Tests
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
             // authority for where the box goes; see the note on tabcontrol.
-            ["checkbox"] = (310, 45),
+            ["checkbox"] = (309, 45),
             ["checkbox-clear"] = (327, 46),
             ["checkbox-disabled"] = (318, 135),
-            ["checkedlistbox"] = (22, 1085),
+            ["checkedlistbox"] = (20, 1085),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a

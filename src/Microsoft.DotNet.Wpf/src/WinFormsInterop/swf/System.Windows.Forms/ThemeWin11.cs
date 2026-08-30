@@ -1089,7 +1089,11 @@ namespace System.Windows.Forms
 			if (bounds.Width <= 4 || bounds.Height <= 4)
 				return;
 
-			var box = new Rectangle (bounds.X + 1, bounds.Y, bounds.Width - 3, bounds.Height - 1);
+			// Windows draws the two buttons as one eighteen-row block floor-centred in the field: a
+			// row spare above the top button and two below the bottom one. Ours filled the field, so
+			// our top frame sat a row high and our bottom edge two rows low.
+			var box = top ? new Rectangle (bounds.X + 1, bounds.Y + 1, bounds.Width - 3, bounds.Height - 2)
+				      : new Rectangle (bounds.X + 1, bounds.Y,     bounds.Width - 3, bounds.Height - 3);
 
 			// A hovered spin button takes a tint of the accent rather than a grey wash, and its arrow
 			// goes accent blue with it.
@@ -1123,17 +1127,29 @@ namespace System.Windows.Forms
 			// middle of its own: measured off a stock spin box, where the pair sits two rows closer
 			// together than centring each in its own button puts them, and a column left.
 			int cx = box.X + box.Width / 2;
-			int cy = box.Y + box.Height / 2 + (top ? 1 : -1);
+			// Off bounds, not box: insetting the box above must not drag the arrows with it.
+			int cy = bounds.Y + (bounds.Height - 1) / 2 + (top ? 1 : -1);
 
 			// A real TRIANGLE, antialiased, rather than three solid rows. The slanted edges carry part
 			// coverage in Windows -- six percent at the base corners, half way up the sides -- and rows
-			// cannot express that. The geometry is read off a stock spin box: the base edge sits two
-			// rows past the centre, the apex three point eight rows back from it, and the base is six
-			// pixels across.
-			float ax = cx + 0.5f;
-			float baseY = top ? cy + 2f : cy - 1f;
-			float apexY = top ? cy - 1.8f : cy + 2.8f;
-			const float HalfBase = 3.0f;
+			// cannot express that.
+			// Solved from Windows own coverage rather than guessed. A triangle of base 2H spanning S rows
+			// widens at s = 2H/S per row, so a row wholly inside it takes s*(rowcentre - apex) of ink and
+			// the apex row takes s*(top - apex)^2/2 -- four numbers per arrow, three unknowns, one to
+			// check with. Windows up arrow reads 0.31 / 2.00 / 3.88 / 5.12 and solves to apex 330.44,
+			// base 333.90, half-base 3.26; the model then predicts its apex row to 0.295 against 0.31.
+			// Ours read 0.79 / 2.36 / 3.94 / 3.99 -- too pointed and a quarter row short at the base.
+			// Our rasterizer SNAPS polygon vertices to half pixels, which is why these numbers look
+			// arbitrary and why two of them can be moved a long way without the picture changing:
+			// 1.97 and 1.88 both land the up base on 334.0, while the down base went from 340.0 to
+			// 340.5 -- a whole half row -- for a change of a tenth. Windows wants 333.90 and 340.10,
+			// so 334.0 and 340.0 are the nearest we can reach and the tenth of a row is not ours to
+			// close. Chosen as the reachable neighbour of each, not fitted.
+			float ax = cx + 0.60f;
+			const float HalfBase = 3.26f;
+			const float Span = 3.46f;
+			float baseY = top ? cy + 1.88f : cy - 0.77f;
+			float apexY = top ? baseY - Span : baseY + Span;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
 			g.FillPolygon (brush, new PointF [] {
 				new PointF (ax, apexY),
