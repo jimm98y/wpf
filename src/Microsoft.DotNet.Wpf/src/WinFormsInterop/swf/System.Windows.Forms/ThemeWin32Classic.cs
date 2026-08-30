@@ -2652,7 +2652,7 @@ namespace System.Windows.Forms
 
 			// Clip the are that the text will be in
 			Region prev_clip = dc.Clip;
-			dc.SetClip (new Rectangle (10, 0, width, box.Font.Height), CombineMode.Exclude);
+			dc.SetClip (new Rectangle (GroupBoxCaptionIndent, 0, width, box.Font.Height), CombineMode.Exclude);
 			/* Draw group box*/
 			// ONE ROW SHORT of the control's own bottom. Measured against a live stock group box, whose
 			// left, right and top edges land on our exact rows while its bottom sits a row ABOVE ours --
@@ -2663,15 +2663,19 @@ namespace System.Windows.Forms
 			/* Text */
 			if (box.Text.Length != 0) {
 				if (box.Enabled) {
-					dc.DrawString (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), 10, 0, text_format);
+					dc.DrawString (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), GroupBoxCaptionIndent, 0, text_format);
 				} else {
 					CPDrawStringDisabled (dc, box.Text, box.Font, box.BackColor, 
-							      new RectangleF (10, 0, width,  box.Font.Height), text_format);
+							      new RectangleF (GroupBoxCaptionIndent, 0, width,  box.Font.Height), text_format);
 				}
 			}
 			
 			text_format.Dispose ();	
 		}
+
+		/// <summary>How far in from the left edge the caption's rectangle starts. The classic look
+		/// puts it at ten; Windows draws it at nine, measured -- see the Win11 override.</summary>
+		protected virtual int GroupBoxCaptionIndent => 10;
 
 		public override Size GroupBoxDefaultSize {
 			get {

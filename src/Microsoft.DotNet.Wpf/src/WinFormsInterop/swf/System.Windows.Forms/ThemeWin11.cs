@@ -1550,6 +1550,17 @@ namespace System.Windows.Forms
 		// month in bold, chevrons with no button around them, grey day names, and a light box on
 		// today's cell.
 
+		/// <summary>NINE, measured. The classic look indents the caption ten pixels and Windows
+		/// indents it nine, which is a whole pixel of every glyph in it: with the caption at ten the
+		/// group box region measures 160,069, at nine 75,099, and at eleven 195,459.
+		/// <para>It hid behind the format margin. The caption is positioned by a RECTANGLE, and the
+		/// default string format leaves three pixels inside that rectangle before the first glyph,
+		/// so the ink was four pixels right of Windows' and the rectangle only one. Only once the
+		/// margin was gone did the remaining pixel become visible -- and then as a SUB-PIXEL
+		/// difference, our stem two lamps right of Windows' inside the same column, which is what
+		/// one pixel of pen looks like once the glyph's own bearing is added back.</para></summary>
+		protected override int GroupBoxCaptionIndent => 9;
+
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
 
 		// The grey Windows fills a selected day with, measured off its own calendar.
