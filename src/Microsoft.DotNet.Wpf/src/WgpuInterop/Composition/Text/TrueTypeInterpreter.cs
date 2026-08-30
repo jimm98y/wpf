@@ -859,6 +859,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
                        : InClearTypeDirection ? ClearTypeGrid
                        : 1;
+            // A SNAP ZONE was tried here -- pull a value onto a whole pixel when it lands within a
+            // few 64ths of one, leave it alone otherwise. It is the one mechanism that would explain
+            // the shape of the per-glyph measurement, where GDI's lamps prefer the bi-level fit for
+            // some glyphs and the ClearType fit for others at the SAME size with nothing geometric
+            // separating the two lists: whichever a glyph resembled would be an accident of where
+            // its stems happened to fall. Measured at 4, 6, 8, 12 and 16 sixty-fourths it is
+            // monotonically worse -- 766,634 / 780,604 / 805,071 / 840,918 / 954,917 against
+            // 759,520 -- so that is not the mechanism either.
             value *= thirds;
 
             switch (_gs.Round)
