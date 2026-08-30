@@ -990,6 +990,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // costs 316,000. Dropout control, which widens only the thin ones: a shallow best at one
             // subpixel worth 2,617 out of 2,197,658, a tenth of a percent.
             //
+            // AND THEY ARE NOT NARROW AT ALL. Segoe UI's 'l' is the clean case: the face's control
+            // value is 164 units, 0.96px at 12ppem, prep rounds it to 1.0, and the MIRP does not
+            // round, so we draw exactly 1.0px. GDI's reads 3.49 lamps against our 3.00 -- and a
+            // 1.0px stem covers SIX half-lamps, so 3.49 is seven of them lit, not a wider stem.
+            // Seven light only at one phase:
+            //     edge at 0, 1/4, 3/4 of a half-lamp -> 6 lit (3.00 lamps)
+            //     edge at exactly 1/2                -> 7 lit (3.50 lamps)
+            // because at that phase BOTH end samples sit at exactly 50% coverage and both pass the
+            // threshold. So GDI's stem is the same width as ours with its edges an twelfth of a
+            // pixel off, and ours land on the half-lamp grid.
+            //
+            // Not the threshold, either: at 127 instead of 128 our stems are still 3.00 at 11, 12
+            // and 13ppem and the specimen is worse (2,199,781 against 2,197,658). Our edges are at
+            // phase 0, not on the knife edge.
+            //
             // So it is not that our stems are narrow. Some are and some are not, and the ones that
             // are are not narrow for a reason any global widening can reach. Italics escape whatever
             // it is entirely -- they have no vertical stems for a control value to govern -- and
