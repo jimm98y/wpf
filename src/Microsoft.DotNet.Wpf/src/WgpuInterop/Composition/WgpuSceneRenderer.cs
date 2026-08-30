@@ -412,6 +412,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_traceText =
             Environment.GetEnvironmentVariable("WGPU_TRACE_TEXT") == "1";
         private readonly Text.ITextShaper _shaper;
+        private static readonly Text.SimpleTextShaper s_plainShaper = new();
         private readonly Text.GlyphAtlas _glyphAtlas = new();
         private readonly List<Text.ShapedGlyph> _shapeScratch = new();
         private IntPtr _shaderModule;
@@ -4425,7 +4426,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Shape the run into positioned glyphs (glyph ids + advances/offsets),
             // then lay them out. Advances come from the shaper (so kerning etc.
             // are honoured); the atlas provides each glyph's bitmap and bearings.
-            _shaper.Shape(font, run.Text, _shapeScratch);
+            // A run that asks not to be kerned gets the plain shaper, whatever this renderer's is.
+            if ((run.Simulations & GlyphRunDraw.NoKerningSimulation) != 0)
+                s_plainShaper.Shape(font, run.Text, _shapeScratch);
+            else
+                _shaper.Shape(font, run.Text, _shapeScratch);
 
             float scale = run.EmSize / font.PixelsPerEm;
 

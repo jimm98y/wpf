@@ -3673,6 +3673,15 @@ namespace System.Windows.Forms
 		// draw the month calendar
 		public override void DrawMonthCalendar(Graphics dc, Rectangle clip_rectangle, MonthCalendar mc) 
 		{
+			// THE MONTH CALENDAR IS A NATIVE CONTROL IN WINDOWS, and comctl32 draws its text without
+			// pair kerning. A WinForms Label carrying the same string DOES kern -- measured, with the
+			// same "Today: 8/30/2026" in both: the Label matches us exactly and the calendar's own
+			// footer sat one pixel left of Windows', the width of the single 'To' pair in it.
+			// Unkerned, that line's error over its own rectangle falls from 143,223 to 8,198, which
+			// is the same number the kerned run only reaches when slid a pixel right.
+			bool saved_kerning = dc.no_kerning;
+			dc.no_kerning = true;
+			try {
 			// Once the outgoing view has finished gathering itself up, the calendar swaps to the new
 			// one and fades it in. Asking here is what drives the second half of the transition.
 			mc.AdvanceZoom ();
@@ -3889,6 +3898,7 @@ namespace System.Windows.Forms
 					dc.DrawRectangle (ResPool.GetPen (MonthCalendarPopupBorderColor (mc)),
 							   bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
 			}
+			} finally { dc.no_kerning = saved_kerning; }
 		}
 
 		// darws a single part of the month calendar (with one month)

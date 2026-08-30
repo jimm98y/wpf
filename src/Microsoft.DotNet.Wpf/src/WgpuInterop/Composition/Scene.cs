@@ -544,6 +544,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float EmSize { get; }
         public RgbaColor Color { get; }
 
+        /// <summary>Bit 2 of Simulations: lay this run out WITHOUT pair kerning.
+        /// <para>For a control that stands in for a native Win32 one. Windows' month calendar draws
+        /// its own "Today: ..." line unkerned -- ours came out a pixel left of it, and the only
+        /// pair in that string is 'To' -- while a WinForms LABEL carrying the same text kerns and
+        /// matches us exactly. So it is not a property of the text or the font, it is a property of
+        /// WHO IS DRAWING, and it has to travel with the run.</para></summary>
+        public const int NoKerningSimulation = 4;
+
         /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
         /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
         /// every run comes out in the regular face however the caller asked for it.</summary>

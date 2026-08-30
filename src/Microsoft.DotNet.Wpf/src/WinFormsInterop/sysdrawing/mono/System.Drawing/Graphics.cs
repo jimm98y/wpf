@@ -1667,6 +1667,11 @@ namespace System.Drawing
 		/// TextRenderer draws through here, since the two align a line of text differently.</summary>
 		internal bool gdi_text_metrics;
 
+		/// <summary>Set while a control that stands in for a NATIVE Win32 one paints its text.
+		/// Windows' own month calendar draws its "Today: ..." line without pair kerning; a WinForms
+		/// Label carrying the same string kerns it. See GlyphRunDraw.NoKerningSimulation.</summary>
+		internal bool no_kerning;
+
 		/// <summary>Draw a string the way GDI would place it. TextRenderer means GDI, and the only
 		/// difference that reaches this far is which box a centred line is centred in.</summary>
 		internal void DrawStringGdi (string s, Font font, Brush brush, RectangleF layoutRectangle,
@@ -1735,7 +1740,8 @@ namespace System.Drawing
 				// arrives with nothing but a size and a colour, and every piece of bold text in
 				// every hosted control -- a property grid's modified values, a group heading --
 				// came out regular.
-				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
+					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0);
 				// The family the caller asked for. A run used to arrive at the renderer with
 				// nothing but a size, a colour and a style, so everything came out in one
 				// hard-coded face -- and a fixed-width font could not be had at all.

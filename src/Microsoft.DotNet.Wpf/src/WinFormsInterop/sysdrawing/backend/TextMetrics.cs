@@ -11,6 +11,11 @@ namespace System.Drawing.WebGpuBackend
 {
     internal static class TextMetrics
     {
+        /// <summary>The simulation bit that asks for a run to be laid out WITHOUT pair kerning,
+        /// re-exported here so the drawing code need not name the composition types.</summary>
+        internal const int NoKerning =
+            Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.NoKerningSimulation;
+
         private static readonly IFont Font = LoadFont();
         // KERNING, because Windows kerns a string run and a measurement that does not is a
         // measurement of a different string. Arial's "AVAVAV..." measures 140 pixels unkerned
@@ -30,6 +35,8 @@ namespace System.Drawing.WebGpuBackend
         // Kerning the measurement is still the better setting overall (1,767,527 against 1,776,863
         // for draw-only), so it stays, but the two are separable and the knob is here because the
         // next person will want to separate them again.
+        private static readonly ITextShaper PlainShaper = new SimpleTextShaper();
+
         private static readonly ITextShaper Shaper =
             Environment.GetEnvironmentVariable("WPF_KERN_MEASURE") == "0"
                 ? new SimpleTextShaper() : (ITextShaper) new KerningTextShaper();
@@ -71,7 +78,11 @@ namespace System.Drawing.WebGpuBackend
                 float lineWidth;
                 lock (Buf)
                 {
-                    Shaper.Shape((IShapingFont)font, line, Buf);
+                    // Bit 2 of the simulations asks for no kerning -- see GlyphRunDraw. The measure
+                    // has to agree with the draw or an autosize control sizes itself to a width its
+                    // own text will not have.
+                    ((simulations & NoKerning) != 0 ? PlainShaper : Shaper)
+                        .Shape((IShapingFont)font, line, Buf);
                     // A whole pixel per glyph, as Windows lays a string out: it advances the pen by
                     // each glyph's width rounded to a pixel, so a run is the SUM of rounded widths and
                     // not the rounded sum. Adding the fractions up first and rounding once made every
