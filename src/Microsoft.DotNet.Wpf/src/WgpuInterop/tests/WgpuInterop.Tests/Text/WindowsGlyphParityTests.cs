@@ -1202,12 +1202,12 @@ namespace WgpuInterop.Tests.Text
                 }
 
                 double best = double.MaxValue, bestErr = 0; float bl = 0, br = 0;
-                for (int li = 0; li <= 96; li++)
+                for (int li = 0; li <= 256; li++)
                 {
-                    float left = PenX - 1 + li / 24f;
-                    for (int wi = 8; wi <= 56; wi++)
+                    float left = PenX - 1 + li / 64f;
+                    for (int wi = 21; wi <= 149; wi++)
                     {
-                        float w = wi / 24f;
+                        float w = wi / 64f;
                         int[] got = BarLamps(left, left + w, row, ppem);
                         double e = 0;
                         for (int k = 0; k < 36; k++) { double d = got[k] - want[k]; e += d * d; }
@@ -1215,12 +1215,20 @@ namespace WgpuInterop.Tests.Text
                     }
                 }
 
-                float natL = 0, natR = 0, fitL = 0, fitR = 0;
+                float natL = 0, natR = 0, fitL = 0, fitR = 0, biL = 0, biR = 0;
                 Edges(font, ppem, subpixel: true, out natL, out natR);
                 Edges(font, ppem, subpixel: false, out fitL, out fitR);
-                report.AppendLine($"     {ppem,4}   {bl,6:0.000}..{br,-6:0.000} (w {br - bl,5:0.000})"
-                                  + $" rms={MathF.Sqrt((float)bestErr / 36),5:0.0}"
-                                  + $"   {natL,5:0.00}..{natR,-5:0.00}   {fitL,5:0.00}..{fitR,-5:0.00}");
+                // And the BI-LEVEL fit, on a fresh font so the (glyph, size) outline cache cannot
+                // hand back the ClearType answer. GDI's real stem can then be placed against BOTH
+                // of ours: between them, or outside them both.
+                var biFont = new TrueTypeFont(File.ReadAllBytes(file!));
+                TrueTypeInterpreter.BiLevelPass = true;
+                try { Edges(biFont, ppem, subpixel: true, out biL, out biR); }
+                finally { TrueTypeInterpreter.BiLevelPass = false; }
+                report.AppendLine($"     {ppem,4}   gdi {bl,6:0.000}..{br,-6:0.000} (w {br - bl,5:0.000})"
+                                  + $" rms={MathF.Sqrt((float)bestErr / 36),4:0.0}"
+                                  + $"   ct {natL,5:0.00}..{natR,-5:0.00} (w {natR - natL,4:0.00})"
+                                  + $"   bi {biL,5:0.00}..{biR,-5:0.00} (w {biR - biL,4:0.00})");
             }
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
         }

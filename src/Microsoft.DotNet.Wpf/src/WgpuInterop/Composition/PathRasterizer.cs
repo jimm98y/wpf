@@ -494,6 +494,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                           subWidth * HalfLamps, height,
                                           SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows,
                                           MinStemSubpixels * HalfLamps);
+            // Filtering the 6x samples STRAIGHT into lamps was tried, on the grounds that the paper
+            // calls this "a 6x1 filtering technique" -- one operation, six samples in and three
+            // lamps out -- where ours is two, thresholding each half-lamp at 128 and then running a
+            // three-lamp box over the result. The threshold in the middle is a binarization the
+            // documented pipeline does not have. Measured with the same curve and level cap in the
+            // same order it costs 759,520 -> 803,759, and 822,317 / 841,529 at other gammas. The
+            // threshold earns its place: it sharpens, and averaging the fine samples instead gives
+            // away the edge.
             samples = HalfLamps > 1 ? CollapseHalfLamps(samples, subWidth, height) : samples;
             Quantize(samples);
             // The contrast curve, if it is to be applied to the RAW LAMPS rather than to the filtered
