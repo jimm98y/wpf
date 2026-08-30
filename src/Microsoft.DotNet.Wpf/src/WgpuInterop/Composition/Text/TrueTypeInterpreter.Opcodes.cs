@@ -566,7 +566,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // Version 35: the classic interpreter, which is the one GDI is. Saying
                             // 40 would make a ClearType-era face suppress its own horizontal hints,
                             // and GDI plainly does not -- its stems land on single columns.
-                            if ((selector & 1) != 0) result |= 35;
+                            if ((selector & 1) != 0) result |= s_rasterizerVersion;
                             // Rendering in greyscale, which GDI reports for ANTIALIASED_QUALITY.
                             // Also tried the other way, since GDI's greyscale is a supersample of a
                             // black-and-white rasterization and might have been expected to hint as
@@ -596,6 +596,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // half, and the page comes out too thin. GDI's stems measure the same
                             // width in both of its modes -- what changes between them is how a
                             // partly covered pixel is SHADED, not where the outline goes.
+                            if (s_traceGetInfo)
+                                Console.Error.WriteLine(
+                                    $"      GETINFO selector={selector} -> {result}"
+                                    + $"  (prep={_inPreProgram}, ct={ClearTypeInfo})");
                             Push(result);
                             break;
                         }
@@ -870,6 +874,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Apply every delta, suppressing none -- what GDI's ClearType appears to do.</summary>
         /// <summary>WPF_CT_SYMINFO=1 answers GETINFO's symmetric-rendering bit.</summary>
+        /// <summary>WPF_GETINFO_TRACE=1: log every GETINFO a face asks, prep included. What a
+        /// face BRANCHES on is the only way its program can behave differently for us than for
+        /// GDI, so it is worth being able to see.</summary>
+        /// <summary>What GETINFO answers for the rasterizer VERSION: THIRTY-FIVE, which is what GDI
+        /// is. WPF_RASTERIZER sweeps it.
+        /// <para>Worth a knob because Segoe UI's 'prep' asks for this THREE TIMES and asks for
+        /// nothing else except rotation and stretch -- no ClearType bit, no compatible-widths bit
+        /// (WPF_GETINFO_TRACE=1 shows it). So the version is the only thing that face's prep can
+        /// behave differently on, and its prep is where the stem control value comes from. It does
+        /// change it: at 35 the stem control value comes out 1.0000px and at 36 or above 0.9688,
+        /// the face declining to round it for a newer rasterizer.</para>
+        /// <para>AND SAYING 40 IS NOT WORTH IT, though the specimen total says otherwise --
+        /// 2,197,699 -> 2,184,855, which is where this nearly went. The total hides a trade that is
+        /// entirely between faces:
+        ///     Verdana B -11,129   Tahoma B -10,959   Consolas R -6,161   Segoe UI R 9 -2,046
+        ///     Segoe UI R 8.25 +13,073   Segoe UI R 12 +3,888
+        /// and the parity suite, which is Segoe UI at eleven sizes, agrees with the losing half:
+        /// its repertoire goes 41,294 -> 42,542. Two bold faces gain because they take a different
+        /// branch when told they are on a rasterizer they are not on. That is not parity, it is a
+        /// lie that happens to pay in two places, and it costs the one face measured most.</para>
+        /// </summary>
+        private static readonly int s_rasterizerVersion =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_RASTERIZER"), out int rv) && rv > 0
+                ? rv : 35;
+
+        private static readonly bool s_traceGetInfo =
+            Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
+
         private static readonly bool s_symmetricInfo =
             Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
 
