@@ -145,11 +145,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _gasp = tables.TryGetValue("gasp", out int gasp) ? gasp : -1;
             // The x-height and cap height, for telling a lowercase letter with an ascender from a
             // capital of the same bounding height. OS/2 carries both from version 2 on.
-            if (tables.TryGetValue("OS/2", out int os2) && U16(os2) >= 2)
+            if (tables.TryGetValue("OS/2", out int os2))
             {
-                _sxHeight = (short) U16(os2 + 86);
-                _sCapHeight = (short) U16(os2 + 88);
+                if (U16(os2) >= 2)
+                {
+                    _sxHeight = (short) U16(os2 + 86);
+                    _sCapHeight = (short) U16(os2 + 88);
+                }
+                // usWinAscent / usWinDescent: the fallback line box, for a face with no usable VDMX.
+                _winAscent = U16(os2 + 74);
+                _winDescent = U16(os2 + 76);
             }
+            _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -267,6 +274,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public int GlyphIndex(char c) => _cmap.Map(c);
 
         public float Advance(int glyphId) => AdvanceWidth(glyphId) * _scale;
+
+        /// <summary>Where the program left the two horizontal phantom points, in pixels, before any
+        /// rounding of ours. Tells apart "the program widened the advance and we lost it" from "the
+        /// program never touched the advance".</summary>
+        internal (float Pp1, float Pp2) HintedPhantomsForTest(int glyphId, float pixelsPerEm)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null) return (float.NaN, float.NaN);
+            GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
+            if (glyph is null) return (float.NaN, float.NaN);
+            return (glyph.X[glyph.PointCount] / 64f, glyph.X[glyph.PointCount + 1] / 64f);
+        }
+
+        /// <summary>The advance before anything fits it -- 'hmtx' scaled to the size. What a
+        /// device advance should NOT be equal to, on a face whose program touches the phantom
+        /// points.</summary>
+        internal float LinearAdvanceForTest(int glyphId, float pixelsPerEm)
+            => AdvanceWidth(glyphId) * pixelsPerEm / _unitsPerEm;
 
         public bool TryGetKerning(int leftGlyph, int rightGlyph, out float kerning)
             => _kerning.TryGetValue((leftGlyph, rightGlyph), out kerning);
@@ -467,7 +492,92 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return TryGetHintedAdvance(glyphId, pixelsPerEm, out advance);
         }
 
-        /// <summary>The advance the FACE ships for this size, read straight from 'hdmx'.
+        /// <summary>The line box GDI gives this face at this size: the ascent and descent a
+        /// TEXTMETRIC reports, which is what every control that sizes itself to a line of text is
+        /// measured against.
+        /// <para>NOT the scaled design metrics. GDI reads 'VDMX', the table recording how far the
+        /// HINTED outlines actually reach at each whole pixel size -- hinting moves them, so the
+        /// design values are the wrong answer by more than rounding. Arial at twelve pixels an em
+        /// has usWinAscent 1854 on a 2048 em, which scales to 10.86 pixels; GDI says TWELVE,
+        /// because that is what Arial's own hinting program leaves the tallest glyph reaching.
+        /// Times New Roman is the same. Both came out three pixels short, which put every line of
+        /// them TWO PIXELS ABOVE Windows' on the specimen -- six of its twenty-four bands, and more
+        /// error than every hinting fix in this file put together.</para>
+        /// <para>A ratio range only counts when its bCharSet is 1. Tahoma is the face that proves
+        /// it: it ships a VDMX whose single range is bCharSet 0, its numbers disagree with GDI from
+        /// twelve pixels an em upwards (13/3 against 12/2), and GDI ignores it and scales the design
+        /// metrics instead. Every other face measured here -- Segoe UI, Arial, Times, Verdana --
+        /// carries bCharSet 1 and GDI follows its VDMX EXACTLY at all of 8..20 pixels an em.</para>
+        /// <para>The fallback rounds; it does not truncate. Consolas ships no VDMX at all and its
+        /// TEXTMETRIC is round(usWinAscent x scale) / round(usWinDescent x scale) at every one of
+        /// those sizes, truncation being wrong at seven of them.</para></summary>
+        public bool TryGetGdiLineMetrics(int ppem, out int ascent, out int descent)
+        {
+            ascent = descent = 0;
+            if (ppem <= 0 || _unitsPerEm <= 0) return false;
+
+            if (TryGetVdmxExtents(ppem, out int yMax, out int yMin))
+            {
+                ascent = yMax;
+                descent = -yMin;
+                return true;
+            }
+
+            if (_winAscent <= 0 && _winDescent <= 0) return false;
+            ascent = (int) MathF.Round(_winAscent * (float) ppem / _unitsPerEm);
+            descent = (int) MathF.Round(_winDescent * (float) ppem / _unitsPerEm);
+            return true;
+        }
+
+        /// <summary>How far the hinted outlines reach at this size, from 'VDMX'. False when the face
+        /// ships none, when no ratio range applies, or when the size is outside the range recorded.
+        /// </summary>
+        private bool TryGetVdmxExtents(int ppem, out int yMax, out int yMin)
+        {
+            yMax = yMin = 0;
+            if (_vdmx < 0 || ppem <= 0 || ppem > 0xFFFF) return false;
+            if (_vdmx + 6 > _data.Length) return false;
+
+            int numRatios = U16(_vdmx + 4);
+            if (numRatios <= 0) return false;
+            int ratios = _vdmx + 6;
+            int offsets = ratios + numRatios * 4;
+            if (offsets + numRatios * 2 > _data.Length) return false;
+
+            for (int i = 0; i < numRatios; i++)
+            {
+                int r = ratios + i * 4;
+                // bCharSet 1 is the only one GDI honours -- see the remarks on TryGetGdiLineMetrics.
+                if (_data[r] != 1) continue;
+                // Square pixels: the aspect ratio is 1, so the range has to bracket it. An xRatio of
+                // zero is the "applies to everything" record.
+                int xRatio = _data[r + 1], yStart = _data[r + 2], yEnd = _data[r + 3];
+                if (xRatio != 0 && !(xRatio == 1 && yStart <= 1 && yEnd >= 1)) continue;
+
+                int group = _vdmx + U16(offsets + i * 2);
+                if (group + 4 > _data.Length) continue;
+                int recs = U16(group);
+                int startSize = _data[group + 2], endSize = _data[group + 3];
+                if (ppem < startSize || ppem > endSize) continue;
+                if (group + 4 + recs * 6 > _data.Length) continue;
+
+                for (int j = 0; j < recs; j++)
+                {
+                    int e = group + 4 + j * 6;
+                    int size = U16(e);
+                    if (size < ppem) continue;
+                    // The records are ordered by size; the first one at or above the size asked for
+                    // is the one that governs, so a gap in the table rounds UP rather than missing.
+                    if (size > ppem) break;
+                    yMax = (short) U16(e + 2);
+                    yMin = (short) U16(e + 4);
+                    return yMax != 0 || yMin != 0;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>The advance the FACE ships for this size, read straight from 'hdmx".
         /// <para>Separate from TryGetDeviceAdvance because that one falls back to HINTING the glyph
         /// to find out how wide it is -- which is fine for a caller measuring text and fatal for a
         /// caller inside the hinter: compatible widths asked for the advance from within
@@ -498,21 +608,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// run, or the glyph has no outline for one to run on.</summary>
         private bool TryGetHintedAdvance(int glyphId, float pixelsPerEm, out float advance)
         {
-            // Keyed by the hinting MODE too: a glyph fitted for grey and one fitted for subpixel are
-            // different shapes, and sharing a cache entry hands one draw the other one's outline.
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f) * 2 + (SubpixelFitting ? 1 : 0));
+            // NOT keyed by the hinting mode, because it is not measured in one: see below.
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
             if (_hintedAdvances.TryGetValue(key, out advance)) return advance > 0f;
 
             advance = 0f;
             TrueTypeInterpreter? interpreter = Interpreter();
             if (interpreter is not null)
             {
-                GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
-                if (glyph is not null)
+                // MEASURED BI-LEVEL, whatever mode we are drawing in. An advance under ClearType is
+                // a COMPATIBLE width: the same number bi-level text would use, so that turning
+                // ClearType on does not reflow the page. 'hdmx' is nothing more than a cache of
+                // those numbers, which is why a face that ships one has always agreed with Windows
+                // here. A face that ships none fell through to this, measured the ClearType-fitted
+                // glyph -- reduced cut-in, halved minimum distance, deltas suppressed -- and got a
+                // narrower answer.
+                //
+                // Verdana ships no 'hdmx'. It came out a pixel short on a b d e g o p q s w z W:
+                // invisible on any one letter, THIRTEEN PIXELS of drift by the end of a line, and
+                // every glyph past the third landing on different pixels from Windows'. The band
+                // read as a fitting problem for a long time because that is what drift looks like.
+                bool savedBi = TrueTypeInterpreter.BiLevelPass;
+                TrueTypeInterpreter.BiLevelPass = true;
+                try
                 {
-                    int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
-                    if (span > 0) advance = MathF.Round(span / 64f);
+                    GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
+                    if (glyph is not null)
+                    {
+                        int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
+                        if (span > 0) advance = MathF.Round(span / 64f);
+                    }
                 }
+                finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
             }
 
             if (_hintedAdvances.Count > HintedCacheLimit) _hintedAdvances.Clear();
@@ -623,6 +750,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int _gasp = -1;
         private int _sxHeight, _sCapHeight;
+        private int _winAscent, _winDescent;
+        private int _vdmx = -1;         // 'VDMX' table offset, or -1 when the face ships none
 
         private const int GaspGridfit = 0x0001;
         private const int GaspSymmetricSmoothing = 0x0008;

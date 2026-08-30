@@ -1629,12 +1629,26 @@ namespace System.Drawing
 		/// <summary>How far down a line box the baseline sits: the font's ascent, truncated the
 		/// way Windows truncates a scaled metric. Segoe UI at nine point asks for 12.95 pixels
 		/// and Windows uses 12, which is why text drawn on the fraction sat a pixel low.</summary>
+		/// <summary>How far below the top of the line box the baseline sits -- the TEXTMETRIC
+		/// ascent, which is what decides the row every glyph in the application lands on.
+		/// <para>The FACE answers it, because the answer is 'VDMX': the line box is how far the
+		/// HINTED outlines reach, and hinting moves them by more than rounding. Scaling the design
+		/// ascent and truncating -- what this used to do -- gives 10 for Arial at twelve pixels an
+		/// em where GDI gives 12, and 10 for Times New Roman where GDI gives 12. Both faces drew
+		/// TWO PIXELS ABOVE Windows', every style and every band of them; it read as a hinting
+		/// fault for a long time because a two-pixel shift makes err/ink saturate exactly the way
+		/// bad fitting does. The faces that agreed with the old formula -- Segoe UI, Verdana,
+		/// Tahoma, Consolas -- are the ones whose truncated design ascent happens to equal their
+		/// VDMX ascent, which is why this hid behind four correct faces.</para></summary>
 		static float Ascent (Font font, float emPx)
 		{
 			FontFamily family = font.FontFamily;
 			if (family == null)
 				return 0.8f * emPx;
 			try {
+				if (WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
+						family.Name, font.Bold, font.Italic, emPx, out int a, out int _) && a > 0)
+					return a;
 				int em = family.GetEmHeight (font.Style);
 				if (em <= 0)
 					return 0.8f * emPx;
@@ -1673,6 +1687,10 @@ namespace System.Drawing
 			if (family == null)
 				return 0.2f * emPx;
 			try {
+				// From the same place as the ascent, and for the same reason: the two are one box.
+				if (WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
+						family.Name, font.Bold, font.Italic, emPx, out int _, out int d) && d > 0)
+					return d;
 				int em = family.GetEmHeight (font.Style);
 				if (em <= 0)
 					return 0.2f * emPx;

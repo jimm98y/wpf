@@ -220,10 +220,13 @@ namespace System.Windows.Forms
 			}
 		}
 
-		/// <summary>How tall GDI makes one line of this font: the ascent and the descent, each
-		/// scaled to the em size and truncated -- the TEXTMETRIC height, which is what a
-		/// DT_CALCRECT measurement comes back with. Not the same as GDI+'s line spacing, which
-		/// includes the line gap and is rounded up.</summary>
+		/// <summary>How tall GDI makes one line of this font -- the TEXTMETRIC height, which is
+		/// what a DT_CALCRECT measurement comes back with. Not GDI+'s line spacing, which includes
+		/// the line gap and is rounded up.
+		/// <para>The FACE answers this, from 'VDMX' where it has one: the line box is how far the
+		/// HINTED outlines reach, and hinting moves them far enough that the scaled design metrics
+		/// are the wrong answer by whole pixels. Arial and Times New Roman are each three pixels
+		/// short that way.</para></summary>
 		internal static int GdiLineHeight (Font font)
 		{
 			if (font == null)
@@ -236,6 +239,14 @@ namespace System.Windows.Forms
 				if (em <= 0)
 					return 0;
 				float emPx = font.SizeInPoints * 96f / 72f;
+
+				if (System.Drawing.WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
+						family.Name, font.Bold, font.Italic, emPx, out int a, out int d)
+					&& a + d > 0)
+					return a + d;
+
+				// No face to read -- scale what the family reports and truncate, which is what GDI
+				// does for a face with no usable VDMX bar the rounding it cannot know about here.
 				int ascent = (int) Math.Floor (family.GetCellAscent (font.Style) * emPx / em);
 				int descent = (int) Math.Floor (family.GetCellDescent (font.Style) * emPx / em);
 				return ascent + descent;

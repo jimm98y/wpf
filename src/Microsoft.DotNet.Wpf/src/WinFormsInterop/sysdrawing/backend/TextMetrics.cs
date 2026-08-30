@@ -79,6 +79,23 @@ namespace System.Drawing.WebGpuBackend
             }
         }
 
+        /// <summary>The ascent and descent GDI reports for this family and style at this pixel
+        /// size -- the line box every control that sizes itself to a line of text is measured
+        /// against. False when the family cannot be resolved to a face.
+        /// <para>The face knows the rule (TrueTypeFont.TryGetGdiLineMetrics); this only finds the
+        /// face. Scaling the DESIGN ascent and descent, which is what this used to do through
+        /// GDI+, is three pixels short for Arial and for Times New Roman at nine point, and put
+        /// every line of them two pixels above Windows' own.</para></summary>
+        internal static bool TryGetGdiLineMetrics(string family, bool bold, bool italic, float emPx,
+                                                  out int ascent, out int descent)
+        {
+            ascent = descent = 0;
+            int ppem = (int) Math.Round(emPx);
+            if (ppem <= 0) return false;
+            IFont face = FontFor((bold ? 1 : 0) | (italic ? 2 : 0), family);
+            return face is TrueTypeFont ttf && ttf.TryGetGdiLineMetrics(ppem, out ascent, out descent);
+        }
+
         // One instance per family and style. A family that ships a real bold or italic file gets
         // that file; one that does not has the style synthesized from its regular face, which is
         // what the flags on TrueTypeFont do.

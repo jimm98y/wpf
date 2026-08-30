@@ -2591,6 +2591,59 @@ namespace WgpuInterop.Tests.Text
         private static string ProbeFamily() =>
             Environment.GetEnvironmentVariable("WPF_FACE") is string f && f.Length > 0 ? f : "Segoe UI";
 
+
+        /// <summary>Per character: the advance GDI lays out with, against the advance we lay out
+        /// with. Set WPF_ADVANCES to family@ppem, with :B or :I for bold or italic.
+        /// <para>An advance is the one glyph property whose error ACCUMULATES. A quarter of a pixel
+        /// per letter is nothing to look at on one letter and thirteen pixels of drift by the end
+        /// of a line -- which is what Verdana Regular was doing. Every glyph past the third landed
+        /// on different pixels from Windows', and the band read as a fitting problem when it was a
+        /// spacing one.</para>
+        /// <para>Reported only: set WPF_ADVANCES.</para></summary>
+        [Fact]
+        public void LayoutAdvances_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows lays out the reference");
+            string spec = Environment.GetEnvironmentVariable("WPF_ADVANCES") ?? "";
+            Assert.SkipWhen(spec.Length == 0, "set WPF_ADVANCES to family@ppem to collect this");
+
+            bool bold = spec.EndsWith(":B", StringComparison.Ordinal);
+            bool italic = spec.EndsWith(":I", StringComparison.Ordinal);
+            if (bold || italic) spec = spec.Substring(0, spec.Length - 2);
+            string[] parts = spec.Split('@');
+            string family = parts[0];
+            int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 12;
+
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+
+            const string Letters = "abcdefghijklmnopqrstuvwxyz0123456789AKNRWXYZkvwxyz";
+            int ourTotal = 0, gdiTotal = 0;
+            var log = new System.Text.StringBuilder();
+            log.AppendLine($"== {family}{(bold ? " Bold" : italic ? " Italic" : "")} @ {ppem}ppem");
+            log.AppendLine($"   our file: {file}");
+            foreach (char c in Letters)
+            {
+                int gid = font.GlyphIndex(c);
+                int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
+                bool device = font.TryGetDeviceAdvance(gid, ppem, out float ours);
+                int oursI = (int) MathF.Round(ours);
+                ourTotal += oursI; gdiTotal += gdi;
+                bool hinted = font.FaceHintsGlyph(gid, ppem);
+                float linear = font.LinearAdvanceForTest(gid, ppem);
+                if (true)
+                    log.AppendLine($"  '{c}' gid {gid,4}  gdi {gdi,3}  ours {oursI,3}"
+                                   + $"  linear {linear,6:0.000}  faceHints={hinted}"
+                                   + $"  pp {font.HintedPhantomsForTest(gid, ppem).Pp1,6:0.000}"
+                                   + $" .. {font.HintedPhantomsForTest(gid, ppem).Pp2,6:0.000}"
+                                   + $"  ggo {Gdi.HintedMetrics(c, family, ppem, bold, italic)}"
+                                   + (device ? "" : "   NO device advance"));
+            }
+            log.AppendLine($"  TOTAL gdi {gdiTotal}  ours {ourTotal}  drift {ourTotal - gdiTotal}");
+            throw new Xunit.Sdk.XunitException(log.ToString());
+        }
+
         private static class Gdi
         {
             /// <summary>The user's ClearType contrast, 1000..2200, or 1200 if it cannot be read.
@@ -2682,6 +2735,73 @@ namespace WgpuInterop.Tests.Text
             /// in whole pixels and where that box sits relative to the pen. This is the only view of
             /// GDI's hinting that is not filtered through ClearType, so it separates "our outline is
             /// fitted differently" from "our filter spreads it differently".</summary>
+            [DllImport("gdi32.dll")]
+            private static extern bool GetCharWidthI(IntPtr hdc, uint first, uint count,
+                                                     ushort[] gi, int[] widths);
+
+            [DllImport("gdi32.dll")]
+            private static extern uint GetFontData(IntPtr hdc, uint table, uint offset,
+                                                   byte[]? buffer, uint length);
+
+            /// <summary>'hmtx' and 'head' straight out of the font GDI SELECTED, not the file we
+            /// guessed at. The two are not always the same file, and every metric comparison is
+            /// meaningless when they differ.</summary>
+            public static (int Upem, int Advance) SelectedFaceMetrics(
+                int glyphId, string family, int ppem, bool bold = false, bool italic = false)
+            {
+                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                var lf = new LOGFONTW
+                {
+                    lfHeight = -ppem, lfWeight = bold ? 700 : 400,
+                    lfItalic = (byte)(italic ? 1 : 0), lfCharSet = 1,
+                    lfQuality = ClearTypeQuality, lfFaceName = family,
+                };
+                IntPtr font = CreateFontIndirectW(ref lf);
+                IntPtr oldFont = SelectObject(dc, font);
+
+                static uint Tag(string t) => (uint)(t[3] << 24 | t[2] << 16 | t[1] << 8 | t[0]);
+                static int U16(byte[] b, int o) => b[o] << 8 | b[o + 1];
+
+                var head = new byte[54];
+                GetFontData(dc, Tag("head"), 0, head, (uint)head.Length);
+                var hhea = new byte[36];
+                GetFontData(dc, Tag("hhea"), 0, hhea, (uint)hhea.Length);
+                int numH = U16(hhea, 34);
+                int index = Math.Min(glyphId, Math.Max(numH - 1, 0));
+                var entry = new byte[4];
+                GetFontData(dc, Tag("hmtx"), (uint)(index * 4), entry, 4);
+
+                SelectObject(dc, oldFont);
+                DeleteObject(font);
+                DeleteDC(dc);
+                return (U16(head, 18), U16(entry, 0));
+            }
+
+            /// <summary>The advance GDI lays this glyph out with under a ClearType DC -- the number
+            /// that decides where the NEXT glyph starts. A different question from how wide the ink
+            /// is, and the only glyph property whose error ACCUMULATES.</summary>
+            public static int LayoutAdvance(char c, string family, int ppem,
+                                            bool bold = false, bool italic = false)
+            {
+                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                var lf = new LOGFONTW
+                {
+                    lfHeight = -ppem, lfWeight = bold ? 700 : 400,
+                    lfItalic = (byte)(italic ? 1 : 0), lfCharSet = 1,
+                    lfQuality = ClearTypeQuality, lfFaceName = family,
+                };
+                IntPtr font = CreateFontIndirectW(ref lf);
+                IntPtr oldFont = SelectObject(dc, font);
+                var idx = new ushort[1];
+                GetGlyphIndicesW(dc, c.ToString(), 1, idx, 0);
+                var widths = new int[1];
+                GetCharWidthI(dc, 0, 1, idx, widths);
+                SelectObject(dc, oldFont);
+                DeleteObject(font);
+                DeleteDC(dc);
+                return widths[0];
+            }
+
             public static (int Index, int OriginX, int BlackBoxX, int CellIncX) HintedMetrics(
                 char c, string family, int ppem, bool bold = false, bool italic = false)
             {

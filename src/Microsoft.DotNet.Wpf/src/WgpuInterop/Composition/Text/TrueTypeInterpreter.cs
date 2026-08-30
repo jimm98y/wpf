@@ -542,8 +542,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_positionsOnPhysicalGrid =
             Environment.GetEnvironmentVariable("WPF_CT_POSGRID") == "physical";
 
+        /// <summary>What GETINFO tells the face's program about the rasterizer running it.
+        /// <para>A BI-LEVEL PASS MUST ANSWER NO. It is not a mode of ours, it is an impersonation --
+        /// "what would a bi-level rasterizer have made of this glyph" -- and a face that asks the
+        /// question branches on the answer. Verdana asks: its program equalizes the advances of the
+        /// round lowercase (a b d e g o p q all land on 8 at twelve pixels an em, from linear widths
+        /// spread over 7.15 to 7.48) on the bi-level branch, and leaves them alone on the ClearType
+        /// one. Answering "ClearType" during a compatible-width measurement got us the ClearType
+        /// branch's advances, which are not what Windows lays out with.</para></summary>
         internal static bool ClearTypeInfo =>
-            s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering;
+            s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering && !BiLevelPass;
 
         private static readonly bool s_ctInfoAllowed =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
