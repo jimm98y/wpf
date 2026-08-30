@@ -683,7 +683,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             // The two horizontal phantom points are rounded to the grid before hinting starts, the
-            // way the rasterizer does it: a face's program reads them to find its own side bearings.
+            // way a BI-LEVEL rasterizer does it: a face's program reads them to find its own side
+            // bearings. Under ClearType, x carries sixteen times the resolution and quantizing the
+            // advance to a whole pixel throws that away before the program has even started.
+            // Verdana's 'o' at 12ppem is what it costs: the advance is 7.283px, this made it 7.0,
+            // and the right side bearing MIRP then placed the right edge at 7.0 - 0.625 = 6.375
+            // instead of 6.658 -- the glyph came out 0.28px narrow, which is most of why Verdana
+            // was the worst face on the specimen.
+            // KEEP IT, even under ClearType, and the reason is worth the paragraph. Leaving them
+            // unrounded IS better geometry -- Verdana's 'o' comes out 0.28px wider, its true width
+            // -- and nearly every band improves, Consolas by 39,931. But rounding them is what makes
+            // the FITTED advance equal the bi-level advance, and that is exactly what compatible
+            // widths means: "the hints are executed once to determine the width in bi-level
+            // rendering". Unrounded, the fitted span differs from the bi-level advance by a fraction
+            // for every glyph, compatible widths scales every glyph's ink by that fraction, and
+            // Segoe UI italic at 9pt goes 9,760 -> 152,480. Rounding the span instead of the
+            // phantoms fixes the italics and loses the rest: 10,686,251 against 10,072,594 here.
+            // Measured every way round; this is the best of them.
             z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
             z.CurX[glyph.PointCount + 1] = Pix(z.CurX[glyph.PointCount + 1]);
 
