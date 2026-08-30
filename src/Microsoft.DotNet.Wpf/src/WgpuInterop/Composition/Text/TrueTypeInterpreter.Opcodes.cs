@@ -990,20 +990,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // costs 316,000. Dropout control, which widens only the thin ones: a shallow best at one
             // subpixel worth 2,617 out of 2,197,658, a tenth of a percent.
             //
-            // AND THEY ARE NOT NARROW AT ALL. Segoe UI's 'l' is the clean case: the face's control
+            // HOW MUCH NARROWER, EXACTLY. Segoe UI's 'l' is the clean case: the face's control
             // value is 164 units, 0.96px at 12ppem, prep rounds it to 1.0, and the MIRP does not
             // round, so we draw exactly 1.0px. GDI's reads 3.49 lamps against our 3.00 -- and a
             // 1.0px stem covers SIX half-lamps, so 3.49 is seven of them lit, not a wider stem.
-            // Seven light only at one phase:
-            //     edge at 0, 1/4, 3/4 of a half-lamp -> 6 lit (3.00 lamps)
-            //     edge at exactly 1/2                -> 7 lit (3.50 lamps)
-            // because at that phase BOTH end samples sit at exactly 50% coverage and both pass the
-            // threshold. So GDI's stem is the same width as ours with its edges an twelfth of a
-            // pixel off, and ours land on the half-lamp grid.
+            // Seven can be lit two ways, and the LIT COUNT DOES NOT TELL THEM APART -- only the
+            // shape of the filtered profile does:
+            //     A  a 1.0px stem shifted half a half-lamp: raw lamps [.75, 1, .75]
+            //        -> through the box, 0.25 0.58 0.83 0.58 0.25, FIVE lamps and symmetric
+            //     B  a wider stem still on the lamp grid:   raw lamps [1, 1, 1, .5]
+            //        -> 0.33 0.67 1.00 0.83 0.50 0.17, SIX lamps and asymmetric
+            // Windows measures 0.33 0.56 1.00 0.78 0.44 0.11 -- six lamps, asymmetric. It is B.
+            // Ours measures 0.33 0.56 1.00 0.56 0.33, five and symmetric, which is [1, 1, 1].
+            //
+            // So GDI's stem IS wider: seven half-lamps against our six, both starting on the grid,
+            // which puts it at 1.083px or more against our exact 1.0. (An earlier reading here said
+            // the widths agreed and only a phase differed -- that came from counting lit half-lamps
+            // and finding a phase that produces seven, without checking that the phase also
+            // produces the profile that was measured. It does not.)
             //
             // Not the threshold, either: at 127 instead of 128 our stems are still 3.00 at 11, 12
-            // and 13ppem and the specimen is worse (2,199,781 against 2,197,658). Our edges are at
-            // phase 0, not on the knife edge.
+            // and 13ppem and the specimen is worse (2,199,781 against 2,197,658).
             //
             // So it is not that our stems are narrow. Some are and some are not, and the ones that
             // are are not narrow for a reason any global widening can reach. Italics escape whatever
