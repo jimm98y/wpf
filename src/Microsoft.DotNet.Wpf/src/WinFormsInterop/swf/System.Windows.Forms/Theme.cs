@@ -1172,6 +1172,10 @@ namespace System.Windows.Forms
 		#endregion	// VScrollBar
 
 		#region TreeView
+		/// <summary>The colour of a tree's connector lines, or Empty to derive one from the
+		/// background. Windows draws them in a fixed grey of its own.</summary>
+		public virtual Color TreeViewLineColor (TreeView tv) => Color.Empty;
+
 		public abstract Size TreeViewDefaultSize { get; }
 		public abstract void TreeViewDrawNodePlusMinus (TreeView treeView, TreeNode node, Graphics dc, int x, int middle);
 		#endregion

@@ -574,6 +574,12 @@ namespace System.Windows.Forms {
 		public Color LineColor {
 			get {
 				if (line_color == Color.Empty) {
+					// THEMED, because the connector lines are the native control's own and not a
+					// shade of the background. ControlPaint.Dark(White) is 85 -- which is what real
+					// WinForms computes too -- and Windows draws these at 109.
+					Color themed = ThemeEngine.Current.TreeViewLineColor (this);
+					if (themed != Color.Empty)
+						return themed;
 					Color res = ControlPaint.Dark (BackColor);
 					if (res == BackColor)
 						res = ControlPaint.Light (BackColor);

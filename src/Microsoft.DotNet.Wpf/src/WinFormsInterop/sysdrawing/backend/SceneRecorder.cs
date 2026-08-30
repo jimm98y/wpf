@@ -192,6 +192,8 @@ namespace System.Drawing.WebGpuBackend
             }
 
             float w = width <= 0 ? 1f : width;
+            // The pattern's anchor, taken BEFORE the half-pixel nudge below moves the coordinates.
+            float anchorX = x1, anchorY = y1;
 
             // A one-pixel stroke is centred on the line it is given, so an axis-aligned one at a
             // whole coordinate lands half in each of two pixels and fills neither -- a tree view's
@@ -218,7 +220,20 @@ namespace System.Drawing.WebGpuBackend
             double offset = 0.0;
             if (period > 0.0 && w > 0f && (x1 == x2 || y1 == y2))
             {
-                offset = ((x1 == x2 ? y1 : x1) / w) % period;
+                // THE VARYING AXIS ONLY. A checkerboard -- ink where x + y is odd -- was tried here
+                // and is NOT the rule, though one connector makes it look like it: a stock tree's
+                // upright at column 589 inks rows 404 and 406 (sum odd) but its deeper upright at
+                // column 608 inks rows 444, 446 and 448 (sum EVEN). Both ink even rows whatever
+                // column they are in, so the anchor is the axis the line runs along.
+                //
+                // What is still unexplained is the ARM: at row 414 Windows inks columns 591, 593,
+                // 595, 597 -- the odd parity -- where this gives it the even one. So verticals want
+                // phase 0 and that horizontal wants phase 1, which no single anchor produces. A
+                // line-relative pattern whose first unit is OFF fits all three observations, but
+                // line-relative was measured wrong here before (see the paragraph above), so the
+                // evidence is recorded rather than acted on. The checkerboard cost 4,380 in the
+                // tree view alone: the arm came out exact and both uprights inverted.
+                offset = ((x1 == x2 ? anchorY : anchorX) / w) % period;
                 if (offset < 0.0) offset += period;
             }
 

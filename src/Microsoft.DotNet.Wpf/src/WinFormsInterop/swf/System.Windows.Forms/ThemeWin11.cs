@@ -1561,6 +1561,10 @@ namespace System.Windows.Forms
 		/// one pixel of pen looks like once the glyph's own bearing is added back.</para></summary>
 		protected override int GroupBoxCaptionIndent => 9;
 
+		/// <summary>#6D6D6D, measured off a stock tree. The derived value is 85 and Windows draws
+		/// 109; the dots sit on the same rows and columns, so it is only the colour.</summary>
+		public override Color TreeViewLineColor (TreeView tv) => Color.FromArgb (109, 109, 109);
+
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
 
 		// The grey Windows fills a selected day with, measured off its own calendar.
