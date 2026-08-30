@@ -660,6 +660,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// and the weight still in the window is not a systematic lightness that more ink would fix.
         /// Anything aimed at the "regular face tilt" has to be confirmed against the window before it
         /// is believed.</para></summary>
+        /// <summary>OFF, and the reason is two instruments disagreeing. Dropout control -- keeping a
+        /// feature thinner than a sample rather than dropping it, the sample here being a lamp -- is
+        /// a real thing to want, and on the six-face specimen one lamp of it measures BETTER: none
+        /// 2,197,690; three quarters 2,195,755; ONE 2,195,041; one and a quarter 2,195,609; two
+        /// 2,218,880. It costs the control window nothing either.
+        /// <para>And it makes 308 of the per-glyph parity measurements worse against 15 better --
+        /// whole runs of Segoe UI at 13ppem going 362 pixels wrong, and every capital and lowercase
+        /// chunk picking up shade errors of 58/255. Two thousand six hundred out of 2.2 million is
+        /// a tenth of a percent on one aggregate; the suite compares glyph by glyph against GDI's
+        /// own pixels and says plainly that the shapes got worse. The aggregate does not outvote
+        /// it.</para></summary>
         private static readonly float MinStemSubpixels =
             (int.TryParse(Environment.GetEnvironmentVariable("WPF_MIN_STEM"), out int ms) ? ms : 0) / 100f;
 
