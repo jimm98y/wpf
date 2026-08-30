@@ -110,8 +110,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public int GlyphCount => _numGlyphs;
 
-        // DirectWrite oblique simulation slants glyphs by 20 degrees.
-        private const float ObliqueShear = 0.36397023f;     // tan(20°)
+        // The slant a SYNTHESIZED italic gets, for a face that ships no italic of its own -- Tahoma
+        // is the common one. 20 degrees is DirectWrite's simulation, and we are matching GDI.
+        // WPF_OBLIQUE_SHEAR overrides it so the difference is a measurement, not an assumption.
+        private static readonly float ObliqueShear =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_OBLIQUE_SHEAR"),
+                           System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float os)
+                ? os : 0.20f;
+        // 0.20, MEASURED against GDI. 0.36397 -- tan(20 degrees) -- is what DirectWrite simulates
+        // with, and it was in here with a comment saying so while everything else was being matched
+        // against GDI. Tahoma is the face that shows it, shipping regular and bold and no italic at
+        // all: its synthesized italic goes 810,958 -> 785,245, and the six-face specimen 10,090,879
+        // -> 10,065,207. The curve is flat between 0.18 and 0.22 and climbs away either side.
+        // This changes nothing for a face that ships a real italic, which is most of them.
         // Bold simulation thickens stems by ~2% of the em on each side.
         private const float EmboldenFraction = 0.02f;
 
