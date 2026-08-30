@@ -361,6 +361,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _dumpActive = dumping;
                     try { if (!Execute(glyph.Instructions, 0)) return false; }
                     finally { _dumpActive = false; }
+                    // The trace prints each instruction's state BEFORE it runs, so the last one --
+                    // which is nearly always an IUP, and nearly always the one in question -- never
+                    // shows its own result. Print the finished outline.
+                    if (dumping) DumpFinal();
                 }
 
                 StoreGlyph(glyph);

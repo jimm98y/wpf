@@ -744,6 +744,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_dumpPoints =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_HINT_DUMP_POINTS"), out int dp) && dp > 0 ? dp : 8;
 
+        /// <summary>Where the program actually LEFT the glyph. See the call site.</summary>
+        internal void DumpFinal()
+        {
+            var sb = new System.Text.StringBuilder("FINAL y=[");
+            for (int i = 0; i < System.Math.Min(_glyphZone.CurY.Length, s_dumpPoints); i++)
+                sb.Append((_glyphZone.CurY[i] / 64f).ToString("0.##")).Append(' ');
+            sb.Append("] x=[");
+            for (int i = 0; i < System.Math.Min(_glyphZone.CurX.Length, s_dumpPoints); i++)
+                sb.Append((_glyphZone.CurX[i] / 64f).ToString("0.##")).Append(' ');
+            sb.Append(']');
+            Console.Error.WriteLine(sb.ToString());
+        }
+
         private void DumpStep(byte op, int at)
         {
             var sb = new System.Text.StringBuilder();
@@ -761,6 +774,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             sb.Append("] y=[");
             for (int i = 0; i < System.Math.Min(_glyphZone.CurY.Length, s_dumpPoints); i++)
                 sb.Append((_glyphZone.CurY[i] / 64f).ToString("0.##")).Append(' ');
+            // And the TOUCH flags, because "why did IUP not carry that point" is unanswerable
+            // without them: an untouched point that did not move is a bug, a touched one is the
+            // program's decision.
+            sb.Append("] t=[");
+            for (int i = 0; i < System.Math.Min(_glyphZone.Tags.Length, s_dumpPoints); i++)
+            {
+                byte t = _glyphZone.Tags[i];
+                sb.Append((t & TagTouchX) != 0 ? 'X' : '.').Append((t & TagTouchY) != 0 ? 'Y' : '.');
+                sb.Append(' ');
+            }
             sb.Append(']');
             Console.Error.WriteLine(sb.ToString());
         }
@@ -930,8 +953,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     full  2,841,228     /16  2,773,440     /32  2,787,681
             //     /64   2,788,094     /256 2,790,898              (Arial, three styles)
             // Whatever makes GDI's stems vary, it is not this threshold. WPF_CT_CUTIN_DIV sweeps it.
-            int cutIn = (s_cutInFull || BiLevelPass ? _gs.ControlValueCutIn
-                                                    : _gs.ControlValueCutIn / s_cutInDivisor) * stretch;
+            // AND ONLY IN THE CLEARTYPE DIRECTION, like the minimum distance below it. Everything
+            // in the paragraphs above is about x: the sixteenth is what ClearType does to the cut-in
+            // along the axis it oversamples. There is no ClearType in y -- a scan line is a scan
+            // line -- so a y-direction MIRP must see the cut-in the face actually asked for.
+            //
+            // Applied to y as well, a 2px cut-in became 0.125px, every stroke weight missed it, and
+            // the outline distance was used instead: Tahoma Bold's 'H' crossbar asks for a control
+            // value of 0.64px (one pixel, rounded) and got the outline's 1.66 (TWO). Every
+            // horizontal stroke in Segoe UI Bold, Tahoma Bold and Verdana Bold came out a pixel too
+            // thick. Arial Bold was right, which is what hid it: its program places both crossbar
+            // edges explicitly instead of leaning on a control value.
+            int cutIn = (s_cutInFull || BiLevelPass || !InClearTypeDirection
+                             ? _gs.ControlValueCutIn
+                             : _gs.ControlValueCutIn / s_cutInDivisor) * stretch;
             int minimum = (InClearTypeDirection && !s_fullMinDistance && !BiLevelPass ? _gs.MinimumDistance / 2
                                                 : _gs.MinimumDistance) * stretch;
 
