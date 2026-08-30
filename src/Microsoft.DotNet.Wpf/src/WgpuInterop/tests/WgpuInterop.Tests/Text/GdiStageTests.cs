@@ -598,6 +598,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     int exact = 0, counted = 0;
                     double err = 0;
+                    var differing = new System.Text.StringBuilder();
                     foreach (char c in Repertoire)
                     {
                         bool onY = Environment.GetEnvironmentVariable("WPF_XMATCH_AXIS") == "y";
@@ -608,6 +609,7 @@ namespace WgpuInterop.Tests.Text
                         if (a.Length == 0 || b.Length == 0) continue;
                         counted++;
                         if (a == b) { exact++; continue; }
+                        differing.Append(c);
                         // Not equal: how far apart, over the values they can be paired by order.
                         string[] xa = a.Split(' '), xb = b.Split(' ');
                         for (int i = 0; i < Math.Min(xa.Length, xb.Length); i++)
@@ -615,7 +617,8 @@ namespace WgpuInterop.Tests.Text
                                           - double.Parse(xb[i], System.Globalization.CultureInfo.InvariantCulture));
                     }
                     report.AppendLine($"{ppem,4}   {exact,3} of {counted,3} exact"
-                                      + $"   total |dx| on the rest = {err,8:0.0} px");
+                                      + $"   total |dx| on the rest = {err,8:0.0} px"
+                                      + $"   [{differing}]");
                 }
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }
