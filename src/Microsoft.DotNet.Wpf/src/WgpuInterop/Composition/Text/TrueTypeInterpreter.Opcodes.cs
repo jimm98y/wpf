@@ -978,15 +978,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // (a) its ink centroid modulo one pixel and (b) its total coverage. On Segoe UI ITALIC,
             // which is our best band anywhere at 9,760, our two histograms equal Windows' bin for
             // bin -- so the instrument is sound and the pipeline can match GDI exactly. On Segoe UI
-            // REGULAR the coverage histogram peaks one bin BELOW Windows': our vertical stems carry
-            // about half a lamp less ink than Windows' do, and the phase difference follows from
-            // that (a stem half a lamp narrower has its centroid a quarter lamp to the left).
+            // REGULAR the coverage histogram peaks one bin BELOW Windows'. Read the PEAK shift as
+            // the size of the gap and you get half a lamp; the MEAN shift is 0.17 lamps -- a third
+            // of that -- and the two distributions overlap heavily (ours 25/272/83/34/22 across
+            // bins 4..8, Windows' 13/136/202/50/12). It is a difference in the SHAPE of the
+            // distribution, not a uniform deficit.
             //
-            // So our stems are NARROW, not misplaced, and italics escape it because they have no
-            // vertical stems for a control value to govern. The face's control value for Segoe UI's
-            // 'l' at 12ppem is exactly 1.0px and the MIRP that applies it does not round, so we draw
-            // exactly what the face asks for -- and GDI draws WIDER than both that control value and
-            // the outline. Whatever does that, it is not any threshold in this file.
+            // Which the pixels then confirm, because a uniform deficit would be curable by widening
+            // every stem and NOTHING THAT WIDENS THEM HELPS. Lowering the half-lamp threshold, which
+            // buys exactly one extra half-lamp per stem: 128 is the optimum, 112 costs 33,000 and 64
+            // costs 316,000. Dropout control, which widens only the thin ones: a shallow best at one
+            // subpixel worth 2,617 out of 2,197,658, a tenth of a percent.
+            //
+            // So it is not that our stems are narrow. Some are and some are not, and the ones that
+            // are are not narrow for a reason any global widening can reach. Italics escape whatever
+            // it is entirely -- they have no vertical stems for a control value to govern -- and
+            // Segoe UI's control value for 'l' at 12ppem is exactly 1.0px on a MIRP that does not
+            // round, so for that glyph we draw precisely what the face asks and GDI draws wider than
+            // both the control value and the outline. That is the open question, and ten parameters
+            // are now known not to be the answer.
             // AND ONLY IN THE CLEARTYPE DIRECTION, like the minimum distance below it. Everything
             // in the paragraphs above is about x: the sixteenth is what ClearType does to the cut-in
             // along the axis it oversamples. There is no ClearType in y -- a scan line is a scan

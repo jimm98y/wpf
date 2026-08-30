@@ -541,6 +541,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_HALFLAMPS"), out int hl) && hl > 0
                 ? hl : 2;
 
+        /// <summary>How much of a half-lamp has to be covered for it to light. Half of it is the
+        /// obvious reading of a bilevel sample -- the sample point is inside the shape or it is not,
+        /// and the sample point is the middle. WPF_SUBPIXEL_THRESHOLD sweeps it, because "half"
+        /// is an assumption about where in the half-lamp GDI takes its sample and a lower threshold
+        /// widens every stem by exactly one half-lamp, which is the size of the gap measured
+        /// between our stems and Windows'.</summary>
+        private static readonly int HalfLampThreshold =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_THRESHOLD"), out int ht)
+                && ht > 0 ? ht : 128;
+
         /// <summary>WPF_SUBPIXEL_COLLAPSE=avg: box-downsample the half-lamps instead of thresholding.</summary>
         /// <summary>Whether the display's subpixels run blue, green, red from the left.
         /// <para>Read once from the same Windows setting the user sets in the ClearType tuner.
@@ -582,7 +592,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     {
                         int lit = 0;
                         for (int k = 0; k < HalfLamps; k++)
-                            if (fine[fineRow + x * HalfLamps + k] >= 128) lit++;
+                            if (fine[fineRow + x * HalfLamps + k] >= HalfLampThreshold) lit++;
                         outp[row + x] = (byte)(lit * 255 / HalfLamps);
                     }
                 }
