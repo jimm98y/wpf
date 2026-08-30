@@ -749,6 +749,7 @@ namespace WgpuInterop.Tests.Text
             // the WRONG PLACE, not a measure of agreement, and it has to be read against how many
             // pixels carry ink at all and how many disagree about shade.
             int shade = 0, inked = 0; long sum = 0, signed = 0; var hist = new int[6];
+            long digits = 0, letters = 0, punct = 0;
             var byLevel = new long[3]; var atLevel = new int[3];
             var byEdge = new long[3]; var atEdge = new int[3];
             var report = new System.Text.StringBuilder();
@@ -761,6 +762,13 @@ namespace WgpuInterop.Tests.Text
                 shade += diff.Pixels;
                 total += diff.Pixels;
                 sum += diff.Total;
+                // Split by what the string IS. Keeping the x fitting improves the window's
+                // MonthCalendar (all digits) and worsens its TreeView and DataGridView (words), so
+                // the question is whether the fitting suits some glyph classes and not others --
+                // which an aggregate over the whole repertoire cannot answer.
+                if (char.IsDigit(text[0])) digits += diff.Total;
+                else if (char.IsLetter(text[0])) letters += diff.Total;
+                else punct += diff.Total;
                 for (int i = 0; i < windows.Length; i++)
                 {
                     int d = Math.Abs(windows[i] - ours[i]);
@@ -800,7 +808,8 @@ namespace WgpuInterop.Tests.Text
                 lock (Repertoire)
                     File.AppendAllText(rep!, $"{(style.Length == 0 ? "regular" : style)}@{ppem} {total}"
                                             + $" shade={shade} gdiInked={inked} sum={sum}"
-                                            + $" signed={signed} hist={string.Join("/", hist)}"
+                                            + $" signed={signed} digits={digits} letters={letters}"
+                                            + $" punct={punct} hist={string.Join("/", hist)}"
                                             + $" band={string.Join("/", byLevel)}"
                                             + $" bandN={string.Join("/", atLevel)}"
                                             + $" edge={string.Join("/", byEdge)}"
@@ -820,10 +829,11 @@ namespace WgpuInterop.Tests.Text
         /// <summary>The same string through our renderer: greyscale coverage of black on white, at
         /// the same origin GDI was given.</summary>
         /// <summary>The same run as Ours(), but the whole RGBA buffer rather than one lamp.</summary>
-        private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction)
+        private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
+                                float dx = 0f)
         {
             var root = new SceneVisual();
-            root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX, baseline), ppem,
+            root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + dx, baseline), ppem,
                                               RgbaColor.FromBytes(0, 0, 0, 255)));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction;
@@ -837,6 +847,27 @@ namespace WgpuInterop.Tests.Text
         /// raw coverage against GDI's finished, contrast-corrected pixels would book our own missing
         /// gamma as a difference in every antialiased pixel -- measuring a step we chose to skip
         /// rather than anything about the port. Compare like with like.</para></summary>
+        /// <summary>The paper both sides draw on, as RRGGBB. White unless WPF_PARITY_BG says else.
+        /// <para>The suite has always drawn black on white; the live window draws control text on
+        /// #F0F0F0, selections on blue, disabled text in grey. A subpixel fringe is a BLEND, so the
+        /// paper is part of what is being compared -- and the correction curve was tuned entirely on
+        /// white. This is how to find out whether that is why the two harnesses disagree.</para>
+        /// </summary>
+        private static readonly uint Paper =
+            uint.TryParse(Environment.GetEnvironmentVariable("WPF_PARITY_BG"),
+                          System.Globalization.NumberStyles.HexNumber,
+                          System.Globalization.CultureInfo.InvariantCulture, out uint bg)
+                ? bg : 0xFFFFFFu;
+
+        /// <summary>The ink colour, as RRGGBB. Black unless WPF_PARITY_FG says else -- so that
+        /// INVERTED polarity (light text on dark) can be measured, which every control with a
+        /// selected row draws and which the correction curve was never derived on.</summary>
+        private static readonly uint Ink =
+            uint.TryParse(Environment.GetEnvironmentVariable("WPF_PARITY_FG"),
+                          System.Globalization.NumberStyles.HexNumber,
+                          System.Globalization.CultureInfo.InvariantCulture, out uint fg)
+                ? fg : 0x000000u;
+
         private static readonly bool RawCoverage =
             Environment.GetEnvironmentVariable("WPF_PARITY_RAW") == "1";
 
@@ -857,11 +888,13 @@ namespace WgpuInterop.Tests.Text
         {
             var root = new SceneVisual();
             root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + ShiftX, baseline + ShiftY),
-                                              ppem, RgbaColor.FromBytes(0, 0, 0, 255)));
+                ppem, RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
+                                          (byte)(Ink & 0xFF), 255)));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction ?? !RawCoverage;
             byte[] rgba = renderer.RenderToRgba(root, Width, Height,
-                                                RgbaColor.FromBytes(255, 255, 255, 255));
+                RgbaColor.FromBytes((byte)((Paper >> 16) & 0xFF), (byte)((Paper >> 8) & 0xFF),
+                                    (byte)(Paper & 0xFF), 255));
             var grey = new byte[Width * Height];
             for (int i = 0; i < grey.Length; i++)
                 grey[i] = (byte)(255 - rgba[i * 4 + 1]);   // the green lamp, as on the Windows side
@@ -1008,6 +1041,125 @@ namespace WgpuInterop.Tests.Text
             }
         }
 
+        /// <summary>Per glyph, the sub-pixel x offset that best reproduces what GDI DREW.
+        /// <para>A global offset sweep says zero, and a global sweep is the average of every glyph.
+        /// If glyphs individually want different offsets the average can be zero while every glyph is
+        /// misplaced, and nothing measured so far could tell those apart. This slides OUR fitted
+        /// outline against GDI's own rendering, one glyph at a time, and reports the distribution --
+        /// a tight peak at zero means our placement is right and the residual is shape; a spread
+        /// means placement, and names the glyphs to look at.</para>
+        /// <para>Reported only: set WPF_GLYPHOFFSET.</para></summary>
+        [Theory]
+        [InlineData(11)]
+        [InlineData(12)]
+        [InlineData(16)]
+        public void PerGlyphOffset_AgainstGdis(int ppem)
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_GLYPHOFFSET");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GLYPHOFFSET to collect this");
+            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var raw = new byte[Width * Height * 4];
+            var report = new System.Text.StringBuilder();
+            var tally = new int[17];
+            var worst = new List<(float Off, char Ch)>();
+            var residual = new List<(double At0, double AtBest, char Ch)>();
+            var shifts = new System.Text.StringBuilder();
+            var predicted = new List<(char Ch, int Need, int BiLevel)>();
+
+            int baseline = ppem + 12;
+            foreach (char c in Letters)
+            {
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+
+                // Rasterized DIRECTLY, not through the renderer: it snaps a run's origin to a whole
+                // device pixel (as GDI does), so every offset inside half a pixel renders identically,
+                // they all tie, and a strict `<` hands the answer to whichever was tried first. The
+                // first version of this probe reported "every glyph wants exactly -0.500" at both
+                // sizes -- the search boundary -- which is what that artefact looks like.
+                if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                   out List<PathFigure> figs))
+                    continue;
+
+                double best = double.MaxValue; float bestOff = 0;
+                for (int k = -8; k <= 8; k++)
+                {
+                    float off = k / 16f;
+                    double e = GlyphLampError(figs, PenX + off, baseline, raw);
+                    if (e < best) { best = e; bestOff = off; }
+                }
+                tally[(int) MathF.Round(bestOff * 16) + 8]++;
+                if (MathF.Abs(bestOff) >= 0.25f) worst.Add((bestOff, c));
+                // What the glyph costs WHERE IT ACTUALLY SITS, and what sliding it could recover.
+                // A glyph that is expensive at 0 and stays expensive at its best offset is not
+                // misplaced -- it is the wrong SHAPE, and no rounding rule will reach it.
+                residual.Add((GlyphLampError(figs, PenX, baseline, raw), best, c));
+                // The table an upper-bound run feeds back in: what is the MOST that placing every
+                // glyph perfectly could be worth? A rule is only worth looking for if the ceiling
+                // is worth reaching.
+                shifts.AppendLine($"SHIFT {ppem} {font.GlyphIndex(c)} {(int) MathF.Round(bestOff * 16)}");
+                // What the BI-LEVEL fit would move this glyph by, beside what the pixels ask for.
+                // A fresh font each time: hinted outlines are cached by (glyph, size), so reusing
+                // the instance returns the ClearType answer again and the pass looks like a no-op.
+                var biFont = new TrueTypeFont(File.ReadAllBytes(file!));
+                TrueTypeInterpreter.BiLevelPass = true;
+                bool gotBi;
+                List<PathFigure> biFigs;
+                try { gotBi = ((IHintedGlyphFont) biFont).TryGetHintedOutline(biFont.GlyphIndex(c), ppem, out biFigs); }
+                finally { TrueTypeInterpreter.BiLevelPass = false; }
+                if (gotBi)
+                {
+                    float ctL = float.MaxValue, biL = float.MaxValue;
+                    foreach (PathFigure f in figs) ctL = MathF.Min(ctL, FigureLeft(f));
+                    foreach (PathFigure f in biFigs) biL = MathF.Min(biL, FigureLeft(f));
+                    predicted.Add((c, (int) MathF.Round(bestOff * 16), (int) MathF.Round((biL - ctL) * 16)));
+                }
+            }
+
+            report.AppendLine($"== {ppem}ppem   best per-glyph x offset, in sixteenths of a pixel");
+            for (int k = 0; k < 17; k++)
+                if (tally[k] > 0)
+                    report.AppendLine($"   {k - 8,+3}/16 ({(k - 8) / 16f,6:+0.000;-0.000; 0.000})  {new string('#', tally[k])} {tally[k]}");
+            if (worst.Count > 0)
+            {
+                var names = new List<string>();
+                foreach ((float off, char ch) in worst) names.Add($"'{ch}'{off:+0.00;-0.00}");
+                report.AppendLine("   a quarter pixel or more: " + string.Join(" ", names));
+            }
+            if (predicted.Count > 0)
+            {
+                int agree = 0, close = 0;
+                var line = new System.Text.StringBuilder();
+                foreach ((char ch, int need, int bi) in predicted)
+                {
+                    if (need == bi) agree++;
+                    if (Math.Abs(need - bi) <= 2) close++;
+                    line.Append($"{ch}:{need:+0;-0;0}/{bi:+0;-0;0} ");
+                }
+                report.AppendLine($"   bi-level PREDICTS the needed shift exactly for {agree} of"
+                                  + $" {predicted.Count}, within 2/16 for {close}");
+                report.AppendLine("   need/bi-level, sixteenths: " + line);
+            }
+            residual.Sort((x, y) => y.At0.CompareTo(x.At0));
+            double total = 0, recoverable = 0;
+            foreach ((double at0, double atBest, char _) in residual) { total += at0; recoverable += at0 - atBest; }
+            report.AppendLine($"   cost where they sit = {total:0}, of which sliding could recover {recoverable:0}"
+                              + $" ({(total > 0 ? recoverable * 100 / total : 0):0.0}%)");
+            report.Append("   dearest: ");
+            for (int i = 0; i < 12 && i < residual.Count; i++)
+                report.Append($"'{residual[i].Ch}'{residual[i].At0:0} ");
+            report.AppendLine();
+            lock (Repertoire) File.AppendAllText(path!, report.ToString());
+            if (Environment.GetEnvironmentVariable("WPF_SHIFT_TABLE") is string t && t.Length > 0)
+                lock (Repertoire) File.AppendAllText(t, shifts.ToString());
+        }
+
         /// <summary>SOLVE for the outline GDI's ClearType actually draws.
         /// <para>GetGlyphOutline does not report it -- proved: our fitted outline matches what it
         /// DOES report on 61 of 62 glyphs and rendering that is 82% worse than discarding x. But the
@@ -1071,6 +1223,167 @@ namespace WgpuInterop.Tests.Text
                                   + $"   {natL,5:0.00}..{natR,-5:0.00}   {fitL,5:0.00}..{fitR,-5:0.00}");
             }
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>Squared lamp difference between our rasterization of a glyph's figures, placed at
+        /// (x, baseline), and GDI's own drawing of it.</summary>
+        private static double GlyphLampError(List<PathFigure> figures, float x, float baseline, byte[] raw)
+        {
+            var moved = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var g = new PathFigure(new Vector2(f.Start.X + x, f.Start.Y + baseline)) { Closed = f.Closed };
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l:
+                            g.Segments.Add(new LineSegment(new Vector2(l.Point.X + x, l.Point.Y + baseline))); break;
+                        case QuadraticBezierSegment q:
+                            g.Segments.Add(new QuadraticBezierSegment(
+                                new Vector2(q.Control.X + x, q.Control.Y + baseline),
+                                new Vector2(q.Point.X + x, q.Point.Y + baseline))); break;
+                        case CubicBezierSegment cu:
+                            g.Segments.Add(new CubicBezierSegment(
+                                new Vector2(cu.Control1.X + x, cu.Control1.Y + baseline),
+                                new Vector2(cu.Control2.X + x, cu.Control2.Y + baseline),
+                                new Vector2(cu.Point.X + x, cu.Point.Y + baseline))); break;
+                    }
+                moved.Add(g);
+            }
+
+            PathRasterizer.SubpixelMask m = PathRasterizer.RasterizeSubpixel(
+                new PathGeometry(FillRule.NonZero, moved));
+            if (m.IsEmpty) return double.MaxValue;
+
+            double e = 0;
+            for (int y = 0; y < Height; y++)
+                for (int px = 0; px < Width; px++)
+                {
+                    int i = (y * Width + px) * 4;
+                    int gy = y - (int) m.OriginY, gx = px - (int) m.OriginX;
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        int ours = 0;
+                        if (gy >= 0 && gy < m.Height && gx >= 0 && gx < m.Width)
+                            ours = (int) MathF.Round(MathF.Pow(m.Rgba[(gy * m.Width + gx) * 4 + ch] / 255f, 1.15f) * 255f);
+                        int theirs = 255 - raw[i + (2 - ch)];
+                        double d = ours - theirs;
+                        e += d * d;
+                    }
+                }
+            return e;
+        }
+
+        /// <summary>Where each glyph's INK actually begins and ends, ours against GDI's.
+        /// <para>The per-glyph offset probe finds one number per glyph, and one number cannot tell a
+        /// glyph that is in the wrong PLACE from one that is the wrong WIDTH -- it splits the
+        /// difference and reports something that is neither. 'm' wanting -7/16 while 'n', very nearly
+        /// the same shape, wants +6/16 is that artefact showing. Both edges, separately, do tell
+        /// them apart: equal shifts on both edges is placement, unequal is width.</para>
+        /// <para>Reported only: set WPF_EXTENTS.</para></summary>
+        [Theory]
+        [InlineData(11)]
+        [InlineData(12)]
+        [InlineData(16)]
+        public void InkExtents_AgainstGdis(int ppem)
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_EXTENTS");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_EXTENTS to collect this");
+            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var raw = new byte[Width * Height * 4];
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== {ppem}ppem   ink edges in LAMPS (ours - GDI); +left means ours starts right of theirs");
+            int baseline = ppem + 12;
+            double sumL = 0, sumR = 0, sumW = 0; int n = 0;
+            var rows = new System.Text.StringBuilder();
+
+            foreach (char c in Letters)
+            {
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                   out List<PathFigure> figs))
+                    continue;
+                if (!GlyphLampExtents(figs, PenX, baseline, raw, out int gl, out int gr,
+                                      out int ol, out int orr)) continue;
+                double dl = (ol - gl) / 3.0, dr = (orr - gr) / 3.0;
+                sumL += dl; sumR += dr; sumW += dr - dl; n++;
+                rows.Append($"'{c}' L{dl,+5:+0.00;-0.00} R{dr,+5:+0.00;-0.00}  ");
+                if (n % 6 == 0) rows.AppendLine();
+            }
+            report.AppendLine($"   mean left {sumL / Math.Max(n, 1):+0.000;-0.000} px,"
+                              + $" mean right {sumR / Math.Max(n, 1):+0.000;-0.000} px,"
+                              + $" mean WIDTH {sumW / Math.Max(n, 1):+0.000;-0.000} px  (n={n})");
+            report.Append(rows).AppendLine();
+            lock (Repertoire) File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The leftmost x a figure reaches, control points included.</summary>
+        private static float FigureLeft(PathFigure f)
+        {
+            float min = f.Start.X;
+            foreach (PathSegment seg in f.Segments)
+                switch (seg)
+                {
+                    case LineSegment l: min = MathF.Min(min, l.Point.X); break;
+                    case QuadraticBezierSegment q: min = MathF.Min(min, MathF.Min(q.Control.X, q.Point.X)); break;
+                    case CubicBezierSegment cu:
+                        min = MathF.Min(min, MathF.Min(cu.Control1.X, MathF.Min(cu.Control2.X, cu.Point.X))); break;
+                }
+            return min;
+        }
+
+        /// <summary>The first and last lamp carrying ink, ours and GDI's, for one placed glyph.</summary>
+        private static bool GlyphLampExtents(List<PathFigure> figures, float x, float baseline,
+                                             byte[] raw, out int gdiL, out int gdiR,
+                                             out int ourL, out int ourR)
+        {
+            gdiL = ourL = int.MaxValue; gdiR = ourR = int.MinValue;
+            var moved = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var g = new PathFigure(new Vector2(f.Start.X + x, f.Start.Y + baseline)) { Closed = f.Closed };
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l:
+                            g.Segments.Add(new LineSegment(new Vector2(l.Point.X + x, l.Point.Y + baseline))); break;
+                        case QuadraticBezierSegment q:
+                            g.Segments.Add(new QuadraticBezierSegment(
+                                new Vector2(q.Control.X + x, q.Control.Y + baseline),
+                                new Vector2(q.Point.X + x, q.Point.Y + baseline))); break;
+                        case CubicBezierSegment cu:
+                            g.Segments.Add(new CubicBezierSegment(
+                                new Vector2(cu.Control1.X + x, cu.Control1.Y + baseline),
+                                new Vector2(cu.Control2.X + x, cu.Control2.Y + baseline),
+                                new Vector2(cu.Point.X + x, cu.Point.Y + baseline))); break;
+                    }
+                moved.Add(g);
+            }
+            PathRasterizer.SubpixelMask m = PathRasterizer.RasterizeSubpixel(
+                new PathGeometry(FillRule.NonZero, moved));
+            if (m.IsEmpty) return false;
+
+            const int Lit = 40;                       // a lamp is "on" once it carries this much ink
+            for (int y = 0; y < Height; y++)
+                for (int px = 0; px < Width; px++)
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        int lamp = px * 3 + ch;
+                        if (255 - raw[(y * Width + px) * 4 + (2 - ch)] >= Lit)
+                        { if (lamp < gdiL) gdiL = lamp; if (lamp > gdiR) gdiR = lamp; }
+                        int gy = y - (int) m.OriginY, gx = px - (int) m.OriginX;
+                        if (gy >= 0 && gy < m.Height && gx >= 0 && gx < m.Width
+                            && m.Rgba[(gy * m.Width + gx) * 4 + ch] >= Lit)
+                        { if (lamp < ourL) ourL = lamp; if (lamp > ourR) ourR = lamp; }
+                    }
+            return gdiL != int.MaxValue && ourL != int.MaxValue;
         }
 
         /// <summary>Our pipeline's lamps for a plain vertical bar at a given left and right edge.</summary>
@@ -2111,9 +2424,15 @@ namespace WgpuInterop.Tests.Text
 
                 // White paper. CreateDIBSection hands back zeroed memory, which is black, and text
                 // drawn black on black is invisible -- and identical everywhere, which would pass.
-                var white = new byte[w * h * 4];
-                Array.Fill(white, (byte)0xFF);
-                Marshal.Copy(white, 0, bits, white.Length);
+                var paper = new byte[w * h * 4];
+                for (int i = 0; i < paper.Length; i += 4)
+                {
+                    paper[i] = (byte)(Paper & 0xFF);            // B, as the DIB wants it
+                    paper[i + 1] = (byte)((Paper >> 8) & 0xFF);
+                    paper[i + 2] = (byte)((Paper >> 16) & 0xFF);
+                    paper[i + 3] = 0xFF;
+                }
+                Marshal.Copy(paper, 0, bits, paper.Length);
 
                 var lf = new LOGFONTW
                 {
@@ -2133,7 +2452,7 @@ namespace WgpuInterop.Tests.Text
 
                 IntPtr oldBitmap = SelectObject(dc, dib);
                 IntPtr oldFont = SelectObject(dc, font);
-                SetTextColor(dc, 0x000000);
+                SetTextColor(dc, (int)(((Ink & 0xFF) << 16) | (Ink & 0xFF00) | ((Ink >> 16) & 0xFF)));
                 SetBkMode(dc, Transparent);
                 SetTextAlign(dc, TaBaseline | TaLeft);
                 bool drew = ExtTextOutW(dc, penX, baseline, 0, IntPtr.Zero, text, (uint)text.Length, IntPtr.Zero);

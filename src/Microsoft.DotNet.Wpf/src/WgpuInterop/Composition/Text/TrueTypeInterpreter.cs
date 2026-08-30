@@ -265,7 +265,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private GraphicsState _prepState;      // what 'prep' left behind, restored per glyph
         private bool _prepRun;
         private bool _inPreProgram;
+        private bool _inComposite;
+        private bool _iupDone;
         private bool _prepClearType;
+        private bool _prepBiLevel;
+
+        /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
+        /// distance, every delta applied -- whatever the ClearType defaults say.
+        /// <para>Set around a second hinting pass, so a glyph can be fitted both ways and the two
+        /// results compared. See TrueTypeFont's left-edge transfer.</para></summary>
+        [ThreadStatic] internal static bool BiLevelPass;
         private float _prepPpem = -1f;
 
         private int _scale;                    // 16.16: font units -> 26.6 pixels
@@ -301,6 +310,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and the caller should fit the glyph some other way.</summary>
         public bool Hint(GlyphProgram glyph, float pixelsPerEm)
         {
+            // The paper exempts composites from the delta rules: there a point flagged untouched may
+            // have been touched while its component ran, so a delta moves the whole outline instead
+            // of denting it -- which is how diacritics keep their distance from the base glyph.
+            _inComposite = glyph.Composite;
+            _iupDone = false;
             if (!IsUsable || pixelsPerEm <= 0f) return false;
 
             try
@@ -460,6 +474,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// x-direction, and one gridline per pixel in the y-direction. Rounding instructions ... now
         /// apply to this virtual grid as do MDAP[R], MIAP[R], MDRP[...R...], and ROUND[...]" -- and
         /// in the y direction "the behavior is exactly how it was with bi-level".</para></summary>
+        /// <summary>Whether the face has asked for the instruction set as SPECIFIED, turning off the
+        /// backwards-compatibility behaviour ClearType applies to older fonts.
+        /// <para>"The INSTCTRL instruction with selector flag three and a value of TRUE (4) should be
+        /// used in new fonts and existing instructed fonts that have been verified to work correctly
+        /// in the ClearType environment ... When the INSTCTRL ClearType instruction is used it returns
+        /// instructions to the behavior as described in the TrueType instruction specification."</para>
+        /// <para>Checked: Segoe UI, Arial and Consolas all leave it clear, so the compatibility rules
+        /// really do apply to them -- which is worth knowing, because those rules are what the delta
+        /// suppression rests on.</para></summary>
+        internal bool NativeClearTypeMode => (_gs.InstructControl & 4) != 0;
+
         internal bool InClearTypeDirection =>
             ClearTypeInfo && IsHorizontalProjection && !_inPreProgram;
 
@@ -468,6 +493,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// interpreter ROUNDS against is finer still, and guessing thirds here is what made every
         /// earlier attempt at this quantise stroke weights that GDI leaves alone.</summary>
         internal const int ClearTypeGrid = 16;
+
+        /// <summary>Whether a POSITION rounds on the physical grid instead of the virtual one. OFF.
+        /// <para>And the measurement behind it is the most decisive one in this file. Rounding
+        /// positions on the whole-pixel grid makes our fitted outline match the one GetGlyphOutline
+        /// reports EXACTLY -- 'o' at 11ppem comes back 1 / 1.672 / 1.703 / 2 / 2.344 / 2.406 ... on
+        /// both sides, digit for digit -- and the RENDERED text then gets 87% worse: the text
+        /// specimen goes 1,074,897 to 2,013,995.</para>
+        /// <para>So it is no longer an inference that ClearType draws a different outline from the
+        /// one GGO reports. We can reproduce GGO's outline on demand, and doing so nearly doubles the
+        /// error against what GDI actually puts on the screen. Stop trying to match the outline API.
+        /// WPF_CT_POSGRID=physical turns it on for anyone who wants to see it.</para></summary>
+        /// <summary>Grid for POSITIONS specifically, when it is not the virtual one. WPF_CT_POSGRID
+        /// takes a number here -- 3 puts them on the lamp grid, which is the resolution the text is
+        /// actually DRAWN at, as opposed to the sixteenth the program rounds against.</summary>
+        private static readonly int s_positionGrid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_POSGRID"), out int pg) ? pg : 0;
+
+        private static readonly bool s_positionsOnPhysicalGrid =
+            Environment.GetEnvironmentVariable("WPF_CT_POSGRID") == "physical";
 
         internal static bool ClearTypeInfo =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
@@ -486,11 +530,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // greyscale. Cached by ppem alone, whichever mode asked first fixed the control values
             // for every glyph afterwards -- so switching the answer appeared to do nothing at all.
             bool clearType = ClearTypeInfo;
-            if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType)
+            if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
+                && _prepBiLevel == BiLevelPass)
                 return !_faulted;
 
             _prepPpem = pixelsPerEm;
             _prepClearType = clearType;
+            _prepBiLevel = BiLevelPass;
             _prepRun = true;
             _faulted = false;
             _ppem = ppem;
@@ -641,6 +687,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool IsHorizontalProjection
             => (_gs.ProjX < 0 ? -_gs.ProjX : _gs.ProjX) > (_gs.ProjY < 0 ? -_gs.ProjY : _gs.ProjY);
 
+        /// <summary>Whether the FREEDOM vector points along the ClearType direction.
+        /// <para>Which vector a rule keys on is not a detail. The rounding rules are about the
+        /// projection vector -- that is the axis a distance is measured along -- but the paper's
+        /// delta rules are explicitly about the other one: "a backward compatible mode for ClearType
+        /// when dealing with instructions using the ClearType direction FOR THE FREEDOM VECTOR".
+        /// A DELTAP or SHPIX moves a point along freedom, so that is the vector that decides whether
+        /// the move is the sloppy bi-level pixel-flip ClearType throws away.</para>
+        /// <para>It matters most for DIAGONALS, which is where our worst glyphs are: M, W, N, m, w.
+        /// A diagonal control sets a freedom vector that is not the x axis, and a delta along it is
+        /// not a ClearType-direction delta at all.</para></summary>
+        private bool IsHorizontalFreedom
+            => (_gs.FreeX < 0 ? -_gs.FreeX : _gs.FreeX) > (_gs.FreeY < 0 ? -_gs.FreeY : _gs.FreeY);
+
+        /// <summary>The delta rules' version of <see cref="InClearTypeDirection"/>, on freedom.</summary>
+        internal bool DeltaInClearTypeDirection =>
+            ClearTypeInfo && IsHorizontalFreedom && !_inPreProgram;
+
         private int DualProject(int dx, int dy) => DotFix14(dx, dy, _gs.DualX, _gs.DualY);
 
         /// <summary>How far apart two points are NOW, measured along the projection vector.</summary>
@@ -755,7 +818,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // round it by the face's own rule, put it back.
             // The face's own rule, on the virtual grid where that grid applies.
             bool finer = XThirdGrid || (XThirdPositions && position);
+            // A POSITION may round on the physical grid while a DISTANCE rounds on the virtual one.
+            // Measured at 11ppem, GDI puts the left edge of 'o', 'e', 'n' and 'a' on a WHOLE pixel
+            // (1.0, from unhinted 0.516/0.516/0.891/0.484) where the sixteenth grid leaves us at
+            // 0.5/0.5/0.875/0.5 -- and the rendered pixels agree, our glyphs sitting a column left
+            // of Windows'. WPF_CT_POSGRID=virtual restores the literal reading.
+            bool physicalPosition = position && s_positionsOnPhysicalGrid;
+            // Exactly the configuration that was MEASURED to reproduce GetGlyphOutline (55 of 62
+            // glyphs byte-identical): POSITIONS on the physical grid, distances left on the
+            // ClearType grid. An earlier version put distances there too -- which is not the tested
+            // configuration, and it put 'o' at 0.06 where GDI's bi-level outline says 1.0.
+            if (BiLevelPass) { finer = false; physicalPosition = position; }
             int thirds = finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
+                       : physicalPosition ? 1
+                       : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
                        : InClearTypeDirection ? ClearTypeGrid
                        : 1;
             value *= thirds;

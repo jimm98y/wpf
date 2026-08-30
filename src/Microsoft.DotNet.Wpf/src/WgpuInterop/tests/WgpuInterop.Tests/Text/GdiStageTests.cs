@@ -548,6 +548,22 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine("  gdi  : " + Xs(theirs));
             List<PathFigure> plain = GdiOutline(c, parts[0], ppem, unhinted: true);
             Console.Error.WriteLine("  (unhinted, both agree): " + Xs(plain));
+
+            // And the same glyph through the per-call BI-LEVEL pass, which is meant to reproduce the
+            // gdi line above without any environment variable set. If it does not, the pass and the
+            // configuration it was modelled on have drifted apart.
+            saved = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = false;
+            TrueTypeInterpreter.BiLevelPass = true;
+            List<PathFigure> bi;
+            // A FRESH font: the hinted outline is cached by (glyph, size), so asking the same
+            // instance twice returns the first answer and any second configuration looks like a
+            // no-op. That is exactly how this line first reported "the bi-level pass changes
+            // nothing" for every glyph.
+            var fresh = new TrueTypeFont(File.ReadAllBytes(file!));
+            try { bi = HintedFigures(fresh, c, ppem); }
+            finally { TrueTypeInterpreter.BiLevelPass = false; TrueTypeFont.SubpixelFitting = saved; }
+            Console.Error.WriteLine("  bilevel pass : " + Xs(bi));
         }
 
         /// <summary>How many glyphs' fitted X COORDINATES match GDI's exactly, over the repertoire.

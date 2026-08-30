@@ -291,8 +291,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (op == 0x3F)
                             {
                                 // Close enough to the designer's measurement and it IS the
-                                // measurement; further and the outline is telling the truth.
-                                if (Math.Abs(value - here) > _gs.ControlValueCutIn) value = here;
+                                // measurement; further and the outline is telling the truth -- and
+                                // the threshold is a SIXTEENTH in the ClearType direction, the same
+                                // reduction SCVTCI gets there. MIRP had it and MIAP did not, which
+                                // is a real gap: MIAP is what places the left edge of a round glyph
+                                // against a control value, and round glyphs are exactly the ones the
+                                // per-glyph offset probe finds half a pixel out at 11ppem.
+                                int miapCutIn = InClearTypeDirection && !s_cutInFull && !BiLevelPass
+                                    ? _gs.ControlValueCutIn / ClearTypeGrid
+                                    : _gs.ControlValueCutIn;
+                                if (Math.Abs(value - here) > miapCutIn) value = here;
                                 value = RoundDistance(value, position: true);
                             }
                             MovePoint(z, p, value - here);
@@ -321,6 +329,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             }
 
                             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+
+                            // "Some fonts pre-calculate stroke weights and subsequently use MSIRP[.],
+                            // which involves neither rounding nor CVT cut-ins. Therefore MSIRP[.] now
+                            // respects the CVT cut-in" -- and only where there is a real outline
+                            // distance to compare against, since "in which case we assume the context
+                            // is a stroke weight, else we assume the context is an accent placement
+                            // function, in which case we use the actual distance as before".
+                            if (InClearTypeDirection && !NativeClearTypeMode && _gs.Zp0 == _gs.Zp1)
+                            {
+                                int org = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+                                if (org != 0
+                                    && Math.Abs(distance - org) >= _gs.ControlValueCutIn / ClearTypeGrid)
+                                    distance = org;
+                            }
+
                             MovePoint(z, p, distance - current);
                             _gs.Rp1 = _gs.Rp0;
                             _gs.Rp2 = p;
@@ -360,8 +383,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     case 0x29: break;                                                   // (unused)
 
-                    case 0x30: InterpolateUntouched(false); break;                       // IUP[y]
-                    case 0x31: InterpolateUntouched(true); break;                        // IUP[x]
+                    case 0x30: InterpolateUntouched(false); _iupDone = true; break;      // IUP[y]
+                    case 0x31: InterpolateUntouched(true); _iupDone = true; break;       // IUP[x]
 
                     case 0x32: case 0x33: ShiftByPoint(op == 0x33); break;               // SHP[a]
                     case 0x34: case 0x35: ShiftContour(op == 0x35); break;               // SHC[a]
@@ -375,7 +398,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             byte touch = TouchMask();
                             Zone z = ZoneOf(_gs.Zp2);
                             for (int i = 0; i < _gs.Loop; i++)
-                                MoveDirect(z, Pop(), dx, dy, touch);
+                            {
+                                int sp = Pop();
+                                if (SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
+                                MoveDirect(z, sp, dx, dy, touch);
+                            }
                             _gs.Loop = 1;
                             break;
                         }
@@ -758,8 +785,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>MIRP: the same, but the distance comes from the CONTROL VALUE TABLE rather than
         /// from the outline -- the designer's own measurement of that stem, so every stem the face
         /// meant to be the same width comes out the same width.</summary>
-        private static readonly bool s_cutInUnroundedOnly =
-            Environment.GetEnvironmentVariable("WPF_CT_CUTIN") == "unrounded";
+        private static readonly bool s_keepInlineDeltas =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "inline";
+
+        /// <summary>Apply every delta, suppressing none -- what GDI's ClearType appears to do.</summary>
+        private static readonly bool s_keepAllDeltas =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";
+
+        /// <summary>Do NOT halve the minimum distance in the ClearType direction.</summary>
+        internal static readonly bool s_fullMinDistance =
+            Environment.GetEnvironmentVariable("WPF_CT_MINDIST") == "full";
+
+        private static readonly bool s_keepTouchedDeltas =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "touched";
+
+        private static readonly bool s_cutInFull =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_FULL") == "1";
 
         private void MoveIndirectRelative(byte op)
         {
@@ -793,10 +834,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // better: with the fitting kept, parity is 3,629,242 against 3,764,189 for the narrower
             // reading (the paper's section is about UNROUNDED MIRP, so restricting it there was worth
             // testing). WPF_CT_CUTIN=unrounded selects that narrower reading.
-            bool narrowCutIn = InClearTypeDirection && (!round || !s_cutInUnroundedOnly);
-            int cutIn = (narrowCutIn ? _gs.ControlValueCutIn / ClearTypeGrid
-                                     : _gs.ControlValueCutIn) * stretch;
-            int minimum = (InClearTypeDirection ? _gs.MinimumDistance / 2
+            // A SIXTEENTH, as the paper says, and the rendered pixels agree even though the
+            // reported outline does not. Not shrinking it makes our stem WIDTHS equal the ones
+            // GetGlyphOutline reports at every size (1.0px, where shrinking leaves us on the outline
+            // distance and drifting 0.97 -> 1.45) -- and measured on the text specimen that is
+            // WORSE, 1,654,115 against 1,410,303. One more piece of evidence that GGO reports the
+            // greyscale fit and ClearType draws something else, and a reminder that the specimen is
+            // the authority here, not the outline API. WPF_CT_CUTIN_FULL=1 restores the full cut-in.
+            int cutIn = (s_cutInFull || BiLevelPass ? _gs.ControlValueCutIn
+                                                    : _gs.ControlValueCutIn / ClearTypeGrid) * stretch;
+            int minimum = (InClearTypeDirection && !s_fullMinDistance && !BiLevelPass ? _gs.MinimumDistance / 2
                                                 : _gs.MinimumDistance) * stretch;
 
             if (_gs.SingleWidthCutIn > 0
@@ -825,6 +872,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" zp0={_gs.Zp0} zp1={_gs.Zp1} rp0={_gs.Rp0}"
                     + $" minDist={_gs.MinimumDistance / 64f:0.0000} keepMin={keepMinimum}"
                     + $" op=0x{op:X2}({Convert.ToString(op & 0x1F, 2).PadLeft(5, '0')}) roundState={_gs.Round}"
+                    + $" instrCtrl={_gs.InstructControl}"
                     + $" axis={(IsHorizontalProjection ? "x" : "y")}");
 
             // A control value pointing the other way from the outline is the wrong one to use; with
@@ -1152,8 +1200,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!DeltaApplies(spec, rangeOffset, out int amount)) continue;
 
                 Zone z = ZoneOf(_gs.Zp0);
+                if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)) continue;
                 MoveDirect(z, p, MulFix(amount, _gs.FreeX << 2), MulFix(amount, _gs.FreeY << 2), touch);
             }
+        }
+
+        /// <summary>Whether a DELTAP or SHPIX moving a point along the CLEARTYPE DIRECTION is to be
+        /// dropped, as GDI drops it.
+        /// <para>Microsoft, "TrueType and ClearType": "all DELTAPs are skipped, except DELTAPs on
+        /// previously touched points in the non-ClearType direction and DELTACs" -- and for SHPIX,
+        /// "if such a delta occurs on an untouched point ... it creates a dent in the outline. While
+        /// for bi-level this is intended to flip one or more pixels, it distorts the stroke in
+        /// ClearType ... Therefore we keep only deltas on touched points in the non-ClearType
+        /// direction."</para>
+        /// <para>The reason is that the extra x resolution makes a delta far more accurate than the
+        /// sloppy pixel-flipping it was written for: "previous usage with bi-level rendering was
+        /// relatively sloppy leading to extreme exaggeration of delta like instructions". A face as
+        /// heavily delta-hinted as Segoe UI therefore renders quite differently under ClearType, and
+        /// running every delta as written is not a small error.</para>
+        /// <para>The composite rule differs between the two, and the paper says so in two places:
+        /// DELTAPs are "also skipped in composite glyphs if they are in the ClearType direction",
+        /// while for SHPIX "for composites, the touched/untouched rule does not apply the same way
+        /// ... hence we also keep deltas in composites" -- there a point flagged untouched may have
+        /// been touched while its component ran, so the delta moves the whole outline rather than
+        /// denting it, which is how diacritics keep clear of their base.</para>
+        /// </summary>
+        private bool SkipDeltaInClearTypeDirection(Zone z, int point, bool compositeExempt)
+        {
+            if (!DeltaInClearTypeDirection || NativeClearTypeMode || s_keepAllDeltas || BiLevelPass) return false;
+            if (compositeExempt && _inComposite) return false;
+            if ((uint) point >= (uint) z.PointCount) return false;
+            // EVERY delta in this direction goes, not just those on points untouched in the other
+            // one. The paper's headline is "all DELTAPs are skipped" and its exception is written for
+            // INLINE deltas specifically; measured on the text specimen, taking the headline plainly
+            // is better -- 1,074,897 against 1,112,253 for the narrower reading.
+            // WPF_CT_DELTA=touched restores the exception.
+            // INLINE vs POST-IUP. "An inline delta is a delta that occurs before the IUP
+            // instruction on a previously touched point. A post-IUP delta occurs after the IUP
+            // instruction" -- and the paper keeps inline ones ("inline deltas are sometimes used to
+            // adjust the position of horizontal strokes ... hence they are kept"). WPF_CT_DELTA=inline
+            // skips only what comes after IUP.
+            if (s_keepInlineDeltas && !_iupDone) return false;
+            return !s_keepTouchedDeltas || (z.Tags[point] & TagTouchY) == 0;
         }
 
         private void ApplyControlValueDeltas(int rangeOffset)

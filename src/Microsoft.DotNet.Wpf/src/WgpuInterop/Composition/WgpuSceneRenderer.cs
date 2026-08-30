@@ -53,6 +53,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // over an OPAQUE destination in the framebuffer, but on a transparent target the coverage becomes
         // the alpha that CoreAnimation later composites over the backdrop, so the gamma distorts the edges
         // (WPF likewise drops ClearType/text-gamma on layered windows).
+        private static readonly bool s_runTrace =
+            Environment.GetEnvironmentVariable("WPF_RUN_TRACE") == "1";
+        private static int _runsTraced;
+
+        private static readonly bool s_flagTrace =
+            Environment.GetEnvironmentVariable("WPF_FLAG_TRACE") == "1";
+        private static bool s_flagTraced;
+
         private bool _transparentTarget;
 
         /// <summary>Whether the run being drawn asked for symmetric smoothing (see the face's
@@ -3283,6 +3291,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // 0.23, and every glyph edge is such a pixel, so the page reads as bold. Measured
             // against ClearType, dropping it puts that pixel at 0.246.
             bool hintedText = TextBlendCorrection && isGlyph && pixelAligned;
+
+            // ONE LINE PER PROCESS, so the two harnesses can be held against each other. The parity
+            // suite and the live window disagree about whether keeping the x fitting helps, and they
+            // are supposed to be rendering the same way; this prints what each actually renders
+            // under so the difference can be seen rather than guessed at.
+            if (isGlyph && s_flagTrace && !s_flagTraced)
+            {
+                s_flagTraced = true;
+                Console.Error.WriteLine($"[flags] pixelAligned={pixelAligned} hintedText={hintedText}"
+                    + $" clearType={_clearType} srgbOutput={_srgbOutput}"
+                    + $" gammaComposite={s_gammaComposite} transparent={_transparentTarget}"
+                    + $" textBlend={TextBlendCorrection} aliasedEdges={_aliasedEdges}"
+                    + $" axisAligned={IsAxisAligned(world)} scale={LinearScale(world):0.000}");
+            }
             bool gamma = isGlyph && !_transparentTarget && _srgbOutput && !hintedText;
 
             // Glyph runs that were fitted to the pixel grid are composited the way Windows
@@ -4240,6 +4262,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     + $"em={run.EmSize} origin={run.Origin} colorA={run.Color.A} clipEmpty={clip.IsEmpty} "
                     + $"opacity={opacity} world=({world.M31},{world.M32}) target={width}x{height}");
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
+
+            // What the APP asks for, as opposed to what the parity suite asks for. The suite passes
+            // an integer pen and an integer em; the app passes whatever its layout computed, and a
+            // fractional em would mean the face is fitted at a size nobody measured.
+            if (s_runTrace && _runsTraced < 8)
+            {
+                _runsTraced++;
+                Console.Error.WriteLine($"[run] em={run.EmSize:0.0000} origin=({run.Origin.X:0.0000},"
+                    + $"{run.Origin.Y:0.0000}) world=({world.M31:0.0000},{world.M32:0.0000})"
+                    + $" scale={LinearScale(world):0.0000} '{(run.Text.Length > 12 ? run.Text.Substring(0, 12) : run.Text)}'");
+            }
 
             // The face this run asked for. Style is per-run, so it cannot be resolved once at
             // construction the way the regular face is.

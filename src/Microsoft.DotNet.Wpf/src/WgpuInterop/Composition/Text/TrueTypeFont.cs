@@ -658,17 +658,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>A sub-pixel x offset applied to the fitted outline, in 64ths of a pixel.</summary>
+        internal static readonly int XOffset64 =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_OFFSET"), out int xo) ? xo : 0;
+
         /// <summary>Whether a fitted glyph is scaled back onto the bi-level advance.
-        /// <para>OFF. It implements what the paper calls compatible widths -- "the glyphs for this
-        /// font size will be adjusted post hinting in order to return advance widths that are exactly
-        /// the same as bi-level rendering" -- as a proportional scale of x onto the hdmx advance, and
-        /// MEASURED that is not the mechanism: parity gets worse with the fitting kept (3,776,437
-        /// against 3,629,242) and the live window does not move at all, 2,479,813 either way, so it
-        /// does nothing about the doubled POSITION half it was written to explain.</para>
-        /// <para>A proportional scale is only the simplest reading of "adjusted". Whatever GDI does
-        /// there, it is not this. WPF_CT_COMPATWIDTH=1 turns it on.</para></summary>
-        internal static readonly bool CompatibleWidths =
-            Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH") == "1";
+        /// <para>ON, mode 1. It implements what the paper calls compatible widths -- "the glyphs for
+        /// this font size will be adjusted post hinting in order to return advance widths that are
+        /// exactly the same as bi-level rendering" -- as a proportional scale of x onto the hdmx
+        /// advance. We answer the GETINFO selector that says ClearType, so the face is entitled to
+        /// expect it.</para>
+        /// <para>It was OFF here for a long time on a measurement that said it did nothing, taken
+        /// when the surrounding fitting was different. Re-measured against the text specimen it is
+        /// the largest single correction found: 1,074,897 -> 870,799, and -- unlike every rounding
+        /// rule tried beside it -- it improves the bands that are wrong WITHOUT touching the ones
+        /// that are right. Lowercase at 11ppem 196,453 -> 130,130 and the sentence 180,450 ->
+        /// 110,679, while the digits (20,168) and everything at 16ppem (50,593) do not move by a
+        /// single unit. That is the signature of a correction that belongs: the glyphs whose ink had
+        /// drifted inside their advance box are pulled back, and the ones already in place stay.</para>
+        /// <para>NEVER call TryGetDeviceAdvance from here for the target width -- it hints the glyph
+        /// to answer and we are inside the hinter. The recursion silently stops most of the
+        /// repertoire drawing and reports itself as a large improvement.</para>
+        /// <para>1 scales x onto the hdmx advance, 2 translates the glyph back onto its original
+        /// left side bearing (measured: no effect), 0 does neither. WPF_CT_COMPATWIDTH.</para></summary>
+        internal static readonly int CompatibleWidthMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 1;
 
         /// <summary>Whether a fitted outline is still the glyph it started as.
         /// <para>GRID FITTING MOVES EDGES TO THE GRID -- by definition less than a pixel, plus a
@@ -1034,6 +1048,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// also what "GDI keeps natural widths" has said all along.</para></summary>
         internal static bool SubpixelFitting { get; set; }
 
+        /// <summary>Snap the fitted glyph's left edge onto a whole pixel: 1 nearest, 2 ceil, 3 floor.
+        /// <para>WPF_X_LSBSNAP.</para></summary>
+        /// <summary>WPF_X_SHIFTS: a file of "SHIFT ppem glyphId sixteenths" lines. Diagnostic.</summary>
+        private static readonly Dictionary<(int Ppem, int Gid), int>? ShiftTable = LoadShiftTable();
+
+        private static Dictionary<(int, int), int>? LoadShiftTable()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_X_SHIFTS");
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return null;
+            var table = new Dictionary<(int, int), int>();
+            foreach (string line in System.IO.File.ReadAllLines(path))
+            {
+                string[] parts = line.Split(' ');
+                if (parts.Length == 4 && parts[0] == "SHIFT"
+                    && int.TryParse(parts[1], out int pp) && int.TryParse(parts[2], out int g)
+                    && int.TryParse(parts[3], out int k))
+                    table[(pp, g)] = k;
+            }
+            return table.Count > 0 ? table : null;
+        }
+
+        /// <summary>How far the bi-level width may differ from the fitted one, in percent, and the
+        /// two still count as the same shape. WPF_X_SPANTOL.</summary>
+        private static readonly string? SpanDump = Environment.GetEnvironmentVariable("WPF_SPAN_DUMP");
+        private static readonly object SpanLock = new object();
+
+        private static readonly int SpanTolerance =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_SPANTOL"), out int st) ? st : 5;
+
+        private static readonly int LsbSnapMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_LSBSNAP"), out int ls) ? ls : 0;
+
         /// <summary>What to do with the x the face's own program produces, when subpixel fitting is on.
         /// <para>0 -- DISCARD it and keep the scaled outline's x (the default, and what GDI's rendered
         /// output has always looked like). 1 -- KEEP it, with x distances rounded on a THIRD-pixel
@@ -1069,15 +1115,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and becomes the best thing available:</para>
         /// <para>parity SUM|d|, x discarded 4,071,456 -> 3,894,842; x kept 7,404,226 -> 3,629,242.
         /// Keeping it now BEATS discarding it, which had never happened before.</para>
-        /// <para>It is still 0 here, because the live window disagrees: keeping the fitting takes it
-        /// 2,254,974 -> 2,479,813 and DOUBLES its position half. The character maps say why -- with
-        /// the fitting kept, Segoe UI's 'H' at 12ppem puts its stems on Windows' own columns and is
-        /// then a pixel too NARROW (ours 3..8 against Windows' 3..9), because the reduced cut-in
-        /// fires on the inter-stem spacing as well as on the stem width. The paper says to honour the
-        /// cut-in always; it does not say the spacing should collapse to the outline, so something in
-        /// how we apply it is still too broad. Fix that before flipping this to 5.</para></summary>
+        /// <para>SHIPPED, on the evidence of the text specimen -- rows of plain Labels drawn by both
+        /// stacks, which is nothing but text and so cannot be confused by control chrome: 1,536,150
+        /// with the fitting discarded against 1,410,303 with it kept. The live CONTROL window still
+        /// prefers discarding it, and that disagreement is now known to be about the CONTROLS rather
+        /// than about text.</para></summary>
         internal static readonly int XHintMode =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 5;
 
 
         /// <summary>How many parts of a pixel the natural x may land on, or 0 to leave it alone.
@@ -1152,7 +1196,109 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (space3x)
                 for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] *= 3;
 
+            // Where the glyph's origin sat BEFORE the program ran, so a run can be given back the
+            // ink-to-origin offset the fitting moved. Taken here because after Hint it is gone.
+            int plainPhantom = glyph.X.Length > glyph.PointCount
+                ? glyph.X[glyph.PointCount] : int.MinValue;
+
             if (!interpreter.Hint(glyph, pixelsPerEm)) return null;
+
+            // SNAP THE GLYPH ONTO THE PIXEL GRID, KEEPING THE SHAPE THE FITTING GAVE IT.
+            // The physical grid reproduces GDI's bi-level outline and renders twice as badly, but it
+            // does not fail everywhere: it fixes lowercase at 11ppem and breaks every other band. Per
+            // glyph, 65% of the 11ppem error is recoverable by SLIDING the glyph -- and the glyphs
+            // asking to move are the round ones ('d' 'g' 'o' 'q' 'u' 'O' +0.50). So the position wants
+            // the pixel grid while the stems want the fine one: take the translation from the coarse
+            // rule and the shape from the fine one, instead of choosing between them.
+            // MODE 4: fit the glyph a SECOND time under the bi-level rules and move the ClearType
+            // fitting sideways onto the bi-level left edge. Snapping to the nearest whole pixel was
+            // the first attempt and it is wrong: it moves glyphs whose edge was ALREADY right (the
+            // digits, which want no offset at all) and by its own probe it made 11ppem worse, 19
+            // glyphs wanting zero falling to 6. The bi-level edge is not "a whole pixel", it is
+            // where GDI puts that particular glyph, and for the digits it is where we already were.
+            if (LsbSnapMode == 4 && !glyph.Composite)
+            {
+                GlyphProgram? plain = ReadGlyphProgram(gid);
+                if (plain is not null)
+                {
+                    bool fitted;
+                    TrueTypeInterpreter.BiLevelPass = true;
+                    try { fitted = interpreter.Hint(plain, pixelsPerEm); }
+                    finally { TrueTypeInterpreter.BiLevelPass = false; }
+                    if (fitted)
+                    {
+                        int biL = int.MaxValue, biR = int.MinValue, ctL = int.MaxValue, ctR = int.MinValue;
+                        for (int i = 0; i < plain.PointCount && i < plain.X.Length; i++)
+                        { if (plain.X[i] < biL) biL = plain.X[i]; if (plain.X[i] > biR) biR = plain.X[i]; }
+                        for (int i = 0; i < glyph.PointCount && i < glyph.X.Length; i++)
+                        { if (glyph.X[i] < ctL) ctL = glyph.X[i]; if (glyph.X[i] > ctR) ctR = glyph.X[i]; }
+                        // ONLY WHEN THE TWO FITS AGREE ON THE SHAPE. Where bi-level merely puts our
+                        // glyph somewhere else, its position is the one GDI draws and we should
+                        // follow it: 'o' at 11ppem comes out 5.19px wide against bi-level's 5.00 and
+                        // sits exactly half a pixel left of it. Where bi-level RESHAPES the glyph it
+                        // has gone its own way and ours should stand: '0' at the same size is 5.13px
+                        // wide against bi-level's 6.00, a whole pixel of widening that ClearType does
+                        // not do -- and forcing our digits onto it costs band 0 eight times its error.
+                        if (SpanDump is string dump)
+                            lock (SpanLock)
+                                System.IO.File.AppendAllText(dump,
+                                    $"SPAN {(int) MathF.Round(pixelsPerEm)} {gid} {ctL} {ctR} {biL} {biR}" + System.Environment.NewLine);
+                        long ctW = ctR - ctL, biW = biR - biL;
+                        bool sameShape = ctW > 0 && biW > 0
+                            && Math.Abs(biW - ctW) * 100 <= ctW * SpanTolerance;
+                        if (biL != int.MaxValue && ctL != int.MaxValue && sameShape)
+                        {
+                            // Moving the glyph onto the bi-level LEFT edge fixes every left edge --
+                            // measured, mean error -0.220px -> -0.054px, the round glyphs exactly on
+                            // it -- and then overshoots on the right, because our fitting comes out
+                            // about a quarter pixel WIDER than GDI's at every size. So match the
+                            // span, not just its start: "the glyphs for this font size will be
+                            // adjusted POST HINTING in order to return advance widths that are
+                            // exactly the same as bi-level rendering" (Microsoft, TrueType and
+                            // ClearType). Interior points keep their fine fitting, proportionally.
+                            for (int i = 0; i < glyph.X.Length; i++)
+                                glyph.X[i] = ctR > ctL && biR > biL
+                                    ? biL + (int) ((long) (glyph.X[i] - ctL) * (biR - biL) / (ctR - ctL))
+                                    : glyph.X[i] + (biL - ctL);
+                        }
+                    }
+                }
+            }
+            else if (LsbSnapMode != 0 && !glyph.Composite)
+            {
+                int left = int.MaxValue;
+                for (int i = 0; i < glyph.PointCount && i < glyph.X.Length; i++)
+                    if (glyph.X[i] < left) left = glyph.X[i];
+                if (left != int.MaxValue)
+                {
+                    int target = LsbSnapMode switch
+                    {
+                        2 => (left + 63) & ~63,                  // ceil
+                        3 => left & ~63,                         // floor
+                        _ => (left + 32) & ~63,                  // nearest
+                    };
+                    int shift = target - left;
+                    for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] += shift;
+                }
+            }
+
+            // THE CEILING. A table of the best possible x shift for every (size, glyph), measured
+            // against GDI's own lamps one glyph at a time and fed back in here. It is not a rule and
+            // could never ship -- it is how much a perfect placement rule would be WORTH, so that
+            // the search for one can be called off if the answer is "not much".
+            if (ShiftTable is not null)
+            {
+                int px = (int) MathF.Round(pixelsPerEm);
+                if (ShiftTable.TryGetValue((px, gid), out int sixteenths) && sixteenths != 0)
+                    for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] += sixteenths * 4;
+            }
+
+            // A SUB-LAMP x offset, for measuring only. At 11ppem our stems sit a fraction of a pixel
+            // left of Windows' -- ours spill into the column before and never saturate, where GDI's
+            // fill one column outright -- and a whole-lamp slide cannot express that: the lamp test
+            // still puts its minimum at zero. In 64ths of a pixel.
+            if (XOffset64 != 0)
+                for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] += XOffset64;
 
             // COMPATIBLE WIDTHS. "Compatible Width ClearType ... the glyphs for this font size will
             // be adjusted POST HINTING in order to return advance widths that are exactly the same as
@@ -1161,13 +1307,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // is kept: our advances already equal GDI's exactly, but the fitted INK moves inside the
             // advance box and nothing pulls it back, so the error accumulates along a run. The live
             // window's POSITION half doubles, 280,803 -> 479,090.
-            if (CompatibleWidths && plainX is null && !glyph.Composite
+            if (CompatibleWidthMode != 0 && plainX is null && !glyph.Composite
                 && glyph.X.Length > glyph.PointCount + 1)
             {
                 int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
                 int fitted = p1 - p0;
+                // MODE 2: put the glyph back on its ORIGINAL left side bearing instead of scaling it
+                // onto the advance. A run places each glyph at pen + advance and takes the ink from
+                // the outline, so what a run needs is the ink's offset from the origin preserved --
+                // a translation. Scaling (mode 1) changes the shape the fitting just produced and
+                // measured worse; this keeps it and moves it.
+                if (CompatibleWidthMode == 2)
+                {
+                    int before = plainPhantom;
+                    if (before != int.MinValue && before != p0)
+                    {
+                        int shift = before - p0;
+                        for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] += shift;
+                    }
+                }
                 int ppemI = (int) MathF.Round(pixelsPerEm);
-                if (fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                if (CompatibleWidthMode == 1 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
                     // hdmx if the face ships it, else the scaled advance rounded to a pixel, which is
                     // what a bi-level rasterizer would have produced. NEVER TryGetDeviceAdvance --

@@ -512,17 +512,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// slanted one, where the area says "half" and the two samples say which half.
         /// WPF_SUBPIXEL_HALFLAMPS switches between them so the difference is a measurement rather
         /// than an argument.</para>
-        /// <para>MEASURED, and the approximation WINS: 1 (exact area, then quantized) leaves the live
-        /// window at 2,491,739 where 2 half-lamps gives 2,533,593 and 3 gives 2,616,561. Note that
-        /// three half-lamps is BETTER on the parity harness (structural 239 against 277) and clearly
-        /// worse on the window -- when those two disagree the window is the authority, because the
-        /// harness weighs one arrangement of glyphs and the window weighs every control. So the
-        /// literal sampling story is not what to implement, even though it is what GDI's OUTPUT
-        /// LEVELS say; reproducing the levels is what matters, and the area does that better.</para>
+        /// <para>TWO, which is six samples per pixel and is what Microsoft's "TrueType and ClearType"
+        /// says the rasterizer does: "a 6x1 filtering technique -- with six times the resolution
+        /// along the x-axis and no resolution change along the y-axis".</para>
+        /// <para>It was 1 for a long time on the strength of the CONTROL window (1 gave 2,491,739
+        /// against 2,533,593 for 2), and that measurement was made with the interpreter still
+        /// hinting as a bi-level rasterizer. Re-measured on the text specimen -- rows of plain
+        /// Labels, nothing but text, repeatable to 41 parts in 1.4 million -- 2 wins: 1,408,586
+        /// against 1,410,303 for one sample and 1,432,328 for three. Small, but forty times the
+        /// noise, and it is the documented number.</para>
         /// </summary>
         private static readonly int HalfLamps =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_HALFLAMPS"), out int hl) && hl > 0
-                ? hl : 1;
+                ? hl : 2;
+
+        /// <summary>WPF_SUBPIXEL_COLLAPSE=avg: box-downsample the half-lamps instead of thresholding.</summary>
+        private static readonly bool AverageHalfLamps =
+            Environment.GetEnvironmentVariable("WPF_SUBPIXEL_COLLAPSE") == "avg";
 
         /// <summary>Threshold each half-lamp sample and average them back down to one value per lamp.
         /// </summary>
@@ -535,10 +541,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int row = y * subWidth;
                 for (int x = 0; x < subWidth; x++)
                 {
-                    int lit = 0;
-                    for (int k = 0; k < HalfLamps; k++)
-                        if (fine[fineRow + x * HalfLamps + k] >= 128) lit++;
-                    outp[row + x] = (byte)(lit * 255 / HalfLamps);
+                    if (AverageHalfLamps)
+                    {
+                        // A PLAIN BOX DOWNSAMPLE. Thresholding each half-lamp rounds a sliver of
+                        // coverage up to a whole one, and a sliver is exactly what the extremum of a
+                        // CURVE leaves: measured against GDI at 11ppem, glyphs whose left edge is a
+                        // curve ('c' 'd' 'e' 'g' 'o' 'q' 'C' 'G' 'O') start two lamps too far left
+                        // while every straight-stemmed glyph ('l' 'i' 'H' 'I' 'M' 'N' ...) is exact
+                        // to the lamp -- and a straight edge is the one case thresholding cannot get
+                        // wrong, because it covers a half-lamp or it does not.
+                        int total = 0;
+                        for (int k = 0; k < HalfLamps; k++) total += fine[fineRow + x * HalfLamps + k];
+                        outp[row + x] = (byte) (total / HalfLamps);
+                    }
+                    else
+                    {
+                        int lit = 0;
+                        for (int k = 0; k < HalfLamps; k++)
+                            if (fine[fineRow + x * HalfLamps + k] >= 128) lit++;
+                        outp[row + x] = (byte)(lit * 255 / HalfLamps);
+                    }
                 }
             }
             return outp;
