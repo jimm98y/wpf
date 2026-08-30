@@ -508,7 +508,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// VERTICAL movement the ClearType direction. Plausible, and measured worse: 10,355,224 ->
         /// 10,362,490 on the six-face specimen, fixing no glyph's fitted y.</para></summary>
         internal bool InClearTypeDirection =>
-            ClearTypeInfo && IsHorizontalProjection && !_inPreProgram;
+            ClearTypeInfo && IsHorizontalProjection && (s_ctInPrep || !_inPreProgram);
+
+        /// <summary>WPF_CT_PREP=1: let 'prep' round on the ClearType grid too.
+        /// <para>'prep' is where a face rounds its stem CONTROL VALUES, and excluding it means those
+        /// land on whole pixels: Segoe UI's stem control value comes out at exactly 1.0000px at 12
+        /// pixels an em, and GDI draws that stem 1.165 wide. On the sixteenth grid the same rounding
+        /// would leave 1.1875. That is the shape of the whole remaining difference, so it was worth a
+        /// measurement rather than an assumption.</para>
+        /// <para>MEASURED AND WORSE: the six-face specimen goes 2,197,699 -> 2,311,500. And it does
+        /// not touch the stem that prompted it -- Segoe UI's 'l' at 12ppem stays at 3.00 lamps
+        /// against GDI's 3.49 either way -- which says that control value is not being rounded by
+        /// 'prep' at all, so where 'prep' rounds was never the question. Fourteenth parameter
+        /// measured, current setting kept.</para></summary>
+        private static readonly bool s_ctInPrep =
+            Environment.GetEnvironmentVariable("WPF_CT_PREP") == "1";
 
         /// <summary>Grid lines per pixel along the ClearType direction. SIXTEEN, from the paper --
         /// not three. A lamp is a third of a pixel and that is what gets DRAWN; the grid the
