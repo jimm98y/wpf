@@ -688,6 +688,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// The width of that plateau is why this is a fair value and not a fitted one -- anywhere in
         /// a twelve-point range gives the same answer to within 0.3%.</para>
         /// <para>WPF_CT_CWTOL.</para></summary>
+        /// <summary>Glyphs no taller than this many TENTHS of a pixel are fitted with the bi-level
+        /// rules instead of the ClearType ones.
+        /// <para>58, i.e. 5.8 pixels. Measured band by band on the text specimen: the ClearType
+        /// rounding is right nearly everywhere -- it reproduces Windows' digits almost pixel for
+        /// pixel -- but at 11ppem the LOWERCASE is far better fitted bi-level, 117,862 -> 88,434 and
+        /// 104,545 -> 69,553. What separates them is not the size of the text, because the same
+        /// lowercase at 16ppem wants the ClearType fit like everything else: it is the height of the
+        /// glyph. At 11ppem an x-height letter stands about 5.7 pixels tall while the digits and
+        /// capitals beside it stand about 8.</para>
+        /// <para>Sweeping it: 5.6 costs 854,135, 5.8 gives 787,977, then 795,253 / 806,228 / 821,476
+        /// at 6.0 / 6.2 / 6.4 as taller glyphs start being caught by it. And the ten bands that are
+        /// NOT lowercase-at-11ppem come out byte-identical, which is the whole argument for it --
+        /// every global rounding rule tried instead traded one band against another.</para>
+        /// <para>WPF_CT_SMALLGLYPH, 0 disables it.</para></summary>
+        private static readonly int SmallGlyphPixels =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SMALLGLYPH"), out int sg) ? sg : 58;
+
         private static readonly int CompatibleWidthTolerance =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CWTOL"), out int ct2) ? ct2 : 25;
 
@@ -1224,7 +1241,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int plainPhantom = glyph.X.Length > glyph.PointCount
                 ? glyph.X[glyph.PointCount] : int.MinValue;
 
-            if (!interpreter.Hint(glyph, pixelsPerEm)) return null;
+            // SMALL GLYPHS ARE FITTED HARD. Measured band by band against Windows: the ClearType
+            // rounding wins everywhere except lowercase at 11ppem, where the bi-level fit is far
+            // better (117,862 -> 71,276 and 104,545 -> 57,945) -- and at that size lowercase stands
+            // about five pixels tall while the digits and capitals beside it, which the ClearType
+            // fit gets very nearly exactly right, stand about eight. It is the height of the GLYPH
+            // that separates them, not the size of the text: the same lowercase at 16ppem is eight
+            // pixels tall and wants the ClearType fit like everything else.
+            bool small = false;
+            if (SmallGlyphPixels > 0 && !glyph.Composite && gid >= 0 && gid < _numGlyphs
+                && _loca.Length > gid + 1 && _loca[gid + 1] > _loca[gid])
+            {
+                int hp = _glyfOffset + (int) _loca[gid];
+                int yMin = (short) U16(hp + 4), yMax = (short) U16(hp + 8);
+                // Through the interpreter's own scale. PixelsPerEm here is a BASE em size, not the
+                // units per em, so scaling font units by pixelsPerEm/PixelsPerEm gives hundreds of
+                // pixels and silently never fires -- which is exactly what the first version did.
+                if (interpreter.PrepareForSize(pixelsPerEm))
+                {
+                    float tall = interpreter.ScaleToPixels(yMax - yMin) / 64f;
+                    small = tall > 0f && tall * 10f <= SmallGlyphPixels;
+                }
+            }
+            bool savedBi = TrueTypeInterpreter.BiLevelPass;
+            if (small) TrueTypeInterpreter.BiLevelPass = true;
+            bool hinted;
+            try { hinted = interpreter.Hint(glyph, pixelsPerEm); }
+            finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+            if (!hinted) return null;
 
             // SNAP THE GLYPH ONTO THE PIXEL GRID, KEEPING THE SHAPE THE FITTING GAVE IT.
             // The physical grid reproduces GDI's bi-level outline and renders twice as badly, but it
