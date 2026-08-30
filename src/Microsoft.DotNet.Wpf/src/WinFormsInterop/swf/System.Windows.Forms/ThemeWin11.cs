@@ -1284,7 +1284,12 @@ namespace System.Windows.Forms
 		protected override void TrackBarDrawHorizontalTrack (Graphics dc, Rectangle thumb_area,
 								     Point channel_startpoint, Rectangle clippingArea)
 		{
-			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y,
+			// ONE ROW ABOVE the classic channel. The layout that hands over channel_startpoint is
+			// the classic one and puts a horizontal channel at y=9; Windows draws it at 8. Measured
+			// off both: the four rows are the same colours in the same order -- edge D6D6D6, two of
+			// E7EAEA, edge D6D6D6 -- and ours were simply one row lower all the way along.
+			// The THUMB is not moved: its rows already agree.
+			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y - 1,
 							thumb_area.Width, 4));
 		}
 
