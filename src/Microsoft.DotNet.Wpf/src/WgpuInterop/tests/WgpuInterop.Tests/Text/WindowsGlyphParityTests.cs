@@ -1955,6 +1955,10 @@ namespace WgpuInterop.Tests.Text
         [InlineData("Arial", 0)]
         [InlineData("Times New Roman", 0)]
         [InlineData("Comic Sans MS", 0)]
+        // Verdana and Tahoma were not on this list, and Verdana is the worst face on the six-face
+        // specimen -- a guard that counts interpreter bugs should look at the face doing worst.
+        [InlineData("Verdana", 0)]
+        [InlineData("Tahoma", 0)]
         public void EveryFacesOwnHinting_SurvivesItsOwnProgram(string family, int allowed)
         {
             string? file = FontFiles.Find(family, bold: false, italic: false);
