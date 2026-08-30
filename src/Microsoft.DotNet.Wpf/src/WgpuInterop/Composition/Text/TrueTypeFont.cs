@@ -129,6 +129,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int hmtx = Require(tables, "hmtx");
             int cmap = Require(tables, "cmap");
             _gasp = tables.TryGetValue("gasp", out int gasp) ? gasp : -1;
+            // The x-height and cap height, for telling a lowercase letter with an ascender from a
+            // capital of the same bounding height. OS/2 carries both from version 2 on.
+            if (tables.TryGetValue("OS/2", out int os2) && U16(os2) >= 2)
+            {
+                _sxHeight = (short) U16(os2 + 86);
+                _sCapHeight = (short) U16(os2 + 88);
+            }
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -601,6 +608,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static void ResetImplausibleFits() => System.Threading.Interlocked.Exchange(ref s_implausibleFits, 0);
 
         private int _gasp = -1;
+        private int _sxHeight, _sCapHeight;
 
         private const int GaspGridfit = 0x0001;
         private const int GaspSymmetricSmoothing = 0x0008;
@@ -704,6 +712,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>WPF_CT_SMALLGLYPH, 0 disables it.</para></summary>
         private static readonly int SmallGlyphPixels =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SMALLGLYPH"), out int sg) ? sg : 58;
+
+        /// <summary>WPF_CT_EXTENDER=0 turns off treating x-height letters with ascenders or
+        /// descenders as small glyphs.</summary>
+        private static readonly bool ExtenderRule =
+            Environment.GetEnvironmentVariable("WPF_CT_EXTENDER") != "0";
+
+        /// <summary>How far above the cap height a glyph must reach to count as having an ascender,
+        /// in percent. WPF_CT_EXTMARGIN.</summary>
+        private static readonly int ExtenderMargin =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_EXTMARGIN"), out int em) ? em : 3;
 
         private static readonly int CompatibleWidthTolerance =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CWTOL"), out int ct2) ? ct2 : 25;
@@ -1261,6 +1279,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     float tall = interpreter.ScaleToPixels(yMax - yMin) / 64f;
                     small = tall > 0f && tall * 10f <= SmallGlyphPixels;
+
+                    // AND A LETTER WHOSE BODY SITS AT X-HEIGHT counts as small even though its box
+                    // is tall: 'b' 'd' 'k' 'p' 'q' 'g' are drawn around the same little bowl as 'o',
+                    // with an ascender or a descender hung off it, and after the height rule went in
+                    // they are exactly what is left dear at 11ppem. A bounding box cannot tell them
+                    // from a capital -- 'b' is 8.1px tall and 'H' is 8.0 -- but the font can: an
+                    // ascender reaches ABOVE the cap height, and a descender below the baseline,
+                    // and a capital does neither.
+                    if (!small && ExtenderRule && _sxHeight > 0 && _sCapHeight > 0)
+                    {
+                        float xh = interpreter.ScaleToPixels(_sxHeight) / 64f;
+                        // With a MARGIN over the cap height, because lining figures are drawn a
+                        // shade taller than the capitals in most faces -- Segoe UI's are -- and a
+                        // bare "taller than a capital" catches every digit. Caught, they are fitted
+                        // small and the digit band goes 20,168 -> 156,808, which is how this was
+                        // found.
+                        // And the descender test needs its own margin, for the same reason in the
+                        // other direction: a ROUND glyph overshoots the baseline by a hair, so a
+                        // bare "yMin < 0" calls '0' '3' '6' '8' '9' -- and 'O' 'C' 'G' 'S' --
+                        // descenders. A real descender drops about an x-height below the line; an
+                        // overshoot is a percent of an em.
+                        bool extender = yMax * 100 > _sCapHeight * (100 + ExtenderMargin)
+                                        || yMin < -(_sxHeight / 4);
+                        small = extender && xh > 0f && xh * 10f <= SmallGlyphPixels;
+                    }
                 }
             }
             bool savedBi = TrueTypeInterpreter.BiLevelPass;
