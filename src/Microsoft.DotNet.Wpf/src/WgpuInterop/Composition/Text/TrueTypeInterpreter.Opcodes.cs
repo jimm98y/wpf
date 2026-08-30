@@ -740,14 +740,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private bool _dumpActive;
 
+        /// <summary>How many points the instruction dump shows per axis. WPF_HINT_DUMP_POINTS.</summary>
+        private static readonly int s_dumpPoints =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_HINT_DUMP_POINTS"), out int dp) && dp > 0 ? dp : 8;
+
         private void DumpStep(byte op, int at)
         {
             var sb = new System.Text.StringBuilder();
             sb.Append($"{at,5}: {OpName(op)} (0x{op:X2})  stack[");
             for (int i = System.Math.Max(0, _top - 4); i < _top; i++)
                 sb.Append(_stack[i]).Append(' ');
-            sb.Append($"]  pv=({_gs.ProjX},{_gs.ProjY}) fv=({_gs.FreeX},{_gs.FreeY}) rp0={_gs.Rp0} rp1={_gs.Rp1} rp2={_gs.Rp2}  y=[");
-            for (int i = 0; i < System.Math.Min(_glyphZone.CurY.Length, 8); i++)
+            sb.Append($"]  pv=({_gs.ProjX},{_gs.ProjY}) fv=({_gs.FreeX},{_gs.FreeY}) rp0={_gs.Rp0} rp1={_gs.Rp1} rp2={_gs.Rp2}  ");
+            // BOTH AXES. This printed y only, which is no use at all for the direction most of the
+            // work here is about -- an x-direction bug shows as an unchanging y column. The count is
+            // WPF_HINT_DUMP_POINTS wide because eight points do not reach the interesting ones in a
+            // glyph like 'o'.
+            sb.Append("x=[");
+            for (int i = 0; i < System.Math.Min(_glyphZone.CurX.Length, s_dumpPoints); i++)
+                sb.Append((_glyphZone.CurX[i] / 64f).ToString("0.##")).Append(' ');
+            sb.Append("] y=[");
+            for (int i = 0; i < System.Math.Min(_glyphZone.CurY.Length, s_dumpPoints); i++)
                 sb.Append((_glyphZone.CurY[i] / 64f).ToString("0.##")).Append(' ');
             sb.Append(']');
             Console.Error.WriteLine(sb.ToString());
