@@ -616,6 +616,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// weight 2,030,177 -> 2,002,709. Bilevel being far the worst is why the earlier attempt at
         /// "threshold each subpixel" failed and was recorded as a dead end -- it is one level short of
         /// the model, not one too many.</para>
+        /// <para>RE-SWEPT on the control window 2026-08-30: three 1,376,484; two 1,830,368; four
+        /// 1,529,559; and zero is identical to three, because collapsing the half-lamps has already
+        /// left each lamp on one of {0, 1/2, 1} and there is nothing for a further quantization to
+        /// do.</para>
         /// <para>WPF_SUBPIXEL_QUANT overrides it: 0 or 1 leaves the exact area alone, 2 makes each
         /// lamp bilevel, 3 is the model above.</para></summary>
         private static readonly int SubpixelLevels =

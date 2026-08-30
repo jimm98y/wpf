@@ -3767,6 +3767,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool SubpixelCurveIsBlend =
             Environment.GetEnvironmentVariable("WPF_SUBPIXEL_CURVE") != "power";
 
+        /// <summary>RE-SWEPT 2026-08-30 against the live control window, which by then had no
+        /// whole-pixel displacement left anywhere in it -- so the number is measured against text
+        /// weight and nothing else. It is a sharp optimum and it is the SYSTEM's:
+        ///     1.10 1,427,116   1.15 1,398,653   1.20 1,376,508   1.25 1,429,576   1.30 1,490,667
+        /// and 1.20 is exactly what this machine's font-smoothing contrast of 1200 derives. The
+        /// remaining text is about 2.5% light against Windows' and this is NOT the reason.</summary>
         private static readonly float SubpixelGamma =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAMMA"),
                            System.Globalization.NumberStyles.Float,
