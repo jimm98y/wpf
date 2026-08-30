@@ -2839,6 +2839,54 @@ namespace WgpuInterop.Tests.Text
             throw new Xunit.Sdk.XunitException($"{family} @ {ppem}ppem simulated italic" + Environment.NewLine + log);
         }
 
+
+        /// <summary>How much ink GDI puts in a plain vertical stem, in LAMPS, against how much we
+        /// put there and against what the face's control value asks for. WPF_STEMINK=family.
+        /// <para>The contrast curve is undone first, per lamp, so the numbers are coverage and not
+        /// luminance -- a three-tap box conserves coverage, so the total over a stem's run IS the
+        /// raw lamp count the rasterizer lit. Constant against size means a rasterizer rule;
+        /// proportional to size means a fitting one.</para></summary>
+        [Fact]
+        public void AStemsInk_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string family = Environment.GetEnvironmentVariable("WPF_STEMINK") ?? "";
+            Assert.SkipWhen(family.Length == 0, "set WPF_STEMINK to a family name");
+            string? file = FontFiles.Find(family, bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+
+            // Undo the contrast curve: ours applies c' = 1 - (1-c)^(1/g), so c = 1 - (1-c')^g.
+            float g = WgpuSceneRenderer.TextGammaForTest;
+            static float Lin(float shown, float gamma) => 1f - MathF.Pow(1f - shown, gamma);
+
+            var log = new System.Text.StringBuilder();
+            log.AppendLine($"== {family} 'l' stem, coverage in lamps (curve undone, gamma {g:0.00})");
+            foreach (int ppem in new[] { 11, 12, 13, 14, 16, 19 })
+            {
+                var raw = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw("l", family, ppem, PenX, ppem + 12, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                byte[] ours = OursRgba(font, "l", ppem, ppem + 12, correction: true);
+
+                // One row through the middle of the stem, well clear of top and bottom.
+                int row = ppem + 12 - ppem / 3;
+                double gdiInk = 0, ourInk = 0;
+                for (int x = 0; x < Width; x++)
+                    for (int lamp = 0; lamp < 3; lamp++)
+                    {
+                        int o = (row * Width + x) * 4 + lamp;
+                        gdiInk += Lin((255 - raw[o]) / 255f, g);
+                        ourInk += Lin((255 - ours[o]) / 255f, g);
+                    }
+                log.AppendLine($"  {ppem,2}ppem  gdi {gdiInk,6:0.00} lamps ({gdiInk / 3,5:0.000} px)"
+                               + $"   ours {ourInk,6:0.00} ({ourInk / 3,5:0.000} px)"
+                               + $"   gdi/ours {(ourInk > 0 ? gdiInk / ourInk : 0),5:0.000}");
+            }
+            throw new Xunit.Sdk.XunitException(log.ToString());
+        }
+
         private static class Gdi
         {
             /// <summary>The user's ClearType contrast, 1000..2200, or 1200 if it cannot be read.

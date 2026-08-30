@@ -3787,6 +3787,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// blending at 1.2 and the old power curve at 1.15 agree to within a percent through the
         /// midtones. There is no ClearType contrast to honour there and no reference to measure
         /// against, so this is not the place to change how they look.</para></summary>
+        /// <summary>The text gamma, exposed so a test can UNDO the contrast curve and compare
+        /// coverage rather than luminance.</summary>
+        internal static float TextGammaForTest => SubpixelGamma;
+
         private static float GammaForSystemContrast()
         {
             int contrast = Platform.Win32Interop.FontSmoothingContrast();
