@@ -456,10 +456,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     case 0x49: case 0x4A:                                               // MD[a]
                         {
-                            int p2 = Pop(), p1 = Pop();
+                            // ZP0 GOES WITH THE TOP ARGUMENT HERE, AND FREETYPE PAIRS THEM THE OTHER
+                            // WAY -- it bounds-checks args[0] against zp0 and args[1] against zp1 and
+                            // measures PROJECT(zp0 + args[0], zp1 + args[1]). Swapping to match it
+                            // negates a directional measurement, and MD feeds conditionals, so that
+                            // is not a small shift: it takes the other arm of an IF.
+                            // MEASURED BOTH WAYS against GDI, and this one wins: six-face specimen
+                            // 10,053,618 against 10,072,556 for FreeType's pairing. The Segoe UI
+                            // suite cannot tell them apart at all (61,232 either way) -- that face
+                            // never exercises MD where it matters, which is why this could sit here
+                            // unexamined. WPF_MD_SPEC=1 uses FreeType's pairing.
+                            int top = Pop(), deep = Pop();
+                            int a = s_mdSpecOrder ? deep : top, b = s_mdSpecOrder ? top : deep;
                             Push(op == 0x49
-                                 ? MeasureCurrent(_gs.Zp0, p2, _gs.Zp1, p1)
-                                 : MeasureOriginalExact(_gs.Zp0, p2, _gs.Zp1, p1));
+                                 ? MeasureCurrent(_gs.Zp0, a, _gs.Zp1, b)
+                                 : MeasureOriginalExact(_gs.Zp0, a, _gs.Zp1, b));
                             break;
                         }
 
@@ -819,6 +830,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SYMINFO=1 answers GETINFO's symmetric-rendering bit.</summary>
         private static readonly bool s_symmetricInfo =
             Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+
+        /// <summary>WPF_MD_SPEC=1 pairs MD's operands with the zones the way FreeType does.</summary>
+        private static readonly bool s_mdSpecOrder =
+            Environment.GetEnvironmentVariable("WPF_MD_SPEC") == "1";
 
         /// <summary>WPF_CT_SHPIXTOUCH=0 lets a vertical SHPIX move an untouched point.</summary>
         private static readonly bool s_shpixNeedsTouch =
