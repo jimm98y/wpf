@@ -117,13 +117,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             float.TryParse(Environment.GetEnvironmentVariable("WPF_OBLIQUE_SHEAR"),
                            System.Globalization.NumberStyles.Float,
                            System.Globalization.CultureInfo.InvariantCulture, out float os)
-                ? os : 0.20f;
-        // 0.20, MEASURED against GDI. 0.36397 -- tan(20 degrees) -- is what DirectWrite simulates
-        // with, and it was in here with a comment saying so while everything else was being matched
-        // against GDI. Tahoma is the face that shows it, shipping regular and bold and no italic at
-        // all: its synthesized italic goes 810,958 -> 785,245, and the six-face specimen 10,090,879
-        // -> 10,065,207. The curve is flat between 0.18 and 0.22 and climbs away either side.
-        // This changes nothing for a face that ships a real italic, which is most of them.
+                ? os : 0.36397023f;                          // tan(20 degrees)
+        // AND THE MAGNITUDE WAS NEVER THE PROBLEM. This was briefly set to 0.20 because that
+        // measured better than 0.364 -- both were leaning the glyph the WRONG WAY, so the sweep was
+        // choosing between two wrong answers and the whole range was flat to within 3%. With the
+        // sign corrected, Tahoma's synthesized italic goes 785,245 -> 283,963, and the optimum sits
+        // at 0.34-0.36, which is tan(20 degrees) as it always was.
+        // The tell was that shear 0 -- no slant at all -- measured BETTER than any slant we applied
+        // (775,497), while Windows' italic is plainly slanted. A metric that prefers no effect to
+        // the effect is not choosing a magnitude, it is telling you the sign is wrong.
         // Bold simulation thickens stems by ~2% of the em on each side.
         private const float EmboldenFraction = 0.02f;
 
@@ -849,7 +851,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     Embolden(working, _emboldenStrength * pixelsPerEm / BaseEmPixels);
                 foreach ((Vector2[] pts, _) in working)
                     for (int i = 0; i < pts.Length; i++)
-                        pts[i] = new Vector2(pts[i].X - _shear * pts[i].Y, -pts[i].Y);   // y-down
+                        // PLUS, because y is still up here -- the flip to y-down is the second
+                        // component of this very expression. Minus leans the glyph backwards.
+                        pts[i] = new Vector2(pts[i].X + _shear * pts[i].Y, -pts[i].Y);   // y-down
             }
 
             var built = new List<PathFigure>(working.Count);
@@ -905,7 +909,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 Embolden(working, _emboldenStrength * pixelsPerEm / BaseEmPixels);
             foreach ((Vector2[] pts, _) in working)
                 for (int i = 0; i < pts.Length; i++)
-                    pts[i] = new Vector2(pts[i].X - _shear * pts[i].Y, -pts[i].Y);
+                    // Plus, for the same reason: these are the HINTED points, still y-up.
+                    pts[i] = new Vector2(pts[i].X + _shear * pts[i].Y, -pts[i].Y);
 
             var built = new List<PathFigure>(working.Count);
             foreach ((Vector2[] pts, bool[] on) in working)
