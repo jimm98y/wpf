@@ -76,14 +76,15 @@ namespace System.Windows.Forms
 		//     x     0   100   200   270   380   540   600   800   810   900  1050  1079
 		//     ours 240   241   242   243   244   246   246   248   248   249   251   251
 		//     win  240   241   242   243   245   246   247   249   249   250   251   252
-		// Equal at both ends of each run and one unit low across the middle, and ours never quite
-		// reaches 252 at the last column where Windows does.
+		// It was the END STOP: ours ran to 251 and Windows to 252, and one unit short at the end is
+		// one unit short across most of the strip. See MenuStripGradientEnd below, which is what
+		// this strip actually uses -- the ToolStrip stops here are a different pair, and reading
+		// them instead is how I convinced myself the colours were already right.
 		//
-		// It is NOT the interpolation space -- over a range this narrow sRGB and linear-light agree
-		// to a tenth of a unit (243.00 against 243.08 at x=270), so gamma cannot produce a whole
-		// one. It is NOT ramp resolution or filtering either: twenty consecutive columns read flat
-		// on both sides, so neither is stepping through a 256-texel ramp. Something about how the
-		// ramp is laid across the strip, and worth roughly forty thousand to whoever finds it.
+		// Ruled out on the way, and still worth knowing: NOT the interpolation space, since over a
+		// range this narrow sRGB and linear-light agree to a tenth of a unit (243.00 against 243.08
+		// at x=270); NOT ramp resolution or filtering, since twenty consecutive columns read flat
+		// on both sides.
 		public override Color ToolStripGradientBegin => Color.FromArgb (252, 252, 252);
 		public override Color ToolStripGradientMiddle => Color.FromArgb (246, 246, 246);
 		public override Color ToolStripGradientEnd => Color.FromArgb (240, 240, 240);
@@ -96,7 +97,11 @@ namespace System.Windows.Forms
 		// right, measured across a stock one. Reporting the same colour at both ends made it a
 		// plain grey band.
 		public override Color MenuStripGradientBegin => Color.FromArgb (240, 240, 240);
-		public override Color MenuStripGradientEnd => Color.FromArgb (251, 251, 251);
+		// 252, NOT 251. The strip's ramp runs 240 at the left to this at the right, and one unit
+		// short at the end is one unit short across most of the strip: 251 -> 58,349 for the region,
+		// 252 -> 32,501, 253 -> 57,485. Its ink ratio goes 1.028 -- the only one in the window above
+		// one -- to 0.994, which is where every other region sits.
+		public override Color MenuStripGradientEnd => Color.FromArgb (252, 252, 252);
 		public override Color StatusStripGradientBegin => Surface;
 		public override Color StatusStripGradientEnd => Surface;
 		// A menu is white behind its entries -- #FDFDFD, measured off a stock one -- with the
