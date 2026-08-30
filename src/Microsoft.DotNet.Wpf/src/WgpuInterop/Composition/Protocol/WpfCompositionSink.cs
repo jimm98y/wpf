@@ -965,7 +965,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent —
                 // shape and rasterize with actual glyphs. WPF's own text arrives as pre-shaped
                 // glyph-INDEX runs with per-run fonts, so this default is only used for those string runs.
-                _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.SimpleTextShaper(), LoadStyledFont);
+                _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.KerningTextShaper(), LoadStyledFont);
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
                 // (rendered sRGB for display, then un-premultiplied since the image path re-premultiplies).

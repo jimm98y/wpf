@@ -2618,7 +2618,10 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(file is null, $"this machine has no {family}");
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
 
-            const string Letters = "abcdefghijklmnopqrstuvwxyz0123456789AKNRWXYZkvwxyz";
+            // THE SPACE IS IN HERE ON PURPOSE. It is a glyph with no ink, so every instrument
+            // that looks at pixels is blind to it, and its advance displaces everything after it
+            // just as surely as a letter's does.
+            const string Letters = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
             int ourTotal = 0, gdiTotal = 0;
             var log = new System.Text.StringBuilder();
             log.AppendLine($"== {family}{(bold ? " Bold" : italic ? " Italic" : "")} @ {ppem}ppem");
@@ -2637,7 +2640,7 @@ namespace WgpuInterop.Tests.Text
                 // less the ink's own width. If GDI builds the advance from the hinted ink plus this,
                 // the model below reproduces it.
                 float rsb = font.RightSideBearingForTest(gid, ppem);
-                if (true)
+                if (oursI != gdi)
                     log.AppendLine($"  '{c}' gid {gid,4}  gdi {gdi,3}  ours {oursI,3}"
                                    + $"  linear {linear,6:0.000}  faceHints={hinted}"
                                    + $"  pp {font.HintedPhantomsForTest(gid, ppem).Pp1,6:0.000}"
@@ -2649,6 +2652,121 @@ namespace WgpuInterop.Tests.Text
                                    + (device ? "" : "   NO device advance"));
             }
             log.AppendLine($"  TOTAL gdi {gdiTotal}  ours {ourTotal}  drift {ourTotal - gdiTotal}");
+
+            // The RUNNING difference, which is what the screen shows. A total of zero can hide a
+            // letter that gains a pixel and another that loses one, and everything between the two
+            // lands on the wrong column.
+            int running = 0;
+            var trail = new System.Text.StringBuilder("  running:");
+            foreach (char c in Letters)
+            {
+                int gid = font.GlyphIndex(c);
+                int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
+                float ours = font.TryGetDeviceAdvance(gid, ppem, out float dv)
+                    ? dv : MathF.Round(font.LinearAdvanceForTest(gid, ppem));
+                running += (int) MathF.Round(ours) - gdi;
+                trail.Append(running == 0 ? "." : running.ToString("+0;-0"));
+            }
+            log.AppendLine(trail.ToString());
+
+            // And the same trail under the FALLBACK the renderer uses when it has no device advance
+            // to hand -- the scaled design advance, rounded. If the screen matches this one and not
+            // the one above, the renderer is not reaching the device advances at all.
+            int r2 = 0;
+            var t2 = new System.Text.StringBuilder("  linear :");
+            foreach (char c in Letters)
+            {
+                int gid = font.GlyphIndex(c);
+                int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
+                r2 += (int) MathF.Round(font.LinearAdvanceForTest(gid, ppem)) - gdi;
+                t2.Append(r2 == 0 ? "." : r2.ToString("+0;-0"));
+            }
+            log.AppendLine(t2.ToString());
+
+            // Where each character STARTS, so a column on a screen capture can be named.
+            int cx = 0;
+            var t3 = new System.Text.StringBuilder("  cumulative:");
+            foreach (char c in Letters)
+            {
+                t3.Append($" {(c == ' ' ? '_' : c)}@{cx}");
+                cx += Gdi.LayoutAdvance(c, family, ppem, bold, italic);
+            }
+            log.AppendLine(t3.ToString());
+
+            // What the kerning shaper makes of a string that is nothing but kern pairs.
+            string kernLine = Environment.GetEnvironmentVariable("WPF_KERNLINE") ?? "";
+            if (kernLine.Length > 0)
+            {
+                var shaped = new List<Microsoft.Wpf.Interop.WebGpu.Composition.Text.ShapedGlyph>();
+                new Microsoft.Wpf.Interop.WebGpu.Composition.Text.KerningTextShaper().Shape(font, kernLine, shaped);
+                float sc = ppem / (float) font.PixelsPerEm;
+                var t4 = new System.Text.StringBuilder($"  basePx={font.PixelsPerEm} sc={sc} kerns:");
+                float totalKern = 0f;
+                foreach (Microsoft.Wpf.Interop.WebGpu.Composition.Text.ShapedGlyph g in shaped)
+                {
+                    t4.Append($" {g.Kern:0.0000}/{g.Kern * sc:0.00}");
+                    totalKern += MathF.Round(g.Kern * sc);
+                }
+                log.AppendLine(t4.ToString());
+                log.AppendLine($"  rounded kern total {totalKern}");
+            }
+            throw new Xunit.Sdk.XunitException(log.ToString());
+        }
+
+
+        /// <summary>Renders the specimen line through OUR renderer and through GDI, and reports the
+        /// best lamp shift in each window along it. Set WPF_RUNDRIFT to family@ppem.
+        /// <para>The screen said Arial's line is exact until the space before the capitals and one
+        /// whole pixel behind from there on, while every per-character advance matches GDI. This is
+        /// the same measurement without a window, a compositor or a screen grab in the way.</para>
+        /// </summary>
+        [Fact]
+        public void ARunsPen_KeepsUpWithGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string spec = Environment.GetEnvironmentVariable("WPF_RUNDRIFT") ?? "";
+            Assert.SkipWhen(spec.Length == 0, "set WPF_RUNDRIFT to family@ppem");
+            string[] parts = spec.Split('@');
+            string family = parts[0];
+            int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 12;
+            string? file = FontFiles.Find(family, bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+
+            // OursRgba renders into the class's own Width x Height buffer, so GDI has to be given
+            // the same rectangle or the two are not pictures of the same thing.
+            const string Line = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
+            const int W = Width, H = Height;
+            int baseline = ppem + 12;
+
+            var gdiRgb = new byte[W * H * 4];
+            Gdi.s_rawRgb = gdiRgb;
+            Gdi.Draw(Line, family, ppem, PenX, baseline, W, H, false, false);
+            Gdi.s_rawRgb = null;
+            byte[] ours = OursRgba(font, Line, ppem, baseline, correction: true);
+
+            var log = new System.Text.StringBuilder();
+            log.AppendLine($"== {family} @ {ppem}ppem, run pen against GDI's");
+            for (int x0 = 0; x0 + 20 <= W; x0 += 20)
+            {
+                int best = 0; long bestErr = long.MaxValue;
+                for (int k = -3; k <= 3; k++)
+                {
+                    long err = 0;
+                    for (int y = 0; y < H; y++)
+                        for (int x = x0; x < x0 + 20; x++)
+                            for (int lamp = 0; lamp < 3; lamp++)
+                            {
+                                int src = x * 3 + lamp + k;
+                                if (src < 0) continue;           // C# division truncates toward zero
+                                int sx = src / 3, sl = src - sx * 3;
+                                if (sx >= W) continue;
+                                err += Math.Abs(ours[(y * W + sx) * 4 + sl] - gdiRgb[(y * W + x) * 4 + sl]);
+                            }
+                    if (err < bestErr) { bestErr = err; best = k; }
+                }
+                if (bestErr > 0) log.AppendLine($"  x {x0,3}..{x0 + 19,3}  best {best,2} lamps  err {bestErr}");
+            }
             throw new Xunit.Sdk.XunitException(log.ToString());
         }
 

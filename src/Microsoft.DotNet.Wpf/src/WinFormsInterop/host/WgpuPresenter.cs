@@ -79,7 +79,10 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         Configure();
         // A real TrueType font so control text (lowercase) rasterizes; the default BuiltinBitmapFont
         // is uppercase-only. Glyphs are rasterized on the GPU at present time.
-        _renderer = new WgpuSceneRenderer(ctx, LoadFont(), new SimpleTextShaper());
+        // KERNING: Windows kerns a string run, and this presenter is what draws every WinForms
+        // caption. It had the plain shaper while the composition sink had the kerning one, so the
+        // measurements agreed with Windows and the pixels did not.
+        _renderer = new WgpuSceneRenderer(ctx, LoadFont(), new KerningTextShaper());
     }
 
     // The face the presenter rasterizes control text with. It MUST stay in step with the one

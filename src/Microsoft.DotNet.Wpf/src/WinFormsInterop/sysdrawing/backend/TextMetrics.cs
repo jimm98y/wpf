@@ -12,7 +12,10 @@ namespace System.Drawing.WebGpuBackend
     internal static class TextMetrics
     {
         private static readonly IFont Font = LoadFont();
-        private static readonly ITextShaper Shaper = new SimpleTextShaper();
+        // KERNING, because Windows kerns a string run and a measurement that does not is a
+        // measurement of a different string. Arial's "AVAVAV..." measures 140 pixels unkerned
+        // against Windows' 121.
+        private static readonly ITextShaper Shaper = new KerningTextShaper();
         private static readonly List<ShapedGlyph> Buf = new List<ShapedGlyph>();
 
         // Width/height of a run at the given pixel em size. Advances are in the font's base pixels
@@ -70,10 +73,14 @@ namespace System.Drawing.WebGpuBackend
                     var faced = font as IHintedGlyphFont;
                     lineWidth = 0f;
                     foreach (ShapedGlyph g in Buf)
+                    {
                         lineWidth += faced is not null
                                      && faced.TryGetDeviceAdvance(g.GlyphId, emPx, out float device)
                                      ? device
                                      : (float)Math.Round(g.Advance * scale);
+                        // Separate from the advance, and rounded on the same grid: see ShapedGlyph.
+                        if (g.Kern != 0f) lineWidth += (float)Math.Round(g.Kern * scale);
+                    }
                 }
                 if (lineWidth > width) width = lineWidth;
             }

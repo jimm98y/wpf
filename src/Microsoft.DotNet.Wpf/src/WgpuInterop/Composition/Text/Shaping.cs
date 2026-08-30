@@ -25,9 +25,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public readonly float XOffset;   // placement offset, base pixels
         public readonly float YOffset;
 
-        public ShapedGlyph(int glyphId, float advance, float xOffset = 0f, float yOffset = 0f)
+        /// <summary>The pair adjustment to the space AFTER this glyph, in base pixels.
+        /// <para>Carried SEPARATELY from Advance, not folded into it, because a caller drawing at a
+        /// device size does not use Advance at all: it asks the face for the advance that size was
+        /// fitted to ('hdmx', or the hinted span) and steps by that. A kern folded into Advance is
+        /// silently dropped by every one of those callers, which is what happened when the kerning
+        /// shaper was first written and why no caller ever used it.</para></summary>
+        public readonly float Kern;
+
+        public ShapedGlyph(int glyphId, float advance, float xOffset = 0f, float yOffset = 0f,
+                           float kern = 0f)
         {
-            GlyphId = glyphId; Advance = advance; XOffset = xOffset; YOffset = yOffset;
+            GlyphId = glyphId; Advance = advance; XOffset = xOffset; YOffset = yOffset; Kern = kern;
         }
     }
 
@@ -68,7 +77,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
     }
 
-    /// <summary>Adds pairwise kerning on top of the simple mapping.</summary>
+    /// <summary>Adds pairwise kerning on top of the simple mapping.
+    /// <para>WINDOWS KERNS A STRING RUN, and until this was wired up we did not. Arial's line of
+    /// 'AVAVAV...' came out 140 pixels wide against Windows' 121 -- a whole pixel per pair, all of
+    /// it accumulating -- and one kern pair in the middle of a line puts every glyph after it on
+    /// the wrong column. The specimen line hid it behind a single pair, (space, A), which is why
+    /// it read as "Arial's capitals are misplaced" for so long.</para></summary>
     internal sealed class KerningTextShaper : ITextShaper
     {
         public void Shape(IShapingFont font, string text, List<ShapedGlyph> output)
@@ -85,7 +99,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (font.TryGetKerning(output[i].GlyphId, output[i + 1].GlyphId, out float k))
                 {
                     ShapedGlyph g = output[i];
-                    output[i] = new ShapedGlyph(g.GlyphId, g.Advance + k, g.XOffset, g.YOffset);
+                    output[i] = new ShapedGlyph(g.GlyphId, g.Advance, g.XOffset, g.YOffset, k);
                 }
             }
         }
