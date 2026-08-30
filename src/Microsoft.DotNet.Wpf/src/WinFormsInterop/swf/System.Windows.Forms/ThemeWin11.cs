@@ -2175,9 +2175,25 @@ namespace System.Windows.Forms
 			// rectangle and not its display rectangle: the display rectangle is where the page goes,
 			// already inset by the padding the frame and its margin take up, so framing that drew the
 			// border a couple of pixels in from the edge it belongs on.
-			int shoulder = Math.Max (area.Y, row.Bottom - 1);
-			var body = new Rectangle (area.X, shoulder, area.Width, Math.Max (0, area.Bottom - shoulder));
+			// THE PANE, MEASURED off a stock tab control rather than derived. Both controls occupy
+			// the same 240 columns and end on the same one; Windows' pane is the smaller of the two
+			// and sits inside them:
+			//     ours    x 826..1065   y 55..163      Windows   x 826..1063   y 56..162
+			// so its top is the tab row's BOTTOM (not one above it), its left edge is the control's,
+			// and it stops two columns short on the right and one row short at the bottom, leaving
+			// the tab strip's own #F3F3F3 showing in the gap. The single row at 162 was the largest
+			// difference anywhere in the control, 14,280 of it, purely from the border being one
+			// row out.
+			int shoulder = Math.Max (area.Y, row.Bottom);
+			var body = new Rectangle (area.X, shoulder, Math.Max (0, area.Width - 2),
+						  Math.Max (0, area.Bottom - shoulder - 1));
 			if (body.Width > 0 && body.Height > 0) {
+				// The two columns and one row the pane stops short of are not the form showing
+				// through: Windows fills them with the same #F3F3F3 the resting tabs are, so the
+				// pane sits on a band of its own strip rather than on the dialog.
+				dc.FillRectangle (ResPool.GetSolidBrush (TabRestFace),
+						  new Rectangle (area.X, shoulder, area.Width,
+								 Math.Max (0, area.Bottom - shoulder)));
 				dc.FillRectangle (ResPool.GetSolidBrush (TabPaneFace), body);
 				dc.DrawRectangle (edge, body.X, body.Y, body.Width - 1, body.Height - 1);
 			}
