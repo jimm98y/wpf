@@ -552,20 +552,11 @@ namespace System.Windows.Forms
 			g.DrawLine (p, x + 3, y + 1, x + 3, y + 2);
 		}
 
+		// THEMED, because the grip is one of the few things Windows 11 redrew outright: six tan
+		// boxes became ten white dots. See Theme.StatusStripSizingGrip.
 		private void DrawSizingGrip (Graphics g, Rectangle rect)
 		{
-			DrawGripBox (g, rect.Right - 5, rect.Bottom - 5);
-			DrawGripBox (g, rect.Right - 9, rect.Bottom - 5);
-			DrawGripBox (g, rect.Right - 5, rect.Bottom - 9);
-			DrawGripBox (g, rect.Right - 13, rect.Bottom - 5);
-			DrawGripBox (g, rect.Right - 5, rect.Bottom - 13);
-			DrawGripBox (g, rect.Right - 9, rect.Bottom - 9);
-		}
-		
-		private void DrawGripBox (Graphics g, int x, int y)
-		{
-			g.DrawRectangle (Pens.White, x + 1, y + 1, 1, 1);
-			g.DrawRectangle (ThemeEngine.Current.ResPool.GetPen (Color.FromArgb (172, 168, 153)), x, y, 1, 1);
+			ThemeEngine.Current.StatusStripSizingGrip (g, rect);
 		}
 		#endregion
 	}

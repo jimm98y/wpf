@@ -1172,6 +1172,19 @@ namespace System.Windows.Forms
 		#endregion	// VScrollBar
 
 		#region TreeView
+		/// <summary>The status strip's resize grip, so a theme can draw the one its Windows draws.
+		/// The classic look is six boxes, each a tan square with a white one below and right.
+		/// </summary>
+		public virtual void StatusStripSizingGrip (Graphics g, Rectangle rect)
+		{
+			for (int i = 0; i < 6; i++) {
+				int x = rect.Right - (i == 3 ? 13 : i == 1 || i == 5 ? 9 : 5);
+				int y = rect.Bottom - (i == 4 ? 13 : i == 2 || i == 5 ? 9 : 5);
+				g.DrawRectangle (Pens.White, x + 1, y + 1, 1, 1);
+				g.DrawRectangle (ResPool.GetPen (Color.FromArgb (172, 168, 153)), x, y, 1, 1);
+			}
+		}
+
 		/// <summary>The colour of a tree's connector lines, or Empty to derive one from the
 		/// background. Windows draws them in a fixed grey of its own.</summary>
 		public virtual Color TreeViewLineColor (TreeView tv) => Color.Empty;

@@ -1604,6 +1604,28 @@ namespace System.Windows.Forms
 
 		/// <summary>#6D6D6D, measured off a stock tree. The derived value is 85 and Windows draws
 		/// 109; the dots sit on the same rows and columns, so it is only the colour.</summary>
+		/// <summary>The status strip's resize grip. The classic one is six boxes -- a three-two-one
+		/// triangle -- each a tan #ACA899 square with a white one a pixel down and right of it.
+		/// Windows 11 draws TEN, a four-three-two-one triangle, and every one of them pure white
+		/// with no tan at all.
+		/// <para>Measured off a stock strip: #FFFFFF two-pixel squares at x 1062, 1066, 1071 and
+		/// 1075 with the window 1080 wide, and y 643, 647, 651 and 655 with the strip ending at
+		/// 660 -- four apart in both directions, the nearest five from each edge.</para></summary>
+		public override void StatusStripSizingGrip (Graphics g, Rectangle rect)
+		{
+			// FOUR AND A THIRD, not four. Windows' dots sit at 1075, 1071, 1066 and 1062 across --
+			// gaps of four, FIVE, four -- and at 655, 651, 646, 642 down, the same. Rounding 13/3
+			// reproduces both columns exactly; a step of four leaves the far dots a pixel in.
+			const int Rows = 4;
+			const float Step = 13f / 3f;
+			Brush white = ResPool.GetSolidBrush (Color.White);
+			for (int row = 0; row < Rows; row++)
+				for (int col = Rows - 1 - row; col < Rows; col++)
+					g.FillRectangle (white,
+							 (int) Math.Round (rect.Right - 5 - (Rows - 1 - col) * Step),
+							 (int) Math.Round (rect.Bottom - 5 - (Rows - 1 - row) * Step), 2, 2);
+		}
+
 		public override Color TreeViewLineColor (TreeView tv) => Color.FromArgb (109, 109, 109);
 
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
