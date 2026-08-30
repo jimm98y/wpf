@@ -524,7 +524,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_positionsOnPhysicalGrid =
             Environment.GetEnvironmentVariable("WPF_CT_POSGRID") == "physical";
 
-        internal static bool ClearTypeInfo =
+        internal static bool ClearTypeInfo =>
+            s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering;
+
+        private static readonly bool s_ctInfoAllowed =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
 
         internal bool PrepareForSize(float pixelsPerEm) => IsUsable && pixelsPerEm > 0f && PrepareSize(pixelsPerEm);

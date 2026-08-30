@@ -1093,6 +1093,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// also what "GDI keeps natural widths" has said all along.</para></summary>
         internal static bool SubpixelFitting { get; set; }
 
+        /// <summary>Whether ClearType is the mode being DRAWN, as opposed to the fitting in use.
+        /// <para>The interpreter tells a face what GETINFO says and rounds on the ClearType grid
+        /// when it is on. Off it, GDI answers no and rounds on whole pixels, so drawing grey text
+        /// while still saying yes fits the glyph for a rasterizer that is not running.</para>
+        /// <para>Separate from <see cref="SubpixelFitting"/> on purpose: the stage tests toggle that
+        /// to fit a glyph both ways, and doing so must not change what the face is told.</para>
+        /// </summary>
+        internal static bool ClearTypeRendering { get; set; } = true;
+
         /// <summary>Snap the fitted glyph's left edge onto a whole pixel: 1 nearest, 2 ceil, 3 floor.
         /// <para>WPF_X_LSBSNAP.</para></summary>
         /// <summary>WPF_X_SHIFTS: a file of "SHIFT ppem glyphId sixteenths" lines. Diagnostic.</summary>
