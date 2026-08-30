@@ -572,7 +572,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // black-and-white rasterization and might have been expected to hint as
                             // one: saying no turns twenty-three disagreements with Windows into a
                             // hundred and five. It reports greyscale.
-                            if (!ClearTypeInfo && (selector & 32) != 0) result |= 1 << 12;
+                            if ((s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0) result |= 1 << 12;
                             if (ClearTypeInfo)
                             {
                                 // WHAT GDI ANSWERS WHEN IT IS ACTUALLY DRAWING CLEARTYPE, which is
@@ -877,6 +877,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_GETINFO_TRACE=1: log every GETINFO a face asks, prep included. What a
         /// face BRANCHES on is the only way its program can behave differently for us than for
         /// GDI, so it is worth being able to see.</summary>
+        /// <summary>WPF_CT_GREY=1: answer the GREYSCALE bit even when drawing ClearType. NO, and
+        /// measured: the six-face specimen goes 2,197,658 -> 2,286,187.
+        /// <para>Worth asking because selector 32 is the ONLY channel by which our ClearType claim
+        /// reaches any of these faces. Traced with WPF_GETINFO_TRACE=1, all six ask for the
+        /// rasterizer VERSION and the GREYSCALE bit and nothing else -- Segoe UI, Arial and Times
+        /// also ask about rotation, Consolas about rotation and stretch. NOT ONE asks for the
+        /// ClearType bit, the compatible-widths bit, the stripe bit or the symmetric bit, so the
+        /// four answers below them are unexercised by every face this port is measured against.
+        /// Keep them, they cost nothing and another face may ask -- but do not tune against
+        /// them.</para></summary>
+        private static readonly bool s_greyAlways =
+            Environment.GetEnvironmentVariable("WPF_CT_GREY") == "1";
+
         /// <summary>What GETINFO answers for the rasterizer VERSION: THIRTY-FIVE, which is what GDI
         /// is. WPF_RASTERIZER sweeps it.
         /// <para>Worth a knob because Segoe UI's 'prep' asks for this THREE TIMES and asks for
