@@ -183,6 +183,12 @@ namespace System.Drawing.WebGpuBackend
         // renderer honours, whereas the solid path above collapses a line to a filled 1px rect and
         // would lose the pattern entirely. The forms designer draws its 8x8 dot grid as horizontal
         // lines dashed {1, 7}, so losing it turned the design surface into solid stripes.
+        /// <summary>WPF_DASH=line: anchor a dash pattern to the LINE rather than to the device
+        /// grid, starting on the gap. The one model that fits all three connector measurements.
+        /// </summary>
+        private static readonly bool s_dashLineRelative =
+            System.Environment.GetEnvironmentVariable("WPF_DASH") == "line";
+
         public void DrawDashedLine(float x1, float y1, float x2, float y2, int argb, float width, float[] dashPattern)
         {
             if (dashPattern == null || dashPattern.Length == 0)
@@ -228,12 +234,20 @@ namespace System.Drawing.WebGpuBackend
                 //
                 // What is still unexplained is the ARM: at row 414 Windows inks columns 591, 593,
                 // 595, 597 -- the odd parity -- where this gives it the even one. So verticals want
-                // phase 0 and that horizontal wants phase 1, which no single anchor produces. A
-                // line-relative pattern whose first unit is OFF fits all three observations, but
-                // line-relative was measured wrong here before (see the paragraph above), so the
-                // evidence is recorded rather than acted on. The checkerboard cost 4,380 in the
-                // tree view alone: the arm came out exact and both uprights inverted.
-                offset = ((x1 == x2 ? anchorY : anchorX) / w) % period;
+                // phase 0 and that horizontal wants phase 1, which no single anchor produces.
+                // THREE MODELS TRIED, ALL THREE WRONG:
+                //     device grid, varying axis   1,376,484   <- here, and the best of them
+                //     checkerboard (x + y)        1,380,450
+                //     line-relative, gap first    1,380,426   (WPF_DASH=line)
+                // I talked myself into the last one on the grounds that it "fits all three
+                // observations". It does not, and the measurement says so: it costs what the
+                // checkerboard costs because it inverts the same two uprights, which means those
+                // uprights START ON AN EVEN ROW -- not the odd one that argument needed. An
+                // assumption never checked, inside a sentence that sounded like a deduction.
+                // Whatever puts that one arm on the odd columns, it is none of these three.
+                offset = s_dashLineRelative
+                    ? (dashes.Length > 0 ? dashes[0] : 0.0)      // line-relative, first unit OFF
+                    : ((x1 == x2 ? anchorY : anchorX) / w) % period;
                 if (offset < 0.0) offset += period;
             }
 
