@@ -384,6 +384,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x29: break;                                                   // (unused)
 
                     case 0x30: InterpolateUntouched(false); _iupDone = true; break;      // IUP[y]
+                    // IUP[x] belongs, and it was worth checking: under ClearType x is fitted only
+                    // lightly, so a rasterizer might reasonably leave every point the program did
+                    // not explicitly move where the scaling put it. Skipping it costs 759,520 ->
+                    // 1,203,544, and the digits -- which nothing else here disturbs -- go 20,168 ->
+                    // 44,940. The untouched points do get dragged along.
                     case 0x31: InterpolateUntouched(true); _iupDone = true; break;       // IUP[x]
 
                     case 0x32: case 0x33: ShiftByPoint(op == 0x33); break;               // SHP[a]
