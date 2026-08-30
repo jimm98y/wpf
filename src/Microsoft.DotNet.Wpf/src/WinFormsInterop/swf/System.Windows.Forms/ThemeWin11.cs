@@ -513,6 +513,18 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
+		/// <summary>How wide the tick's stroke is. Measured over both regions that draw one:
+		///     0.30 94,252   0.44 93,960   0.55 94,438   0.60 92,532
+		///     0.62 92,510   0.65 92,518   0.70 92,652   0.75 92,990   0.90 94,098
+		/// A clear basin from 0.60 to 0.70 with 0.62 at the bottom. (0.55 reading worse than both
+		/// its neighbours is not noise -- these regions repeat to the pixel across captures -- it is
+		/// a stroke width falling either side of a rasterization threshold.) WPF_TICK_WIDTH sweeps
+		/// it.</summary>
+		private static readonly float TickWidth =
+			float.TryParse (Environment.GetEnvironmentVariable ("WPF_TICK_WIDTH"),
+					System.Globalization.NumberStyles.Float,
+					System.Globalization.CultureInfo.InvariantCulture, out float tw) ? tw : 0.62f;
+
 		/// <summary>How far a check box's corner is rounded. THREE, measured over the whole of the
 		/// two regions that draw these boxes rather than off one corner:
 		///     radius   2.0     2.5     2.75    3.0     3.25    3.5
@@ -606,7 +618,7 @@ namespace System.Windows.Forms
 			// as a different mark rather than the same one drawn a little off.
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, 0.44f)) {
+			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, TickWidth)) {
 				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
 				g.DrawLines (pen, new PointF [] {
 					new PointF (x + w * 0.30f, y + h * 0.56f),
