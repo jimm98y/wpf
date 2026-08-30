@@ -1324,6 +1324,66 @@ namespace WgpuInterop.Tests.Text
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>Which FIT each glyph's pixels prefer: the ClearType rounding or the bi-level one.
+        /// <para>Every rule tried for choosing between them was a guess at a discriminator -- height,
+        /// then ascenders, then curvature -- checked against a whole band of the specimen at a time.
+        /// This asks the question one glyph at a time and in the only court that matters, GDI's own
+        /// lamps: fit the glyph both ways, rasterize both, and report which is closer.</para>
+        /// <para>Reported only: set WPF_FITCHOICE.</para></summary>
+        [Theory]
+        [InlineData(11)]
+        [InlineData(12)]
+        [InlineData(16)]
+        public void WhichFitDoThePixelsPrefer(int ppem)
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_FITCHOICE");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_FITCHOICE to collect this");
+            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            byte[] bytes = File.ReadAllBytes(file!);
+            var raw = new byte[Width * Height * 4];
+            var report = new System.Text.StringBuilder();
+            int baseline = ppem + 12;
+            var wantsBi = new System.Text.StringBuilder();
+            var wantsCt = new System.Text.StringBuilder();
+            double gain = 0;
+
+            foreach (char c in Letters)
+            {
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+
+                // A FRESH font for each fit: hinted outlines are cached by (glyph, size), so the
+                // second ask would otherwise return the first fit's answer.
+                var ctFont = new TrueTypeFont(bytes);
+                if (!((IHintedGlyphFont) ctFont).TryGetHintedOutline(ctFont.GlyphIndex(c), ppem,
+                                                                     out List<PathFigure> ct)) continue;
+                var biFont = new TrueTypeFont(bytes);
+                List<PathFigure> bi;
+                TrueTypeInterpreter.BiLevelPass = true;
+                try
+                {
+                    if (!((IHintedGlyphFont) biFont).TryGetHintedOutline(biFont.GlyphIndex(c), ppem, out bi))
+                        continue;
+                }
+                finally { TrueTypeInterpreter.BiLevelPass = false; }
+
+                double ctErr = GlyphLampError(ct, PenX, baseline, raw);
+                double biErr = GlyphLampError(bi, PenX, baseline, raw);
+                if (biErr < ctErr) { wantsBi.Append(c); gain += ctErr - biErr; }
+                else wantsCt.Append(c);
+            }
+            report.AppendLine($"== {ppem}ppem");
+            report.AppendLine($"   prefer BI-LEVEL ({wantsBi.Length}): {wantsBi}");
+            report.AppendLine($"   prefer CLEARTYPE ({wantsCt.Length}): {wantsCt}");
+            report.AppendLine($"   choosing per glyph would be worth {gain:0}");
+            lock (Repertoire) File.AppendAllText(path!, report.ToString());
+        }
+
         /// <summary>The leftmost x a figure reaches, control points included.</summary>
         private static float FigureLeft(PathFigure f)
         {

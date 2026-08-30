@@ -1444,6 +1444,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                 }
                 int ppemI = (int) MathF.Round(pixelsPerEm);
+                // MODE 4, measured and NOT the default: 815,655 against mode 1's 759,520, with
+                // 829,983 for no correction at all. So it is a real correction and the smaller half
+                // of the right one -- the advance genuinely does need fixing, and stretching the
+                // glyph onto it beats sliding the glyph inside it. Move the ink instead of
+                // stretching it. "Adjusted post hinting to return
+                // advance widths the same as bi-level" says the ADVANCE must come out right; mode 1
+                // reads that as scaling the glyph, which also changes every stem width the fitting
+                // just chose. This reads it as changing only the SPACE around the glyph: the left
+                // side bearing scales with the advance and the ink rides along unchanged.
+                if (CompatibleWidthMode == 4 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    float wanted4 = TryGetHdmxAdvance(gid, ppemI, out float hd4)
+                        ? hd4
+                        : MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+                    int target4 = (int) MathF.Round(wanted4 * 64f);
+                    int off4 = Math.Abs(target4 - fitted) * 100;
+                    if (target4 > 0 && target4 != fitted && off4 <= fitted * CompatibleWidthTolerance)
+                    {
+                        int inkLeft = int.MaxValue;
+                        for (int i = 0; i < glyph.PointCount && i < glyph.X.Length; i++)
+                            if (glyph.X[i] < inkLeft) inkLeft = glyph.X[i];
+                        if (inkLeft != int.MaxValue)
+                        {
+                            int lsb = inkLeft - p0;
+                            int shift = (int) ((long) lsb * target4 / fitted) - lsb;
+                            for (int i = 0; i < glyph.X.Length; i++) glyph.X[i] += shift;
+                            if (glyph.X.Length > glyph.PointCount + 1)
+                                glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target4;
+                        }
+                    }
+                }
                 if ((CompatibleWidthMode == 1 || CompatibleWidthMode == 3) && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
                     // hdmx if the face ships it, else the scaled advance rounded to a pixel, which is
