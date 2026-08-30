@@ -1287,6 +1287,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // from a capital -- 'b' is 8.1px tall and 'H' is 8.0 -- but the font can: an
                     // ascender reaches ABOVE the cap height, and a descender below the baseline,
                     // and a capital does neither.
+                    // Fitting every CURVE-FREE glyph bi-level was tried here, on the reasoning that
+                    // at 12ppem 'H' wants its stems on whole pixels (GDI puts them at 1 and 7 where
+                    // our sixteenth grid leaves 1.125 and 6.812) while the digits beside it, exactly
+                    // as tall, are reproduced almost pixel for pixel by the ClearType fit. It does
+                    // help the capitals, 94,146 -> 87,305, and it costs far more everywhere else:
+                    // 759,520 -> 944,858. Curvature is not the discriminator either.
+
                     if (!small && ExtenderRule && _sxHeight > 0 && _sCapHeight > 0)
                     {
                         float xh = interpreter.ScaleToPixels(_sxHeight) / 64f;
