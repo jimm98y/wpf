@@ -866,6 +866,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>A sub-pixel x offset applied to the fitted outline, in 64ths of a pixel.</summary>
+        /// <summary>A whole-run x offset in 64ths, for asking whether our glyphs sit where Windows'
+        /// do. Swept 2026-08-30 on the six-face specimen: -4/64 2,950,670; -2/64 2,502,263; ZERO
+        /// 2,197,658; +2/64 2,389,737; +4/64 2,697,720; +6/64 3,111,741. A clean minimum at zero,
+        /// so our placement is right ON AVERAGE and what differs is per-glyph, not a shift.</summary>
         internal static readonly int XOffset64 =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_OFFSET"), out int xo) ? xo : 0;
 

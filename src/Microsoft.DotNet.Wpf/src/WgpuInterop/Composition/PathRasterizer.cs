@@ -391,6 +391,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// {0.286, 0.6, 1.0, 0.6, 0.286} -- a three-tap box with a darkening gamma of about 0.88 over
         /// it, not the classic five-tap.</para>
         ///
+        /// <para>RE-SWEPT 2026-08-30 against the six-face specimen, after the baseline, advance,
+        /// kerning and y-cut-in fixes. The box still wins and the trade is still monotone in width:
+        /// [0,1,1,1,0] 2,197,658; [4,80,88,80,4] 2,380,749; [8,77,86,77,8] 2,532,549; [1,2,3,2,1]
+        /// 3,343,483; no filter at all 5,279,402. Nothing here changes -- but the numbers it was
+        /// last argued from were measured against a renderer that drew two of its six faces two
+        /// pixels high, so they were not numbers about the filter.</para>
+        ///
         /// <para>IT IS NOW THE BOX, [0,1,1,1,0]/3, and the reason is a COUNT rather than a sweep.
         /// GDI's ClearType output holds exactly seven distinct levels (k/6). Three-valued lamps
         /// through a three-tap box produce exactly seven levels; through any wider filter they
