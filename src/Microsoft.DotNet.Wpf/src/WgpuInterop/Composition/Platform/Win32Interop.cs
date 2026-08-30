@@ -162,7 +162,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             catch (EntryPointNotFoundException) { return 0; }
         }
 
+        /// <summary>True when the display's subpixels run BLUE, green, red from the left.
+        /// <para>Which third of a pixel is which colour is a property of the PANEL, and Windows lets
+        /// the user say so. On a BGR display the fringe colours are mirrored, so drawing RGB there
+        /// puts red where Windows puts blue on every glyph edge -- not subtly wrong, inside out.</para>
+        /// </summary>
+        internal static bool FontSmoothingIsBgr()
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            try
+            {
+                uint value = 0;
+                return SystemParametersInfo(SPI_GETFONTSMOOTHINGORIENTATION, 0, ref value, 0)
+                    && value == FE_FONTSMOOTHINGORIENTATIONBGR;
+            }
+            catch (DllNotFoundException) { return false; }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
         private const uint SPI_GETFONTSMOOTHINGCONTRAST = 0x200C;
+        private const uint SPI_GETFONTSMOOTHINGORIENTATION = 0x2012;
+        private const uint FE_FONTSMOOTHINGORIENTATIONBGR = 0;
 
         [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
         private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);

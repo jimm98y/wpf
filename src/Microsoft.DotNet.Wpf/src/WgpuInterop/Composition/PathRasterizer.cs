@@ -535,6 +535,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ? hl : 2;
 
         /// <summary>WPF_SUBPIXEL_COLLAPSE=avg: box-downsample the half-lamps instead of thresholding.</summary>
+        /// <summary>Whether the display's subpixels run blue, green, red from the left.
+        /// <para>Read once from the same Windows setting the user sets in the ClearType tuner.
+        /// WPF_SUBPIXEL_BGR=1/0 forces it, which is the only way to exercise the other order on a
+        /// machine that is not built that way.</para></summary>
+        internal static readonly bool LampsRunBlueFirst =
+            Environment.GetEnvironmentVariable("WPF_SUBPIXEL_BGR") is string s2 && s2.Length > 0
+                ? s2 == "1"
+                : Platform.Win32Interop.FontSmoothingIsBgr();
+
         private static readonly bool AverageHalfLamps =
             Environment.GetEnvironmentVariable("WPF_SUBPIXEL_COLLAPSE") == "avg";
 
@@ -671,7 +680,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             sum += samples[sampleRow + s] * SubpixelFilter[t + radius];
                         }
                         int value = Math.Clamp((int)MathF.Round(sum), 0, 255);
-                        rgba[outIndex + lamp] = (byte)value;
+                        // The filter works in SPACE, so only the colour each lamp is handed to
+                        // changes on a BGR panel: the leftmost third is blue there, not red.
+                        rgba[outIndex + (LampsRunBlueFirst ? 2 - lamp : lamp)] = (byte)value;
                         total += value;
                     }
                     // Alpha is what the destination is dimmed by where the three disagree; the mean of
