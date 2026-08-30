@@ -84,7 +84,13 @@ namespace Wpf.WinFormsInterop.Tests
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
             ["button-disabled"] = (352, 261),
-            ["button-flat"] = (148, 385),
+            // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
+            // moving to where the LIVE stock window draws it and from the string-format margin it
+            // used to carry. This reference is rendered on a form that was never shown, and where
+            // the two disagree the live window is the authority -- see the disabled button above,
+            // which has the same note for the same reason. Ink 148 -> 106 here and 266 -> 168 there
+            // says the shapes agree better than they did; the shade is a few edge pixels either way.
+            ["button-flat"] = (106, 398),
             // The check GLYPH moved up a row to sit where the live window beside ours puts it, so these
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
@@ -102,7 +108,7 @@ namespace Wpf.WinFormsInterop.Tests
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
-            ["groupbox"] = (266, 147),
+            ["groupbox"] = (168, 189),
             // A horizontal scroll bar's thumb was placed without the leading arrow's width at startup
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
@@ -133,14 +139,14 @@ namespace Wpf.WinFormsInterop.Tests
             // it. The live-window comparison is the authority for this one.
             // The INK figure here is that page fill and nothing else, so it moves whenever the tab
             // geometry does and is not a quality signal; the SHADE figure is the one to read.
-            ["tabcontrol"] = (12459, 295),
+            ["tabcontrol"] = (12024, 295),
             ["textbox"] = (0, 764),
             // The remaining shade is the dots being antialiased differently, not drawn differently:
             // Windows renders text with ClearType and we render it grey. See the glyph parity suite.
             ["textbox-password"] = (0, 602),
             // The slider is nineteen rows and the channel one row up, both measured on the live window,
             // and the ticks now snap to a column instead of being spread over two by a fractional x.
-            ["trackbar"] = (310, 10),
+            ["trackbar"] = (4, 10),
             // The dotted connector now hangs from the centre of its expander box and reaches the
             // label, as Windows draws it (TreeView.DrawNodeLines). Two pixels changed shade in
             // trade; against the live window that was 2,628 pixels of position recovered.
