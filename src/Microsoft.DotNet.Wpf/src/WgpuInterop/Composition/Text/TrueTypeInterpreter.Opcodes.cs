@@ -968,6 +968,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     distances on the physical grid  3,810,559
             //     narrow reading (unrounded only) 3,319,606 against 2,197,690
             // Sixteen, no stem snapping, and the broad reading -- by a wide margin in each case.
+            // So are the other four: positions on the 16 grid (physical 3,805,858, /1 3,805,855,
+            // /2 2,853,991, /3 2,620,282), the minimum distance HALVED in the ClearType direction
+            // (full 2,284,820), the three-tap box filter, and no run offset. Eight parameters, all
+            // already at their optimum, which is the useful part of the result: WHAT IS LEFT IS NOT
+            // REACHABLE FROM ANY OF THEM.
+            //
+            // What is left, measured. Take every maximal run of inked lamps in a band, and histogram
+            // (a) its ink centroid modulo one pixel and (b) its total coverage. On Segoe UI ITALIC,
+            // which is our best band anywhere at 9,760, our two histograms equal Windows' bin for
+            // bin -- so the instrument is sound and the pipeline can match GDI exactly. On Segoe UI
+            // REGULAR the coverage histogram peaks one bin BELOW Windows': our vertical stems carry
+            // about half a lamp less ink than Windows' do, and the phase difference follows from
+            // that (a stem half a lamp narrower has its centroid a quarter lamp to the left).
+            //
+            // So our stems are NARROW, not misplaced, and italics escape it because they have no
+            // vertical stems for a control value to govern. The face's control value for Segoe UI's
+            // 'l' at 12ppem is exactly 1.0px and the MIRP that applies it does not round, so we draw
+            // exactly what the face asks for -- and GDI draws WIDER than both that control value and
+            // the outline. Whatever does that, it is not any threshold in this file.
             // AND ONLY IN THE CLEARTYPE DIRECTION, like the minimum distance below it. Everything
             // in the paragraphs above is about x: the sixteenth is what ClearType does to the cut-in
             // along the axis it oversamples. There is no ClearType in y -- a scan line is a scan
