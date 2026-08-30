@@ -3716,7 +3716,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly float SubpixelGamma =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAMMA"),
                            System.Globalization.NumberStyles.Float,
-                           System.Globalization.CultureInfo.InvariantCulture, out float g) ? g : 1.15f;
+                           System.Globalization.CultureInfo.InvariantCulture, out float g)
+                ? g : GammaForSystemContrast();
+
+        /// <summary>The exponent that matches the ClearType CONTRAST the user has set.
+        /// <para>1.15 was measured against Windows on a machine set to 1200 and then written down as
+        /// a constant, which is only right on that machine -- and the Windows DEFAULT is 1400, where
+        /// a constant 1.15 costs about six percent (879,159 against 827,148 on the text specimen).
+        /// </para>
+        /// <para>The relation is a straight line, and it was measured rather than assumed: setting
+        /// the system contrast to 1000, 1200 and 1400 in turn and re-sweeping our exponent against
+        /// Windows' own rendering each time gives an optimum of 1.00, 1.15 and 1.30. Two points
+        /// would have been a guess; the third was a PREDICTION -- 1.00 at contrast 1000 -- and it
+        /// came back a clear minimum, 688,210 against 792,180 and 849,488 a tenth either side.</para>
+        /// <para>Off Windows, and if the setting cannot be read, keep 1.15: there is no ClearType
+        /// contrast to honour there and no reference to re-measure against, so this is not the place
+        /// to change how those platforms look.</para></summary>
+        private static float GammaForSystemContrast()
+        {
+            int contrast = Platform.Win32Interop.FontSmoothingContrast();
+            if (contrast < 1000 || contrast > 2200) return 1.15f;
+            return 0.75f * (contrast / 1000f) + 0.25f;
+        }
 
         /// <summary>How hard the curve pushes coverage AWAY from the middle, after the gamma.
         /// <para>A power curve can only slide the whole line up or down, and what is left disagreeing

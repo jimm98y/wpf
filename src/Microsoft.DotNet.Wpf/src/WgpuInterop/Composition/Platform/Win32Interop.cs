@@ -144,6 +144,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             return true;
         }
 
+        /// <summary>The ClearType CONTRAST the user has set, 1000..2200, or 0 if it cannot be read.
+        /// <para>Win32 calls it SPI_GETFONTSMOOTHINGCONTRAST and the tuner UI calls it gamma; it is
+        /// the contrast the GDI ClearType algorithm blends with, and it is a per-user setting whose
+        /// Windows default is 1400. Text weight cannot be a constant while this is a variable.</para>
+        /// </summary>
+        internal static int FontSmoothingContrast()
+        {
+            if (!OperatingSystem.IsWindows()) return 0;
+            try
+            {
+                uint value = 0;
+                return SystemParametersInfo(SPI_GETFONTSMOOTHINGCONTRAST, 0, ref value, 0)
+                    ? (int) value : 0;
+            }
+            catch (DllNotFoundException) { return 0; }
+            catch (EntryPointNotFoundException) { return 0; }
+        }
+
+        private const uint SPI_GETFONTSMOOTHINGCONTRAST = 0x200C;
+
+        [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
+        private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);
+
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
