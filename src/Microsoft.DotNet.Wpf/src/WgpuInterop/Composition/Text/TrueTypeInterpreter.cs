@@ -694,7 +694,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int Project(int dx, int dy) => DotFix14(dx, dy, _gs.ProjX, _gs.ProjY);
 
-        /// <summary>Whether distances are currently measured along x rather than y.</summary>
+        /// <summary>Whether distances are currently measured along x rather than y.
+        /// <para>"Predominantly x" is one reading of the ClearType direction and "has any x in it at
+        /// all" is another, and the difference would be exactly the DIAGONALS -- 'A' 'X' 'M' 'W' 'N'
+        /// 'K' 'V' 'Y' 'Z' '4' '7', the same set our fitting disagrees with GetGlyphOutline about,
+        /// holding several of the dearest glyphs left. It makes NO DIFFERENCE, and not because the
+        /// reading does not matter: sliding the threshold from "any x at all" to "ten times more x
+        /// than y" moves the specimen by 41, which is its own noise. Segoe UI hints along x and y
+        /// and nothing else at these sizes; its diagonals are carried by IUP. So the question is
+        /// moot for this face, and whatever those glyphs disagree about, it is not this.</para>
+        /// </summary>
         private bool IsHorizontalProjection
             => (_gs.ProjX < 0 ? -_gs.ProjX : _gs.ProjX) > (_gs.ProjY < 0 ? -_gs.ProjY : _gs.ProjY);
 
