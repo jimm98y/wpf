@@ -85,6 +85,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     /// it read as "Arial's capitals are misplaced" for so long.</para></summary>
     internal sealed class KerningTextShaper : ITextShaper
     {
+        private static readonly bool s_off =
+            System.Environment.GetEnvironmentVariable("WPF_KERN") == "0";
+
         public void Shape(IShapingFont font, string text, List<ShapedGlyph> output)
         {
             output.Clear();
@@ -94,6 +97,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 output.Add(new ShapedGlyph(gid, font.Advance(gid)));
             }
 
+            if (s_off) return;      // WPF_KERN=0, to measure what kerning is worth region by region
             for (int i = 0; i < output.Count - 1; i++)
             {
                 if (font.TryGetKerning(output[i].GlyphId, output[i + 1].GlyphId, out float k))

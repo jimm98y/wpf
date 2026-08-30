@@ -3758,9 +3758,15 @@ namespace System.Windows.Forms
 				zoom_offset = Point.Empty;
 			}
 
+			// THIS FILL IS DRAWN AFTER THE DATES, so its top edge is the last row of the date grid
+			// or it erases one. It began a row too high, and what it rubbed out was the BOTTOM of the
+			// box around today's date -- the other three sides drawn, the fourth painted over a
+			// moment later, which is why the box read as cut off at the bottom rather than as
+			// mispositioned. The date grid itself was never wrong: every inked row band in the
+			// calendar matches Windows' exactly, and Windows simply has one more of them.
 			Rectangle bottom_rect = new Rectangle (
 						client_rectangle.X,
-						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 3 - margin, 0),
+						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 2 - margin, 0),
 						client_rectangle.Width,
 						date_cell_size.Height + 2);
 			// draw the today date if it's set

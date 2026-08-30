@@ -15,7 +15,24 @@ namespace System.Drawing.WebGpuBackend
         // KERNING, because Windows kerns a string run and a measurement that does not is a
         // measurement of a different string. Arial's "AVAVAV..." measures 140 pixels unkerned
         // against Windows' 121.
-        private static readonly ITextShaper Shaper = new KerningTextShaper();
+        // WPF_KERN_MEASURE=0 kerns when DRAWING but not when MEASURING, to tell a text difference
+        // from a LAYOUT one: a measured width feeds AutoSize, and a control that measures a pixel
+        // narrower moves everything laid out after it.
+        //
+        // MEASURED on the control window. Kerning is worth 40,000 overall (1,807,443 unkerned
+        // against 1,767,527), and its effect is UNEVEN: TreeView -57,452, RichTextBox -55,146, the
+        // labelled TextBox -55,146, ListView -31,900 and TabControl -21,416, against MonthCalendar
+        // +181,142 and ProgressBar +109,550.
+        //
+        // The ProgressBar has no text at all, and that is the tell: measuring without kerning takes
+        // its error from 166,420 to 73,628 and its POSITION component to exactly zero. It was being
+        // moved, not drawn wrong -- something laid out after a label whose autosize width changed.
+        // Kerning the measurement is still the better setting overall (1,767,527 against 1,776,863
+        // for draw-only), so it stays, but the two are separable and the knob is here because the
+        // next person will want to separate them again.
+        private static readonly ITextShaper Shaper =
+            Environment.GetEnvironmentVariable("WPF_KERN_MEASURE") == "0"
+                ? new SimpleTextShaper() : (ITextShaper) new KerningTextShaper();
         private static readonly List<ShapedGlyph> Buf = new List<ShapedGlyph>();
 
         // Width/height of a run at the given pixel em size. Advances are in the font's base pixels
