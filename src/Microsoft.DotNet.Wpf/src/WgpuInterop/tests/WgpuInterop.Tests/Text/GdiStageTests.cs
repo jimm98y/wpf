@@ -543,11 +543,16 @@ namespace WgpuInterop.Tests.Text
             finally { TrueTypeFont.SubpixelFitting = saved; }
             List<PathFigure> theirs = GdiOutline(c, parts[0], ppem, unhinted: false);
 
-            Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  fitted x coordinates ===");
-            Console.Error.WriteLine("  ours : " + Xs(ours));
-            Console.Error.WriteLine("  gdi  : " + Xs(theirs));
+            // WPF_XMATCH_AXIS=y reads the same comparison on the OTHER axis, where
+            // GetGlyphOutline is authoritative -- y is hinted bi-level in both renderers -- so a
+            // disagreement there is a plain interpreter bug rather than a ClearType question.
+            bool onY = Environment.GetEnvironmentVariable("WPF_XMATCH_AXIS") == "y";
+            Func<List<PathFigure>, string> show = onY ? Ys : Xs;
+            Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  fitted {(onY ? "y" : "x")} coordinates ===");
+            Console.Error.WriteLine("  ours : " + show(ours));
+            Console.Error.WriteLine("  gdi  : " + show(theirs));
             List<PathFigure> plain = GdiOutline(c, parts[0], ppem, unhinted: true);
-            Console.Error.WriteLine("  (unhinted, both agree): " + Xs(plain));
+            Console.Error.WriteLine("  (unhinted, both agree): " + show(plain));
 
             // And the same glyph through the per-call BI-LEVEL pass, which is meant to reproduce the
             // gdi line above without any environment variable set. If it does not, the pass and the

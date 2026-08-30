@@ -116,11 +116,10 @@ namespace WgpuInterop.Tests.Text
             ["&"] = 18,
             ["("] = 18,
             [")"] = 9,
-            ["*"] = 5,
-            ["+"] = 12,
-            [","] = 5,
-            ["-"] = 1,
-            ["."] = 2,
+            ["*"] = 2,
+            ["+"] = 11,
+            [","] = 6,
+            ["."] = 4,
             ["/"] = 1,
             ["0"] = 8,
             ["0123456789@11"] = 21,
@@ -145,9 +144,9 @@ namespace WgpuInterop.Tests.Text
             ["9"] = 6,
             [":"] = 6,
             [";"] = 9,
-            ["<"] = 16,
-            ["="] = 4,
-            [">"] = 19,
+            ["<"] = 17,
+            ["="] = 6,
+            [">"] = 17,
             ["?"] = 12,
             ["@"] = 47,
             ["A"] = 3,
@@ -176,7 +175,7 @@ namespace WgpuInterop.Tests.Text
             ["Handgloves@16bi"] = 19,
             ["Handgloves@16i"] = 11,
             ["I"] = 18,
-            ["Illinois still@11"] = 92,
+            ["Illinois still@11"] = 120,
             ["Illinois still@12"] = 130,
             ["Illinois still@13"] = 153,
             ["Illinois still@16"] = 73,
@@ -193,16 +192,16 @@ namespace WgpuInterop.Tests.Text
             ["NOPQRSTUVWXYZ@19"] = 105,
             ["O"] = 29,
             ["P"] = 20,
-            ["Příliš@12b"] = 79,
+            ["Příliš@12b"] = 78,
             ["Příliš@12bi"] = 13,
             ["Příliš@12i"] = 20,
-            ["Příliš@16b"] = 99,
+            ["Příliš@16b"] = 98,
             ["Příliš@16bi"] = 27,
             ["Příliš@16i"] = 28,
             ["Q"] = 7,
             ["R"] = 14,
             ["S"] = 12,
-            ["Shapes 2026@11"] = 78,
+            ["Shapes 2026@11"] = 92,
             ["Shapes 2026@12"] = 107,
             ["Shapes 2026@13"] = 81,
             ["Shapes 2026@16"] = 111,
@@ -216,10 +215,10 @@ namespace WgpuInterop.Tests.Text
             ["Z"] = 10,
             ["["] = 13,
             ["]"] = 22,
-            ["^"] = 13,
-            ["`"] = 4,
+            ["^"] = 1,
+            ["`"] = 2,
             ["a"] = 11,
-            ["abcdefghijklm@11"] = 149,
+            ["abcdefghijklm@11"] = 218,
             ["abcdefghijklm@12"] = 194,
             ["abcdefghijklm@13"] = 240,
             ["abcdefghijklm@16"] = 130,
@@ -237,7 +236,7 @@ namespace WgpuInterop.Tests.Text
             ["l"] = 9,
             ["m"] = 32,
             ["n"] = 11,
-            ["nopqrstuvwxyz@11"] = 145,
+            ["nopqrstuvwxyz@11"] = 173,
             ["nopqrstuvwxyz@12"] = 128,
             ["nopqrstuvwxyz@13"] = 152,
             ["nopqrstuvwxyz@16"] = 111,
@@ -246,48 +245,48 @@ namespace WgpuInterop.Tests.Text
             ["p"] = 15,
             ["q"] = 20,
             ["r"] = 6,
-            ["repertoire@10"] = 1522,
-            ["repertoire@10b"] = 1553,
-            ["repertoire@10bi"] = 501,
+            ["repertoire@10"] = 653,
+            ["repertoire@10b"] = 811,
+            ["repertoire@10bi"] = 509,
             ["repertoire@10i"] = 334,
-            ["repertoire@11"] = 1599,
-            ["repertoire@11b"] = 2654,
-            ["repertoire@11bi"] = 422,
-            ["repertoire@11i"] = 326,
-            ["repertoire@12"] = 1884,
-            ["repertoire@12b"] = 1321,
-            ["repertoire@12bi"] = 541,
-            ["repertoire@12i"] = 383,
-            ["repertoire@13"] = 2025,
-            ["repertoire@13b"] = 1017,
+            ["repertoire@11"] = 1718,
+            ["repertoire@11b"] = 891,
+            ["repertoire@11bi"] = 443,
+            ["repertoire@11i"] = 340,
+            ["repertoire@12"] = 1842,
+            ["repertoire@12b"] = 1294,
+            ["repertoire@12bi"] = 587,
+            ["repertoire@12i"] = 386,
+            ["repertoire@13"] = 1989,
+            ["repertoire@13b"] = 926,
             ["repertoire@13bi"] = 416,
-            ["repertoire@13i"] = 370,
-            ["repertoire@14"] = 1124,
-            ["repertoire@14b"] = 1172,
+            ["repertoire@13i"] = 372,
+            ["repertoire@14"] = 1011,
+            ["repertoire@14b"] = 1099,
             ["repertoire@14bi"] = 468,
             ["repertoire@14i"] = 1029,
-            ["repertoire@15"] = 1229,
-            ["repertoire@15b"] = 1245,
+            ["repertoire@15"] = 1150,
+            ["repertoire@15b"] = 1108,
             ["repertoire@15bi"] = 444,
             ["repertoire@15i"] = 436,
-            ["repertoire@16"] = 1281,
-            ["repertoire@16b"] = 1238,
+            ["repertoire@16"] = 1125,
+            ["repertoire@16b"] = 1176,
             ["repertoire@16bi"] = 494,
             ["repertoire@16i"] = 526,
-            ["repertoire@17"] = 1267,
-            ["repertoire@17b"] = 1406,
+            ["repertoire@17"] = 1102,
+            ["repertoire@17b"] = 1303,
             ["repertoire@17bi"] = 565,
             ["repertoire@17i"] = 484,
-            ["repertoire@18"] = 1345,
-            ["repertoire@18b"] = 1297,
+            ["repertoire@18"] = 1214,
+            ["repertoire@18b"] = 1194,
             ["repertoire@18bi"] = 585,
             ["repertoire@18i"] = 468,
-            ["repertoire@19"] = 1633,
-            ["repertoire@19b"] = 1769,
+            ["repertoire@19"] = 1519,
+            ["repertoire@19b"] = 1700,
             ["repertoire@19bi"] = 703,
             ["repertoire@19i"] = 528,
-            ["repertoire@20"] = 3029,
-            ["repertoire@20b"] = 2848,
+            ["repertoire@20"] = 2948,
+            ["repertoire@20b"] = 2762,
             ["repertoire@20bi"] = 2239,
             ["repertoire@20i"] = 2031,
             ["s"] = 7,
@@ -301,207 +300,206 @@ namespace WgpuInterop.Tests.Text
             ["{"] = 24,
             ["|"] = 12,
             ["}"] = 26,
-            ["~"] = 5,
+            ["~"] = 8,
             ["Á@11"] = 3,
             ["Á@12"] = 5,
             ["Á@13"] = 2,
-            ["Á@16"] = 3,
+            ["Á@16"] = 2,
             ["Á@19"] = 6,
-            ["Ä@11"] = 3,
-            ["Ä@12"] = 6,
-            ["Ä@13"] = 3,
-            ["Ä@16"] = 10,
-            ["Ä@19"] = 12,
+            ["Ä@11"] = 5,
+            ["Ä@12"] = 3,
+            ["Ä@13"] = 1,
+            ["Ä@16"] = 6,
+            ["Ä@19"] = 5,
             ["É@11"] = 8,
             ["É@12"] = 11,
             ["É@13"] = 13,
-            ["É@16"] = 5,
+            ["É@16"] = 4,
             ["É@19"] = 19,
-            ["Ñ@11"] = 23,
-            ["Ñ@12"] = 27,
+            ["Ñ@11"] = 20,
+            ["Ñ@12"] = 22,
             ["Ñ@13"] = 51,
-            ["Ñ@16"] = 13,
-            ["Ñ@19"] = 13,
+            ["Ñ@16"] = 11,
+            ["Ñ@19"] = 17,
             ["Ö@11"] = 30,
-            ["Ö@12"] = 32,
-            ["Ö@13"] = 30,
-            ["Ö@16"] = 14,
-            ["Ö@19"] = 20,
-            ["Ü@11"] = 20,
-            ["Ü@12"] = 17,
-            ["Ü@13"] = 35,
-            ["Ü@16"] = 12,
-            ["Ü@19"] = 17,
+            ["Ö@12"] = 29,
+            ["Ö@13"] = 29,
+            ["Ö@16"] = 11,
+            ["Ö@19"] = 11,
+            ["Ü@11"] = 21,
+            ["Ü@12"] = 16,
+            ["Ü@13"] = 34,
+            ["Ü@16"] = 6,
+            ["Ü@19"] = 11,
             ["à@11"] = 17,
             ["à@12"] = 13,
             ["à@13"] = 14,
             ["à@16"] = 13,
             ["à@19"] = 12,
-            ["á@11"] = 16,
+            ["á@11"] = 15,
             ["á@12"] = 15,
             ["á@13"] = 16,
-            ["á@16"] = 13,
+            ["á@16"] = 12,
             ["á@19"] = 12,
-            ["â@11"] = 21,
-            ["â@12"] = 17,
-            ["â@13"] = 19,
-            ["â@16"] = 19,
-            ["â@19"] = 18,
-            ["ã@11"] = 20,
-            ["ã@12"] = 19,
+            ["â@11"] = 19,
+            ["â@12"] = 16,
+            ["â@13"] = 18,
+            ["â@16"] = 12,
+            ["â@19"] = 17,
+            ["ã@11"] = 15,
+            ["ã@12"] = 13,
             ["ã@13"] = 18,
-            ["ã@16"] = 15,
-            ["ã@19"] = 15,
-            ["ä@11"] = 17,
-            ["ä@12"] = 13,
-            ["ä@13"] = 16,
-            ["ä@16"] = 20,
-            ["ä@19"] = 18,
+            ["ã@16"] = 14,
+            ["ã@19"] = 16,
+            ["ä@11"] = 15,
+            ["ä@12"] = 12,
+            ["ä@13"] = 15,
+            ["ä@16"] = 15,
+            ["ä@19"] = 12,
             ["å@11"] = 20,
-            ["å@12"] = 19,
-            ["å@13"] = 17,
-            ["å@16"] = 17,
-            ["å@19"] = 16,
-            ["ç@11"] = 13,
-            ["ç@12"] = 23,
-            ["ç@13"] = 22,
-            ["ç@16"] = 16,
+            ["å@12"] = 17,
+            ["å@13"] = 16,
+            ["å@16"] = 10,
+            ["å@19"] = 17,
+            ["ç@11"] = 18,
+            ["ç@12"] = 22,
+            ["ç@13"] = 23,
+            ["ç@16"] = 17,
             ["ç@19"] = 10,
-            ["è@11"] = 10,
+            ["è@11"] = 20,
             ["è@12"] = 16,
             ["è@13"] = 24,
             ["è@16"] = 14,
             ["è@19"] = 5,
-            ["é@11"] = 11,
+            ["é@11"] = 21,
             ["é@12"] = 18,
             ["é@13"] = 22,
-            ["é@16"] = 13,
-            ["é@19"] = 5,
-            ["ê@11"] = 11,
+            ["é@16"] = 10,
+            ["é@19"] = 8,
+            ["ê@11"] = 19,
             ["ê@12"] = 17,
-            ["ê@13"] = 26,
-            ["ê@16"] = 18,
-            ["ê@19"] = 10,
-            ["ë@11"] = 10,
-            ["ë@12"] = 17,
-            ["ë@13"] = 22,
-            ["ë@16"] = 14,
-            ["ë@19"] = 9,
+            ["ê@13"] = 25,
+            ["ê@16"] = 13,
+            ["ê@19"] = 8,
+            ["ë@11"] = 21,
+            ["ë@12"] = 15,
+            ["ë@13"] = 21,
+            ["ë@16"] = 15,
+            ["ë@19"] = 3,
             ["ì@11"] = 10,
             ["ì@12"] = 8,
-            ["ì@13"] = 10,
-            ["ì@16"] = 3,
+            ["ì@13"] = 11,
+            ["ì@16"] = 4,
             ["ì@19"] = 3,
             ["í@11"] = 9,
             ["í@12"] = 10,
             ["í@13"] = 10,
-            ["í@16"] = 3,
+            ["í@16"] = 2,
             ["í@19"] = 2,
-            ["î@11"] = 11,
-            ["î@12"] = 11,
+            ["î@11"] = 12,
+            ["î@12"] = 12,
             ["î@13"] = 12,
-            ["î@16"] = 7,
+            ["î@16"] = 3,
             ["î@19"] = 11,
             ["ï@11"] = 8,
-            ["ï@12"] = 9,
-            ["ï@13"] = 11,
-            ["ï@16"] = 10,
-            ["ï@19"] = 6,
-            ["ñ@11"] = 19,
-            ["ñ@12"] = 18,
-            ["ñ@13"] = 19,
-            ["ñ@16"] = 18,
-            ["ñ@19"] = 35,
-            ["ò@11"] = 10,
+            ["ï@12"] = 8,
+            ["ï@13"] = 8,
+            ["ï@19"] = 4,
+            ["ñ@11"] = 18,
+            ["ñ@12"] = 15,
+            ["ñ@13"] = 17,
+            ["ñ@16"] = 20,
+            ["ñ@19"] = 41,
+            ["ò@11"] = 29,
             ["ò@12"] = 13,
             ["ò@13"] = 27,
-            ["ò@16"] = 12,
+            ["ò@16"] = 13,
             ["ò@19"] = 10,
-            ["ó@11"] = 10,
+            ["ó@11"] = 27,
             ["ó@12"] = 13,
             ["ó@13"] = 24,
-            ["ó@16"] = 15,
-            ["ó@19"] = 13,
-            ["ô@11"] = 13,
-            ["ô@12"] = 15,
-            ["ô@13"] = 30,
-            ["ô@16"] = 18,
+            ["ó@16"] = 14,
+            ["ó@19"] = 10,
+            ["ô@11"] = 31,
+            ["ô@12"] = 16,
+            ["ô@13"] = 28,
+            ["ô@16"] = 13,
             ["ô@19"] = 10,
-            ["õ@11"] = 15,
-            ["õ@12"] = 18,
+            ["õ@11"] = 26,
+            ["õ@12"] = 14,
             ["õ@13"] = 28,
-            ["õ@16"] = 13,
-            ["õ@19"] = 10,
-            ["ö@11"] = 10,
-            ["ö@12"] = 13,
-            ["ö@13"] = 26,
-            ["ö@16"] = 19,
-            ["ö@19"] = 17,
-            ["ù@11"] = 14,
+            ["õ@16"] = 11,
+            ["õ@19"] = 15,
+            ["ö@11"] = 25,
+            ["ö@12"] = 12,
+            ["ö@13"] = 25,
+            ["ö@16"] = 13,
+            ["ö@19"] = 11,
+            ["ù@11"] = 6,
             ["ù@12"] = 26,
             ["ù@13"] = 15,
-            ["ù@16"] = 4,
+            ["ù@16"] = 3,
             ["ù@19"] = 36,
-            ["ú@11"] = 15,
+            ["ú@11"] = 7,
             ["ú@12"] = 28,
             ["ú@13"] = 18,
-            ["ú@16"] = 4,
+            ["ú@16"] = 3,
             ["ú@19"] = 39,
-            ["û@11"] = 17,
-            ["û@12"] = 29,
-            ["û@13"] = 18,
-            ["û@16"] = 11,
-            ["û@19"] = 42,
-            ["ü@11"] = 12,
-            ["ü@12"] = 25,
-            ["ü@13"] = 15,
-            ["ü@16"] = 11,
-            ["ü@19"] = 42,
-            ["ý@11"] = 18,
+            ["û@11"] = 10,
+            ["û@12"] = 28,
+            ["û@13"] = 19,
+            ["û@16"] = 5,
+            ["û@19"] = 37,
+            ["ü@11"] = 4,
+            ["ü@12"] = 24,
+            ["ü@13"] = 14,
+            ["ü@16"] = 8,
+            ["ü@19"] = 40,
+            ["ý@11"] = 17,
             ["ý@12"] = 5,
             ["ý@13"] = 5,
-            ["ý@16"] = 5,
+            ["ý@16"] = 4,
             ["ý@19"] = 5,
-            ["ÿ@11"] = 17,
-            ["ÿ@12"] = 7,
-            ["ÿ@13"] = 8,
-            ["ÿ@16"] = 12,
-            ["ÿ@19"] = 10,
+            ["ÿ@11"] = 18,
+            ["ÿ@12"] = 4,
+            ["ÿ@13"] = 5,
+            ["ÿ@16"] = 6,
+            ["ÿ@19"] = 4,
             ["Č@11"] = 21,
             ["Č@12"] = 15,
-            ["Č@13"] = 21,
-            ["Č@16"] = 11,
-            ["Č@19"] = 7,
-            ["Ř@11"] = 13,
-            ["Ř@12"] = 16,
-            ["Ř@13"] = 31,
-            ["Ř@16"] = 27,
-            ["Ř@19"] = 22,
-            ["Š@11"] = 16,
+            ["Č@13"] = 20,
+            ["Č@16"] = 6,
+            ["Č@19"] = 6,
+            ["Ř@11"] = 17,
+            ["Ř@12"] = 21,
+            ["Ř@13"] = 30,
+            ["Ř@16"] = 19,
+            ["Ř@19"] = 20,
+            ["Š@11"] = 17,
             ["Š@12"] = 15,
-            ["Š@13"] = 14,
-            ["Š@16"] = 12,
+            ["Š@13"] = 12,
+            ["Š@16"] = 11,
             ["Š@19"] = 4,
-            ["š@11"] = 9,
+            ["š@11"] = 14,
             ["š@12"] = 11,
             ["š@13"] = 15,
-            ["š@16"] = 9,
-            ["š@19"] = 10,
-            ["ů@11"] = 19,
+            ["š@16"] = 8,
+            ["š@19"] = 7,
+            ["ů@11"] = 12,
             ["ů@12"] = 28,
-            ["ů@13"] = 20,
-            ["ů@16"] = 7,
-            ["ů@19"] = 42,
-            ["Ž@11"] = 10,
+            ["ů@13"] = 19,
+            ["ů@16"] = 1,
+            ["ů@19"] = 38,
+            ["Ž@11"] = 9,
             ["Ž@12"] = 14,
-            ["Ž@13"] = 10,
-            ["Ž@16"] = 10,
+            ["Ž@13"] = 8,
+            ["Ž@16"] = 8,
             ["Ž@19"] = 12,
-            ["ž@11"] = 15,
-            ["ž@12"] = 7,
-            ["ž@13"] = 7,
-            ["ž@16"] = 11,
-            ["ž@19"] = 7,
+            ["ž@11"] = 7,
+            ["ž@12"] = 8,
+            ["ž@13"] = 5,
+            ["ž@16"] = 3,
+            ["ž@19"] = 6,
         };
 
         private static int AllowanceFor(string key)
@@ -532,12 +530,12 @@ namespace WgpuInterop.Tests.Text
         public void EveryGlyph_CoversTheSamePixelsAsWindows(char character)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             string text = character.ToString();
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
-            byte[] windows = Gdi.Draw(text, "Segoe UI", Ppem, PenX, Baseline, Width, Height);
+            byte[] windows = Gdi.Draw(text, ProbeFamily(), Ppem, PenX, Baseline, Width, Height);
             byte[] ours = Ours(font, text);
             Dump($"c{(int)character}", windows, ours);
 
@@ -575,11 +573,11 @@ namespace WgpuInterop.Tests.Text
         public void RunsOfText_CoverTheSamePixelsAsWindows(string text, int ppem)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             int baseline = ppem + 12;            // room for the ascenders at this size
-            byte[] windows = Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height);
+            byte[] windows = Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height);
             byte[] ours = Ours(new TrueTypeFont(File.ReadAllBytes(file!)), text, ppem, baseline);
             Dump($"{ppem}-{text}", windows, ours);
 
@@ -622,7 +620,7 @@ namespace WgpuInterop.Tests.Text
         public void EveryAccentedGlyph_CoversTheSamePixelsAsWindows(char character, int ppem)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -637,7 +635,7 @@ namespace WgpuInterop.Tests.Text
 
             string text = character.ToString();
             int baseline = ppem + 12;
-            byte[] windows = Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height);
+            byte[] windows = Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height);
             byte[] ours = Ours(font, text, ppem, baseline);
             Dump($"a{(int)character}-{ppem}", windows, ours);
 
@@ -674,11 +672,11 @@ namespace WgpuInterop.Tests.Text
                                                                     int ppem)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold, italic);
+            string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
             int baseline = ppem + 12;
-            byte[] windows = Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, bold, italic);
+            byte[] windows = Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, bold, italic);
             byte[] ours = Ours(new TrueTypeFont(File.ReadAllBytes(file!)), text, ppem, baseline);
             string style = (bold ? "b" : "") + (italic ? "i" : "");
             Dump($"{style}-{ppem}-{text}", windows, ours);
@@ -732,7 +730,7 @@ namespace WgpuInterop.Tests.Text
         public void TheWholeRepertoire_CoversTheSamePixelsAsWindows(bool bold, bool italic, int ppem)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold, italic);
+            string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -752,7 +750,7 @@ namespace WgpuInterop.Tests.Text
             var report = new System.Text.StringBuilder();
             foreach (string text in Repertoire)
             {
-                byte[] windows = Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height,
+                byte[] windows = Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height,
                                           bold, italic);
                 byte[] ours = Ours(font, text, ppem, baseline);
                 Difference diff = Difference.Between(windows, ours, Width, Height);
@@ -938,7 +936,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_STEM_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_STEM_REPORT to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -949,7 +947,7 @@ namespace WgpuInterop.Tests.Text
             {
                 int baseline = ppem + 12;
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
                 byte[] mine = OursRgba(font, text, ppem, baseline, correction: true);
 
@@ -991,7 +989,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_TRANSFER");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_TRANSFER to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1005,7 +1003,7 @@ namespace WgpuInterop.Tests.Text
                 foreach (string text in Repertoire)
                 {
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                     Gdi.s_rawRgb = null;
                     // OURS BEFORE THE CURVE: the transfer is what the curve should BE, so measuring
                     // it through the curve would only report the curve back.
@@ -1055,7 +1053,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_GLYPHOFFSET");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GLYPHOFFSET to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1072,7 +1070,7 @@ namespace WgpuInterop.Tests.Text
             foreach (char c in Letters)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
 
                 // Rasterized DIRECTLY, not through the renderer: it snaps a run's origin to a whole
@@ -1172,7 +1170,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_SOLVE");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_SOLVE to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1295,7 +1293,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_EXTENTS");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_EXTENTS to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1310,7 +1308,7 @@ namespace WgpuInterop.Tests.Text
             foreach (char c in Letters)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
                 if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
                                                                    out List<PathFigure> figs))
@@ -1344,7 +1342,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_FITCHOICE");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_FITCHOICE to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1359,7 +1357,7 @@ namespace WgpuInterop.Tests.Text
             foreach (char c in Letters)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
 
                 // A FRESH font for each fit: hinted outlines are cached by (glyph, size), so the
@@ -1405,7 +1403,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_GLYPHFIT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GLYPHFIT to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -1418,7 +1416,7 @@ namespace WgpuInterop.Tests.Text
             foreach (char c in Letters)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
                 if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
                                                                    out List<PathFigure> figs))
@@ -1471,7 +1469,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_SOLVEGLYPH");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SOLVEGLYPH=char@ppem");
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             string[] parts = spec!.Split('@');
@@ -1480,7 +1478,7 @@ namespace WgpuInterop.Tests.Text
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+            Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
             Gdi.s_rawRgb = null;
             Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
                                                                      out List<PathFigure> ours));
@@ -1711,7 +1709,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_ENDS");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_ENDS to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1763,7 +1761,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_STEMWIDTH");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_STEMWIDTH to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1775,7 +1773,7 @@ namespace WgpuInterop.Tests.Text
             {
                 int baseline = ppem + 12;
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                 Gdi.s_rawRgb = null;
                 byte[] mine = OursRgba(font, text, ppem, baseline, correction: true);
 
@@ -1808,7 +1806,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_FINISHED");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_FINISHED=text@ppem");
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
 
             string[] parts = spec!.Split('@');
@@ -1817,7 +1815,7 @@ namespace WgpuInterop.Tests.Text
             int baseline = ppem + 12;
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
 
-            byte[] windows = Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+            byte[] windows = Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
             byte[] ours = Ours(font, text, ppem, baseline, correction: true);
 
             const string Ramp = " .:-=+*#%@";
@@ -1850,7 +1848,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_LAMP_SHIFT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_LAMP_SHIFT to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no Segoe UI to compare against");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1865,7 +1863,7 @@ namespace WgpuInterop.Tests.Text
                 foreach (string text in Repertoire)
                 {
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
                     Gdi.s_rawRgb = null;
                     byte[] mine = OursRgba(font, text, ppem, baseline, correction: true);
 
@@ -2178,20 +2176,20 @@ namespace WgpuInterop.Tests.Text
         /// </summary>
         private static readonly Dictionary<string, int> InkAllowed = new()
         {
-            ["b@10"] = 105,
-            ["b@11"] = 35,
-            ["b@12"] = 63,
-            ["b@13"] = 134,
-            ["b@14"] = 182,
-            ["b@15"] = 26,
-            ["b@16"] = 37,
-            ["b@17"] = 30,
-            ["b@18"] = 21,
-            ["b@19"] = 99,
-            ["b@20"] = 641,
-            ["bi@10"] = 130,
-            ["bi@11"] = 63,
-            ["bi@12"] = 125,
+            ["b@10"] = 45,
+            ["b@11"] = 78,
+            ["b@12"] = 127,
+            ["b@13"] = 149,
+            ["b@14"] = 193,
+            ["b@15"] = 41,
+            ["b@16"] = 50,
+            ["b@17"] = 16,
+            ["b@18"] = 10,
+            ["b@19"] = 86,
+            ["b@20"] = 626,
+            ["bi@10"] = 120,
+            ["bi@11"] = 83,
+            ["bi@12"] = 183,
             ["bi@13"] = 116,
             ["bi@14"] = 121,
             ["bi@15"] = 49,
@@ -2201,9 +2199,9 @@ namespace WgpuInterop.Tests.Text
             ["bi@19"] = 67,
             ["bi@20"] = 636,
             ["i@10"] = 214,
-            ["i@11"] = 181,
-            ["i@12"] = 169,
-            ["i@13"] = 139,
+            ["i@11"] = 195,
+            ["i@12"] = 174,
+            ["i@13"] = 144,
             ["i@14"] = 178,
             ["i@15"] = 104,
             ["i@16"] = 82,
@@ -2211,17 +2209,17 @@ namespace WgpuInterop.Tests.Text
             ["i@18"] = 49,
             ["i@19"] = 73,
             ["i@20"] = 846,
-            ["regular@10"] = 585,
-            ["regular@11"] = 485,
-            ["regular@12"] = 575,
-            ["regular@13"] = 501,
-            ["regular@14"] = 36,
-            ["regular@15"] = 69,
-            ["regular@16"] = 141,
-            ["regular@17"] = 105,
-            ["regular@18"] = 111,
-            ["regular@19"] = 35,
-            ["regular@20"] = 108,
+            ["regular@10"] = 183,
+            ["regular@11"] = 264,
+            ["regular@12"] = 577,
+            ["regular@13"] = 468,
+            ["regular@14"] = 8,
+            ["regular@15"] = 112,
+            ["regular@16"] = 103,
+            ["regular@17"] = 44,
+            ["regular@18"] = 50,
+            ["regular@19"] = 19,
+            ["regular@20"] = 101,
         };
 
 
@@ -2244,7 +2242,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? report = Environment.GetEnvironmentVariable("WPF_TRANSFER_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(report), "set WPF_TRANSFER_REPORT to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold, italic);
+            string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -2258,7 +2256,7 @@ namespace WgpuInterop.Tests.Text
             foreach (string text in Repertoire)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, bold, italic);
+                Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, bold, italic);
                 Gdi.s_rawRgb = null;
                 byte[] mine = OursRgba(font, text, ppem, baseline, correction: true);
 
@@ -2315,7 +2313,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
             string? report = Environment.GetEnvironmentVariable("WPF_HINT_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(report), "set WPF_HINT_REPORT to collect this");
-            string? file = FontFiles.Find("Segoe UI", bold, italic);
+            string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -2390,7 +2388,7 @@ namespace WgpuInterop.Tests.Text
         public void TheWholeRepertoire_CarriesAsMuchInkAsWindows(bool bold, bool italic, int ppem)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
-            string? file = FontFiles.Find("Segoe UI", bold, italic);
+            string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -2413,7 +2411,7 @@ namespace WgpuInterop.Tests.Text
             foreach (string text in Repertoire)
             {
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(text, "Segoe UI", ppem, PenX, baseline, Width, Height, bold, italic);
+                Gdi.Draw(text, ProbeFamily(), ppem, PenX, baseline, Width, Height, bold, italic);
                 Gdi.s_rawRgb = null;
                 for (int i = 0; i < raw.Length; i += 4)
                 {
@@ -2577,6 +2575,14 @@ namespace WgpuInterop.Tests.Text
         /// process may have a ported System.Drawing loaded, and the whole point is to ask the real
         /// Windows for its answer.</summary>
         [SupportedOSPlatform("windows")]
+        /// <summary>The face every probe here measures. WPF_FACE picks another.
+        /// <para>These were all pinned to Segoe UI, which is exactly how the renderer came to be
+        /// tuned against the one face that barely exercises the hinter -- the probes could not see
+        /// any other. A diagnostic that can only look at the case that works is not a diagnostic.</para>
+        /// </summary>
+        private static string ProbeFamily() =>
+            Environment.GetEnvironmentVariable("WPF_FACE") is string f && f.Length > 0 ? f : "Segoe UI";
+
         private static class Gdi
         {
             /// <summary>The user's ClearType contrast, 1000..2200, or 1200 if it cannot be read.

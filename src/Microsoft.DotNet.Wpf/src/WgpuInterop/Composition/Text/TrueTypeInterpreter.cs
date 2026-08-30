@@ -497,6 +497,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// suppression rests on.</para></summary>
         internal bool NativeClearTypeMode => (_gs.InstructControl & 4) != 0;
 
+        /// <summary>Whether the distance being rounded is one ClearType measures on the finer grid.
+        /// <para>Requiring the FREEDOM vector to be horizontal as well was tried, because Arial's 'K'
+        /// controls its diagonal with `MDRP pv=(-12221,10912) fv=(0,16384)` -- measure along the
+        /// diagonal, move along Y -- and the projection being more x than y makes this test call a
+        /// VERTICAL movement the ClearType direction. Plausible, and measured worse: 10,355,224 ->
+        /// 10,362,490 on the six-face specimen, fixing no glyph's fitted y.</para></summary>
         internal bool InClearTypeDirection =>
             ClearTypeInfo && IsHorizontalProjection && !_inPreProgram;
 

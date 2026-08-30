@@ -709,9 +709,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// at 6.0 / 6.2 / 6.4 as taller glyphs start being caught by it. And the ten bands that are
         /// NOT lowercase-at-11ppem come out byte-identical, which is the whole argument for it --
         /// every global rounding rule tried instead traded one band against another.</para>
-        /// <para>WPF_CT_SMALLGLYPH, 0 disables it.</para></summary>
+        /// <para>OFF, AND THE REASON IS A LESSON. Every number above was measured on a specimen of
+        /// ONE FACE IN ONE STYLE -- Segoe UI regular. Put five more faces and bold and italic in
+        /// front of it and the rule is net harmful: 10,362,413 with it against 10,094,299 without.
+        /// It fires only where an x-height is under 5.8 pixels, so almost everything is untouched,
+        /// and where it does fire it does this:</para>
+        /// <para>Segoe UI REGULAR at 8.25pt   75,517 with, 99,012 without -- it helps, by 23,495.
+        /// Segoe UI BOLD at the same size    306,424 with, 40,308 without -- it hurts, by 266,116.
+        /// The same rule, the same face, one weight apart, and seven times worse on the bold.</para>
+        /// <para>A rule that helps one face and style and destroys the next is not a rule, it is a
+        /// fit to whatever was in front of it. The bold was never in front of it. Both this and the
+        /// extender rule below it are off; WPF_CT_SMALLGLYPH=58 restores them together, since the
+        /// extender test lives inside this one's guard.</para>
+        /// <para>What DOES generalise, measured on the same six faces: compatible widths (worth
+        /// 242,000), its 25% tolerance, and the gamma-space blend (worth 222,000). Those were
+        /// derived from the same one-face specimen and survive the wider one, which is the
+        /// difference between a mechanism and a fit.</para></summary>
         private static readonly int SmallGlyphPixels =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SMALLGLYPH"), out int sg) ? sg : 58;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SMALLGLYPH"), out int sg) ? sg : 0;
 
         /// <summary>WPF_CT_EXTENDER=0 turns off treating x-height letters with ascenders or
         /// descenders as small glyphs.</summary>
