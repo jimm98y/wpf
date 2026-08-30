@@ -70,6 +70,20 @@ namespace System.Windows.Forms
 		// #FCFCFC at the top to about #F0F0F0 at the foot, with a #F2F2F2 rule along the bottom.
 		// Reporting one colour at both ends was what left ours a flat grey band. The renderer takes
 		// only the two ends, so the middle just names the average.
+		// THE STOP COLOURS ARE RIGHT AND THE RAMP BETWEEN THEM IS NOT, which is most of what the
+		// MenuStrip region still costs (58,349, and its ink ratio of 1.028 is the only one in the
+		// window above one). Sampled along row 20 of a 1080-wide strip, ours against Windows':
+		//     x     0   100   200   270   380   540   600   800   810   900  1050  1079
+		//     ours 240   241   242   243   244   246   246   248   248   249   251   251
+		//     win  240   241   242   243   245   246   247   249   249   250   251   252
+		// Equal at both ends of each run and one unit low across the middle, and ours never quite
+		// reaches 252 at the last column where Windows does.
+		//
+		// It is NOT the interpolation space -- over a range this narrow sRGB and linear-light agree
+		// to a tenth of a unit (243.00 against 243.08 at x=270), so gamma cannot produce a whole
+		// one. It is NOT ramp resolution or filtering either: twenty consecutive columns read flat
+		// on both sides, so neither is stepping through a 256-texel ramp. Something about how the
+		// ramp is laid across the strip, and worth roughly forty thousand to whoever finds it.
 		public override Color ToolStripGradientBegin => Color.FromArgb (252, 252, 252);
 		public override Color ToolStripGradientMiddle => Color.FromArgb (246, 246, 246);
 		public override Color ToolStripGradientEnd => Color.FromArgb (240, 240, 240);
