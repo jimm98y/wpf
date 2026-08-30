@@ -1616,7 +1616,10 @@ namespace System.Windows.Forms
 		protected override StringFormat MonthCalendarDateFormat (MonthCalendar mc)
 		{
 			if (units_format == null)
-				units_format = new StringFormat (StringFormat.GenericTypographic) {
+				// The FLAGS, not the typography -- see the note in ThemeWin32Classic's month
+				// calendar. This never was a typographic format and its placement was measured
+				// without one.
+				units_format = new StringFormat (StringFormat.GenericTypographic.FormatFlags) {
 					Alignment = StringAlignment.Far,
 					LineAlignment = StringAlignment.Center,
 					FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces,

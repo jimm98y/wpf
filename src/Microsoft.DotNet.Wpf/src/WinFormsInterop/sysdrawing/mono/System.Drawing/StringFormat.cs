@@ -99,6 +99,11 @@ namespace System.Drawing {
 			this.language = format.language;
 			_align = format._align; _lineAlign = format._lineAlign;
 			_flags = format._flags; _trimming = format._trimming; _hotkey = format._hotkey;
+			// AND THE TYPOGRAPHIC FLAG, which is a field rather than one of the FormatFlags and so
+			// was not copied by a copy constructor. A caller writing
+			// new StringFormat (StringFormat.GenericTypographic) got a format that was no longer
+			// typographic, and the margin it was asking to be rid of came straight back.
+			IsTypographic = format.IsTypographic;
 			_measurableRanges = (format._measurableRanges == null)
 				? null : (CharacterRange []) format._measurableRanges.Clone ();
 			if (GDIPlus.Initialized) {
@@ -316,6 +321,7 @@ namespace System.Drawing {
 			StringFormat clone = new StringFormat (native);
 			clone._measurableRanges = (_measurableRanges == null)
 				? null : (CharacterRange []) _measurableRanges.Clone ();
+			clone.IsTypographic = IsTypographic;     // a field, so the native clone does not carry it
 			return clone;
 		}
 

@@ -2627,8 +2627,16 @@ namespace System.Windows.Forms
 
 			dc.FillRectangle (GetControlBackBrush (box.BackColor), box.ClientRectangle);
 			
-			text_format = new StringFormat();
+			// TYPOGRAPHIC, because the default format leaves a margin inside the rectangle before
+			// the first glyph -- a sixth of the line height, which is three pixels for the shell
+			// font -- and the caption is positioned by its rectangle at x=10. Windows puts the
+			// caption's INK at 10; ours started at 13, the width of that margin exactly.
+			// NOT Clone() and NOT new StringFormat(GenericTypographic): "typographic" is carried by
+			// an internal FIELD on the format, which neither of those copies, so the margin comes
+			// straight back. The getter hands out a fresh instance every call, so mutate that.
+			text_format = StringFormat.GenericTypographic;
 			text_format.HotkeyPrefix = HotkeyPrefix.Show;
+			text_format.FormatFlags |= StringFormatFlags.NoWrap;
 
 			size = dc.MeasureString (box.Text, box.Font);
 			width = 0;
@@ -3815,7 +3823,15 @@ namespace System.Windows.Forms
 					// the arithmetic above says it goes -- and so twelve right of Windows'. With the
 					// typographic format the run starts where it is put, and the offset below is the whole
 					// story.
-					StringFormat text_format = new StringFormat (StringFormat.GenericTypographic);
+					// ITS FLAGS, NOT ITS TYPOGRAPHY. This read
+					// new StringFormat (StringFormat.GenericTypographic) and the comment above
+					// believed that made it typographic; it never did, because "typographic" is a
+					// field the copy constructor did not copy. So this caption has always been laid
+					// out WITH the margin, and the offsets around it were measured against Windows
+					// with the margin there. Now that the copy constructor is fixed, ask for what
+					// this actually wants -- the flags -- or the caption moves three pixels left of
+					// where Windows draws it.
+					StringFormat text_format = new StringFormat (StringFormat.GenericTypographic.FormatFlags);
 					text_format.LineAlignment = StringAlignment.Center;
 					text_format.Alignment = StringAlignment.Near;
 					text_format.FormatFlags |= StringFormatFlags.NoWrap;
