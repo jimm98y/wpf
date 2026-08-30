@@ -1389,6 +1389,192 @@ namespace WgpuInterop.Tests.Text
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>How much of each glyph's residual a per-glyph SCALE and OFFSET can explain.
+        /// <para>The bar solver now reproduces GDI's lamps with rms 0 -- our rasterizer, filter and
+        /// blend are an exact model of GDI's rendering given the right outline -- so what it recovers
+        /// IS GDI's geometry, and the same is true of anything else fitted this way. Sliding a glyph
+        /// was worth 32% of the error; this asks what a stretch buys on top, which is the difference
+        /// between "GDI places glyphs differently" and "GDI FITS them differently".</para>
+        /// <para>Reported only: set WPF_GLYPHFIT.</para></summary>
+        [Theory]
+        [InlineData(11)]
+        [InlineData(12)]
+        [InlineData(16)]
+        public void PerGlyphScaleAndOffset_AgainstGdis(int ppem)
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_GLYPHFIT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GLYPHFIT to collect this");
+            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            const string Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var raw = new byte[Width * Height * 4];
+            int baseline = ppem + 12;
+            double at0 = 0, bestSlide = 0, bestBoth = 0;
+            var scales = new Dictionary<int, int>();
+
+            foreach (char c in Letters)
+            {
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                   out List<PathFigure> figs))
+                    continue;
+
+                at0 += GlyphLampError(figs, PenX, baseline, raw);
+                double slide = double.MaxValue, both = double.MaxValue; int bestS = 0;
+                for (int k = -8; k <= 8; k++)
+                {
+                    double e = GlyphLampError(figs, PenX + k / 16f, baseline, raw);
+                    if (e < slide) slide = e;
+                    // Scale about the glyph's own origin, in half percents, then slide.
+                    for (int sp = -8; sp <= 8; sp++)
+                    {
+                        List<PathFigure> scaled = ScaleX(figs, 1f + sp / 200f);
+                        double e2 = GlyphLampError(scaled, PenX + k / 16f, baseline, raw);
+                        if (e2 < both) { both = e2; bestS = sp; }
+                    }
+                }
+                bestSlide += slide; bestBoth += both;
+                scales[bestS] = scales.GetValueOrDefault(bestS) + 1;
+            }
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== {ppem}ppem   cost {at0:0}");
+            report.AppendLine($"   sliding alone leaves      {bestSlide:0}  ({(at0 - bestSlide) * 100 / at0:0.0}% recovered)");
+            report.AppendLine($"   sliding AND stretching    {bestBoth:0}  ({(at0 - bestBoth) * 100 / at0:0.0}% recovered)");
+            report.Append("   best stretch, in half percents: ");
+            var keys = new List<int>(scales.Keys); keys.Sort();
+            foreach (int k in keys) report.Append($"{k:+0;-0;0}:{scales[k]} ");
+            report.AppendLine();
+            lock (Repertoire) File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>SOLVE for the x coordinates GDI's ClearType actually fitted a glyph to.
+        /// <para>This is the instrument the whole investigation wanted and could not have until now.
+        /// GetGlyphOutline reports the BI-LEVEL outline, not ClearType's, and fitting geometry
+        /// through our pipeline used to charge every pipeline error to the geometry. Neither
+        /// objection stands any more: the bar solver reproduces GDI's lamps at rms 0, so our
+        /// rasterizer, filter and blend ARE an exact model of GDI's rendering given the right
+        /// outline. What comes back from a fit is therefore GDI's geometry.</para>
+        /// <para>Coordinate descent over the glyph's DISTINCT x values -- a stem glyph has two, an
+        /// 'H' four -- each swept in 64ths of a pixel and kept where the lamps agree best. Comparing
+        /// the answer against our own fitted x says which instruction outcome we get wrong, one
+        /// coordinate at a time, which is what deriving the rule requires.</para>
+        /// <para>WPF_SOLVEGLYPH=char@ppem, e.g. "H@12".</para></summary>
+        [Fact]
+        public void SolveTheXCoordinatesGdiFitted()
+        {
+            string? spec = Environment.GetEnvironmentVariable("WPF_SOLVEGLYPH");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SOLVEGLYPH=char@ppem");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            string[] parts = spec!.Split('@');
+            char c = parts[0][0];
+            int ppem = int.Parse(parts[1]), baseline = ppem + 12;
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(c.ToString(), "Segoe UI", ppem, PenX, baseline, Width, Height, false, false);
+            Gdi.s_rawRgb = null;
+            Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                     out List<PathFigure> ours));
+
+            // The distinct x values, and a map from each to itself that the descent will move.
+            var xs = new SortedSet<float>();
+            foreach (PathFigure f in ours) CollectXs(f, xs);
+            var order = new List<float>(xs);
+            var move = new Dictionary<float, float>();
+            foreach (float x in order) move[x] = x;
+
+            double Err() => GlyphLampError(Remap(ours, move), PenX, baseline, raw);
+            double best = Err();
+            Console.Error.WriteLine($"=== '{c}' @{ppem}: solving {order.Count} distinct x values, start {best:0}");
+            for (int pass = 0; pass < 4; pass++)
+            {
+                bool moved = false;
+                foreach (float x in order)
+                {
+                    float keep = move[x], bestAt = keep;
+                    for (int k = -24; k <= 24; k++)
+                    {
+                        move[x] = keep + k / 64f;
+                        double e = Err();
+                        if (e < best - 1e-9) { best = e; bestAt = move[x]; moved = true; }
+                    }
+                    move[x] = bestAt;
+                }
+                if (!moved) break;
+            }
+            Console.Error.WriteLine($"    solved  {best:0}");
+            var sb = new System.Text.StringBuilder("    ours -> gdi : ");
+            foreach (float x in order) sb.Append($"{x:0.000}->{move[x]:0.000}  ");
+            Console.Error.WriteLine(sb.ToString());
+        }
+
+        private static void CollectXs(PathFigure f, SortedSet<float> xs)
+        {
+            xs.Add(MathF.Round(f.Start.X, 3));
+            foreach (PathSegment seg in f.Segments)
+                switch (seg)
+                {
+                    case LineSegment l: xs.Add(MathF.Round(l.Point.X, 3)); break;
+                    case QuadraticBezierSegment q:
+                        xs.Add(MathF.Round(q.Control.X, 3)); xs.Add(MathF.Round(q.Point.X, 3)); break;
+                    case CubicBezierSegment cu:
+                        xs.Add(MathF.Round(cu.Control1.X, 3)); xs.Add(MathF.Round(cu.Control2.X, 3));
+                        xs.Add(MathF.Round(cu.Point.X, 3)); break;
+                }
+        }
+
+        private static List<PathFigure> Remap(List<PathFigure> figures, Dictionary<float, float> move)
+        {
+            Vector2 M(Vector2 v) => new Vector2(move.TryGetValue(MathF.Round(v.X, 3), out float nx) ? nx : v.X, v.Y);
+            var outp = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var g = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: g.Segments.Add(new LineSegment(M(l.Point))); break;
+                        case QuadraticBezierSegment q:
+                            g.Segments.Add(new QuadraticBezierSegment(M(q.Control), M(q.Point))); break;
+                        case CubicBezierSegment cu:
+                            g.Segments.Add(new CubicBezierSegment(M(cu.Control1), M(cu.Control2), M(cu.Point))); break;
+                    }
+                outp.Add(g);
+            }
+            return outp;
+        }
+
+        /// <summary>The same figures with x scaled about the glyph origin.</summary>
+        private static List<PathFigure> ScaleX(List<PathFigure> figures, float k)
+        {
+            var outp = new List<PathFigure>(figures.Count);
+            Vector2 S(Vector2 v) => new Vector2(v.X * k, v.Y);
+            foreach (PathFigure f in figures)
+            {
+                var g = new PathFigure(S(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: g.Segments.Add(new LineSegment(S(l.Point))); break;
+                        case QuadraticBezierSegment q:
+                            g.Segments.Add(new QuadraticBezierSegment(S(q.Control), S(q.Point))); break;
+                        case CubicBezierSegment cu:
+                            g.Segments.Add(new CubicBezierSegment(S(cu.Control1), S(cu.Control2), S(cu.Point))); break;
+                    }
+                outp.Add(g);
+            }
+            return outp;
+        }
+
         /// <summary>Coverage through the SHIPPING contrast curve, so a probe measures the pipeline
         /// that is actually drawn.
         /// <para>These probes had `pow(cov, 1.15)` written into them, which was the curve at the
