@@ -553,6 +553,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static bool ClearTypeInfo =>
             s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering && !BiLevelPass;
 
+        /// <summary>How the ADVANCE phantom is quantized before the program runs. 0 round (the
+        /// default), 1 ceil, 2 not at all. WPF_PP2_ROUND.
+        /// <para>Verdana is why this is a knob. It ships no 'hdmx', so its advances come from this
+        /// phantom, and they came out thirteen pixels short over a line of fifty. Its program never
+        /// MOVES the phantom -- it only reads it, as the rp0 of the MIRP that places the right edge
+        /// -- so whatever GDI has there, it has before the first instruction.</para></summary>
+        private static readonly int s_advancePhantom =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp : 0;
+
         private static readonly bool s_ctInfoAllowed =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
 
@@ -709,7 +718,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // phantoms fixes the italics and loses the rest: 10,686,251 against 10,072,594 here.
             // Measured every way round; this is the best of them.
             z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
-            z.CurX[glyph.PointCount + 1] = Pix(z.CurX[glyph.PointCount + 1]);
+            z.CurX[glyph.PointCount + 1] = s_advancePhantom switch
+            {
+                1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
+                2 => z.CurX[glyph.PointCount + 1],                   // leave it alone
+                _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
+            };
 
             for (int i = 0; i < glyph.EndPoints.Length; i++)
                 z.Contours[i] = glyph.EndPoints[i];

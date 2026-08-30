@@ -275,6 +275,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public float Advance(int glyphId) => AdvanceWidth(glyphId) * _scale;
 
+        /// <summary>The space the design leaves to the RIGHT of the ink, in pixels: the advance
+        /// less the left side bearing and less the ink's own width.</summary>
+        internal float RightSideBearingForTest(int glyphId, float pixelsPerEm)
+        {
+            if (_glyfOffset < 0 || glyphId < 0 || glyphId >= _numGlyphs || _loca.Length == 0) return 0f;
+            uint start = _loca[glyphId], end = _loca[glyphId + 1];
+            if (end <= start) return 0f;
+            int p = _glyfOffset + (int) start;
+            int xMin = (short) U16(p + 2), xMax = (short) U16(p + 6);
+            int lsb = MetricsLeftSideBearing(glyphId);
+            float rsb = AdvanceWidth(glyphId) - lsb - (xMax - xMin);
+            return rsb * pixelsPerEm / (float) _unitsPerEm;
+        }
+
         /// <summary>Where the program left the two horizontal phantom points, in pixels, before any
         /// rounding of ours. Tells apart "the program widened the advance and we lost it" from "the
         /// program never touched the advance".</summary>
@@ -599,6 +613,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return false;
         }
 
+        /// <summary>Set while a bi-level run is measuring an advance, so that the compatible-width
+        /// correction inside that run does not ask for the advance it is in the middle of
+        /// computing. Without it the two call each other for ever.</summary>
+        [ThreadStatic] private static bool s_measuringAdvance;
+
+        /// <summary>The advance a BI-LEVEL rasterizer would give this glyph -- what compatible
+        /// widths means, and what the fitted glyph has to be corrected onto.
+        /// <para>'hdmx' is a cache of exactly these numbers, so a face that ships one is answered
+        /// from the table. A face that ships none has to be MEASURED, by running its program in
+        /// bi-level mode, and that is not the same as scaling the design advance: Verdana's own
+        /// program widens 'w' from 9.82 pixels to 11 and narrows 'm' from 11.67 to 11, and the
+        /// rounded design advance -- what this used to fall back to -- gets both wrong along with
+        /// fourteen other letters. Thirteen pixels of drift over a line of fifty, so every glyph
+        /// past the third landed on different pixels from Windows'.</para>
+        /// <para>Verdana is the only face in the specimen with neither 'hdmx' nor 'LTSH', which is
+        /// the font telling you outright that its advances are not linear and there is no table to
+        /// look them up in. Segoe UI, Arial, Times, Tahoma and Consolas all ship 'hdmx' and never
+        /// reached this path, which is why the fallback could be wrong for as long as it was.</para>
+        /// </summary>
+        private float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
+        {
+            if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
+            if (TryGetHintedAdvance(gid, pixelsPerEm, out float hinted)) return hinted;
+            return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+        }
+
         // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of
         // text asks for the same handful of glyphs over and over.
         private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
@@ -629,7 +669,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // every glyph past the third landing on different pixels from Windows'. The band
                 // read as a fitting problem for a long time because that is what drift looks like.
                 bool savedBi = TrueTypeInterpreter.BiLevelPass;
+                bool savedMeasuring = s_measuringAdvance;
                 TrueTypeInterpreter.BiLevelPass = true;
+                s_measuringAdvance = true;      // the run below must not ask itself this question
                 try
                 {
                     GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
@@ -639,7 +681,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         if (span > 0) advance = MathF.Round(span / 64f);
                     }
                 }
-                finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+                finally
+                {
+                    TrueTypeInterpreter.BiLevelPass = savedBi;
+                    s_measuringAdvance = savedMeasuring;
+                }
             }
 
             if (_hintedAdvances.Count > HintedCacheLimit) _hintedAdvances.Clear();
@@ -1594,8 +1640,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // is kept: our advances already equal GDI's exactly, but the fitted INK moves inside the
             // advance box and nothing pulls it back, so the error accumulates along a run. The live
             // window's POSITION half doubles, 280,803 -> 479,090.
+            // ...and NOT while measuring, because what a measuring run wants is the raw span the
+            // program left. Correcting it there would correct it onto itself.
             if (CompatibleWidthMode != 0 && plainX is null && !glyph.Composite
-                && glyph.X.Length > glyph.PointCount + 1)
+                && !s_measuringAdvance && glyph.X.Length > glyph.PointCount + 1)
             {
                 int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
                 int fitted = p1 - p0;
@@ -1625,9 +1673,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // side bearing scales with the advance and the ink rides along unchanged.
                 if (CompatibleWidthMode == 4 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
-                    float wanted4 = TryGetHdmxAdvance(gid, ppemI, out float hd4)
-                        ? hd4
-                        : MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+                    float wanted4 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target4 = (int) MathF.Round(wanted4 * 64f);
                     int off4 = Math.Abs(target4 - fitted) * 100;
                     if (target4 > 0 && target4 != fitted && off4 <= fitted * CompatibleWidthTolerance)
@@ -1647,12 +1693,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
                 if ((CompatibleWidthMode == 1 || CompatibleWidthMode == 3) && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
-                    // hdmx if the face ships it, else the scaled advance rounded to a pixel, which is
-                    // what a bi-level rasterizer would have produced. NEVER TryGetDeviceAdvance --
-                    // it hints the glyph to answer, and we are inside the hinter.
-                    float wanted = TryGetHdmxAdvance(gid, ppemI, out float hd)
-                        ? hd
-                        : MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+                    // hdmx if the face ships it, else the face's program run in bi-level to find
+                    // out. NEVER TryGetDeviceAdvance -- it hints the glyph to answer and we are
+                    // inside the hinter; CompatibleAdvance carries the guard that makes it safe.
+                    float wanted = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target = (int) MathF.Round(wanted * 64f);
                     // Only a CORRECTION, never a rebuild. The scale is the ratio of two advances and
                     // it is applied to the INK, so where the fitted phantom points have gone astray

@@ -246,8 +246,8 @@ namespace WgpuInterop.Tests.Text
             ["q"] = 20,
             ["r"] = 6,
             ["repertoire@10"] = 653,
-            ["repertoire@10b"] = 811,
-            ["repertoire@10bi"] = 509,
+            ["repertoire@10b"] = 684,
+            ["repertoire@10bi"] = 365,
             ["repertoire@10i"] = 334,
             ["repertoire@11"] = 1691,
             ["repertoire@11b"] = 891,
@@ -262,9 +262,9 @@ namespace WgpuInterop.Tests.Text
             ["repertoire@13bi"] = 416,
             ["repertoire@13i"] = 372,
             ["repertoire@14"] = 1011,
-            ["repertoire@14b"] = 1099,
-            ["repertoire@14bi"] = 468,
-            ["repertoire@14i"] = 1029,
+            ["repertoire@14b"] = 994,
+            ["repertoire@14bi"] = 416,
+            ["repertoire@14i"] = 430,
             ["repertoire@15"] = 1150,
             ["repertoire@15b"] = 1108,
             ["repertoire@15bi"] = 444,
@@ -2184,22 +2184,22 @@ namespace WgpuInterop.Tests.Text
         /// </summary>
         private static readonly Dictionary<string, int> InkAllowed = new()
         {
-            ["b@10"] = 45,
+            ["b@10"] = 31,
             ["b@11"] = 78,
             ["b@12"] = 127,
             ["b@13"] = 149,
-            ["b@14"] = 193,
+            ["b@14"] = 160,
             ["b@15"] = 41,
             ["b@16"] = 50,
             ["b@17"] = 16,
             ["b@18"] = 10,
             ["b@19"] = 86,
             ["b@20"] = 626,
-            ["bi@10"] = 120,
+            ["bi@10"] = 111,
             ["bi@11"] = 83,
             ["bi@12"] = 183,
             ["bi@13"] = 116,
-            ["bi@14"] = 121,
+            ["bi@14"] = 101,
             ["bi@15"] = 49,
             ["bi@16"] = 17,
             ["bi@17"] = 25,
@@ -2210,7 +2210,7 @@ namespace WgpuInterop.Tests.Text
             ["i@11"] = 195,
             ["i@12"] = 174,
             ["i@13"] = 144,
-            ["i@14"] = 178,
+            ["i@14"] = 121,
             ["i@15"] = 104,
             ["i@16"] = 82,
             ["i@17"] = 68,
@@ -2632,12 +2632,20 @@ namespace WgpuInterop.Tests.Text
                 ourTotal += oursI; gdiTotal += gdi;
                 bool hinted = font.FaceHintsGlyph(gid, ppem);
                 float linear = font.LinearAdvanceForTest(gid, ppem);
+                var g = Gdi.HintedMetrics(c, family, ppem, bold, italic);
+                // The right side bearing in DESIGN units, scaled: advance less the left bearing and
+                // less the ink's own width. If GDI builds the advance from the hinted ink plus this,
+                // the model below reproduces it.
+                float rsb = font.RightSideBearingForTest(gid, ppem);
                 if (true)
                     log.AppendLine($"  '{c}' gid {gid,4}  gdi {gdi,3}  ours {oursI,3}"
                                    + $"  linear {linear,6:0.000}  faceHints={hinted}"
                                    + $"  pp {font.HintedPhantomsForTest(gid, ppem).Pp1,6:0.000}"
                                    + $" .. {font.HintedPhantomsForTest(gid, ppem).Pp2,6:0.000}"
-                                   + $"  ggo {Gdi.HintedMetrics(c, family, ppem, bold, italic)}"
+                                   + $"  ggo {g}"
+                                   + $"  inkR {g.OriginX + g.BlackBoxX}"
+                                   + $"  rsb {rsb,6:0.000}"
+                                   + $"  model {g.OriginX + g.BlackBoxX + (int) MathF.Round(rsb),3}"
                                    + (device ? "" : "   NO device advance"));
             }
             log.AppendLine($"  TOTAL gdi {gdiTotal}  ours {ourTotal}  drift {ourTotal - gdiTotal}");
