@@ -456,18 +456,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     case 0x49: case 0x4A:                                               // MD[a]
                         {
-                            // ZP0 GOES WITH THE TOP ARGUMENT HERE, AND FREETYPE PAIRS THEM THE OTHER
-                            // WAY -- it bounds-checks args[0] against zp0 and args[1] against zp1 and
-                            // measures PROJECT(zp0 + args[0], zp1 + args[1]). Swapping to match it
-                            // negates a directional measurement, and MD feeds conditionals, so that
-                            // is not a small shift: it takes the other arm of an IF.
-                            // MEASURED BOTH WAYS against GDI, and this one wins: six-face specimen
-                            // 10,053,618 against 10,072,556 for FreeType's pairing. The Segoe UI
-                            // suite cannot tell them apart at all (61,232 either way) -- that face
-                            // never exercises MD where it matters, which is why this could sit here
-                            // unexamined. WPF_MD_SPEC=1 uses FreeType's pairing.
+                            // ZP0 GOES WITH THE DEEPER ARGUMENT, ZP1 WITH THE TOP ONE, as FreeType
+                            // pairs them: it bounds-checks args[0] against zp0 and args[1] against
+                            // zp1 and measures PROJECT(zp0 + args[0], zp1 + args[1]). We had them
+                            // the other way round, which NEGATES a directional measurement -- and MD
+                            // feeds conditionals, so that is not a small shift, it takes the other
+                            // arm of an IF.
+                            // Arial's 'W' at 12ppem is what it cost: the wrong sign took a branch
+                            // ending in a vertical SHPIX of -199/64, which put the W's bottom vertex
+                            // more than three pixels BELOW THE BASELINE. Rendered, our W was a pixel
+                            // taller than Windows'; corrected, it ends on the same row. Arial's
+                            // per-glyph cost at 12ppem falls 15,524,188 -> 13,335,829 and 'W' and
+                            // 'w' leave the twelve dearest glyphs entirely.
+                            // The aggregate goes the OTHER way by about a percent -- the six-face
+                            // specimen 10,053,618 -> 10,072,556, all of it Arial regular and bold --
+                            // so this trades many small differences for one gross one. A spurious
+                            // descender on a W is the worse defect, and this is what the spec and
+                            // FreeType both say. WPF_MD_SPEC=0 restores the old pairing.
                             int top = Pop(), deep = Pop();
-                            int a = s_mdSpecOrder ? deep : top, b = s_mdSpecOrder ? top : deep;
+                            int a = s_mdOldOrder ? top : deep, b = s_mdOldOrder ? deep : top;
                             Push(op == 0x49
                                  ? MeasureCurrent(_gs.Zp0, a, _gs.Zp1, b)
                                  : MeasureOriginalExact(_gs.Zp0, a, _gs.Zp1, b));
@@ -831,9 +838,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_symmetricInfo =
             Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
 
-        /// <summary>WPF_MD_SPEC=1 pairs MD's operands with the zones the way FreeType does.</summary>
-        private static readonly bool s_mdSpecOrder =
-            Environment.GetEnvironmentVariable("WPF_MD_SPEC") == "1";
+        /// <summary>WPF_MD_SPEC=0 restores the old MD operand pairing.</summary>
+        private static readonly bool s_mdOldOrder =
+            Environment.GetEnvironmentVariable("WPF_MD_SPEC") == "0";
 
         /// <summary>WPF_CT_SHPIXTOUCH=0 lets a vertical SHPIX move an untouched point.</summary>
         private static readonly bool s_shpixNeedsTouch =

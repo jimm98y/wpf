@@ -1941,6 +1941,10 @@ namespace WgpuInterop.Tests.Text
         [Theory]
         [InlineData("Segoe UI", 0)]
         [InlineData("Consolas", 0)]
+        // 5 -> 0 when MD's operands were paired with the zones the way the spec and FreeType pair
+        // them. Every glyph Arial could not fit before was a glyph whose hinting ran on a measured
+        // distance of the wrong SIGN. Kept below as the history of the number, since it is the only
+        // record of what the ClearType delta rules cost:
         // 4 -> 5 when the ClearType DELTA rules went in. Isolated, not guessed: WPF_CT_DELTA=all and
         // =inline both bring it back to 4, so it is the suppression of x-direction deltas and
         // nothing else. That rule is measured-correct for rendering -- keeping the deltas costs the
@@ -1948,7 +1952,7 @@ namespace WgpuInterop.Tests.Text
         // whose program, deprived of its deltas, fits to a size the outline does not agree with.
         // The fallback then draws it unhinted, so the output is protected; this is the guard saying
         // the interpreter has one more glyph it cannot run faithfully, which is true.
-        [InlineData("Arial", 5)]
+        [InlineData("Arial", 0)]
         [InlineData("Times New Roman", 0)]
         [InlineData("Comic Sans MS", 0)]
         public void EveryFacesOwnHinting_SurvivesItsOwnProgram(string family, int allowed)
