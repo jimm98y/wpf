@@ -117,8 +117,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             float.TryParse(Environment.GetEnvironmentVariable("WPF_OBLIQUE_SHEAR"),
                            System.Globalization.NumberStyles.Float,
                            System.Globalization.CultureInfo.InvariantCulture, out float os)
-                ? os : 0.36397023f;                          // tan(20 degrees)
-        // AND THE MAGNITUDE WAS NEVER THE PROBLEM. This was briefly set to 0.20 because that
+                ? os : 0.3385f;                              // MEASURED off GDI, see below
+        // MEASURED OFF GDI'S OWN PIXELS, not swept against a specimen. Draw a vertical stem with
+        // GDI's simulated italic, take the sub-pixel CENTROID of each row's ink -- for a single
+        // stem that is its centre line -- and the slope through those centroids is the shear. Over
+        // 'l', 'H' and 'I' at 24, 32, 40 and 48 pixels an em it reads 0.334 to 0.343, mean 0.3385,
+        // which is 18.7 degrees. GdisSimulatedItalic_LeansByAMeasurableAmount is that measurement.
+        // Sweeping the specimen agrees to within its own noise -- 168,812 at 0.3385 against 170,407
+        // at 0.34 and 171,490 at a third -- so the two methods are independent and land together.
+        // Not tan(20 degrees), which is what DirectWrite simulates with and what this used to hold:
+        // that costs Tahoma's italic 195,634 against 168,812.
+        //
+        // AND THE MAGNITUDE WAS NEVER THE PROBLEM when this was set to 0.20. That was briefly set because
         // measured better than 0.364 -- both were leaning the glyph the WRONG WAY, so the sweep was
         // choosing between two wrong answers and the whole range was flat to within 3%. With the
         // sign corrected, Tahoma's synthesized italic goes 785,245 -> 283,963, and the optimum sits

@@ -2633,7 +2633,12 @@ namespace WgpuInterop.Tests.Text
             {
                 int gid = font.GlyphIndex(c);
                 int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
+                // The renderer's own rule: the device advance where the face has one, and the
+                // scaled design advance rounded where it does not. A glyph with no outline -- the
+                // SPACE -- has no device advance at all, and reading that as zero made Verdana look
+                // eight pixels adrift when nothing was wrong.
                 bool device = font.TryGetDeviceAdvance(gid, ppem, out float ours);
+                if (!device) ours = MathF.Round(font.LinearAdvanceForTest(gid, ppem));
                 int oursI = (int) MathF.Round(ours);
                 ourTotal += oursI; gdiTotal += gdi;
                 bool hinted = font.FaceHintsGlyph(gid, ppem);
@@ -2771,6 +2776,67 @@ namespace WgpuInterop.Tests.Text
                 if (bestErr > 0) log.AppendLine($"  x {x0,3}..{x0 + 19,3}  best {best,2} lamps  err {bestErr}");
             }
             throw new Xunit.Sdk.XunitException(log.ToString());
+        }
+
+
+        /// <summary>How far GDI leans a SIMULATED italic, measured off its own pixels.
+        /// <para>A face that ships no italic file gets one by shearing, and the shear is a constant
+        /// somebody chose. Rather than sweep ours against a specimen and keep whatever wins, ask
+        /// GDI: draw a vertical stem tall enough to measure, take the leftmost inked column on each
+        /// row, and the slope of that line IS the shear. Set WPF_SLANT to family@ppem.</para>
+        /// </summary>
+        [Fact]
+        public void GdisSimulatedItalic_LeansByAMeasurableAmount()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string spec = Environment.GetEnvironmentVariable("WPF_SLANT") ?? "";
+            Assert.SkipWhen(spec.Length == 0, "set WPF_SLANT to family@ppem");
+            string[] parts = spec.Split('@');
+            string family = parts[0];
+            int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 48;
+
+            var log = new System.Text.StringBuilder();
+            foreach (string glyph in new[] { "l", "H", "I" })
+            {
+                var raw = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(glyph, family, ppem, PenX, Height - 8, Width, Height, false, italic: true);
+                Gdi.s_rawRgb = null;
+
+                // The CENTROID of each row's ink, not its leftmost inked column. A threshold
+                // quantizes the edge to whole pixels and the slope it gives wanders by a degree
+                // between glyphs; a centroid is sub-pixel, and for a single vertical stem it is the
+                // stem's own centre line. ('H' has two stems, so its centroid is the midpoint
+                // between them -- which leans by exactly the same amount.)
+                var ys = new List<double>();
+                var xs = new List<double>();
+                for (int y = 0; y < Height; y++)
+                {
+                    double mass = 0, moment = 0;
+                    for (int x = 0; x < Width; x++)
+                    {
+                        int o = (y * Width + x) * 4;
+                        double cov = (765 - raw[o] - raw[o + 1] - raw[o + 2]) / 765.0;
+                        if (cov <= 0) continue;
+                        mass += cov; moment += cov * x;
+                    }
+                    // Only rows the stem passes cleanly through: a row clipped by the glyph's top or
+                    // bottom serif carries a different shape and pulls the fit.
+                    if (mass > 0.5) { ys.Add(y); xs.Add(moment / mass); }
+                }
+                if (xs.Count < 4) { log.AppendLine($"  '{glyph}': too little ink"); continue; }
+
+                double my = 0, mx = 0;
+                for (int i = 0; i < xs.Count; i++) { my += ys[i]; mx += xs[i]; }
+                my /= ys.Count; mx /= xs.Count;
+                double num = 0, den = 0;
+                for (int i = 0; i < xs.Count; i++) { num += (ys[i] - my) * (xs[i] - mx); den += (ys[i] - my) * (ys[i] - my); }
+                // x decreases as y increases (the top leans right), so negate for a positive shear.
+                double shear = den > 0 ? -num / den : 0;
+                log.AppendLine($"  '{glyph}' rows={xs.Count} shear={shear:0.0000}"
+                               + $"  ({Math.Atan(shear) * 180 / Math.PI:0.00} degrees)");
+            }
+            throw new Xunit.Sdk.XunitException($"{family} @ {ppem}ppem simulated italic" + Environment.NewLine + log);
         }
 
         private static class Gdi
