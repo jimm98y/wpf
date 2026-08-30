@@ -1273,7 +1273,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         int ours = 0;
                         if (gy >= 0 && gy < m.Height && gx >= 0 && gx < m.Width)
-                            ours = (int) MathF.Round(MathF.Pow(m.Rgba[(gy * m.Width + gx) * 4 + ch] / 255f, 1.15f) * 255f);
+                            ours = InkThroughTheCurve(m.Rgba[(gy * m.Width + gx) * 4 + ch]);
                         int theirs = 255 - raw[i + (2 - ch)];
                         double d = ours - theirs;
                         e += d * d;
@@ -1392,6 +1392,18 @@ namespace WgpuInterop.Tests.Text
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>Coverage through the SHIPPING contrast curve, so a probe measures the pipeline
+        /// that is actually drawn.
+        /// <para>These probes had `pow(cov, 1.15)` written into them, which was the curve at the
+        /// time. It is not any more -- the contrast is applied by blending in gamma space, and the
+        /// exponent comes from the user's ClearType setting rather than from a constant -- so every
+        /// verdict they reach would otherwise be about a renderer we no longer ship.</para></summary>
+        private static int InkThroughTheCurve(byte coverage)
+        {
+            float g = Math.Clamp(Gdi.SystemFontSmoothingContrast() / 1000f, 1.0f, 2.2f);
+            return (int) MathF.Round((1f - MathF.Pow(1f - coverage / 255f, 1f / g)) * 255f);
+        }
+
         /// <summary>The leftmost x a figure reaches, control points included.</summary>
         private static float FigureLeft(PathFigure f)
         {
@@ -1477,7 +1489,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     // The same curve the renderer applies to a mask before it is composited.
                     float cov = m.Rgba[i + c] / 255f;
-                    outp[k * 3 + c] = (int)MathF.Round(MathF.Pow(cov, 1.15f) * 255f);
+                    outp[k * 3 + c] = InkThroughTheCurve((byte) MathF.Round(cov * 255f));
                 }
             }
             return outp;
@@ -2375,6 +2387,23 @@ namespace WgpuInterop.Tests.Text
         [SupportedOSPlatform("windows")]
         private static class Gdi
         {
+            /// <summary>The user's ClearType contrast, 1000..2200, or 1200 if it cannot be read.
+            /// It IS the gamma the ClearType blend uses -- measured, at three settings.</summary>
+            internal static int SystemFontSmoothingContrast()
+            {
+                try
+                {
+                    uint value = 0;
+                    return SystemParametersInfo(0x200C, 0, ref value, 0) && value >= 1000 && value <= 2200
+                        ? (int) value : 1200;
+                }
+                catch (EntryPointNotFoundException) { return 1200; }
+                catch (DllNotFoundException) { return 1200; }
+            }
+
+            [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
+            private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);
+
             // ClearType, because ClearType is what we draw. Asking GDI for grey and comparing it with
             // subpixel output measures the difference between two rendering modes, which is not a
             // fault anyone can fix.
