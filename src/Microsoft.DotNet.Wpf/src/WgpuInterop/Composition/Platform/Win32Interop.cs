@@ -180,6 +180,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             catch (EntryPointNotFoundException) { return false; }
         }
 
+        /// <summary>0 when the user has font smoothing off, 1 for grey, 2 for ClearType.
+        /// <para>Two settings, because Windows keeps them apart: SPI_GETFONTSMOOTHING says whether
+        /// text is smoothed at all, and only if it is does SPI_GETFONTSMOOTHINGTYPE say how.</para>
+        /// <para>Off Windows, ClearType -- every other head emulates the Windows text stack and has
+        /// no such setting to read.</para></summary>
+        internal static int FontSmoothingKind()
+        {
+            if (!OperatingSystem.IsWindows()) return 2;
+            try
+            {
+                uint on = 0;
+                if (!SystemParametersInfo(SPI_GETFONTSMOOTHING, 0, ref on, 0)) return 2;
+                if (on == 0) return 0;
+                uint kind = 0;
+                if (!SystemParametersInfo(SPI_GETFONTSMOOTHINGTYPE, 0, ref kind, 0)) return 2;
+                return kind == FE_FONTSMOOTHINGCLEARTYPE ? 2 : 1;
+            }
+            catch (DllNotFoundException) { return 2; }
+            catch (EntryPointNotFoundException) { return 2; }
+        }
+
+        private const uint SPI_GETFONTSMOOTHING = 0x004A;
+        private const uint SPI_GETFONTSMOOTHINGTYPE = 0x200A;
+        private const uint FE_FONTSMOOTHINGCLEARTYPE = 2;
         private const uint SPI_GETFONTSMOOTHINGCONTRAST = 0x200C;
         private const uint SPI_GETFONTSMOOTHINGORIENTATION = 0x2012;
         private const uint FE_FONTSMOOTHINGORIENTATIONBGR = 0;

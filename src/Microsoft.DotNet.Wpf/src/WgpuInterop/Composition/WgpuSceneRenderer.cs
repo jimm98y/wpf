@@ -3576,10 +3576,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
         private bool _clearType = InitClearType();
 
+        /// <summary>Whether the user has ClearType on at all, and whether they want it.
+        /// <para>This answered "yes, always". Windows has TWO settings ahead of the ones we already
+        /// read: font smoothing can be OFF, and when it is on it can be STANDARD rather than
+        /// ClearType, in which case GDI draws grey. Answering yes regardless puts coloured fringes
+        /// on every glyph on a desktop where every other application has just gone grey -- the same
+        /// shape of gap as having the panel's lamp order written in, and more visible.</para>
+        /// <para>Off Windows this is ClearType, as it was: every other head emulates the Windows
+        /// text stack and has no such setting to read.</para></summary>
         private static bool InitClearType()
         {
-            Text.TrueTypeFont.SubpixelFitting = true;
-            return true;
+            // WPF_CLEARTYPE forces either answer, so the other mode can be exercised on a machine
+            // that is not set to it -- and so that "should we follow the setting at all?" is a
+            // measurement rather than an assumption.
+            string? forced = Environment.GetEnvironmentVariable("WPF_CLEARTYPE");
+            bool on = forced == "1" || forced == "0"
+                ? forced == "1"
+                : Platform.Win32Interop.FontSmoothingKind() == 2;
+            Text.TrueTypeFont.SubpixelFitting = on;
+            return on;
         }
 
         /// <summary>Draw a glyph run the way ClearType does, or say that this one cannot be.</summary>
