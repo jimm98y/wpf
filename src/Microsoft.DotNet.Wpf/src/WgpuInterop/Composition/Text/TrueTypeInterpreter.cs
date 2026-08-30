@@ -507,6 +507,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Grid for POSITIONS specifically, when it is not the virtual one. WPF_CT_POSGRID
         /// takes a number here -- 3 puts them on the lamp grid, which is the resolution the text is
         /// actually DRAWN at, as opposed to the sixteenth the program rounds against.</summary>
+        /// <summary>WPF_CT_DISTGRID: the grid DISTANCES round on in the ClearType direction, as a
+        /// divisor of a pixel (1 = whole pixels). 0 leaves them on the virtual grid.</summary>
+        private static readonly int s_distanceGrid =
+            Environment.GetEnvironmentVariable("WPF_CT_DISTGRID") == "physical" ? 1
+            : int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DISTGRID"), out int dg) ? dg : 0;
+
+        /// <summary>WPF_CT_STEMSNAP: distances at or below this many 64ths of a pixel round on the
+        /// physical grid. 0 disables it.</summary>
+        private static readonly int s_stemSnap =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMSNAP"), out int ss) ? ss : 0;
+
         private static readonly int s_positionGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_POSGRID"), out int pg) ? pg : 0;
 
@@ -829,7 +840,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // ClearType grid. An earlier version put distances there too -- which is not the tested
             // configuration, and it put 'o' at 0.06 where GDI's bi-level outline says 1.0.
             if (BiLevelPass) { finer = false; physicalPosition = position; }
-            int thirds = finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
+            // A DISTANCE may round on the physical grid while a POSITION rounds on the virtual one --
+            // the opposite pairing to WPF_CT_POSGRID, and the one the pixels argue for: Windows'
+            // stems land square on a column ('m' at 11ppem reads "@." per stem) where ours straddle
+            // two ("./%"), which is a stem WIDTH question, while our placement is already within a
+            // sixteenth almost everywhere.
+            int distanceGrid = !position && InClearTypeDirection && s_distanceGrid > 0 ? s_distanceGrid : 0;
+            // A SHORT distance is a stem, and a stem about a pixel wide is the one measurement where
+            // landing on the grid decides whether the stem is crisp or smeared across two columns.
+            // A long one is a bowl or a bar, where the same rounding is just distortion. That is the
+            // 11-vs-16ppem tension every global rule here has run into, stated as what it actually
+            // depends on -- the size of the DISTANCE, not the size of the text.
+            if (s_stemSnap > 0 && !position && InClearTypeDirection && Math.Abs(value) <= s_stemSnap)
+                distanceGrid = 1;
+            int thirds = distanceGrid > 0 ? distanceGrid
+                       : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : physicalPosition ? 1
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
                        : InClearTypeDirection ? ClearTypeGrid
