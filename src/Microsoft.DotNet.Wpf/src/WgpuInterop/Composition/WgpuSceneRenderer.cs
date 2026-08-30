@@ -3464,6 +3464,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 key = (key * 397 ^ (long)format) * 32 + (_symmetricSmoothing && subpixel ? 16 : 0)
                       + (_aliasedEdges ? 8 : 0) + (gamma ? 4 : 0)
                       + (textBlend ? 2 : 0) + (subpixel ? 1 : 0);
+                // A subpixel mask now carries the contrast curve for the INK it will be drawn in --
+                // the gamma blend GDI does depends on the foreground, and only black makes it drop
+                // out -- so two colours cannot share one mask. Keyed only for subpixel text, and
+                // only on the three channels the curve reads, so a UI's handful of text colours
+                // costs a handful of extra entries and everything else caches exactly as before.
+                if (subpixel)
+                    key = key * 397 ^ ((long) ToByte(solid.Color.R) << 16
+                                     | (long) ToByte(solid.Color.G) << 8
+                                     | ToByte(solid.Color.B));
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
@@ -3492,7 +3501,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // carries corrected ink about unchanged) and measures slightly WORSE on every
                         // count -- 1307 disagreeing pixels against 1196. It also does not straighten
                         // the size tilt, which is how we know the tilt is not about this order.
-                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend);
+                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color);
                         (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
                         mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
                         cm = new CachedMask
@@ -3880,7 +3889,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// of three corrected values is not the correction of their mean. Correcting it separately
         /// left the destination dimmed by a different amount from the ink that replaced it, which
         /// shows as a pale halo around every glyph.</para></summary>
-        private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend)
+        /// <summary>The contrast curve for ink of a given channel value, against WHITE paper.
+        /// <para>Our composite is a linear blend, `dst*(1-c') + fg*c'`, with the contrast folded into
+        /// c'. GDI's is a blend in gamma space, `((1-cov)*dst^g + cov*fg^g)^(1/g)`. The two agree
+        /// EXACTLY when the ink is black -- the fg^g term vanishes -- which is why black text on any
+        /// background is right and why nothing here mattered while the specimen was black on white.
+        /// They part company as the ink lightens: measured against Windows, error per unit of ink
+        /// runs 0.1005 / 0.1201 / 0.1283 / 0.1300 for black / #404040 / #808080 / #A0A0A0, and our
+        /// ink goes from 3.5% light to 8% light over the same range.</para>
+        /// <para>Solving the linear blend for the gamma blend's answer on WHITE paper gives
+        /// c' = (1 - T)/(1 - fg) with T = ((1-cov) + cov*fg^g)^(1/g). A two-pass linear blend cannot
+        /// be exact for an arbitrary foreground AND an arbitrary destination -- (A+B)^(1/g) is not
+        /// A^(1/g) + B^(1/g) -- so white paper is the achievable target, and it is the common one.
+        /// At fg = 0 this reduces to the curve that was there before.</para></summary>
+        private static byte[] SubpixelLutForInk(byte fg)
+        {
+            if (fg == 0) return s_subpixelLut;
+            byte[]? cached = s_inkLuts[fg];
+            if (cached is not null) return cached;
+
+            float g = SubpixelGamma, f = fg / 255f;
+            var lut = new byte[256];
+            float fgPow = MathF.Pow(f, g);
+            for (int i = 0; i < 256; i++)
+            {
+                float cov = i / 255f;
+                float t = MathF.Pow((1f - cov) + cov * fgPow, 1f / g);
+                // 1 - fg is the most ink this channel can carry; as it goes to zero there is no ink
+                // to place and the curve is meaningless, so fall back rather than divide by it.
+                float c = f >= 0.999f ? cov : (1f - t) / (1f - f);
+                lut[i] = (byte) MathF.Round(Math.Clamp(c, 0f, 1f) * 255f);
+            }
+            return s_inkLuts[fg] = lut;
+        }
+
+        private static readonly byte[]?[] s_inkLuts = new byte[]?[256];
+
+        private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink)
         {
             // Applied whichever correction the grey path would have wanted, because the reason is the
             // same one -- coverage is not brightness -- and only the curve differs.
@@ -3894,13 +3939,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     rgba[j + 3] = (byte)((rgba[j] + rgba[j + 1] + rgba[j + 2]) / 3);
                 return;
             }
-            byte[] lut = s_subpixelLut;
+            // One curve per LAMP, because each lamp lights a different channel of the ink.
+            byte[] lutR = SubpixelLutForInk(ToByte(ink.R));
+            byte[] lutG = SubpixelLutForInk(ToByte(ink.G));
+            byte[] lutB = SubpixelLutForInk(ToByte(ink.B));
             for (int i = 0; i < rgba.Length; i += 4)
             {
                 int total = 0;
                 for (int c = 0; c < 3; c++)
                 {
-                    byte v = lut[rgba[i + c]];
+                    byte v = (c == 0 ? lutR : c == 1 ? lutG : lutB)[rgba[i + c]];
                     rgba[i + c] = v;
                     total += v;
                 }
