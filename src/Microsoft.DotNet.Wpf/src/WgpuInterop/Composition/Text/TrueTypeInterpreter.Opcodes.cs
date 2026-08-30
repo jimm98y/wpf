@@ -405,7 +405,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             for (int i = 0; i < _gs.Loop; i++)
                             {
                                 int sp = Pop();
-                                if (SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
+                                // Jason Campbell, on the Windows rasterizers: "only DELTAPs are not
+                                // used, but SHPIX are executed." Tested, because it is a specific
+                                // claim from someone who would know, and it does NOT hold against
+                                // GDI's own output here: executing SHPIX costs 681,513 -> 743,730.
+                                // Refusing it in the ClearType direction, as DELTAP is refused,
+                                // measures better. WPF_CT_SHPIX=run tries it the other way.
+                                if (!s_runShpix && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
                                 MoveDirect(z, sp, dx, dy, touch);
                             }
                             _gs.Loop = 1;
@@ -550,6 +556,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 if ((selector & 64) != 0) result |= 1 << 13;    // ClearType enabled
                                 if ((selector & 128) != 0) result |= 1 << 14;   // compatible widths
                                 if ((selector & 256) != 0) result |= 1 << 15;   // horizontal stripes
+                                // Bit 18, ClearType SYMMETRIC RENDERING, "can impact the rendering
+                                // of horizontal features" -- FreeType answers yes whenever it hints
+                                // for an antialiased target. Answering it changes nothing measurable
+                                // for Segoe UI (743,631 against 743,730, inside the noise), so it is
+                                // left unanswered rather than guessed at. WPF_CT_SYMINFO=1 answers it.
+                                if (s_symmetricInfo && (selector & 2048) != 0) result |= 1 << 18;
                             }
                             // NOT ClearType, and it was tried: saying so makes Segoe UI hint its
                             // stems to exactly one pixel where GDI's own geometry is a pixel and a
@@ -794,6 +806,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "inline";
 
         /// <summary>Apply every delta, suppressing none -- what GDI's ClearType appears to do.</summary>
+        /// <summary>WPF_CT_SYMINFO=1 answers GETINFO's symmetric-rendering bit.</summary>
+        private static readonly bool s_symmetricInfo =
+            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+
+        /// <summary>WPF_CT_SHPIX=run executes SHPIX in the ClearType direction instead of refusing
+        /// it. Measured worse -- see the note at the SHPIX site.</summary>
+        private static readonly bool s_runShpix =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
+
         private static readonly bool s_keepAllDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";
 
