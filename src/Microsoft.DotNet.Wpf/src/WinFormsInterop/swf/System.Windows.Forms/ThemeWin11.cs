@@ -513,10 +513,20 @@ namespace System.Windows.Forms
 			g.SmoothingMode = old;
 		}
 
-		/// <summary>How far a check box's corner is rounded. Measured against a stock box by how far
-		/// its top row is inset from the box's own edge: a radius of three rounded a pixel more than
-		/// Windows does.</summary>
-		private const float Radius = 2.5f;
+		/// <summary>How far a check box's corner is rounded. THREE, measured over the whole of the
+		/// two regions that draw these boxes rather than off one corner:
+		///     radius   2.0     2.5     2.75    3.0     3.25    3.5
+		///     checked  98,261  96,362  94,029  93,960  95,686  98,177
+		///     boxes    48,854  48,060  46,720  46,384  47,308  48,732
+		/// <para>It was 2.5 on the strength of a single reading -- how far the box's TOP ROW is
+		/// inset from its own edge -- which said three rounded a pixel more than Windows. That one
+		/// pixel is real and the rest of the shape outvotes it: at three, both regions are better
+		/// than at any other radius tried, and the offscreen control-parity suite stays green.
+		/// WPF_CHECK_RADIUS sweeps it.</para></summary>
+		private static readonly float Radius =
+			float.TryParse (Environment.GetEnvironmentVariable ("WPF_CHECK_RADIUS"),
+					System.Globalization.NumberStyles.Float,
+					System.Globalization.CultureInfo.InvariantCulture, out float cr) ? cr : 3.0f;
 
 		/// <summary>A rounded rectangle in float coordinates, built from four arcs -- the shape a
 		/// modern check box, and anything else with softened corners, is drawn as.</summary>
