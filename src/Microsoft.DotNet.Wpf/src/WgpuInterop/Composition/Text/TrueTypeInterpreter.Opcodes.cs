@@ -863,6 +863,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_runShpix =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
 
+        /// <summary>WPF_CT_CUTIN_DIV: what the control-value cut-in is divided by in the ClearType
+        /// direction. 16 is the paper's sixteenth.</summary>
+        private static readonly int s_cutInDivisor =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CUTIN_DIV"), out int cd) && cd > 0
+                ? cd : ClearTypeGrid;
+
         private static readonly bool s_keepAllDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";
 
@@ -915,8 +921,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // WORSE, 1,654,115 against 1,410,303. One more piece of evidence that GGO reports the
             // greyscale fit and ClearType draws something else, and a reminder that the specimen is
             // the authority here, not the outline API. WPF_CT_CUTIN_FULL=1 restores the full cut-in.
+            // The divisor decides whether a stem takes the CONTROL VALUE or the OUTLINE distance,
+            // and SIXTEEN is an optimum with both sides measured. Solving Arial's stems out of GDI's
+            // pixels at 12ppem gives 1.110 for 'l' and 'i' and 1.249/1.296 for 'H' -- varied, which
+            // is what taking the outline looks like -- where every stem we fit is exactly 1.0625px,
+            // which is what taking one control value looks like. So a SMALLER cut-in (take the
+            // outline more often) was the obvious move, and it is worse in both directions:
+            //     full  2,841,228     /16  2,773,440     /32  2,787,681
+            //     /64   2,788,094     /256 2,790,898              (Arial, three styles)
+            // Whatever makes GDI's stems vary, it is not this threshold. WPF_CT_CUTIN_DIV sweeps it.
             int cutIn = (s_cutInFull || BiLevelPass ? _gs.ControlValueCutIn
-                                                    : _gs.ControlValueCutIn / ClearTypeGrid) * stretch;
+                                                    : _gs.ControlValueCutIn / s_cutInDivisor) * stretch;
             int minimum = (InClearTypeDirection && !s_fullMinDistance && !BiLevelPass ? _gs.MinimumDistance / 2
                                                 : _gs.MinimumDistance) * stretch;
 
