@@ -409,7 +409,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// on is rounding to a third of a real one, and each stem lands on a lamp.</para></summary>
         internal static bool XSpace3x => TrueTypeFont.XHintMode == 11;
 
-        /// <summary>Whether x movement is refused AS THE PROGRAM RUNS rather than undone after.</summary>
+        /// <summary>Whether x movement is refused AS THE PROGRAM RUNS rather than undone after.
+        /// <para>This is rule 1 of what FreeType calls BACKWARD COMPATIBILITY MODE, its emulation of
+        /// ClearType. Its four rules, from ttinterp.h: x movement is ignored; points are not moved
+        /// post-IUP on either axis except the x component of diagonal moves; SHPIX and DELTAP do not
+        /// execute unless moving a composite on y or a previously y-touched point; and the hdmx
+        /// table and phantom-point changes are ignored. It is disabled by `#PUSH 4,3 INSTCTRL[]`,
+        /// which is the selector NativeClearTypeMode already reads.</para>
+        /// <para>MEASURED, and it is not GDI's mode. All four rules together cost 681,433 ->
+        /// 1,550,791; rule 1 alone 1,472,831; rule 2 alone 684,721. Our delta suppression already
+        /// matches their rule 3 and WPF_CT_DELTA=touched is that clause verbatim, but rules 1 and 4
+        /// contradict what measures best here -- GDI hints x, and compatible widths (which rule 4
+        /// forbids) is worth 70,000 on its own. FreeType is emulating DirectWrite's ClearType;
+        /// GDI's is the compatible-widths mode, and it is a different animal.</para></summary>
         internal static bool XSuppress =>
             TrueTypeFont.XHintMode == 12 && TrueTypeFont.SubpixelFitting;
 
@@ -766,6 +778,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private void MovePoint(Zone zone, int point, int distance, bool touch = true)
         {
             if (point < 0 || point >= zone.PointCount) return;
+
+            // FreeType's post-IUP curfew was tried here and is NOT what GDI does -- see the note on
+            // backward-compatibility mode above XSuppress. Measured alone it costs 681,433 ->
+            // 684,721, and the mode it belongs to costs 1,550,791. No branch is kept for it: this is
+            // the hottest function in the hinter.
 
             if (_gs.FreeX != 0)
             {
