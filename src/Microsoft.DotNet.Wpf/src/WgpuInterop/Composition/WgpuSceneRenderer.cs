@@ -3713,6 +3713,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// coverage model does not stay tuned when the model changes -- re-sweep it after any
         /// rasteriser change, not just after a change to the curve.</para>
         /// </summary>
+        /// <summary>Whether the contrast is applied by BLENDING in gamma space rather than as a
+        /// power on the coverage. ON.
+        /// <para>"The contrast value used in the ClearType algorithm" is a blend parameter, and for
+        /// black ink on white paper a gamma-space blend reduces to 1-(1-c)^(1/g) where ours was
+        /// c^g. The two are the same curve only at g = 1.</para>
+        /// <para>The evidence that this is GDI's shape is not that it measures better, though it
+        /// does -- 681,433 against 759,520. It is that it makes the exponent COME OUT RIGHT. With
+        /// c^g the best exponent was 0.75 * contrast + 0.25, three quarters of the way from 1 to the
+        /// user's setting, which is the shape of an approximation. With the blend it is the setting
+        /// EXACTLY, at every contrast measured: 1.00 at 1000, 1.20 at 1200, 1.40 at 1400, each a
+        /// sharp minimum with both neighbours 60,000 or more worse.</para>
+        /// <para>And the error stops depending on the setting. With c^g it ran 688k / 759k / 827k
+        /// across those three contrasts, because the fit was only good near where it was tuned; with
+        /// the blend it is 688k / 681k / 683k. A model that is right does not get worse when the
+        /// user changes a preference.</para>
+        /// <para>WPF_SUBPIXEL_CURVE=power restores the old shape.</para></summary>
+        private static readonly bool SubpixelCurveIsBlend =
+            Environment.GetEnvironmentVariable("WPF_SUBPIXEL_CURVE") != "power";
+
         private static readonly float SubpixelGamma =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAMMA"),
                            System.Globalization.NumberStyles.Float,
@@ -3724,19 +3743,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// a constant, which is only right on that machine -- and the Windows DEFAULT is 1400, where
         /// a constant 1.15 costs about six percent (879,159 against 827,148 on the text specimen).
         /// </para>
-        /// <para>The relation is a straight line, and it was measured rather than assumed: setting
-        /// the system contrast to 1000, 1200 and 1400 in turn and re-sweeping our exponent against
-        /// Windows' own rendering each time gives an optimum of 1.00, 1.15 and 1.30. Two points
-        /// would have been a guess; the third was a PREDICTION -- 1.00 at contrast 1000 -- and it
-        /// came back a clear minimum, 688,210 against 792,180 and 849,488 a tenth either side.</para>
-        /// <para>Off Windows, and if the setting cannot be read, keep 1.15: there is no ClearType
-        /// contrast to honour there and no reference to re-measure against, so this is not the place
-        /// to change how those platforms look.</para></summary>
+        /// <para>It is the setting itself, once the contrast is applied the way GDI applies it --
+        /// see SubpixelCurveIsBlend. Measured at 1000, 1200 and 1400 by setting the system contrast
+        /// and re-sweeping against Windows' own rendering: the optimum is 1.00, 1.20 and 1.40, each
+        /// a sharp minimum. The 0.75 * contrast + 0.25 that the old power curve needed was the
+        /// approximation showing through.</para>
+        /// <para>Off Windows, and if the setting cannot be read, 1.2 -- which is not a Windows
+        /// default (that is 1400) but the value that leaves those platforms looking as they did:
+        /// blending at 1.2 and the old power curve at 1.15 agree to within a percent through the
+        /// midtones. There is no ClearType contrast to honour there and no reference to measure
+        /// against, so this is not the place to change how they look.</para></summary>
         private static float GammaForSystemContrast()
         {
             int contrast = Platform.Win32Interop.FontSmoothingContrast();
-            if (contrast < 1000 || contrast > 2200) return 1.15f;
-            return 0.75f * (contrast / 1000f) + 0.25f;
+            if (contrast < 1000 || contrast > 2200) return 1.2f;
+            return contrast / 1000f;
         }
 
         /// <summary>How hard the curve pushes coverage AWAY from the middle, after the gamma.
@@ -3792,7 +3813,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var lut = new byte[256];
             for (int i = 0; i < 256; i++)
             {
-                float c = MathF.Pow(i / 255f, SubpixelGamma);
+                // TWO READINGS OF THE CONTRAST VALUE. Ours darkens the coverage itself, c^g. The
+                // other is what "the contrast used in the ClearType algorithm" most naturally means
+                // -- blend in gamma space -- which for black ink on white paper reduces to
+                // 1-(1-c)^(1/g). If that is the shape GDI uses, the exponent that fits it should be
+                // the system contrast EXACTLY rather than three quarters of the way to it, which is
+                // what the c^g form needs.
+                float c = SubpixelCurveIsBlend
+                    ? 1f - MathF.Pow(1f - i / 255f, 1f / SubpixelGamma)
+                    : MathF.Pow(i / 255f, SubpixelGamma);
                 // Symmetric about a half, so it cannot change which side of the middle a value is on
                 // and cannot invert an edge; k = 1 is the full cubic.
                 if (SubpixelContrast != 0f)
