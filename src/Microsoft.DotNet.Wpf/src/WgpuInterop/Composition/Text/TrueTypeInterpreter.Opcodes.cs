@@ -412,6 +412,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // Refusing it in the ClearType direction, as DELTAP is refused,
                                 // measures better. WPF_CT_SHPIX=run tries it the other way.
                                 if (!s_runShpix && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
+                                // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
+                                // paper's sentence quoted below ends "we keep only deltas on touched
+                                // points in the non-ClearType direction", and we were applying the
+                                // touched test only in the ClearType one. Arial's 'W' at 12ppem is
+                                // what that costs: a vertical SHPIX of -199/64 -- more than three
+                                // pixels -- lands its bottom vertex BELOW the baseline, where GDI's
+                                // W stops on it and the unhinted outline never goes below it either.
+                                if (s_shpixNeedsTouch && !_inPreProgram && !IsHorizontalFreedom
+                                    && (uint) sp < (uint) z.PointCount
+                                    && (z.Tags[sp] & TagTouchY) == 0) continue;
                                 MoveDirect(z, sp, dx, dy, touch);
                             }
                             _gs.Loop = 1;
@@ -809,6 +819,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SYMINFO=1 answers GETINFO's symmetric-rendering bit.</summary>
         private static readonly bool s_symmetricInfo =
             Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+
+        /// <summary>WPF_CT_SHPIXTOUCH=0 lets a vertical SHPIX move an untouched point.</summary>
+        private static readonly bool s_shpixNeedsTouch =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIXTOUCH") != "0";
 
         /// <summary>WPF_CT_SHPIX=run executes SHPIX in the ClearType direction instead of refusing
         /// it. Measured worse -- see the note at the SHPIX site.</summary>
