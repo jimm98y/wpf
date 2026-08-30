@@ -1712,6 +1712,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // inside the hinter; CompatibleAdvance carries the guard that makes it safe.
                     float wanted = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target = (int) MathF.Round(wanted * 64f);
+                    // IT STRETCHES THE STEMS, and that is the price. Verdana's 'l' at 19ppem fits to
+                    // a 1.75px stem inside a 5.25px advance; the compatible advance is 6, so the
+                    // glyph is scaled by 6/5.25 and the stem comes out at 2.0. GDI draws 1.663.
+                    // Ours is worse than the unscaled fit for that ONE measurement -- and better
+                    // everywhere it is measured whole, because an advance that is a pixel out
+                    // displaces every glyph after it and a stem an eighth of a pixel wide does not.
+                    // Re-measured over the repertoire at 10..20ppem on Verdana, which has no 'hdmx'
+                    // and so takes the largest corrections of any face here:
+                    //     scale 23,565    translate 25,226    no correction at all 26,338
+                    // and on Segoe UI, which has one: 41,294 / 41,705 / --. Scaling wins at every
+                    // size but 19 and 20, where the three are within noise of each other.
+                    //
                     // Only a CORRECTION, never a rebuild. The scale is the ratio of two advances and
                     // it is applied to the INK, so where the fitted phantom points have gone astray
                     // it stretches the glyph instead of nudging it: 'f' at 11ppem comes out 4.41px
