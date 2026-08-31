@@ -1445,7 +1445,35 @@ namespace WgpuInterop.Tests.Text
                     double ourFit = font.TryGetHintedOutline(font.GlyphIndex(ch[0]), Ppem, out List<PathFigure> f)
                         ? XExtent(f) : 0;
                     if (gdi <= 0 && ours <= 0) continue;
-                    if (i == 4 || i == 8)
+                    if (bars[i].NoProgram && (i == 98 || i == 110 || i == 122 || i == 134))
+                    {
+                        // The lamps themselves, for a bar whose geometry both sides agree on
+                        // EXACTLY. If GDI samples each lamp in-or-out at six positions its
+                        // ANSWERED, and the answer is that they are IDENTICAL -- every lamp,
+                        // every width, byte for byte. Our ClearType coverage chain is exact
+                        // against GDI's on geometry the two agree about, which retires the
+                        // filter, the gain, the curve and the quantiser all at once.
+                        //
+                        // The 0.136px that BarWidth reported was never horizontal. BarWidth
+                        // divides ink by the number of INKED ROWS, and the row profiles show
+                        // GDI with a ninth faint row on top -- 0.094 against eight identical
+                        // full rows -- where we have eight and nothing above them. The glyph
+                        // spans -8.2031 to 0 on BOTH sides, so that row is real geometry: we
+                        // sample a lamp once, at the scanline centre, and the top row's
+                        // centre at -8.5 misses it. That is SubpixelRows, and it is a
+                        // measured decision (see PathRasterizer) that one row beats four on
+                        // real text, precisely because y hinting leaves no partial rows.
+                        // This font has no program, so it manufactures the one case where
+                        // the decision costs -- the probe built its own residual.
+                        // pre-filter coverage can only be a sixth at a time; if it integrates
+                        // area, it is continuous. The filter is a box and preserves the total,
+                        // so the difference survives to here and is visible in the profile.
+                        report.AppendLine($"      [w={wanted[i]:0.0000}] GDI lamps: {LampProfile(raw, true)}");
+                        report.AppendLine($"      [w={wanted[i]:0.0000}] our lamps: {LampProfile(OursRgba(font, ch, Ppem, baseline, correction: true), false)}");
+                        report.AppendLine($"      [w={wanted[i]:0.0000}] GDI rows : {RowProfile(raw, true)}");
+                        report.AppendLine($"      [w={wanted[i]:0.0000}] our rows : {RowProfile(OursRgba(font, ch, Ppem, baseline, correction: true), false)}");
+                    }
+                    if (i == 4 || i == 8 || i == 110 || i == 122)
                     {
                         // The coordinates themselves, for the two glyphs either side of where
                         // the two interpreters part company. If ours are whole in Y as well as
@@ -1463,6 +1491,46 @@ namespace WgpuInterop.Tests.Text
             }
             finally { RemoveFontMemResourceEx(handle); }
             File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The inked lamps of the busiest row, left to right, as coverage out of 255.
+        /// One number per LAMP, not per pixel, so the three of a pixel are consecutive.</summary>
+        private static string LampProfile(byte[] rgba, bool bgra)
+        {
+            int best = -1; double bestInk = 0;
+            for (int y = 0; y < Height; y++)
+            {
+                double ink = 0;
+                for (int x = 0; x < Width; x++)
+                    for (int c = 0; c < 3; c++)
+                        ink += 255 - rgba[(y * Width + x) * 4 + (bgra ? 2 - c : c)];
+                if (ink > bestInk) { bestInk = ink; best = y; }
+            }
+            if (best < 0) return "(none)";
+            var sb = new System.Text.StringBuilder();
+            for (int x = 0; x < Width; x++)
+                for (int c = 0; c < 3; c++)
+                {
+                    int v = 255 - rgba[(best * Width + x) * 4 + (bgra ? 2 - c : c)];
+                    if (v > 0 || sb.Length > 0) sb.Append(v.ToString()).Append(' ');
+                }
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>Total ink per ROW, top to bottom, in pixels. BarWidth divides by the number
+        /// of inked rows, so a bar that is a different HEIGHT reads as a different WIDTH.</summary>
+        private static string RowProfile(byte[] rgba, bool bgra)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int y = 0; y < Height; y++)
+            {
+                double ink = 0;
+                for (int x = 0; x < Width; x++)
+                    for (int c = 0; c < 3; c++)
+                        ink += (255 - rgba[(y * Width + x) * 4 + (bgra ? 2 - c : c)]) / 255.0;
+                if (ink > 0.001 || sb.Length > 0) sb.Append((ink / 3.0).ToString("0.000")).Append(' ');
+            }
+            return sb.ToString().TrimEnd();
         }
 
         /// <summary>Every distinct coordinate in a figure, as text.</summary>
