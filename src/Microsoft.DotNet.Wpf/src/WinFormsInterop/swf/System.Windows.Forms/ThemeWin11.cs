@@ -848,8 +848,14 @@ namespace System.Windows.Forms
 
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.None;
-			dc.FillRectangle (ResPool.GetSolidBrush (treeView.BackColor), box.X, box.Y,
-					     box.Width + 1, box.Height + 1);
+			// A VERTICAL RAMP, not the tree's flat BackColor. Measured off a stock expander, whose
+			// seven interior rows run 250, 250, 250, 237, 237, 227, 227 -- light at the top, a
+			// couple of percent darker at the foot. Ours filled all seven with the tree's white.
+			var inner = new Rectangle (box.X, box.Y, box.Width + 1, box.Height + 1);
+			using (var face = new LinearGradientBrush (
+					new Rectangle (inner.X, inner.Y, inner.Width, inner.Height + 1),
+					ExpanderFaceTop, ExpanderFaceFoot, LinearGradientMode.Vertical))
+				dc.FillRectangle (face, inner);
 			dc.DrawRectangle (ResPool.GetPen (ExpanderFrame), box);
 			// The four corners come back to a paler grey, which is all the rounding there is room for.
 			Brush corner = ResPool.GetSolidBrush (ExpanderCorner);
@@ -865,6 +871,13 @@ namespace System.Windows.Forms
 				dc.DrawLine (mark, cx, cy - 2, cx, cy + 2);
 			dc.SmoothingMode = old;
 		}
+
+		/// <summary>The expander's interior ramp. A stock one renders 250, 250, 250, 237, 237,
+		/// 227, 227 down its seven interior rows; these are the STOPS that produce that, not those
+		/// values -- the gradient is sampled across a rect a row taller than the interior, so
+		/// feeding it 250 and 227 rendered 247 to 233, a range half as wide as it should be.</summary>
+		private static readonly Color ExpanderFaceTop = Color.FromArgb (253, 253, 253);
+		private static readonly Color ExpanderFaceFoot = Color.FromArgb (221, 221, 221);
 
 		private static readonly Color ExpanderFrame = Color.FromArgb (145, 145, 145);
 		private static readonly Color ExpanderCorner = Color.FromArgb (186, 187, 188);

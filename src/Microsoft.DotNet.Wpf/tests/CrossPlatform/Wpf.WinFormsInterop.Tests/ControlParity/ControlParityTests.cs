@@ -175,7 +175,10 @@ namespace Wpf.WinFormsInterop.Tests
             // The dotted connector now hangs from the centre of its expander box and reaches the
             // label, as Windows draws it (TreeView.DrawNodeLines). Two pixels changed shade in
             // trade; against the live window that was 2,628 pixels of position recovered.
-            ["treeview"] = (9, 1062),
+            // Ink 9 -> 14, shade 1062 -> 1033: the expander gained the vertical ramp Windows
+            // fills it with, which is 2,740 off the window and moves five faint pixels across
+            // the "drawn at all" line here. Shade -- the measure that can see a ramp -- improved.
+            ["treeview"] = (14, 1062),
             ["vscrollbar"] = (4, 1),
         };
 
