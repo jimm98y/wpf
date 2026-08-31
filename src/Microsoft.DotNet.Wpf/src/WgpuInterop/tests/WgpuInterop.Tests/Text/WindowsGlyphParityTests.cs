@@ -1312,6 +1312,102 @@ namespace WgpuInterop.Tests.Text
         /// Marshal.Copy out of a Windows DIB and its name is a lie. Indexing both sides the same way
         /// compares our RED lamp against GDI's BLUE one, which for subpixel text is comparing
         /// opposite edges of the same stem.</summary>
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern IntPtr AddFontMemResourceEx(byte[] font, int cb, IntPtr pdv, ref int numFonts);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool RemoveFontMemResourceEx(IntPtr h);
+
+        /// <summary>ASK GDI DIRECTLY what its interpreter does with one MIRP.
+        /// Reported only -- set WPF_ORACLE_REPORT.
+        /// <para>Everything else here reads a shipping face and infers the rules from glyphs someone
+        /// else hinted. That has a floor: when GDI and we disagree about a stem, the font's program,
+        /// its pre-program, its control values and two interpreters are all in the way at once, and
+        /// no measurement over real text separates them.</para>
+        /// <para>So build a font with nothing in it. One contour, four points, and six instructions:
+        /// SVTCA[x], MDAP[R] on the left edge, one MIRP moving the right edge to a control value,
+        /// IUP[x]. Sweep the control value across the sub-pixel range, one glyph per value, and
+        /// render it through GDI. The width that comes back IS the interpreter's answer, with no
+        /// font left to argue about -- and the same font through ours answers the same question.
+        /// The two columns are the rounding rule, read off both implementations.</para></summary>
+        [Fact]
+        public void MirpOracle_WhatGdiDoesWithOneControlValue()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? path = Environment.GetEnvironmentVariable("WPF_ORACLE_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_ORACLE_REPORT to collect this");
+
+            const int Ppem = 12;
+            const string Family = "WpfOracleProbe";
+            double unitsPerPixel = SyntheticFont.UnitsPerEm / (double)Ppem;   // 170.667 at 12ppem
+
+            // Sweep 0.55px to 1.95px in sixteenths of a pixel, rounded and unrounded.
+            var bars = new List<SyntheticFont.Bar>();
+            var wanted = new List<double>();
+            foreach (bool round in new[] { true, false })
+                for (int sixteenth = 9; sixteenth <= 31; sixteenth++)
+                {
+                    double px = sixteenth / 16.0;
+                    int units = (int)Math.Round(px * unitsPerPixel);
+                    bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, round, minDistance: false));
+                    wanted.Add(px);
+                }
+
+            byte[] fontBytes = SyntheticFont.Build(Family, bars);
+            File.WriteAllBytes(path + ".ttf", fontBytes);   // for inspection when GDI refuses
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            int lastErr = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            Assert.True(handle != IntPtr.Zero && count > 0,
+                        "GDI refused the synthetic font: handle=" + handle + " fonts=" + count
+                        + " err=" + lastErr + " bytes=" + fontBytes.Length);
+
+            var report = new System.Text.StringBuilder();
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                report.AppendLine($"== one MIRP, {Ppem}ppem, ClearType -- what each interpreter makes of it");
+                report.AppendLine("   round   cvt(px)   GDI(px)   ours(px)    GDI-cvt   ours-cvt");
+                var raw = new byte[Width * Height * 4];
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char)(0x41 + i)).ToString();
+                    int baseline = Ppem + 12;
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Family, Ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    double gdi = BarWidth(raw, bgra: true);
+                    double ours = BarWidth(OursRgba(font, ch, Ppem, baseline, correction: true), bgra: false);
+                    if (gdi <= 0 && ours <= 0) continue;
+                    report.AppendLine($"   {(bars[i].Round ? "yes" : "no ")}   {wanted[i],7:0.0000}"
+                                      + $"   {gdi,7:0.000}   {ours,8:0.000}"
+                                      + $"   {gdi - wanted[i],8:0.000}   {ours - wanted[i],8:0.000}");
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The rendered width of a vertical bar, in pixels: total lamp coverage divided by
+        /// the number of rows carrying any, which needs no assumption about where the bar is.</summary>
+        private static double BarWidth(byte[] rgba, bool bgra)
+        {
+            double ink = 0;
+            int rows = 0;
+            for (int y = 0; y < Height; y++)
+            {
+                double row = 0;
+                for (int x = 0; x < Width; x++)
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int idx = (y * Width + x) * 4 + (bgra ? 2 - c : c);
+                        row += (255 - rgba[idx]) / 255.0;
+                    }
+                if (row > 0.05) { rows++; ink += row; }
+            }
+            return rows == 0 ? 0 : ink / 3.0 / rows;
+        }
+
         private static void Tally(byte[] ours, byte[] gdiBgra, ref long pixels, ref long sum)
         {
             for (int i = 0; i + 3 < ours.Length && i + 3 < gdiBgra.Length; i += 4)
