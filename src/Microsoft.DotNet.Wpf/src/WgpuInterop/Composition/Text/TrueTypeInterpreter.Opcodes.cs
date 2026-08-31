@@ -756,6 +756,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_stemFatNoMin =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_NOMIN") == "1";
 
+        /// <summary>Restrict the stroke-weight correction to ONE control value. DIAGNOSTIC ONLY,
+        /// and it must stay that way.
+        /// <para>Segoe UI's 'l' takes its weight from cvt[132] and needs the correction; 'o' takes
+        /// its from cvt[131] and does not -- turn the correction off and 'o's right stroke lands on
+        /// GDI's lamps exactly. Restricting to 132 is worth 6,426 on the window (1,201,169 ->
+        /// 1,194,743) and is neutral over the repertoire (41,072 -> 41,057, with @13 better by 115
+        /// and @11 worse by 108).
+        /// <para>It is still not shippable. A control value INDEX is a fingerprint of one font, not
+        /// a rule: 132 means nothing in Arial, and a face where 132 happened to be a stroke weight
+        /// would get an arbitrary sixth of a pixel for no reason. What is needed is whatever
+        /// PROPERTY of that control value GDI is reading, and these are now eliminated: the opcode
+        /// (0xE1 against 0xE9 -- see StemFatNoMin), the minimum-distance flag, the ppem, and the
+        /// value itself. 126, 131 and 132 all arrive at prep's ROUND holding 0.9688 and all leave
+        /// it holding 1.0, so nothing in the number distinguishes them.</para></summary>
+        private static readonly int s_stemFatCvt =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_CVT"), out int sc) ? sc : -1;
+
         private static readonly bool s_stemFatExact =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
         private static readonly int s_stemFatHi =
@@ -1214,6 +1231,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // this gate is what it has to reproduce.
             if (s_stemFat != 0 && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
                 && !(s_stemFatNoMin && keepMinimum)
+                && (s_stemFatCvt < 0 || cvt == s_stemFatCvt)
                 && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
                 && (!s_stemFatExact || distance == 64 || distance == -64))
                 distance += distance < 0 ? -s_stemFat : s_stemFat;
