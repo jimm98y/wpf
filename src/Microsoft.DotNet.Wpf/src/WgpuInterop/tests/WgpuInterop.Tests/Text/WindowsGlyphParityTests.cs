@@ -2560,9 +2560,28 @@ namespace WgpuInterop.Tests.Text
         /// <para>So a function CALLed out of the font program touches points in x under GDI
         /// that it does not under us. No opcode is unimplemented (checked), and we match 70% of
         /// coordinates, so the divergence is a branch inside one of those functions rather than
-        /// anything missing. Comparing the x-touch SET against GDI's, glyph by glyph, is the way
-        /// in -- and the touch set is observable from the fitted coordinates, because a touched
-        /// point is one IUP could not have produced.</para>
+        /// anything missing.</para>
+        /// <para>TRUE OF 'n', AND NOT THE GENERAL CASE -- done properly across b, B, D and P, by
+        /// joining the dump's touch flags and pre-IUP coordinates to the solver's answer, the bad
+        /// coordinates come in TRIPLES: a point we DID touch, plus the two untouched points
+        /// coincident with it that IUP carries along.</para>
+        /// <para>b 23,24,25  ours 5.330  GDI 5.281  (24 touched)   -3/64<br/>
+        /// D 12,13,14  ours 6.330  GDI 6.234  (13 touched)   -6/64<br/>
+        /// B 11,12,13  ours 6.420  GDI 6.281  (12 touched)   -9/64<br/>
+        /// P  6, 7, 8  ours 6.420  GDI 6.172  ( 7 touched)  -16/64<br/>
+        /// P 15,16,17  ours 5.330  GDI 4.969  (16 touched)  -23/64</para>
+        /// <para>So for these it is not a touch-set difference at all -- it is a touched point
+        /// landing in the wrong place and its neighbours following it there. Every one is on the
+        /// right-hand edge of a bowl and every one is too far RIGHT, by amounts that are not
+        /// constant. 'n' point 13 stays the exception: genuinely untouched, and GDI's value for
+        /// it outside anything IUP can produce.</para>
+        /// <para>P's point 16 says what the touched ones are. It reaches MDAP[r] at 5.39; mode 6
+        /// rounds it on the lamp grid to 5.333, and GDI has 4.969 -- a thirty-second under the
+        /// whole pixel that mode 5's grid would have given. Neither grid is right everywhere, now
+        /// visible at the instruction instead of in an aggregate.</para>
+        /// <para>The touch set is still observable from the fitted coordinates, because a touched
+        /// point is one IUP could not have produced -- that is how the triples were told apart
+        /// from real touch-set differences in the first place.</para>
         /// <para>AND THE SAME CENSUS SETTLES WHAT XHintMode 6 BUYS, in GDI's own coordinates
         /// rather than in a score. Twenty-two letters and ten digits at 12ppem:</para>
         /// <para>letters  mode 5 158/279 exact (57%),  mode 6 196/281 (70%)<br/>
