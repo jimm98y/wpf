@@ -743,6 +743,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_stemFatRounded =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_ROUNDED") == "1";
 
+        /// <summary>Whether the stroke-weight correction is skipped on a MIRP that keeps a minimum
+        /// distance. OFF: MEASURED AND REJECTED.
+        /// <para>'l' takes its stroke weight through MIRP 0xE1 and 'o' through 0xE9, which keeps a
+        /// minimum -- so the flag looked like a way to give the correction to the one that wants it
+        /// and not the other. Read lamp by lamp it does exactly that: 'o' at 12ppem has its RIGHT
+        /// stroke land on GDI's lamps precisely, and 'l' is untouched and still exact. And 'n',
+        /// whose stems also keep a minimum, loses the correction and goes light. Window 1,201,143
+        /// to 1,277,355, regular@12 structural 1,673 to 1,759. Both metrics agree, so it is not a
+        /// case of one being blind: the correction genuinely belongs to some keepMin strokes and
+        /// not others, and the opcode does not separate them.</para></summary>
+        private static readonly bool s_stemFatNoMin =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_NOMIN") == "1";
+
         private static readonly bool s_stemFatExact =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
         private static readonly int s_stemFatHi =
@@ -1200,6 +1213,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // -- so the boundary is a measured fact without a mechanism. If someone finds the rule,
             // this gate is what it has to reproduce.
             if (s_stemFat != 0 && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
+                && !(s_stemFatNoMin && keepMinimum)
                 && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
                 && (!s_stemFatExact || distance == 64 || distance == -64))
                 distance += distance < 0 ? -s_stemFat : s_stemFat;

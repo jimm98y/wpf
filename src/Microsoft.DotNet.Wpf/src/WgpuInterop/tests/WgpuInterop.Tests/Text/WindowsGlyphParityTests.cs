@@ -931,6 +931,9 @@ namespace WgpuInterop.Tests.Text
         [InlineData("l")]
         [InlineData("I")]
         [InlineData("n")]
+        [InlineData("o")]
+        [InlineData("e")]
+        [InlineData("c")]
         public void StemLamps_ReadAgainstGdis(string text)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
