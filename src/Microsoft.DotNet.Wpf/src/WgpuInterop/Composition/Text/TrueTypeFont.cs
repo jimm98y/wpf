@@ -1314,6 +1314,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// also what "GDI keeps natural widths" has said all along.</para></summary>
         internal static bool SubpixelFitting { get; set; }
 
+        /// <summary>Fit Y ONLY, whatever XHintMode says -- the stage tests' third measurement.
+        /// <para>Not a rendering knob: nothing but GdiStageTests sets it, and it exists because
+        /// the XHintMode gate on the plainX capture had silently retired that stage.</para>
+        /// </summary>
+        internal static bool ForceYOnlyFit { get; set; }
+
         /// <summary>Whether ClearType is the mode being DRAWN, as opposed to the fitting in use.
         /// <para>The interpreter tells a face what GETINFO says and rounds on the ClearType grid
         /// when it is on. Off it, GDI answers no and rounds on whole pixels, so drawing grey text
@@ -1454,7 +1460,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // because after it they are the hinted ones, and scaled here because a simple glyph
             // arrives in font units (a composite is already in pixels, one level down).
             int[]? plainX = null;
-            if (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16 && !glyph.Composite
+            // ForceYOnlyFit is the stage tests' way in, and it exists because without it stage Y
+            // measured NOTHING. Every XHintMode this ships with is in the exclusion list below (5
+            // is the default), so SubpixelFitting alone never captured plainX and the y-only stage
+            // fitted identically to the x+y one -- two identical rows in the report under
+            // different names. The capture is the only thing gated: with plainX in hand,
+            // XHintMode 5 already falls to the branch that restores x wholesale, which IS the
+            // y-only fit. Shipping behaviour is untouched -- nothing sets this but the tests.
+            if ((ForceYOnlyFit
+                 || (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16))
+                && !glyph.Composite
                 && interpreter.PrepareForSize(pixelsPerEm))
             {
                 plainX = new int[glyph.X.Length];

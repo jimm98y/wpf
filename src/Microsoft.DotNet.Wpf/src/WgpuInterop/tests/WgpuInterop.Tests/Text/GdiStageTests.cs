@@ -867,6 +867,7 @@ namespace WgpuInterop.Tests.Text
                     // in it: stage B fits BOTH axes, so everything between B and C could be the
                     // lamps or could be the fitting mode, and there would be no way to tell.
                     TrueTypeFont.SubpixelFitting = stage == "Y";
+                    TrueTypeFont.ForceYOnlyFit = stage == "Y";
                     int pixels = 0;
                     long total = 0, ourInk = 0, theirInk = 0;
                     // WHICH letters, not just how many pixels. An aggregate says a face is wrong at a
@@ -885,20 +886,20 @@ namespace WgpuInterop.Tests.Text
                         pixels += p; total += t; ourInk += o; theirInk += th;
                         if (p > 0) worst.Add((p, c));
                     }
-                    // AN INERT STAGE MUST SAY SO. Stage Y asks for the y-only fitting ClearType
-                    // actually renders from, by turning TrueTypeFont.SubpixelFitting on -- but that
-                    // flag is gated on XHintMode, and every mode this has shipped with (5 is the
-                    // default) is in the exclusion list, so Y and B fit identically and the report
-                    // printed two identical rows under different names. Read plainly that says "the
-                    // fitting mode makes no difference", which is the opposite of true: the knob is
-                    // simply not connected any more. The hole the comment above warns about is
-                    // therefore OPEN -- everything between B and C could be the lamps or could be
-                    // the fitting mode, and this report cannot currently tell them apart.
+                    // A STAGE THAT COINCIDES WITH ANOTHER MUST SAY SO, because two identical rows
+                    // under different names read as "the fitting mode makes no difference" whether
+                    // that is a result or a dead knob. It was a dead knob: SubpixelFitting alone
+                    // never captured plainX at any XHintMode this ships with, so Y fitted exactly
+                    // as B did at every size. ForceYOnlyFit fixes that and the two now separate
+                    // where there is anything to separate.
+                    // <para>They still coincide at 7 and 8, and that IS a result: those sizes are
+                    // below Segoe UI's gasp gridfit threshold, the program moves no x, so both
+                    // fittings land in the same place. The note says which of the two it is by
+                    // saying nothing about causes it cannot check.</para>
                     if (stage == "B") { bPixels = pixels; bTotal = total; }
                     else if (stage == "Y" && pixels == bPixels && total == bTotal)
-                        report.AppendLine($"  {ppem,2}  Y y-only     INERT -- identical to B. "
-                            + $"SubpixelFitting is gated off at XHintMode={TrueTypeFont.XHintMode}, "
-                            + "so this row is not a second measurement.");
+                        report.AppendLine($"  {ppem,2}  Y y-only     coincides with B exactly -- "
+                            + "the fitting moved no x at this size.");
 
                     string label = stage switch
                     {
