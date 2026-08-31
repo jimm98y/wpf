@@ -438,18 +438,14 @@ namespace System.Windows.Forms
 				return;
 
 			// r is a DrawRectangle rectangle -- its width is the span between the outermost pixel
-			// CENTRES -- so the shape it stands for is one pixel wider and taller, AND it starts half
-			// a pixel before the first of those centres. Adding the pixel without moving the origin
-			// leaves every edge straddling two rows at half strength: ours put the button's top
-			// border across rows 1 and 2 where Windows has one solid row 1.
+			// centres -- so the shape it stands for is one pixel wider and taller.
 			float w = r.Width + 1, h = r.Height + 1;
-			float x = r.X - 0.5f, y = r.Y - 0.5f;
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (GraphicsPath shape = RoundedGlyph (x, y, w, h, radius))
+			using (GraphicsPath shape = RoundedGlyph (r.X, r.Y, w, h, radius))
 				g.FillPath (ResPool.GetSolidBrush (border), shape);
 			if (face != border)
-				using (GraphicsPath inner = RoundedGlyph (x + 1, y + 1, w - 2, h - 2, radius - 1))
+				using (GraphicsPath inner = RoundedGlyph (r.X + 1, r.Y + 1, w - 2, h - 2, radius - 1))
 					g.FillPath (ResPool.GetSolidBrush (face), inner);
 			g.SmoothingMode = old;
 		}
@@ -582,11 +578,8 @@ namespace System.Windows.Forms
 			return path;
 		}
 
-		/// <param name="yNudge">Half a pixel DOWN for a CheckBox, which is lined up against the text
-		/// beside it with a whole-row offset where the real correction is half a row. The primitive
-		/// the CheckedListBox uses does not carry that offset and must not carry this either.</param>
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot, float yNudge = 0f)
+					      bool enabled, bool hot)
 		{
 			Color fill, border;
 			if (!enabled) {
@@ -611,18 +604,11 @@ namespace System.Windows.Forms
 			// between the shape and the same shape a pixel in, which is exact geometry, where stroking
 			// a path put a quarter of a pixel of ink on the row BELOW the box -- a stroke is widened
 			// about its own line, and that line is only as well placed as the widening is.
-			// HALF A PIXEL LEFT AND HALF A PIXEL DOWN of where the integer rectangle puts it.
-			// Measured against a stock check box: Windows' box covers rows 4..16 and columns 0..12
-			// squarely, every edge pixel either full or empty, while ours came out spanning 3.55 to
-			// 16.55 and 0.5 to 13.5 -- half-covered top and bottom rows, and an extra column of ink
-			// down the right with nothing down the left.
-			const float Nudge = 0.5f;
 			float bw = box.Width + 1, bh = box.Height + 1;
-			float bx = box.X - Nudge, by = box.Y + yNudge;
-			using (GraphicsPath shape = RoundedGlyph (bx, by, bw, bh, Radius))
+			using (GraphicsPath shape = RoundedGlyph (box.X, box.Y, bw, bh, Radius))
 				g.FillPath (ResPool.GetSolidBrush (border), shape);
 			if (fill != border)
-				using (GraphicsPath inner = RoundedGlyph (bx + 1, by + 1, bw - 2, bh - 2, Radius - 1))
+				using (GraphicsPath inner = RoundedGlyph (box.X + 1, box.Y + 1, bw - 2, bh - 2, Radius - 1))
 					g.FillPath (ResPool.GetSolidBrush (fill), inner);
 			g.SmoothingMode = boxMode;
 
@@ -696,7 +682,7 @@ namespace System.Windows.Forms
 				return;
 			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
 			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
-					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered, 0.5f);
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered);
 		}
 
 		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
@@ -734,15 +720,9 @@ namespace System.Windows.Forms
 			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
 			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
 			// across -- which is what made this one look cut off against the control's left edge.
-			// Half a pixel up and left, the same correction the check box needs: measured against a
-			// stock radio button, ours sits with its ink centroid at row 10.64 where Windows' is at
-			// 10.01, and spreads over fourteen rows where Windows uses thirteen.
-			const float Nudge = 0.5f;
-			var disc = new RectangleF (circle.X - Nudge, circle.Y - Nudge, circle.Width, circle.Height);
-			g.FillEllipse (ResPool.GetSolidBrush (border), disc);
+			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
 			if (face != border)
-				g.FillEllipse (ResPool.GetSolidBrush (face),
-					       new RectangleF (disc.X + 1, disc.Y + 1, disc.Width - 2, disc.Height - 2));
+				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
 
 			if (rb.Checked) {
 				// Five pixels across in a thirteen pixel disc, measured off a stock radio button.
@@ -750,8 +730,8 @@ namespace System.Windows.Forms
 				// dot -- there is no room left for the corners to be rounded away.
 				int span = circle.Width;
 				int dotSize = Math.Max (3, span * 5 / 13);
-				var dot = new RectangleF (disc.X + (span - dotSize) / 2f, disc.Y + (span - dotSize) / 2f,
-						      dotSize, dotSize);
+				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2,
+						     dotSize, dotSize);
 				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), dot);
 			}
 			g.SmoothingMode = old;
@@ -2065,8 +2045,7 @@ namespace System.Windows.Forms
 			// Centred by INSET AND WIDTH separately, and the inset rounds UP. Taking the width as
 			// "the bar less twice the inset" makes it one too wide whenever the bar's own width and
 			// the thickness disagree in parity: a seventeen pixel bar wanting two pixels of thumb
-			// insets by seven and comes out THREE, which is what ours drew -- 277, 278, 279 against
-			// Windows' 278, 279.
+			// insets by seven and comes out THREE -- ours drew 277, 278, 279 against Windows' 278, 279.
 			if (bar.vert) {
 				int inset = Math.Max (0, (thumb.Width - thickness + 1) / 2);
 				slim.X += inset;
@@ -2081,9 +2060,12 @@ namespace System.Windows.Forms
 
 		private const int ScrollRestThickness = 2;
 		private const int ScrollOpenThickness = 7;
-		// The SAME grey resting as open: Windows changes only the width. It was 138 to make up for a
-		// thumb that came out three pixels wide and washed out; with the width fixed the measured
-		// colour is 133 both ways.
+		// Darker than it looks it should be on paper: at two pixels wide with both edges softened
+		// there is hardly a solid core left, so a paler colour washes out altogether. Windows barely
+		// changes the colour between resting and open at all -- it is the width that changes.
+		// The SAME grey resting as open: Windows changes only the width. It was 138 to make up
+		// for a thumb that came out three pixels wide and washed out; with the width fixed the
+		// measured colour is 133 both ways.
 		private static readonly Color ScrollThumbRest = Color.FromArgb (133, 133, 133);
 
 		/// <summary>Mix two colours, <paramref name="t"/> of the way from the first to the

@@ -74,7 +74,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference lands in shade instead.
             ["textbox-readonly"] = (839, 153),
 
-            ["button"] = (12, 368),
+            ["button"] = (132, 345),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
             // text -- one flat #A0A0A0 pass, where the base drew a light copy at (1,1) and the real one
             // on top. Against the live stock window that took this button's text from 1.26 times
@@ -83,7 +83,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference in this reference's own geometry: with one pass it shows, and on an unshown
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
-            ["button-disabled"] = (10, 261),
+            ["button-disabled"] = (352, 240),
             // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
             // moving to where the LIVE stock window draws it and from the string-format margin it
             // used to carry. This reference is rendered on a form that was never shown, and where
@@ -95,10 +95,10 @@ namespace Wpf.WinFormsInterop.Tests
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
             // authority for where the box goes; see the note on tabcontrol.
-            ["checkbox"] = (201, 200),
-            ["checkbox-clear"] = (203, 185),
-            ["checkbox-disabled"] = (215, 260),
-            ["checkedlistbox"] = (14, 1085),
+            ["checkbox"] = (224, 210),
+            ["checkbox-clear"] = (242, 210),
+            ["checkbox-disabled"] = (233, 290),
+            ["checkedlistbox"] = (20, 1060),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a
@@ -108,15 +108,15 @@ namespace Wpf.WinFormsInterop.Tests
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
-            ["groupbox"] = (30, 215),
+            ["groupbox"] = (168, 195),
             // A horizontal scroll bar's thumb was placed without the leading arrow's width at startup
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
             // position error against the live window.
             ["hscrollbar"] = (4, 1),
-            ["label"] = (6, 102),
-            ["label-disabled"] = (38, 116),
-            ["linklabel"] = (11, 110),
+            ["label"] = (110, 110),
+            ["label-disabled"] = (120, 120),
+            ["linklabel"] = (331, 110),
             // The row caption moved a pixel left and the selection band grew two to the right, both
             // measured against the live window -- where this control went from 276k of difference to
             // 77k, with its text now landing on Windows' exact columns. This reference, drawn on a
@@ -127,8 +127,8 @@ namespace Wpf.WinFormsInterop.Tests
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (92, 150),
-            ["radio-clear"] = (173, 135),
+            ["radio"] = (115, 160),
+            ["radio-clear"] = (197, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the

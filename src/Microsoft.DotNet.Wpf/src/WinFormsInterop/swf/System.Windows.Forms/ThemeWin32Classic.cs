@@ -2663,16 +2663,10 @@ namespace System.Windows.Forms
 			/* Text */
 			if (box.Text.Length != 0) {
 				if (box.Enabled) {
-					// Half the site correction every DrawString caption needs -- see LabelPainter --
-					// and only half. The ROW was missing: ours sat on 4..12 where a stock GroupBox
-					// draws 3..11, and lifting it takes this specimen from 168 differing pixels to 30.
-					// The COLUMN is already paid for, in GroupBoxCaptionIndent -- the Windows 11 theme
-					// overrides it to 9 against the classic 10, which is this same pixel, fitted at the
-					// indent instead of at the draw. Applying it here as well costs 102 pixels back.
-					dc.DrawString (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), GroupBoxCaptionIndent, -1, text_format);
+					dc.DrawString (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), GroupBoxCaptionIndent, 0, text_format);
 				} else {
 					CPDrawStringDisabled (dc, box.Text, box.Font, box.BackColor, 
-							      new RectangleF (GroupBoxCaptionIndent, -1, width,  box.Font.Height), text_format);
+							      new RectangleF (GroupBoxCaptionIndent, 0, width,  box.Font.Height), text_format);
 				}
 			}
 			
