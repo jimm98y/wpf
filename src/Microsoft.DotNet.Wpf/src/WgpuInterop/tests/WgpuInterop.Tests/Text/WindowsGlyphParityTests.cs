@@ -947,6 +947,7 @@ namespace WgpuInterop.Tests.Text
         /// </summary>
         [Theory]
         [InlineData("Segoe UI")]
+        [InlineData("Arial")]
         public void FilterTaps_SolvedFromGdisOwnPixels(string family)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");

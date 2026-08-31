@@ -759,6 +759,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>(The allowance metric reads 54,934 both before and after that fix, so the 442
         /// ratcheted cases never used the swapped channels -- only stage C and CR did. Knobs
         /// rejected against WPF_ALLOW_REPORT do not need revisiting.)</para></summary>
+        /// <summary>WPF_CT_NOROUND_X: leave a control-value distance unrounded in the ClearType
+        /// direction, which is what VTT shows Microsoft's rasterizer doing.</summary>
+        private static readonly bool s_noRoundX =
+            Environment.GetEnvironmentVariable("WPF_CT_NOROUND_X") == "1";
+
         private static readonly bool s_stemFatRounded =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_ROUNDED") == "1";
 
@@ -1266,7 +1271,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool tookControlValue = true;
             if (_gs.Zp0 == _gs.Zp1 && Math.Abs(value - original) >= cutIn)
             { distance = original; tookControlValue = false; }
-            if (round)
+            // WPF_CT_NOROUND_X=1: do not round a control-value distance in the ClearType
+            // direction. Visual TrueType, driven to Arial 'H' at 9pt/12ppem with pixels shown,
+            // puts the cap stem's left edge ON a pixel boundary and its right edge PAST the
+            // next one -- Microsoft's own rasterizer does not snap it to a whole pixel, and our
+            // measured widths agree (GDI 1.18px against our 1.00). Adding a constant to rounded
+            // stems was tried and is worse (s_stemFatRounded); not rounding them is the other
+            // reading, and it is worse too -- 54,934 -> 55,545, 30 cases worse against 11 better.
+            // Less wrong than the constant (+611 against +1,459) and still wrong. Rounding is
+            // right for most stems and wrong for the cap stem, so the decision depends on
+            // something per-stem that neither switch expresses. Kept so the third person to
+            // look at VTT's picture does not spend the evening rediscovering it.
+            if (round && !(s_noRoundX && tookControlValue && !BiLevelPass && InClearTypeDirection))
                 distance = RoundDistance(distance);
 
             // THE PPEM GATE BELOW IS NOT ABOUT STROKE WEIGHT. Read every glyph in the lamp report
