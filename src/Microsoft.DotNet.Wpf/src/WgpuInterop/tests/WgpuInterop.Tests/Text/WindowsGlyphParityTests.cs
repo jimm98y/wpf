@@ -2527,93 +2527,33 @@ namespace WgpuInterop.Tests.Text
         /// the answer against our own fitted x says which instruction outcome we get wrong, one
         /// coordinate at a time, which is what deriving the rule requires.</para>
         /// <para>WPF_SOLVEGLYPH=char@ppem, e.g. "H@12".</para>
-        /// <para>RUN OVER TWENTY-TWO GLYPHS AT 12PPEM under XHintMode 6, 281 coordinates in
-        /// all, the census is:</para>
-        /// <para>196 EXACT (70%), then -24/64 eighteen times, +2/64 seven times, +13/64 five
-        /// times, +6/64 five times, +3/64 four times, -11/64 three times, +4/64 three times,
-        /// and a tail of singletons.</para>
-        /// <para>Two things follow. The left stem -- 1.000 to 2.094 -- comes out EXACTLY right
-        /// for H, l, i, n, E, B, D, K, N, F, L, P, R, b, h and k, so whatever is wrong is not
-        /// the stem-fitting machinery in general. And the errors are not scattered: one value,
-        /// -0.375px, accounts for eighteen of the eighty-five that are wrong, which is more than
-        /// the next six classes together.</para>
-        /// <para>Those eighteen sit at the junction where a bowl or an arch meets a stem, in
-        /// n, m, b, B, D, P and R -- e.g. 'n' has a point one 64th past its stem's right edge at
-        /// 2.109 that GDI puts at 1.734, pulled a third of a pixel INSIDE the stem. -0.375 is
-        /// three units of a DELTAP at the default shift, so a delta we apply and GDI does not
-        /// was the obvious suspect; it is not, because all three WPF_CT_DELTA modes leave those
-        /// coordinates completely unchanged. Those points are placed by SHP and IP through CALLs
-        /// into the font program.</para>
-        /// <para>RUN DOWN, for 'n' at 12ppem. The coordinate is point 13, and it is moved by
-        /// exactly one instruction in our execution: IUP. Entering IUP the x-touched set is
-        /// {0, 1, 8, 9, 12}; point 13 is untouched, so its anchors are 12 and 0 wrapping round
-        /// the contour, and interpolating 1.95 between them gives 2.094 + 0.0025 * 3.996 =
-        /// 2.104. That is what we produce, and it is textbook IUP.</para>
-        /// <para>GDI has that point at 1.734, which is BELOW anchor 12's own fitted position of
-        /// 2.094. No IUP can put an interpolated point outside its anchors, so GDI is not
-        /// interpolating it -- GDI TOUCHES it and we do not.</para>
-        /// <para>Two things make that solid rather than an artefact of the fit. The point is
-        /// ON-CURVE (read out of glyf: 'n' is one contour of nineteen points, and 13 is on
-        /// curve), so it is not a control point whose position the rendering barely constrains.
-        /// And the solver reaches residual 0 on 'n', 'b' and 'm' -- the solved coordinates
-        /// reproduce GDI's lamps exactly, while ours start 13,069 away.</para>
-        /// <para>So a function CALLed out of the font program touches points in x under GDI
-        /// that it does not under us. No opcode is unimplemented (checked), and we match 70% of
-        /// coordinates, so the divergence is a branch inside one of those functions rather than
-        /// anything missing.</para>
-        /// <para>TRUE OF 'n', AND NOT THE GENERAL CASE -- done properly across b, B, D and P, by
-        /// joining the dump's touch flags and pre-IUP coordinates to the solver's answer, the bad
-        /// coordinates come in TRIPLES: a point we DID touch, plus the two untouched points
-        /// coincident with it that IUP carries along.</para>
-        /// <para>b 23,24,25  ours 5.330  GDI 5.281  (24 touched)   -3/64<br/>
-        /// D 12,13,14  ours 6.330  GDI 6.234  (13 touched)   -6/64<br/>
-        /// B 11,12,13  ours 6.420  GDI 6.281  (12 touched)   -9/64<br/>
-        /// P  6, 7, 8  ours 6.420  GDI 6.172  ( 7 touched)  -16/64<br/>
-        /// P 15,16,17  ours 5.330  GDI 4.969  (16 touched)  -23/64</para>
-        /// <para>So for these it is not a touch-set difference at all -- it is a touched point
-        /// landing in the wrong place and its neighbours following it there. Every one is on the
-        /// right-hand edge of a bowl and every one is too far RIGHT, by amounts that are not
-        /// constant. 'n' point 13 stays the exception: genuinely untouched, and GDI's value for
-        /// it outside anything IUP can produce.</para>
-        /// <para>P's point 16 says what the touched ones are. It reaches MDAP[r] at 5.39; mode 6
-        /// rounds it on the lamp grid to 5.333, and GDI has 4.969 -- a thirty-second under the
-        /// whole pixel that mode 5's grid would have given. Neither grid is right everywhere, now
-        /// visible at the instruction instead of in an aggregate.</para>
-        /// <para>AND THE ROUNDING THEORY DOES NOT SURVIVE THE SAMPLE. Recording, for every
-        /// instruction that moves a point in x, the value ARRIVING, ours, and GDI's:</para>
-        /// <para>P  IP      pt16   5.200 -> ours 5.390, GDI 4.969<br/>
-        /// P  MDAP[r] pt16   5.390 -> ours 5.330, GDI 4.969<br/>
-        /// P  MIRP    pt7    6.230 -> ours 6.420, GDI 6.172<br/>
-        /// B  MIRP    pt5    5.860 -> ours 6.090, GDI 6.125<br/>
-        /// B  MIRP    pt12   6.280 -> ours 6.420, GDI 6.281<br/>
-        /// D  IP      pt13   6.830 -> ours 6.480, GDI 6.234<br/>
-        /// D  MDAP[r] pt13   6.480 -> ours 6.330, GDI 6.234</para>
-        /// <para>GDI's answers -- 4.969, 6.172, 6.234, 6.281 -- are on no grid we round to: not
-        /// the whole pixel, not the third, not the sixteenth. They are not the output of a
-        /// rounding at all, so 'our MDAP rounds to the wrong grid' is the wrong shape of
-        /// explanation however well it fitted P's point 16 on its own.</para>
-        /// <para>B's point 12 is the one to keep hold of: it arrives at 6.280 and GDI leaves it
-        /// at 6.281, while we move it to 6.420. GDI is not moving that point. The pattern across
-        /// all of them is that we push a bowl's right edge OUT and GDI does not -- which is a
-        /// question about what the instruction decides to do, not about what it rounds to.</para>
-        /// <para>The touch set is still observable from the fitted coordinates, because a touched
-        /// point is one IUP could not have produced -- that is how the triples were told apart
-        /// from real touch-set differences in the first place.</para>
-        /// <para>AND THE SAME CENSUS SETTLES WHAT XHintMode 6 BUYS, in GDI's own coordinates
-        /// rather than in a score. Twenty-two letters and ten digits at 12ppem:</para>
-        /// <para>letters  mode 5 158/279 exact (57%),  mode 6 196/281 (70%)<br/>
-        /// digits   mode 5 382/440 exact (87%),  mode 6 343/437 (78%)</para>
-        /// <para>Mode 6 is better on letters and WORSE on digits, and that is the whole of the
-        /// argument the two harnesses were having. The control window is mostly letters, so it
-        /// prefers 6 by 159,129; its MonthCalendar is nothing but digits, so 6 costs that region
-        /// 23,780 -- and MonthCalendar is the worst region in the window at 245,138 with the
-        /// lowest ink ratio of any, 0.9896.</para>
-        /// <para>Neither mode is the rule. Digits at 87% say mode 5 is nearly right for them and
-        /// mode 6 breaks something that was working; letters at 57% say the reverse. Switching on
-        /// the character CLASS would buy the window perhaps twenty thousand and would be a lie --
-        /// a font's digits are not special, and the real distinction is whatever makes GDI
-        /// lamp-align some stems and not others. This is recorded as the size of the prize, not
-        /// as a thing to do.</para></summary>
+        /// <para>WHAT THIS INSTRUMENT CAN AND CANNOT TELL YOU -- read before using it. Lamps
+        /// carry seven levels, so a RANGE of positions renders identically, and the descent only
+        /// takes a strict improvement: whichever end of the range it sweeps from is the end it
+        /// keeps. It swept up from -24, so it reported the leftmost member of every tie, and
+        /// every difference it ever printed came out NEGATIVE.</para>
+        /// <para>Measured with WPF_SOLVE_REVERSE=1, which sweeps the other way: 'n' point 13
+        /// comes back 1.734 forwards and 2.078 reversed; 'B' at 3.250 gives 2.875 and 3.125; '0'
+        /// at 1.000 gives 0.625 and 0.750. Those coordinates are not determined by GDI's pixels
+        /// at all.</para>
+        /// <para>So the run reports the INTERVAL now. Across n, P, '0' and H not one coordinate
+        /// is pinned to a 64th, the median range is about twenty 64ths -- a third of a pixel --
+        /// and most ranges already CONTAIN our own value: 10 of 12 for 'n', 10 of 14 for 'P', 15
+        /// of 25 for '0', 2 of 4 for 'H'. Where the range contains ours there was never anything
+        /// to explain.</para>
+        /// <para>RETRACTED, therefore: the census of 281 coordinates that made -0.375 an
+        /// eighteen-strong error class; the conclusion that GDI TOUCHES a point we interpolate;
+        /// the triples of a touched point with its followers; and the arriving/ours/GDI sample
+        /// that concluded GDI's answers lie on no grid we round to. Each was reading the sweep
+        /// direction as if it were GDI. The leftward bias WAS the finding.</para>
+        /// <para>What survives is the binary question -- is our coordinate inside the range GDI
+        /// allows -- which does not depend on the tie-break. On that metric at 12ppem: letters
+        /// 52% under mode 5 and 66% under mode 6; digits 88% under mode 5 and 79% under mode 6.
+        /// Same split and same size as the biased count gave (57/70 and 87/78), so the
+        /// letters-versus-digits result stands on its own.</para></summary>
+        private static readonly bool s_solveReverse =
+            Environment.GetEnvironmentVariable("WPF_SOLVE_REVERSE") == "1";
+
         [Fact]
         public void SolveTheXCoordinatesGdiFitted()
         {
@@ -2650,8 +2590,17 @@ namespace WgpuInterop.Tests.Text
                 foreach (float x in order)
                 {
                     float keep = move[x], bestAt = keep;
-                    for (int k = -24; k <= 24; k++)
+                    // TIE-BREAKING IS NOT NEUTRAL, and it decides what this instrument reports.
+                    // Lamps carry seven levels, so a whole RANGE of coordinates can render
+                    // identically; the sweep only takes a strict improvement, so whichever end it
+                    // starts from is the end it keeps. Sweeping up from -24 reports the leftmost
+                    // member of every tie -- and every difference this test has ever reported was
+                    // negative. WPF_SOLVE_REVERSE=1 sweeps the other way; where the two disagree,
+                    // the coordinate is not determined by GDI's pixels at all and neither answer
+                    // means anything.
+                    for (int j = -24; j <= 24; j++)
                     {
+                        int k = s_solveReverse ? -j : j;
                         move[x] = keep + k / 64f;
                         double e = Err();
                         if (e < best - 1e-9) { best = e; bestAt = move[x]; moved = true; }
@@ -2661,6 +2610,49 @@ namespace WgpuInterop.Tests.Text
                 if (!moved) break;
             }
             Console.Error.WriteLine($"    solved  {best:0}");
+
+            // AND HOW MUCH OF EACH COORDINATE THE PIXELS ACTUALLY DETERMINE. Lamps carry seven
+            // levels, so a range of positions can render identically, and a descent that only
+            // takes strict improvements keeps whichever end it started from -- which made every
+            // difference this test reported come out NEGATIVE, and made a rule out of the sweep
+            // direction. Report the interval instead: it is the honest answer, and where it
+            // contains our own value there is nothing to explain.
+            var lo = new Dictionary<float, float>();
+            var hi = new Dictionary<float, float>();
+            foreach (float x in order)
+            {
+                float keep = move[x];
+                float a = keep, b = keep;
+                bool any = false;
+                for (int k = -24; k <= 24; k++)
+                {
+                    move[x] = keep + k / 64f;
+                    if (Err() > best + 1e-9) continue;
+                    if (!any) { a = move[x]; any = true; }
+                    b = move[x];
+                }
+                move[x] = keep;
+                lo[x] = a; hi[x] = b;
+            }
+
+            var widths = new List<float>();
+            int determined = 0, contains = 0;
+            foreach (float x in order)
+            {
+                widths.Add(hi[x] - lo[x]);
+                if (hi[x] - lo[x] < 1f / 64f + 1e-6f) determined++;
+                if (x >= lo[x] - 1e-6f && x <= hi[x] + 1e-6f) contains++;
+            }
+            widths.Sort();
+            Console.Error.WriteLine($"    of {order.Count} coordinates: {determined} pinned to a 64th,"
+                + $" {contains} whose range already contains ours; median range"
+                + $" {widths[widths.Count / 2] * 64:0.0}/64");
+            {
+                var sb2 = new System.Text.StringBuilder("    ours -> [lo, hi] : ");
+                foreach (float x in order)
+                    sb2.Append($"{x:0.000}->[{lo[x]:0.000},{hi[x]:0.000}] ");
+                Console.Error.WriteLine(sb2.ToString());
+            }
             var sb = new System.Text.StringBuilder("    ours -> gdi : ");
             foreach (float x in order) sb.Append($"{x:0.000}->{move[x]:0.000}  ");
             Console.Error.WriteLine(sb.ToString());
