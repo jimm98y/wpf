@@ -738,15 +738,24 @@ namespace WgpuInterop.Tests.Text
         /// against ours at 8x also checks our rasterizer against itself, which costs nothing here
         /// and would catch a sampling error masquerading as a difference of opinion with GDI.</para>
         /// </summary>
-        private static long OutlineArea(List<PathFigure> figures)
+        private static long OutlineArea(List<PathFigure> figures) => OutlineArea(figures, out _);
+
+        /// <summary>Area, and the PERIMETER that comes free with it: at scale N the partially
+        /// covered pixels of a shape number about perimeter x N, so counting them and dividing by N
+        /// estimates it without a flattener. Wanted because if GDI renders a shape dilated by w,
+        /// its extra ink is about perimeter x w -- so w falls out, and whether w is CONSTANT across
+        /// sizes or grows with them is the difference between two quite different models.</summary>
+        private static long OutlineArea(List<PathFigure> figures, out long perimeter)
         {
+            perimeter = 0;
             if (figures.Count == 0) return 0;
             const int N = 8;
             List<PathFigure> big = Map(figures, v => new Vector2((v.X + PenX) * N, (v.Y + BaseY) * N));
             CoverageMask m = PathRasterizer.Rasterize(new PathGeometry(FillRule.NonZero, big));
             if (m.Coverage == null) return 0;
-            long sum = 0;
-            foreach (byte b in m.Coverage) sum += b;
+            long sum = 0, partial = 0;
+            foreach (byte b in m.Coverage) { sum += b; if (b != 0 && b != 255) partial++; }
+            perimeter = partial / N;
             return sum / (N * N);
         }
 
@@ -937,7 +946,7 @@ namespace WgpuInterop.Tests.Text
                     TrueTypeFont.SubpixelFitting = stage == "Y";
                     TrueTypeFont.ForceYOnlyFit = stage == "Y";
                     int pixels = 0;
-                    long total = 0, ourInk = 0, theirInk = 0, area = 0;
+                    long total = 0, ourInk = 0, theirInk = 0, area = 0, perim = 0;
                     // GDI'S TRANSFER CURVE, read off rather than guessed at. Stage R's two cells
                     // hold the SAME outline, so pairing them pixel by pixel gives (our exact area
                     // coverage) -> (what GDI put there). Binning that IS the curve GDI applies on
@@ -971,7 +980,9 @@ namespace WgpuInterop.Tests.Text
                         pixels += p; total += t; ourInk += o; theirInk += th;
                         if (stage == "R")
                         {
-                            area += OutlineArea(GdiOutline(c, family, ppem, unhinted: false));
+                            area += OutlineArea(GdiOutline(c, family, ppem, unhinted: false),
+                                                out long per);
+                            perim += per;
                             for (int k = 0; k < mine.Length; k++)
                             {
                                 if (mine[k] == 0 && theirs[k] == 0) continue;
@@ -1017,7 +1028,8 @@ namespace WgpuInterop.Tests.Text
                         + $"  ourInk={ourInk} gdiInk={theirInk}"
                         + (stage == "R" && area > 0
                             ? $"  AREA={area} (ours/area={(double)ourInk / area:0.000}"
-                              + $" gdi/area={(double)theirInk / area:0.000})"
+                              + $" gdi/area={(double)theirInk / area:0.000}"
+                              + $" dilate={(perim == 0 ? 0 : (theirInk - area) / 255.0 / perim):0.0000}px)"
                             : "")
                         + $"  worst:{names}");
 
