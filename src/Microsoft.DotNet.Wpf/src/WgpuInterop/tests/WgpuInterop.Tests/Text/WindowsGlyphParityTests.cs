@@ -1395,6 +1395,18 @@ namespace WgpuInterop.Tests.Text
                     wanted.Add(px);
                 }
 
+            // THE CONTROL: the same widths with NO PROGRAM. If GDI renders these at their
+            // fractional widths then it does not force-round a stem, and the saturation in the
+            // rows above belongs to the MIRP path. If it rounds these too, it rounds
+            // everything, and this port's x-sub-pixel design is what is wrong.
+            for (int sixtyfourth = 64; sixtyfourth <= 112; sixtyfourth++)
+            {
+                double px = sixtyfourth / 64.0;
+                int units = (int)Math.Round(px * unitsPerPixel);
+                bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false, noProgram: true));
+                wanted.Add(px);
+            }
+
             byte[] fontBytes = SyntheticFont.Build(Family, bars);
             File.WriteAllBytes(path + ".ttf", fontBytes);   // for inspection when GDI refuses
             int count = 0;
@@ -1444,7 +1456,7 @@ namespace WgpuInterop.Tests.Text
                         report.AppendLine($"      [{i}] our xs: {Coords(f, true)}");
                         report.AppendLine($"      [{i}] our ys: {Coords(f, false)}");
                     }
-                    report.AppendLine($"   {(bars[i].Round ? "yes" : "no ")}   {wanted[i],7:0.0000}"
+                    report.AppendLine($"   {(bars[i].NoProgram ? "non" : bars[i].Round ? "yes" : "no ")}   {wanted[i],7:0.0000}"
                                       + $"  {gdi,6:0.000}  {ours,6:0.000}  |"
                                       + $"  {gdiFit,6:0.000}  {ourFit,6:0.000}  {ourFit - gdiFit,9:0.000}");
                 }

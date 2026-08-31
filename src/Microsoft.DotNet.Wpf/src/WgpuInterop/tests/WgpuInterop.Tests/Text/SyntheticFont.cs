@@ -37,9 +37,16 @@ namespace WgpuInterop.Tests.Text
             /// <summary>MIRP's "keep at least the minimum distance" bit.</summary>
             public readonly bool MinDistance;
 
-            public Bar(int cvt, int left, int right, bool round, bool minDistance)
+            /// <summary>No glyph program at all: the bar renders at whatever width its outline
+            /// has. The control for whether GDI force-rounds a stem or only rounds one a MIRP
+            /// asked it to.</summary>
+            public readonly bool NoProgram;
+
+            public Bar(int cvt, int left, int right, bool round, bool minDistance,
+                       bool noProgram = false)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
+                NoProgram = noProgram;
             }
         }
 
@@ -62,7 +69,7 @@ namespace WgpuInterop.Tests.Text
             {
                 int cvtIndex = cvts.Count;
                 cvts.Add((short)b.Cvt);
-                WriteBar(glyf, b, cvtIndex, instructions: true);
+                WriteBar(glyf, b, cvtIndex, instructions: !b.NoProgram);
                 while (glyf.Length % 4 != 0) glyf.WriteByte(0);
                 loca.Add((uint)glyf.Length);
             }
