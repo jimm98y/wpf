@@ -938,6 +938,18 @@ namespace WgpuInterop.Tests.Text
                     TrueTypeFont.ForceYOnlyFit = stage == "Y";
                     int pixels = 0;
                     long total = 0, ourInk = 0, theirInk = 0, area = 0;
+                    // GDI'S TRANSFER CURVE, read off rather than guessed at. Stage R's two cells
+                    // hold the SAME outline, so pairing them pixel by pixel gives (our exact area
+                    // coverage) -> (what GDI put there). Binning that IS the curve GDI applies on
+                    // top of coverage -- the thing the 1.15-1.39 ink ratio is the integral of, and
+                    // the last unmeasured term between our text and GDI's.
+                    var curveSum = new long[17];
+                    var curveN = new long[17];
+                    // WHERE the ink is, not just how much. The curve's bottom bin says GDI inks
+                    // pixels our coverage leaves empty, and that has two possible causes with
+                    // opposite fixes: GDI's glyph is FATTER than the outline it reports, or it is in
+                    // a different PLACE. Ink centroids separate them in one line.
+                    double mx = 0, my = 0, gx = 0, gy = 0;
                     // WHICH letters, not just how many pixels. An aggregate says a face is wrong at a
                     // size; the names say which glyph's program to step through, which is the only
                     // thing that leads anywhere.
@@ -958,7 +970,18 @@ namespace WgpuInterop.Tests.Text
                         var (p, t, o, th) = Compare(mine, theirs);
                         pixels += p; total += t; ourInk += o; theirInk += th;
                         if (stage == "R")
+                        {
                             area += OutlineArea(GdiOutline(c, family, ppem, unhinted: false));
+                            for (int k = 0; k < mine.Length; k++)
+                            {
+                                if (mine[k] == 0 && theirs[k] == 0) continue;
+                                int bin = mine[k] * 16 / 255;
+                                curveSum[bin] += theirs[k];
+                                curveN[bin]++;
+                                mx += mine[k] * (k % Cell); my += mine[k] * (k / Cell);
+                                gx += theirs[k] * (k % Cell); gy += theirs[k] * (k / Cell);
+                            }
+                        }
                         if (p > 0) worst.Add((p, c));
                     }
                     // A STAGE THAT COINCIDES WITH ANOTHER MUST SAY SO, because two identical rows
@@ -997,6 +1020,22 @@ namespace WgpuInterop.Tests.Text
                               + $" gdi/area={(double)theirInk / area:0.000})"
                             : "")
                         + $"  worst:{names}");
+
+                    if (stage == "R")
+                    {
+                        report.AppendLine($"      centroid @{ppem}: ours "
+                            + $"({(ourInk == 0 ? 0 : mx / ourInk):0.000},{(ourInk == 0 ? 0 : my / ourInk):0.000})"
+                            + $"  GDI ({(theirInk == 0 ? 0 : gx / theirInk):0.000},{(theirInk == 0 ? 0 : gy / theirInk):0.000})"
+                            // 0.000, not "+0.000": in a .NET CUSTOM format string the plus is a
+                            // LITERAL, so every negative value printed as "-+0.105".
+                            + $"  d=({(ourInk == 0 || theirInk == 0 ? 0 : mx / ourInk - gx / theirInk):0.000},"
+                            + $"{(ourInk == 0 || theirInk == 0 ? 0 : my / ourInk - gy / theirInk):0.000})");
+                        var curve = new System.Text.StringBuilder($"      curve @{ppem}:");
+                        for (int b = 0; b <= 16; b++)
+                            curve.Append(curveN[b] == 0 ? "    ." 
+                                : $" {b * 255 / 16,3}->{curveSum[b] / curveN[b],3}");
+                        report.AppendLine(curve.ToString());
+                    }
                 }
             }
 
