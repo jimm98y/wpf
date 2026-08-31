@@ -874,7 +874,13 @@ namespace WgpuInterop.Tests.Text
             foreach (int ppem in new[] { 7, 8, 11, 12, 13, 16, 19 })
             {
                 long bPixels = -1, bTotal = -1;
-                foreach (string stage in new[] { "A", "B", "Y" })
+                // R is the stage that was missing: ONE outline through BOTH rasterizers. Every
+                // other row here changes the geometry and the rasterizer together or holds the
+                // rasterizer fixed, so nothing said how far apart the two RASTERIZERS are -- and
+                // B minus D implied a lot. R settles it by giving both sides GDI's own fitted
+                // outline: ours draws it, and GDI's GRAY8 bitmap of the same glyph IS GDI drawing
+                // it. Whatever differs is the rasterizer alone.
+                foreach (string stage in new[] { "A", "B", "Y", "R" })
                 {
                     bool unhinted = stage == "A";
                     // Stage Y fits the outline the way ClearType asks for it -- y only, x left
@@ -891,9 +897,11 @@ namespace WgpuInterop.Tests.Text
                     var worst = new List<(int Pixels, char Ch)>();
                     foreach (char c in Repertoire)
                     {
-                        byte[] mine = unhinted
-                            ? RasterizeIntoCell(OurOutline(font, c, ppem))
-                            : OurGray(font, c, ppem, unhinted: false);
+                        byte[] mine = stage == "R"
+                            ? RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: false))
+                            : unhinted
+                                ? RasterizeIntoCell(OurOutline(font, c, ppem))
+                                : OurGray(font, c, ppem, unhinted: false);
                         byte[] theirs = unhinted
                             ? RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: true))
                             : GdiGray(c, family, ppem, unhinted: false);
@@ -920,6 +928,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         "A" => "A unhinted",
                         "B" => "B hinted  ",
+                        "R" => "R raster  ",
                         _   => "Y y-only  ",
                     };
                     worst.Sort((x, y) => y.Pixels.CompareTo(x.Pixels));
