@@ -1263,7 +1263,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // outside it. That is one anomaly at 11, 12 and 13 with two symptoms, and the six
             // sixty-fourths below is a patch on the one symptom it happens to fit.
             //
-            // 'I' is the exception that keeps the story honest: it is wrong at EVERY size, and that
+            // AND IT IS NOT A BRANCH WE MISS. Comparing every control value prep writes at 12ppem
+            // against 14, exactly one is treated differently across the boundary -- cvt[240], which
+            // the pre-program adjusts by a whole pixel under an explicit 'if ppem is 11 to 13' and
+            // leaves alone at 14. We take that branch and apply that pixel; the trace shows it
+            // (2.734px -> 1.734px). Thirty-one control values carry a per-ppem adjustment at 12 and
+            // thirty-one at 14, and the sets differ by that one entry and one other.
+            //
+            // So the anomaly is not the font steering us somewhere we do not go. Whatever GDI does
+            // at these three sizes, it does it with the same control values we end up holding:
+            // cvt[131] and cvt[132] both arrive at 0.9688 and both leave prep's ROUND at 1.0.
+            //            // 'I' is the exception that keeps the story honest: it is wrong at EVERY size, and that
             // is the separate MDAP position fault (1.109 rounded up to 1.125 where GDI is at or
             // below 1.0), which has nothing to do with the range.
             //            // SIX SIXTY-FOURTHS ON A CONTROL-VALUE STROKE WEIGHT, and the six is not fitted: it is
