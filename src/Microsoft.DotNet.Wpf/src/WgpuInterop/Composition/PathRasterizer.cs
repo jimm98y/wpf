@@ -427,6 +427,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static readonly float[] SubpixelFilter = LoadFilter();
 
+        /// <summary>How much of the light the filter passes, as distinct from how it spreads it.
+        /// <para>These are two different facts and only one of them survives LoadFilter: the taps
+        /// are divided by their own total on the way in, so any filter handed to us -- including
+        /// the one solved off GDI's own pixels, whose taps sum to 0.899 -- arrives summing to 1
+        /// with its gain quietly discarded. Spread and gain have to be carried separately or the
+        /// second one cannot be expressed at all.</para>
+        /// <para>Made expressible in order to test one, and the answer is that a gain does not
+        /// belong here AT ALL. Sweeping it costs immediately and steeply -- 54,934 differing
+        /// pixels over the parity suite at 1.0, against 340,310 at 0.96 and 374,007 at the 0.899
+        /// solved off GDI's own pixels. The reason is that a gain is a straight line and dims
+        /// FULL coverage along with partial: the solid interior of every stem stops being black.
+        /// GDI keeps solid black solid. The 0.899 was solved on synthetic bars about a pixel
+        /// wide, which are all edge and no interior, so it fitted the edges and was read as if
+        /// it applied everywhere. Whatever pulls our edges down has to pin 1 to 1, which is a
+        /// curve, not a factor -- and that curve is SubpixelGamma, already at its own sharp
+        /// minimum. Left at 1 and kept only so the next person can re-run the disproof.</para></summary>
+        private static readonly float SubpixelGain =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAIN"),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+                out float g) && g > 0f ? g : 1f;
+
         private static float[] LoadFilter()
         {
             string? s = Environment.GetEnvironmentVariable("WPF_SUBPIXEL_FILTER");
@@ -800,7 +821,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             if (s < 0 || s >= subWidth) continue;   // off the mask is bare paper
                             sum += samples[sampleRow + s] * SubpixelFilter[t + radius];
                         }
-                        int value = Math.Clamp((int)MathF.Round(sum), 0, 255);
+                        int value = Math.Clamp((int)MathF.Round(sum * SubpixelGain), 0, 255);
                         // The filter works in SPACE, so only the colour each lamp is handed to
                         // changes on a BGR panel: the leftmost third is blue there, not red.
                         rgba[outIndex + (LampsRunBlueFirst ? 2 - lamp : lamp)] = (byte)value;
