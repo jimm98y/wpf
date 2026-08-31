@@ -797,6 +797,14 @@ namespace WgpuInterop.Tests.Text
                 byte[] theirs = GdiGray(c, parts[0], ppem, unhinted: false);
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  fitted (x+y), ours | GDI ===");
                 Dump(mine, theirs);
+
+                // And the same glyph as stage R sees it: GDI's OWN fitted outline drawn by our
+                // rasterizer, beside GDI drawing it. The geometry is identical in this pair, so
+                // anything that differs is the rasterizer and nothing else -- which is the only way
+                // to look at the largest single term in the text disagreement.
+                Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  GDI's fitted outline: "
+                    + "our rasterizer | GDI's ===");
+                Dump(RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false)), theirs);
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }
         }
@@ -880,6 +888,25 @@ namespace WgpuInterop.Tests.Text
                 // B minus D implied a lot. R settles it by giving both sides GDI's own fitted
                 // outline: ours draws it, and GDI's GRAY8 bitmap of the same glyph IS GDI drawing
                 // it. Whatever differs is the rasterizer alone.
+                // <para>READ R'S TREND WITH CAUTION. Segoe UI gives 0.87, 0.80, 0.76 at 11-13,
+                // then 0.72 at 16 and 0.95 at 19 -- a swing between adjacent sizes far too large
+                // for a property of a rasterizer, so something size-specific is in it that has not
+                // been found yet (19's ourInk is nearly double 16's for a 19% size increase, and
+                // stage D's gdi1x column carries the same oddity). The 11-13 numbers are steady
+                // and the 7-8 agreement is solid; treat 16 and 19 as unexplained rather than as
+                // measurements.</para>
+                // U WAS MEANT TO BE R'S CONTROL and CANNOT BE, which is worth keeping rather than
+                // deleting. R agrees at 7 and 8 and diverges from 11 up, but those are also the
+                // sizes below Segoe UI's gasp threshold, so "unhinted" and "small" are confounded
+                // in it. U tried to separate them by running the same both-rasterizers comparison
+                // on the UNHINTED outline at every size -- GdiGray(unhinted: true) against our
+                // raster of GDI's unhinted outline.
+                // <para>GDI IGNORES GGO_UNHINTED FOR GGO_GRAY8_BITMAP. The proof is in the report:
+                // U's gdiInk column came back byte-identical to R's at all seven sizes. So U
+                // compared our UNHINTED outline against GDI's HINTED bitmap -- geometry and
+                // rasterizer mixed again, which is the very thing R exists to avoid, and its
+                // numbers (0.76, 0.77, 0.76, 0.90, 0.88) mean nothing. GGO_UNHINTED works for the
+                // outline formats, which is why stage A can use it and this cannot.</para>
                 foreach (string stage in new[] { "A", "B", "Y", "R" })
                 {
                     bool unhinted = stage == "A";
@@ -897,14 +924,17 @@ namespace WgpuInterop.Tests.Text
                     var worst = new List<(int Pixels, char Ch)>();
                     foreach (char c in Repertoire)
                     {
-                        byte[] mine = stage == "R"
-                            ? RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: false))
-                            : unhinted
-                                ? RasterizeIntoCell(OurOutline(font, c, ppem))
-                                : OurGray(font, c, ppem, unhinted: false);
-                        byte[] theirs = unhinted
-                            ? RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: true))
-                            : GdiGray(c, family, ppem, unhinted: false);
+                        byte[] mine = stage switch
+                        {
+                            "R" => RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: false)),
+                            "A" => RasterizeIntoCell(OurOutline(font, c, ppem)),
+                            _   => OurGray(font, c, ppem, unhinted: false),
+                        };
+                        byte[] theirs = stage switch
+                        {
+                            "A" => RasterizeIntoCell(GdiOutline(c, family, ppem, unhinted: true)),
+                            _   => GdiGray(c, family, ppem, unhinted: false),
+                        };
                         var (p, t, o, th) = Compare(mine, theirs);
                         pixels += p; total += t; ourInk += o; theirInk += th;
                         if (p > 0) worst.Add((p, c));
