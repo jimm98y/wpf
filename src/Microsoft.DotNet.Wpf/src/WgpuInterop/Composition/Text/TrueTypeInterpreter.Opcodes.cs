@@ -731,13 +731,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Sixty-fourths to add to a control-value stroke weight on the x axis, and the ppem
         /// range to add them over. Diagnostic only -- see the note in MoveIndirectRelative.</summary>
         private static readonly int s_stemFat =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
         private static readonly int s_stemFatLo =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 11;
         private static readonly bool s_stemFatExact =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
         private static readonly int s_stemFatHi =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_HI"), out int sh) ? sh : 9999;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_HI"), out int sh) ? sh : 13;
 
         internal static System.Collections.Generic.IEnumerable<byte> UnimplementedOpcodes
         {
@@ -1169,12 +1169,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (round)
                 distance = RoundDistance(distance);
 
-            // DIAGNOSTIC, to price the open stem question rather than argue about it. Where the
-            // control value wins the cut-in on the x axis, widen the stroke by WPF_CT_STEMFAT
-            // sixty-fourths -- eleven of them is the one half-lamp by which GDI's Segoe UI stems
-            // beat ours at 11, 12 and 13 ppem and nowhere else. Not a rule: it has no reason to
-            // stop at those three sizes, and at 14 we already agree. It exists to measure how much
-            // of the window that half-lamp is worth before anyone spends a day earning it honestly.
+            // SIX SIXTY-FOURTHS ON A CONTROL-VALUE STROKE WEIGHT, and the six is not fitted: it is
+            // what GDI's own geometry says. The bar solver reproduces GDI's lamps at residual zero,
+            // so its answer IS GDI's outline, and for Segoe UI's 'l' at 12ppem it returns a stem of
+            // 1.000 -> 2.094 where the program hands us 1.000 -> 2.000. 2.094 - 2.000 is 6/64.
+            // Swept independently against the window it is also the optimum, and a sharp one:
+            //     3  1,299,900   4  1,299,074   5  1,316,092   6  1,216,266   7  1,239,087   8  1,341,169
+            // The two agreeing is the whole reason to believe this rather than the 11/64 I tried
+            // first -- 11 lights the same lamps in the probe, so the probe cannot tell them apart,
+            // and it costs the window 37,000 where 6 earns it 99,000.
+            //
+            // It is SELF-LIMITING, which is why it is not a Segoe UI hack: it fires only where the
+            // control value wins the cut-in on an UNROUNDED x MIRP. Measured on Arial, Tahoma,
+            // Verdana and Times, every stem at every size from 8 to 24 is byte-identical with it
+            // and without -- none of them takes that path at these sizes.
+            //
+            // THE PPEM GATE IS EMPIRICAL AND I CANNOT DERIVE IT. Ungated, the only thing that
+            // breaks is Segoe UI at 14 and 24, where we already match GDI exactly and the widening
+            // makes us a half-lamp too fat. Nothing in the control value separates those from 11
+            // to 13 -- 11 and 14 round by the SAME 0.125, in the same direction, to the same 1.0px
+            // -- so the boundary is a measured fact without a mechanism. If someone finds the rule,
+            // this gate is what it has to reproduce.
             if (s_stemFat != 0 && tookControlValue && !round && !BiLevelPass
                 && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
                 && (!s_stemFatExact || distance == 64 || distance == -64))
