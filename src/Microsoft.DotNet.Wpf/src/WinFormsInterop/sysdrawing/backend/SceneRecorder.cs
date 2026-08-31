@@ -108,7 +108,10 @@ namespace System.Drawing.WebGpuBackend
             for (int i = 0; i < stops.Length; i++) stops[i] = new GradientStop(g.Offsets[i], Rgba(g.Argb[i]));
             Add(g.Radial
                 ? new GeometryFill(geo, new RadialGradientBrush(new Vector2(g.Sx, g.Sy), g.Ex, g.Ey, stops))
-                : new GeometryFill(geo, new LinearGradientBrush(new Vector2(g.Sx, g.Sy), new Vector2(g.Ex, g.Ey), stops)));
+                // SIXTEEN BANDS: a GDI+ LinearGradientBrush is a staircase, not a smooth ramp, and
+                // System.Drawing has to be GDI+. See Scene.LinearGradientBrush.Bands.
+                : new GeometryFill(geo, new LinearGradientBrush(new Vector2(g.Sx, g.Sy), new Vector2(g.Ex, g.Ey), stops,
+                                                                GradientSpreadMethod.Pad, bands: 16)));
         }
 
         private static Vector2[] ToVecs(float[] xy)

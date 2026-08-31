@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -20,6 +20,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace WinFormsControlParity
@@ -143,6 +144,31 @@ namespace WinFormsControlParity
                 s.Items.Add(new ToolStripStatusLabel("Ready"));
                 return s;
             }));
+
+
+            // NOT a control: a bare LinearGradientBrush, so the two System.Drawing implementations
+            // can be compared without a theme in the way. The menu strip's ramp differs from
+            // Windows' by 15,624 on the window, and both sides draw it with the same managed
+            // renderer -- so the difference is the BRUSH. Measured on the strip, GDI+'s ramp is
+            // quantised to sixteen bands where ours is smooth. Two widths, because a band COUNT
+            // and a band WIDTH predict different things when the width changes.
+            foreach (int w in new[] { 400, 1000 })
+            {
+                int width = w;
+                all.Add(new Specimen("gradient-" + width, width, 24, () =>
+                {
+                    var p = new Panel();
+                    p.Paint += (s2, e) =>
+                    {
+                        using var b = new LinearGradientBrush(
+                            new Rectangle(0, 0, width, 24),
+                            Color.FromArgb(240, 240, 240), Color.FromArgb(252, 252, 252),
+                            LinearGradientMode.Horizontal);
+                        e.Graphics.FillRectangle(b, 0, 0, width, 24);
+                    };
+                    return p;
+                }));
+            }
 
             return all;
         }

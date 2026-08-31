@@ -276,9 +276,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public GradientStop[] Stops { get; }
         public GradientSpreadMethod SpreadMethod { get; }
 
-        public LinearGradientBrush(Vector2 start, Vector2 end, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad)
+        /// <summary>How many discrete BANDS the ramp is quantised to along its axis, or 0 for a
+        /// smooth one.
+        /// <para>GDI+ draws a LinearGradientBrush as a staircase of exactly sixteen steps at any
+        /// length -- measured against the real System.Drawing through the control-parity harness, a
+        /// 400px ramp steps every 25.0 and a 1000px one every 62.5. WPF's own gradients are smooth,
+        /// and this renderer serves both, so the banding belongs to the brush that asked for it and
+        /// not to the compositor. System.Drawing sets sixteen here; WPF leaves it at zero.</para>
+        /// </summary>
+        public int Bands { get; }
+
+        public LinearGradientBrush(Vector2 start, Vector2 end, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad, int bands = 0)
         {
-            Start = start; End = end; Stops = stops; SpreadMethod = spread;
+            Start = start; End = end; Stops = stops; SpreadMethod = spread; Bands = bands;
         }
     }
 

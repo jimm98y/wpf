@@ -307,6 +307,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
         private const int GradientRampTexels = 256;
 
+
         private static string ShaderWgsl => ShaderSource.Get("Shader");
 
         // fs_clip needs a second texture (the clip mask), so it uses its own
@@ -2882,7 +2883,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 case LinearGradientBrush grad:
                 {
-                    IntPtr view = GetOrCreateRampView(grad.Stops);
+                    IntPtr view = GetOrCreateRampView(grad.Stops, grad.Bands);
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
@@ -3231,7 +3232,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             byte[] uni = BuildBrushParams(gradient, g0, g1, 0f, 0f, 0f, 0f, (float)Math.Clamp(opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
-            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
+            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient), BrushBands(gradient));
             IntPtr bg = CreateBrushBindGroup(format, FillKind.ShapeBrush, IntPtr.Zero, rampView, ubuf, uni.Length, _srcCopy);
             DeferReleaseBindGroup(bg);
 
@@ -5971,6 +5972,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _ => Array.Empty<GradientStop>(),
         };
 
+        /// <summary>How many bands the brush asks its ramp to be quantised to. Only a linear one
+        /// carries this, and only System.Drawing sets it -- see Scene.LinearGradientBrush.Bands.
+        /// </summary>
+        private static int BrushBands(Brush b) => b is LinearGradientBrush lgb ? lgb.Bands : 0;
+
         // format must be the pipeline format of the pass the returned bind group is drawn in:
         // auto-layout bind groups are exclusive to the exact pipeline their layout came from.
         private IntPtr CreateBrushBindGroup(WGPUTextureFormat format, FillKind kind, IntPtr covView, IntPtr rampView, IntPtr ubuf, int uniSize,
@@ -6012,7 +6018,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
-            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient));
+            IntPtr rampView = GetOrCreateRampView(BrushStops(gradient), BrushBands(gradient));
 
             (Vector2 g0, Vector2 g1) = gradient is LinearGradientBrush lg
                 ? (lg.Start, lg.End)
@@ -6109,7 +6115,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             byte[] uni = BuildBrushParams(brush, g0, g1, originX, originY, width, height, 1f);
             IntPtr ubuf = GetOrCreateUniform(uni);
 
-            IntPtr rampView = GetOrCreateRampView(BrushStops(brush));
+            IntPtr rampView = GetOrCreateRampView(BrushStops(brush), BrushBands(brush));
 
             (tex, view) = RentMaskTexture(width, height);
 
@@ -6165,22 +6171,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // Returns a cached (across frames) gradient ramp texture VIEW for these stops, creating+uploading
         // it only on a miss. The cache owns the texture (do NOT defer-release it); callers just bind the view.
-        private IntPtr GetOrCreateRampView(GradientStop[] stops)
+        private IntPtr GetOrCreateRampView(GradientStop[] stops, int bands)
         {
             var h = new HashCode();
             foreach (GradientStop s in stops) { h.Add(s.Offset); h.Add(s.Color.R); h.Add(s.Color.G); h.Add(s.Color.B); h.Add(s.Color.A); }
+            h.Add(bands);
             long key = h.ToHashCode();
             if (_rampCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
             {
                 _rampCache[key] = (e.Tex, e.View, _frameId);
                 return e.View;
             }
-            var (tex, view) = CreateRgbaTexture(BuildGradientRamp(stops), GradientRampTexels, 1);
+            var (tex, view) = CreateRgbaTexture(BuildGradientRamp(stops, bands), GradientRampTexels, 1);
             _rampCache[key] = (tex, view, _frameId);
             return view;
         }
 
-        private static byte[] BuildGradientRamp(GradientStop[] stops)
+        private static byte[] BuildGradientRamp(GradientStop[] stops, int bands)
         {
             var ramp = new byte[GradientRampTexels * 4];
             if (stops.Length == 0) return ramp;
@@ -6188,6 +6195,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             for (int i = 0; i < GradientRampTexels; i++)
             {
                 float t = i / (float)(GradientRampTexels - 1);
+                // SIXTEEN BANDS, because that is what GDI+ does and it is visible. A stock
+                // LinearGradientBrush is a staircase of exactly sixteen steps along its axis, at any
+                // length: measured against the real System.Drawing through the parity harness, a
+                // 400px ramp steps every 25.0 and a 1000px one every 62.5, both 16 bands. Our own
+                // System.Drawing already matches it byte for byte -- it is only this GPU path, which
+                // samples a smooth 256-texel ramp, that draws the interpolation instead.
+                // The menu strip is where it shows: ours stepped evenly every 88.6 columns where
+                // Windows steps 68, 137, 69 repeating -- the doubled gaps being the four pairs of
+                // bands that round to the same grey.
+                if (bands > 0) t = MathF.Round(t * bands) / bands;
                 RgbaColor c = SampleStops(stops, t);
                 ramp[i * 4 + 0] = ToByte(c.R);
                 ramp[i * 4 + 1] = ToByte(c.G);
