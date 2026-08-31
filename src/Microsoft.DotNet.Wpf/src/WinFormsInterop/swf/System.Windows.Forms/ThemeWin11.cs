@@ -840,8 +840,14 @@ namespace System.Windows.Forms
 			// Pressed gets the same light wash a pressed tool bar button gets, so the two agree.
 			if ((state & (ButtonState.Pushed | ButtonState.Checked)) != 0)
 				graphics.FillRectangle (ResPool.GetSolidBrush (Color.FromArgb (204, 232, 255)), rectangle);
-			DrawComboArrow (graphics, rectangle, SystemColors.ControlText);
+			DrawComboArrow (graphics, rectangle, ChevronGrey);
 		}
+
+		/// <summary>#6E6E6E, measured off a stock combo box. Not ControlText: Windows draws this
+		/// chevron GREY, and drawing it in the text colour made every combo box on the form carry a
+		/// black arrow against Windows' grey one -- the core pixels differ by 110 of 255, and the
+		/// shape underneath them was already exact.</summary>
+		private static readonly Color ChevronGrey = Color.FromArgb (110, 110, 110);
 
 		private void DrawComboArrow (Graphics graphics, Rectangle rectangle, Color color)
 		{
@@ -1109,6 +1115,14 @@ namespace System.Windows.Forms
 		{
 			if (bounds.Width <= 4 || bounds.Height <= 4)
 				return;
+
+			// The PANEL behind the buttons is the control colour, not the field's white. Windows
+			// insets each button a pixel and leaves that margin #F0F0F0; ours left whatever the
+			// UpDownBase had already painted, which is the white of a text field, so every spin box
+			// on the form carried a white frame where Windows has grey. Sixteen columns by twenty
+			// rows across two controls -- 6,120 of the client's difference, and invisible in a
+			// screenshot until the two are subtracted.
+			g.FillRectangle (ResPool.GetSolidBrush (ColorControl), bounds);
 
 			// Windows draws the two buttons as one eighteen-row block floor-centred in the field: a
 			// row spare above the top button and two below the bottom one. Ours filled the field, so
@@ -1641,13 +1655,23 @@ namespace System.Windows.Forms
 
 		/// <summary>#6D6D6D, measured off a stock tree. The derived value is 85 and Windows draws
 		/// 109; the dots sit on the same rows and columns, so it is only the colour.</summary>
+		/// <summary>The grip's shadow dots, measured off a stock strip: a 109 core, the same
+		/// grey Windows uses for tree lines.</summary>
+		private static readonly Color GripShadow = Color.FromArgb (109, 109, 109);
+
 		/// <summary>The status strip's resize grip. The classic one is six boxes -- a three-two-one
 		/// triangle -- each a tan #ACA899 square with a white one a pixel down and right of it.
-		/// Windows 11 draws TEN, a four-three-two-one triangle, and every one of them pure white
-		/// with no tan at all.
+		/// Windows 11 draws TEN, a four-three-two-one triangle.
 		/// <para>Measured off a stock strip: #FFFFFF two-pixel squares at x 1062, 1066, 1071 and
 		/// 1075 with the window 1080 wide, and y 643, 647, 651 and 655 with the strip ending at
-		/// 660 -- four apart in both directions, the nearest five from each edge.</para></summary>
+		/// 660 -- four apart in both directions, the nearest five from each edge.</para>
+		/// <para>THIS ONCE SAID "every one of them pure white with no tan at all", and that was
+		/// wrong -- read off the white dots without looking for anything else. Windows draws a
+		/// SECOND lattice of #6D6D6D dots offset two pixels down and right of the white ones, the
+		/// same shadow the classic grip has and the same 109 the tree lines use. Subtracting the
+		/// two windows put 13,701 in this corner, the largest single non-text disagreement left in
+		/// the client, and all of it was the missing shadow. The white dots themselves were already
+		/// where Windows puts them.</para></summary>
 		public override void StatusStripSizingGrip (Graphics g, Rectangle rect)
 		{
 			// FOUR AND A THIRD, not four. Windows' dots sit at 1075, 1071, 1066 and 1062 across --
@@ -1656,11 +1680,19 @@ namespace System.Windows.Forms
 			const int Rows = 4;
 			const float Step = 13f / 3f;
 			Brush white = ResPool.GetSolidBrush (Color.White);
+			Brush shadow = ResPool.GetSolidBrush (GripShadow);
 			for (int row = 0; row < Rows; row++)
-				for (int col = Rows - 1 - row; col < Rows; col++)
-					g.FillRectangle (white,
-							 (int) Math.Round (rect.Right - 5 - (Rows - 1 - col) * Step),
-							 (int) Math.Round (rect.Bottom - 5 - (Rows - 1 - row) * Step), 2, 2);
+				for (int col = Rows - 1 - row; col < Rows; col++) {
+					int x = (int) Math.Round (rect.Right - 5 - (Rows - 1 - col) * Step);
+					int y = (int) Math.Round (rect.Bottom - 5 - (Rows - 1 - row) * Step);
+					// THREE apart, not two. Two was the guess from "a shadow sits diagonally
+					// adjacent"; subtracting the two windows put our whole shadow lattice one
+					// pixel up and left of Windows'. Windows' white core sits at 1071,646 and its
+					// shadow core at 1074,649 -- three in both directions, a full dot's width of
+					// clear background between them.
+					g.FillRectangle (shadow, x + 3, y + 3, 2, 2);
+					g.FillRectangle (white, x, y, 2, 2);
+				}
 		}
 
 		public override Color TreeViewLineColor (TreeView tv) => Color.FromArgb (109, 109, 109);

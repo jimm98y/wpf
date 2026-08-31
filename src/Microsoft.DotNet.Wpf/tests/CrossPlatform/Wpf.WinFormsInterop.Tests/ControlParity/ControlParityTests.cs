@@ -65,7 +65,7 @@ namespace Wpf.WinFormsInterop.Tests
             // Ours draws the value and the spin arrows; Windows' DrawToBitmap draws neither, because
             // they live in CHILD controls that WM_PRINT does not reach. The reference is the thin one
             // here, so this number cannot go to zero and going up would be us drawing LESS.
-            ["numericupdown"] = (2232, 282),
+            ["numericupdown"] = (2148, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control
@@ -103,8 +103,13 @@ namespace Wpf.WinFormsInterop.Tests
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a
             // couple of pixels either way; see the note on tabcontrol.
-            ["combobox-editable"] = (16, 625),
-            ["combobox-list"] = (19, 225),
+            // Ink up one and shade down 359: the chevron went from black to the #6E6E6E
+            // Windows actually draws, which is a large win in shade and costs a single ink
+            // pixel -- lighter ink puts one faint antialiased pixel the other side of the
+            // "drawn at all" threshold. The window agrees and by much more: 9,303 off the
+            // captured difference across the two combo boxes.
+            ["combobox-editable"] = (17, 300),
+            ["combobox-list"] = (20, 225),
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
