@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -129,6 +129,13 @@ namespace Wpf.WinFormsInterop.Tests
             ["progressbar-full"] = (0, 4000),
             ["radio"] = (92, 150),
             ["radio-clear"] = (173, 135),
+            // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
+            // path -- the row ink is flat background on every row -- while Windows' has "Ready"
+            // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the
+            // never-shown form again: a ToolStrip lays its items out later than the other
+            // controls do, and touching Handle is not enough to make it. Worth fixing as a
+            // layout question one day; it is not a drawing difference and the number here
+            // cannot go to zero until it is.
             ["statusstrip"] = (188, 200),
             // HARNESS, not drawing. The same .NET TabControl paints its page 249,249,249 when it
             // is drawn on a form that has never been shown, and 240,240,240 once the form is up --
