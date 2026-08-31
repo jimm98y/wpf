@@ -500,7 +500,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             byte[] samples = FillCoverage(contours, path.FillRule, originX * scale, originY,
                                           subWidth * HalfLamps, height,
                                           SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows,
-                                          MinStemSubpixels * HalfLamps);
+                                          MinStemSubpixels * HalfLamps, CentreSample);
             // Filtering the 6x samples STRAIGHT into lamps was tried, on the grounds that the paper
             // calls this "a 6x1 filtering technique" -- one operation, six samples in and three
             // lamps out -- where ours is two, thresholding each half-lamp at 128 and then running a
@@ -547,6 +547,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// is an assumption about where in the half-lamp GDI takes its sample and a lower threshold
         /// widens every stem by exactly one half-lamp, which is the size of the gap measured
         /// between our stems and Windows'.</summary>
+        /// <summary>Whether a fine sample is decided by asking if its CENTRE is inside the outline
+        /// -- GDI's bi-level scan conversion -- rather than by integrating its area and thresholding
+        /// at half. OFF: MEASURED AND REJECTED, but worth keeping for the reason it was tried.
+        /// <para>The two rules agree for a straight edge and differ only for a sliver narrower than
+        /// half a sample straddling the centre, which is the leading edge of a curve -- and 'o', 'e'
+        /// and 'c' sit half a pixel right of Windows' where 'l' and 'n' are exact. It looked like
+        /// the explanation. It is not: 'o' at 12ppem comes back pixel for pixel IDENTICAL with the
+        /// rule changed, and the repertoire's structural disagreement goes 41,072 to 46,072. So the
+        /// curve shift is in the FITTED OUTLINE, not in how the outline is sampled, and one more
+        /// rasterizer rule is ruled out. WPF_SUBPIXEL_SAMPLE=centre.</para></summary>
+        private static readonly bool CentreSample =
+            Environment.GetEnvironmentVariable("WPF_SUBPIXEL_SAMPLE") == "centre";
+
         private static readonly int HalfLampThreshold =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_THRESHOLD"), out int ht)
                 && ht > 0 ? ht : 128;
@@ -784,7 +797,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return FillCoverage(contours, path.FillRule, originX, originY, width, height);
         }
 
-        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height, int verticalSamples = VerticalSamples, float minSpan = 0f)
+        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height, int verticalSamples = VerticalSamples, float minSpan = 0f, bool centreSample = false)
         {
             var bytes = new byte[width * height];
             if (width <= 0 || height <= 0 || contours.Count == 0) return bytes;
@@ -836,14 +849,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         {
                             winding += crossings[i].Dir;
                             if (winding != 0)
-                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan);
+                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan, centreSample);
                         }
                     }
                     else // EvenOdd
                     {
                         for (int i = 0; i < crossings.Count - 1; i++)
                             if ((i & 1) == 0)
-                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan);
+                                AddSpan(coverage, rowBase, width, originX, crossings[i].X, crossings[i + 1].X, weight, minSpan, centreSample);
                     }
                 }
             }
@@ -855,7 +868,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static void AddSpan(float[] cov, int rowBase, int width, int originX, float xs, float xe, float weight,
-                                    float minSpan = 0f)
+                                    float minSpan = 0f, bool centreSample = false)
         {
             if (xe <= xs) return;
 
@@ -877,6 +890,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int p1 = Math.Min(width - 1, (int)MathF.Ceiling(right) - 1);
             for (int px = p0; px <= p1; px++)
             {
+                if (centreSample)
+                {
+                    // GDI'S RULE, not ours: a bi-level scan conversion asks whether the sample
+                    // point is INSIDE the outline, where we integrate the area and threshold it at
+                    // half. For a straight edge the two are the same -- covering at least half a
+                    // sample is exactly having the edge left of its centre -- which is why every
+                    // straight stem already matched. They differ on a SLIVER narrower than half a
+                    // sample that straddles the centre: area says no, inside says yes. That sliver
+                    // is the leading edge of a curve, and losing it is why 'o', 'e' and 'c' sat half
+                    // a pixel right of Windows' while 'l' and 'n' were exact.
+                    float centre = px + 0.5f;
+                    if (centre >= left && centre < right) cov[rowBase + px] += weight;
+                    continue;
+                }
                 float overlap = MathF.Min(right, px + 1) - MathF.Max(left, px);
                 if (overlap > 0f) cov[rowBase + px] += overlap * weight;
             }
