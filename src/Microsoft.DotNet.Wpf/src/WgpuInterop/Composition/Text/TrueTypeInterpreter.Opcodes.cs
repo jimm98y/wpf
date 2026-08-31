@@ -725,6 +725,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// prints each one the first time it is seen.</summary>
         private static readonly System.Collections.Generic.HashSet<byte> s_unimplemented = new();
 
+        /// <summary>WHY DIGITS AND LETTERS WANT DIFFERENT GRIDS, as far as it has been taken.
+        /// <para>Segoe UI classifies its own stems by control value: digits fit from cvt[137] and
+        /// cvt[138], capitals from cvt[125] and cvt[126], lowercase from cvt[131] and cvt[132].
+        /// So the digit/letter split is visible in the FONT's data and not only in the character,
+        /// which is what a principled discriminator would need.</para>
+        /// <para>Sampled at the instruction, the digit errors under mode 6 are MDAP[r] landing on
+        /// a lamp boundary where GDI does not: '0' pt10 arrives 0.500 and we round to 0.660 (2/3)
+        /// where GDI has 0.406; '8' pt0 arrives 0.530, ours 0.660, GDI 0.390; '3' pt15 arrives
+        /// 4.270, ours 4.330 (13/3), GDI 4.094. We sit about one lamp to the RIGHT, every time,
+        /// and GDI's answers are on no grid at all.</para>
+        /// <para>The obvious next move is therefore to stop rounding x, and it is WRONG. Measured:
+        /// WPF_CT_NOROUND_X improves the parity metric under mode 6 by 86,454 (3,271,235 ->
+        /// 3,184,781) and costs the live window 358,518 (985,204 -> 1,343,722), with the position
+        /// half going 135,981 -> 433,676. Unrounded stems land anywhere. The two metrics disagree
+        /// again and the window is the objective.</para>
+        /// <para>Keying the grid on the control value INDEX would fit all of this and is not
+        /// offered: cvt[137] means digits in this face and nothing anywhere else.</para></summary>
+
         /// <summary>WPF_STEM_NATURAL: target the natural stem width plus half a pixel, which is
         /// what GDI measurably draws, instead of a rounded control value plus s_stemFat.</summary>
         private static readonly bool s_stemNatural =
