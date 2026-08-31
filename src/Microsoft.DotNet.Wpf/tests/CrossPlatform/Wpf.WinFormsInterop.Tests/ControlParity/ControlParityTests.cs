@@ -95,10 +95,10 @@ namespace Wpf.WinFormsInterop.Tests
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
             // authority for where the box goes; see the note on tabcontrol.
-            ["checkbox"] = (309, 45),
-            ["checkbox-clear"] = (327, 46),
-            ["checkbox-disabled"] = (318, 135),
-            ["checkedlistbox"] = (20, 1085),
+            ["checkbox"] = (286, 45),
+            ["checkbox-clear"] = (288, 46),
+            ["checkbox-disabled"] = (300, 135),
+            ["checkedlistbox"] = (14, 1085),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a

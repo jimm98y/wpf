@@ -578,8 +578,11 @@ namespace System.Windows.Forms
 			return path;
 		}
 
+		/// <param name="yNudge">Half a pixel DOWN for a CheckBox, which is lined up against the text
+		/// beside it with a whole-row offset where the real correction is half a row. The primitive
+		/// the CheckedListBox uses does not carry that offset and must not carry this either.</param>
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot)
+					      bool enabled, bool hot, float yNudge = 0f)
 		{
 			Color fill, border;
 			if (!enabled) {
@@ -604,11 +607,18 @@ namespace System.Windows.Forms
 			// between the shape and the same shape a pixel in, which is exact geometry, where stroking
 			// a path put a quarter of a pixel of ink on the row BELOW the box -- a stroke is widened
 			// about its own line, and that line is only as well placed as the widening is.
+			// HALF A PIXEL LEFT AND HALF A PIXEL DOWN of where the integer rectangle puts it.
+			// Measured against a stock check box: Windows' box covers rows 4..16 and columns 0..12
+			// squarely, every edge pixel either full or empty, while ours came out spanning 3.55 to
+			// 16.55 and 0.5 to 13.5 -- half-covered top and bottom rows, and an extra column of ink
+			// down the right with nothing down the left.
+			const float Nudge = 0.5f;
 			float bw = box.Width + 1, bh = box.Height + 1;
-			using (GraphicsPath shape = RoundedGlyph (box.X, box.Y, bw, bh, Radius))
+			float bx = box.X - Nudge, by = box.Y + yNudge;
+			using (GraphicsPath shape = RoundedGlyph (bx, by, bw, bh, Radius))
 				g.FillPath (ResPool.GetSolidBrush (border), shape);
 			if (fill != border)
-				using (GraphicsPath inner = RoundedGlyph (box.X + 1, box.Y + 1, bw - 2, bh - 2, Radius - 1))
+				using (GraphicsPath inner = RoundedGlyph (bx + 1, by + 1, bw - 2, bh - 2, Radius - 1))
 					g.FillPath (ResPool.GetSolidBrush (fill), inner);
 			g.SmoothingMode = boxMode;
 
@@ -682,7 +692,7 @@ namespace System.Windows.Forms
 				return;
 			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
 			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
-					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered);
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered, 0.5f);
 		}
 
 		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
