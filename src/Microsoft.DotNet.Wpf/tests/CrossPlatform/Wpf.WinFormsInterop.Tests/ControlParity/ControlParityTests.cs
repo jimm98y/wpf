@@ -116,7 +116,7 @@ namespace Wpf.WinFormsInterop.Tests
             ["hscrollbar"] = (4, 1),
             ["label"] = (6, 102),
             ["label-disabled"] = (38, 116),
-            ["linklabel"] = (331, 100),
+            ["linklabel"] = (11, 110),
             // The row caption moved a pixel left and the selection band grew two to the right, both
             // measured against the live window -- where this control went from 276k of difference to
             // 77k, with its text now landing on Windows' exact columns. This reference, drawn on a

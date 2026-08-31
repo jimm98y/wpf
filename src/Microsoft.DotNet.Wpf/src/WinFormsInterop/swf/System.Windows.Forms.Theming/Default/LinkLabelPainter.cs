@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -59,6 +59,13 @@ namespace System.Windows.Forms.Theming.Default
 			Rectangle client_rect = label.PaddingClientRectangle;
 
 			label.DrawImage (dc, label.Image, client_rect, label.ImageAlign);
+
+			// The same site correction a Label needs, and for the same reason: this paints with
+			// DrawString where Windows paints with DrawText, and neither the ascent-versus-metric
+			// -height row nor the glyph-overhang column is applied anywhere on this path. Measured
+			// against a stock LinkLabel, ours drew its text on rows 4..12 and its underline on row
+			// 14 where Windows draws 3..11 and 13. After the image, so the image does not move.
+			client_rect.Offset (1, -1);
 
 			if (label.pieces == null)
 				return;
