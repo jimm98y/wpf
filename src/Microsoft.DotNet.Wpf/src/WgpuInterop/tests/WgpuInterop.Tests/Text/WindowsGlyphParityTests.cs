@@ -976,6 +976,13 @@ namespace WgpuInterop.Tests.Text
             // between their levels is a disagreement no filter or curve can remove.
             var gdiLevels = new long[256];
             var ourLevels = new long[256];
+            // AND HOW FAR APART, in LEVELS rather than in bytes. The claim this is testing is
+            // that the residual is borderline rounding -- lamps landing either side of a
+            // threshold. If that is true almost every disagreement is exactly ONE level. If
+            // many are two or three, something upstream is still wrong and the claim is not.
+            var ladder = new byte[] { 0, 58, 102, 144, 182, 219, 255 };
+            var levelGap = new long[8];
+            long lampsCompared = 0;
             var curveSum = new double[Bins + 1];
             var curveN = new long[Bins + 1];
             var raw = new byte[Width * Height * 4];
@@ -1028,6 +1035,7 @@ namespace WgpuInterop.Tests.Text
                         byte[] oursPix = OursRgba(font, ch.ToString(), ppem, baseline, correction: true);
                         for (int q = 0; q + 3 < oursPix.Length; q += 4)
                             for (int qc = 0; qc < 3; qc++) ourLevels[oursPix[q + qc]]++;
+
                         var v = new double[Taps];
                         for (int y = 0; y < Height; y++)
                         {
@@ -1067,6 +1075,31 @@ namespace WgpuInterop.Tests.Text
                                     }
                                 }
                         }
+                    }
+            }
+
+            // THE LEVEL GAP IS MEASURED AT 11 TO 13, not at the 7 and 8 the filter solve uses.
+            // At 7 and 8 stage C reads our ink at 1.36 and 1.33 of GDI's -- those sizes are
+            // below the gridfit threshold and our text there is far heavier than Windows',
+            // so a level histogram taken there measures that, not the sizes anyone reads.
+            foreach (int ppem in new[] { 11, 12, 13 })
+            {
+                int baseline = ppem + 12;
+                foreach (string group in Repertoire)
+                    foreach (char ch in group)
+                    {
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(ch.ToString(), family, ppem, PenX, baseline, Width, Height, false, false);
+                        Gdi.s_rawRgb = null;
+                        byte[] oursPix = OursRgba(font, ch.ToString(), ppem, baseline, correction: true);
+                        for (int q = 0; q + 3 < oursPix.Length; q += 4)
+                            for (int qc = 0; qc < 3; qc++)
+                            {
+                                byte ov = oursPix[q + qc], gv = raw[q + (2 - qc)];
+                                if (ov == 255 && gv == 255) continue;      // paper both sides
+                                levelGap[Math.Min(7, Math.Abs(Nearest(ladder, ov) - Nearest(ladder, gv)))]++;
+                                lampsCompared++;
+                            }
                     }
             }
 
@@ -1124,6 +1157,12 @@ namespace WgpuInterop.Tests.Text
                 report.AppendLine($"{sum,10:0.0000}   {(ssTot <= 0 ? 0 : ssRes / ssTot):P2}");
             }
             report.AppendLine();
+            report.AppendLine("   how far apart, in LEVELS of the seven-step ladder");
+            report.AppendLine($"      lamps compared {lampsCompared:N0}");
+            for (int k = 0; k < 8; k++)
+                if (levelGap[k] > 0)
+                    report.AppendLine($"      {k} level{(k == 1 ? " " : "s")} apart  {levelGap[k],9:N0}   {(double)levelGap[k] / Math.Max(1, lampsCompared):P2}");
+            report.AppendLine();
             report.AppendLine("   distinct lamp values emitted (excluding paper and full ink)");
             int gdiDistinct = 0, ourDistinct = 0;
             for (int k = 1; k < 255; k++) { if (gdiLevels[k] > 50) gdiDistinct++; if (ourLevels[k] > 50) ourDistinct++; }
@@ -1156,6 +1195,18 @@ namespace WgpuInterop.Tests.Text
                     new Vector2(cu.Point.X * 3f, cu.Point.Y)),
                 _ => seg,
             };
+        }
+
+        /// <summary>Which rung of GDI's seven-step ladder a lamp value sits on.</summary>
+        private static int Nearest(byte[] ladder, byte v)
+        {
+            int best = 0, bd = 999;
+            for (int i = 0; i < ladder.Length; i++)
+            {
+                int d = Math.Abs(ladder[i] - v);
+                if (d < bd) { bd = d; best = i; }
+            }
+            return best;
         }
 
         private static double[] Solve(double[,] a, double[] b, int n)
