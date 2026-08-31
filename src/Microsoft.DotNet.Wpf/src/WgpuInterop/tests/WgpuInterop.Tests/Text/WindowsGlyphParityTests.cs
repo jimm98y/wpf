@@ -899,11 +899,227 @@ namespace WgpuInterop.Tests.Text
             File.AppendAllText(path!, report.ToString());
         }
 
-        private static void Tally(byte[] a, byte[] b, ref long pixels, ref long sum)
+        /// <summary>SOLVE FOR GDI'S FILTER, from its own pixels, with no font fitting in the way.
+        /// Reported only -- set WPF_FILTER_REPORT.
+        /// <para>Stage CR showed the disagreement barely moves when the geometry is swapped, so the
+        /// mass is in the lamps, the filter and the contrast curve. Those have only ever been tuned
+        /// against finished pixels. This measures the filter itself.</para>
+        /// <para>The trick is to work at 7 and 8 ppem, BELOW Segoe UI's gasp gridfit threshold.
+        /// There GDI does not fit, so the shape it renders IS the outline we can compute exactly --
+        /// stage R measures 0.994 and 0.984 agreement at those sizes and nowhere else. Scaling that
+        /// outline three times in x and rasterizing gives one column per lamp, which is that lamp's
+        /// exact coverage; GDI's own lamp value is the answer it produced from the same input. Least
+        /// squares over five taps then READS GDI'S FILTER OFF rather than guessing it.</para>
+        /// <para>The alignment is SWEPT, not assumed. Solving at offset 0 alone returned taps peaked
+        /// at both ends -- 0.286, 0.029, 0.181, 0.057, 0.315 -- with 70% of the variance unexplained,
+        /// which is what a misaligned window looks like and not what a filter looks like. If one
+        /// offset fits far better than its neighbours, that is where GDI's lamps sit against ours;
+        /// if none does, the model is wrong rather than the alignment.</para></summary>
+        [Theory]
+        [InlineData("Segoe UI")]
+        public void FilterTaps_SolvedFromGdisOwnPixels(string family)
         {
-            for (int i = 0; i + 3 < a.Length && i + 3 < b.Length; i += 4)
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_FILTER_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_FILTER_REPORT to collect this");
+            string? file = FontFiles.Find(family, bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no " + family);
+
+            const int Taps = 5, Half = 2, Off = 3;
+            var ata = new double[2 * Off + 1, Taps, Taps];
+            var atb = new double[2 * Off + 1, Taps];
+            var samplesAt = new long[2 * Off + 1];
+            var sumBAt = new double[2 * Off + 1];
+            var sumBSqAt = new double[2 * Off + 1];
+            var raw = new byte[Width * Height * 4];
+
+            // Is GDI even drawing SUBPIXEL at these sizes? If gasp puts 7 and 8 in greyscale then
+            // every lamp of a pixel carries the same value and fitting three of them to three
+            // different coverages is fitting noise. (It does not: 247 coloured against 10 neutral.)
+            int neutral = 0, coloured = 0;
             {
-                int d = Math.Abs(a[i] - b[i]) + Math.Abs(a[i + 1] - b[i + 1]) + Math.Abs(a[i + 2] - b[i + 2]);
+                var probe = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = probe;
+                Gdi.Draw("Hamburgefonstiv", family, 8, PenX, 20, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                for (int i3 = 0; i3 + 3 < probe.Length; i3 += 4)
+                {
+                    int r = probe[i3], g = probe[i3 + 1], b2 = probe[i3 + 2];
+                    if (r == 255 && g == 255 && b2 == 255) continue;
+                    if (Math.Max(r, Math.Max(g, b2)) - Math.Min(r, Math.Min(g, b2)) > 8) coloured++;
+                    else neutral++;
+                }
+            }
+
+            foreach (int ppem in new[] { 7, 8 })
+            {
+                int baseline = ppem + 12;
+                foreach (string group in Repertoire)
+                    foreach (char ch in group)
+                    {
+                        List<PathFigure> figures =
+                            GdiStageTests.GdiOutlineAt(ch, family, ppem, PenX, baseline);
+                        if (figures.Count == 0) continue;
+
+                        // Three times as wide: one column per lamp, each the exact area the outline
+                        // covers of that lamp. NOT RasterizeSubpixel -- that has already applied OUR
+                        // filter, which is the thing being measured.
+                        var wide = new List<PathFigure>(figures.Count);
+                        foreach (PathFigure f in figures)
+                        {
+                            var g = new PathFigure(new Vector2(f.Start.X * 3f, f.Start.Y)) { Closed = f.Closed };
+                            foreach (PathSegment seg in f.Segments) g.Segments.Add(WidenX(seg));
+                            wide.Add(g);
+                        }
+                        CoverageMask m = PathRasterizer.Rasterize(new PathGeometry(FillRule.NonZero, wide));
+                        if (m.Coverage == null) continue;
+
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(ch.ToString(), family, ppem, PenX, baseline, Width, Height, false, false);
+                        Gdi.s_rawRgb = null;
+
+                        var v = new double[Taps];
+                        for (int y = 0; y < Height; y++)
+                        {
+                            int row = y - (int) m.OriginY;
+                            if ((uint) row >= (uint) m.Height) continue;
+                            for (int x = 0; x < Width; x++)
+                                for (int c = 0; c < 3; c++)
+                                {
+                                    int lamp = 3 * x + c - (int) m.OriginX;
+                                    double b = 1.0 - raw[(y * Width + x) * 4 + (2 - c)] / 255.0;
+                                    for (int o = -Off; o <= Off; o++)
+                                    {
+                                        bool any = b > 0.004;
+                                        for (int k = -Half; k <= Half; k++)
+                                        {
+                                            int li = lamp + o + k;
+                                            double cov = (uint) li < (uint) m.Width
+                                                ? m.Coverage[row * m.Width + li] / 255.0 : 0.0;
+                                            v[k + Half] = cov;
+                                            if (cov > 0.004) any = true;
+                                        }
+                                        if (!any) continue;
+                                        int oi = o + Off;
+                                        for (int i2 = 0; i2 < Taps; i2++)
+                                        {
+                                            atb[oi, i2] += v[i2] * b;
+                                            for (int j = 0; j < Taps; j++) ata[oi, i2, j] += v[i2] * v[j];
+                                        }
+                                        samplesAt[oi]++; sumBAt[oi] += b; sumBSqAt[oi] += b * b;
+                                    }
+                                }
+                        }
+                    }
+            }
+
+            // ONE ROW OF ONE GLYPH, printed. A 70% residual with the alignment already swept is
+            // the point to stop fitting and look at the numbers themselves.
+            var report = new System.Text.StringBuilder();
+            {
+                var figs = GdiStageTests.GdiOutlineAt('n', family, 8, PenX, 20);
+                var wide2 = new List<PathFigure>(figs.Count);
+                foreach (PathFigure f in figs)
+                {
+                    var g = new PathFigure(new Vector2(f.Start.X * 3f, f.Start.Y)) { Closed = f.Closed };
+                    foreach (PathSegment seg in f.Segments) g.Segments.Add(WidenX(seg));
+                    wide2.Add(g);
+                }
+                CoverageMask mm = PathRasterizer.Rasterize(new PathGeometry(FillRule.NonZero, wide2));
+                var probe2 = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = probe2;
+                Gdi.Draw("n", family, 8, PenX, 20, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                int yy = 16;
+                int rr = yy - (int) mm.OriginY;
+                report.AppendLine($"   'n'@8 row {yy}   lamp: ours(exact coverage) | GDI(1 - v/255)");
+                if ((uint) rr < (uint) mm.Height)
+                    for (int xx = PenX - 1; xx < PenX + 8; xx++)
+                        for (int cc = 0; cc < 3; cc++)
+                        {
+                            int li = 3 * xx + cc - (int) mm.OriginX;
+                            double cov = (uint) li < (uint) mm.Width
+                                ? mm.Coverage[rr * mm.Width + li] / 255.0 : 0.0;
+                            double gv = 1.0 - probe2[(yy * Width + xx) * 4 + (2 - cc)] / 255.0;
+                            report.AppendLine($"      x={xx,3} {"RGB"[cc]}   ours {cov,6:0.000}   GDI {gv,6:0.000}");
+                        }
+            }
+            report.AppendLine("== " + family + "  GDI's filter, solved from its own lamps at 7 and 8 ppem");
+            report.AppendLine($"   GDI at 8ppem: {coloured} coloured px, {neutral} neutral px");
+            report.AppendLine("   lampOff  samples       t-2       t-1        t0       t+1       t+2       sum   unexplained");
+            for (int o = -Off; o <= Off; o++)
+            {
+                int oi = o + Off;
+                var a2 = new double[Taps, Taps];
+                var b2 = new double[Taps];
+                for (int i2 = 0; i2 < Taps; i2++)
+                {
+                    b2[i2] = atb[oi, i2];
+                    for (int j = 0; j < Taps; j++) a2[i2, j] = ata[oi, i2, j];
+                }
+                double[] w = Solve(a2, b2, Taps);
+                double explained = 0, sum = 0;
+                for (int i2 = 0; i2 < Taps; i2++) { explained += w[i2] * b2[i2]; sum += w[i2]; }
+                double ssTot = sumBSqAt[oi] - sumBAt[oi] * sumBAt[oi] / Math.Max(1, samplesAt[oi]);
+                double ssRes = sumBSqAt[oi] - explained;
+                report.Append($"   {o,7}  {samplesAt[oi],7:N0}");
+                for (int i2 = 0; i2 < Taps; i2++) report.Append($"{w[i2],10:0.0000}");
+                report.AppendLine($"{sum,10:0.0000}   {(ssTot <= 0 ? 0 : ssRes / ssTot):P2}");
+            }
+            File.AppendAllText(path!, report.ToString());
+
+            PathSegment WidenX(PathSegment seg) => seg switch
+            {
+                LineSegment l => new LineSegment(new Vector2(l.Point.X * 3f, l.Point.Y)),
+                QuadraticBezierSegment q => new QuadraticBezierSegment(
+                    new Vector2(q.Control.X * 3f, q.Control.Y), new Vector2(q.Point.X * 3f, q.Point.Y)),
+                CubicBezierSegment cu => new CubicBezierSegment(
+                    new Vector2(cu.Control1.X * 3f, cu.Control1.Y),
+                    new Vector2(cu.Control2.X * 3f, cu.Control2.Y),
+                    new Vector2(cu.Point.X * 3f, cu.Point.Y)),
+                _ => seg,
+            };
+        }
+
+        private static double[] Solve(double[,] a, double[] b, int n)
+        {
+            var m = new double[n, n + 1];
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++) m[i, j] = a[i, j];
+                m[i, n] = b[i];
+            }
+            for (int col = 0; col < n; col++)
+            {
+                int piv = col;
+                for (int r = col + 1; r < n; r++)
+                    if (Math.Abs(m[r, col]) > Math.Abs(m[piv, col])) piv = r;
+                if (Math.Abs(m[piv, col]) < 1e-12) continue;
+                if (piv != col)
+                    for (int j = 0; j <= n; j++) (m[col, j], m[piv, j]) = (m[piv, j], m[col, j]);
+                for (int r = 0; r < n; r++)
+                {
+                    if (r == col) continue;
+                    double f = m[r, col] / m[col, col];
+                    for (int j = col; j <= n; j++) m[r, j] -= f * m[col, j];
+                }
+            }
+            var x = new double[n];
+            for (int i = 0; i < n; i++) x[i] = Math.Abs(m[i, i]) < 1e-12 ? 0 : m[i, n] / m[i, i];
+            return x;
+        }
+
+        /// <summary>Ours (RGBA) against GDI's raw buffer, which is B G R A -- s_rawRgb is a straight
+        /// Marshal.Copy out of a Windows DIB and its name is a lie. Indexing both sides the same way
+        /// compares our RED lamp against GDI's BLUE one, which for subpixel text is comparing
+        /// opposite edges of the same stem.</summary>
+        private static void Tally(byte[] ours, byte[] gdiBgra, ref long pixels, ref long sum)
+        {
+            for (int i = 0; i + 3 < ours.Length && i + 3 < gdiBgra.Length; i += 4)
+            {
+                int d = Math.Abs(ours[i] - gdiBgra[i + 2])
+                      + Math.Abs(ours[i + 1] - gdiBgra[i + 1])
+                      + Math.Abs(ours[i + 2] - gdiBgra[i]);
                 if (d == 0) continue;
                 pixels++; sum += d;
             }
@@ -2217,7 +2433,10 @@ namespace WgpuInterop.Tests.Text
                     for (int i = 0; i < mine.Length; i += 4)
                         for (int c = 0; c < 3; c++)
                         {
-                            int a = 255 - mine[i + c], b = 255 - raw[i + c];
+                            // raw is B G R A -- a straight Marshal.Copy out of a Windows DIB, whatever
+                            // its name says. Indexing both sides alike compared our RED lamp against
+                            // GDI's BLUE one, which on subpixel text is opposite edges of the same stem.
+                            int a = 255 - mine[i + c], b = 255 - raw[i + (2 - c)];
                             int d = Math.Abs(a - b);
                             if (d > 8) pixels++;
                             total += d;
@@ -2381,7 +2600,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         // Coverage, not colour: black ink on white paper, so 255 - value.
                         int ours = 255 - mine[i + c];
-                        int gdi = 255 - raw[i + c];
+                        int gdi = 255 - raw[i + (2 - c)];      // raw is BGRA; see StageC
                         // BOTH must have ink. Mixing in the pixels where only one side inked at all
                         // measures structural disagreement, not tone, and it swamps everything.
                         if (ours < 8 || gdi < 8) continue;
