@@ -1491,7 +1491,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < count; i++)
             {
                 int index = Pop(), spec = Pop();
-                if (!DeltaApplies(spec, rangeOffset, out int amount)) continue;
+                bool fires = DeltaApplies(spec, rangeOffset, out int amount);
+                if (s_traceHint)
+                    Console.Error.WriteLine($"      DELTAC cvt[{index}] spec=0x{spec:X2} "
+                        + $"ppem={((spec >> 4) & 0x0F) + _gs.DeltaBase + rangeOffset} (we are {_ppem}) "
+                        + $"{(fires ? $"FIRES {amount / 64f:0.0000}px" : "no")}"
+                        + $" cvt now {((uint)index < _scaledCvt.Length ? _scaledCvt[index] / 64f : 0):0.0000}px");
+                if (!fires) continue;
                 if ((uint)index < _scaledCvt.Length) _scaledCvt[index] += amount;
             }
         }

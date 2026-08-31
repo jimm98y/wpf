@@ -2862,7 +2862,7 @@ namespace WgpuInterop.Tests.Text
 
             var log = new System.Text.StringBuilder();
             log.AppendLine($"== {family} 'l' stem, coverage in lamps (curve undone, gamma {g:0.00})");
-            foreach (int ppem in new[] { 11, 12, 13, 14, 16, 19 })
+            foreach (int ppem in new[] { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24 })
             {
                 var raw = new byte[Width * Height * 4];
                 Gdi.s_rawRgb = raw;
@@ -2883,6 +2883,30 @@ namespace WgpuInterop.Tests.Text
                 log.AppendLine($"  {ppem,2}ppem  gdi {gdiInk,6:0.00} lamps ({gdiInk / 3,5:0.000} px)"
                                + $"   ours {ourInk,6:0.00} ({ourInk / 3,5:0.000} px)"
                                + $"   gdi/ours {(ourInk > 0 ? gdiInk / ourInk : 0),5:0.000}");
+
+                // WHERE the lit lamps are, not just how many. A stem one half-lamp wider and a stem
+                // shifted by half a lamp give the SAME total, and the total is all this probe used to
+                // report -- so it could never say which of the two GDI was doing. Each group of three
+                // is one pixel's red, green and blue lamp, in sixths, so a full lamp reads 6.
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    var line = new System.Text.StringBuilder(pass == 0 ? "          gdi " : "          our ");
+                    for (int x = PenX - 2; x < PenX + 4; x++)
+                    {
+                        for (int lamp = 0; lamp < 3; lamp++)
+                        {
+                            // GDI's bitmap is a Windows DIB and so is BGRA, ours is RGBA: read
+                            // GDI's lamps backwards or every triple comes out mirrored, which reads
+                            // convincingly as "their subpixel order is reversed" and is not.
+                            float c = pass == 0
+                                ? Lin((255 - raw[(row * Width + x) * 4 + (2 - lamp)]) / 255f, g)
+                                : Lin((255 - ours[(row * Width + x) * 4 + lamp]) / 255f, g);
+                            line.Append($"{MathF.Round(c * 6),2:0}");
+                        }
+                        line.Append(' ');
+                    }
+                    log.AppendLine(line.ToString());
+                }
             }
             throw new Xunit.Sdk.XunitException(log.ToString());
         }
