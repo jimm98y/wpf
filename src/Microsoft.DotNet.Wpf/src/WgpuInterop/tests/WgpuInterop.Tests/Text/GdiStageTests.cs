@@ -840,14 +840,40 @@ namespace WgpuInterop.Tests.Text
                 // outline it reports, and that the dilation and the centroid shift are the same
                 // number -- which would mean the extra ink is all on one side. On a single vertical
                 // stem that is not an inference: the column profile shows it.
-                Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  column ink, "
-                    + "GDI's outline: ours | GDI's | difference ===");
+                // THREE profiles, because two cannot answer the question they raise. GDI's
+                // greyscale stem is wider than its own hinted outline's by a quantised fraction
+                // that grows with size -- 0.25px at 9-11 up to 1.00 at 18 -- and expressed as a
+                // width that is about 0.115 em at EVERY size, which is what an UNHINTED stem is.
+                // So the third column here is the unhinted outline. GDI's stem does NOT match it --
+                // it is wider than BOTH the hinted and the unhinted outline -- and that is the
+                // answer. Segoe UI 'l', all three widths in pixels, our hinted stem being exactly
+                // 1.0 at every size:
+                //
+                //   ppem      9    10    11    12    13    14    15    16    17    18
+                //   GDI    1.25  1.25  1.25  1.50  1.50  1.62  1.75  1.75  1.87  2.00
+                //   unhtd  0.70  0.85  0.90  0.97  1.02  1.14  1.20  1.25  1.30  1.37
+                //   diff  +0.55 +0.39 +0.35 +0.53 +0.48 +0.49 +0.55 +0.50 +0.57 +0.63
+                //
+                // GDI'S GREYSCALE STEM IS THE NATURAL WIDTH PLUS ABOUT HALF A PIXEL, at every size,
+                // then quantised to an eighth -- which is what the 0.35-0.63 spread is. It is not a
+                // whole-pixel snap (our hinted 1.00 is), not the natural width (that is the row
+                // above), and not a rasterizer or a contrast curve. It is stem darkening, and half
+                // a pixel is a much larger and much simpler number than the tuned +6/64 the
+                // interpreter currently applies over ppem 11-13 only.
+                byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: true));
+                Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  column ink: "
+                    + "GDI-hinted(ours) | GDI bitmap | GDI-UNhinted(ours) ===");
                 for (int x = 0; x < Cell; x++)
                 {
-                    long a = 0, b = 0;
-                    for (int y = 0; y < Cell; y++) { a += gdiOutlineOurs[y * Cell + x]; b += theirs[y * Cell + x]; }
-                    if (a == 0 && b == 0) continue;
-                    Console.Error.WriteLine($"  x={x,3}  ours {a,6}   GDI {b,6}   {b - a,+7}");
+                    long a = 0, b = 0, u = 0;
+                    for (int y = 0; y < Cell; y++)
+                    {
+                        a += gdiOutlineOurs[y * Cell + x];
+                        b += theirs[y * Cell + x];
+                        u += unhintedOurs[y * Cell + x];
+                    }
+                    if (a == 0 && b == 0 && u == 0) continue;
+                    Console.Error.WriteLine($"  x={x,3}  hinted {a,6}   GDI {b,6}   unhinted {u,6}");
                 }
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }
