@@ -111,6 +111,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x42:                                                          // WS
                         {
                             int v = Pop(), i = Pop();
+                            if (s_traceHint)
+                                Console.Error.WriteLine($"      WS storage[{i}] = {v}  (ppem {_ppem}, prep {_inPreProgram})");
                             if ((uint)i < _storage.Length) _storage[i] = v;
                             break;
                         }
