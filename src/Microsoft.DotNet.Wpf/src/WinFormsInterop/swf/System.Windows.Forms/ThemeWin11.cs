@@ -1258,7 +1258,13 @@ namespace System.Windows.Forms
 			// 340.5 -- a whole half row -- for a change of a tenth. Windows wants 333.90 and 340.10,
 			// so 334.0 and 340.0 are the nearest we can reach and the tenth of a row is not ours to
 			// close. Chosen as the reachable neighbour of each, not fitted.
-			float ax = cx + 0.60f;
+			// ON cx, not 0.60 right of it -- and the half-pixel vertex snapping the comment above
+			// describes is exactly why. With ax = cx + 0.60 the base runs cx - 2.66 to cx + 3.86,
+			// which snaps to cx - 2.5 and cx + 4.0: SEVEN pixels wide but centred on cx + 0.75. At
+			// ax = cx it snaps to cx +/- 3.5, the same seven pixels centred where Windows centres
+			// them. Read off the up arrow's apex row, which Windows draws 138/26/138 about one
+			// column and ours drew 200/36/95/246 across two.
+			float ax = cx + 0.35f;
 			const float HalfBase = 3.26f;
 			const float Span = 3.46f;
 			float baseY = top ? cy + 1.88f : cy - 0.77f;
