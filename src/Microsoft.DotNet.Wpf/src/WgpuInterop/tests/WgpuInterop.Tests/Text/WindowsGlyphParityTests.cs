@@ -1195,12 +1195,21 @@ namespace WgpuInterop.Tests.Text
         private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
                                 float dx = 0f)
         {
+            // Paper and Ink, not hardcoded white and black. Gdi.Draw already fills its DIB with
+            // Paper, so with these fixed here WPF_PARITY_BG changed ONE side of the comparison and
+            // the report came back with 923,621 differing pixels and an ink ratio of 0.10 -- the
+            // whole background disagreeing, not the text. The knob's own comment says it exists to
+            // find out whether the live window's #F0F0F0 is why the two harnesses disagree, and it
+            // could not answer that while only GDI was listening to it.
             var root = new SceneVisual();
             root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + dx, baseline), ppem,
-                                              RgbaColor.FromBytes(0, 0, 0, 255)));
+                RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
+                                    (byte)(Ink & 0xFF), 255)));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction;
-            return renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
+            return renderer.RenderToRgba(root, Width, Height,
+                RgbaColor.FromBytes((byte)((Paper >> 16) & 0xFF), (byte)((Paper >> 8) & 0xFF),
+                                    (byte)(Paper & 0xFF), 255));
         }
 
         /// <summary>What we draw, as the green lamp, for comparison against what Windows draws.
