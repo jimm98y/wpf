@@ -74,7 +74,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference lands in shade instead.
             ["textbox-readonly"] = (839, 153),
 
-            ["button"] = (132, 368),
+            ["button"] = (12, 368),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
             // text -- one flat #A0A0A0 pass, where the base drew a light copy at (1,1) and the real one
             // on top. Against the live stock window that took this button's text from 1.26 times
@@ -83,7 +83,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference in this reference's own geometry: with one pass it shows, and on an unshown
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
-            ["button-disabled"] = (352, 261),
+            ["button-disabled"] = (10, 261),
             // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
             // moving to where the LIVE stock window draws it and from the string-format margin it
             // used to carry. This reference is rendered on a form that was never shown, and where

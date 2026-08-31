@@ -438,14 +438,18 @@ namespace System.Windows.Forms
 				return;
 
 			// r is a DrawRectangle rectangle -- its width is the span between the outermost pixel
-			// centres -- so the shape it stands for is one pixel wider and taller.
+			// CENTRES -- so the shape it stands for is one pixel wider and taller, AND it starts half
+			// a pixel before the first of those centres. Adding the pixel without moving the origin
+			// leaves every edge straddling two rows at half strength: ours put the button's top
+			// border across rows 1 and 2 where Windows has one solid row 1.
 			float w = r.Width + 1, h = r.Height + 1;
+			float x = r.X - 0.5f, y = r.Y - 0.5f;
 			SmoothingMode old = g.SmoothingMode;
 			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (GraphicsPath shape = RoundedGlyph (r.X, r.Y, w, h, radius))
+			using (GraphicsPath shape = RoundedGlyph (x, y, w, h, radius))
 				g.FillPath (ResPool.GetSolidBrush (border), shape);
 			if (face != border)
-				using (GraphicsPath inner = RoundedGlyph (r.X + 1, r.Y + 1, w - 2, h - 2, radius - 1))
+				using (GraphicsPath inner = RoundedGlyph (x + 1, y + 1, w - 2, h - 2, radius - 1))
 					g.FillPath (ResPool.GetSolidBrush (face), inner);
 			g.SmoothingMode = old;
 		}
