@@ -2566,6 +2566,22 @@ namespace WgpuInterop.Tests.Text
         /// is positions on the physical grid with distances left alone, and it is measured and
         /// wrong: WPF_CT_POSGRID=physical costs 5,834,105 against 2,180,771 under mode 5, and
         /// does nothing at all under mode 6, where the lamp grid takes precedence.</para>
+        /// <para>AND THE WHOLE ROUNDING-RULE FAMILY IS NOW CLOSED, fitted against ten glyphs'
+        /// intervals at once instead of read off one. For every coordinate, take the value
+        /// ARRIVING at the last instruction that moved it and ask which candidate rounding lands
+        /// inside the interval GDI allows. Over 182 coordinates:</para>
+        /// <para>leave it alone 83, whole pixel 76, half 90, lamp 83, quarter 98, eighth 83,
+        /// sixteenth 85 -- against 115 for what our pipeline actually produces. Restricted to the
+        /// 36 coordinates whose last mover is MDAP, MIRP or MIAP, where rounding is the whole of
+        /// the job: 9, 13, 13, 13, 14, 8, 9 against 17 for ours.</para>
+        /// <para>Every simple rounding of the arriving value is WORSE than what we already do, on
+        /// both populations. So GDI's positions are not our arriving value put on any grid, and
+        /// the family of fixes that has occupied this investigation -- lamp instead of pixel,
+        /// sixteenth instead of lamp, physical for positions -- is exhausted rather than
+        /// untried.</para>
+        /// <para>The room is real: we are inside the allowed interval for 115 of 182 coordinates,
+        /// and only 17 of 36 where a fitting instruction decides it. Whatever closes that gap
+        /// depends on more than the value arriving at the instruction.</para>
         /// <para>'l' at 12ppem has NO coordinate outside its range under mode 6 -- we draw it
         /// correctly -- so whatever this is, it is not general.</para></summary>
         private static readonly bool s_solveReverse =
