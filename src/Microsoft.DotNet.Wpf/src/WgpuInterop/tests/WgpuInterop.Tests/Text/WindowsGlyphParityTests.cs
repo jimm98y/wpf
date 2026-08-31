@@ -2550,7 +2550,24 @@ namespace WgpuInterop.Tests.Text
         /// allows -- which does not depend on the tie-break. On that metric at 12ppem: letters
         /// 52% under mode 5 and 66% under mode 6; digits 88% under mode 5 and 79% under mode 6.
         /// Same split and same size as the biased count gave (57/70 and 87/78), so the
-        /// letters-versus-digits result stands on its own.</para></summary>
+        /// letters-versus-digits result stands on its own.</para>
+        /// <para>AND WITH THE INTERVAL, THE FIRST DETERMINED STATEMENT ABOUT A GLYPH. 'H' at
+        /// 12ppem has to satisfy [0.922,1.078] [2.094,2.235] [6.921,7.078] [8.094,8.250]. Both
+        /// modes fail the last two:</para>
+        /// <para>mode 6  1.000  2.094  6.656  7.750   stem to stem 5.656<br/>
+        /// mode 5  1.125  2.219  6.812  7.906   stem to stem 5.687</para>
+        /// <para>The ranges force the second stem's left edge to 7.0 and the first's to 1.0, so
+        /// GDI's stem-to-stem is SIX PIXELS EXACTLY and ours is a third of a pixel short. Our
+        /// stem WIDTH of 1.094 is inside the allowed [1.016, 1.312] -- the width is fine and the
+        /// whole second stem is displaced. That is mode-independent, so it is not the rounding
+        /// grid, and it is the first thing here that is true rather than merely fitted.</para>
+        /// <para>Where it comes from: point 1 reaches MDAP[r] at 6.75 and mode 6 rounds it to the
+        /// nearest LAMP, 6.66, where the whole pixel would be 7.0 and in range. The obvious fix
+        /// is positions on the physical grid with distances left alone, and it is measured and
+        /// wrong: WPF_CT_POSGRID=physical costs 5,834,105 against 2,180,771 under mode 5, and
+        /// does nothing at all under mode 6, where the lamp grid takes precedence.</para>
+        /// <para>'l' at 12ppem has NO coordinate outside its range under mode 6 -- we draw it
+        /// correctly -- so whatever this is, it is not general.</para></summary>
         private static readonly bool s_solveReverse =
             Environment.GetEnvironmentVariable("WPF_SOLVE_REVERSE") == "1";
 
