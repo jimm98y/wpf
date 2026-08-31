@@ -744,7 +744,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 1,233,117, and it does not touch the case that prompted it -- 'H' at 12ppem is
         /// unchanged, pixel for pixel, because its second stem is placed by IP and MDAP and not
         /// by a control value at all. Kept so the test does not have to be rebuilt to repeat it.
-        /// WPF_CT_STEMFAT_ROUNDED=1.</summary>
+        /// WPF_CT_STEMFAT_ROUNDED=1.
+        /// <para>THIS GATE IS WHY 'H' IS LIGHT AND 'l' IS NOT, which is worth knowing even though
+        /// turning it on is still wrong. Measured against GDI's own ClearType pixels at 12ppem,
+        /// our 'l' stem is about 1.08px and matches GDI to three decimals; our 'H' stem is 1.00
+        /// against GDI's 1.18. 'l' takes an UNROUNDED MIRP and collects s_stemFat's +6/64; 'H'
+        /// takes a rounded one and collects nothing -- and the pre-program leaves 46 separate
+        /// control values at exactly 1.0px at that size, so a rounded cap stem lands on 1.00 and
+        /// stays there.</para>
+        /// <para>Extending the correction to rounded MIRPs is therefore exactly what 'H' needs,
+        /// and it is still worse across the repertoire: 54,934 -> 56,393, 32 cases worse against
+        /// 8 better. Re-measured after the BGRA fix, so this rejection rests on a comparison that
+        /// has been checked. What 'H' needs is not a constant added to every rounded stem.</para>
+        /// <para>(The allowance metric reads 54,934 both before and after that fix, so the 442
+        /// ratcheted cases never used the swapped channels -- only stage C and CR did. Knobs
+        /// rejected against WPF_ALLOW_REPORT do not need revisiting.)</para></summary>
         private static readonly bool s_stemFatRounded =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_ROUNDED") == "1";
 
