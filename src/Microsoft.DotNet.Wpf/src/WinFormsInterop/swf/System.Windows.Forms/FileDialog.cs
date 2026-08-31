@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -2577,7 +2577,7 @@ namespace System.Windows.Forms
 			if (Directory.Exists (Path.Combine (folder, tmp_filename))) {
 				int i = 1;
 				
-				if (XplatUI.RunningOnUnix) {
+				if (XplatUI.RunningOnUnixPlatform) {
 					tmp_filename = tmp_filename + "-" + i;
 				} else {
 					tmp_filename = tmp_filename + " (" + i + ")";
@@ -2585,7 +2585,7 @@ namespace System.Windows.Forms
 				
 				while (Directory.Exists (Path.Combine (folder, tmp_filename))) {
 					i++;
-					if (XplatUI.RunningOnUnix) {
+					if (XplatUI.RunningOnUnixPlatform) {
 						tmp_filename = Locale.GetText("New Folder") + "-" + i;
 					} else {
 						tmp_filename = Locale.GetText("New Folder") + " (" + i + ")";
@@ -3417,7 +3417,7 @@ namespace System.Windows.Forms
 		
 		public MWFVFS ()
 		{
-			if (XplatUI.RunningOnUnix) {
+			if (XplatUI.RunningOnUnixPlatform) {
 				fileSystem = new UnixFileSystem ();
 			} else {
 				fileSystem = new WinFileSystem ();
@@ -4794,7 +4794,7 @@ namespace System.Windows.Forms
 		public MasterMount ()
 		{
 			// maybe check if the current user can access /proc/mounts
-			if (XplatUI.RunningOnUnix)
+			if (XplatUI.RunningOnUnixPlatform)
 				if (File.Exists ("/proc/mounts"))
 					proc_mount_available = true;
 		}
@@ -5012,7 +5012,7 @@ namespace System.Windows.Forms
 				string b = "mwf_config";
 				string dir = Environment.GetFolderPath (Environment.SpecialFolder.Personal);
 
-				if (XplatUI.RunningOnUnix) {
+				if (XplatUI.RunningOnUnixPlatform) {
 					dir = Path.Combine (dir, ".mono");
 					try {
 						Directory.CreateDirectory (dir);
@@ -5092,7 +5092,7 @@ namespace System.Windows.Forms
 					
 					xtw.Close ();
 
-					if (!XplatUI.RunningOnUnix)
+					if (!XplatUI.RunningOnUnixPlatform)
 						File.SetAttributes (full_file_name, FileAttributes.Hidden);
 				} catch (Exception){
 				}
