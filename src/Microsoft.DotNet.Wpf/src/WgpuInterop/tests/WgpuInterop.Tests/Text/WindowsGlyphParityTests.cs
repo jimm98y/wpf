@@ -928,7 +928,23 @@ namespace WgpuInterop.Tests.Text
         /// of the variance is NOT linear -- that residue is the contrast curve, now a bounded
         /// isolated quantity instead of something tangled up with geometry and lamps.</para>
         /// <para>The offsets either side of 0 fit symmetrically worse, which is what proves the lamp
-        /// mapping is right rather than merely assumed.</para></summary>
+        /// mapping is right rather than merely assumed.</para>
+        /// <para>AND THE CURVE, which is what that 7.91% is. With the filter known to be a box, the
+        /// linear prediction for a lamp is the mean of it and its two neighbours, so binning GDI's
+        /// actual lamp against that plots the transfer directly:</para>
+        /// <code>   in    out   implied gamma        in    out   implied gamma
+        ///        0.05  0.015      1.402          0.40  0.340      1.177
+        ///        0.10  0.066      1.180          0.50  0.448      1.158
+        ///        0.15  0.118      1.126          0.60  0.564      1.121
+        ///        0.20  0.158      1.146          0.70  0.644      1.234
+        ///        0.25  0.228      1.066          0.80  0.754      1.265</code>
+        /// <para>A gamma of about 1.15 across the middle -- and we already use 1.20. So the shape of
+        /// our filter, its gain and its curve are all close to what GDI measurably does, which is
+        /// the same story the corrected stage C tells.</para>
+        /// <para>The 1.40 in the lowest bin is NOT evidence of a toe. GDI quantises its lamps, so at
+        /// coverage this faint many samples land on zero and drag the mean down; the bin is
+        /// measuring the quantiser, not the curve. Do not fit a curve to that end of it.</para>
+        /// </summary>
         [Theory]
         [InlineData("Segoe UI")]
         public void FilterTaps_SolvedFromGdisOwnPixels(string family)
@@ -945,6 +961,13 @@ namespace WgpuInterop.Tests.Text
             var samplesAt = new long[2 * Off + 1];
             var sumBAt = new double[2 * Off + 1];
             var sumBSqAt = new double[2 * Off + 1];
+            // THE CURVE ITSELF. With the filter known to be a three-tap box, the linear
+            // prediction for a lamp is just the mean of it and its two neighbours. Binning
+            // GDI's actual lamp against that prediction plots the transfer curve directly --
+            // which is what the 7.91% the linear fit cannot explain actually IS.
+            const int Bins = 20;
+            var curveSum = new double[Bins + 1];
+            var curveN = new long[Bins + 1];
             var raw = new byte[Width * Height * 4];
 
             // Is GDI even drawing SUBPIXEL at these sizes? If gasp puts 7 and 8 in greyscale then
@@ -1021,6 +1044,12 @@ namespace WgpuInterop.Tests.Text
                                             for (int j = 0; j < Taps; j++) ata[oi, i2, j] += v[i2] * v[j];
                                         }
                                         samplesAt[oi]++; sumBAt[oi] += b; sumBSqAt[oi] += b * b;
+                                        if (o == 0)
+                                        {
+                                            double pred = (v[Half - 1] + v[Half] + v[Half + 1]) / 3.0;
+                                            int bin = (int) Math.Round(pred * Bins);
+                                            if ((uint) bin <= Bins) { curveSum[bin] += b; curveN[bin]++; }
+                                        }
                                     }
                                 }
                         }
@@ -1079,6 +1108,15 @@ namespace WgpuInterop.Tests.Text
                 report.Append($"   {o,7}  {samplesAt[oi],7:N0}");
                 for (int i2 = 0; i2 < Taps; i2++) report.Append($"{w[i2],10:0.0000}");
                 report.AppendLine($"{sum,10:0.0000}   {(ssTot <= 0 ? 0 : ssRes / ssTot):P2}");
+            }
+            report.AppendLine();
+            report.AppendLine("   GDI's transfer curve: box-average coverage in, lamp coverage out");
+            report.AppendLine("      in     out    out/in   samples");
+            for (int k = 0; k <= Bins; k++)
+            {
+                if (curveN[k] < 20) continue;
+                double inv = (double) k / Bins, outv = curveSum[k] / curveN[k];
+                report.AppendLine($"   {inv,6:0.000}  {outv,6:0.000}  {(inv <= 0 ? 0 : outv / inv),8:0.000}   {curveN[k],7:N0}");
             }
             File.AppendAllText(path!, report.ToString());
 
