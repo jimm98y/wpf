@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -41,6 +41,16 @@ namespace System.Windows.Forms.Theming.Default
 			label.DrawImage (dc, label.Image, rect, label.ImageAlign);
 
 			rect.Height = Math.Max(rect.Height, label.Font.Height);
+			// THE SITE CORRECTION for drawing a caption with DrawString instead of DrawText, which is
+			// what TextRenderer.PadDrawStringRectangle describes and what every control that goes
+			// through TextRenderer already gets. A Label does not go through it -- it calls DrawString
+			// straight -- so it never got either half, and measured against a stock Label its text sat
+			// one row LOW and one column LEFT: ours on rows 4..12 where Windows draws 3..11.
+			// Down the page, DrawString lays a line on the font's own ascent where DrawText uses the
+			// metric height. Across, DrawText leaves a margin that DrawString has already spent on the
+			// glyph overhang. Both are one pixel at nine point, which is every caption in this suite;
+			// if a face or a size ever needs a different number this is the place that has to learn it.
+			rect.Offset (1, -1);
 
 			if (label.Enabled) {
 				dc.DrawString (label.Text, label.Font,

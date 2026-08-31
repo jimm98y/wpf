@@ -114,8 +114,8 @@ namespace Wpf.WinFormsInterop.Tests
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
             // position error against the live window.
             ["hscrollbar"] = (4, 1),
-            ["label"] = (110, 102),
-            ["label-disabled"] = (120, 116),
+            ["label"] = (6, 102),
+            ["label-disabled"] = (38, 116),
             ["linklabel"] = (331, 100),
             // The row caption moved a pixel left and the selection band grew two to the right, both
             // measured against the live window -- where this control went from 276k of difference to
