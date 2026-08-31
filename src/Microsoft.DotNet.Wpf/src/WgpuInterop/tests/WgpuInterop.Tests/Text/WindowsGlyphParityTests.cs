@@ -914,7 +914,21 @@ namespace WgpuInterop.Tests.Text
         /// at both ends -- 0.286, 0.029, 0.181, 0.057, 0.315 -- with 70% of the variance unexplained,
         /// which is what a misaligned window looks like and not what a filter looks like. If one
         /// offset fits far better than its neighbours, that is where GDI's lamps sit against ours;
-        /// if none does, the model is wrong rather than the alignment.</para></summary>
+        /// if none does, the model is wrong rather than the alignment.</para>
+        /// <para>THE ANSWER, once GDI's buffer is read as the BGRA it is:</para>
+        /// <code>  lampOff  samples      t-2      t-1       t0      t+1      t+2      sum   unexpl
+        ///        -1   16,933  -0.0033  -0.0106   0.2926   0.3235   0.2986   0.9008    7.91%
+        ///         0   16,922  -0.0150   0.2983   0.3167   0.3084  -0.0091   0.8992    7.91%
+        ///         1   16,924   0.2821   0.3286   0.2981  -0.0003  -0.0071   0.9014    7.93%</code>
+        /// <para>Three things, none of them measured before. GDI's filter IS a three-tap box -- the
+        /// outer taps come back -0.015 and -0.009, zero to the noise, so it is not the classic
+        /// five-tap [1,2,3,2,1]/9 and that argument can stop. Its gain is 0.899, not 1.0: GDI's
+        /// lamps are a tenth lighter than a normalised box would make them, close to the 0.88
+        /// darkening the comment above PathRasterizer.SubpixelFilter already describes. And 7.91%
+        /// of the variance is NOT linear -- that residue is the contrast curve, now a bounded
+        /// isolated quantity instead of something tangled up with geometry and lamps.</para>
+        /// <para>The offsets either side of 0 fit symmetrically worse, which is what proves the lamp
+        /// mapping is right rather than merely assumed.</para></summary>
         [Theory]
         [InlineData("Segoe UI")]
         public void FilterTaps_SolvedFromGdisOwnPixels(string family)
