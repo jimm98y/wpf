@@ -1202,9 +1202,14 @@ namespace WgpuInterop.Tests.Text
             // find out whether the live window's #F0F0F0 is why the two harnesses disagree, and it
             // could not answer that while only GDI was listening to it.
             var root = new SceneVisual();
-            root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + dx, baseline), ppem,
-                RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
-                                    (byte)(Ink & 0xFF), 255)));
+            // ShiftX/ShiftY as well, for the same reason as Paper: the knobs exist to ask questions
+            // of the whole comparison and reached only one of the two renderers. The window lays
+            // glyphs out at real layout positions while this probe uses an integer pen, so how
+            // sharply the disagreement depends on sub-pixel position is exactly what separates
+            // "our filter is wrong" from "the window puts glyphs somewhere the probe never does".
+            root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + dx + ShiftX, baseline + ShiftY),
+                ppem, RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
+                                          (byte)(Ink & 0xFF), 255)));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction;
             return renderer.RenderToRgba(root, Width, Height,
