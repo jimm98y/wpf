@@ -1911,10 +1911,15 @@ namespace System.Windows.Forms
 			// CENTRING WAS TRIED AND IS WORSE, for now. Returning -1 reaches the centring path,
 			// which is what Windows does, and it lands the group 12 pixels LEFT of Windows' where
 			// the fixed column lands 3 left: MonthCalendar 625,159 against 604,417. The centring
-			// path measures the group with Graphics.MeasureString and the text is DRAWN by this
-			// port's own pipeline, and the two disagree by about twenty pixels on this string --
-			// so the group comes out too wide and the centre too far left. Fixing the measurement
-			// is what unlocks this; until then the fixed column is nearer.
+			// I guessed that Graphics.MeasureString was over-measuring and that fixing it would
+			// unlock centring. MEASURED, and it is not: TextMeasurementTests puts MeasureString
+			// within 0 to 9 pixels of the ink actually drawn, and most of that is side bearings,
+			// which ink extents exclude and advances include. On this very string at 12px it is 91
+			// against 90 pixels of ink. There is no measurement bug to fix.
+			// So the group is measured correctly and centring STILL lands 12 left, which means our
+			// group is not the group Windows centres -- Windows' effective group is about 26 pixels
+			// narrower than marker-plus-gap-plus-text. What Windows actually centres is the open
+			// question; the fixed column is nearer until it is answered.
 			return margin + 2 * cell.Width - 7;
 		}
 
