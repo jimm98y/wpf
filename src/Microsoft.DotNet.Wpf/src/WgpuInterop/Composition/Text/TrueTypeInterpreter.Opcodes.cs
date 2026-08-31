@@ -1504,6 +1504,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>Whether SHP moves and touches a looped point that IS the reference point,
+        /// as FreeType does, instead of skipping it.</summary>
+        private static readonly bool s_shpMovesRefPoint =
+            Environment.GetEnvironmentVariable("WPF_CT_SHP_REF") == "move";
+
         private void ShiftByPoint(bool useRp1)
         {
             if (!ReferenceShift(useRp1, out int dx, out int dy, out int refZone, out int refPoint))
@@ -1518,7 +1523,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < _gs.Loop; i++)
             {
                 int p = Pop();
-                if (p == refPoint && _gs.Zp2 == refZone) continue;   // it is already where it is
+                // SKIPPING THE REFERENCE POINT ALSO SKIPS TOUCHING IT, and a point's touch state
+                // outlives this instruction: IUP interpolates between TOUCHED points, so a point
+                // GDI touches and we do not becomes an anchor there and an interpolated point
+                // here. FreeType's Ins_SHP has no such special case -- it moves and touches every
+                // point in the loop. WPF_CT_SHP_REF=move drops the guard, and MEASURED it changes
+                // nothing at all: the parity total is 3,271,235 either way, byte for byte, and
+                // 'n' at 12ppem solves to the same coordinates. The guard is a real deviation from
+                // the spec and it never fires on this corpus, so it is not the cause of the
+                // touch-set difference -- kept expressible so the next reader need not re-derive
+                // that.
+                if (p == refPoint && _gs.Zp2 == refZone && !s_shpMovesRefPoint) continue;
                 MoveDirect(z, p, dx, dy, touch);
             }
             _gs.Loop = 1;
