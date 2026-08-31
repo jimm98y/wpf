@@ -1329,7 +1329,25 @@ namespace WgpuInterop.Tests.Text
         /// IUP[x]. Sweep the control value across the sub-pixel range, one glyph per value, and
         /// render it through GDI. The width that comes back IS the interpreter's answer, with no
         /// font left to argue about -- and the same font through ours answers the same question.
-        /// The two columns are the rounding rule, read off both implementations.</para></summary>
+        /// The two columns are the rounding rule, read off both implementations.</para>
+        /// <para>WHAT THIS SHOWS, STATED CAREFULLY. With the round bit off GDI returns the exact
+        /// fractional width and we return a whole pixel (48 of 49 swept values); with it on we
+        /// agree except that our threshold sits 15/64 of a pixel early. And on a program that
+        /// contains no y instruction at all, GDI leaves y at 8.2031 pixels where we return 8.
+        /// So we are imposing a whole-pixel grid on both axes that the program did not ask for.
+        /// <para>Whether each half of that is a BUG is a separate question, and the y half is
+        /// not settled here. ClearType legitimately grid-fits y -- that is what this port's
+        /// vertical-only hinting is -- so a whole-pixel y may be right and GGO_NATIVE, which
+        /// this session established is NOT GDI's ClearType geometry, may simply be answering a
+        /// different question. The x half does not have that defence: ClearType is sub-pixel in
+        /// x by definition, so a whole-pixel x on a MIRP that asked for no rounding is a real
+        /// disagreement with the mode we ship in.</para>
+        /// <para>Ruled out as the source, each measured against this oracle rather than reasoned
+        /// about: RoundDistance (the round bit is off), SnapX and plainX (not reached at
+        /// XHintMode 5), CompatibleWidthMode, LsbSnapMode, SmallGlyphPixels, XPixelWidths and
+        /// XOutlineWidths (modes 8/13/14/16, not 5), the 26.6 scaling into the zone (MulFix, no
+        /// rounding), StoreGlyph on the way out (a plain copy), and FitIsPlausible (2px slack,
+        /// this bar passes). The snap is somewhere else.</para></summary>
         [Fact]
         public void MirpOracle_WhatGdiDoesWithOneControlValue()
         {
