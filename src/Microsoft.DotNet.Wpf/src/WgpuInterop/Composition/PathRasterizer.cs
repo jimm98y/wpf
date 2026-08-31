@@ -707,6 +707,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// and the live WinForms window 2,689,806 -> 2,609,923 -> 2,555,219, improving BOTH its
         /// position and its weight halves. The grey path keeps VerticalSamples: shapes are not
         /// hinted onto the pixel grid, so they do need the vertical coverage.</summary>
+        /// <summary>AND 20PPEM IS STILL THE WORST SIZE, which is not this. Structural disagreement
+        /// per size runs 653 at 10ppem, about 1,100 to 1,700 from 11 to 19, and 2,948 at 20 -- twice
+        /// its neighbour. Segoe UI's gasp gains SYM_SMOOTHING at exactly 20 and we implement no
+        /// symmetric smoothing, so that looked like the answer and it is not: rendering at 20ppem is
+        /// BYTE IDENTICAL with one vertical sample and with four, because y hinting has already put
+        /// every horizontal edge on a pixel boundary and there is no partial row for the extra
+        /// samples to find. That is the same reason one row is right here in the first place.
+        /// <para>So 20ppem and up is a real second front, it is named (symmetric smoothing), and it
+        /// is NOT reachable by turning this up. It is also outside every size the control window
+        /// uses, which is why it has not been chased.</para></summary>
         private static readonly int SubpixelRows =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_ROWS"), out int r) ? r : 1;
 
