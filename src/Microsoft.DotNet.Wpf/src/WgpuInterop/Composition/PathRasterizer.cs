@@ -399,7 +399,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// pixels high, so they were not numbers about the filter.</para>
         ///
         /// <para>IT IS NOW THE BOX, [0,1,1,1,0]/3, and the reason is a COUNT rather than a sweep.
-        /// GDI's ClearType output holds exactly seven distinct levels (k/6). Three-valued lamps
+        /// GDI's ClearType output holds exactly seven distinct levels. SEVEN is right and k/6 is
+        /// NOT: histogrammed off GDI's own pixels over the whole repertoire at 7 and 8 ppem, the
+        /// set is 0, 58, 102, 144, 182, 219, 255 -- steps of 58, 44, 42, 38, 37, 36, a curve baked
+        /// into the levels rather than an even ladder (k/6 would be 0, 42, 85, 128, 170, 213, 255).
+        /// OURS EMITS THE SAME SEVEN, exactly, which is worth knowing before anyone goes looking
+        /// for the residual in the quantiser. Three-valued lamps
         /// through a three-tap box produce exactly seven levels; through any wider filter they
         /// produce many more. So the box is not a tuning choice, it is the filter that makes our
         /// output live in the same value SET as GDI's -- and once the lamps became three-valued

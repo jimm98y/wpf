@@ -955,6 +955,9 @@ namespace WgpuInterop.Tests.Text
             string? file = FontFiles.Find(family, bold: false, italic: false);
             Assert.SkipWhen(file is null, "this machine has no " + family);
 
+            // Our own font too: the level histogram below needs OUR pixels as well as GDI's.
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+
             const int Taps = 5, Half = 2, Off = 3;
             var ata = new double[2 * Off + 1, Taps, Taps];
             var atb = new double[2 * Off + 1, Taps];
@@ -966,6 +969,13 @@ namespace WgpuInterop.Tests.Text
             // GDI's actual lamp against that prediction plots the transfer curve directly --
             // which is what the 7.91% the linear fit cannot explain actually IS.
             const int Bins = 20;
+            // WHICH VALUES each side is capable of emitting. This file states in two places
+            // that GDI's ClearType output holds exactly seven levels, k/6 -- and one row of
+            // one glyph came back 255, 182, 144, 102, 58, which is not that set. A histogram
+            // settles it, and it matters: if the two quantisers differ, every lamp that lands
+            // between their levels is a disagreement no filter or curve can remove.
+            var gdiLevels = new long[256];
+            var ourLevels = new long[256];
             var curveSum = new double[Bins + 1];
             var curveN = new long[Bins + 1];
             var raw = new byte[Width * Height * 4];
@@ -1015,6 +1025,9 @@ namespace WgpuInterop.Tests.Text
                         Gdi.Draw(ch.ToString(), family, ppem, PenX, baseline, Width, Height, false, false);
                         Gdi.s_rawRgb = null;
 
+                        byte[] oursPix = OursRgba(font, ch.ToString(), ppem, baseline, correction: true);
+                        for (int q = 0; q + 3 < oursPix.Length; q += 4)
+                            for (int qc = 0; qc < 3; qc++) ourLevels[oursPix[q + qc]]++;
                         var v = new double[Taps];
                         for (int y = 0; y < Height; y++)
                         {
@@ -1044,6 +1057,7 @@ namespace WgpuInterop.Tests.Text
                                             for (int j = 0; j < Taps; j++) ata[oi, i2, j] += v[i2] * v[j];
                                         }
                                         samplesAt[oi]++; sumBAt[oi] += b; sumBSqAt[oi] += b * b;
+                                        if (o == 0) gdiLevels[raw[(y * Width + x) * 4 + (2 - c)]]++;
                                         if (o == 0)
                                         {
                                             double pred = (v[Half - 1] + v[Half] + v[Half + 1]) / 3.0;
@@ -1109,6 +1123,17 @@ namespace WgpuInterop.Tests.Text
                 for (int i2 = 0; i2 < Taps; i2++) report.Append($"{w[i2],10:0.0000}");
                 report.AppendLine($"{sum,10:0.0000}   {(ssTot <= 0 ? 0 : ssRes / ssTot):P2}");
             }
+            report.AppendLine();
+            report.AppendLine("   distinct lamp values emitted (excluding paper and full ink)");
+            int gdiDistinct = 0, ourDistinct = 0;
+            for (int k = 1; k < 255; k++) { if (gdiLevels[k] > 50) gdiDistinct++; if (ourLevels[k] > 50) ourDistinct++; }
+            report.AppendLine($"      GDI {gdiDistinct}   ours {ourDistinct}");
+            report.Append("      GDI: ");
+            for (int k = 1; k < 255; k++) if (gdiLevels[k] > 50) report.Append($"{k} ");
+            report.AppendLine();
+            report.Append("      ours:");
+            for (int k = 1; k < 255; k++) if (ourLevels[k] > 50) report.Append($" {k}");
+            report.AppendLine();
             report.AppendLine();
             report.AppendLine("   GDI's transfer curve: box-average coverage in, lamp coverage out");
             report.AppendLine("      in     out    out/in   samples");
