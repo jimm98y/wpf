@@ -571,8 +571,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// resolution, cancelling in the sum. So "our text is too light" is a small part of it,
         /// widening is at best a 14% lever, and that is why every global widening knob -- this
         /// threshold, the lamp grid, a blanket stroke correction -- buys a little and loses more
-        /// somewhere else. Green being twice as short as the outer lamps says our strokes saturate
-        /// a whole pixel less often than Windows': they straddle boundaries more.</para></summary>
+        /// somewhere else.</para>
+        /// <para>Green being twice as short as the outer lamps is NOT, as I first wrote here, our
+        /// strokes straddling pixel boundaries more. Counting saturated lamps says the opposite in
+        /// one direction and neither in the other: of the window's inked pixels (ours 550,213 to
+        /// Windows' 551,155 -- the same to a fifth of a percent), Windows has 7,658 with the green
+        /// lamp full against our 6,316, while OURS has more pixels that are fully black, 3,082 to
+        /// 2,793. So Windows carries more pixels whose CENTRE is saturated and whose edges are not,
+        /// and we carry more that are solid through. Which of those is cause and which effect the
+        /// counts do not say, and the honest reading is that they rule out the shift and leave the
+        /// distribution question open.</para></summary>
         private static readonly int HalfLampThreshold =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_THRESHOLD"), out int ht)
                 && ht > 0 ? ht : 128;
