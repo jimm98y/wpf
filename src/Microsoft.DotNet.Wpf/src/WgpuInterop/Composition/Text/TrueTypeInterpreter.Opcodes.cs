@@ -773,6 +773,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_stemFatCvt =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_CVT"), out int sc) ? sc : -1;
 
+        /// <summary>Whether the stroke-weight correction is limited to a point on a STRAIGHT part of
+        /// the outline -- neither neighbour in its contour an off-curve control point. OFF, and the
+        /// closest thing to an answer this question has had.
+        /// <para>It is the only candidate that does the right thing for all three glyphs I can read
+        /// directly: 'l' stays exact, 'n's left stem stays exact, and 'o's right stroke BECOMES
+        /// exact -- which is what turning the correction off entirely does for 'o', without giving
+        /// up 'l' and 'n' the way the opcode gate did. It is geometry rather than a font's control
+        /// value number, so unlike WPF_CT_STEMFAT_CVT it could ship.</para>
+        /// <para>The measurements refuse it. Window 1,201,169 -> 1,196,814, structural 41,072 ->
+        /// 41,113, and the ink ratio splits: regular@11 goes 1.0147 to exactly 1.0000 while @12
+        /// goes 0.9769 to 0.9620 and @13 0.9921 to 0.9769. Three instruments, three answers.</para>
+        /// <para>Reading 'o' says why, and says the premise is wrong. GDI's own bowl is ASYMMETRIC:
+        /// its left stroke carries 825 of ink over six lamps and its right 707 over five, and our
+        /// uncorrected right stroke matches that 707 exactly. Equal geometry cannot render
+        /// asymmetrically, so GDI's 'o' is not a thicker stroke, it is a bowl sitting elsewhere on
+        /// the lamp grid. This whole line of attack has been about WEIGHT and 'o' is about
+        /// POSITION.</para></summary>
+        private static readonly bool s_stemFatStraight =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_STRAIGHT") == "1";
+
         private static readonly bool s_stemFatExact =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
         private static readonly int s_stemFatHi =
@@ -1010,6 +1030,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_cutInFull =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_FULL") == "1";
 
+        /// <summary>Whether the point sits on a CURVE -- either of its neighbours in the same
+        /// contour is an off-curve control point -- as opposed to a corner of a straight edge.
+        /// </summary>
+        private static bool TouchesACurve(Zone z, int p)
+        {
+            if (z.Contours == null || z.Contours.Length == 0 || p < 0 || p >= z.PointCount) return false;
+            int start = 0;
+            for (int c = 0; c < z.Contours.Length; c++)
+            {
+                int end = z.Contours[c];
+                if (p <= end)
+                {
+                    if (end <= start) return false;
+                    int prev = p == start ? end : p - 1;
+                    int next = p == end ? start : p + 1;
+                    return (z.Tags[prev] & TagOn) == 0 || (z.Tags[next] & TagOn) == 0;
+                }
+                start = end + 1;
+            }
+            return false;
+        }
+
         private void MoveIndirectRelative(byte op)
         {
             bool setRp0 = (op & 0x10) != 0;
@@ -1232,6 +1274,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (s_stemFat != 0 && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
                 && !(s_stemFatNoMin && keepMinimum)
                 && (s_stemFatCvt < 0 || cvt == s_stemFatCvt)
+                && (!s_stemFatStraight || !TouchesACurve(z, p))
                 && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
                 && (!s_stemFatExact || distance == 64 || distance == -64))
                 distance += distance < 0 ? -s_stemFat : s_stemFat;
