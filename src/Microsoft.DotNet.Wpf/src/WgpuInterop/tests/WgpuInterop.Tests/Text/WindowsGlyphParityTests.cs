@@ -2579,6 +2579,23 @@ namespace WgpuInterop.Tests.Text
         /// rounds it on the lamp grid to 5.333, and GDI has 4.969 -- a thirty-second under the
         /// whole pixel that mode 5's grid would have given. Neither grid is right everywhere, now
         /// visible at the instruction instead of in an aggregate.</para>
+        /// <para>AND THE ROUNDING THEORY DOES NOT SURVIVE THE SAMPLE. Recording, for every
+        /// instruction that moves a point in x, the value ARRIVING, ours, and GDI's:</para>
+        /// <para>P  IP      pt16   5.200 -> ours 5.390, GDI 4.969<br/>
+        /// P  MDAP[r] pt16   5.390 -> ours 5.330, GDI 4.969<br/>
+        /// P  MIRP    pt7    6.230 -> ours 6.420, GDI 6.172<br/>
+        /// B  MIRP    pt5    5.860 -> ours 6.090, GDI 6.125<br/>
+        /// B  MIRP    pt12   6.280 -> ours 6.420, GDI 6.281<br/>
+        /// D  IP      pt13   6.830 -> ours 6.480, GDI 6.234<br/>
+        /// D  MDAP[r] pt13   6.480 -> ours 6.330, GDI 6.234</para>
+        /// <para>GDI's answers -- 4.969, 6.172, 6.234, 6.281 -- are on no grid we round to: not
+        /// the whole pixel, not the third, not the sixteenth. They are not the output of a
+        /// rounding at all, so 'our MDAP rounds to the wrong grid' is the wrong shape of
+        /// explanation however well it fitted P's point 16 on its own.</para>
+        /// <para>B's point 12 is the one to keep hold of: it arrives at 6.280 and GDI leaves it
+        /// at 6.281, while we move it to 6.420. GDI is not moving that point. The pattern across
+        /// all of them is that we push a bowl's right edge OUT and GDI does not -- which is a
+        /// question about what the instruction decides to do, not about what it rounds to.</para>
         /// <para>The touch set is still observable from the fitted coordinates, because a touched
         /// point is one IUP could not have produced -- that is how the triples were told apart
         /// from real touch-set differences in the first place.</para>
