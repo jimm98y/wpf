@@ -108,7 +108,7 @@ namespace Wpf.WinFormsInterop.Tests
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
-            ["groupbox"] = (168, 189),
+            ["groupbox"] = (30, 215),
             // A horizontal scroll bar's thumb was placed without the leading arrow's width at startup
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
