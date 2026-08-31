@@ -734,6 +734,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
         private static readonly int s_stemFatLo =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 11;
+        /// <summary>Whether the stroke-weight correction also applies to a ROUNDED MIRP, which is
+        /// spacing rather than weight. MEASURED AND REJECTED: the window goes 1,216,292 to
+        /// 1,233,117, and it does not touch the case that prompted it -- 'H' at 12ppem is
+        /// unchanged, pixel for pixel, because its second stem is placed by IP and MDAP and not
+        /// by a control value at all. Kept so the test does not have to be rebuilt to repeat it.
+        /// WPF_CT_STEMFAT_ROUNDED=1.</summary>
+        private static readonly bool s_stemFatRounded =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_ROUNDED") == "1";
+
         private static readonly bool s_stemFatExact =
             Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
         private static readonly int s_stemFatHi =
@@ -1190,7 +1199,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // to 13 -- 11 and 14 round by the SAME 0.125, in the same direction, to the same 1.0px
             // -- so the boundary is a measured fact without a mechanism. If someone finds the rule,
             // this gate is what it has to reproduce.
-            if (s_stemFat != 0 && tookControlValue && !round && !BiLevelPass
+            if (s_stemFat != 0 && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
                 && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
                 && (!s_stemFatExact || distance == 64 || distance == -64))
                 distance += distance < 0 ? -s_stemFat : s_stemFat;
