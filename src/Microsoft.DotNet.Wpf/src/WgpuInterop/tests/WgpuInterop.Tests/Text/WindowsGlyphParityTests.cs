@@ -1389,6 +1389,17 @@ namespace WgpuInterop.Tests.Text
                     double ourFit = font.TryGetFittedOutline(font.GlyphIndex(ch[0]), Ppem, out List<PathFigure> f)
                         ? XExtent(f) : 0;
                     if (gdi <= 0 && ours <= 0) continue;
+                    if (i == 4 || i == 8)
+                    {
+                        // The coordinates themselves, for the two glyphs either side of where
+                        // the two interpreters part company. If ours are whole in Y as well as
+                        // X then something rounds the entire outline; if only X, it is the
+                        // horizontal path.
+                        report.AppendLine($"      [{i}] GDI xs: {Coords(GdiStageTests.GdiOutlineAt(ch[0], Family, Ppem, 0, 0), true)}");
+                        report.AppendLine($"      [{i}] GDI ys: {Coords(GdiStageTests.GdiOutlineAt(ch[0], Family, Ppem, 0, 0), false)}");
+                        report.AppendLine($"      [{i}] our xs: {Coords(f, true)}");
+                        report.AppendLine($"      [{i}] our ys: {Coords(f, false)}");
+                    }
                     report.AppendLine($"   {(bars[i].Round ? "yes" : "no ")}   {wanted[i],7:0.0000}"
                                       + $"  {gdi,6:0.000}  {ours,6:0.000}  |"
                                       + $"  {gdiFit,6:0.000}  {ourFit,6:0.000}  {ourFit - gdiFit,9:0.000}");
@@ -1396,6 +1407,19 @@ namespace WgpuInterop.Tests.Text
             }
             finally { RemoveFontMemResourceEx(handle); }
             File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>Every distinct coordinate in a figure, as text.</summary>
+        private static string Coords(List<PathFigure> figures, bool x)
+        {
+            var seen = new SortedSet<double>();
+            foreach (PathFigure fg in figures)
+            {
+                seen.Add(Math.Round(x ? fg.Start.X : fg.Start.Y, 4));
+                foreach (PathSegment seg in fg.Segments)
+                    if (seg is LineSegment l) seen.Add(Math.Round(x ? l.Point.X : l.Point.Y, 4));
+            }
+            return string.Join(" ", seen);
         }
 
         /// <summary>How far a figure spans in x. For the synthetic bar that is the stem width
