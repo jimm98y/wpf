@@ -833,7 +833,22 @@ namespace WgpuInterop.Tests.Text
                 // to look at the largest single term in the text disagreement.
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  GDI's fitted outline: "
                     + "our rasterizer | GDI's ===");
-                Dump(RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false)), theirs);
+                byte[] gdiOutlineOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false));
+                Dump(gdiOutlineOurs, theirs);
+
+                // WHICH SIDE gains the ink. The aggregate says GDI renders a shape fatter than the
+                // outline it reports, and that the dilation and the centroid shift are the same
+                // number -- which would mean the extra ink is all on one side. On a single vertical
+                // stem that is not an inference: the column profile shows it.
+                Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  column ink, "
+                    + "GDI's outline: ours | GDI's | difference ===");
+                for (int x = 0; x < Cell; x++)
+                {
+                    long a = 0, b = 0;
+                    for (int y = 0; y < Cell; y++) { a += gdiOutlineOurs[y * Cell + x]; b += theirs[y * Cell + x]; }
+                    if (a == 0 && b == 0) continue;
+                    Console.Error.WriteLine($"  x={x,3}  ours {a,6}   GDI {b,6}   {b - a,+7}");
+                }
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }
         }
@@ -917,6 +932,20 @@ namespace WgpuInterop.Tests.Text
                 // B minus D implied a lot. R settles it by giving both sides GDI's own fitted
                 // outline: ours draws it, and GDI's GRAY8 bitmap of the same glyph IS GDI drawing
                 // it. Whatever differs is the rasterizer alone.
+                // <para>THAT PREMISE IS FALSE, and the column profile of a single stem is what
+                // showed it. Segoe UI 'l' at 12ppem, GDI's own outline drawn both ways:</para>
+                // <code>  x=21  ours 2295  GDI 2295     0
+                //         x=22  ours    0  GDI 1143  +1143</code>
+                // <para>One column identical to the digit, and then GDI puts half a column of ink
+                // where the outline has none. Across sizes the extra is 0.25, 0.50, 0.50, 0.75 of
+                // a column at 11, 12, 13, 16 -- QUARTER PIXELS, on the right of every stem ('H'
+                // gains on both of its). So GGO_NATIVE's hinted outline is NOT the geometry GDI
+                // rasterizes for GGO_GRAY8_BITMAP: the bitmap comes from a hinting pass whose stems
+                // are quarter-pixel wider. R therefore compares two GEOMETRIES, not two
+                // rasterizers, and its ink ratios (0.87/0.80/0.76) measure that difference.</para>
+                // <para>It still earns its place: A says our outline is right, the area arbiter
+                // says our rasterizer is exact to 0.999, and R says GDI draws something wider than
+                // it will hand over. What it cannot do is isolate a rasterizer.</para>
                 // <para>READ R'S TREND WITH CAUTION. Segoe UI gives 0.87, 0.80, 0.76 at 11-13,
                 // then 0.72 at 16 and 0.95 at 19 -- a swing between adjacent sizes far too large
                 // for a property of a rasterizer, so something size-specific is in it that has not
