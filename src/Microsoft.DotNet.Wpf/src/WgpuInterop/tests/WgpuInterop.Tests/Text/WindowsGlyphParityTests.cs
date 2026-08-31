@@ -1614,6 +1614,82 @@ namespace WgpuInterop.Tests.Text
             File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>ARE OUR GLYPHS THE RIGHT HEIGHT? Reported only -- set WPF_HEIGHT_REPORT.
+        /// <para>Error per inked pixel runs 11.5 at 10ppem, 27.9 / 26.3 / 27.5 at 11, 12 and 13,
+        /// then 11.1 / 10.4 / 9.8 at 14, 15, 16. Three sizes are three times worse than their
+        /// neighbours, and the excess is disproportionately on HORIZONTAL edges -- 0.33 to 0.42 of
+        /// the vertical-edge error against 0.15 to 0.17 at 16 and 17. A horizontal edge is decided
+        /// by where the outline's top and bottom land, so the first thing to ask is whether our
+        /// glyphs are simply the wrong HEIGHT at those sizes.</para>
+        /// <para>hdmx, gasp, all three delta modes and four vertical samples have each been tried
+        /// and none of them is it.</para></summary>
+        [Fact]
+        public void HeightProfile_WhereTheBadBandIs()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_HEIGHT_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_HEIGHT_REPORT to collect this");
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== ink rows, GDI against ours (top..bottom), Segoe UI regular");
+            report.AppendLine("   ppem  glyph   GDI rows    our rows    dTop dBot");
+            foreach (int ppem in new[] { 10, 11, 12, 13, 14, 15, 16, 17 })
+            {
+                int baseline = ppem + 12;
+                foreach (char ch in "HxonE8")
+                {
+                    string t = ch.ToString();
+                    byte[] w = Gdi.Draw(t, ProbeFamily(), ppem, PenX, baseline, Width, Height);
+                    byte[] o = Ours(font, t, ppem, baseline);
+                    (int wt, int wb) = InkRows(w);
+                    (int ot, int ob) = InkRows(o);
+                    if ((ppem == 12 || ppem == 16) && (ch == 'o' || ch == 'H'))
+                    {
+                        // The extents match at every size, so whatever is wrong with the horizontal
+                        // edges is INSIDE the glyph. Ink per row says where.
+                        report.AppendLine($"      [{ch}@{ppem}] GDI rows: {RowInk(w, wt, wb)}");
+                        report.AppendLine($"      [{ch}@{ppem}] our rows: {RowInk(o, wt, wb)}");
+                    }
+                    report.AppendLine($"   {ppem,4}  '{ch}'    {wt,3}..{wb,-3}     {ot,3}..{ob,-3}"
+                                      + $"    {ot - wt,+3} {ob - wb,+3}"
+                                      + (ot != wt || ob != wb ? "   <-- differs" : ""));
+                }
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>Ink per row, as a fraction of a fully covered pixel.</summary>
+        private static string RowInk(byte[] mask, int top, int bottom)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int y = top; y <= bottom; y++)
+            {
+                double ink = 0;
+                for (int x = 0; x < Width; x++) ink += mask[y * Width + x] / 255.0;
+                sb.Append(ink.ToString("0.00")).Append("  ");
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>First and last row carrying any ink.</summary>
+        private static (int, int) InkRows(byte[] mask)
+        {
+            int top = -1, bottom = -1;
+            for (int y = 0; y < Height; y++)
+            {
+                bool inked = false;
+                for (int x = 0; x < Width && !inked; x++)
+                    if (mask[y * Width + x] > 8) inked = true;
+                if (!inked) continue;
+                if (top < 0) top = y;
+                bottom = y;
+            }
+            return (top, bottom);
+        }
+
         /// <summary>One row of lamps, left to right, as the value each carries.</summary>
         private static int[] Lamps(byte[] rgba, int y, bool bgra)
         {

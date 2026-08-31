@@ -745,13 +745,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// unchanged, pixel for pixel, because its second stem is placed by IP and MDAP and not
         /// by a control value at all. Kept so the test does not have to be rebuilt to repeat it.
         /// WPF_CT_STEMFAT_ROUNDED=1.
-        /// <para>THIS GATE IS WHY 'H' IS LIGHT AND 'l' IS NOT, which is worth knowing even though
-        /// turning it on is still wrong. Measured against GDI's own ClearType pixels at 12ppem,
-        /// our 'l' stem is about 1.08px and matches GDI to three decimals; our 'H' stem is 1.00
-        /// against GDI's 1.18. 'l' takes an UNROUNDED MIRP and collects s_stemFat's +6/64; 'H'
-        /// takes a rounded one and collects nothing -- and the pre-program leaves 46 separate
-        /// control values at exactly 1.0px at that size, so a rounded cap stem lands on 1.00 and
-        /// stays there.</para>
+        /// <para>'H' IS LIGHT AND 'l' IS NOT, and the reason written here was wrong. Dumped,
+        /// 'H' at 12ppem takes MIRP 0xE9 -- round=False. Both take an UNROUNDED MIRP, so the
+        /// rounded/unrounded gate is not what separates them.</para>
+        /// <para>WHAT ACTUALLY SEPARATES THEM IS WHETHER THE CUT-IN REJECTS THE CONTROL VALUE,
+        /// and the whole 11-13 band hangs off it. Segoe UI's pre-program forces cvt[126] to
+        /// EXACTLY 1.0 pixel at every size -- the dump shows 1.0000px at ppem 12 (ratio 0.0833)
+        /// and 1.0000px at ppem 16 (ratio 0.0625), a fixed pixel rather than a fixed design
+        /// width. Then:</para>
+        /// <para>at 12ppem  cvt 1.0000, outline 0.9844, apart by 0.016 -- inside the shrunk
+        /// cut-in of 2.25/16, so the control value is TAKEN and the stem is 1.00 where GDI draws
+        /// 1.1875. At 16ppem  cvt 1.0000, outline 1.3125, apart by 0.313 -- outside it, so the
+        /// control value is REFUSED, the outline distance is used, and our ink per row matches
+        /// GDI's exactly (2.41 against 2.41, 8.04 against 8.04 on the crossbar).</para>
+        /// <para>So we agree with GDI precisely when we IGNORE this control value and disagree
+        /// when we honour it. That is the whole of the anomaly: error per inked pixel is 27.9,
+        /// 26.3 and 27.5 at ppem 11, 12 and 13 against 11.1, 10.4 and 9.8 at 14, 15 and 16, and
+        /// 11-13 are the sizes where a 1.0px control value sits close enough to the outline to
+        /// be accepted.</para>
+        /// <para>The target is known: +12/64 puts the stem on 1.1875 = 19/16, which is GDI's
+        /// number to four decimals and lands on the sixteenth grid ClearType rounds against.
+        /// The shipped +6/64 does NOTHING -- H at 12ppem renders 1.83 ink per row at stem fat 0
+        /// and 1.83 at 6, identical, because the addition quantises away -- and +12/64 gets H
+        /// right while making ppem 11 and 12 worse overall (92,701 -> 104,594 and 96,586 ->
+        /// 106,042), because most glyphs do not want the extra width. A constant added to every
+        /// stem is still the wrong instrument. What is wanted is the rule that produces 19/16
+        /// for the stems GDI widens and leaves the others alone.</para>
         /// <para>Extending the correction to rounded MIRPs is therefore exactly what 'H' needs,
         /// and it is still worse across the repertoire: 54,934 -> 56,393, 32 cases worse against
         /// 8 better. Re-measured after the BGRA fix, so this rejection rests on a comparison that
