@@ -1347,7 +1347,28 @@ namespace WgpuInterop.Tests.Text
         /// XHintMode 5), CompatibleWidthMode, LsbSnapMode, SmallGlyphPixels, XPixelWidths and
         /// XOutlineWidths (modes 8/13/14/16, not 5), the 26.6 scaling into the zone (MulFix, no
         /// rounding), StoreGlyph on the way out (a plain copy), and FitIsPlausible (2px slack,
-        /// this bar passes). The snap is somewhere else.</para></summary>
+        /// this bar passes). The snap is somewhere else.</para>
+        /// <para>THE SHARPEST TEST THIS ALLOWS. With s_stemFat off the interpreter's output is
+        /// IDENTICAL to GDI's on all 49 unrounded values, so any difference in the rendered
+        /// pixels is downstream of the interpreter by construction. It is large:</para>
+        /// <code>  cvt     GDIink  ourInk        cvt     GDIink  ourInk
+        ///        1.0000   0.924   0.924        1.4688   1.058   1.412
+        ///        1.1563   0.969   1.078        1.6250   1.058   1.591
+        ///        1.3125   1.058   1.258        1.7031   1.058   1.591
+        ///        49 rows, mean +0.287px, worst +0.533</code>
+        /// <para>GDI's ink STOPS GROWING at 1.058 pixels: a stem of geometric width 1.7 renders
+        /// with the same ink as one of 1.3. Ours grows continuously, because keeping x
+        /// sub-pixel is this port's deliberate design. 1.058 is about what a ONE-pixel stem
+        /// renders as, and one pixel is what GGO_NATIVE reports for every one of these glyphs,
+        /// so the reading is that GDI rounds the stem in ClearType and not only in bi-level.
+        /// None of the four CompatibleWidthMode settings reproduces it (0 and 1 give +0.287,
+        /// 3 gives +0.254, 2 is worse at +0.528).</para>
+        /// <para>HELD OPEN, because it contradicts a measurement already taken: if GDI rounded
+        /// stems in ClearType then Segoe UI 'l' at 12ppem would not measure 9.706 on both sides,
+        /// and it does, exactly, at four sizes. Either this synthetic font provokes a path real
+        /// faces do not take, or 'l' agrees by landing on a whole pixel anyway. Settling that
+        /// either confirms this port's central x-sub-pixel decision or overturns it, so it is
+        /// worth doing properly rather than acting on one probe.</para></summary>
         [Fact]
         public void MirpOracle_WhatGdiDoesWithOneControlValue()
         {
