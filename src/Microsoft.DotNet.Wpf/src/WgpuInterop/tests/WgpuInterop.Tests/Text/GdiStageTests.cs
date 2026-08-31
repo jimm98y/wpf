@@ -91,12 +91,12 @@ namespace WgpuInterop.Tests.Text
 
         /// <summary>GDI's own greyscale coverage for one glyph, laid into the shared cell. GGO_GRAY8
         /// counts 0..64, so it is stretched to 0..255 to sit beside ours.</summary>
-        private static byte[] GdiGray(char c, string family, int ppem, bool unhinted)
+        private static byte[] GdiGray(char c, string family, int ppem, bool unhinted, bool bold = false)
         {
             IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
             var lf = new LOGFONTW
             {
-                lfHeight = -ppem, lfWeight = 400, lfCharSet = 1,
+                lfHeight = -ppem, lfWeight = bold ? 700 : 400, lfCharSet = 1,
                 lfQuality = ClearTypeQuality, lfFaceName = family,
             };
             IntPtr font = CreateFontIndirectW(ref lf);
@@ -156,13 +156,13 @@ namespace WgpuInterop.Tests.Text
         /// reports and whose absence is what the whole decomposition has been stuck behind.</para>
         /// </summary>
         private static List<PathFigure> GdiOutline(char c, string family, int ppem, bool unhinted,
-                                                   int xScale = 1)
+                                                   int xScale = 1, bool bold = false)
         {
             var figures = new List<PathFigure>();
             IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
             var lf = new LOGFONTW
             {
-                lfHeight = -ppem, lfWeight = 400, lfCharSet = 1,
+                lfHeight = -ppem, lfWeight = bold ? 700 : 400, lfCharSet = 1,
                 lfQuality = ClearTypeQuality, lfFaceName = family,
             };
             IntPtr font = CreateFontIndirectW(ref lf);
@@ -810,9 +810,13 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
             string? spec = Environment.GetEnvironmentVariable("WPF_STAGE_GLYPH");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_STAGE_GLYPH=family/char/ppem");
+            // family/char/ppem, optionally /b for bold. The weight is not decoration: the
+            // half-pixel widening this dump measured off the REGULAR face does not hold for bold
+            // (see WPF_STEM_NATURAL's numbers), so a width rule has to be read at both weights.
             string[] parts = spec!.Split('/');
-            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
-            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            bool bold = parts.Length > 3 && parts[3].StartsWith("b");
+            string? file = FontFiles.Find(parts[0], bold: bold, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}" + (bold ? " Bold" : ""));
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
             char c = parts[1][0];
@@ -823,7 +827,7 @@ namespace WgpuInterop.Tests.Text
             {
                 TrueTypeFont.SubpixelFitting = false;
                 byte[] mine = OurGray(font, c, ppem, unhinted: false);
-                byte[] theirs = GdiGray(c, parts[0], ppem, unhinted: false);
+                byte[] theirs = GdiGray(c, parts[0], ppem, unhinted: false, bold: bold);
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  fitted (x+y), ours | GDI ===");
                 Dump(mine, theirs);
 
@@ -833,7 +837,7 @@ namespace WgpuInterop.Tests.Text
                 // to look at the largest single term in the text disagreement.
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  GDI's fitted outline: "
                     + "our rasterizer | GDI's ===");
-                byte[] gdiOutlineOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false));
+                byte[] gdiOutlineOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false, bold: bold));
                 Dump(gdiOutlineOurs, theirs);
 
                 // WHICH SIDE gains the ink. The aggregate says GDI renders a shape fatter than the
@@ -860,7 +864,7 @@ namespace WgpuInterop.Tests.Text
                 // above), and not a rasterizer or a contrast curve. It is stem darkening, and half
                 // a pixel is a much larger and much simpler number than the tuned +6/64 the
                 // interpreter currently applies over ppem 11-13 only.
-                byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: true));
+                byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: true, bold: bold));
                 // OURS is the fourth column and the only one that says what to DO. The other three
                 // describe GDI; this one is the geometry we actually ship, so the correction any
                 // fix has to apply is (GDI - ours) and not (GDI - anything of GDI's).

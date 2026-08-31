@@ -1329,6 +1329,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // 44->16, @18 50->18 all improve, while regular@13 goes 79->1,893. So "natural + half a
             // pixel" is the right description of what GDI does to Segoe UI Regular's 'l' and is NOT
             // a rule our fitting can adopt wholesale.</para>
+            // <para>WHY it fails on bold is now measured too, and the two weights behave OPPOSITELY
+            // -- stem widths in pixels, 'l':</para>
+            // <code>  regular @12  hinted 1.00  natural 0.97  GDI 1.50   wider than both
+            //         regular @16  hinted 1.00  natural 1.25  GDI 1.75   wider than both
+            //         bold    @12  hinted 2.00  natural 1.84  GDI 2.00   equals the hinted stem
+            //         bold    @16  hinted 2.00  natural 2.42  GDI 2.00   NARROWER than natural</code>
+            // <para>For bold GDI's greyscale stem is exactly its whole-pixel hinted stem, and at 16
+            // that is narrower than the natural outline. For regular it is wider than the hinted
+            // AND the natural one. So there is no single "GDI widens by w" to find: adding half a
+            // pixel to bold pushes a stem that GDI is holding at 2.00 up to 2.34, which is what
+            // those +1,400 bold regressions are.</para>
             if (s_stemNatural && tookControlValue && !BiLevelPass && InClearTypeDirection)
                 distance = original + (original < 0 ? -32 : 32);
 
