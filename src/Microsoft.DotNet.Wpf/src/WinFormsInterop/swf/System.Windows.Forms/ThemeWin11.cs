@@ -101,6 +101,19 @@ namespace System.Windows.Forms
 		// short at the end is one unit short across most of the strip: 251 -> 58,349 for the region,
 		// 252 -> 32,501, 253 -> 57,485. Its ink ratio goes 1.028 -- the only one in the window above
 		// one -- to 0.994, which is where every other region sits.
+		// WHAT IS STILL LEFT, measured 2026-08-31 by scanning both ramps column by column. Both run
+		// 240 to 252 in thirteen grey steps and both agree at the ends; they cross the steps at
+		// different columns, which costs 651 per row and 15,624 over the strip -- half of what the
+		// region still differs by.
+		//   ours 0 47 135 228 317 405 494 587 675 764 852 945 1034   (even, 88.6 apart -- linear)
+		//   win  0 35 103 240 309 377 514 583 651 788 857 925 1062
+		// Windows' gaps are 68, 137, 69 REPEATING. That is not any interpolation of two colours: a
+		// smooth monotone ramp gives smoothly varying step positions, and undoing the quantisation
+		// either way -- nearest or truncating -- leaves a period-three sawtooth of a quarter of a
+		// level that no formula in x produces. A level twice as wide as its two neighbours, over and
+		// over, is what STRETCHING A SMALL BITMAP looks like, and a themed menu bar is drawn from
+		// one. If that is right there is no constant here to find and the fix is to sample the part.
+		// Deterministic, at least: rows 2 and 20 give identical transitions.
 		public override Color MenuStripGradientEnd => Color.FromArgb (252, 252, 252);
 		public override Color StatusStripGradientBegin => Surface;
 		public override Color StatusStripGradientEnd => Surface;
