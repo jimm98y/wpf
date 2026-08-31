@@ -441,6 +441,10 @@ namespace System.Windows.Forms
 		/// <summary>The inside of a disabled check box or radio button, #F9F9F9 -- measured off a
 		/// stock one, and NOT the control colour behind it.</summary>
 		private static readonly Color GlyphDisabledFace = Color.FromArgb (249, 249, 249);
+
+		/// <summary>The inside of a resting, unchecked check box or radio button: #F3F3F3,
+		/// measured off a stock one. Not ColorWindow.</summary>
+		private static readonly Color GlyphRestFace = Color.FromArgb (243, 243, 243);
 		/// <summary>The bottom edge only, #BABABA, measured off a stock button. The other three
 		/// sides are ButtonBorderNormal; drawing all four in it left a 90-pixel line across the
 		/// two buttons 22 levels too light.</summary>
@@ -673,9 +677,17 @@ namespace System.Windows.Forms
 				// classic theme draws and it reads as a different control altogether.
 				SmoothingMode dashMode = g.SmoothingMode;
 				g.SmoothingMode = SmoothingMode.AntiAlias;
-				using (var dash = new Pen (enabled ? ColorWindow : ColorControlDark, 0.7f)) {
+				// Measured off a stock box, column by column: Windows inks five pixels at three
+				// quarters coverage with the two either side barely touched (16 of 255), i.e. a
+				// dash from 15.92 to 21.08 in a box spanning 12..24. Ours ran 15 to 21 at 0.85 --
+				// two pixels too long and centred half a pixel left. box.Width here is 13, the
+				// glyph's full width -- NOT the centre-to-centre span the rounded-rect code above
+				// works in -- so the geometric centre is box.X + Width / 2. Measured, after
+				// assuming otherwise put the dash half a pixel right.
+				using (var dash = new Pen (enabled ? ColorWindow : ColorControlDark, 0.545f)) {
 					float cy = box.Y + box.Height / 2f;
-					g.DrawLine (dash, box.X + 3f, cy, box.X + box.Width - 3f, cy);
+					float cx = box.X + box.Width / 2f;
+					g.DrawLine (dash, cx - 2.2f, cy, cx + 2.2f, cy);
 				}
 				g.SmoothingMode = dashMode;
 				return;
@@ -771,8 +783,10 @@ namespace System.Windows.Forms
 			// A DISABLED radio still has a face: Windows fills it #F9F9F9, a shade off the
 			// control colour behind it, so the disc is still a disc. Filling it with ColorControl
 			// painted it the same colour as its own background and left nothing but a ring.
+			// An UNCHECKED radio is #F3F3F3 inside, not the window's white -- measured off a stock
+			// one, an 11x11 disc of it. ColorWindow was 12 levels light over the whole face.
 			Color face = !rb.Enabled ? GlyphDisabledFace
-				   : rb.Checked ? border : ColorWindow;
+				   : rb.Checked ? border : GlyphRestFace;
 			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
 			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
 			// across -- which is what made this one look cut off against the control's left edge.

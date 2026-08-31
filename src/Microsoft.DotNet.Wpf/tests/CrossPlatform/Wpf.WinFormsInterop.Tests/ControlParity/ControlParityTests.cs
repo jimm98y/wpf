@@ -139,7 +139,7 @@ namespace Wpf.WinFormsInterop.Tests
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
             ["radio"] = (115, 160),
-            ["radio-clear"] = (197, 155),
+            ["radio-clear"] = (128, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the
