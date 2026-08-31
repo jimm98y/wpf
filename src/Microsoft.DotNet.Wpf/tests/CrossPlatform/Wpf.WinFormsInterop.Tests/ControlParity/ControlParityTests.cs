@@ -113,7 +113,7 @@ namespace Wpf.WinFormsInterop.Tests
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
             // position error against the live window.
-            ["hscrollbar"] = (21, 1),
+            ["hscrollbar"] = (4, 1),
             ["label"] = (110, 102),
             ["label-disabled"] = (120, 116),
             ["linklabel"] = (331, 100),
@@ -151,7 +151,7 @@ namespace Wpf.WinFormsInterop.Tests
             // label, as Windows draws it (TreeView.DrawNodeLines). Two pixels changed shade in
             // trade; against the live window that was 2,628 pixels of position recovered.
             ["treeview"] = (9, 1062),
-            ["vscrollbar"] = (21, 1),
+            ["vscrollbar"] = (4, 1),
         };
 
         private static (int Ink, int Shade) AllowanceFor(string name)

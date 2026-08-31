@@ -2042,24 +2042,29 @@ namespace System.Windows.Forms
 			int thickness = (int) Math.Round (ScrollRestThickness
 				 + (ScrollOpenThickness - ScrollRestThickness) * open);
 			Rectangle slim = thumb;
+			// Centred by INSET AND WIDTH separately, and the inset rounds UP. Taking the width as
+			// "the bar less twice the inset" makes it one too wide whenever the bar's own width and
+			// the thickness disagree in parity: a seventeen pixel bar wanting two pixels of thumb
+			// insets by seven and comes out THREE, which is what ours drew -- 277, 278, 279 against
+			// Windows' 278, 279.
 			if (bar.vert) {
-				int inset = Math.Max (0, (thumb.Width - thickness) / 2);
+				int inset = Math.Max (0, (thumb.Width - thickness + 1) / 2);
 				slim.X += inset;
-				slim.Width = Math.Max (1, thumb.Width - inset * 2);
+				slim.Width = Math.Max (1, Math.Min (thickness, thumb.Width - inset));
 			} else {
-				int inset = Math.Max (0, (thumb.Height - thickness) / 2);
+				int inset = Math.Max (0, (thumb.Height - thickness + 1) / 2);
 				slim.Y += inset;
-				slim.Height = Math.Max (1, thumb.Height - inset * 2);
+				slim.Height = Math.Max (1, Math.Min (thickness, thumb.Height - inset));
 			}
 			FillCapsule (dc, slim, Blend (ScrollThumbRest, ScrollThumb, open), ScrollTrack);
 		}
 
 		private const int ScrollRestThickness = 2;
 		private const int ScrollOpenThickness = 7;
-		// Darker than it looks it should be on paper: at two pixels wide with both edges softened
-		// there is hardly a solid core left, so a paler colour washes out altogether. Windows barely
-		// changes the colour between resting and open at all -- it is the width that changes.
-		private static readonly Color ScrollThumbRest = Color.FromArgb (138, 138, 138);
+		// The SAME grey resting as open: Windows changes only the width. It was 138 to make up for a
+		// thumb that came out three pixels wide and washed out; with the width fixed the measured
+		// colour is 133 both ways.
+		private static readonly Color ScrollThumbRest = Color.FromArgb (133, 133, 133);
 
 		/// <summary>Mix two colours, <paramref name="t"/> of the way from the first to the
 		/// second.</summary>
