@@ -3723,6 +3723,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 1.08. A gamma slides that whole line up and down and cannot rotate it, so no single value
         /// is right everywhere -- 1.1 puts eleven to fourteen pixels an em, which is where interface
         /// text lives, closest.</para>
+        /// <para>THAT TILT IS GONE and the paragraph above is kept only because the reasoning in it
+        /// is still sound. Stage C now reads our ink against GDI's as 1.015 at eleven, 0.977 at
+        /// twelve, 0.992 at thirteen, 0.990 at sixteen and 1.002 at nineteen -- flat, not tilted.
+        /// Whatever rotated the line has been fixed since.</para>
+        /// <para>AND THE VALUE IS RIGHT, swept against the control window rather than argued:</para>
+        /// <code>   gamma   1.10       1.15       1.20       1.25       1.30       1.40
+        ///         window  1,231,055  1,184,137  1,145,011  1,192,848  1,248,425  1,342,472</code>
+        /// <para>A sharp minimum exactly where the system contrast puts it, costing 40,000 for five
+        /// hundredths either way. Note this is NOT the same number as the gamma of GDI's own
+        /// transfer curve, which measures about 1.15 (see FilterTaps_SolvedFromGdisOwnPixels): that
+        /// one maps GDI's filtered coverage to GDI's lamp, and this one is applied at a different
+        /// point in a different pipeline. Do not "correct" this to 1.15 on the strength of that
+        /// measurement -- it was tried, and it costs 39,000.</para>
         ///
         /// <para>The tilt is NOT a curve problem, and four attempts to make it one all failed: a
         /// contrast curve applied before the filter instead of after; the face's control values
