@@ -1344,10 +1344,13 @@ namespace WgpuInterop.Tests.Text
             // Sweep 0.55px to 1.95px in sixteenths of a pixel, rounded and unrounded.
             var bars = new List<SyntheticFont.Bar>();
             var wanted = new List<double>();
+            // Sixty-fourths across the boundary, because at sixteenths the two interpreters
+            // already disagree between 1.25 and 1.5 and the question is where exactly each
+            // one flips.
             foreach (bool round in new[] { true, false })
-                for (int sixteenth = 9; sixteenth <= 31; sixteenth++)
+                for (int sixtyfourth = 64; sixtyfourth <= 112; sixtyfourth++)
                 {
-                    double px = sixteenth / 16.0;
+                    double px = sixtyfourth / 64.0;
                     int units = (int)Math.Round(px * unitsPerPixel);
                     bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, round, minDistance: false));
                     wanted.Add(px);
@@ -1367,7 +1370,11 @@ namespace WgpuInterop.Tests.Text
             {
                 var font = new TrueTypeFont(fontBytes);
                 report.AppendLine($"== one MIRP, {Ppem}ppem, ClearType -- what each interpreter makes of it");
-                report.AppendLine("   round   cvt(px)   GDI(px)   ours(px)    GDI-cvt   ours-cvt");
+                // Ink columns are quantised by the rasterizer to about a sixth of a pixel.
+                // The OUTLINE columns are not quantised at all: GGO_NATIVE hands back GDI's
+                // fitted points, and TryGetFittedOutline hands back ours, so those two are
+                // the interpreters answering the same question exactly.
+                report.AppendLine("   round   cvt(px)  GDIink  ourInk  |  GDIfit  ourFit   fit diff");
                 var raw = new byte[Width * Height * 4];
                 for (int i = 0; i < bars.Count; i++)
                 {
@@ -1378,14 +1385,37 @@ namespace WgpuInterop.Tests.Text
                     Gdi.s_rawRgb = null;
                     double gdi = BarWidth(raw, bgra: true);
                     double ours = BarWidth(OursRgba(font, ch, Ppem, baseline, correction: true), bgra: false);
+                    double gdiFit = XExtent(GdiStageTests.GdiOutlineAt(ch[0], Family, Ppem, 0, 0));
+                    double ourFit = font.TryGetFittedOutline(font.GlyphIndex(ch[0]), Ppem, out List<PathFigure> f)
+                        ? XExtent(f) : 0;
                     if (gdi <= 0 && ours <= 0) continue;
                     report.AppendLine($"   {(bars[i].Round ? "yes" : "no ")}   {wanted[i],7:0.0000}"
-                                      + $"   {gdi,7:0.000}   {ours,8:0.000}"
-                                      + $"   {gdi - wanted[i],8:0.000}   {ours - wanted[i],8:0.000}");
+                                      + $"  {gdi,6:0.000}  {ours,6:0.000}  |"
+                                      + $"  {gdiFit,6:0.000}  {ourFit,6:0.000}  {ourFit - gdiFit,9:0.000}");
                 }
             }
             finally { RemoveFontMemResourceEx(handle); }
             File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>How far a figure spans in x. For the synthetic bar that is the stem width
+        /// the interpreter decided on, with no rasterizer in between.</summary>
+        private static double XExtent(List<PathFigure> figures)
+        {
+            double lo = double.MaxValue, hi = double.MinValue;
+            foreach (PathFigure f in figures)
+            {
+                void See(Vector2 v) { if (v.X < lo) lo = v.X; if (v.X > hi) hi = v.X; }
+                See(f.Start);
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: See(l.Point); break;
+                        case QuadraticBezierSegment q: See(q.Control); See(q.Point); break;
+                        case CubicBezierSegment c: See(c.Control1); See(c.Control2); See(c.Point); break;
+                    }
+            }
+            return hi < lo ? 0 : hi - lo;
         }
 
         /// <summary>The rendered width of a vertical bar, in pixels: total lamp coverage divided by
