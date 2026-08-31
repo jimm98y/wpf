@@ -309,6 +309,10 @@ namespace System.Windows.Forms
 		// Ours used the selection colour for both, so the closed field came out as a solid blue
 		// slab. The list's own frame is #646464, not the light grey a plain bordered control gets.
 		private static readonly Color ComboFieldOpenFace = Color.FromArgb (204, 228, 247);
+
+		/// <summary>A resting combo field, #FDFDFD -- the same very-slightly-off white a button
+		/// face is, and NOT SystemColors.Window.</summary>
+		private static readonly Color ComboFieldFace = Color.FromArgb (253, 253, 253);
 		private static readonly Color ComboListSelection = Color.FromArgb (0, 120, 215);
 		private static readonly Color PopupBorder = Color.FromArgb (100, 100, 100);
 
@@ -380,6 +384,17 @@ namespace System.Windows.Forms
 				g.FillRectangle (ResPool.GetSolidBrush (ColorControl), comboBox.ClientRectangle);
 			else if (comboBox.DroppedDown || comboBox.PointerOver)
 				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), comboBox.ClientRectangle);
+			else if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList)
+				// A resting DROP-DOWN LIST is #FDFDFD, not the window's white -- it is a button
+				// showing a choice, and Windows gives it a button's face. Most of ours already came
+				// out at 253 because what draws over it is that colour, but the first and last row
+				// inside the frame were left showing the control's own white: a two-row ring round
+				// the field, 786 pixels of it, invisible until the two are subtracted.
+				//
+				// ONLY the list style. An editable combo is a text field with a button on the end
+				// and Windows fills it with real white; painting both alike moved 1,202 pixels of
+				// the editable one the wrong way, which is how the two came to be told apart.
+				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldFace), comboBox.ClientRectangle);
 
 			if (comboBox.DropDownStyle == ComboBoxStyle.Simple)
 				g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent.BackColor), comboBox.ClientRectangle);
