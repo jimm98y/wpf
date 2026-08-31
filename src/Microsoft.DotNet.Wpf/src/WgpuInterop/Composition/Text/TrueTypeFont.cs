@@ -944,6 +944,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int CompatibleWidthTolerance =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CWTOL"), out int ct2) ? ct2 : 25;
 
+        /// <summary>WPF_CT_COMPATWIDTH_COMPOSITE: apply the compatible-width correction to
+        /// composite glyphs too, which the spec does not exempt.</summary>
+        private static readonly bool s_compatWidthComposite =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH_COMPOSITE") == "1";
+
         internal static readonly int CompatibleWidthMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 1;
 
@@ -1671,7 +1676,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // window's POSITION half doubles, 280,803 -> 479,090.
             // ...and NOT while measuring, because what a measuring run wants is the raw span the
             // program left. Correcting it there would correct it onto itself.
-            if (CompatibleWidthMode != 0 && plainX is null && !glyph.Composite
+            // THE COMPOSITE EXEMPTION IS CORRECT, and WPF_CT_COMPATWIDTH_COMPOSITE=1 exists to
+            // stop that being re-litigated. Microsoft's sentence is about "the glyphs for this
+            // font size" and says nothing about composites, and the lamps that sit two or more
+            // levels from GDI cluster on exactly those glyphs -- five of the worst fourteen are
+            // accented composites -- so this reads like a difference we chose. It is not.
+            // <para>Dropping the guard changes NOTHING: 54,934 against 54,934 across all 442
+            // cases of the parity repertoire, not one of them moving by a pixel. The reason is
+            // in ReadCompositeProgram, which builds each component with HintedProgram(...,
+            // depth + 1) -- so every component is a SIMPLE glyph that has already had this
+            // correction applied to it. A composite assembled from corrected parts is already
+            // correct, and applying it again would correct it twice.</para>
+            if (CompatibleWidthMode != 0 && plainX is null
+                && (s_compatWidthComposite || !glyph.Composite)
                 && !s_measuringAdvance && glyph.X.Length > glyph.PointCount + 1)
             {
                 int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
