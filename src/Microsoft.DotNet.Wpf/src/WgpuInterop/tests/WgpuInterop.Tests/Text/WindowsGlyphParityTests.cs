@@ -1404,7 +1404,12 @@ namespace WgpuInterop.Tests.Text
                     double gdi = BarWidth(raw, bgra: true);
                     double ours = BarWidth(OursRgba(font, ch, Ppem, baseline, correction: true), bgra: false);
                     double gdiFit = XExtent(GdiStageTests.GdiOutlineAt(ch[0], Family, Ppem, 0, 0));
-                    double ourFit = font.TryGetFittedOutline(font.GlyphIndex(ch[0]), Ppem, out List<PathFigure> f)
+                    // TryGetHintedOutline, NOT TryGetFittedOutline. The first runs the face's own
+                    // program through the interpreter and only falls back to GlyphHinter -- the
+                    // autofitter, whose Round is Floor(x + 0.5) and therefore snaps to whole
+                    // pixels by design -- when the face's hints fail or come out implausible.
+                    // Calling the inner one measured the autofitter and called it our interpreter.
+                    double ourFit = font.TryGetHintedOutline(font.GlyphIndex(ch[0]), Ppem, out List<PathFigure> f)
                         ? XExtent(f) : 0;
                     if (gdi <= 0 && ours <= 0) continue;
                     if (i == 4 || i == 8)
