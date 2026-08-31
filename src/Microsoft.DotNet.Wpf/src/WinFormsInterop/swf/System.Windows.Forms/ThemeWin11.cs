@@ -107,13 +107,21 @@ namespace System.Windows.Forms
 		// region still differs by.
 		//   ours 0 47 135 228 317 405 494 587 675 764 852 945 1034   (even, 88.6 apart -- linear)
 		//   win  0 35 103 240 309 377 514 583 651 788 857 925 1062
-		// Windows' gaps are 68, 137, 69 REPEATING. That is not any interpolation of two colours: a
-		// smooth monotone ramp gives smoothly varying step positions, and undoing the quantisation
-		// either way -- nearest or truncating -- leaves a period-three sawtooth of a quarter of a
-		// level that no formula in x produces. A level twice as wide as its two neighbours, over and
-		// over, is what STRETCHING A SMALL BITMAP looks like, and a themed menu bar is drawn from
-		// one. If that is right there is no constant here to find and the fix is to sample the part.
-		// Deterministic, at least: rows 2 and 20 give identical transitions.
+		// Windows' gaps are 68, 137, 69 REPEATING, and the model that fits them exactly is a ramp
+		// QUANTISED TO SIXTEEN BANDS -- not to its twelve colour levels:
+		//     value(x) = 240 + round(12 * k / 16),  k = round(x / 68.53)
+		// Sixteen bands over thirteen levels means four pairs of adjacent bands round to the same
+		// grey, and those four are exactly the doubled 137-wide gaps. Every one of the twelve
+		// transitions falls within a pixel of (k - 0.5) * 68.53; fitting s over all of them gives
+		// 68.53 with a spread of 0.07, so the band width is real and not a coincidence of three.
+		// Ours is a smooth linear ramp, which is why our steps are even and 88.6 apart.
+		//
+		// The band width is 1096/16 where the strip is 1080 wide, and BOTH sides draw this through
+		// ToolStripProfessionalRenderer with a LinearGradientBrush over e.AffectedBounds -- same
+		// managed code -- so the difference is in the BRUSH, ours against GDI+'s, and not in the
+		// theme at all. That makes it worth more than the 15,624 counted here: every gradient in
+		// the application is drawn with the same brush.
+		// Deterministic: rows 2 and 20 give identical transitions.
 		public override Color MenuStripGradientEnd => Color.FromArgb (252, 252, 252);
 		public override Color StatusStripGradientBegin => Surface;
 		public override Color StatusStripGradientEnd => Surface;
