@@ -569,6 +569,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>regular@12 improves by 145 and regular@19 gets 75% worse. The window is all
         /// 12ppem, so the window cannot see the cost. A metric that contains only one size cannot
         /// choose a rule that has to hold at all of them.</para></summary>
+        /// <summary>WHERE THE CURVE GLYPHS ACTUALLY DIFFER, measured lamp by lamp so the next
+        /// attempt starts from a number. 'o', 'e' and 'c' at 12ppem have IDENTICAL leading edges as
+        /// each other, and this is what they read (GDI first, then ours at three position grids):
+        /// <para>  GDI            0,  36, 111, 197, 255      deconvolves to [0, half, 1, 1]</para>
+        /// <para>  ours 1/16      0,  73, 153, 255           deconvolves to [0, 1, 1]</para>
+        /// <para>  ours lamp      0,  73, 153, 255           unchanged -- the extremum does not move</para>
+        /// <para>  ours physical  0,   0,  73, 153, 255      peak now on GDI's lamp</para>
+        /// <para>Two facts. GDI's edge carries a HALF-LIT lamp and none of ours does, at any grid --
+        /// its edge falls in the middle of a lamp where ours falls on a boundary, a sixth of a pixel
+        /// apart. And whole-pixel rounding puts our PEAK on GDI's lamp while the sixteenth leaves it
+        /// one lamp left, so GDI's curve extremum sits about a sixth of a pixel BEFORE where whole-
+        /// pixel rounding would put it -- 0.833 against our unhinted 0.5625 at 12ppem.</para>
+        /// <para>No grid tried reproduces that: 0.5625 rounds to 0.5 on sixths, 0.667 on thirds,
+        /// 0.5625 on sixteenths, 1.0 on whole pixels. And the lamp grid does not move this point at
+        /// all, which says the leading edge is not set by the MDAP that rounds it but by a
+        /// neighbour IUP carries.</para></summary>
         private static readonly int s_positionGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_POSGRID"), out int pg) ? pg : 0;
 
