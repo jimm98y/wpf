@@ -1906,47 +1906,6 @@ namespace System.Windows.Forms
 		private static readonly Color ScrollThumb = Color.FromArgb (133, 133, 133);
 		private static readonly Color ScrollArrow = Color.FromArgb (96, 96, 96);
 		private static readonly Color ProgressTrough = Color.FromArgb (230, 230, 230);
-		// Timed off a stock progress bar: the crest travels about 300 pixels a second, so it
-		// crosses the fill in a little over half a second, and the cycle repeats every second and
-		// a half with a pause in between. Its crest is #34AA34 through the middle of the bar and
-		// much lighter on the top and bottom rows, which is what gives it the rounded look.
-		private const int SweepPeriod = 1500;
-		private const double SweepTravel = 0.6;       // of the period spent moving
-		private const double SweepWidth = 0.36;       // half-width, of the fill
-		private static readonly Color SweepCrest = Color.FromArgb (52, 170, 52);
-		private static readonly Color SweepEdge = Color.FromArgb (128, 198, 128);
-		private static readonly object SweepKey = new object ();
-
-		/// <summary>The strip of a progress bar the highlight is crossing just now, widened by one
-		/// frame's travel in each direction so the band it is about to leave is repainted too.
-		/// Empty while the highlight is between passes, when nothing is changing at all.</summary>
-		private static Rectangle SweepBand (ProgressBar ctrl)
-		{
-			Rectangle bounds = ctrl.ClientRectangle;
-			if (bounds.Width <= 2 || bounds.Height <= 2)
-				return Rectangle.Empty;
-			int range = ctrl.Maximum - ctrl.Minimum;
-			if (range <= 0)
-				return Rectangle.Empty;
-			double fraction = (double) (ctrl.Value - ctrl.Minimum) / range;
-			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
-			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
-			if (fill.Width <= 0)
-				return Rectangle.Empty;
-
-			double phase = Animation.Value (ctrl, SweepKey);
-			if (phase > SweepTravel)
-				return Rectangle.Empty;
-			int half = Math.Max (1, (int) Math.Round (SweepWidth * fill.Width));
-			int crest = fill.X - half + (int) Math.Round (phase / SweepTravel * (fill.Width + 2 * half));
-			// One frame of travel, so the trailing edge is cleaned up as the crest moves on.
-			int step = Math.Max (2, (int) Math.Round ((fill.Width + 2 * half) * 16.0 / (SweepPeriod * SweepTravel)));
-			int left = Math.Max (bounds.X, crest - half - step);
-			int right = Math.Min (bounds.Right, crest + half + step);
-			return right <= left ? Rectangle.Empty
-				    : new Rectangle (left, bounds.Y, right - left, bounds.Height);
-		}
-		private static readonly Color SweepNear = Color.FromArgb (63, 185, 63);
 
 		// #0F7B0F, read off a stock progress bar. Ours was a brighter, yellower green.
 		private static readonly Color ProgressFill = Color.FromArgb (15, 123, 15);
@@ -1958,7 +1917,9 @@ namespace System.Windows.Forms
 		private static readonly Color TabEdge = Color.FromArgb (229, 229, 229);
 		/// <summary>How far the tab on show stands above its neighbours.</summary>
 		private const int TabRise = 2;
-		private static readonly Color HairLine = Color.FromArgb (217, 217, 217);
+		// 188, measured off the stock bar's outline. 217 is barely darker than the 230 trough it sits
+		// against, so our frame all but vanished. Used by the progress bar and nothing else.
+		private static readonly Color HairLine = Color.FromArgb (188, 188, 188);
 		private static readonly Color HeaderSeparator = Color.FromArgb (229, 229, 229);
 		private static readonly Color HeaderInnerEdge = Color.FromArgb (241, 241, 241);
 		private static readonly Color InputFrameInner = Color.FromArgb (254, 254, 254);
@@ -1981,42 +1942,25 @@ namespace System.Windows.Forms
 
 			// One continuous fill, not the classic row of blocks.
 			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
-			fill.Width = (int) Math.Round (fill.Width * Math.Min (1.0, fraction));
+			// TRUNCATED, not rounded: a stock bar at this value ends one column earlier than rounding
+			// puts it -- ours ran green to 124 where Windows' trough starts at 124.
+			fill.Width = (int) (fill.Width * Math.Min (1.0, fraction));
 			if (fill.Width <= 0 || fill.Height <= 0)
 				return;
 			dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
 
-			// A highlight sweeps along the fill and repeats, which is why a stock progress bar whose
-			// value never changes is still not a static image.
-			// The same clock the scroll bars fade on. Asking for it here keeps the bar repainting for
-			// as long as it is drawn, and stops the moment it is not -- and only the band the highlight
-			// is passing over is repainted, not the whole bar.
-			Animation.Loop (ctrl, SweepKey, SweepPeriod, () => SweepBand (ctrl));
-			double phase = Animation.Value (ctrl, SweepKey);
-			if (phase > SweepTravel)
-				return;                                         // the pause between passes
-
-			int half = Math.Max (1, (int) Math.Round (SweepWidth * fill.Width));
-			double travel = phase / SweepTravel;                // 0 .. 1 across one pass
-			int crest = fill.X - half + (int) Math.Round (travel * (fill.Width + 2 * half));
-
-			for (int x = Math.Max (fill.X, crest - half); x < Math.Min (fill.Right, crest + half); x++) {
-				double d = (x - crest) / (double) half;             // -1 .. 1 across the crest
-				double lift = Math.Max (0.0, 1.0 - d * d);          // and nothing at either end
-				// Over the WHOLE height, frame included. The highlight lifts the top and bottom rules
-				// most of all -- that is what makes the bar look rounded rather than flat -- and
-				// confining it to the fill left those two rows untouched, so the effect went missing.
-				for (int y = bounds.Y; y < bounds.Bottom; y++) {
-					int depth = Math.Min (y - bounds.Y, bounds.Bottom - 1 - y);
-					Color from = depth == 0 ? HairLine : ProgressFill;
-					Color to = depth == 0 ? SweepEdge : depth <= 2 ? SweepNear : SweepCrest;
-					Color c = Color.FromArgb (
-						(int) Math.Round (from.R + (to.R - from.R) * lift),
-						(int) Math.Round (from.G + (to.G - from.G) * lift),
-						(int) Math.Round (from.B + (to.B - from.B) * lift));
-					dc.FillRectangle (ResPool.GetSolidBrush (c), x, y, 1, 1);
-				}
-			}
+			// NO SWEEPING HIGHLIGHT. There used to be one here, with a comment saying a stock progress
+			// bar whose value never changes is still not a static image. That is not true, and it is
+			// cheap to check: capture the stock window three times and its progress bar is BYTE
+			// IDENTICAL every time, while ours differed from itself by 130,950 between two captures
+			// taken minutes apart. A Windows 11 Continuous bar is flat green.
+			//
+			// The animation is why this region was excluded from the parity total in the first place --
+			// a control that will not hold still cannot be compared -- so the exclusion was hiding a
+			// difference rather than allowing for one.
+			//
+			// A MARQUEE bar does animate, and this method does not draw one at all: it fills by value
+			// whatever the style. That is a separate gap and it is not this one.
 		}
 
 		/// <summary>A Windows 11 scroll bar. At rest it is a thin line and nothing else -- no
