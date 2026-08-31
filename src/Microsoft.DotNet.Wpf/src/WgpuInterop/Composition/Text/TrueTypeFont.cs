@@ -1422,8 +1422,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>The isolated-glyph parity metric DISAGREES -- 54,934 for mode 5 against 80,756 for
         /// mode 6 -- and it is the proxy, not the objective. It renders one glyph through GDI
         /// directly; the window is WinForms drawing through WinForms. Where the two disagree the
-        /// window is what was asked for. That gap is worth understanding and is not understood
-        /// yet.</para>
+        /// window is what was asked for.</para>
+        /// <para>ANSWERED, AND NEITHER HARNESS WAS WRONG. They measure different populations.
+        /// Every candidate was eliminated first: the two oracles are byte-identical (TextRenderer
+        /// against ExtTextOutW at CLEARTYPE_QUALITY is SUM|d| 0, drawn into the same DIB); the
+        /// paper does not matter; both harnesses render through the same RenderToRgba under
+        /// identical flags (WPF_FLAG_TRACE prints one line per process and they match field for
+        /// field); and the live app rasterizes at scale 1, Segoe UI 9pt, which is ppem 12.</para>
+        /// <para>Split the suite by case and mode 6 wins at regular@12 and NOWHERE ELSE:</para>
+        /// <para>regular@11 92,701 -> 111,739;  regular@12 96,586 -> 89,997;  regular@13 108,156
+        /// -> 128,003;  regular@16 51,691 -> 94,987;  regular@20 173,117 -> 210,261;  b@12 51,022
+        /// -> 87,578.</para>
+        /// <para>The window is one case -- regular at 12 -- and the suite averages 442 across four
+        /// styles and eleven sizes. So the aggregate says 5, the window says 6, and both are right
+        /// about what they measure.</para>
+        /// <para>WHICH MEANS THIS IS TUNED TO ONE SIZE, and that is a liability, not a victory: at
+        /// 125% DPI the same window is ppem 15 and at 150% it is 18, where mode 5 is better. Mode 6
+        /// is almost certainly compensating for something else that is wrong at 12 rather than
+        /// being right in general. Finding that -- and getting mode 5 plus a fix to beat mode 6
+        /// everywhere -- is worth more than the 159,129 this earned, because it would hold at every
+        /// size instead of one.</para>
         /// <para>AND THE REST WERE RE-SWEPT UNDERNEATH IT, because a knob measured against a
         /// different geometry is a knob measured against something that no longer exists -- which
         /// is exactly how 5 came to sit here after 6 had become better. Every other knob in the

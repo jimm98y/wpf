@@ -117,10 +117,17 @@ namespace WgpuInterop.Tests.Text
         /// The window is what was asked for and what the ink corroborates -- its regions sit on
         /// 1.000 under mode 6 against 0.99 under mode 5, and the pure Label regions, which are text
         /// on a plain background and nothing else, improve by 43%.</para>
-        /// <para>So these numbers are now agreement with a proxy that disagrees with the target,
-        /// and they are NOT on their own a measure of correctness. What renders text differently in
-        /// the two paths is not known -- finding what TextRenderer does that ExtTextOutW at
-        /// CLEARTYPE_QUALITY does not is the top open question in the text work.</para></summary>
+        /// <para>ANSWERED, and this suite's oracle is exonerated. TextRenderer and ExtTextOutW at
+        /// CLEARTYPE_QUALITY are byte-identical -- SUM|d| 0, drawn into the same GDI DIB -- so what
+        /// is asked for here is exactly what WinForms draws. Both harnesses also render our side
+        /// through the same RenderToRgba under identical flags, and the paper makes no difference.
+        /// The two disagreed because they measure different POPULATIONS: mode 6 wins at regular@12
+        /// and nowhere else, the live window is Segoe UI 9pt at scale 1 which is exactly ppem 12,
+        /// and these 442 cases average four styles across eleven sizes.</para>
+        /// <para>So the raise is not a proxy disagreeing with the target. It is this suite
+        /// correctly reporting that the shipped mode is worse at every size but the one the window
+        /// happens to use. These numbers are the honest record of that trade, and the 206 that went
+        /// up are the sizes we got worse at.</para></summary>
         private static readonly Dictionary<string, int> Allowed = new()
         {
             ["!"] = 7,
