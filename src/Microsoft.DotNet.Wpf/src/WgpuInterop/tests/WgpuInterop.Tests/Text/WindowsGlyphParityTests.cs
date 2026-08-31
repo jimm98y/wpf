@@ -1176,7 +1176,10 @@ namespace WgpuInterop.Tests.Text
             // shape wider than GGO_NATIVE reports was measured off GGO_GRAY8 -- GREYSCALE -- and
             // greyscale hints differently from ClearType. Summing the lamp ink of one clean stem
             // three ways settles whether that finding survives in the mode that matters.
-            foreach (char probe in new[] { 'l', 'H', 'm', '%', '@', 'o', 'e' })
+            // THE WHOLE REPERTOIRE, not seven letters. The open question is which stems GDI
+            // rounds and which it leaves alone, and that is readable off its own output: a glyph
+            // we render light is one whose stem we snapped and GDI did not.
+            foreach (char probe in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
             foreach (int ppem in new[] { 12 })
             {
                 int baseline = ppem + 12;
