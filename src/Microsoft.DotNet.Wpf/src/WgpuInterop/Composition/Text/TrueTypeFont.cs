@@ -1423,7 +1423,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// mode 6 -- and it is the proxy, not the objective. It renders one glyph through GDI
         /// directly; the window is WinForms drawing through WinForms. Where the two disagree the
         /// window is what was asked for. That gap is worth understanding and is not understood
-        /// yet.</para></summary>
+        /// yet.</para>
+        /// <para>AND THE REST WERE RE-SWEPT UNDERNEATH IT, because a knob measured against a
+        /// different geometry is a knob measured against something that no longer exists -- which
+        /// is exactly how 5 came to sit here after 6 had become better. Every other knob in the
+        /// text path, re-measured on the window with mode 6 in place:</para>
+        /// <para>gamma 1.16/1.20/1.24 -> 1,019,140 / 985,204 / 1,029,861;  stem fat 0/5/6/7 ->
+        /// 1,191,587 / 1,142,649 / 985,204 / 1,010,779;  vertical rows 1/2/4 -> 985,204 /
+        /// 1,252,810 / 986,601;  compatible widths 0/1/2 -> 1,076,391 / 985,204 / 1,076,367.</para>
+        /// <para>All four are already where they should be, so the move to 6 is a genuine joint
+        /// improvement and not one knob paying for another. Two things are worth keeping from the
+        /// numbers: four vertical samples is now within 1,400 of one and carries LESS weight error
+        /// (664,007 against 672,115), so the argument for one row is thinner than it was; and stem
+        /// fattening buys 127,000 of weight at the cost of 38,000 of position, which is a blunt
+        /// instrument compensating for something not yet named.</para></summary>
         internal static readonly int XHintMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 6;
 
