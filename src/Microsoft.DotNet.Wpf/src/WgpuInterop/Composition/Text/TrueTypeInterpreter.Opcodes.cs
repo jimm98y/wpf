@@ -798,11 +798,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>WIDENING IS ONLY HALF OF IT; THE OTHER HALF IS PHASE. GDI's pattern SATURATES a
         /// lamp and ours is symmetric about a lamp boundary -- a stem sitting half a lamp over,
         /// not merely a narrow one.</para>
-        /// <para>AND THE WIDTH IS PER-GLYPH, not per-face and not per-size. At 12ppem GDI draws
-        /// 'H' and 'l' at 73 153 255 197 111 36, which is 19/16, and 'I' at 73 153 255 153 73,
-        /// which is 1.0 -- two plain cap-height stems, two different widths. Any rule that widens
-        /// every stem is therefore wrong before it starts, which is what the measurements above
+        /// <para>AND THE WIDTH IS PER-GLYPH, not per-face and not per-size -- two plain
+        /// cap-height stems, two different widths, from identical MIRP inputs. Any rule that
+        /// widens every stem is wrong before it starts, which is what the measurements above
         /// were saying.</para>
+        /// <para>THE NUMBERS ABOVE WERE READ OFF LAMP PATTERNS AND ARE SUPERSEDED. Matching a
+        /// glyph's lamps against the synthetic bar table compares two different PHASES and is
+        /// only approximate; it gave 'H' as 19/16 and 'I' as 1.0. SolveTheXCoordinatesGdiFitted
+        /// (WPF_SOLVEGLYPH=char@ppem) fits GDI's actual coordinates in 64ths, which is sound
+        /// because the bar solver already showed our rasterizer reproduces GDI's lamps at rms 0
+        /// given the right outline. Its answer, under XHintMode 6 at 12ppem:</para>
+        /// <para>'l'  ours 1.000, 2.094 -> GDI 1.000, 2.094.  EXACT.<br/>
+        /// 'H'  ours 1.000, 2.094, 6.656, 7.750 -> GDI 1.000, 2.094, 6.922, 8.094: the LEFT stem
+        /// exact and the right one 0.266 too far left -- stem SPACING, not stem width.<br/>
+        /// 'I'  ours 1.000, 2.094 -> GDI 1.000, 1.922: ours 0.172 too WIDE.<br/>
+        /// 'n'  nine of eleven coordinates exact.</para>
+        /// <para>So GDI's 'H' stem is 70/64 and its 'I' stem is 59/64. And 70/64 is exactly the
+        /// control value of 64/64 plus s_stemFat's 6/64 -- which says the +6/64 is RIGHT, and
+        /// that the note above calling it a no-op was measuring it under mode 5, where the stem
+        /// sits half a lamp over and the addition disappears into the quantiser. Under mode 6 it
+        /// lands on GDI's number exactly.</para>
+        /// <para>What is still unexplained is 'I': same control value, same outline, same
+        /// opcode, and GDI ends 5/64 BELOW the control value where 'H' ends 6/64 above it.</para>
         /// <para>Held against GDI at 12ppem: mode 5 gets 'l' exactly and misses 'H' and 'I'; mode
         /// 6 gets 'H' and 'l' exactly and makes 'I' too wide. Mode 6 is not right at 12ppem, it is
         /// right about the glyphs whose stems GDI puts on a lamp boundary and wrong about the rest
