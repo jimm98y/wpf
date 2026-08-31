@@ -1754,6 +1754,13 @@ namespace System.Windows.Forms
 
 		protected override Color MonthCalendarTitleBackColor (MonthCalendar mc) => mc.BackColor;
 
+		/// <summary>#646464, measured off a stock calendar, NOT SystemColors.GrayText.
+		/// <para>GrayText is #6D6D6D and that is what the control defaults to, so every day either
+		/// side of the month came out nine levels light -- and with it the whole antialiased ramp
+		/// under those glyphs: ours ran 109/135/161/185/209/233 where Windows runs
+		/// 100/128/156/181/207/231.</para></summary>
+		public override Color MonthCalendarTrailingForeColor => Color.FromArgb (100, 100, 100);
+
 		// The grey Windows fills a selected day with, measured off its own calendar.
 		private static readonly Color CalendarSelection = Color.FromArgb (217, 217, 217);
 

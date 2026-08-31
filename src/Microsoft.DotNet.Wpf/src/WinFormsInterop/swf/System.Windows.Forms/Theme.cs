@@ -1189,6 +1189,10 @@ namespace System.Windows.Forms
 		/// background. Windows draws them in a fixed grey of its own.</summary>
 		public virtual Color TreeViewLineColor (TreeView tv) => Color.Empty;
 
+		/// <summary>The days either side of the month in a calendar. The control defaults to
+		/// SystemColors.GrayText; a theme may draw them in something else.</summary>
+		public virtual Color MonthCalendarTrailingForeColor => SystemColors.GrayText;
+
 		public abstract Size TreeViewDefaultSize { get; }
 		public abstract void TreeViewDrawNodePlusMinus (TreeView treeView, TreeNode node, Graphics dc, int x, int middle);
 		#endregion

@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -140,7 +140,7 @@ namespace System.Windows.Forms {
 			title_back_color = ThemeEngine.Current.ColorActiveCaption;
 			title_fore_color = ThemeEngine.Current.ColorActiveCaptionText;
 			today_date_set = false;
-			trailing_fore_color = SystemColors.GrayText;
+			trailing_fore_color = ThemeEngine.Current.MonthCalendarTrailingForeColor;
 			bold_font = new Font (Font, Font.Style | FontStyle.Bold);
 			centered_format = new StringFormat (StringFormat.GenericTypographic);
 			centered_format.FormatFlags = centered_format.FormatFlags | StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap | StringFormatFlags.FitBlackBox;
