@@ -983,6 +983,12 @@ namespace WgpuInterop.Tests.Text
             var ladder = new byte[] { 0, 58, 102, 144, 182, 219, 255 };
             var levelGap = new long[8];
             long lampsCompared = 0;
+            // WHERE those two-or-more-level lamps are, and which WAY they go. A twelfth of
+            // inked lamps being badly out is only actionable if they are somewhere: on curved
+            // glyphs, or on straight ones, or spread evenly. And if they are systematically
+            // ours-darker or ours-lighter that is a bias, which is a different fix from noise.
+            var badByChar = new System.Collections.Generic.Dictionary<char, int>();
+            long badDarker = 0, badLighter = 0;
             var curveSum = new double[Bins + 1];
             var curveN = new long[Bins + 1];
             var raw = new byte[Width * Height * 4];
@@ -1097,8 +1103,16 @@ namespace WgpuInterop.Tests.Text
                             {
                                 byte ov = oursPix[q + qc], gv = raw[q + (2 - qc)];
                                 if (ov == 255 && gv == 255) continue;      // paper both sides
-                                levelGap[Math.Min(7, Math.Abs(Nearest(ladder, ov) - Nearest(ladder, gv)))]++;
+                                int lo = Nearest(ladder, ov), lg = Nearest(ladder, gv);
+                                levelGap[Math.Min(7, Math.Abs(lo - lg))]++;
                                 lampsCompared++;
+                                if (Math.Abs(lo - lg) >= 2)
+                                {
+                                    badByChar.TryGetValue(ch, out int bc);
+                                    badByChar[ch] = bc + 1;
+                                    // lower level index = closer to 0 = MORE ink
+                                    if (lo < lg) badDarker++; else badLighter++;
+                                }
                             }
                     }
             }
@@ -1158,6 +1172,15 @@ namespace WgpuInterop.Tests.Text
             }
             report.AppendLine();
             report.AppendLine("   how far apart, in LEVELS of the seven-step ladder");
+            report.AppendLine($"      of the two-or-more: {badDarker:N0} ours DARKER, {badLighter:N0} ours LIGHTER");
+            {
+                var worst = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<char, int>>(badByChar);
+                worst.Sort((x, y) => y.Value.CompareTo(x.Value));
+                report.Append("      worst glyphs:");
+                for (int k = 0; k < Math.Min(14, worst.Count); k++)
+                    report.Append($" '{worst[k].Key}'={worst[k].Value}");
+                report.AppendLine();
+            }
             report.AppendLine($"      lamps compared {lampsCompared:N0}");
             for (int k = 0; k < 8; k++)
                 if (levelGap[k] > 0)
