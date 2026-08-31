@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -858,6 +858,7 @@ namespace WgpuInterop.Tests.Text
             // fit -- which stage B can confirm rather than leave assumed.
             foreach (int ppem in new[] { 7, 8, 11, 12, 13, 16, 19 })
             {
+                long bPixels = -1, bTotal = -1;
                 foreach (string stage in new[] { "A", "B", "Y" })
                 {
                     bool unhinted = stage == "A";
@@ -884,6 +885,21 @@ namespace WgpuInterop.Tests.Text
                         pixels += p; total += t; ourInk += o; theirInk += th;
                         if (p > 0) worst.Add((p, c));
                     }
+                    // AN INERT STAGE MUST SAY SO. Stage Y asks for the y-only fitting ClearType
+                    // actually renders from, by turning TrueTypeFont.SubpixelFitting on -- but that
+                    // flag is gated on XHintMode, and every mode this has shipped with (5 is the
+                    // default) is in the exclusion list, so Y and B fit identically and the report
+                    // printed two identical rows under different names. Read plainly that says "the
+                    // fitting mode makes no difference", which is the opposite of true: the knob is
+                    // simply not connected any more. The hole the comment above warns about is
+                    // therefore OPEN -- everything between B and C could be the lamps or could be
+                    // the fitting mode, and this report cannot currently tell them apart.
+                    if (stage == "B") { bPixels = pixels; bTotal = total; }
+                    else if (stage == "Y" && pixels == bPixels && total == bTotal)
+                        report.AppendLine($"  {ppem,2}  Y y-only     INERT -- identical to B. "
+                            + $"SubpixelFitting is gated off at XHintMode={TrueTypeFont.XHintMode}, "
+                            + "so this row is not a second measurement.");
+
                     string label = stage switch
                     {
                         "A" => "A unhinted",

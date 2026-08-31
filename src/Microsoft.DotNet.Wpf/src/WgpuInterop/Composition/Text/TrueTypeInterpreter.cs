@@ -673,6 +673,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             finally { _inPreProgram = false; _dumpActive = false; }
 
             _prepState = _gs;
+            // WPF_CVT_DUMP writes the control values the pre-program LEAVES BEHIND, in pixels and
+            // again divided by ppem. The second column is the point: a control value that is simply
+            // scaled is a constant there at every size, so a per-size branch in the pre-program --
+            // the one thing not yet ruled out for the 11-to-13 anomaly -- shows up as an entry that
+            // moves when nothing else does. Comparing whole prep TRACES across sizes cannot show
+            // that; they differ everywhere for uninteresting reasons.
+            string? cvtDump = Environment.GetEnvironmentVariable("WPF_CVT_DUMP");
+            if (!string.IsNullOrEmpty(cvtDump))
+            {
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < _scaledCvt.Length; i++)
+                    sb.Append($"font {_controlValues.Length}_{_fontProgram.Length} ppem {_ppem} cvt[{i}] {_scaledCvt[i] / 64f:0.0000} "
+                              + $"{(_ppem > 0 ? _scaledCvt[i] / 64f / _ppem : 0):0.00000}"
+                              + System.Environment.NewLine);
+                System.IO.File.AppendAllText(cvtDump!, sb.ToString());
+            }
             return true;
         }
 
