@@ -795,12 +795,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// answering GETINFO's greyscale query yes (2,402,211), against a baseline of 2,180,771.
         /// Every one of them fixes 'H' and costs more elsewhere, which says GDI is not widening
         /// by a constant at all.</para>
-        /// <para>WIDENING IS ONLY HALF OF IT; THE OTHER HALF IS PHASE. Dumped across fourteen
-        /// glyphs at 12ppem, GDI's stems are remarkably UNIFORM -- 'H', 'l', 'E', 'T', 'i', 'u',
-        /// 'K' and 'N' all come back 73 153 255 197 111 36, the same width and the same position
-        /// within the pixel. Ours are not: some match, some are 36 111 197 197 111 36, some
-        /// 73 153 255 255 153 73. GDI's pattern SATURATES a lamp and ours is symmetric about a
-        /// lamp boundary, which is a stem sitting half a lamp over, not merely a narrow one.</para>
+        /// <para>WIDENING IS ONLY HALF OF IT; THE OTHER HALF IS PHASE. GDI's pattern SATURATES a
+        /// lamp and ours is symmetric about a lamp boundary -- a stem sitting half a lamp over,
+        /// not merely a narrow one.</para>
+        /// <para>AND THE WIDTH IS PER-GLYPH, not per-face and not per-size. At 12ppem GDI draws
+        /// 'H' and 'l' at 73 153 255 197 111 36, which is 19/16, and 'I' at 73 153 255 153 73,
+        /// which is 1.0 -- two plain cap-height stems, two different widths. Any rule that widens
+        /// every stem is therefore wrong before it starts, which is what the measurements above
+        /// were saying.</para>
+        /// <para>Held against GDI at 12ppem: mode 5 gets 'l' exactly and misses 'H' and 'I'; mode
+        /// 6 gets 'H' and 'l' exactly and makes 'I' too wide. Mode 6 is not right at 12ppem, it is
+        /// right about the glyphs whose stems GDI puts on a lamp boundary and wrong about the rest
+        /// -- and at 12ppem more glyphs fall the first way than the second. That is the whole of
+        /// its 159,129, and the reason it does not survive to other sizes.</para>
         /// <para>That is why forcing width alone never pays, and it is measured: taking the
         /// control value always (full cut-in) costs 3,116,340, and doing that with +12/64 on top
         /// costs 3,125,569, against 2,180,771. Making every stem 19/16 at the WRONG phase is worse
