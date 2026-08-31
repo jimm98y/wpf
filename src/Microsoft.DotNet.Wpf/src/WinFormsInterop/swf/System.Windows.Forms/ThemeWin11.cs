@@ -445,6 +445,10 @@ namespace System.Windows.Forms
 		/// <summary>The inside of a resting, unchecked check box or radio button: #F3F3F3,
 		/// measured off a stock one. Not ColorWindow.</summary>
 		private static readonly Color GlyphRestFace = Color.FromArgb (243, 243, 243);
+
+		/// <summary>The calendar's month arrows: the mean of the 25..59 ramp Windows draws them
+		/// with, measured off a stock calendar.</summary>
+		private static readonly Color CalendarArrowInk = Color.FromArgb (44, 44, 44);
 		/// <summary>The bottom edge only, #BABABA, measured off a stock button. The other three
 		/// sides are ButtonBorderNormal; drawing all four in it left a 90-pixel line across the
 		/// two buttons 22 levels too light.</summary>
@@ -1958,12 +1962,29 @@ namespace System.Windows.Forms
 			// column too far right and stopped one row short.
 			const float Apex = 3f, Flat = 1f, Top = 3f, Bottom = 4f, Mid = 0.5f;
 			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.AntiAlias;
+			// NO ANTIALIASING. Windows' arrow is solid runs -- 1, 2, 3, 4, 3, 2, 1 pixels down the
+			// rows, each row one flat value, nothing at all in the pixel beside it. Ours smooths the
+			// diagonals and puts 90 to 112 into columns Windows leaves at 255, which is a larger
+			// error than the ink colour was.
+			// <para>ASKING FOR IT CHANGES NOTHING TODAY, and that is the point of saying it here:
+			// SmoothingMode reaches System.Drawing's Graphics and stops. The WebGPU backend never
+			// reads it -- SceneRecorder does not mention it and GeometryFill has no flag for it --
+			// so every fill is antialiased whatever the caller asks. Setting None here produced
+			// pixel-identical output, which is how it was found. The intent is correct and the
+			// arrow will sharpen on its own when the backend learns to honour it; closing that gap
+			// means a flag through Scene, the recorder and the coverage path.</para>
+			dc.SmoothingMode = SmoothingMode.None;
 			// Blue under the pointer and while held, the way the heading beside it goes blue.
 			bool hovered = is_previous ? mc.HoverPrevious : mc.HoverNext;
+			// NOT ControlText. A stock calendar's arrow never reaches black anywhere: read column
+			// by column it runs 59 at the top row to 25 at the bottom, so the darkest pixel in it is
+			// #191919 and the lightest #3B3B3B. Ours filled the same 4x7 triangle with pure 0.
+			// <para>One flat colour is an approximation of a vertical ramp, and #2C2C2C is its mean
+			// -- worth saying plainly rather than implying the ramp has been reproduced. It takes
+			// the two arrows from 44 levels out to about 15.</para>
 			Color ink = !mc.Enabled ? ColorGrayText
 				  : clicked || hovered ? ButtonBorderHover
-				  : ColorControlText;
+				  : CalendarArrowInk;
 			PointF [] arrow = is_previous
 				? new PointF [] { new PointF (cx + Flat, cy - Top), new PointF (cx + Flat, cy + Bottom), new PointF (cx - Apex, cy + Mid) }
 				: new PointF [] { new PointF (cx - Flat, cy - Top), new PointF (cx - Flat, cy + Bottom), new PointF (cx + Apex, cy + Mid) };
