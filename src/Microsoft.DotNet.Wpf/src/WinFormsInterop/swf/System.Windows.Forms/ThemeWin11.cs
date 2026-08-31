@@ -1982,8 +1982,8 @@ namespace System.Windows.Forms
 			// a control that will not hold still cannot be compared -- so the exclusion was hiding a
 			// difference rather than allowing for one.
 			//
-			// A MARQUEE bar does animate, and this method does not draw one at all: it fills by value
-			// whatever the style. That is a separate gap and it is not this one.
+			// A MARQUEE bar is the one that DOES animate, and it is drawn above -- we had the two exactly
+			// backwards, animating the still bar and leaving the moving one still.
 		}
 
 		/// <summary>A Windows 11 scroll bar. At rest it is a thin line and nothing else -- no
