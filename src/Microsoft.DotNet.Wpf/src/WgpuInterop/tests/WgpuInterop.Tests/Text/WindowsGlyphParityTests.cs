@@ -2543,7 +2543,26 @@ namespace WgpuInterop.Tests.Text
         /// three units of a DELTAP at the default shift, so a delta we apply and GDI does not
         /// was the obvious suspect; it is not, because all three WPF_CT_DELTA modes leave those
         /// coordinates completely unchanged. Those points are placed by SHP and IP through CALLs
-        /// into the font program, and that is where to look next.</para>
+        /// into the font program.</para>
+        /// <para>RUN DOWN, for 'n' at 12ppem. The coordinate is point 13, and it is moved by
+        /// exactly one instruction in our execution: IUP. Entering IUP the x-touched set is
+        /// {0, 1, 8, 9, 12}; point 13 is untouched, so its anchors are 12 and 0 wrapping round
+        /// the contour, and interpolating 1.95 between them gives 2.094 + 0.0025 * 3.996 =
+        /// 2.104. That is what we produce, and it is textbook IUP.</para>
+        /// <para>GDI has that point at 1.734, which is BELOW anchor 12's own fitted position of
+        /// 2.094. No IUP can put an interpolated point outside its anchors, so GDI is not
+        /// interpolating it -- GDI TOUCHES it and we do not.</para>
+        /// <para>Two things make that solid rather than an artefact of the fit. The point is
+        /// ON-CURVE (read out of glyf: 'n' is one contour of nineteen points, and 13 is on
+        /// curve), so it is not a control point whose position the rendering barely constrains.
+        /// And the solver reaches residual 0 on 'n', 'b' and 'm' -- the solved coordinates
+        /// reproduce GDI's lamps exactly, while ours start 13,069 away.</para>
+        /// <para>So a function CALLed out of the font program touches points in x under GDI
+        /// that it does not under us. No opcode is unimplemented (checked), and we match 70% of
+        /// coordinates, so the divergence is a branch inside one of those functions rather than
+        /// anything missing. Comparing the x-touch SET against GDI's, glyph by glyph, is the way
+        /// in -- and the touch set is observable from the fitted coordinates, because a touched
+        /// point is one IUP could not have produced.</para>
         /// <para>AND THE SAME CENSUS SETTLES WHAT XHintMode 6 BUYS, in GDI's own coordinates
         /// rather than in a score. Twenty-two letters and ten digits at 12ppem:</para>
         /// <para>letters  mode 5 158/279 exact (57%),  mode 6 196/281 (70%)<br/>
