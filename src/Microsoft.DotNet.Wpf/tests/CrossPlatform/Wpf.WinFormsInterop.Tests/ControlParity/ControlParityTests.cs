@@ -127,8 +127,8 @@ namespace Wpf.WinFormsInterop.Tests
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (204, 42),
-            ["radio-clear"] = (286, 38),
+            ["radio"] = (181, 42),
+            ["radio-clear"] = (262, 38),
             ["statusstrip"] = (188, 200),
             // HARNESS, not drawing. The same .NET TabControl paints its page 249,249,249 when it
             // is drawn on a form that has never been shown, and 240,240,240 once the form is up --

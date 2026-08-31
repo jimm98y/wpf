@@ -730,9 +730,15 @@ namespace System.Windows.Forms
 			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
 			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
 			// across -- which is what made this one look cut off against the control's left edge.
-			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
+			// Half a pixel up and left, the same correction the check box needs: measured against a
+			// stock radio button, ours sits with its ink centroid at row 10.64 where Windows' is at
+			// 10.01, and spreads over fourteen rows where Windows uses thirteen.
+			const float Nudge = 0.5f;
+			var disc = new RectangleF (circle.X - Nudge, circle.Y - Nudge, circle.Width, circle.Height);
+			g.FillEllipse (ResPool.GetSolidBrush (border), disc);
 			if (face != border)
-				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
+				g.FillEllipse (ResPool.GetSolidBrush (face),
+					       new RectangleF (disc.X + 1, disc.Y + 1, disc.Width - 2, disc.Height - 2));
 
 			if (rb.Checked) {
 				// Five pixels across in a thirteen pixel disc, measured off a stock radio button.
@@ -740,8 +746,8 @@ namespace System.Windows.Forms
 				// dot -- there is no room left for the corners to be rounded away.
 				int span = circle.Width;
 				int dotSize = Math.Max (3, span * 5 / 13);
-				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2,
-						     dotSize, dotSize);
+				var dot = new RectangleF (disc.X + (span - dotSize) / 2f, disc.Y + (span - dotSize) / 2f,
+						      dotSize, dotSize);
 				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), dot);
 			}
 			g.SmoothingMode = old;
