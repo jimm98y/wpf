@@ -853,6 +853,21 @@ namespace WgpuInterop.Tests.Text
             {
             report.AppendLine($"== {family}");
             report.AppendLine("ppem  stage      differing  sum|d|      our ink / GDI ink");
+            // READ THE INK COLUMN WITH CARE ON B AND Y, and not at all as a statement about
+            // fitting. Stage A is rasterizer-neutral BY CONSTRUCTION -- GDI's outline and ours both
+            // go through OUR rasterizer, so the rasterizer cancels and what is left is geometry.
+            // B and Y are not: they put our fitted outline through our rasterizer and compare it
+            // against GDI's OWN GRAY8 bitmap, so a difference there is fitting AND rasterizer
+            // together, with no way to say which.
+            // <para>It matters because the two disagree in SIGN. B says our fitted geometry carries
+            // 0.94/0.85/0.79 of GDI's ink at 11/12/13 -- badly light. Stage D, which reads GDI's
+            // FITTED outline out through a MAT2 and runs it through our rasterizer, says the
+            // opposite: 1.08/1.07/1.04, ours slightly HEAVY. D isolates the geometry and B does
+            // not, so D is the one to believe, and the deficit B reports belongs to GDI's
+            // greyscale rasterizer rather than to our fitting. (GRAY8 is normalised correctly here,
+            // v * 255 / 64 -- that was checked before concluding it.)</para>
+            // <para>What is still missing is a stage that puts ONE outline through both
+            // rasterizers. B minus D is the nearest thing to it and it is large.</para>
 
             // 7 and 8 sit below Segoe UI's gasp gridfit threshold, where GDI is expected NOT to
             // fit -- which stage B can confirm rather than leave assumed.
