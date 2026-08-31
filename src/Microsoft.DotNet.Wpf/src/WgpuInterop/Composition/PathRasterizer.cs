@@ -560,6 +560,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool CentreSample =
             Environment.GetEnvironmentVariable("WPF_SUBPIXEL_SAMPLE") == "centre";
 
+        /// <summary>WHAT THE REMAINING WINDOW DIFFERENCE IS, measured per channel so that anyone
+        /// reaching for this threshold knows what it can and cannot buy. Signed ink over the whole
+        /// window, ours minus Windows':
+        /// <para>    signed   R -40,471   G -83,266   B -39,801      sum   -163,538</para>
+        /// <para>    absolute R 409,393   G 407,458   B 386,625      sum  1,203,476</para>
+        /// <para>R and B are SYMMETRIC, so there is no sub-pixel shift -- a shifted run moves ink
+        /// from one outer lamp to the other and would show them opposed. And the signed total is
+        /// only 14% of the absolute one: the other 86% is ink in the wrong PLACE at lamp
+        /// resolution, cancelling in the sum. So "our text is too light" is a small part of it,
+        /// widening is at best a 14% lever, and that is why every global widening knob -- this
+        /// threshold, the lamp grid, a blanket stroke correction -- buys a little and loses more
+        /// somewhere else. Green being twice as short as the outer lamps says our strokes saturate
+        /// a whole pixel less often than Windows': they straddle boundaries more.</para></summary>
         private static readonly int HalfLampThreshold =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_THRESHOLD"), out int ht)
                 && ht > 0 ? ht : 128;
