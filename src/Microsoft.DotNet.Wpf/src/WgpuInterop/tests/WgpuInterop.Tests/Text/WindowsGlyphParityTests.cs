@@ -1646,6 +1646,24 @@ namespace WgpuInterop.Tests.Text
                     byte[] o = Ours(font, t, ppem, baseline);
                     (int wt, int wb) = InkRows(w);
                     (int ot, int ob) = InkRows(o);
+                    if (ch == 'H')
+                    {
+                        // THE LAMPS THEMSELVES, so the stem edges can be read in thirds of a
+                        // pixel instead of inferred from a row total. Ink per row says GDI's
+                        // stem is wider than ours at 12ppem and identical at 16; only the lamp
+                        // pattern says WHERE the two edges are, and a stem that starts on a lamp
+                        // boundary looks nothing like one that straddles it.
+                        var raw = new byte[Width * Height * 4];
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(t, ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
+                        Gdi.s_rawRgb = null;
+                        int mid = (wt + wb) / 2 == wt + 4 ? wt + 3 : wt + 1;   // a plain stem row
+                        report.AppendLine($"      [H@{ppem}] GDI lamps: {LampRow(raw, mid, true)}"
+                            + $"   (two stems total {LampTotal(raw, mid, true) / 3.0:0.000}px)");
+                        report.AppendLine($"      [H@{ppem}] our lamps: "
+                            + LampRow(OursRgba(font, t, ppem, baseline, correction: true), mid, false)
+                            + $"   (two stems total {LampTotal(OursRgba(font, t, ppem, baseline, correction: true), mid, false) / 3.0:0.000}px)");
+                    }
                     if ((ppem == 12 || ppem == 16) && (ch == 'o' || ch == 'H'))
                     {
                         // The extents match at every size, so whatever is wrong with the horizontal
@@ -1659,6 +1677,30 @@ namespace WgpuInterop.Tests.Text
                 }
             }
             File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>All the ink in one row, in lamps.</summary>
+        private static double LampTotal(byte[] rgba, int y, bool bgra)
+        {
+            double t = 0;
+            for (int x = 0; x < Width; x++)
+                for (int c = 0; c < 3; c++)
+                    t += (255 - rgba[(y * Width + x) * 4 + (bgra ? 2 - c : c)]) / 255.0;
+            return t;
+        }
+
+        /// <summary>One row's lamps as coverage out of 255, from the first inked lamp.</summary>
+        private static string LampRow(byte[] rgba, int y, bool bgra)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int x = 0; x < Width; x++)
+                for (int c = 0; c < 3; c++)
+                {
+                    int v = 255 - rgba[(y * Width + x) * 4 + (bgra ? 2 - c : c)];
+                    if (v > 0 || sb.Length > 0) sb.Append(v.ToString()).Append(' ');
+                }
+            string t = sb.ToString().TrimEnd();
+            return t.Length > 150 ? t.Substring(0, 150) : t;
         }
 
         /// <summary>Ink per row, as a fraction of a fully covered pixel.</summary>

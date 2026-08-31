@@ -771,6 +771,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 106,042), because most glyphs do not want the extra width. A constant added to every
         /// stem is still the wrong instrument. What is wanted is the rule that produces 19/16
         /// for the stems GDI widens and leaves the others alone.</para>
+        /// <para>THE TARGET IS NOT INFERRED, IT IS READ OFF GDI'S LAMPS. At 12ppem GDI's 'H'
+        /// stem is 73 153 255 197 111 36, which is byte for byte the synthetic-font oracle's
+        /// w=1.1875 row -- so GDI's stem is 19/16 exactly, not approximately. Ours is
+        /// 36 111 197 197 111 36: narrower AND differently phased, straddling two lamps where
+        /// GDI saturates one. At 16 and 17ppem our lamps are byte-identical to GDI's.</para>
+        /// <para>GDI HOLDS 19/16 ACROSS PPEM 11 TO 15 (ink per row for two stems: 2.157 at 11,
+        /// 12, 13, 14 and 15, then 2.490 at 16 and 2.824 at 17). Ours wobbles -- 2.157 at 11 and
+        /// 14, 1.799 at 12, 1.978 at 13, 2.336 at 15 -- because the cut-in takes the control
+        /// value at 11-13 and refuses it from 14 up. Glyph HEIGHTS match GDI exactly at every
+        /// size (WPF_HEIGHT_REPORT), so this is stem width alone.</para>
+        /// <para>AND IT IS NOT THE FONT PROGRAM. Traced, Segoe UI's pre-program asks GETINFO for
+        /// selectors 1, 2, 4 and 32 only -- rasterizer version, rotated, stretched, greyscale.
+        /// It never asks whether ClearType is on, so it CANNOT branch on it, so the control
+        /// values it computes are the same ones it computes for the bi-level pass -- and ours
+        /// already reproduce GetGlyphOutline there for 55 of 62 glyphs. Our cvt[126] of 1.0 is
+        /// almost certainly GDI's cvt[126] too, and the 19/16 is something GDI's RASTERIZER does
+        /// with it, not something the face asked for.</para>
+        /// <para>Tried and rejected against the repertoire, all worse than leaving it alone:
+        /// +12/64 on every taken control value (2,237,335), the same with the cut-in divisor at
+        /// 8 instead of 16 (2,408,207), the divisor alone (2,360,273), +12/64 restricted to
+        /// stems landing on exactly 1.0px (2,225,357), +8/64 so restricted (2,201,229), and
+        /// answering GETINFO's greyscale query yes (2,402,211), against a baseline of 2,180,771.
+        /// Every one of them fixes 'H' and costs more elsewhere, which says GDI is not widening
+        /// by a constant at all.</para>
         /// <para>Extending the correction to rounded MIRPs is therefore exactly what 'H' needs,
         /// and it is still worse across the repertoire: 54,934 -> 56,393, 32 cases worse against
         /// 8 better. Re-measured after the BGRA fix, so this rejection rests on a comparison that
