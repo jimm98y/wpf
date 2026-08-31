@@ -730,6 +730,26 @@ namespace WgpuInterop.Tests.Text
         private static List<PathFigure> Scale(List<PathFigure> figures, float k)
             => Map(figures, v => new Vector2(v.X * k, v.Y * k));
 
+        /// <summary>The outline's AREA, in units of one pixel's worth of ink (255), got by
+        /// rasterizing it eight times life size and dividing by 64.
+        /// <para>This is the arbiter for stage R. For one fixed outline, total ink IS total area --
+        /// for ANY rasterizer that computes coverage linearly -- so when ours and GDI's disagree by
+        /// a fifth, one of them is not linear, and the outline's own area says which. Ours at 1x
+        /// against ours at 8x also checks our rasterizer against itself, which costs nothing here
+        /// and would catch a sampling error masquerading as a difference of opinion with GDI.</para>
+        /// </summary>
+        private static long OutlineArea(List<PathFigure> figures)
+        {
+            if (figures.Count == 0) return 0;
+            const int N = 8;
+            List<PathFigure> big = Map(figures, v => new Vector2((v.X + PenX) * N, (v.Y + BaseY) * N));
+            CoverageMask m = PathRasterizer.Rasterize(new PathGeometry(FillRule.NonZero, big));
+            if (m.Coverage == null) return 0;
+            long sum = 0;
+            foreach (byte b in m.Coverage) sum += b;
+            return sum / (N * N);
+        }
+
         private static List<PathFigure> Translate(List<PathFigure> figures, float dx, float dy)
             => Map(figures, v => new Vector2(v.X + dx, v.Y + dy));
 
@@ -917,7 +937,7 @@ namespace WgpuInterop.Tests.Text
                     TrueTypeFont.SubpixelFitting = stage == "Y";
                     TrueTypeFont.ForceYOnlyFit = stage == "Y";
                     int pixels = 0;
-                    long total = 0, ourInk = 0, theirInk = 0;
+                    long total = 0, ourInk = 0, theirInk = 0, area = 0;
                     // WHICH letters, not just how many pixels. An aggregate says a face is wrong at a
                     // size; the names say which glyph's program to step through, which is the only
                     // thing that leads anywhere.
@@ -937,6 +957,8 @@ namespace WgpuInterop.Tests.Text
                         };
                         var (p, t, o, th) = Compare(mine, theirs);
                         pixels += p; total += t; ourInk += o; theirInk += th;
+                        if (stage == "R")
+                            area += OutlineArea(GdiOutline(c, family, ppem, unhinted: false));
                         if (p > 0) worst.Add((p, c));
                     }
                     // A STAGE THAT COINCIDES WITH ANOTHER MUST SAY SO, because two identical rows
@@ -970,6 +992,10 @@ namespace WgpuInterop.Tests.Text
                         + $" {pixels,9}  {total,9}      "
                         + $"{(theirInk == 0 ? 0 : (double)ourInk / theirInk):0.0000}"
                         + $"  ourInk={ourInk} gdiInk={theirInk}"
+                        + (stage == "R" && area > 0
+                            ? $"  AREA={area} (ours/area={(double)ourInk / area:0.000}"
+                              + $" gdi/area={(double)theirInk / area:0.000})"
+                            : "")
                         + $"  worst:{names}");
                 }
             }
