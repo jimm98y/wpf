@@ -1263,7 +1263,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // outside it. That is one anomaly at 11, 12 and 13 with two symptoms, and the six
             // sixty-fourths below is a patch on the one symptom it happens to fit.
             //
-            // AND IT IS NOT A BRANCH WE MISS. Comparing every control value prep writes at 12ppem
+            // AND THE GATE BELOW IS NOT WHAT CAUSES IT, which had to be checked because this
+            // correction is gated to those same three sizes and could have been manufacturing the
+            // pattern it is quoted as evidence for. Turned OFF, the curves keep it:
+            //     'e'   10 --   11  3   12  2   13  4   14 --
+            //     'c'   10 --   11  3   12  3   13  3   14 --
+            //     'l'   10 --   11  2   12  2   13  2   14 --   (what this correction fixes)
+            // Exact at 10 and at 14, wrong at 11, 12 and 13, with nothing of ours applied.
+            //
+            // The gasp table is not the boundary either: Segoe UI reads GRIDFIT|DOGRAY|SYM_GRIDFIT
+            // flat from 9ppem to 16 and only gains SYM_SMOOTHING at 20. (Which is its own question --
+            // we do not implement symmetric smoothing, and 20ppem and up is where GDI turns it on.)
+            //            // AND IT IS NOT A BRANCH WE MISS. Comparing every control value prep writes at 12ppem
             // against 14, exactly one is treated differently across the boundary -- cvt[240], which
             // the pre-program adjusts by a whole pixel under an explicit 'if ppem is 11 to 13' and
             // leaves alone at 14. We take that branch and apply that pixel; the trace shows it
