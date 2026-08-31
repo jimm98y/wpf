@@ -1171,6 +1171,50 @@ namespace WgpuInterop.Tests.Text
                 report.AppendLine($"{sum,10:0.0000}   {(ssTot <= 0 ? 0 : ssRes / ssTot):P2}");
             }
             report.AppendLine();
+            // THE SAME STEM IN THE MODE WE ACTUALLY SHIP AGAINST. The claim that GDI renders a
+            // shape wider than GGO_NATIVE reports was measured off GGO_GRAY8 -- GREYSCALE -- and
+            // greyscale hints differently from ClearType. Summing the lamp ink of one clean stem
+            // three ways settles whether that finding survives in the mode that matters.
+            foreach (char probe in new[] { 'l', 'H', 'm', '%', '@', 'o', 'e' })
+            foreach (int ppem in new[] { 12 })
+            {
+                int baseline = ppem + 12;
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(probe.ToString(), family, ppem, PenX, baseline, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                double ctInk = 0;
+                for (int q = 0; q + 3 < raw.Length; q += 4)
+                    for (int qc = 0; qc < 3; qc++) ctInk += (255 - raw[q + qc]) / 255.0;
+                double outlineInk = 0;
+                CoverageMask om = PathRasterizer.Rasterize(new PathGeometry(FillRule.NonZero,
+                    GdiStageTests.GdiOutlineAt(probe, family, ppem, PenX, baseline)));
+                if (om.Coverage != null) foreach (byte bb in om.Coverage) outlineInk += bb / 255.0;
+                byte[] op = OursRgba(font, probe.ToString(), ppem, baseline, correction: true);
+                double ourInk2 = 0;
+                for (int q = 0; q + 3 < op.Length; q += 4)
+                    for (int qc = 0; qc < 3; qc++) ourInk2 += (255 - op[q + qc]) / 255.0;
+                report.AppendLine($"   '{probe}'@{ppem}  GDI ClearType {ctInk / 3:0.000}   "
+                                  + $"GGO_NATIVE outline {outlineInk:0.000}   ours {ourInk2 / 3:0.000}");
+                if (probe == 'H')
+                {
+                    // WHERE the missing ink is. Column lamp-ink, ours against GDI's, for the one
+                    // glyph whose total is badly out while a single stem matches exactly.
+                    report.AppendLine("      x     ours      GDI     diff");
+                    for (int x = PenX - 1; x < PenX + 10; x++)
+                    {
+                        double oc = 0, gc = 0;
+                        for (int y = 0; y < Height; y++)
+                            for (int qc = 0; qc < 3; qc++)
+                            {
+                                oc += (255 - op[(y * Width + x) * 4 + qc]) / 255.0;
+                                gc += (255 - raw[(y * Width + x) * 4 + qc]) / 255.0;
+                            }
+                        if (oc > 0.001 || gc > 0.001)
+                            report.AppendLine($"   {x,4}  {oc / 3,7:0.000}  {gc / 3,7:0.000}  {(oc - gc) / 3,7:0.000}");
+                    }
+                }
+            }
+            report.AppendLine();
             report.AppendLine("   how far apart, in LEVELS of the seven-step ladder");
             report.AppendLine($"      of the two-or-more: {badDarker:N0} ours DARKER, {badLighter:N0} ours LIGHTER");
             {
