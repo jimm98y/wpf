@@ -95,9 +95,9 @@ namespace Wpf.WinFormsInterop.Tests
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
             // authority for where the box goes; see the note on tabcontrol.
-            ["checkbox"] = (286, 45),
-            ["checkbox-clear"] = (288, 46),
-            ["checkbox-disabled"] = (300, 135),
+            ["checkbox"] = (201, 200),
+            ["checkbox-clear"] = (203, 185),
+            ["checkbox-disabled"] = (215, 260),
             ["checkedlistbox"] = (14, 1085),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
@@ -127,8 +127,8 @@ namespace Wpf.WinFormsInterop.Tests
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (181, 42),
-            ["radio-clear"] = (262, 38),
+            ["radio"] = (92, 150),
+            ["radio-clear"] = (173, 135),
             ["statusstrip"] = (188, 200),
             // HARNESS, not drawing. The same .NET TabControl paints its page 249,249,249 when it
             // is drawn on a form that has never been shown, and 240,240,240 once the form is up --

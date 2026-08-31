@@ -133,11 +133,19 @@ namespace System.Windows.Forms
 				return;
 
 
+			// DT_VCENTER and DT_BOTTOM only do anything to a SINGLE LINE -- that is DrawText's rule,
+			// and WinForms leans on it: a CheckBox asks for VerticalCenter | TextBoxControl and never
+			// says SingleLine. This used to be applied only on the branch that calls the real GDI,
+			// which this port never takes, so the flag never arrived and TextBoxControl went on to
+			// mean StringFormatFlags.LineLimit -- "drop any line that does not fit ENTIRELY" -- on a
+			// rectangle exactly one line high. The result was that every CheckBox and RadioButton
+			// caption in the application was silently not drawn at all.
+			if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter
+			    || (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom)
+				flags |= TextFormatFlags.SingleLine;
+
 			// We use MS GDI API's unless told not to, or we aren't on Windows
 			if (!useDrawString && !XplatUI.RunningOnUnix) {
-				if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter || (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom)
-					flags |= TextFormatFlags.SingleLine;
-
 				// Calculate the text bounds (there is often padding added)
 				Rectangle new_bounds = PadRectangle (bounds, flags);
 				new_bounds.Offset ((int)(dc as Graphics).Transform.OffsetX, (int)(dc as Graphics).Transform.OffsetY);
