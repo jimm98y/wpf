@@ -158,7 +158,7 @@ namespace Wpf.WinFormsInterop.Tests
             // it. The live-window comparison is the authority for this one.
             // The INK figure here is that page fill and nothing else, so it moves whenever the tab
             // geometry does and is not a quality signal; the SHADE figure is the one to read.
-            ["tabcontrol"] = (12024, 295),
+            ["tabcontrol"] = (11981, 295),
             ["textbox"] = (0, 764),
             // The remaining shade is the dots being antialiased differently, not drawn differently:
             // Windows renders text with ClearType and we render it grey. See the glyph parity suite.

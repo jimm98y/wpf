@@ -423,6 +423,10 @@ namespace System.Windows.Forms
 		// and the accent is #005FB8, not the #0078D7 of a decade ago.
 		private static readonly Color ButtonFaceNormal = Color.FromArgb (253, 253, 253);
 		private static readonly Color ButtonBorderNormal = Color.FromArgb (208, 208, 208);
+		/// <summary>The bottom edge only, #BABABA, measured off a stock button. The other three
+		/// sides are ButtonBorderNormal; drawing all four in it left a 90-pixel line across the
+		/// two buttons 22 levels too light.</summary>
+		private static readonly Color ButtonBorderBottom = Color.FromArgb (186, 186, 186);
 		private static readonly Color ButtonFaceHover = Color.FromArgb (224, 238, 249);
 		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 95, 184);
 
@@ -509,6 +513,16 @@ namespace System.Windows.Forms
 				return;
 
 			PaintRoundedRect (dc, r, ButtonCornerRadius, face, border);
+
+			// Windows draws a resting button's BOTTOM edge darker than its other three -- #BABABA
+			// against the #D0D0D0 of the sides and top. It is the whole of what is left of a button
+			// once the face and the frame agree, and it reads as a very slight lift off the page.
+			// Only at rest: a hovered, pressed or focused button is outlined in one colour all
+			// round, which is what the capture shows for each of those states.
+			if (button.Enabled && !button.Pressed && !button.Entered
+			    && !button.IsDefault && !button.Focused)
+				dc.DrawLine (ResPool.GetPen (ButtonBorderBottom),
+					     r.X + 1, r.Bottom, r.Right - 1, r.Bottom);
 
 			// The dotted rectangle a focused button carries, two pixels inside its frame -- Windows
 			// draws one and this did not, so the only sign that a button had the focus was the colour
@@ -2344,13 +2358,15 @@ namespace System.Windows.Forms
 						continue;
 
 					dc.FillRectangle (ResPool.GetSolidBrush (selected ? TabPaneFace : TabRestFace), face);
-					if (selected) {
-						dc.DrawLine (edge, face.X, face.Y, face.Right - 1, face.Y);
-						dc.DrawLine (edge, face.X, face.Y, face.X, face.Bottom - 1);
-						dc.DrawLine (edge, face.Right - 1, face.Y, face.Right - 1, face.Bottom - 1);
-					} else {
-						dc.DrawRectangle (edge, face.X, face.Y, face.Width - 1, face.Height - 1);
-					}
+					// THREE SIDES for a resting tab too, not four. Its foot sits directly on the
+					// pane's own top edge, so drawing one put two rows of #E5E5E5 where Windows has
+					// one -- the tab's last row of face, then the pane's edge. Across the two
+					// resting tabs that single row was 4,536 of the client's difference, and it is
+					// the same shape as the pane border being one row out that this control was
+					// caught by before.
+					dc.DrawLine (edge, face.X, face.Y, face.Right - 1, face.Y);
+					dc.DrawLine (edge, face.X, face.Y, face.X, face.Bottom - 1);
+					dc.DrawLine (edge, face.Right - 1, face.Y, face.Right - 1, face.Bottom - 1);
 
 					TabPage page = tab.TabPages[i];
 					var format = new StringFormat {
