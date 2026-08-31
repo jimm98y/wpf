@@ -1401,13 +1401,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and becomes the best thing available:</para>
         /// <para>parity SUM|d|, x discarded 4,071,456 -> 3,894,842; x kept 7,404,226 -> 3,629,242.
         /// Keeping it now BEATS discarding it, which had never happened before.</para>
-        /// <para>SHIPPED, on the evidence of the text specimen -- rows of plain Labels drawn by both
-        /// stacks, which is nothing but text and so cannot be confused by control chrome: 1,536,150
-        /// with the fitting discarded against 1,410,303 with it kept. The live CONTROL window still
-        /// prefers discarding it, and that disagreement is now known to be about the CONTROLS rather
-        /// than about text.</para></summary>
+        /// <para>Shipped as 5 on the evidence of the text specimen -- rows of plain Labels drawn by
+        /// both stacks, which is nothing but text and so cannot be confused by control chrome:
+        /// 1,536,150 with the fitting discarded against 1,410,303 with it kept. That note used to
+        /// end "the live CONTROL window still prefers discarding it"; it does not any more, and had
+        /// not for some time. Discarding now costs 1,698,126 against 1,144,325 for keeping.</para>
+        /// <para>SIX, NOT FIVE. Nobody had swept the modes against the live window since the
+        /// ClearType-direction rules went in -- each was measured once, against whatever the
+        /// objective was that day, and 5 was left in place. Swept now, on the window:</para>
+        /// <para>6: 985,196   13: 988,410   8: 992,404   7: 993,858   5: 1,144,325   14: 1,158,009
+        /// 16: 1,236,974   12: 1,551,638   11: 1,613,692   0: 1,698,126.</para>
+        /// <para>Mode 6 is 159,129 better than what shipped, and it improves nearly every region --
+        /// ListView by 38%, GroupBox by 33%, RichTextBox by 32%, LinkLabel by 44% -- against three
+        /// that get worse (MonthCalendar, TextBoxes, DateTimePicker). The corroboration that it is
+        /// RIGHT rather than merely better-scoring is the ink ratio, which is the weight half of the
+        /// difference and therefore most of it: mode 5 leaves the regions near 0.99 and mode 6 puts
+        /// them on 1.000 -- Label 1.0006, Panel 0.9999, ListBox 1.0004, StatusStrip 0.9996. Rounding
+        /// on the lamp grid is what a ClearType rasterizer does, and the weight it produces is
+        /// Windows'.</para>
+        /// <para>The isolated-glyph parity metric DISAGREES -- 54,934 for mode 5 against 80,756 for
+        /// mode 6 -- and it is the proxy, not the objective. It renders one glyph through GDI
+        /// directly; the window is WinForms drawing through WinForms. Where the two disagree the
+        /// window is what was asked for. That gap is worth understanding and is not understood
+        /// yet.</para></summary>
         internal static readonly int XHintMode =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 5;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 6;
 
 
         /// <summary>How many parts of a pixel the natural x may land on, or 0 to leave it alone.
