@@ -591,6 +591,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_positionsOnPhysicalGrid =
             Environment.GetEnvironmentVariable("WPF_CT_POSGRID") == "physical";
 
+        /// <summary>Whether only MDAP -- rounding a point where it already sits -- takes the
+        /// physical grid, leaving MIAP on the ClearType one.</summary>
+        private static readonly bool s_posGridMdapOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_POSGRID") == "mdap";
+
         /// <summary>What GETINFO tells the face's program about the rasterizer running it.
         /// <para>A BI-LEVEL PASS MUST ANSWER NO. It is not a mode of ours, it is an impersonation --
         /// "what would a bi-level rasterizer have made of this glyph" -- and a face that asks the
@@ -941,7 +946,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// measuring and is worse than leaving x alone: structural 3155 against 274. Every division
         /// of this labour has now been tried -- both grids fine (6), positions only (7), widths to a
         /// whole pixel (8), all of it (5) -- and all four are far behind mode 0.</para></summary>
-        private int RoundDistance(int distance, bool position = false)
+        private int RoundDistance(int distance, bool position = false, bool mdap = false)
         {
             bool negative = distance < 0;
             int value = negative ? -distance : distance;
@@ -974,7 +979,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // (1.0, from unhinted 0.516/0.516/0.891/0.484) where the sixteenth grid leaves us at
             // 0.5/0.5/0.875/0.5 -- and the rendered pixels agree, our glyphs sitting a column left
             // of Windows'. WPF_CT_POSGRID=virtual restores the literal reading.
-            bool physicalPosition = position && s_positionsOnPhysicalGrid;
+            // WPF_CT_POSGRID=physical put EVERY position on the whole-pixel grid, MDAP and
+            // MIAP alike, and cost 5,834,105 against 2,180,771. MIAP places a point at a
+            // control value outright, which is a different job from MDAP rounding a point
+            // where it already is, and there is no reason the two want the same grid.
+            // WPF_CT_POSGRID=mdap asks only the second of them.
+            //
+            // MEASURED, AND IT SETTLES THE QUESTION THE OTHER WAY. On 'H' at 12ppem it is
+            // exactly right: the four coordinates go 1.000 2.094 7.000 8.094 and every one lands
+            // inside the range GDI's pixels allow, where mode 6 alone misses the last two by a
+            // third of a pixel. And it costs 5,979,285 against 3,271,235 across the repertoire.
+            // Fixing 'H' breaks everything else, so GDI does not round MDAP positions to the
+            // whole pixel.
+            //
+            // The inference that it did came from reading a RANGE as a value: H's third
+            // coordinate must lie in [6.921, 7.078], which contains 7.0 but does not require it.
+            // Anything in that interval will do, and 'the interval contains a whole pixel' is a
+            // much weaker fact than it looks.
+            //
+            // Note also that mdap and physical measure IDENTICALLY under mode 5 (5,834,105 both),
+            // so MIAP's position rounding never differs in practice -- the whole-pixel grid only
+            // ever reached MDAP anyway.
+            bool physicalPosition = position && (s_positionsOnPhysicalGrid
+                                                 || (s_posGridMdapOnly && mdap));
             // Exactly the configuration that was MEASURED to reproduce GetGlyphOutline (55 of 62
             // glyphs byte-identical): POSITIONS on the physical grid, distances left on the
             // ClearType grid. An earlier version put distances there too -- which is not the tested
@@ -994,8 +1021,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (s_stemSnap > 0 && !position && InClearTypeDirection && Math.Abs(value) <= s_stemSnap)
                 distanceGrid = 1;
             int thirds = distanceGrid > 0 ? distanceGrid
-                       : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : physicalPosition ? 1
+                       : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
                        : InClearTypeDirection ? ClearTypeGrid
                        : 1;

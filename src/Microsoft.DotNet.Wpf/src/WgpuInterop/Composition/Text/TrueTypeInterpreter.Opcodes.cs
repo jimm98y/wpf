@@ -264,7 +264,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 if (op == 0x2F)
                                 {
                                     int here = Project(z.CurX[p], z.CurY[p]);
-                                    MovePoint(z, p, RoundDistance(here, position: true) - here);
+                                    MovePoint(z, p, RoundDistance(here, position: true, mdap: true) - here);
                                 }
                                 else
                                 {
