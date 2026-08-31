@@ -723,6 +723,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
 
+        /// <summary>Sixty-fourths to add to a control-value stroke weight on the x axis, and the ppem
+        /// range to add them over. Diagnostic only -- see the note in MoveIndirectRelative.</summary>
+        private static readonly int s_stemFat =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 0;
+        private static readonly int s_stemFatLo =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 0;
+        private static readonly bool s_stemFatExact =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_EXACT") == "1";
+        private static readonly int s_stemFatHi =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_HI"), out int sh) ? sh : 9999;
+
         internal static System.Collections.Generic.IEnumerable<byte> UnimplementedOpcodes
         {
             get { lock (s_unimplemented) return new System.Collections.Generic.List<byte>(s_unimplemented); }
@@ -1140,10 +1151,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // halves are needed -- the test has to happen at all, and the threshold has to be a
             // sixteenth, because the face sets the cut-in to 2.25px and nothing ever reaches that.
             int distance = value;
+            bool tookControlValue = true;
             if (_gs.Zp0 == _gs.Zp1 && Math.Abs(value - original) >= cutIn)
-                distance = original;
+            { distance = original; tookControlValue = false; }
             if (round)
                 distance = RoundDistance(distance);
+
+            // DIAGNOSTIC, to price the open stem question rather than argue about it. Where the
+            // control value wins the cut-in on the x axis, widen the stroke by WPF_CT_STEMFAT
+            // sixty-fourths -- eleven of them is the one half-lamp by which GDI's Segoe UI stems
+            // beat ours at 11, 12 and 13 ppem and nowhere else. Not a rule: it has no reason to
+            // stop at those three sizes, and at 14 we already agree. It exists to measure how much
+            // of the window that half-lamp is worth before anyone spends a day earning it honestly.
+            if (s_stemFat != 0 && tookControlValue && !round && !BiLevelPass
+                && InClearTypeDirection && _ppem >= s_stemFatLo && _ppem <= s_stemFatHi
+                && (!s_stemFatExact || distance == 64 || distance == -64))
+                distance += distance < 0 ? -s_stemFat : s_stemFat;
 
             if (keepMinimum)
             {

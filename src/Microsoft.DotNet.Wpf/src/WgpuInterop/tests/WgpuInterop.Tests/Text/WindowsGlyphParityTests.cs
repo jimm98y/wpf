@@ -2872,6 +2872,18 @@ namespace WgpuInterop.Tests.Text
 
                 // One row through the middle of the stem, well clear of top and bottom.
                 int row = ppem + 12 - ppem / 3;
+
+                // The SAME glyph through GDI's greyscale rasterizer (ANTIALIASED_QUALITY). Greyscale
+                // and ClearType share the hinting and differ only in how a covered pixel is shaded,
+                // so if the two disagree about a stem's WIDTH the extra half-lamp is added by the
+                // ClearType rasterizer; if they agree, it is in the fitting.
+                var greyRaw = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = greyRaw;
+                Gdi.Draw("l", family, ppem, PenX, ppem + 12, Width, Height, false, false, quality: 4);
+                Gdi.s_rawRgb = null;
+                double greyInk = 0;
+                for (int x = 0; x < Width; x++)
+                    greyInk += (255 - greyRaw[(row * Width + x) * 4 + 1]) / 255f;
                 double gdiInk = 0, ourInk = 0;
                 for (int x = 0; x < Width; x++)
                     for (int lamp = 0; lamp < 3; lamp++)
@@ -2882,7 +2894,8 @@ namespace WgpuInterop.Tests.Text
                     }
                 log.AppendLine($"  {ppem,2}ppem  gdi {gdiInk,6:0.00} lamps ({gdiInk / 3,5:0.000} px)"
                                + $"   ours {ourInk,6:0.00} ({ourInk / 3,5:0.000} px)"
-                               + $"   gdi/ours {(ourInk > 0 ? gdiInk / ourInk : 0),5:0.000}");
+                               + $"   gdi/ours {(ourInk > 0 ? gdiInk / ourInk : 0),5:0.000}"
+                               + $"   gdiGREY {greyInk,5:0.00}px");
 
                 // WHERE the lit lamps are, not just how many. A stem one half-lamp wider and a stem
                 // shifted by half a lamp give the SAME total, and the total is all this probe used to
@@ -3097,7 +3110,8 @@ namespace WgpuInterop.Tests.Text
             /// <summary>Coverage of the string, 0 where the paper shows through and 255 where the ink
             /// is solid -- the same thing our renderer's mask holds.</summary>
             public static byte[] Draw(string text, string family, int ppem, int penX, int baseline,
-                                      int w, int h, bool bold = false, bool italic = false)
+                                      int w, int h, bool bold = false, bool italic = false,
+                                      int quality = ClearTypeQuality)
             {
                 IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
                 var header = new BITMAPINFOHEADER
@@ -3134,7 +3148,7 @@ namespace WgpuInterop.Tests.Text
                     lfWeight = bold ? 700 : 400,
                     lfItalic = (byte)(italic ? 1 : 0),
                     lfCharSet = 1,          // DEFAULT_CHARSET
-                    lfQuality = ClearTypeQuality,
+                    lfQuality = (byte) quality,
                     lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);

@@ -561,6 +561,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ? s2 == "1"
                 : Platform.Win32Interop.FontSmoothingIsBgr();
 
+        /// <summary>The exact half-lamp run length to lengthen by one on the right, or 0 for none.
+        /// <para>GDI's Segoe UI 'l' at 11, 12 and 13ppem lights SEVEN half-lamps where ours lights
+        /// six -- deconvolved, ours is three full lamps and GDI's is three full and a half on the
+        /// right. Widening the OUTLINE to buy that half-lamp is measurably wrong: it moves every
+        /// point after the stem, and the window's position error goes from 127,023 to 179,585. If
+        /// GDI is doing this at all it is doing it here, where nothing moves.</para></summary>
+        private static readonly int StemDilate =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DILATE"), out int sd) ? sd : 0;
+
+        /// <summary>Lengthen every maximal run of lit half-lamps of exactly <see cref="StemDilate"/>
+        /// samples by one on the right, and rebuild the lamps that changed.</summary>
+        private static void DilateRuns(byte[] fine, byte[] outp, int subWidth, int height)
+        {
+            int n = subWidth * HalfLamps;
+            var lit = new bool[n];
+            for (int y = 0; y < height; y++)
+            {
+                int fineRow = y * subWidth * HalfLamps;
+                for (int i = 0; i < n; i++) lit[i] = fine[fineRow + i] >= HalfLampThreshold;
+
+                for (int i = 0; i < n; i++)
+                {
+                    if (!lit[i] || (i > 0 && lit[i - 1])) continue;   // start of a run only
+                    int j = i;
+                    while (j + 1 < n && lit[j + 1]) j++;
+                    if (j - i + 1 == StemDilate && j + 1 < n && !lit[j + 1]) lit[j + 1] = true;
+                    i = j;
+                }
+
+                int row = y * subWidth;
+                for (int x = 0; x < subWidth; x++)
+                {
+                    int count = 0;
+                    for (int k = 0; k < HalfLamps; k++) if (lit[x * HalfLamps + k]) count++;
+                    outp[row + x] = (byte)(count * 255 / HalfLamps);
+                }
+            }
+        }
+
         private static readonly bool AverageHalfLamps =
             Environment.GetEnvironmentVariable("WPF_SUBPIXEL_COLLAPSE") == "avg";
 
@@ -597,6 +636,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
             }
+            if (StemDilate > 0) DilateRuns(fine, outp, subWidth, height);
             return outp;
         }
 
