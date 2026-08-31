@@ -1941,7 +1941,7 @@ namespace System.Windows.Forms
 				click_last = DateTime.Now;
 			}
 
-			if ((e.Button == MouseButtons.Middle) && XplatUI.RunningOnUnix) {
+			if ((e.Button == MouseButtons.Middle) && XplatUI.RunningOnUnixPlatform) {
 				Document.Marker	marker;
 
 				marker.tag = document.FindCursor(e.X + document.ViewPortX, e.Y + document.ViewPortY, out marker.pos);

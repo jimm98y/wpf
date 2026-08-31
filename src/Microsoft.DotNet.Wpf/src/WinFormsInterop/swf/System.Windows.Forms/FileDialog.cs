@@ -2059,7 +2059,7 @@ namespace System.Windows.Forms
 			
 			folderStack.Push (di);
 
-			bool ignoreCase = !XplatUI.RunningOnUnix;
+			bool ignoreCase = !XplatUI.RunningOnUnixPlatform;
 
 			while (di.Parent != null) {
 				di = di.Parent;

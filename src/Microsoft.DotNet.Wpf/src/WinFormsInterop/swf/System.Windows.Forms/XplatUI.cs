@@ -142,6 +142,26 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		/// <summary>Whether the OPERATING SYSTEM is a Unix -- a different question from
+		/// <see cref="RunningOnUnix"/>, which is why this exists.
+		/// <para>RunningOnUnix answers "which text and graphics BACKEND", and it says yes on Windows
+		/// whenever the GPU rasterizer is driving, because the Graphics a control is handed then
+		/// records into a WebGPU scene and has no GDI behind it. That is right for choosing
+		/// DrawString over Win32DrawText. It is WRONG for every caller asking about the platform's
+		/// own conventions, and there were four: the file dialog matched paths case-SENSITIVELY on
+		/// Windows, the folder browser stopped recognising "C:" as a drive root, a middle click in
+		/// any TextBox pasted the X11 primary selection, and RichTextBox counted a line ending as one
+		/// character where Windows uses two -- which puts every selection offset past the first line
+		/// wrong.</para></summary>
+		public static bool RunningOnUnixPlatform {
+			get {
+				if (OperatingSystem.IsBrowser ())
+					return false;
+				int p = (int) Environment.OSVersion.Platform;
+				return (p == 4 || p == 6 || p == 128);
+			}
+		}
+
 		public static int ActiveWindowTrackingDelay {
 			get { return driver.ActiveWindowTrackingDelay; }
 		}
