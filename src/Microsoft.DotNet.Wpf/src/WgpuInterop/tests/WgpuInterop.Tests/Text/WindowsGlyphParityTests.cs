@@ -1639,14 +1639,14 @@ namespace WgpuInterop.Tests.Text
             foreach (int ppem in new[] { 10, 11, 12, 13, 14, 15, 16, 17 })
             {
                 int baseline = ppem + 12;
-                foreach (char ch in "HxonE8")
+                foreach (char ch in "HIlnmuETioBDKN")
                 {
                     string t = ch.ToString();
                     byte[] w = Gdi.Draw(t, ProbeFamily(), ppem, PenX, baseline, Width, Height);
                     byte[] o = Ours(font, t, ppem, baseline);
                     (int wt, int wb) = InkRows(w);
                     (int ot, int ob) = InkRows(o);
-                    if (ch == 'H')
+                    if (ppem == 12 || (ppem == 16 && ch == 'H'))
                     {
                         // THE LAMPS THEMSELVES, so the stem edges can be read in thirds of a
                         // pixel instead of inferred from a row total. Ink per row says GDI's

@@ -795,6 +795,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// answering GETINFO's greyscale query yes (2,402,211), against a baseline of 2,180,771.
         /// Every one of them fixes 'H' and costs more elsewhere, which says GDI is not widening
         /// by a constant at all.</para>
+        /// <para>WIDENING IS ONLY HALF OF IT; THE OTHER HALF IS PHASE. Dumped across fourteen
+        /// glyphs at 12ppem, GDI's stems are remarkably UNIFORM -- 'H', 'l', 'E', 'T', 'i', 'u',
+        /// 'K' and 'N' all come back 73 153 255 197 111 36, the same width and the same position
+        /// within the pixel. Ours are not: some match, some are 36 111 197 197 111 36, some
+        /// 73 153 255 255 153 73. GDI's pattern SATURATES a lamp and ours is symmetric about a
+        /// lamp boundary, which is a stem sitting half a lamp over, not merely a narrow one.</para>
+        /// <para>That is why forcing width alone never pays, and it is measured: taking the
+        /// control value always (full cut-in) costs 3,116,340, and doing that with +12/64 on top
+        /// costs 3,125,569, against 2,180,771. Making every stem 19/16 at the WRONG phase is worse
+        /// than leaving them alone.</para>
+        /// <para>It also explains why XHintMode 6 wins at 12ppem and nowhere else: rounding on the
+        /// lamp grid is what puts a stem edge on a lamp boundary, which is the phase GDI has. The
+        /// open question is what GDI actually does -- it is not the face (the pre-program never
+        /// asks whether ClearType is on) and it is not a constant width -- and the answer has to
+        /// set the position and the width together.</para>
         /// <para>Extending the correction to rounded MIRPs is therefore exactly what 'H' needs,
         /// and it is still worse across the repertoire: 54,934 -> 56,393, 32 cases worse against
         /// 8 better. Re-measured after the BGRA fix, so this rejection rests on a comparison that
