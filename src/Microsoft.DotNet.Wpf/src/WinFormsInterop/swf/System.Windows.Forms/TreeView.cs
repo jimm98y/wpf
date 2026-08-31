@@ -1542,8 +1542,24 @@ namespace System.Windows.Forms {
 			// that it fills one row instead of two -- so middle + 2 is what puts it on that centre.
 			// Measured against a stock tree: ours ran two rows above the box it hangs from, and three
 			// pixels short of the label it points at.
-			if (show_root_lines || node.Parent != null)
-				dc.DrawLine (dash, x - indent + ladjust, middle + 2, x + radjust + 3, middle + 2);
+			if (show_root_lines || node.Parent != null) {
+				// Anchored to its OWN start, which is the vertical it hangs off. Our DashStyle.Dot
+				// pen inks even columns wherever it is asked to start, so this run agreed with
+				// Windows only at the depths whose vertical happens to sit on an even column.
+				// middle + 1, not middle + 2: a one-pixel DrawLine is centred half a pixel back and
+				// inks the row ABOVE its coordinate, which is why the stroke asked for middle + 2.
+				// MINUS ONE ON X TOO. The half-pixel rule that makes a one-pixel stroke ink the row
+				// above its coordinate does the same on the other axis: the vertical drawn at
+				// `x - indent + ladjust` inks the column to its LEFT. Starting the fill at the
+				// coordinate itself put every run one column right of the vertical it hangs off --
+				// which reads exactly like a parity bug and is not one.
+				int hx0 = x - indent + ladjust - 1;
+				int hy = middle + 1;
+				int hx1 = x + radjust + 2;
+				using (var solid = new SolidBrush (dash.Color))
+					for (int hx = hx0; hx <= hx1; hx += 2)
+						dc.FillRectangle (solid, hx, hy, 1, 1);
+			}
 
 			if (node.PrevNode != null || node.Parent != null) {
 				dc.DrawLine (dash, x - indent + ladjust, node.Bounds.Top,
