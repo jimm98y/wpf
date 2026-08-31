@@ -3400,6 +3400,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
                 float dx = world.M11 * gminX + world.M21 * gminY + world.M31;
                 float dy = world.M12 * gminX + world.M22 * gminY + world.M32;
+                // PLACEMENT IS NOT WHAT IS LEFT, and it was worth proving rather than assuming.
+                // Flooring gminX does occasionally put a glyph a whole pixel off GDI: the 'T' of
+                // "Today:" in the control window is one column left, and its columns match GDI's
+                // to the digit (481, 765, 1349) -- an identical mask at a different integer,
+                // because our hinted left edge lands a hair below the integer GDI's lands above.
+                // <para>But it is rare. Letting EVERY glyph in the window slide a whole pixel to
+                // wherever it fits best recovers 20,702 of 1,203,450 -- 1.7%, and that is an upper
+                // bound measured with 5px blocks, which also lets noise shift itself into
+                // agreement. At glyph-sized blocks it is 1.2%, at 30px blocks 0.1%. So no
+                // placement rule -- not rounding here instead of flooring, not snapping the pen to
+                // integers the way GDI does -- can be worth more than a rounding error of the
+                // total. The residual is the coverage/ClearType stage, which is where the
+                // stage-by-stage split said it was. Do not spend another day on positioning.</para>
                 float qx = MathF.Round(dx * 2f) * 0.5f;
                 float ox = MathF.Floor(qx);
                 float phaseX = qx - ox;
