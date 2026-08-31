@@ -1906,6 +1906,8 @@ namespace System.Windows.Forms
 		private static readonly Color ScrollThumb = Color.FromArgb (133, 133, 133);
 		private static readonly Color ScrollArrow = Color.FromArgb (96, 96, 96);
 		private static readonly Color ProgressTrough = Color.FromArgb (230, 230, 230);
+		/// <summary>How much of the track a marquee's sliding segment covers.</summary>
+		private const double MarqueeSegment = 0.35;
 
 		// #0F7B0F, read off a stock progress bar. Ours was a brighter, yellower green.
 		private static readonly Color ProgressFill = Color.FromArgb (15, 123, 15);
@@ -1932,6 +1934,27 @@ namespace System.Windows.Forms
 			dc.FillRectangle (ResPool.GetSolidBrush (ProgressTrough), bounds);
 			dc.DrawRectangle (ResPool.GetPen (HairLine), bounds.X, bounds.Y,
 					  bounds.Width - 1, bounds.Height - 1);
+
+			// A MARQUEE says nothing about a value: it is a segment that slides across and repeats, and
+			// it is the one progress bar Windows really does animate. This method used to fill by value
+			// whatever the style, so a marquee bar sat still showing a partial fill that meant nothing.
+			// The control already runs a timer and invalidates for this; only the drawing was missing.
+			if (ctrl.Style == ProgressBarStyle.Marquee) {
+				Rectangle track = Rectangle.Inflate (bounds, -1, -1);
+				if (track.Width <= 0 || track.Height <= 0)
+					return;
+				int speed = Math.Max (1, ctrl.MarqueeAnimationSpeed);
+				// The same clock and scaling the classic theme marquees on, so the two agree about speed.
+				double ms = (DateTime.Now - ctrl.start).TotalMilliseconds;
+				double phase = ms / ThemeWin32Classic.ProgressBarMarqueeSpeedScaling % speed / speed;
+				int seg = Math.Max (1, (int) Math.Round (track.Width * MarqueeSegment));
+				int x = track.X - seg + (int) Math.Round (phase * (track.Width + seg));
+				int left = Math.Max (track.X, x);
+				int right = Math.Min (track.Right, x + seg);
+				if (right > left)
+					dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), left, track.Y, right - left, track.Height);
+				return;
+			}
 
 			int range = ctrl.Maximum - ctrl.Minimum;
 			if (range <= 0)
