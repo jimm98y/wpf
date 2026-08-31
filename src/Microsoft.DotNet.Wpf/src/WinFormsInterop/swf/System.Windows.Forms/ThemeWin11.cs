@@ -802,8 +802,14 @@ namespace System.Windows.Forms
 				return ColorControl;
 			// With the list down the whole field takes the pale accent, chevron and all. Leaving the
 			// button on the control's own background left a white notch at the end of a blue field.
+			// A DROP-DOWN LIST's button is the same #FDFDFD as the rest of its field, not the
+			// control's BackColor. Filling the field solved the two-row ring round it and left this
+			// notch behind, because the button is painted over the field afterwards -- 276 pixels
+			// of white in a field that is 253 everywhere else.
 			return comboBox.DroppedDown || comboBox.PointerOver
-				? ComboFieldOpenFace : comboBox.BackColor;
+				? ComboFieldOpenFace
+				: comboBox.DropDownStyle == ComboBoxStyle.DropDownList
+					? ComboFieldFace : comboBox.BackColor;
 		}
 
 		// ---- tree view ----------------------------------------------------------------
