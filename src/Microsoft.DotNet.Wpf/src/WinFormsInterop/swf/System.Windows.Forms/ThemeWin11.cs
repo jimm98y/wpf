@@ -1897,8 +1897,24 @@ namespace System.Windows.Forms
 
 		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
 		{
-			// Two columns in, less seven: measured against a stock calendar, whose marker starts a
-			// little before the third column rather than on it.
+			// NEGATIVE ASKS TO BE CENTRED, and centring is what Windows does. This used to return
+			// margin + 2 * cell.Width - 7, "measured against a stock calendar" -- and it was measured
+			// on one DAY. The caller only centres when the indent comes back negative, so a positive
+			// answer made MonthCalendarCentersToday dead code and pinned the Today line to a fixed
+			// column.
+			// A fixed column matches a centred one only for the string it was fitted to. The date
+			// rolled from 8/31/2026 to 9/1/2026 during a session and the line lost a character:
+			// Windows' centred group moved half a character right, ours did not, and MonthCalendar
+			// went from 245,138 to 604,417 with its position half alone going 32,088 -> 329,783.
+			// The cost of this was a function of the calendar date, which is the kind of bug that
+			// hides until the clock finds it.
+			// CENTRING WAS TRIED AND IS WORSE, for now. Returning -1 reaches the centring path,
+			// which is what Windows does, and it lands the group 12 pixels LEFT of Windows' where
+			// the fixed column lands 3 left: MonthCalendar 625,159 against 604,417. The centring
+			// path measures the group with Graphics.MeasureString and the text is DRAWN by this
+			// port's own pipeline, and the two disagree by about twenty pixels on this string --
+			// so the group comes out too wide and the centre too far left. Fixing the measurement
+			// is what unlocks this; until then the fixed column is nearer.
 			return margin + 2 * cell.Width - 7;
 		}
 

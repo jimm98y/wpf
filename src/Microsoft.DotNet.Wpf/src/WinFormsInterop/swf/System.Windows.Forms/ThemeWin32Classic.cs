@@ -3799,8 +3799,16 @@ namespace System.Windows.Forms
 					string today_text = "Today: " + DateTime.Now.ToShortDateString();
 					if (MonthCalendarCentersToday (mc)) {
 						// Centre the marker and the date as one group, which is where Windows puts them.
-						int group = (int) Math.Ceiling (dc.MeasureString (today_text, MonthCalendarTodayFont (mc)).Width);
-						if (mc.ShowTodayCircle) group += date_cell_size.Width + 5;
+						// MEASURE IT THE WAY IT IS DRAWN. The text below goes out under
+						// GenericTypographic, which has no padding, and starts a whole cell after the
+						// marker -- today_offset += date_cell_size.Width, a few lines down. Measuring here
+						// with the default format instead adds GDI+'s padding, and adding five on top of a
+						// cell width invents a gap that is not drawn: together they made the group 26 pixels
+						// wider than the thing on screen, which centred it 13 to the left of Windows'.
+						var group_format = new StringFormat (StringFormat.GenericTypographic.FormatFlags);
+						int group = (int) Math.Ceiling (dc.MeasureString (today_text,
+							MonthCalendarTodayFont (mc), int.MaxValue, group_format).Width);
+						if (mc.ShowTodayCircle) group += date_cell_size.Width;
 						if (today_offset < 0)
 					today_offset = Math.Max (5, (client_rectangle.Width - group) / 2);
 					}
