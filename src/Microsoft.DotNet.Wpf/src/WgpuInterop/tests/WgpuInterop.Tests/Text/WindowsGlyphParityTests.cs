@@ -2526,7 +2526,24 @@ namespace WgpuInterop.Tests.Text
         /// 'H' four -- each swept in 64ths of a pixel and kept where the lamps agree best. Comparing
         /// the answer against our own fitted x says which instruction outcome we get wrong, one
         /// coordinate at a time, which is what deriving the rule requires.</para>
-        /// <para>WPF_SOLVEGLYPH=char@ppem, e.g. "H@12".</para></summary>
+        /// <para>WPF_SOLVEGLYPH=char@ppem, e.g. "H@12".</para>
+        /// <para>RUN OVER TWENTY-TWO GLYPHS AT 12PPEM under XHintMode 6, 281 coordinates in
+        /// all, the census is:</para>
+        /// <para>196 EXACT (70%), then -24/64 eighteen times, +2/64 seven times, +13/64 five
+        /// times, +6/64 five times, +3/64 four times, -11/64 three times, +4/64 three times,
+        /// and a tail of singletons.</para>
+        /// <para>Two things follow. The left stem -- 1.000 to 2.094 -- comes out EXACTLY right
+        /// for H, l, i, n, E, B, D, K, N, F, L, P, R, b, h and k, so whatever is wrong is not
+        /// the stem-fitting machinery in general. And the errors are not scattered: one value,
+        /// -0.375px, accounts for eighteen of the eighty-five that are wrong, which is more than
+        /// the next six classes together.</para>
+        /// <para>Those eighteen sit at the junction where a bowl or an arch meets a stem, in
+        /// n, m, b, B, D, P and R -- e.g. 'n' has a point one 64th past its stem's right edge at
+        /// 2.109 that GDI puts at 1.734, pulled a third of a pixel INSIDE the stem. -0.375 is
+        /// three units of a DELTAP at the default shift, so a delta we apply and GDI does not
+        /// was the obvious suspect; it is not, because all three WPF_CT_DELTA modes leave those
+        /// coordinates completely unchanged. Those points are placed by SHP and IP through CALLs
+        /// into the font program, and that is where to look next.</para></summary>
         [Fact]
         public void SolveTheXCoordinatesGdiFitted()
         {
