@@ -861,19 +861,24 @@ namespace WgpuInterop.Tests.Text
                 // a pixel is a much larger and much simpler number than the tuned +6/64 the
                 // interpreter currently applies over ppem 11-13 only.
                 byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: true));
+                // OURS is the fourth column and the only one that says what to DO. The other three
+                // describe GDI; this one is the geometry we actually ship, so the correction any
+                // fix has to apply is (GDI - ours) and not (GDI - anything of GDI's).
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  column ink: "
-                    + "GDI-hinted(ours) | GDI bitmap | GDI-UNhinted(ours) ===");
+                    + "GDI-hinted(ours) | GDI bitmap | GDI-UNhinted(ours) | OURS fitted ===");
                 for (int x = 0; x < Cell; x++)
                 {
-                    long a = 0, b = 0, u = 0;
+                    long a = 0, b = 0, u = 0, o2 = 0;
                     for (int y = 0; y < Cell; y++)
                     {
                         a += gdiOutlineOurs[y * Cell + x];
                         b += theirs[y * Cell + x];
                         u += unhintedOurs[y * Cell + x];
+                        o2 += mine[y * Cell + x];
                     }
-                    if (a == 0 && b == 0 && u == 0) continue;
-                    Console.Error.WriteLine($"  x={x,3}  hinted {a,6}   GDI {b,6}   unhinted {u,6}");
+                    if (a == 0 && b == 0 && u == 0 && o2 == 0) continue;
+                    Console.Error.WriteLine($"  x={x,3}  hinted {a,6}   GDI {b,6}"
+                        + $"   unhinted {u,6}   ours {o2,6}");
                 }
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }

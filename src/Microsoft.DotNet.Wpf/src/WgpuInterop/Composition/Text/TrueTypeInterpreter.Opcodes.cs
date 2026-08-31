@@ -725,6 +725,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// prints each one the first time it is seen.</summary>
         private static readonly System.Collections.Generic.HashSet<byte> s_unimplemented = new();
 
+        /// <summary>WPF_STEM_NATURAL: target the natural stem width plus half a pixel, which is
+        /// what GDI measurably draws, instead of a rounded control value plus s_stemFat.</summary>
+        private static readonly bool s_stemNatural =
+            Environment.GetEnvironmentVariable("WPF_STEM_NATURAL") == "1";
+
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
 
@@ -1308,7 +1313,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // to 13 -- 11 and 14 round by the SAME 0.125, in the same direction, to the same 1.0px
             // -- so the boundary is a measured fact without a mechanism. If someone finds the rule,
             // this gate is what it has to reproduce.
-            if (s_stemFat != 0 && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
+            // WPF_STEM_NATURAL: the measured rule rather than the fitted one. Three column
+            // profiles of Segoe UI 'l' say GDI's greyscale stem is the NATURAL width plus about
+            // half a pixel at every size from 9 to 18 (quantised to an eighth), where ours is a
+            // control value rounded to the grid and then nudged by s_stemFat. So take the natural
+            // distance and add half a pixel, skipping the control value and the rounding both.
+            // MEASURED AND REJECTED, and kept here so it is not re-derived. Against the glyph
+            // parity repertoire it takes the disagreement from 54,934 to 89,871 -- 207 cases worse,
+            // 28 better. The regressions are concentrated in the BOLD faces (repertoire@17b +1,426,
+            // @18b +1,563, @20b +1,393, 'b'@11 +1,614), which is the tell: half a pixel on top of
+            // an already-wide bold stem overshoots, and the rule was read off ONE glyph of ONE face
+            // -- Segoe UI Regular 'l'. The measurement is right and the generalisation was not
+            // tested before being believed.
+            // <para>Even for the regular face it is mixed: regular@10 183->48, @16 103->16, @17
+            // 44->16, @18 50->18 all improve, while regular@13 goes 79->1,893. So "natural + half a
+            // pixel" is the right description of what GDI does to Segoe UI Regular's 'l' and is NOT
+            // a rule our fitting can adopt wholesale.</para>
+            if (s_stemNatural && tookControlValue && !BiLevelPass && InClearTypeDirection)
+                distance = original + (original < 0 ? -32 : 32);
+
+            if (s_stemFat != 0 && !s_stemNatural && tookControlValue && (!round || s_stemFatRounded) && !BiLevelPass
                 && !(s_stemFatNoMin && keepMinimum)
                 && (s_stemFatCvt < 0 || cvt == s_stemFatCvt)
                 && (!s_stemFatStraight || !TouchesACurve(z, p))
