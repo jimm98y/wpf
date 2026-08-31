@@ -1787,8 +1787,19 @@ namespace System.Windows.Forms
 					// coverage each, centred where a two-pixel square would be centred; a hard
 					// square carries 4.0 and has no soft edge at all. Measured off a stock grip,
 					// whose brightest white dot reaches 255 in ONE pixel with 245..251 around it.
-					g.FillRectangle (shadow, x + 3.1f, y + 3.1f, 1.8f, 1.8f);
-					g.FillRectangle (white, x + 0.1f, y + 0.1f, 1.8f, 1.8f);
+					// CENTRED ON A PIXEL, not straddling two. From x + 0.1 a 1.8 square covers 0.9
+					// of column x and 0.9 of x+1 and nothing fully -- which is why ours came out a
+					// flat 253 pair where a stock grip has ONE pixel at 255 with 245..251 around
+					// it. From x - 0.4 it covers column x completely and 0.4 either side, which is
+					// that shape.
+					// <para>MEASURED, not reasoned. The dot nearest the corner then has its core on
+					// column 1075 where Windows' is on 1076, so shifting the whole lattice one right
+					// and down looks obviously right -- it puts THAT core exactly on Windows'. It is
+					// 7,008 worse: the other nine dots were already where Windows puts them, and one
+					// visibly-wrong dot said nothing about the eight that were not being looked
+					// at.</para>
+					g.FillRectangle (shadow, x + 2.6f, y + 2.6f, 1.8f, 1.8f);
+					g.FillRectangle (white, x - 0.4f, y - 0.4f, 1.8f, 1.8f);
 				}
 			g.SmoothingMode = oldGrip;
 		}
