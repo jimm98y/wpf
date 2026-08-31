@@ -136,6 +136,13 @@ namespace Wpf.WinFormsInterop.Tests
             // controls do, and touching Handle is not enough to make it. Worth fixing as a
             // layout question one day; it is not a drawing difference and the number here
             // cannot go to zero until it is.
+            // The strip's own gradient, at two widths, with no items on it: EXACT, both of them.
+            // Sixteen bands over a ramp sixteen pixels longer than the strip, and every step lands
+            // on Windows' column. Left in the table at zero on purpose -- it is the only thing here
+            // that reaches zero, and a number appearing would mean the gradient had moved.
+            ["menustrip-400"] = (0, 0),
+            ["menustrip-1000"] = (0, 0),
+
             ["statusstrip"] = (188, 200),
             // HARNESS, not drawing. The same .NET TabControl paints its page 249,249,249 when it
             // is drawn on a form that has never been shown, and 240,240,240 once the form is up --

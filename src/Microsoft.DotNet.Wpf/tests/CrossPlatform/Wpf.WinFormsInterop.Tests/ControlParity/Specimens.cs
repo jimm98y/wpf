@@ -170,6 +170,17 @@ namespace WinFormsControlParity
                 }));
             }
 
+
+            // The menu strip's own background, at two widths. Its ramp is banded like any GDI+
+            // gradient, but the band width says the RECT it is drawn over is wider than the strip:
+            // on the 1080px window ours fits 1080/16 and Windows' fits 1096.6/16. Two widths tell a
+            // constant margin from a proportional one.
+            foreach (int w in new[] { 400, 1000 })
+            {
+                int width = w;
+                all.Add(new Specimen("menustrip-" + width, width, 24, () => new MenuStrip()));
+            }
+
             return all;
         }
     }

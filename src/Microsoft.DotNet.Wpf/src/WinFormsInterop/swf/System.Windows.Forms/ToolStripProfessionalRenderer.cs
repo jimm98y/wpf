@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripProfessionalRenderer.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -375,7 +375,14 @@ namespace System.Windows.Forms
 			}
 			
 			if (e.ToolStrip is MenuStrip || e.ToolStrip is StatusStrip) {
-				using (LinearGradientBrush b = new LinearGradientBrush (e.AffectedBounds, this.ColorTable.MenuStripGradientBegin, this.ColorTable.MenuStripGradientEnd, e.ToolStrip.Orientation == Orientation.Horizontal ? LinearGradientMode.Horizontal : LinearGradientMode.Vertical))
+				// THE RAMP IS SIXTEEN PIXELS LONGER THAN THE STRIP IT FILLS. A GDI+ gradient is a
+				// staircase of sixteen bands, so its band width reports the rect it was built over, and
+				// measured against the real renderer at three widths that rect is consistently sixteen
+				// wider than the strip: 420 -> 436.5, 1020 -> 1037.1, 1080 -> 1096.6. The FILL still
+				// covers the strip; only the brush is longer, so the last band never quite arrives.
+				Rectangle ramp = e.AffectedBounds;
+				if (e.ToolStrip.Orientation == Orientation.Horizontal) ramp.Width += 16; else ramp.Height += 16;
+				using (LinearGradientBrush b = new LinearGradientBrush (ramp, this.ColorTable.MenuStripGradientBegin, this.ColorTable.MenuStripGradientEnd, e.ToolStrip.Orientation == Orientation.Horizontal ? LinearGradientMode.Horizontal : LinearGradientMode.Vertical))
 					e.Graphics.FillRectangle (b, e.AffectedBounds);
 			}
 			else
