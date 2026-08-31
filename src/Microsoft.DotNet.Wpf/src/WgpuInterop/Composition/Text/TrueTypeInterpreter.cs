@@ -554,6 +554,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_stemSnap =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMSNAP"), out int ss) ? ss : 0;
 
+        /// <summary>RE-MEASURED 2026-08-31, after the stroke-weight correction changed the
+        /// landscape, and STILL NOT TAKEN -- but for a reason worth recording, because on the
+        /// window alone it looks like the biggest win available.
+        /// <para>WPF_CT_POSGRID=3, the LAMP grid, takes the control window from 1,216,266 to
+        /// 1,064,610. A hundred and fifty thousand, and the rationale is sound: ClearType draws x
+        /// in thirds, so a stem edge on a lamp boundary saturates that lamp. The earlier
+        /// measurement had it worse, so the improvement is real and new.</para>
+        /// <para>It is OVERFITTING, and the per-size structural numbers say so plainly. It helps
+        /// exactly one size -- the one the window is set in -- and hurts every other:</para>
+        /// <para>            @11    @12    @13    @19   b@12   b@19</para>
+        /// <para>  sixteenth 1587   1673   1982   1516   1102   1547</para>
+        /// <para>  lamp      1770   1528   2187   2677   1659   2712</para>
+        /// <para>regular@12 improves by 145 and regular@19 gets 75% worse. The window is all
+        /// 12ppem, so the window cannot see the cost. A metric that contains only one size cannot
+        /// choose a rule that has to hold at all of them.</para></summary>
         private static readonly int s_positionGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_POSGRID"), out int pg) ? pg : 0;
 
