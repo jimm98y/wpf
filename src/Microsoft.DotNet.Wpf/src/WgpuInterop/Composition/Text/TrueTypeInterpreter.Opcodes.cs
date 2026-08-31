@@ -123,6 +123,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x44:                                                          // WCVTP
                         {
                             int v = Pop(), i = Pop();
+                            if (s_traceHint && (uint)i < _scaledCvt.Length)
+                                Console.Error.WriteLine($"      WCVTP cvt[{i}] {_scaledCvt[i] / 64f:0.0000}"
+                                                        + $" -> {v / 64f:0.0000}px  (ppem {_ppem})");
                             if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = v;
                             break;
                         }
@@ -1100,7 +1103,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (_gs.SingleWidthCutIn > 0
                 && Math.Abs(value - _gs.SingleWidthValue * stretch) < _gs.SingleWidthCutIn * stretch)
+            {
+                if (_dumpActive)
+                    Console.Error.WriteLine($"      SINGLE WIDTH snap cvt[{cvt}] {value / 64f:0.0000}px"
+                        + $" -> {_gs.SingleWidthValue * stretch / 64f:0.0000}px"
+                        + $" (cut-in {_gs.SingleWidthCutIn / 64f:0.0000})");
                 value = value >= 0 ? _gs.SingleWidthValue * stretch : -_gs.SingleWidthValue * stretch;
+            }
 
             if (p >= z.PointCount) { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
 
@@ -1125,6 +1134,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" minDist={_gs.MinimumDistance / 64f:0.0000} keepMin={keepMinimum}"
                     + $" op=0x{op:X2}({Convert.ToString(op & 0x1F, 2).PadLeft(5, '0')}) roundState={_gs.Round}"
                     + $" instrCtrl={_gs.InstructControl}"
+                    + $" swValue={_gs.SingleWidthValue / 64f:0.0000} swCutIn={_gs.SingleWidthCutIn / 64f:0.0000}"
                     + $" axis={(IsHorizontalProjection ? "x" : "y")}");
 
             // A control value pointing the other way from the outline is the wrong one to use; with

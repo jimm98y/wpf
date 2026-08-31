@@ -624,6 +624,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // pre-program" -- Microsoft, TrueType and ClearType. Some faces round numbers there
             // without setting the vectors, and on the virtual grid that misplaces horizontal strokes.
             _inPreProgram = true;
+            // WPF_PREP_DUMP traces the pre-program the way WPF_HINT_DUMP traces a glyph's.
+            _dumpActive = Environment.GetEnvironmentVariable("WPF_PREP_DUMP") == "1";
             try
             {
                 if (_fontProgram.Length > 0)
@@ -637,7 +639,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 ResetGraphicsState();
                 if (_controlProgram.Length > 0 && !Execute(_controlProgram, 0)) { _faulted = true; return false; }
             }
-            finally { _inPreProgram = false; }
+            finally { _inPreProgram = false; _dumpActive = false; }
 
             _prepState = _gs;
             return true;
