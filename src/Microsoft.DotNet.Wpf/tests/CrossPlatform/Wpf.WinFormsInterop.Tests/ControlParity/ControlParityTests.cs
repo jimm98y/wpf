@@ -65,7 +65,13 @@ namespace Wpf.WinFormsInterop.Tests
             // Ours draws the value and the spin arrows; Windows' DrawToBitmap draws neither, because
             // they live in CHILD controls that WM_PRINT does not reach. The reference is the thin one
             // here, so this number cannot go to zero and going up would be us drawing LESS.
-            ["numericupdown"] = (2148, 282),
+            // 2148 -> 2164 deliberately. The spin panel's grey stops one row short of the
+            // lower button, which is what the WINDOW measures -- 1,408 off the captured
+            // difference -- and costs 16 ink pixels HERE, because this harness renders through
+            // DrawToBitmap into a System.Drawing bitmap and lays the two buttons out a row
+            // apart from where the live control puts them. When the two harnesses disagree the
+            // window wins: it is the thing being matched.
+            ["numericupdown"] = (2164, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control

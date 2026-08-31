@@ -438,6 +438,9 @@ namespace System.Windows.Forms
 		// and the accent is #005FB8, not the #0078D7 of a decade ago.
 		private static readonly Color ButtonFaceNormal = Color.FromArgb (253, 253, 253);
 		private static readonly Color ButtonBorderNormal = Color.FromArgb (208, 208, 208);
+		/// <summary>The inside of a disabled check box or radio button, #F9F9F9 -- measured off a
+		/// stock one, and NOT the control colour behind it.</summary>
+		private static readonly Color GlyphDisabledFace = Color.FromArgb (249, 249, 249);
 		/// <summary>The bottom edge only, #BABABA, measured off a stock button. The other three
 		/// sides are ButtonBorderNormal; drawing all four in it left a 90-pixel line across the
 		/// two buttons 22 levels too light.</summary>
@@ -765,7 +768,10 @@ namespace System.Windows.Forms
 			// A checked radio button is an accent-coloured disc with a light dot punched out of it,
 			// not a light disc with an accent dot on it -- which is what this drew, and read as the
 			// colours being swapped.
-			Color face = !rb.Enabled ? ColorControl
+			// A DISABLED radio still has a face: Windows fills it #F9F9F9, a shade off the
+			// control colour behind it, so the disc is still a disc. Filling it with ColorControl
+			// painted it the same colour as its own background and left nothing but a ring.
+			Color face = !rb.Enabled ? GlyphDisabledFace
 				   : rb.Checked ? border : ColorWindow;
 			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
 			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
@@ -1151,7 +1157,13 @@ namespace System.Windows.Forms
 			// on the form carried a white frame where Windows has grey. Sixteen columns by twenty
 			// rows across two controls -- 6,120 of the client's difference, and invisible in a
 			// screenshot until the two are subtracted.
-			g.FillRectangle (ResPool.GetSolidBrush (ColorControl), bounds);
+			// One row SHORT at the foot of the lower button: Windows' grey panel stops with the
+			// button, and the field's white runs under it. Filling the whole of bounds put 32
+			// pixels of grey on the row below -- the fix for one edge overshooting the other.
+			Rectangle panel = bounds;
+			if (!top)
+				panel.Height -= 1;
+			g.FillRectangle (ResPool.GetSolidBrush (ColorControl), panel);
 
 			// Windows draws the two buttons as one eighteen-row block floor-centred in the field: a
 			// row spare above the top button and two below the bottom one. Ours filled the field, so
