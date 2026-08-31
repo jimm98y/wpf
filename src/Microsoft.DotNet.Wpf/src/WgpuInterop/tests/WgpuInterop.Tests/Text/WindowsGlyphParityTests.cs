@@ -1493,6 +1493,120 @@ namespace WgpuInterop.Tests.Text
             File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>IS THE COVERAGE CHAIN EXACT EVERYWHERE, or only where it was checked?
+        /// Reported only -- set WPF_FLOOR_REPORT.
+        /// <para>The lamp comparison that retired the filter, the gain, the curve and the quantiser
+        /// was one size, one shape, one background. That is enough to say those knobs are not
+        /// merely at a LOCAL optimum -- an exact match cannot be improved on, and moving any of
+        /// them away breaks it -- but only over the ground it covered. A knob sweep that looks flat
+        /// at 12ppem can still be wrong at 9 or 18, and then the right answer is a joint move that
+        /// no single sweep from the current setting would ever find.</para>
+        /// <para>So walk the floor: every size the control window actually uses, bars at a spread
+        /// of sub-pixel widths, and demand our lamps equal GDI's EXACTLY. Anything less than every
+        /// row exact says the floor is not level and there is a global optimum still to find.</para>
+        /// </summary>
+        [Fact]
+        public void CoverageFloor_ExactAtEverySizeTheWindowUses()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? path = Environment.GetEnvironmentVariable("WPF_FLOOR_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_FLOOR_REPORT to collect this");
+
+            const string Family = "WpfFloorProbe";
+            // One font, many sizes. Widths in FONT UNITS, so each renders at a different fraction
+            // of a pixel at each ppem -- which is the point: the sub-pixel phase has to vary.
+            var bars = new List<SyntheticFont.Bar>();
+            for (int units = 96; units <= 288; units += 12)
+                bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false, noProgram: true));
+
+            byte[] fontBytes = SyntheticFont.Build(Family, bars);
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI would not accept the synthetic font");
+
+            var report = new System.Text.StringBuilder();
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                report.AppendLine("== is our lamp coverage GDI's, at every size the window uses?");
+                report.AppendLine("   ppem   lamps cmp  differing   solo   shift   offset in LAMPS (ours - GDI)");
+                var raw = new byte[Width * Height * 4];
+                for (int ppem = 8; ppem <= 20; ppem++)
+                {
+                    // TWO axes, kept apart. A row BOTH sides ink is the horizontal coverage chain
+                    // answering the same question -- filter, gain, curve, quantiser. A row only one
+                    // side inks is the vertical one, which is SubpixelRows and already understood.
+                    // Added together they say the floor is not level and hide which half is not.
+                    long compared = 0, differing = 0, worst = 0, soloRows = 0, shifted = 0;
+                    var offsets = new long[17];
+                    for (int i = 0; i < bars.Count; i++)
+                    {
+                        string ch = ((char)(0x41 + i)).ToString();
+                        int baseline = ppem + 12;
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(ch, Family, ppem, PenX, baseline, Width, Height, false, false);
+                        Gdi.s_rawRgb = null;
+                        byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+                        for (int y = 0; y < Height; y++)
+                        {
+                            bool gRow = false, oRow = false;
+                            for (int x = 0; x < Width && !(gRow && oRow); x++)
+                                for (int c = 0; c < 3; c++)
+                                {
+                                    if (raw[(y * Width + x) * 4 + (2 - c)] != 255) gRow = true;
+                                    if (ours[(y * Width + x) * 4 + c] != 255) oRow = true;
+                                }
+                            if (gRow != oRow) { soloRows++; continue; }
+                            if (!gRow) continue;
+                            // A THIRD axis hides in here. A bar that lands on a different lamp
+                            // COLUMN disagrees by 255 at both ends while its coverage is the same
+                            // shape -- that is placement, not the filter or the curve. Compare the
+                            // inked run against the inked run, and count the offset separately.
+                            int[] gLamp = Lamps(raw, y, true), oLamp = Lamps(ours, y, false);
+                            int gs = First(gLamp), os = First(oLamp);
+                            if (gs < 0 || os < 0) continue;
+                            if (gs != os) { shifted++; offsets[Math.Clamp(os - gs + 8, 0, 16)]++; continue; }
+                            int len = Math.Max(gLamp.Length - gs, oLamp.Length - os);
+                            for (int k = 0; k < len; k++)
+                            {
+                                int g = gs + k < gLamp.Length ? gLamp[gs + k] : 255;
+                                int o = os + k < oLamp.Length ? oLamp[os + k] : 255;
+                                compared++;
+                                if (g == o) continue;
+                                differing++;
+                                worst = Math.Max(worst, Math.Abs(g - o));
+                            }
+                        }
+                    }
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        for (int k = 0; k < offsets.Length; k++)
+                            if (offsets[k] > 0) sb.Append($" {k - 8:+0;-0;0}:{offsets[k]}");
+                        report.AppendLine($"   {ppem,4}   {compared,10:N0}   {differing,8:N0}   {soloRows,6}   {shifted,6}   lamps{sb}");
+                    }
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>One row of lamps, left to right, as the value each carries.</summary>
+        private static int[] Lamps(byte[] rgba, int y, bool bgra)
+        {
+            var v = new int[Width * 3];
+            for (int x = 0; x < Width; x++)
+                for (int c = 0; c < 3; c++)
+                    v[x * 3 + c] = rgba[(y * Width + x) * 4 + (bgra ? 2 - c : c)];
+            return v;
+        }
+
+        /// <summary>The first lamp carrying any ink, or -1.</summary>
+        private static int First(int[] lamps)
+        {
+            for (int i = 0; i < lamps.Length; i++) if (lamps[i] != 255) return i;
+            return -1;
+        }
+
         /// <summary>The inked lamps of the busiest row, left to right, as coverage out of 255.
         /// One number per LAMP, not per pixel, so the three of a pixel are consecutive.</summary>
         private static string LampProfile(byte[] rgba, bool bgra)

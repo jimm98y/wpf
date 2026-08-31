@@ -2033,11 +2033,21 @@ namespace System.Windows.Forms
 				dc.FillRectangle (brush, rect);
 		}
 
-		/// <summary>Windows marks today with a one-pixel frame whose corners are rounded by exactly
-		/// one pixel -- which is to say the corner pixel is simply not painted. Drawing it as a curve
-		/// does not survive: a path is flattened into unjoined segments and bulges inwards, an arc or
-		/// a diagonal antialiases outwards and fringes the corner, and a half-pixel offset blurs the
-		/// whole stroke. Four edges that each stop a pixel short need none of that.</summary>
+		/// <summary>Windows marks today with a one-pixel frame whose corners are rounded. Drawing
+		/// that as a curve does not survive: a path is flattened into unjoined segments and bulges
+		/// inwards, an arc or a diagonal antialiases outwards and fringes the corner, and a
+		/// half-pixel offset blurs the whole stroke. Four edges that each stop a pixel short need
+		/// none of that.
+		/// <para>What the edges alone do NOT give is the corner pixel, and this used to say Windows
+		/// leaves it unpainted. It does not. Read off the live window at the today box's top left,
+		/// on white, Windows has 193,225,255 there and we had 255,255,255 -- a miss of 92 across the
+		/// three channels, at eight pixels a box. It paints the pixel diagonally INSIDE the corner
+		/// the same way, which is an antialiased arc of about a pixel's radius passing through both.
+		/// <para>The frame colour blended at 0.24 is what goes in, rather than the 193,225,255 that
+		/// was measured: per-channel that sample does not decompose into any single alpha over the
+		/// frame colour -- its blue is 255 where the frame's is 204 -- so the literal value is only
+		/// right over the white it was read on, and the ring is also drawn over selected cells. A
+		/// coverage is right everywhere and gets three quarters of the way there.</para></summary>
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
@@ -2057,6 +2067,13 @@ namespace System.Windows.Forms
 			dc.DrawLine (pen, box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
 			dc.DrawLine (pen, box.X, box.Y + 1, box.X, box.Bottom - 1);
 			dc.DrawLine (pen, box.Right, box.Y + 1, box.Right, box.Bottom - 1);
+			// The four corners, at the coverage measured off Windows' own.
+			using (var corner = new SolidBrush (Color.FromArgb (62, ColorHotTrack))) {
+				dc.FillRectangle (corner, box.X, box.Y, 1, 1);
+				dc.FillRectangle (corner, box.Right, box.Y, 1, 1);
+				dc.FillRectangle (corner, box.X, box.Bottom, 1, 1);
+				dc.FillRectangle (corner, box.Right, box.Bottom, 1, 1);
+			}
 			dc.SmoothingMode = old;
 		}
 

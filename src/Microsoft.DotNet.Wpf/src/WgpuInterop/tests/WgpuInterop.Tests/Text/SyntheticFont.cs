@@ -92,7 +92,7 @@ namespace WgpuInterop.Tests.Text
                 ["glyf"] = glyfData,
                 ["head"] = BuildHead(longLoca),
                 ["hhea"] = BuildHhea(numGlyphs),
-                ["hmtx"] = BuildHmtx(numGlyphs),
+                ["hmtx"] = BuildHmtx(numGlyphs, bars),
                 ["loca"] = locaData.ToArray(),
                 ["maxp"] = BuildMaxp(numGlyphs),
                 ["name"] = BuildName(family),
@@ -194,10 +194,22 @@ namespace WgpuInterop.Tests.Text
             return m.ToArray();
         }
 
-        private static byte[] BuildHmtx(int numGlyphs)
+        /// <summary>Advance and LEFT SIDE BEARING per glyph.
+        /// <para>The bearing has to be the glyph's own xMin. TrueType requires them equal, and a
+        /// font that breaks it does not fail -- it renders, differently on each side. This wrote a
+        /// flat 0 while every bar's contour starts at Left, and GDI honoured the declared 0 by
+        /// bringing the ink back to the pen while we drew the contour where it says it is. The
+        /// result was a clean 400-unit offset that scales with ppem, 4 lamps at 8ppem up to 8 at
+        /// 14, which read exactly like a placement bug in the renderer and was a lie in the
+        /// fixture. A probe has to be right about the thing it is not testing.</para></summary>
+        private static byte[] BuildHmtx(int numGlyphs, IReadOnlyList<Bar> bars)
         {
             var m = new MemoryStream();
-            for (int i = 0; i < numGlyphs; i++) { WriteU16(m, 1200); WriteI16(m, 0); }
+            for (int i = 0; i < numGlyphs; i++)
+            {
+                WriteU16(m, 1200);
+                WriteI16(m, i > 0 && i - 1 < bars.Count ? bars[i - 1].Left : 0);
+            }
             return m.ToArray();
         }
 

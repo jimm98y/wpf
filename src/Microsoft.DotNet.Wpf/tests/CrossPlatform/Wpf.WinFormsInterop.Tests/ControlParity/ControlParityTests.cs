@@ -71,7 +71,7 @@ namespace Wpf.WinFormsInterop.Tests
             // DrawToBitmap into a System.Drawing bitmap and lays the two buttons out a row
             // apart from where the live control puts them. When the two harnesses disagree the
             // window wins: it is the thing being matched.
-            ["numericupdown"] = (2164, 282),
+            ["numericupdown"] = (2160, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control
