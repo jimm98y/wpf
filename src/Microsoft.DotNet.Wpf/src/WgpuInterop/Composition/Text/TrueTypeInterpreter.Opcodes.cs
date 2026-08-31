@@ -1250,7 +1250,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (round)
                 distance = RoundDistance(distance);
 
-            // SIX SIXTY-FOURTHS ON A CONTROL-VALUE STROKE WEIGHT, and the six is not fitted: it is
+            // THE PPEM GATE BELOW IS NOT ABOUT STROKE WEIGHT. Read every glyph in the lamp report
+            // against GDI, per size, and 11-13 is where nearly everything goes wrong -- straight
+            // stems and CURVES alike, with the curves exact on either side of it:
+            //     'l'   10 --   11 --   12 --   13 --   14 --      (this correction; exact)
+            //     'o'   10 --   11  6   12  4   13  6   14  2
+            //     'e'   10 --   11  3   12  2   13  4   14 --
+            //     'c'   10 --   11  3   12  3   13  3   14 --
+            // ('--' is every lamp identical; a number is columns that differ.) A bowl has no
+            // control-value stroke weight on the side that is wrong, so this correction cannot be
+            // what those need -- and yet they fail over exactly the sizes it covers and are perfect
+            // outside it. That is one anomaly at 11, 12 and 13 with two symptoms, and the six
+            // sixty-fourths below is a patch on the one symptom it happens to fit.
+            //
+            // 'I' is the exception that keeps the story honest: it is wrong at EVERY size, and that
+            // is the separate MDAP position fault (1.109 rounded up to 1.125 where GDI is at or
+            // below 1.0), which has nothing to do with the range.
+            //            // SIX SIXTY-FOURTHS ON A CONTROL-VALUE STROKE WEIGHT, and the six is not fitted: it is
             // what GDI's own geometry says. The bar solver reproduces GDI's lamps at residual zero,
             // so its answer IS GDI's outline, and for Segoe UI's 'l' at 12ppem it returns a stem of
             // 1.000 -> 2.094 where the program hands us 1.000 -> 2.000. 2.094 - 2.000 is 6/64.
