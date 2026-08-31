@@ -824,6 +824,106 @@ namespace WgpuInterop.Tests.Text
         /// <summary>The same string through our renderer: greyscale coverage of black on white, at
         /// the same origin GDI was given.</summary>
         /// <summary>The same run as Ours(), but the whole RGBA buffer rather than one lamp.</summary>
+        /// <summary>STAGE CR: our ClearType pipeline fed GDI'S OWN fitted outline, against GDI's
+        /// ClearType pixels. Reported only -- set WPF_STAGECR_REPORT.
+        /// <para>Every split before this one was taken at the GREYSCALE stage, which is not what we
+        /// ship. Stage C compares our whole pipeline against GDI's whole pipeline and cannot say
+        /// which half disagrees. This gives both sides the SAME geometry -- GDI's -- so what is left
+        /// is our lamp sampling, our filter and our contrast curve, and nothing else. The gap
+        /// between C and CR is the geometry's contribution.</para>
+        /// <para>It matters because the outline, the rasterizer, the lamp phase and the total ink
+        /// are all already measured correct, and GDI is known to RENDER a shape wider than the one
+        /// it hands out -- so "geometry" and "filter" are the only two candidates left and nobody
+        /// has priced them separately.</para>
+        /// <para>THE ANSWER, and it is a negative one:</para>
+        /// <code>  face      ppem    C (ours)   CR (GDI's geometry)   change
+        ///         Segoe UI    11     870,909        817,154          -6.2%
+        ///         Segoe UI    12     955,027        925,906          -3.0%
+        ///         Segoe UI    13   1,042,012        970,736          -6.8%
+        ///         Segoe UI    16   1,405,608      1,531,357          +8.9%
+        ///         Arial       11     979,609      1,181,375         +20.6%
+        ///         Arial       12   1,035,507      1,003,587          -3.1%
+        ///         Arial       13   1,167,355      1,156,474          -0.9%
+        ///         Arial       16   1,647,462      1,687,475          +2.4%</code>
+        /// <para>Handing our ClearType pipeline a DIFFERENT glyph geometry moves the disagreement by
+        /// a few percent and as often up as down. Roughly a million of it survives either way, so
+        /// the mass is in the lamps, the filter and the contrast curve -- not in which of the two
+        /// outlines they are fed.</para>
+        /// <para>ONE CAVEAT, and it is not small: GGO_NATIVE hands out an outline GDI does not
+        /// draw -- its rendered stems are wider (see GdiStageTests' column profiles). So CR does not
+        /// equalise the geometry, it swaps ours for a THIRD one. What it establishes is weaker than
+        /// intended but still useful: the ClearType output is insensitive to geometry differences of
+        /// this size, which caps what any amount of stem-fitting work can win.</para></summary>
+        [Theory]
+        [InlineData("Segoe UI")]
+        [InlineData("Arial")]
+        public void StageCR_ClearTypeAgainstGdisOwnOutline(string family)
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_STAGECR_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_STAGECR_REPORT to collect this");
+            string? file = FontFiles.Find(family, bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== {family}  (stage CR: same geometry, our ClearType against GDI's)");
+            report.AppendLine("ppem   stage                        differing      sum|d|   mean|d|");
+
+            foreach (int ppem in new[] { 11, 12, 13, 16 })
+            {
+                int baseline = ppem + 12;
+                long cPix = 0, cSum = 0, rPix = 0, rSum = 0;
+                var raw = new byte[Width * Height * 4];
+                foreach (string group in Repertoire)
+                    foreach (char ch in group)
+                    {
+                        // Gdi.Draw's RETURN value is not the pixels -- the raw RGB comes back through
+                        // s_rawRgb, which is how StageC does it. Comparing the return value gave a
+                        // mean |d| of 764.7 out of 765: every pixel maximally wrong, which is the
+                        // signature of comparing against the wrong buffer rather than of a bug.
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(ch.ToString(), family, ppem, PenX, baseline, Width, Height, false, false);
+                        Gdi.s_rawRgb = null;
+                        byte[] ours = OursRgba(font, ch.ToString(), ppem, baseline, correction: true);
+                        byte[] fromGdi = OursRgbaFromFigures(
+                            GdiStageTests.GdiOutlineAt(ch, family, ppem, PenX, baseline), font);
+                        Tally(ours, raw, ref cPix, ref cSum);
+                        Tally(fromGdi, raw, ref rPix, ref rSum);
+                    }
+                report.AppendLine($"{ppem,4}   C  ours end to end        {cPix,9}  {cSum,10}  "
+                                  + $"{(cPix == 0 ? 0 : (double)cSum / cPix):0.00}");
+                report.AppendLine($"{ppem,4}   CR ours on GDI's outline  {rPix,9}  {rSum,10}  "
+                                  + $"{(rPix == 0 ? 0 : (double)rSum / rPix):0.00}");
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        private static void Tally(byte[] a, byte[] b, ref long pixels, ref long sum)
+        {
+            for (int i = 0; i + 3 < a.Length && i + 3 < b.Length; i += 4)
+            {
+                int d = Math.Abs(a[i] - b[i]) + Math.Abs(a[i + 1] - b[i + 1]) + Math.Abs(a[i + 2] - b[i + 2]);
+                if (d == 0) continue;
+                pixels++; sum += d;
+            }
+        }
+
+        /// <summary>Our ClearType pixels for a geometry we were HANDED, rather than one we
+        /// fitted -- flagged the way the string-run path flags a glyph batch (isGlyph plus
+        /// PixelAligned) so it takes the same lamps, the same filter and the same contrast
+        /// curve. Anything that differs is those three and nothing else.</summary>
+        private byte[] OursRgbaFromFigures(List<PathFigure> placed, TrueTypeFont font)
+        {
+            var root = new SceneVisual();
+            root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                                              new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)),
+                                              isGlyph: true) { PixelAligned = true });
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            return renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
+        }
+
         private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
                                 float dx = 0f)
         {

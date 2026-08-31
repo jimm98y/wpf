@@ -155,7 +155,10 @@ namespace WgpuInterop.Tests.Text
         /// the theory holds, the outline GDI's ClearType actually draws, which no plain GGO call
         /// reports and whose absence is what the whole decomposition has been stuck behind.</para>
         /// </summary>
-        private static List<PathFigure> GdiOutline(char c, string family, int ppem, bool unhinted,
+        /// <summary>internal, not private: stage CR in WindowsGlyphParityTests feeds GDI's own
+        /// fitted outline through OUR ClearType pipeline, and this is where that outline comes
+        /// from. Same assembly, same namespace.</summary>
+        internal static List<PathFigure> GdiOutline(char c, string family, int ppem, bool unhinted,
                                                    int xScale = 1, bool bold = false)
         {
             var figures = new List<PathFigure>();
@@ -761,6 +764,11 @@ namespace WgpuInterop.Tests.Text
 
         private static List<PathFigure> Translate(List<PathFigure> figures, float dx, float dy)
             => Map(figures, v => new Vector2(v.X + dx, v.Y + dy));
+
+        /// <summary>GDI's fitted outline, placed at a pen. For stage CR, which draws it with OUR
+        /// ClearType pipeline and needs it in the same cell GDI drew into.</summary>
+        internal static List<PathFigure> GdiOutlineAt(char c, string family, int ppem, float dx, float dy)
+            => Map(GdiOutline(c, family, ppem, unhinted: false), v => new Vector2(v.X + dx, v.Y + dy));
 
         private static List<PathFigure> Map(List<PathFigure> figures, Func<Vector2, Vector2> f)
         {
