@@ -2543,7 +2543,22 @@ namespace WgpuInterop.Tests.Text
         /// three units of a DELTAP at the default shift, so a delta we apply and GDI does not
         /// was the obvious suspect; it is not, because all three WPF_CT_DELTA modes leave those
         /// coordinates completely unchanged. Those points are placed by SHP and IP through CALLs
-        /// into the font program, and that is where to look next.</para></summary>
+        /// into the font program, and that is where to look next.</para>
+        /// <para>AND THE SAME CENSUS SETTLES WHAT XHintMode 6 BUYS, in GDI's own coordinates
+        /// rather than in a score. Twenty-two letters and ten digits at 12ppem:</para>
+        /// <para>letters  mode 5 158/279 exact (57%),  mode 6 196/281 (70%)<br/>
+        /// digits   mode 5 382/440 exact (87%),  mode 6 343/437 (78%)</para>
+        /// <para>Mode 6 is better on letters and WORSE on digits, and that is the whole of the
+        /// argument the two harnesses were having. The control window is mostly letters, so it
+        /// prefers 6 by 159,129; its MonthCalendar is nothing but digits, so 6 costs that region
+        /// 23,780 -- and MonthCalendar is the worst region in the window at 245,138 with the
+        /// lowest ink ratio of any, 0.9896.</para>
+        /// <para>Neither mode is the rule. Digits at 87% say mode 5 is nearly right for them and
+        /// mode 6 breaks something that was working; letters at 57% say the reverse. Switching on
+        /// the character CLASS would buy the window perhaps twenty thousand and would be a lie --
+        /// a font's digits are not special, and the real distinction is whatever makes GDI
+        /// lamp-align some stems and not others. This is recorded as the size of the prize, not
+        /// as a thing to do.</para></summary>
         [Fact]
         public void SolveTheXCoordinatesGdiFitted()
         {
