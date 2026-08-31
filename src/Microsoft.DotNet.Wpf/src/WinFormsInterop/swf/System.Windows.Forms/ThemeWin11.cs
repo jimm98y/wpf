@@ -1722,8 +1722,17 @@ namespace System.Windows.Forms
 			const float Step = 13f / 3f;
 			Brush white = ResPool.GetSolidBrush (Color.White);
 			Brush shadow = ResPool.GetSolidBrush (GripShadow);
+			SmoothingMode oldGrip = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
 			for (int row = 0; row < Rows; row++)
 				for (int col = Rows - 1 - row; col < Rows; col++) {
+					// Rounded, and MEASURED to be right. Windows' dots do land on different
+					// subpixel phases -- the step is four and a third, and one dot is two whole
+					// pixels of white where the next is 0.53/1.00/0.40 across three -- so drawing
+					// them unrounded at the true fractional position looks like the correct fix.
+					// It is 2,996 WORSE. Whatever phase Windows' grip actually has, it is not the
+					// one this formula produces, and the rounded lattice is nearer it than a
+					// wrongly-phased continuous one. Don't re-derive this from the step again.
 					int x = (int) Math.Round (rect.Right - 5 - (Rows - 1 - col) * Step);
 					int y = (int) Math.Round (rect.Bottom - 5 - (Rows - 1 - row) * Step);
 					// THREE apart, not two. Two was the guess from "a shadow sits diagonally
@@ -1731,9 +1740,14 @@ namespace System.Windows.Forms
 					// pixel up and left of Windows'. Windows' white core sits at 1071,646 and its
 					// shadow core at 1074,649 -- three in both directions, a full dot's width of
 					// clear background between them.
-					g.FillRectangle (shadow, x + 3, y + 3, 2, 2);
-					g.FillRectangle (white, x, y, 2, 2);
+					// 1.8 ANTIALIASED, not a hard 2x2. Windows' dots carry about 3.1 pixels of
+					// coverage each, centred where a two-pixel square would be centred; a hard
+					// square carries 4.0 and has no soft edge at all. Measured off a stock grip,
+					// whose brightest white dot reaches 255 in ONE pixel with 245..251 around it.
+					g.FillRectangle (shadow, x + 3.1f, y + 3.1f, 1.8f, 1.8f);
+					g.FillRectangle (white, x + 0.1f, y + 0.1f, 1.8f, 1.8f);
 				}
+			g.SmoothingMode = oldGrip;
 		}
 
 		public override Color TreeViewLineColor (TreeView tv) => Color.FromArgb (109, 109, 109);
