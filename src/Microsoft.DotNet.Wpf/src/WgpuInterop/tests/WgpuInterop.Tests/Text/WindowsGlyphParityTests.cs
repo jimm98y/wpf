@@ -292,10 +292,10 @@ namespace WgpuInterop.Tests.Text
             ["repertoire@19b"] = 2840,
             ["repertoire@19bi"] = 523,
             ["repertoire@19i"] = 488,
-            ["repertoire@20"] = 3705,
-            ["repertoire@20b"] = 3570,
-            ["repertoire@20bi"] = 1904,
-            ["repertoire@20i"] = 1958,
+            ["repertoire@20"] = 3467,
+            ["repertoire@20b"] = 3345,
+            ["repertoire@20bi"] = 1124,
+            ["repertoire@20i"] = 1002,
             ["S"] = 12,
             ["s"] = 8,
             ["Shapes 2026@11"] = 135,
@@ -1633,7 +1633,10 @@ namespace WgpuInterop.Tests.Text
             var report = new System.Text.StringBuilder();
             report.AppendLine("== ink rows, GDI against ours (top..bottom), Segoe UI regular");
             report.AppendLine("   ppem  glyph   GDI rows    our rows    dTop dBot");
-            foreach (int ppem in new[] { 10, 11, 12, 13, 14, 15, 16, 17 })
+            // 18-20 added when ppem 20 became the one size the face's symmetric branch turns on
+            // at, and the one size we render too heavy. A report that stops short of the defect
+            // cannot be pointed at it.
+            foreach (int ppem in new[] { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 })
             {
                 int baseline = ppem + 12;
                 foreach (char ch in "HIlnmuETioBDKN")
@@ -1643,7 +1646,7 @@ namespace WgpuInterop.Tests.Text
                     byte[] o = Ours(font, t, ppem, baseline);
                     (int wt, int wb) = InkRows(w);
                     (int ot, int ob) = InkRows(o);
-                    if (ppem == 12 || (ppem == 16 && ch == 'H'))
+                    if (ppem == 12 || ((ppem == 16 || ppem == 20) && ch == 'H'))
                     {
                         // THE LAMPS THEMSELVES, so the stem edges can be read in thirds of a
                         // pixel instead of inferred from a row total. Ink per row says GDI's
@@ -3587,7 +3590,7 @@ namespace WgpuInterop.Tests.Text
             ["b@17"] = 9,
             ["b@18"] = 146,
             ["b@19"] = 15,
-            ["b@20"] = 273,
+            ["b@20"] = 67,
             ["bi@10"] = 120,
             ["bi@11"] = 77,
             ["bi@12"] = 97,
@@ -3598,7 +3601,7 @@ namespace WgpuInterop.Tests.Text
             ["bi@17"] = 40,
             ["bi@18"] = 31,
             ["bi@19"] = 33,
-            ["bi@20"] = 428,
+            ["bi@20"] = 45,
             ["i@10"] = 214,
             ["i@11"] = 180,
             ["i@12"] = 155,
@@ -3609,7 +3612,7 @@ namespace WgpuInterop.Tests.Text
             ["i@17"] = 68,
             ["i@18"] = 49,
             ["i@19"] = 73,
-            ["i@20"] = 787,
+            ["i@20"] = 64,
             ["regular@10"] = 150,
             ["regular@11"] = 701,
             ["regular@12"] = 121,
@@ -3620,7 +3623,7 @@ namespace WgpuInterop.Tests.Text
             ["regular@17"] = 221,
             ["regular@18"] = 172,
             ["regular@19"] = 109,
-            ["regular@20"] = 131,
+            ["regular@20"] = 64,
         };
 
 

@@ -62,6 +62,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Whether the face asks to be smoothed in BOTH directions at this size.</summary>
         bool WantsSymmetricSmoothing(float pixelsPerEm);
+
+        /// <summary>Whether the face asks to be GRID-FITTED at this size. Symmetric
+        /// smoothing means two different things depending on the answer -- see
+        /// WgpuSceneRenderer's SymmetricRows.</summary>
+        bool WantsGridFit(float pixelsPerEm);
     }
 
     internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont,
@@ -852,6 +857,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// room to be right.</para>
         /// <para>A face with no 'gasp' is fitted at every size, which is what a rasterizer does with
         /// one and what we did with all of them.</para></summary>
+        public bool WantsGridFit(float pixelsPerEm) => FaceWantsGridFit(pixelsPerEm);
+
         private bool FaceWantsGridFit(float pixelsPerEm)
         {
             if (_gasp < 0) return true;

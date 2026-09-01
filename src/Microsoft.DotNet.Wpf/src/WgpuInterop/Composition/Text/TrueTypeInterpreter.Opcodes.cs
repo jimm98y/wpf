@@ -1146,33 +1146,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_traceGetInfo =
             Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
 
-        /// <summary>What to answer GETINFO's symmetric-rendering query. WPF_CT_SYMINFO: "gasp"
-        /// asks the FACE (the correct rule), "1"/"0" force it, unset is off.
-        /// <para>THE CORRECT RULE IS "gasp", and it is not the default yet. GDI answers this bit
-        /// per face per ppem out of the face's 'gasp' table, and a face branches its ENTIRE hinting
-        /// program on the answer: Segoe UI's storage[2] gains 128 when it is set, which takes it
-        /// out of the {0, 2, 6} set that prep tests (1866-1883) before rounding 51 stem control
-        /// values to whole pixels (the rounding is fpgm 2617). Segoe UI asks for symmetric
-        /// smoothing at 20ppem and above, and nowhere below.</para>
-        /// <para>Answering a global YES was measured and was badly wrong -- it un-rounded every
-        /// stem at every size, taking 'H' at 12ppem from GDI's exact lamps (73 153 255 197 111 36,
-        /// 2.157px) to 73 153 255 153 73 (1.848px) and costing the window 167,925. That had been
-        /// written down as a deliberate deviation from GDI on the strength of an oracle reading;
-        /// the oracle was right and was asking about the WRONG FONT. The synthetic probe ships no
+        /// <summary>What to answer GETINFO's symmetric-rendering query. Unset asks the FACE,
+        /// which is the rule GDI follows; WPF_CT_SYMINFO=1/0 forces it.
+        /// <para>Symmetric smoothing is a per-face, per-ppem entry in 'gasp', not a property of
+        /// the rasterizer, and a face branches its ENTIRE hinting program on the answer: Segoe
+        /// UI's storage[2] gains 128 when it is set, which takes it out of the {0, 2, 6} set that
+        /// prep tests (1866-1883) before rounding 51 stem control values to whole pixels (the
+        /// rounding is fpgm 2617). Segoe UI asks for it at 20ppem and up, and below 9.</para>
+        /// <para>Both constants that came before this were wrong. A global NO was shipped for a
+        /// long time. A global YES was then measured and was far worse -- it un-rounded every stem
+        /// at every size, taking 'H'@12 from GDI's exact lamps (73 153 255 197 111 36, 2.157px) to
+        /// 73 153 255 153 73 (1.848px) and costing the window 167,925 -- and was briefly written
+        /// down as a deliberate deviation from GDI on the strength of an oracle reading. The
+        /// oracle was right and was asking about the WRONG FONT: the synthetic probe ships no
         /// 'gasp' at all, and a face that does not say gets the bit.</para>
-        /// <para>Why "gasp" is not yet the default: it is exactly right everywhere except the one
-        /// size it turns on at. Only regular@20 moves, and it moves the wrong way -- our ink goes
-        /// from 1.0131 of GDI's to 1.1354, thirteen percent heavy, for 1,364 on the parity suite.
-        /// Bold and italic are untouched. The window is ppem 12 and does not change at all.</para>
-        /// <para>So the remaining defect is small and NAMED: the regular face at 20ppem, running
-        /// the branch the face asks for, comes out too heavy. Find that and "gasp" becomes the
-        /// default and this knob goes away.</para></summary>
+        /// <para>Asking the face was still 1,364 worse than a global no until the thing it exposed
+        /// was fixed: at 20ppem the relaxed geometry was being rasterized with the vertical
+        /// sampling meant for the UNFITTED small-size regime. See WgpuSceneRenderer.SymmetricRows.
+        /// With that split, the face's own answer is both correct and best -- 77,111 against the
+        /// 80,689 that shipped -- and the geometry moves toward GDI where it is checkable: at
+        /// 20ppem the coordinates inside GDI's own allowed intervals go 33/62 to 43/62.</para>
+        /// </summary>
         private static readonly bool? s_symmetricInfoForced =
             Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") switch
             {
                 "1" => true,
-                "gasp" => null,      // ask the face
-                _ => false,          // unset or "0"
+                "0" => false,
+                _ => null,           // unset: ask the face, which is the rule
             };
 
         // Was a documented deviation ("GDI reports symmetric, we do not"). It was not a

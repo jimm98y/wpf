@@ -67,14 +67,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 'gasp'); it costs vertical samples, so it is per run and folded into the mask key.</summary>
         private bool _symmetricSmoothing;
 
-        /// <summary>Vertical samples to use when the face asks for symmetric smoothing.
-        /// <para>TWO, swept (WPF_SYM_ROWS): the parity suite totals 4,140,193 with the flag ignored,
-        /// 4,111,685 at two samples and 4,173,135 at four, and the size that actually changes there
-        /// -- 20ppem, where Segoe UI's gasp turns symmetric smoothing back on -- goes 225,559 ->
-        /// 198,640 -> 209,354. Four over-softens. The grey path's four samples are for unhinted
-        /// shapes and are not the right number here.</para></summary>
+        /// <summary>How many vertical samples this run's symmetric smoothing asks for, which
+        /// depends on whether the face is grid-fitted at this size. Folded into the mask key.
+        /// </summary>
+        private int _symmetricRows;
+
+        /// <summary>Vertical samples when the face asks for symmetric smoothing AND is not
+        /// being grid-fitted -- WPF_SYM_ROWS, two.
+        /// <para>Segoe UI asks for symmetric smoothing in two places and they are not the same
+        /// request. Its 'gasp' gives DOGRAY+SYM_SMOOTHING up to 8ppem with NO gridfit, and
+        /// GRIDFIT+DOGRAY+SYM_GRIDFIT+SYM_SMOOTHING from 20 up. An unfitted outline has a
+        /// partial row at every horizontal edge and genuinely wants vertical samples; a fitted
+        /// one has had its horizontal edges put on pixel boundaries by the y hinting and does
+        /// not -- the same argument PathRasterizer.SubpixelRows already makes for text.</para>
+        /// <para>ONE CONSTANT COVERED BOTH and had only ever been measured on the second. Two
+        /// samples cost 2,981 on the parity suite against one, all of it at 20ppem. But that
+        /// suite runs 10..20ppem only, so it cannot see the first regime at all, and the
+        /// evidence for vertical sampling THERE is separate and stands: our lamp spread against
+        /// GDI's is 1.193 at 7ppem and 1.153 at 8 where 11-19 sit at 0.97-1.04. Splitting the
+        /// two keeps that and takes the 20ppem win.</para></summary>
         private static readonly int SymmetricRows =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 2;
+
+        /// <summary>Vertical samples when the face asks for symmetric smoothing and IS
+        /// grid-fitted -- WPF_SYM_ROWS_FIT, one. See SymmetricRows for why these are two.</summary>
+        private static readonly int SymmetricRowsFitted =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS_FIT"), out int sf) ? sf : 1;
 
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
@@ -3476,6 +3494,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // one -- so it needs its own key, or a run drawn once with ClearType and once without
                 // (a rotated copy, a layered window) would be handed the other one's texture.
                 bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world);
+                // The ROW COUNT is part of the mask, not merely the fact of smoothing: two
+                // runs of the same shape either side of the gridfit boundary ask for
+                // different numbers of vertical samples and must not share a texture.
+                key = key * 31 + (_symmetricSmoothing && subpixel ? _symmetricRows : 0);
                 key = (key * 397 ^ (long)format) * 32 + (_symmetricSmoothing && subpixel ? 16 : 0)
                       + (_aliasedEdges ? 8 : 0) + (gamma ? 4 : 0)
                       + (textBlend ? 2 : 0) + (subpixel ? 1 : 0);
@@ -3506,7 +3528,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // mask is three times as wide before it is filtered down, and the coverage
                         // shader has no notion of that. Glyph masks are cached by shape, so this is
                         // paid once per glyph per size, not once per frame.
-                        PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? SymmetricRows : 0;
+                        PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? _symmetricRows : 0;
                         PathRasterizer.SubpixelMask sm;
                         try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased)); }
                         finally { PathRasterizer.SubpixelRowsForRun = 0; }
@@ -4453,8 +4475,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // table says so per size and the answer changes with it -- Segoe UI wants it at 8ppem
             // and below and again above 19, and not in between -- so it is decided per RUN, not
             // once for the renderer.
+            float symPpem = run.EmSize * LinearScale(world);
             _symmetricSmoothing = font is Text.IHintedGlyphFont hf
-                                  && hf.WantsSymmetricSmoothing(run.EmSize * LinearScale(world));
+                                  && hf.WantsSymmetricSmoothing(symPpem);
+            // And WHICH symmetric regime this is: the face asks for the same smoothing above
+            // 19ppem and below 9, but only the second one is unfitted.
+            _symmetricRows = _symmetricSmoothing && font is Text.IHintedGlyphFont gfit
+                             && gfit.WantsGridFit(symPpem) ? SymmetricRowsFitted : SymmetricRows;
 
             // Shape the run into positioned glyphs (glyph ids + advances/offsets),
             // then lay them out. Advances come from the shaper (so kerning etc.
