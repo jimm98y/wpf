@@ -2542,7 +2542,14 @@ namespace System.Windows.Forms {
 
 		// paint this control now
 		private void PaintHandler (object sender, PaintEventArgs pe) {
-			if (Width <= 0 || Height <=  0 || Visible == false)
+			// NOT gated on Visible. A Paint event being raised IS the request to paint, and
+			// DrawToBitmap and WM_PRINT both arrive through one -- so refusing here made the control
+			// come out BLANK whenever it was drawn other than to the screen. Control.Visible walks
+			// up to the form, so a calendar on a form that has not been shown reports false however
+			// its own flag is set, which is exactly the state anything printing or capturing it is
+			// in. The stock control has no such gate: through the parity harness, which never shows
+			// its host form, Windows' calendar draws 1,066 inked pixels and ours drew 0.
+			if (Width <= 0 || Height <= 0)
     				return;
 
 			Draw (pe.ClipRectangle, pe.Graphics);

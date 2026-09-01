@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -73,6 +73,63 @@ namespace Wpf.WinFormsInterop.Tests
                                       + $"  {measured - drawn,14:+0.0;-0.0;0.0}");
                 }
 
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>Why a MonthCalendar comes out BLANK through DrawToBitmap when the same
+        /// control draws correctly in a live window. Reported only -- WPF_MCPROBE_REPORT.</summary>
+        [Fact]
+        public void MonthCalendar_DrawToBitmap_ProducesInk()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_MCPROBE_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_MCPROBE_REPORT to collect this");
+
+            var report = new System.Text.StringBuilder();
+            using var host = new System.Windows.Forms.Form { ClientSize = new Size(300, 260) };
+            var mc = new System.Windows.Forms.MonthCalendar();
+            report.AppendLine($"   fresh                 Size {mc.Size}  Client {mc.ClientSize}");
+            host.Controls.Add(mc);
+            IntPtr unused = host.Handle; unused = mc.Handle;
+            report.AppendLine($"   parented, handled     Size {mc.Size}  Client {mc.ClientSize}");
+            mc.Width = 230; mc.Height = 170;
+            report.AppendLine($"   after Width/Height    Size {mc.Size}  Client {mc.ClientSize}");
+            mc.Refresh();
+            int Ink()
+            {
+                using var b = new Bitmap(mc.Width, mc.Height, PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(b)) g.Clear(Color.White);
+                mc.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                int n = 0;
+                for (int y = 0; y < b.Height; y++)
+                    for (int x = 0; x < b.Width; x++)
+                    {
+                        Color c = b.GetPixel(x, y);
+                        if (c.R < 120 && c.G < 120 && c.B < 120) n++;
+                    }
+                return n;
+            }
+            report.AppendLine($"   before Show   Visible {mc.Visible,-5}  DrawToBitmap ink {Ink()}");
+            host.Show();
+            System.Windows.Forms.Application.DoEvents();
+            mc.Refresh();
+            report.AppendLine($"   after Show    Visible {mc.Visible,-5}  DrawToBitmap ink {Ink()}");
+
+            foreach (var size in new[] { new Size(230, 170), mc.Size })
+            {
+                using var bmp = new Bitmap(Math.Max(size.Width, 1), Math.Max(size.Height, 1),
+                                           PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(bmp)) g.Clear(Color.White);
+                mc.DrawToBitmap(bmp, new Rectangle(0, 0, bmp.Width, bmp.Height));
+                int dark = 0;
+                for (int y = 0; y < bmp.Height; y++)
+                    for (int x = 0; x < bmp.Width; x++)
+                    {
+                        Color c = bmp.GetPixel(x, y);
+                        if (c.R < 120 && c.G < 120 && c.B < 120) dark++;
+                    }
+                report.AppendLine($"   DrawToBitmap {size.Width}x{size.Height}  ink pixels {dark}");
+            }
+            host.Dispose();
             File.AppendAllText(path!, report.ToString());
         }
     }
