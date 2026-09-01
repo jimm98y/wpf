@@ -3693,6 +3693,13 @@ namespace System.Windows.Forms
 			// is the same number the kerned run only reaches when slid a pixel right.
 			bool saved_kerning = dc.no_kerning;
 			dc.no_kerning = true;
+			// AND GDI'S TEXT PLACEMENT, for the same reason the kerning is off: Windows' month
+			// calendar is a native control and draws through GDI. Every string here is centred in a
+			// rect -- each date in its cell, the title, the day names -- and DrawString centres on a
+			// FRACTIONAL offset where TextRenderer, which IS GDI, floors it. Centring on a fraction
+			// puts every glyph at a sub-pixel phase GDI never uses.
+			bool saved_metrics = dc.gdi_text_metrics;
+			dc.gdi_text_metrics = true;
 			try {
 			// Once the outgoing view has finished gathering itself up, the calendar swaps to the new
 			// one and fades it in. Asking here is what drives the second half of the transition.
@@ -3926,7 +3933,7 @@ namespace System.Windows.Forms
 					dc.DrawRectangle (ResPool.GetPen (MonthCalendarPopupBorderColor (mc)),
 							   bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
 			}
-			} finally { dc.no_kerning = saved_kerning; }
+			} finally { dc.no_kerning = saved_kerning; dc.gdi_text_metrics = saved_metrics; }
 		}
 
 		// darws a single part of the month calendar (with one month)
