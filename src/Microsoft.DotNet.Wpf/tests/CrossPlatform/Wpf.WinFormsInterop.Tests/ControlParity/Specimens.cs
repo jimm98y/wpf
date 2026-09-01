@@ -140,13 +140,15 @@ namespace WinFormsControlParity
             // overnight with no code change. A calendar is different every day, which is
             // presumably why it was left out; TodayDate and the selection settle that.
             //
-            // What it says, band by band against Windows: the DATE GRID is exact (rows 53..61
-            // ink x 17..211 on both), so the cell geometry and the digits are right. Two things
-            // are not. The header and the day names sit one row LOWER in ours (16..27 and 38..46
-            // against 15..26 and 37..45). And the Today line has the same CENTRE on both, 139.5,
-            // but ours is 88 pixels wide against 82 -- so its position is right and the string
-            // itself renders wider. The date grid matching exactly means the digits are not the
-            // cause; the extra width is in "Today: " and the slashes.
+            // What it says, band by band: the date rows' ink EXTENTS match (17..211 on both) and
+            // that is a coincidence, not agreement. Column by column, the first digit of every
+            // two-digit date lands exactly and the second is a pixel right in ours --
+            // 15-19 22-27 against 15-19 21-25, and so on across the row. The Today line is 88
+            // wide against 82 at the same centre. Both are one thing: a digit advance of 7 where
+            // GDI's is 6, which shows up between the digits of a date and seven times over in a
+            // date string.
+            // The header and day names sitting one row LOWER (16..27, 38..46 against 15..26,
+            // 37..45) is separate and still unexplained.
             //
             // AND THAT WIDTH IS THIS HARNESS'S PATH, NOT THE WINDOW'S. The same calendar in the
             // live window draws its Today line 83 pixels wide against Windows' 82 -- right --
