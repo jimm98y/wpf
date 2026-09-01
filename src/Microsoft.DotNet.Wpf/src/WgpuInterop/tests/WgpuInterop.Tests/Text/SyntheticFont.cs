@@ -58,7 +58,15 @@ namespace WgpuInterop.Tests.Text
         }
 
         /// <summary>Build a font whose glyph i+1 is bars[i], mapped to codepoint 0x41 + i.</summary>
-        public static byte[] Build(string family, IReadOnlyList<Bar> bars)
+        /// <summary>Build a font whose glyph i+1 is bars[i], mapped to codepoint 0x41 + i.
+        /// <para><paramref name="prepSelectors"/> asks the same GETINFO questions from the
+        /// PRE-PROGRAM instead of from a glyph, which is a different question and turned out to
+        /// matter: a face computes its rendering-mode variable in 'prep', so what GDI answers
+        /// THERE is what decides which hinting program every glyph then runs. Each selector's
+        /// exact-bit answer is written to cvt[100+i] as ten pixels or none, and a bar whose probe
+        /// is -10000-i shifts itself by that control value.</para></summary>
+        public static byte[] Build(string family, IReadOnlyList<Bar> bars,
+                                   IReadOnlyList<int>? prepSelectors = null)
         {
             int numGlyphs = bars.Count + 1;                       // .notdef first
 
@@ -104,7 +112,7 @@ namespace WgpuInterop.Tests.Text
                 ["maxp"] = BuildMaxp(numGlyphs),
                 ["name"] = BuildName(family),
                 ["post"] = BuildPost(),
-                ["prep"] = BuildPrep(),
+                ["prep"] = BuildPrep(prepSelectors),
             };
 
             return Assemble(tables);
@@ -161,6 +169,29 @@ namespace WgpuInterop.Tests.Text
                 0xB0, 0x04, 0x17,              // PUSHB[1] 4 ; SLOOP  -- shift all four points
                 0xB3, 0x00, 0x01, 0x02, 0x03,  // PUSHB[4] 0 1 2 3
             };
+            // A NEGATIVE selector asks the question the FONT asks: not "is the answer non-zero"
+            // but "is it EXACTLY this bit". Segoe UI's fpgm compares GETINFO(2048) against 262144
+            // and only then takes its symmetric branch, so a probe that settles for non-zero can
+            // report a bit the face would reject. The value is built the way the face builds it,
+            // 16384 * (bit/256) through MUL, because it does not fit a PUSHW.
+            if (selector <= -10000)
+            {
+                // Shift by what the PRE-PROGRAM decided, read back out of the control value.
+                p.Add(0xB0); p.Add((byte) (100 + (-10000 - selector)));   // PUSHB[1] cvt index
+                p.Add(0x45);                                              // RCVT
+                p.Add(0x38);                                              // SHPIX
+                return p.ToArray();
+            }
+            bool exact = selector < 0;
+            if (exact)
+            {
+                selector = -selector;
+                int bit = 7; for (int t = selector; t > 1; t >>= 1) bit++;   // 32 -> 12, 2048 -> 18
+                int val = 1 << bit;
+                p.Add(0xB8); p.Add(0x40); p.Add(0x00);                       // PUSHW[1] 16384
+                p.Add(0xB8); p.Add((byte) ((val / 256) >> 8)); p.Add((byte) (val / 256));
+                p.Add(0x63);                                                 // MUL -> the bit
+            }
             if (selector <= 255) { p.Add(0xB0); p.Add((byte) selector); }
             else { p.Add(0xB8); p.Add((byte) (selector >> 8)); p.Add((byte) selector); }
             p.Add(0x88);                                            // GETINFO
@@ -179,8 +210,15 @@ namespace WgpuInterop.Tests.Text
             }
             else
             {
-                p.Add(0xB0); p.Add(0x00);                           // PUSHB[1] 0
-                p.Add(0x55);                                        // NEQ
+                if (exact)
+                {
+                    p.Add(0x54);                                    // EQ against the bit above
+                }
+                else
+                {
+                    p.Add(0xB0); p.Add(0x00);                       // PUSHB[1] 0
+                    p.Add(0x55);                                    // NEQ
+                }
                 p.Add(0x58);                                        // IF
                 p.Add(0xB8); p.Add(0x02); p.Add(0x80);              // PUSHW[1] 640 -- ten pixels
                 p.Add(0x1B);                                        // ELSE
@@ -195,16 +233,40 @@ namespace WgpuInterop.Tests.Text
         {
             var m = new MemoryStream();
             foreach (short v in cvts) WriteI16(m, v);
-            if (cvts.Count == 0) WriteI16(m, 0);
+            // Padded so the prep probe's cvt[100..] slots exist to be written.
+            for (int i = cvts.Count; i < 128; i++) WriteI16(m, 0);
+            if (cvts.Count == 0 && 128 == 0) WriteI16(m, 0);
             return m.ToArray();
         }
 
         /// <summary>Only what the interpreter needs to be in a defined state: scan control off, and
         /// a cut-in wide enough that it never fires. A prep that decides things would be a prep
         /// whose decisions we would then be measuring.</summary>
-        private static byte[] BuildPrep()
+        private static byte[] BuildPrep(IReadOnlyList<int>? prepSelectors = null)
         {
-            return new byte[]
+            var extra = new List<byte>();
+            if (prepSelectors is not null)
+                for (int i = 0; i < prepSelectors.Count; i++)
+                {
+                    int sel = prepSelectors[i];
+                    int bit = 7; for (int t = sel; t > 1; t >>= 1) bit++;
+                    int val = 1 << bit;
+                    extra.Add(0xB0); extra.Add((byte) (100 + i));          // PUSHB[1] cvt index
+                    extra.Add(0xB8); extra.Add(0x40); extra.Add(0x00);      // PUSHW 16384
+                    extra.Add(0xB8); extra.Add((byte) ((val / 256) >> 8)); extra.Add((byte) (val / 256));
+                    extra.Add(0x63);                                        // MUL -> the bit
+                    if (sel <= 255) { extra.Add(0xB0); extra.Add((byte) sel); }
+                    else { extra.Add(0xB8); extra.Add((byte) (sel >> 8)); extra.Add((byte) sel); }
+                    extra.Add(0x88);                                        // GETINFO
+                    extra.Add(0x54);                                        // EQ
+                    extra.Add(0x58);                                        // IF
+                    extra.Add(0xB8); extra.Add(0x02); extra.Add(0x80);      // PUSHW 640 (ten px)
+                    extra.Add(0x1B);                                        // ELSE
+                    extra.Add(0xB0); extra.Add(0x00);                       // PUSHB 0
+                    extra.Add(0x59);                                        // EIF
+                    extra.Add(0x44);                                        // WCVTP
+                }
+            var head = new List<byte>
             {
                 0xB0, 0x00, 0x85,        // PUSHB[1] 0, SCANCTRL  -- no dropout control
                 0xB0, 0x00, 0x8D,        // PUSHB[1] 0, SCANTYPE
@@ -212,6 +274,8 @@ namespace WgpuInterop.Tests.Text
                 // No INSTCTRL: it pops TWO values and pushing one underflowed our own
                 // interpreter's stack. A probe that faults the thing it is probing is no probe.
             };
+            head.AddRange(extra);
+            return head.ToArray();
         }
 
         private static byte[] BuildHead(bool longLoca)

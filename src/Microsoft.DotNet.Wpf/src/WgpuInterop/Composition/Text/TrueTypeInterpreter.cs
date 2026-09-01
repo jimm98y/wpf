@@ -284,6 +284,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// whose original outline is its components' fitted one and is in pixels already.</summary>
         private int _measureScale;
         private int _ppem;
+
+        /// <summary>Whether the FACE asks for symmetric smoothing at a given size, from its
+        /// 'gasp'. Set by TrueTypeFont when the interpreter is built.
+        /// <para>GETINFO's symmetric-rendering bit is not a global truth about the rasterizer, it
+        /// is a property of THIS face at THIS size -- and a face branches its whole hinting
+        /// program on the answer. Segoe UI asks for it only at 20ppem and above.</para></summary>
+        internal Func<float, bool>? FaceWantsSymmetricSmoothing;
+
+        /// <summary>What to answer GETINFO's symmetric-rendering query at the size in hand.</summary>
+        internal bool SymmetricRenderingAnswer =>
+            s_symmetricInfoForced ?? (FaceWantsSymmetricSmoothing?.Invoke(_ppem) ?? false);
         private int _pointSize;
         private int _dotProduct;               // freedom . projection, 2.14
 

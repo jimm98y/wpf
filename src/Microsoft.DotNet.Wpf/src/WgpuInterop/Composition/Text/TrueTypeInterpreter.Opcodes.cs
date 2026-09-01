@@ -605,7 +605,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // true and misleading: at version 35 the face never reaches the
                                 // question, so an unexercised answer looked like an irrelevant
                                 // one. WPF_CT_SYMINFO=0 turns it back off.
-                                if (s_symmetricInfo && (selector & 2048) != 0) result |= 1 << 18;
+                                if (SymmetricRenderingAnswer && (selector & 2048) != 0) result |= 1 << 18;
                             }
                             // NOT ClearType, and it was tried: saying so makes Segoe UI hint its
                             // stems to exactly one pixel where GDI's own geometry is a pixel and a
@@ -1146,24 +1146,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_traceGetInfo =
             Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
 
-        private static readonly bool s_symmetricInfo =
-            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+        /// <summary>What to answer GETINFO's symmetric-rendering query. WPF_CT_SYMINFO: "gasp"
+        /// asks the FACE (the correct rule), "1"/"0" force it, unset is off.
+        /// <para>THE CORRECT RULE IS "gasp", and it is not the default yet. GDI answers this bit
+        /// per face per ppem out of the face's 'gasp' table, and a face branches its ENTIRE hinting
+        /// program on the answer: Segoe UI's storage[2] gains 128 when it is set, which takes it
+        /// out of the {0, 2, 6} set that prep tests (1866-1883) before rounding 51 stem control
+        /// values to whole pixels (the rounding is fpgm 2617). Segoe UI asks for symmetric
+        /// smoothing at 20ppem and above, and nowhere below.</para>
+        /// <para>Answering a global YES was measured and was badly wrong -- it un-rounded every
+        /// stem at every size, taking 'H' at 12ppem from GDI's exact lamps (73 153 255 197 111 36,
+        /// 2.157px) to 73 153 255 153 73 (1.848px) and costing the window 167,925. That had been
+        /// written down as a deliberate deviation from GDI on the strength of an oracle reading;
+        /// the oracle was right and was asking about the WRONG FONT. The synthetic probe ships no
+        /// 'gasp' at all, and a face that does not say gets the bit.</para>
+        /// <para>Why "gasp" is not yet the default: it is exactly right everywhere except the one
+        /// size it turns on at. Only regular@20 moves, and it moves the wrong way -- our ink goes
+        /// from 1.0131 of GDI's to 1.1354, thirteen percent heavy, for 1,364 on the parity suite.
+        /// Bold and italic are untouched. The window is ppem 12 and does not change at all.</para>
+        /// <para>So the remaining defect is small and NAMED: the regular face at 20ppem, running
+        /// the branch the face asks for, comes out too heavy. Find that and "gasp" becomes the
+        /// default and this knob goes away.</para></summary>
+        private static readonly bool? s_symmetricInfoForced =
+            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") switch
+            {
+                "1" => true,
+                "gasp" => null,      // ask the face
+                _ => false,          // unset or "0"
+            };
 
-        // AND THIS IS A KNOWN DEVIATION FROM GDI, kept deliberately. The oracle says GDI DOES
-        // report symmetric rendering; we do not, because the branch it opens is one we run wrongly
-        // and it is expensive:
-        //
-        //     window   sym off 982,386   sym on 1,150,311     (+167,925)
-        //     parity   sym off  54,780   sym on    61,444     (mode 5)
-        //
-        // The damage is size-shaped -- ppem 17/18/19 go +464/+546/+659 while 13 and 20 IMPROVE --
-        // so it is one mis-run rule and not a general unfitness. Answering honestly is the goal;
-        // answering honestly today would ship a 17% worse window.
-        //
-        // NEXT: with WPF_CT_SYMINFO=1 and WPF_RASTERIZER=42, take ppem 18 (the worst) and compare
-        // the newly reachable instructions against GDI's own fitted coordinates one at a time
-        // (WPF_SOLVEGLYPH, WPF_HINT_DUMP). The first whose result leaves GDI's allowed interval is
-        // the bug. Turn this on the day that is fixed.
+        // Was a documented deviation ("GDI reports symmetric, we do not"). It was not a
+        // deviation, it was a bug in the probe: see s_symmetricInfoForced above.
 
         /// <summary>WPF_MD_SPEC=0 restores the old MD operand pairing.</summary>
         private static readonly bool s_mdOldOrder =

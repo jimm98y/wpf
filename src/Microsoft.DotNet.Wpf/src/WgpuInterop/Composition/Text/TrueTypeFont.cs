@@ -473,6 +473,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 maxStack: U16(_maxpOffset + 24),
                 twilightPoints: U16(_maxpOffset + 16));
 
+            // The face's own answer to GETINFO's symmetric-rendering query, which it branches its
+            // whole hinting program on. Wired here rather than passed per call: the interpreter is
+            // built once per face and already knows the size it is running at.
+            interpreter.FaceWantsSymmetricSmoothing = WantsSymmetricSmoothing;
             return _interpreter = interpreter.IsUsable ? interpreter : null;
         }
 

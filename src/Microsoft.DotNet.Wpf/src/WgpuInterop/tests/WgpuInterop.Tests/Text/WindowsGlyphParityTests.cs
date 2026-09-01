@@ -2652,12 +2652,17 @@ namespace WgpuInterop.Tests.Text
             const int ProbePpem = 16;
             // 0 is the baseline: the same bar with no program at all, so the shift is measured
             // against the position the outline alone puts it in.
-            int[] selectors = { 0, 1, 32, 64, 128, 256, 512, 1024, 2048 };
+            // Negative entries ask the EXACT question the face asks (== the bit), not merely
+            // "non-zero" -- which is the difference between a branch being taken and not.
+            int[] selectors = { 0, 1, 32, 64, 128, 256, 512, 1024, 2048,
+                                -32, -64, -128, -256, -512, -1024, -2048 };
             string[] names =
             {
                 "(no program, baseline)", "rasterizer version", "greyscale", "ClearType enabled",
                 "compatible widths", "horizontal LCD stripes", "BGR order",
                 "sub-pixel positioned", "symmetric rendering",
+                "greyscale == bit", "ClearType == bit", "compatible widths == bit",
+                "stripes == bit", "BGR == bit", "sub-pixel pos == bit", "symmetric == bit",
             };
 
             var bars = new List<SyntheticFont.Bar>();
@@ -2692,6 +2697,64 @@ namespace WgpuInterop.Tests.Text
                 }
                 report.AppendLine("   (selector 1 shifts by VERSION MINUS 32 pixels; every other row"
                                   + " shifts ten pixels when the bit is set and none when it is not)");
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>THE SAME QUESTIONS, ASKED FROM THE PRE-PROGRAM. Set WPF_GETINFO_PREP.
+        /// <para>This is not a duplicate of WhatGdiAnswersGetInfo and the difference is the whole
+        /// point. A face computes its rendering-mode variable in 'prep' -- Segoe UI's fpgm at 2270
+        /// builds storage[2] out of GETINFO answers there -- and that variable then decides which
+        /// of its several hinting programs every glyph runs. So what GDI answers during PREP is
+        /// what actually matters, and what it answers inside a glyph need not be the same.</para>
+        /// <para>Asked because the two disagree with the pixels. GDI reports symmetric rendering
+        /// from a glyph program, which would put Segoe UI in mode 134 and skip the pass that
+        /// rounds 51 stem control values to whole pixels -- and GDI's own H at 12ppem is the
+        /// WHOLE-PIXEL stem (lamps 73 153 255 197 111 36, 2.157px, which our symmetric-OFF output
+        /// matches exactly and our symmetric-ON output does not).</para></summary>
+        [Fact]
+        public void WhatGdiAnswersGetInfoInThePreProgram()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_GETINFO_PREP");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GETINFO_PREP to collect this");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the oracle");
+
+            const string Fam = "WpfPrepInfoOracle";
+            const int ProbePpem = 16;
+            int[] sel = { 32, 64, 128, 256, 512, 1024, 2048 };
+            string[] names = { "greyscale", "ClearType enabled", "compatible widths",
+                               "horizontal LCD stripes", "BGR order", "sub-pixel positioned",
+                               "symmetric rendering" };
+
+            // One baseline bar with no program, then one per selector reading cvt[100+i].
+            var bars = new List<SyntheticFont.Bar> { new(0, 400, 700, false, false, noProgram: true) };
+            for (int i = 0; i < sel.Length; i++)
+                bars.Add(new SyntheticFont.Bar(0, 400, 700, false, false, probe: -10000 - i));
+            byte[] fontBytes = SyntheticFont.Build(Fam, bars, sel);
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the prep-probe font");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== what GDI answers GETINFO IN PREP, at {ProbePpem}ppem");
+            report.AppendLine("   selector  meaning                    drawn(ClearType)");
+            try
+            {
+                var raw = new byte[Width * Height * 4];
+                int base0 = -1;
+                for (int i = 0; i <= sel.Length; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    int drawn = InkLeftColumn(raw);
+                    if (i == 0) { base0 = drawn; continue; }
+                    string d = drawn < 0 ? "no ink" : (drawn - base0).ToString();
+                    report.AppendLine($"   {sel[i - 1],8}  {names[i - 1],-25}  {d,14}");
+                }
+                report.AppendLine("   (ten pixels means the bit came back EXACTLY set, as the face tests it)");
             }
             finally { RemoveFontMemResourceEx(handle); }
             File.AppendAllText(path!, report.ToString());
