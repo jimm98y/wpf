@@ -1550,7 +1550,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // XHintMode 5 already falls to the branch that restores x wholesale, which IS the
             // y-only fit. Shipping behaviour is untouched -- nothing sets this but the tests.
             if ((ForceYOnlyFit
-                 || (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16))
+                 || (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16 && XHintMode != 17))
                 && !glyph.Composite
                 && interpreter.PrepareForSize(pixelsPerEm))
             {

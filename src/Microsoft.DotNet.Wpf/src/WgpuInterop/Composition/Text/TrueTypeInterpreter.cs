@@ -429,6 +429,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static bool XSuppress =>
             TrueTypeFont.XHintMode == 12 && TrueTypeFont.SubpixelFitting;
 
+        /// <summary>Mode 17: DO NOTHING OF OUR OWN IN X -- round it on the whole-pixel grid, the
+        /// way a bi-level interpreter does, and let the FACE decide what ClearType means.
+        /// <para>Every other mode here is a guess at a rule GDI applies on top of the program.
+        /// Once the rasterizer version says 42, Segoe UI runs its own ClearType branch (see
+        /// WhatGdiAnswersGetInfo) and no longer needs one invented for it -- and GDI's own answers
+        /// say the same thing from the other side: compatible widths SET and sub-pixel positioning
+        /// CLEAR is a rasterizer that grid-fits x exactly like the bi-level one and differs only in
+        /// how it shades the result.</para>
+        /// <para>Not the same as mode 0, which throws the program's x work away and keeps the
+        /// scaled outline. This keeps every bit of it and only declines to re-round it.</para>
+        /// </summary>
+        internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
+
         internal static bool XThirdGrid =>
             TrueTypeFont.XHintMode == 6 || TrueTypeFont.XHintMode == 13
             || TrueTypeFont.XHintMode == 14;
@@ -1020,7 +1033,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // depends on -- the size of the DISTANCE, not the size of the text.
             if (s_stemSnap > 0 && !position && InClearTypeDirection && Math.Abs(value) <= s_stemSnap)
                 distanceGrid = 1;
-            int thirds = distanceGrid > 0 ? distanceGrid
+            int thirds = XWholePixelGrid ? 1
+                       : distanceGrid > 0 ? distanceGrid
                        : physicalPosition ? 1
                        : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid

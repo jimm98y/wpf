@@ -588,12 +588,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // there was nothing here. Stage C is the only place it shows.
                                 if ((selector & 64) != 0) result |= 1 << 13;    // ClearType enabled
                                 if ((selector & 128) != 0) result |= 1 << 14;   // compatible widths
-                                if ((selector & 256) != 0) result |= 1 << 15;   // horizontal stripes
+                                // NOT horizontal stripes. MEASURED off GDI with the GETINFO
+                                // oracle (WhatGdiAnswersGetInfo): GDI leaves this bit CLEAR while
+                                // drawing ClearType. It reads like it ought to be set -- the
+                                // stripes are what ClearType is -- but the bit means the stripes
+                                // run HORIZONTALLY, i.e. a display rotated a quarter turn, and
+                                // this one is not.
+                                if (s_stripeInfo && (selector & 256) != 0) result |= 1 << 15;
                                 // Bit 18, ClearType SYMMETRIC RENDERING, "can impact the rendering
                                 // of horizontal features" -- FreeType answers yes whenever it hints
                                 // for an antialiased target. Answering it changes nothing measurable
                                 // for Segoe UI (743,631 against 743,730, inside the noise), so it is
                                 // left unanswered rather than guessed at. WPF_CT_SYMINFO=1 answers it.
+                                // AND SYMMETRIC RENDERING IS SET, measured the same way. The note
+                                // above -- that answering it changes nothing for Segoe UI -- was
+                                // true and misleading: at version 35 the face never reaches the
+                                // question, so an unexercised answer looked like an irrelevant
+                                // one. WPF_CT_SYMINFO=0 turns it back off.
                                 if (s_symmetricInfo && (selector & 2048) != 0) result |= 1 << 18;
                             }
                             // NOT ClearType, and it was tried: saying so makes Segoe UI hint its
@@ -1089,6 +1100,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_greyAlways =
             Environment.GetEnvironmentVariable("WPF_CT_GREY") == "1";
 
+        /// <summary>Whether GETINFO reports HORIZONTAL LCD stripes. Measured: GDI does not.</summary>
+        private static readonly bool s_stripeInfo =
+            Environment.GetEnvironmentVariable("WPF_CT_STRIPEINFO") == "1";
+
         /// <summary>What GETINFO answers for the rasterizer VERSION: THIRTY-FIVE, which is what GDI
         /// is. WPF_RASTERIZER sweeps it.
         /// <para>Worth a knob because Segoe UI's 'prep' asks for this THREE TIMES and asks for
@@ -1111,11 +1126,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_RASTERIZER"), out int rv) && rv > 0
                 ? rv : 35;
 
+        // AND 35 IS KNOWN TO BE THE WRONG ANSWER. GDI's is FORTY-TWO, measured rather than
+        // reasoned: WhatGdiAnswersGetInfo makes a glyph shift itself by what GETINFO returns and
+        // reads the number off the ink, and GDI says 42 on both the drawn and the GetGlyphOutline
+        // path. It stays at 35 because 42 MEASURES WORSE, and shipping a regression to be right
+        // in principle helps nobody:
+        //
+        //     parity suite   v35 mode 5  54,934      v42 mode 5  61,444   (best v42 found)
+        //                    v35 mode 6  80,756      v42 mode 6  84,486
+        //     window         v35 mode 6 989,895      v42 mode 6 989,895   -- byte-identical
+        //
+        // Deltas were the obvious interaction and are not it (all 72,573, inline 71,440), nor is
+        // declining to round x at all (mode 17: 116,381).
+        //
+        // WHY THIS IS WORTH KEEPING RATHER THAN FORGETTING. The version is a GATE, not a detail.
+        // Segoe UI's fpgm tags every hinting instruction with a mode number and runs it only when
+        // that number equals storage[2], and fpgm at 2270 computes storage[2] from GETINFO alone:
+        // below version 36 the face never even asks whether ClearType is on, so storage[2] can
+        // only be 0 or 1 and every ClearType instruction in every glyph is skipped. At 35 we run
+        // the face's BI-LEVEL program; at 42 the same glyph executes an SHP at ip 121 that it
+        // skipped before, touching a point we had separately concluded 'GDI touches and we do
+        // not'. So the branch is real, it is reachable, and it does the thing we were missing.
+        //
+        // That it measures worse says our interpreter MIS-RUNS that branch, which is unsurprising:
+        // the 55-of-62 agreement with GetGlyphOutline that validates this interpreter was taken
+        // against GGO, which renders greyscale and answers GETINFO as a greyscale rasterizer -- so
+        // it exercised the bi-level path and nothing else. The ClearType branch has never been
+        // checked against anything.
+        //
+        // NEXT STEP, and it is a measurement rather than another sweep: run the newly reachable
+        // instructions one at a time under WPF_HINT_DUMP at 42 and compare each against GDI's own
+        // fitted coordinates for the same glyph (WPF_SOLVEGLYPH). The first instruction whose
+        // result leaves GDI's allowed interval is the bug. Do NOT re-sweep XHintMode against 42:
+        // those modes are hand-made substitutes for this branch, so they and it double-count, and
+        // a sweep will keep choosing whichever compensates best for a branch still run wrongly.
+
         private static readonly bool s_traceGetInfo =
             Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
 
         private static readonly bool s_symmetricInfo =
-            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") != "0";
 
         /// <summary>WPF_MD_SPEC=0 restores the old MD operand pairing.</summary>
         private static readonly bool s_mdOldOrder =
