@@ -139,6 +139,14 @@ namespace WinFormsControlParity
             // unnoticed until the calendar's own date moved and the region jumped by 359,000
             // overnight with no code change. A calendar is different every day, which is
             // presumably why it was left out; TodayDate and the selection settle that.
+            //
+            // What it says, band by band against Windows: the DATE GRID is exact (rows 53..61
+            // ink x 17..211 on both), so the cell geometry and the digits are right. Two things
+            // are not. The header and the day names sit one row LOWER in ours (16..27 and 38..46
+            // against 15..26 and 37..45). And the Today line has the same CENTRE on both, 139.5,
+            // but ours is 88 pixels wide against 82 -- so its position is right and the string
+            // itself renders wider. The date grid matching exactly means the digits are not the
+            // cause; the extra width is in "Today: " and the slashes.
             all.Add(new Specimen("monthcalendar", 230, 170, () =>
             {
                 var d = new DateTime(2026, 9, 1);
