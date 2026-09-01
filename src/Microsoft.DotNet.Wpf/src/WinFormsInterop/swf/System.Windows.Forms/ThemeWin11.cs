@@ -1920,7 +1920,11 @@ namespace System.Windows.Forms
 			// group is not the group Windows centres -- Windows' effective group is about 26 pixels
 			// narrower than marker-plus-gap-plus-text. What Windows actually centres is the open
 			// question; the fixed column is nearer until it is answered.
-			return margin + 2 * cell.Width - 7;
+			// TWO COLUMNS IN, and nothing else. Measured off the real control rather than off the
+			// screen: a stock MonthCalendar reports a client width of 227 and puts its marker's left
+			// edge at 64, and 227/7 is 32.4 a column -- so the marker starts exactly two columns in.
+			// The margin and the seven were fitted to a capture and cost about four pixels.
+			return 2 * cell.Width;
 		}
 
 		// Windows colours the day under the pointer rather than shading behind it: the number
