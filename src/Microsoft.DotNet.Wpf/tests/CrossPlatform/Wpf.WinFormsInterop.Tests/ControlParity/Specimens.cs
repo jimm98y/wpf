@@ -134,6 +134,17 @@ namespace WinFormsControlParity
                 return t;
             }));
 
+            // The worst region in the live window, and it had no specimen here -- which is why
+            // its faults only ever showed up in a screen capture, and why one of them went
+            // unnoticed until the calendar's own date moved and the region jumped by 359,000
+            // overnight with no code change. A calendar is different every day, which is
+            // presumably why it was left out; TodayDate and the selection settle that.
+            all.Add(new Specimen("monthcalendar", 230, 170, () =>
+            {
+                var d = new DateTime(2026, 9, 1);
+                return new MonthCalendar { TodayDate = d, SelectionStart = d, SelectionEnd = d };
+            }));
+
             all.Add(new Specimen("numericupdown", 120, 24, () => new NumericUpDown { Value = 42 }));
             all.Add(new Specimen("trackbar", 180, 45, () => new TrackBar { Maximum = 10, Value = 4 }));
             all.Add(new Specimen("hscrollbar", 180, 17, () => new HScrollBar { Value = 30 }));

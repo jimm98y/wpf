@@ -94,13 +94,24 @@ namespace Wpf.WinFormsInterop.Tests
             mc.Width = 230; mc.Height = 170;
             report.AppendLine($"   after Width/Height    Size {mc.Size}  Client {mc.ClientSize}");
             mc.Refresh();
-            int paints = 0;
+            int paints = 0; int lastPainted = 0;
             mc.Paint += (s2, e2) => paints++;
             int Ink()
             {
                 using var b = new Bitmap(mc.Width, mc.Height, PixelFormat.Format32bppArgb);
-                using (var g = Graphics.FromImage(b)) g.Clear(Color.White);
+                // Magenta is a colour the control never draws, so anything that is NOT magenta
+                // afterwards was painted by SOMETHING -- which separates 'the paint path never
+                // ran' from 'it ran and only the calendar's own handler is missing'.
+                using (var g = Graphics.FromImage(b)) g.Clear(Color.Magenta);
                 mc.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                int painted = 0;
+                for (int y = 0; y < b.Height; y++)
+                    for (int x = 0; x < b.Width; x++)
+                    {
+                        Color c = b.GetPixel(x, y);
+                        if (!(c.R == 255 && c.G == 0 && c.B == 255)) painted++;
+                    }
+                lastPainted = painted;
                 int n = 0;
                 for (int y = 0; y < b.Height; y++)
                     for (int x = 0; x < b.Width; x++)
@@ -125,7 +136,7 @@ namespace Wpf.WinFormsInterop.Tests
                 }
                 return One("date_cell_size") + "  " + One("SingleMonthSize") + "  " + One("title_size");
             }
-            report.AppendLine($"   before Show   Visible {mc.Visible,-5}  ink {Ink()}  Paint fired {paints}x");
+            report.AppendLine($"   before Show   Visible {mc.Visible,-5}  ink {Ink()}  non-magenta {lastPainted}  Paint fired {paints}x");
 
             // A direct OnPaint through reflection was tried here and proved nothing:
             // GetMethod with NonPublic does not return a protected member declared on a BASE
@@ -135,7 +146,7 @@ namespace Wpf.WinFormsInterop.Tests
             host.Show();
             System.Windows.Forms.Application.DoEvents();
             mc.Refresh();
-            report.AppendLine($"   after Show    Visible {mc.Visible,-5}  ink {Ink()}  Paint fired {paints}x");
+            report.AppendLine($"   after Show    Visible {mc.Visible,-5}  ink {Ink()}  non-magenta {lastPainted}  Paint fired {paints}x");
 
             foreach (var size in new[] { new Size(230, 170), mc.Size })
             {
