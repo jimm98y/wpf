@@ -12,6 +12,17 @@ namespace Wpf.WinFormsInterop.Tests
     /// for a right-aligned one. It surfaced in the MonthCalendar: its "Today" line is centred by
     /// Windows, our centring put the group twelve pixels left of Windows', and the group had been
     /// measured rather than drawn.</para>
+    /// <para>WHICH PATH THIS MEASURES, because there are two and they are easy to confuse.
+    /// Graphics.DrawString only records a glyph run to the scene when a GpuRecorder is attached;
+    /// a plain Graphics.FromImage(bitmap), which is what this test makes, has none and takes the
+    /// fallback. So these numbers are the FALLBACK path's, not the one a control paints through:
+    /// WgpuSceneRenderer's glyph layout never runs for them, confirmed by instrumenting it and
+    /// getting no output at all.</para>
+    /// <para>The digit finding holds in both, which is why it is worth having. This test says a
+    /// digit advance is 7 where GDI's is 6, and the MonthCalendar specimen -- which does go
+    /// through a control's paint -- has its Today line 6 pixels wide of Windows' at the same
+    /// centre, on a string carrying seven digits. Two paths, same direction, same size. They have
+    /// NOT been shown to be the same bug.</para>
     /// <para>Reported only -- set WPF_MEASURE_REPORT. This is a diagnostic rather than a guard
     /// because the right number to assert is not known yet; what is wanted first is the size and
     /// the shape of the disagreement across sizes and strings.</para></summary>
