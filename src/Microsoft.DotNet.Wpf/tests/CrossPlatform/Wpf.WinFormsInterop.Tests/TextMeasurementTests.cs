@@ -94,6 +94,8 @@ namespace Wpf.WinFormsInterop.Tests
             mc.Width = 230; mc.Height = 170;
             report.AppendLine($"   after Width/Height    Size {mc.Size}  Client {mc.ClientSize}");
             mc.Refresh();
+            int paints = 0;
+            mc.Paint += (s2, e2) => paints++;
             int Ink()
             {
                 using var b = new Bitmap(mc.Width, mc.Height, PixelFormat.Format32bppArgb);
@@ -108,11 +110,32 @@ namespace Wpf.WinFormsInterop.Tests
                     }
                 return n;
             }
-            report.AppendLine($"   before Show   Visible {mc.Visible,-5}  DrawToBitmap ink {Ink()}");
+            string Geom()
+            {
+                var t = mc.GetType();
+                string One(string n)
+                {
+                    var f = t.GetField(n, System.Reflection.BindingFlags.NonPublic
+                                          | System.Reflection.BindingFlags.Instance);
+                    if (f != null) return n + "=" + f.GetValue(mc);
+                    var pr = t.GetProperty(n, System.Reflection.BindingFlags.NonPublic
+                                              | System.Reflection.BindingFlags.Instance
+                                              | System.Reflection.BindingFlags.Public);
+                    return pr != null ? n + "=" + pr.GetValue(mc) : n + "=?";
+                }
+                return One("date_cell_size") + "  " + One("SingleMonthSize") + "  " + One("title_size");
+            }
+            report.AppendLine($"   before Show   Visible {mc.Visible,-5}  ink {Ink()}  Paint fired {paints}x");
+
+            // A direct OnPaint through reflection was tried here and proved nothing:
+            // GetMethod with NonPublic does not return a protected member declared on a BASE
+            // type, so the lookup returned null and the null-conditional call did nothing at
+            // all -- which reads exactly like 'OnPaint drew nothing'. Removed rather than left
+            // to mislead.
             host.Show();
             System.Windows.Forms.Application.DoEvents();
             mc.Refresh();
-            report.AppendLine($"   after Show    Visible {mc.Visible,-5}  DrawToBitmap ink {Ink()}");
+            report.AppendLine($"   after Show    Visible {mc.Visible,-5}  ink {Ink()}  Paint fired {paints}x");
 
             foreach (var size in new[] { new Size(230, 170), mc.Size })
             {
