@@ -54,7 +54,7 @@ namespace Wpf.WinFormsInterop.Tests
 
             string[] texts =
             {
-                "Today: 9/1/2026", "Today: 8/31/2026", "September 2026", "August 2026",
+                "9", "99", "999", "9999", "1", "11", "111", "0", "00", "000",
                 "Hamburgefonstiv", "iiiiiiiiii", "MMMMMMMMMM", "1",
             };
 

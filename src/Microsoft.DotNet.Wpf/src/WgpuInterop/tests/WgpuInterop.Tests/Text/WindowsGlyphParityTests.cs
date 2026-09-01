@@ -1749,6 +1749,34 @@ namespace WgpuInterop.Tests.Text
             return -1;
         }
 
+        /// <summary>What advance do we give a digit, and where does it come from?
+        /// <para>Drawn through this port, a run of digits is a pixel per glyph wider than GDI's:
+        /// '9999' spans 28 pixels of ink against GDI's 24, so our advance is 7 where GDI's is 6.
+        /// Segoe UI's hmtx has 1104 units for '0', which at 12ppem is 6.469 and rounds to 6, and
+        /// its hdmx row for 12 says 6 as well -- so both sources agree with GDI and the question
+        /// is which one we are actually reading. Reported only: WPF_DIGITADV.</para></summary>
+        [Fact]
+        public void DigitAdvance_WhereItComesFrom()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_DIGITADV");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_DIGITADV to collect this");
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== digit advances");
+            report.AppendLine("   ppem  ch  gid   device?  device   linear   rounded");
+            foreach (int ppem in new[] { 11, 12, 13 })
+                foreach (char ch in "019")
+                {
+                    int gid = font.GlyphIndex(ch);
+                    bool ok = font.TryGetDeviceAdvance(gid, ppem, out float dev);
+                    float lin = font.LinearAdvanceForTest(gid, ppem);
+                    report.AppendLine($"   {ppem,4}  '{ch}' {gid,4}   {ok,-6}  {dev,6:0.000}"
+                                      + $"  {lin,7:0.000}  {MathF.Round(lin),7:0}");
+                }
+            File.AppendAllText(path!, report.ToString());
+        }
         /// <summary>The inked lamps of the busiest row, left to right, as coverage out of 255.
         /// One number per LAMP, not per pixel, so the three of a pixel are consecutive.</summary>
         private static string LampProfile(byte[] rgba, bool bgra)
