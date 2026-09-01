@@ -81,6 +81,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <param name="scale">Em size divided by the font's design units per em.</param>
         /// <param name="gx">Glyph origin x (pen position plus any x offset), in the caller's local space.</param>
         /// <param name="gy">Glyph baseline y, in the caller's local space.</param>
+        /// <summary>How the face's own fitting is reaching the screen, or failing to.</summary>
+        /// <summary>Off unless WPF_GRID_TRACE asks: these sit in the per-glyph paint path and an
+        /// interlocked increment per glyph per frame is not free.</summary>
+        private static readonly bool s_countOutlines =
+            System.Environment.GetEnvironmentVariable("WPF_GRID_TRACE") == "1";
+        private static int s_hintedUsed, s_unhintedUsed, s_notHintable;
+        internal static (int Hinted, int Unhinted, int NotHintable) OutlineSourceCounts
+            => (System.Threading.Volatile.Read(ref s_hintedUsed),
+                System.Threading.Volatile.Read(ref s_unhintedUsed),
+                System.Threading.Volatile.Read(ref s_notHintable));
+
         public static void Paint(IGlyphOutlineFont font, IColorGlyphFont? colorFont, int glyphId,
                                  float scale, float gx, float gy, List<GlyphFill> into)
             => Paint(font, colorFont, font as IBitmapGlyphFont, glyphId, scale, gx, gy, into);
@@ -126,14 +137,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 return;
             }
 
+            // Counted, because "is the face's fitting reaching the screen at all" turned out not
+            // to be answerable from the rendered pixels: x-hint modes that demonstrably change the
+            // fitted outline left the window byte-identical.
+            if (s_countOutlines && hintedPixelsPerEm > 0f && font is not IHintedGlyphFont)
+                System.Threading.Interlocked.Increment(ref s_notHintable);
             if (hintedPixelsPerEm > 0f && font is IHintedGlyphFont hinted
                 && hinted.TryGetHintedOutline(glyphId, hintedPixelsPerEm, out List<PathFigure> fitted)
                 && fitted.Count > 0)
             {
+                if (s_countOutlines) System.Threading.Interlocked.Increment(ref s_hintedUsed);
                 into.Add(new GlyphFill(ScaleFigures(fitted, scale, gx, gy), null, isColorLayer: false));
                 return;
             }
 
+            if (s_countOutlines && hintedPixelsPerEm > 0f) System.Threading.Interlocked.Increment(ref s_unhintedUsed);
             if (font.TryGetGlyphOutline(glyphId, out List<PathFigure> figures) && figures.Count > 0)
                 into.Add(new GlyphFill(ScaleFigures(figures, scale, gx, gy), null, isColorLayer: false));
         }

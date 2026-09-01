@@ -1124,48 +1124,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         private static readonly int s_rasterizerVersion =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_RASTERIZER"), out int rv) && rv > 0
-                ? rv : 35;
+                ? rv : 42;
 
-        // AND 35 IS KNOWN TO BE THE WRONG ANSWER. GDI's is FORTY-TWO, measured rather than
-        // reasoned: WhatGdiAnswersGetInfo makes a glyph shift itself by what GETINFO returns and
-        // reads the number off the ink, and GDI says 42 on both the drawn and the GetGlyphOutline
-        // path. It stays at 35 because 42 MEASURES WORSE, and shipping a regression to be right
-        // in principle helps nobody:
+        // FORTY-TWO IS GDI'S, measured rather than reasoned: WhatGdiAnswersGetInfo makes a glyph
+        // shift itself by what GETINFO returns and reads the number off the ink, and GDI says 42
+        // on both the drawn and the GetGlyphOutline path.
         //
-        //     parity suite   v35 mode 5  54,934      v42 mode 5  61,444   (best v42 found)
-        //                    v35 mode 6  80,756      v42 mode 6  84,486
-        //     window         v35 mode 6 989,895      v42 mode 6 989,895   -- byte-identical
+        // It is a GATE, not a detail. Segoe UI's fpgm tags every hinting instruction with a mode
+        // number and runs it only when that number equals storage[2], and fpgm at 2270 computes
+        // storage[2] from GETINFO alone -- below version 36 the face never even asks whether
+        // ClearType is on, so storage[2] can only be 0 or 1 and every ClearType instruction in
+        // every glyph is skipped. At 35 we ran the face's BI-LEVEL program and then applied our
+        // own invented x rules to the result, which is why no rounding rule ever fitted it.
         //
-        // Deltas were the obvious interaction and are not it (all 72,573, inline 71,440), nor is
-        // declining to round x at all (mode 17: 116,381).
+        //     window   v35 987,187 -> v42 982,386      parity  80,756 -> 80,689
         //
-        // WHY THIS IS WORTH KEEPING RATHER THAN FORGETTING. The version is a GATE, not a detail.
-        // Segoe UI's fpgm tags every hinting instruction with a mode number and runs it only when
-        // that number equals storage[2], and fpgm at 2270 computes storage[2] from GETINFO alone:
-        // below version 36 the face never even asks whether ClearType is on, so storage[2] can
-        // only be 0 or 1 and every ClearType instruction in every glyph is skipped. At 35 we run
-        // the face's BI-LEVEL program; at 42 the same glyph executes an SHP at ip 121 that it
-        // skipped before, touching a point we had separately concluded 'GDI touches and we do
-        // not'. So the branch is real, it is reachable, and it does the thing we were missing.
-        //
-        // That it measures worse says our interpreter MIS-RUNS that branch, which is unsurprising:
-        // the 55-of-62 agreement with GetGlyphOutline that validates this interpreter was taken
-        // against GGO, which renders greyscale and answers GETINFO as a greyscale rasterizer -- so
-        // it exercised the bi-level path and nothing else. The ClearType branch has never been
-        // checked against anything.
-        //
-        // NEXT STEP, and it is a measurement rather than another sweep: run the newly reachable
-        // instructions one at a time under WPF_HINT_DUMP at 42 and compare each against GDI's own
-        // fitted coordinates for the same glyph (WPF_SOLVEGLYPH). The first instruction whose
-        // result leaves GDI's allowed interval is the bug. Do NOT re-sweep XHintMode against 42:
-        // those modes are hand-made substitutes for this branch, so they and it double-count, and
-        // a sweep will keep choosing whichever compensates best for a branch still run wrongly.
+        // Both oracles improve, which is the whole reason this moved. It is a small number for a
+        // large finding because most of what the branch does, we still decline to run: see
+        // s_symmetricInfo.
 
         private static readonly bool s_traceGetInfo =
             Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
 
         private static readonly bool s_symmetricInfo =
-            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_SYMINFO") == "1";
+
+        // AND THIS IS A KNOWN DEVIATION FROM GDI, kept deliberately. The oracle says GDI DOES
+        // report symmetric rendering; we do not, because the branch it opens is one we run wrongly
+        // and it is expensive:
+        //
+        //     window   sym off 982,386   sym on 1,150,311     (+167,925)
+        //     parity   sym off  54,780   sym on    61,444     (mode 5)
+        //
+        // The damage is size-shaped -- ppem 17/18/19 go +464/+546/+659 while 13 and 20 IMPROVE --
+        // so it is one mis-run rule and not a general unfitness. Answering honestly is the goal;
+        // answering honestly today would ship a 17% worse window.
+        //
+        // NEXT: with WPF_CT_SYMINFO=1 and WPF_RASTERIZER=42, take ppem 18 (the worst) and compare
+        // the newly reachable instructions against GDI's own fitted coordinates one at a time
+        // (WPF_SOLVEGLYPH, WPF_HINT_DUMP). The first whose result leaves GDI's allowed interval is
+        // the bug. Turn this on the day that is fixed.
 
         /// <summary>WPF_MD_SPEC=0 restores the old MD operand pairing.</summary>
         private static readonly bool s_mdOldOrder =

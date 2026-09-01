@@ -541,6 +541,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// not three. A lamp is a third of a pixel and that is what gets DRAWN; the grid the
         /// interpreter ROUNDS against is finer still, and guessing thirds here is what made every
         /// earlier attempt at this quantise stroke weights that GDI leaves alone.</summary>
+        /// <summary>WPF_GRID_TRACE=1: report ONCE what grid the first rounded distance used, and
+        /// the flags that chose it. Cheap answer to "is this knob reaching the window at all".</summary>
+        private static readonly bool s_traceGrid =
+            Environment.GetEnvironmentVariable("WPF_GRID_TRACE") == "1";
+        private static readonly int[] s_gridHist = new int[20];
+        private static int s_gridTotal;
+
         internal const int ClearTypeGrid = 16;
 
         /// <summary>Whether a POSITION rounds on the physical grid instead of the virtual one. OFF.
@@ -1048,6 +1055,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // its stems happened to fall. Measured at 4, 6, 8, 12 and 16 sixty-fourths it is
             // monotonically worse -- 766,634 / 780,604 / 805,071 / 840,918 / 954,917 against
             // 759,520 -- so that is not the mechanism either.
+            if (s_traceGrid)
+            {
+                s_gridHist[thirds >= 0 && thirds < 20 ? thirds : 19]++;
+                if (++s_gridTotal == 300)
+                {
+                    var sb = new System.Text.StringBuilder($"      [grid] mode={TrueTypeFont.XHintMode}"
+                        + $" subpixelFitting={TrueTypeFont.SubpixelFitting} ctInfo={ClearTypeInfo}"
+                        + $" implausibleFitsDiscarded={TrueTypeFont.ImplausibleFits}"
+                        + $" outlineSource={GlyphRunPainter.OutlineSourceCounts} :");
+                    for (int k = 0; k < 20; k++)
+                        if (s_gridHist[k] > 0) sb.Append($"  thirds={k} x{s_gridHist[k]}");
+                    Console.Error.WriteLine(sb.ToString());
+                }
+            }
             value *= thirds;
 
             switch (_gs.Round)
