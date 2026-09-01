@@ -1924,7 +1924,11 @@ namespace System.Windows.Forms
 			// screen: a stock MonthCalendar reports a client width of 227 and puts its marker's left
 			// edge at 64, and 227/7 is 32.4 a column -- so the marker starts exactly two columns in.
 			// The margin and the seven were fitted to a capture and cost about four pixels.
-			return 2 * cell.Width;
+			// Read off the stock control in ITS OWN coordinates, not off a screenshot: the marker's
+			// left edge is at 64 and the columns are 31 apart (first digits at 15, 46, 77 on both
+			// sides), so it is two columns plus two. The caller draws the box at today_left + 1, so
+			// the indent that lands it on 64 is 2 * cell + 1.
+			return 2 * cell.Width + 1;
 		}
 
 		// Windows colours the day under the pointer rather than shading behind it: the number
