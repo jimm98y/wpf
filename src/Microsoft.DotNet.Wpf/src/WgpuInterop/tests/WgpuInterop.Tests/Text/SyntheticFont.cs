@@ -42,11 +42,18 @@ namespace WgpuInterop.Tests.Text
             /// asked it to.</summary>
             public readonly bool NoProgram;
 
+            /// <summary>Ask GDI what it answers GETINFO, by making the ANSWER visible as ink.
+            /// <para>Nothing else can: GETINFO's result never reaches an API, it only steers the
+            /// font's own program. So the glyph shifts itself right by the answer -- version
+            /// pixels for selector 1, ten pixels for a bit that comes back set -- and the
+            /// rendered position reads it back. 0 means an ordinary bar.</para></summary>
+            public readonly int Probe;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
-                       bool noProgram = false)
+                       bool noProgram = false, int probe = 0)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
-                NoProgram = noProgram;
+                NoProgram = noProgram; Probe = probe;
             }
         }
 
@@ -114,7 +121,7 @@ namespace WgpuInterop.Tests.Text
 
             // MIRP[abcde]: 0xE0 + a(set rp0) + b(min distance)<<1 + c(round)<<2 + distance-type<<3.
             byte mirp = (byte)(0xE0 | (b.MinDistance ? 0x02 : 0) | (b.Round ? 0x04 : 0));
-            byte[] program =
+            byte[] program = b.Probe != 0 ? ProbeProgram(b.Probe) : new byte[]
             {
                 0x01,                                    // SVTCA[1]  -- x axis
                 0xB0, 0x00,                              // PUSHB[1] 0
@@ -126,7 +133,10 @@ namespace WgpuInterop.Tests.Text
 
             WriteI16(s, 1);                              // numberOfContours
             WriteI16(s, b.Left); WriteI16(s, Bottom);    // xMin yMin
-            WriteI16(s, b.Right); WriteI16(s, Top);      // xMax yMax
+            // A PROBE DECLARES A WIDE BOX, because it shifts itself a long way and GDI rasterizes
+            // only inside the glyph's own bounding box -- a 42-pixel shift off a 300-unit box came
+            // back as no ink at all, which reads exactly like 'the program did nothing'.
+            WriteI16(s, b.Probe != 0 ? b.Right + 8000 : b.Right); WriteI16(s, Top);   // xMax yMax
             WriteU16(s, 3);                              // endPtsOfContours[0]
             WriteU16(s, instructions ? program.Length : 0);
             if (instructions) s.Write(program, 0, program.Length);
@@ -135,6 +145,50 @@ namespace WgpuInterop.Tests.Text
             for (int i = 0; i < 4; i++) s.WriteByte(0x01);        // ON_CURVE, 16-bit deltas
             WriteI16(s, b.Left); WriteI16(s, b.Right - b.Left); WriteI16(s, 0); WriteI16(s, b.Left - b.Right);
             WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
+        }
+
+        /// <summary>A glyph program that renders GETINFO's answer as a horizontal displacement.
+        /// <para>SLOOP 4 then SHPIX moves the whole bar, so the shape is undistorted and its left
+        /// edge carries the number. Selector 1 is the rasterizer VERSION, which is an integer, so
+        /// it is multiplied into pixels (MUL is F26Dot6, and 4096 = 64*64, so v -> v*64 = v px).
+        /// Every other selector answers with a single high BIT, which would be an absurd shift, so
+        /// it is tested against zero and turned into a flat ten pixels.</para></summary>
+        private static byte[] ProbeProgram(int selector)
+        {
+            var p = new List<byte>
+            {
+                0x01,                          // SVTCA[x]
+                0xB0, 0x04, 0x17,              // PUSHB[1] 4 ; SLOOP  -- shift all four points
+                0xB3, 0x00, 0x01, 0x02, 0x03,  // PUSHB[4] 0 1 2 3
+            };
+            if (selector <= 255) { p.Add(0xB0); p.Add((byte) selector); }
+            else { p.Add(0xB8); p.Add((byte) (selector >> 8)); p.Add((byte) selector); }
+            p.Add(0x88);                                            // GETINFO
+            if (selector == 1)
+            {
+                // MINUS 32 FIRST. Shifting by the version itself put the bar 42 pixels out and
+                // GDI drew nothing at all -- a shift that large leaves whatever region it
+                // rasterizes, and 'no ink' reads exactly like 'the program did nothing', which is
+                // the one answer this probe must never fake. Every version this gate cares about
+                // is between 35 and 64, so the row reports version - 32 and stays in the range a
+                // ten-pixel bit shift has already been shown to render.
+                p.Add(0xB0); p.Add(0x20);                           // PUSHB[1] 32
+                p.Add(0x61);                                        // SUB  -> version - 32
+                p.Add(0xB8); p.Add(0x10); p.Add(0x00);              // PUSHW[1] 4096
+                p.Add(0x63);                                        // MUL  -> (version-32) * 64
+            }
+            else
+            {
+                p.Add(0xB0); p.Add(0x00);                           // PUSHB[1] 0
+                p.Add(0x55);                                        // NEQ
+                p.Add(0x58);                                        // IF
+                p.Add(0xB8); p.Add(0x02); p.Add(0x80);              // PUSHW[1] 640 -- ten pixels
+                p.Add(0x1B);                                        // ELSE
+                p.Add(0xB0); p.Add(0x00);                           // PUSHB[1] 0
+                p.Add(0x59);                                        // EIF
+            }
+            p.Add(0x38);                                            // SHPIX
+            return p.ToArray();
         }
 
         private static byte[] BuildCvt(List<short> cvts)

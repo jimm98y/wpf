@@ -2615,6 +2615,113 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveReverse =
             Environment.GetEnvironmentVariable("WPF_SOLVE_REVERSE") == "1";
 
+        /// <summary>ASKS GDI WHAT IT ANSWERS GETINFO, instead of assuming it.
+        /// <para>This matters more than its size suggests. Segoe UI does not hint one way; it
+        /// carries several hinting programs and picks between them at run time. Its fpgm holds a
+        /// family of dispatchers shaped
+        /// <c>FDEF PUSHB[2] RS EQ IF &lt;call the real work&gt; ELSE POP POP POP EIF ENDF</c> --
+        /// every instruction in a glyph is tagged with a mode number and runs only if that number
+        /// equals storage[2]. And storage[2] is computed, in fpgm at 2270, from GETINFO alone:</para>
+        /// <code>
+        /// storage[2] = 1
+        /// if 35 &lt;= version &lt;= 64:
+        ///     storage[2] = 0                                  // bi-level
+        ///     if GETINFO(32) == 4096: storage[2] += 1         // greyscale
+        ///     if version >= 36:
+        ///         if GETINFO(64) == 8192: storage[2] += 2     // ClearType
+        ///         if version == 36:       storage[2] += 32
+        /// </code>
+        /// <para>So the rasterizer version is not a detail, it is a GATE: below 36 the face never
+        /// even asks whether ClearType is on, storage[2] can only be 0 or 1, and every ClearType
+        /// instruction in every glyph is skipped. We answered 35, so we have been running Segoe
+        /// UI's BI-LEVEL hinting and then applying our own invented x rules on top of it. That is
+        /// why no rounding rule ever fitted and why XHintMode helps some glyphs and hurts others:
+        /// it is a hand-made substitute for a branch the font wanted to take itself.</para>
+        /// <para>GETINFO's answer never reaches an API, so the only way to read it is to make the
+        /// answer visible: the probe font's glyph shifts ITSELF right by what it is told, and the
+        /// ink says what GDI said. Set WPF_GETINFO_ORACLE to a path.</para>
+        /// <para>Read BOTH columns. GetGlyphOutline renders greyscale and answers as a greyscale
+        /// rasterizer, so the GGO column cannot see the ClearType branch at all -- which is how an
+        /// earlier attempt concluded the face had none. The drawn column is the one that counts.</para>
+        /// </summary>
+        [Fact]
+        public void WhatGdiAnswersGetInfo()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_GETINFO_ORACLE");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GETINFO_ORACLE to collect this");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the oracle");
+
+            const string Fam = "WpfGetInfoOracle";
+            const int ProbePpem = 16;
+            // 0 is the baseline: the same bar with no program at all, so the shift is measured
+            // against the position the outline alone puts it in.
+            int[] selectors = { 0, 1, 32, 64, 128, 256, 512, 1024, 2048 };
+            string[] names =
+            {
+                "(no program, baseline)", "rasterizer version", "greyscale", "ClearType enabled",
+                "compatible widths", "horizontal LCD stripes", "BGR order",
+                "sub-pixel positioned", "symmetric rendering",
+            };
+
+            var bars = new List<SyntheticFont.Bar>();
+            foreach (int sel in selectors)
+                bars.Add(new SyntheticFont.Bar(0, 400, 700, false, false,
+                                               noProgram: sel == 0, probe: sel));
+            byte[] fontBytes = SyntheticFont.Build(Fam, bars);
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the probe font");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== what GDI answers GETINFO, read off the ink at {ProbePpem}ppem");
+            report.AppendLine("   selector  meaning                    drawn(ClearType)      GGO(greyscale)");
+            try
+            {
+                var raw = new byte[Width * Height * 4];
+                int baseDrawn = -1, baseGgo = -1;
+                for (int i = 0; i < selectors.Length; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    int drawn = InkLeftColumn(raw);
+                    var ggoFig = GdiStageTests.GdiOutlineAt(ch[0], Fam, ProbePpem, 0, 0);
+                    int ggo = ggoFig.Count == 0 ? -1 : (int) MathF.Round(XLeft(ggoFig));
+                    if (i == 0) { baseDrawn = drawn; baseGgo = ggo; }
+                    string d = drawn < 0 ? "no ink" : (drawn - baseDrawn).ToString();
+                    string g = ggo < 0 ? "no outline" : (ggo - baseGgo).ToString();
+                    report.AppendLine($"   {selectors[i],8}  {names[i],-25}  {d,14}  {g,18}");
+                }
+                report.AppendLine("   (selector 1 shifts by VERSION MINUS 32 pixels; every other row"
+                                  + " shifts ten pixels when the bit is set and none when it is not)");
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The first column carrying any ink, or -1. The probe reads a POSITION, so this
+        /// deliberately does not care how much ink there is or what shape it makes.</summary>
+        private static int InkLeftColumn(byte[] bgra)
+        {
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                {
+                    int i = (y * Width + x) * 4;
+                    if (bgra[i] < 200 || bgra[i + 1] < 200 || bgra[i + 2] < 200) return x;
+                }
+            return -1;
+        }
+
+        private static float XLeft(List<PathFigure> figures)
+        {
+            var xs = new SortedSet<float>();
+            foreach (PathFigure f in figures) CollectXs(f, xs);
+            float min = float.MaxValue;
+            foreach (float x in xs) if (x < min) min = x;
+            return min == float.MaxValue ? 0f : min;
+        }
+
         [Fact]
         public void SolveTheXCoordinatesGdiFitted()
         {
