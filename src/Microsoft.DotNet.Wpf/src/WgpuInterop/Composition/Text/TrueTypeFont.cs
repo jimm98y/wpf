@@ -1464,7 +1464,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// numbers: four vertical samples is now within 1,400 of one and carries LESS weight error
         /// (664,007 against 672,115), so the argument for one row is thinner than it was; and stem
         /// fattening buys 127,000 of weight at the cost of 38,000 of position, which is a blunt
-        /// instrument compensating for something not yet named.</para></summary>
+        /// instrument compensating for something not yet named.</para>
+        /// <para>AND MODE 6 IS THE DOCUMENTED RULE, which turns a fitted constant into a derived
+        /// one. Microsoft's own ClearType booklet (learn.microsoft.com/typography/cleartype/pdfs/
+        /// nowreadthis.pdf, p.12) says: "even quite subtle x-direction details can be rendered
+        /// simply by letting ClearType use the NEAREST SUBPIXEL BOUNDARY". A subpixel boundary is
+        /// a third of a pixel, and mode 6 is exactly that -- RoundDistance multiplies by three and
+        /// applies the face's own rule on the finer grid. The mode 5 it replaced rounds on
+        /// ClearTypeGrid = 16, a sixteenth of a pixel, which corresponds to nothing described
+        /// anywhere. So the sweep did not merely find a better number; it landed on the rule, and
+        /// the 159,807 it was worth is the size of the error that reading the paper would have
+        /// avoided. Cited so the next person can start from the rule rather than the sweep.</para>
+        /// <para>The same page also settles GLYPH ORIGINS, and we already match: "in the earlier
+        /// versions of ClearType, the space occupied by each glyph always began on a whole pixel
+        /// boundary", subpixel positioning being the LATER technique. GDI classic ClearType --
+        /// what WinForms asks for -- is the earlier behaviour, and WgpuSceneRenderer snaps a
+        /// hinted run's origin to a whole device pixel and rounds each advance before the next
+        /// glyph. Checked rather than assumed, along with 'gasp' (parsed, drives symmetric
+        /// smoothing and gridfit) and 'hdmx' (consulted first for advances, which is the
+        /// "compatible widths" of CLEARTYPE_QUALITY). None of the four needed changing.</para></summary>
         internal static readonly int XHintMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 6;
 
