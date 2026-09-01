@@ -150,16 +150,17 @@ namespace WinFormsControlParity
             // The header and day names sitting one row LOWER (16..27, 38..46 against 15..26,
             // 37..45) is separate and still unexplained.
             //
-            // AND THAT WIDTH IS THIS HARNESS'S PATH, NOT THE WINDOW'S. The same calendar in the
-            // live window draws its Today line 83 pixels wide against Windows' 82 -- right --
-            // where the specimen draws 88. Graphics.DrawString only records a glyph run to the
-            // scene when a GpuRecorder is attached; the live control has one and DrawToBitmap
-            // here does not, so the two go through different layout code and only the fallback
-            // widens digits by a pixel each.
-            // So this suite measures a renderer the user never sees. That does not make it
-            // useless -- it is what caught the calendar drawing nothing at all, which the window
-            // could not have -- but a difference it reports is a difference in the DrawToBitmap
-            // path until it has been checked against a capture.
+            // AND THIS HARNESS DOES NOT DRAW TEXT WITH THIS PORT AT ALL. DrawString records
+            // a glyph run to the scene only when a GpuRecorder is attached; the live control
+            // has one, a DrawToBitmap Graphics does not, and the fallback is a P/Invoke to
+            // gdiplus. So every string here is drawn by Windows' GDI+ and compared against a
+            // native control's GDI -- which is why the Today line comes out 88 wide against
+            // 82 here while the same calendar in the live WINDOW is 83 against 82. GDI+
+            // spaces digits its own way; that is not this port's doing.
+            // Proved: WPF_TEXT_HINTING=0 rewrites this port's glyphs and moves nothing here.
+            // So this suite guards LAYOUT and CHROME, not text. It is what caught the
+            // calendar drawing nothing at all -- which no window capture could have -- but a
+            // TEXT difference it reports is GDI+ against GDI until a capture says otherwise.
             all.Add(new Specimen("monthcalendar", 230, 170, () =>
             {
                 var d = new DateTime(2026, 9, 1);
