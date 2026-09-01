@@ -1449,6 +1449,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>gamma 1.16/1.20/1.24 -> 1,019,140 / 985,204 / 1,029,861;  stem fat 0/5/6/7 ->
         /// 1,191,587 / 1,142,649 / 985,204 / 1,010,779;  vertical rows 1/2/4 -> 985,204 /
         /// 1,252,810 / 986,601;  compatible widths 0/1/2 -> 1,076,391 / 985,204 / 1,076,367.</para>
+        /// <para>AND regular@12 IS NOT A SUFFICIENT PROXY FOR THE WINDOW, which is worth knowing
+        /// because it looks like it should be: the window is Segoe UI regular at 12ppem and that
+        /// suite case is exactly that. Swept on it alone, modes 7, 8 and 13 all BEAT the shipped
+        /// 6 -- 88,551, 88,450 and 89,304 against 89,997 -- and every one of them loses on the
+        /// window, mode 8 by 9,612 (997,285 against 987,673), re-measured after the calendar
+        /// fixes in case the ordering had moved. It had not.</para>
+        /// <para>The suite draws black on white at a fixed pen. The window draws on control grey,
+        /// on selection blue, in bold, and at real layout positions. Whatever the window prefers
+        /// mode 6 for is in that difference, so the capture stays the arbiter and the fast case is
+        /// a hint rather than a proxy.</para>
         /// <para>All four are already where they should be, so the move to 6 is a genuine joint
         /// improvement and not one knob paying for another. Two things are worth keeping from the
         /// numbers: four vertical samples is now within 1,400 of one and carries LESS weight error
