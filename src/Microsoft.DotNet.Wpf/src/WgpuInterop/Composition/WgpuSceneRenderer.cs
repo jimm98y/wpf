@@ -4433,11 +4433,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (path == null) return null;
             try
             {
-                // A family that ships a real bold or italic file gets that file as it is; one that
-                // does not has the style synthesized from its regular face.
-                bool styled = Text.FontFiles.HasStyledFile(family, bold, italic);
-                return new Text.TrueTypeFont(System.IO.File.ReadAllBytes(path),
-                                             bold && !styled, italic && !styled);
+                // WHAT THE FILE IS, per axis, not whether the family 'has a styled file'. One
+                // boolean cannot answer a two-dimensional question: Tahoma resolves Bold+Italic to
+                // tahomabd.ttf, which is not the regular file, so the old test said 'styled' and
+                // suppressed BOTH simulations -- upright bold where Windows shears it.
+                byte[] bytes = System.IO.File.ReadAllBytes(path);
+                Text.FontFiles.DeclaredStyle(bytes, 0, out bool fileBold, out bool fileItalic);
+                return new Text.TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic);
             }
             catch (Exception)
             {

@@ -1,4 +1,4 @@
-// Which file holds a font family.
+﻿// Which file holds a font family.
 //
 // Everything drawn on this stack used to come out in one hard-coded face -- Arial, whatever the
 // caller asked for -- because a text run reached the renderer carrying nothing but a size, a colour
@@ -93,6 +93,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 string? found = Resolve(family!, bold, italic);
                 s_resolved[key] = found;
                 return found;
+            }
+        }
+
+        /// <summary>What styles the FILE itself declares, read from 'head'.macStyle.
+        /// <para>Asking whether a family 'has a styled file' cannot answer a two-dimensional
+        /// question with one boolean, and answering it that way lost the oblique on every
+        /// bold-italic of a family that ships bold but not bold-italic: Tahoma resolved Bold+Italic
+        /// to tahomabd.ttf, which is not the regular file, so 'styled' came back true and NEITHER
+        /// simulation was applied -- we drew upright bold where Windows draws a sheared bold, and
+        /// that one row was a third of the whole specimen's error at 12ppem.</para>
+        /// <para>The file's own macStyle settles it per axis and needs no guessing about which
+        /// path came back: bit 0 is bold, bit 1 is italic.</para></summary>
+        public static void DeclaredStyle(byte[] data, int sfntOffset, out bool bold, out bool italic)
+        {
+            bold = italic = false;
+            if (data.Length < sfntOffset + 12) return;
+            int numTables = (data[sfntOffset + 4] << 8) | data[sfntOffset + 5];
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = sfntOffset + 12 + i * 16;
+                if (rec + 16 > data.Length) return;
+                if (data[rec] != (byte) 'h' || data[rec + 1] != (byte) 'e'
+                    || data[rec + 2] != (byte) 'a' || data[rec + 3] != (byte) 'd') continue;
+                int off = (data[rec + 8] << 24) | (data[rec + 9] << 16)
+                        | (data[rec + 10] << 8) | data[rec + 11];
+                if (off + 46 > data.Length) return;
+                int macStyle = (data[off + 44] << 8) | data[off + 45];
+                bold = (macStyle & 1) != 0;
+                italic = (macStyle & 2) != 0;
+                return;
             }
         }
 
