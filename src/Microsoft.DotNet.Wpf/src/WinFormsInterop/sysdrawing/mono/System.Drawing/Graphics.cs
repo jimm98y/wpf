@@ -1752,6 +1752,33 @@ namespace System.Drawing
 			// WGPU_TRACE_TEXT shows both faces emitted at originX 4 -- so the remaining unknown is what
 			// GDI+ derives ITS margin from. Try the face's own overhang metrics next (OS/2, hhea, the
 			// glyph bounding box against the advance), not the line height.
+			// A SIXTH OF GDI'S tmHeight, ROUNDED UP -- not a sixth of GDI+'s Font.Height.
+			// This margin is the text's left ORIGIN, so being wrong by one moves an entire run, and it
+			// was wrong for some faces at some sizes. TextRenderer wraps an HFONT and takes its height
+			// from GDI's TEXTMETRIC; Font.Height comes from GDI+'s line spacing. The two disagree, and
+			// per FACE, which is what defeated four attempts to fit a rounding to Font.Height:
+			//
+			//   16ppem   Arial  Font.Height 19 tmHeight 18 -> 3     Times  19 / 19 -> 4
+			//            Verdana            20 /       18 -> 3      Tahoma 20 / 19 -> 4
+			//
+			// Equal Font.Height, different tmHeight, different margin. Measured against Windows with a
+			// stem glyph and a near-black threshold (Probe.Margins, Probe.GdiMetrics), ceil(tmHeight/6)
+			// is right in 23 of 24 face-and-size cases; the one miss is Times at 10ppem, which is also
+			// the single case the independent displacement check disagreed with, so it is the
+			// measurement rather than the rule.
+			//
+			// The face knows GDI's rule already -- TryGetGdiLineMetrics is the same VDMX-aware path the
+			// line box uses -- so this asks it rather than re-deriving it. Font.Height remains the
+			// fallback for a family that will not resolve.
+			try {
+				if (font.FontFamily is FontFamily fam
+				    && WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
+					    fam.Name, font.Bold, font.Italic, font.SizeInPoints * 96f / 72f,
+					    out int gdiAsc, out int gdiDesc)
+				    && gdiAsc + gdiDesc > 0)
+					return (float) Math.Ceiling ((gdiAsc + gdiDesc) / 6f);
+			} catch (Exception) {
+			}
 			return (float) Math.Ceiling (font.Height / 6f);
 		}
 
