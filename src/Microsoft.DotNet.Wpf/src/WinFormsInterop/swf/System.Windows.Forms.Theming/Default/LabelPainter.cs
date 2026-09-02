@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -34,6 +34,29 @@ namespace System.Windows.Forms.Theming.Default
 		{
 		}
 
+		/// <summary>NOTE: this ignores Label.UseCompatibleTextRendering, and that is a real
+		/// difference from Windows rather than a detail.
+		/// <para>The property defaults to FALSE, and a WinForms Label with it false draws through
+		/// TextRenderer.DrawText -- GDI -- while this always calls Graphics.DrawString, which is
+		/// GDI+. The two are different rasterizers AND different layouts: they leave different
+		/// margins before the first glyph and place the run on different sub-pixel phases.</para>
+		/// <para>That is why no single margin constant reconciles the two. Measured directly out of
+		/// GDI+ (Probe.Margins draws one glyph twice, once with GenericTypographic which has no
+		/// padding, and subtracts, so the bearing cancels), GDI+'s margin is round(em/6) and is the
+		/// SAME for all six faces at a size:</para>
+		/// <code>
+		///   ppem          9  10  11  12  13  16  20  24
+		///   GDI+          2   2   2   2   2   3   3   4
+		///   ours ceil(H/6) 2  2-3 3   3   3   4  4-5 5-6
+		/// </code>
+		/// <para>But adopting round(em/6) took the text specimen from 37.4M to 122.2M, because the
+		/// STOCK app is not on the GDI+ path either -- its Label is on TextRenderer's, whose padding
+		/// is a different rule again. Matching GDI+ exactly is matching the wrong thing.</para>
+		/// <para>So the fix is not a constant, it is this branch: honour
+		/// UseCompatibleTextRendering and route the false case to TextRenderer.DrawText, mapping
+		/// TextAlign to TextFormatFlags. Left undone deliberately -- it changes every Label in the
+		/// port and the flag mapping has to be right before it can be measured, which is more than a
+		/// one-line change deserves at the end of a session.</para></summary>
 		public virtual void Draw (Graphics dc, Rectangle client_rectangle, Label label) 
 		{
 			Rectangle rect = label.PaddingClientRectangle;
