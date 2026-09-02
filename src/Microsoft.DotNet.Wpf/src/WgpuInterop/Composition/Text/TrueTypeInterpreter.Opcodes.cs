@@ -767,7 +767,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_stemFat =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
         private static readonly int s_stemFatLo =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 11;
+        // TEN, not eleven. Re-swept after the rasterizer version and the symmetric answer changed
+        // the geometry underneath it: 10 measures 77,051 against 11's 77,111, and the ink error at
+        // ppem 10 halves (150 -> 68). NOT taken to 9, though 9 measures identically -- identically
+        // is all the suite can say, because it starts at ppem 10, and a bound set outside the
+        // range that can see it is a guess wearing a measurement's clothes.
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT_LO"), out int sl) ? sl : 10;
         /// <summary>Whether the stroke-weight correction also applies to a ROUNDED MIRP, which is
         /// spacing rather than weight. MEASURED AND REJECTED: the window goes 1,216,292 to
         /// 1,233,117, and it does not touch the case that prompted it -- 'H' at 12ppem is

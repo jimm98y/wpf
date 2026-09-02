@@ -1494,8 +1494,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// glyph. Checked rather than assumed, along with 'gasp' (parsed, drives symmetric
         /// smoothing and gridfit) and 'hdmx' (consulted first for advances, which is the
         /// "compatible widths" of CLEARTYPE_QUALITY). None of the four needed changing.</para></summary>
+        /// <para>BACK TO 5 on 2026-09-02, and the reason is which instrument was asked. Mode 6
+        /// was chosen on the CONTROLS window, which is Segoe UI 9pt inside WinForms controls --
+        /// one face, at one size, with control painting between the glyphs and the capture. The
+        /// text-only specimen (PAIR_SPECIMEN=text: six faces, each regular, bold and italic) is
+        /// the instrument for a question about text, and it says the opposite:</para>
+        /// <code>
+        ///   text specimen, six faces   mode 5 2,056,362   mode 6 2,906,888
+        ///   text specimen, Segoe UI    mode 5   132,757   mode 6   163,112
+        ///   parity suite               mode 5    50,409   mode 6    77,051
+        ///   controls window            mode 5 1,135,620   mode 6   982,386
+        /// </code>
+        /// <para>Every clean text instrument prefers 5, by a lot, and Segoe UI ALONE prefers 5 on
+        /// the specimen -- so this is not the old letters-and-digits story and not a face mix. The
+        /// controls window is the only disagreement, and it is the one measurement with something
+        /// other than text in it.</para>
+        /// <para>That disagreement is now a LEAD rather than a tie-breaker: the same face at the
+        /// same size prefers different rounding depending on whether a plain Label draws it or a
+        /// control's paint path does. The difference between those two is where the text lands --
+        /// sub-pixel phase at real layout positions -- so that is what to look at next.</para>
         internal static readonly int XHintMode =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 6;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 5;
 
 
         /// <summary>How many parts of a pixel the natural x may land on, or 0 to leave it alone.
