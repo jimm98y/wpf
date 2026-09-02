@@ -1709,6 +1709,32 @@ namespace System.Drawing
 		{
 			if (format != null && format.IsTypographic)
 				return 0f;
+			// THIS MARGIN IS THE TEXT'S LEFT ORIGIN, so a one-pixel error moves an entire run, and
+			// there IS one -- at 10ppem and only there. Left as it is because every attempt to fix it
+			// cost more elsewhere than it gained; written down so the next attempt starts here.
+			//
+			// Measured on the text specimen (PAIR_SPECIMEN=text) by asking each row for the rigid
+			// horizontal shift that best matches Windows: at 10ppem twelve of the twenty-four rows
+			// want +1 and the other twelve want 0, and taking it removes 84-99% of those rows'
+			// difference -- 6.2M of that size's 9.4M. At 9, 11, 12, 13, 16 and 20ppem every row
+			// already wants 0, so ceiling is right there.
+			//
+			// It is NOT a function of Font.Height, which is what killed the obvious fixes. The same
+			// height needs different margins at different sizes:
+			//
+			//     Verdana   10ppem Height 13 needs 2     11ppem Height 14 needs 3
+			//     Arial     10ppem Height 12 needs 2     11ppem Height 13 needs 3
+			//     Segoe UI  10ppem Height 14 needs 2     11ppem Height 15 needs 3
+			//
+			// so Height 13 needs 2 at one size and 3 at the next. Truncation fixes 10ppem and breaks
+			// 11/12/16 (total 30.6M -> 110.0M); round-half-up likewise (-> 53.6M). Our Font.Height
+			// agrees with Windows' exactly for all six faces at every size checked, so the
+			// disagreement is in what GDI+ does with it, not in the metric.
+			//
+			// Note also that the SAME formula in TextRenderer.GlyphOverhang is not on this path at
+			// all -- our Label draws through Graphics.DrawString, not TextRenderer -- so changing it
+			// moves nothing here and does move MeasureText, hence AutoSize widths. Change one at a
+			// time and re-measure; changing both together is what made the first attempt unreadable.
 			return (float) Math.Ceiling (font.Height / 6f);
 		}
 
