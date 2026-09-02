@@ -465,6 +465,10 @@ namespace WgpuInterop.Tests.Text
         [InlineData("Segoe UI")]
         [InlineData("Arial")]
         [InlineData("Consolas")]
+        // Times and Verdana added: the text specimen makes Times its worst face at 10ppem, where
+        // its line comes out two pixels short of Windows' in all four styles.
+        [InlineData("Times New Roman")]
+        [InlineData("Verdana")]
         public void Advances_MatchWindows(string family)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
@@ -479,7 +483,7 @@ namespace WgpuInterop.Tests.Text
             var report = new System.Text.StringBuilder();
             report.AppendLine($"== {family}  advances (ours - GDI), per size");
 
-            foreach (int ppem in new[] { 11, 12, 13, 16, 19 })
+            foreach (int ppem in new[] { 9, 10, 11, 12, 13, 16, 19 })
             {
                 IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
                 var lf = new LOGFONTW
@@ -502,7 +506,11 @@ namespace WgpuInterop.Tests.Text
 
                         int mine = ((IHintedGlyphFont) font).TryGetDeviceAdvance(gi[0], ppem, out float a)
                             ? (int) MathF.Round(a)
-                            : (int) MathF.Round(font.Advance(gi[0]) * ppem / font.PixelsPerEm);
+                            // Away from zero, the same as the renderer's fallback: rounding this
+                            // the other way here made the probe report a difference the product
+                            // does not have.
+                            : (int) MathF.Round(font.Advance(gi[0]) * ppem / font.PixelsPerEm,
+                                                MidpointRounding.AwayFromZero);
                         if (mine != w[0])
                         {
                             off++;

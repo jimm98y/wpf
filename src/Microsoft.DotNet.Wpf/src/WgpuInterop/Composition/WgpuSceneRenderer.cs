@@ -4598,7 +4598,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         step = hinted is not null
                                && hinted.TryGetDeviceAdvance(g.GlyphId, hintPpem, out float device)
                                ? device / deviceScale
-                               : MathF.Round(g.Advance * scale * deviceScale) / deviceScale;
+                               : MathF.Round(g.Advance * scale * deviceScale, MidpointRounding.AwayFromZero) / deviceScale;
                         // The pair adjustment, on the same whole-device-pixel grid as the advance.
                         // It has to be added HERE and not folded into the advance, because the
                         // branch above throws the shaped advance away for the face's own.
@@ -4607,7 +4607,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
-                        step = MathF.Round((g.Advance + g.Kern) * scale);
+                        step = MathF.Round((g.Advance + g.Kern) * scale, MidpointRounding.AwayFromZero);
                     }
                     pen += step;
                 }
@@ -4646,7 +4646,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
                 // The pair adjustment travels with the advance here too -- this is the atlas path,
                 // taken when the font has no outlines to fit.
-                penX += MathF.Round((sg.Advance + sg.Kern) * scale);
+                penX += MathF.Round((sg.Advance + sg.Kern) * scale, MidpointRounding.AwayFromZero);
             }
         }
 

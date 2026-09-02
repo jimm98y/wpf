@@ -655,7 +655,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
             if (TryGetHintedAdvance(gid, pixelsPerEm, out float hinted)) return hinted;
-            return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm);
+            // AWAY FROM ZERO, because that is what GDI does and MathF.Round does not: its default
+            // is banker's rounding, which sends a half DOWN to the even number.
+            //
+            // It costs a whole pixel wherever a scaled advance lands exactly on a half, and those
+            // are not rare -- an advance of half an em at an even ppem is exact. Times New Roman's
+            // SPACE is 512 units of a 2048 em, which is 2.5 pixels at 10ppem: we rounded it to 2
+            // where Windows uses 3. The specimen line has two spaces in it, so every Times row came
+            // out two pixels short of Windows' in all four styles.
+            return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
+                               MidpointRounding.AwayFromZero);
         }
 
         // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of
@@ -707,7 +716,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (glyph is not null)
                     {
                         int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
-                        if (span > 0) advance = MathF.Round(span / 64f);
+                        if (span > 0) advance = MathF.Round(span / 64f, MidpointRounding.AwayFromZero);
                     }
                 }
                 finally

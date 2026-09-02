@@ -3536,7 +3536,9 @@ namespace WgpuInterop.Tests.Text
             // 7 and 8 are below the gasp's gridfit threshold for Segoe UI, so with our own
             // hinting off (WPF_TEXT_HINTING=0) both sides draw the SAME outline and the only
             // thing left to differ is the shading.
-            foreach (int ppem in new[] { 7, 8, 11, 12, 13, 16, 19 })
+            // 9 and 10 added when the text specimen made 10ppem its worst size: the list jumped
+            // from 8 to 11 and could not be pointed at it.
+            foreach (int ppem in new[] { 7, 8, 9, 10, 11, 12, 13, 16, 19 })
             {
                 int baseline = ppem + 12;
                 int pixels = 0;
