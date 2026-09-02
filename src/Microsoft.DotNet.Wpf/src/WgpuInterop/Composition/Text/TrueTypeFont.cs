@@ -667,6 +667,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// run, or the glyph has no outline for one to run on.</summary>
         private bool TryGetHintedAdvance(int glyphId, float pixelsPerEm, out float advance)
         {
+            // THE FACE'S 'gasp' GOVERNS THIS TOO. TryGetHintedOutline already declines to fit
+            // where the designer says not to, and this measured the advance by running the
+            // program anyway -- so a glyph was DRAWN unfitted and SPACED as if it had been fitted.
+            // Consolas asks for no gridfit at 10ppem and below; its scaled advance there is 5.498,
+            // Windows spaces it at 5, and the fitted phantom rounds to 6. One pixel a glyph, fifty
+            // glyphs, and our line came out 49 pixels longer than Windows' -- every letter past
+            // the first landing somewhere else. It was invisible in the old specimen because that
+            // drew almost everything at 9pt, where the face does fit.
+            if (!FaceWantsGridFit(pixelsPerEm)) { advance = 0f; return false; }
+
             // NOT keyed by the hinting mode, because it is not measured in one: see below.
             var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
             if (_hintedAdvances.TryGetValue(key, out advance)) return advance > 0f;
