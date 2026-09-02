@@ -599,6 +599,27 @@ namespace System.Windows.Forms
 		/// <summary>The left and right margins Windows leaves around text, in pixels: an
 		/// overhang of a sixth of the font's height, doubled when the caller asks for padding on
 		/// both sides, and half as much again on the right to leave room for an italic.</summary>
+		/// <summary>AND THE PER-FACE VARIATION IS REAL, which the note below wrongly called noise.
+		/// <para>Re-measured with a STEM glyph ('I') and a near-black threshold, so only the fully
+		/// black core counts and the ClearType fringe -- which is never full black -- cannot move the
+		/// answer. The margins that come back predict the displacement the text specimen actually
+		/// shows in 11 of 12 cases, including the SIGN of Arial's -1 at 10ppem:</para>
+		/// <code>
+		///   16ppem  Segoe 4  Arial 3  Times 4  Verdana 3  Tahoma 4  Consolas 4
+		///   10ppem  Segoe 2  Arial 3  Times 1  Verdana 2  Tahoma 2  Consolas 2
+		/// </code>
+		/// <para>Two instruments agreeing on the sign and size of eleven displacements is not noise.
+		/// So Windows' margin genuinely DIFFERS BETWEEN FACES AT THE SAME Font.Height -- 16ppem Arial
+		/// and Times are both Height 19 and get 3 and 4; Verdana and Tahoma are both 20 and get 3 and
+		/// 4 -- and no rounding of Height can produce that. It is a per-FACE quantity.</para>
+		/// <para>Which also means no simple rule wins: ceil matches 4 of 6 faces at 16ppem and 2 of 6
+		/// at 10ppem, round is the other way round, and each was measured to cost more on the whole
+		/// specimen than it gained. Four roundings have now been tried and reverted. STOP FITTING
+		/// ROUNDINGS; find the per-face quantity GDI reports -- tmOverhang and the OUTLINETEXTMETRIC
+		/// fields are where to look, since those are the only per-face numbers a text stack has that
+		/// are not derived from the height.</para>
+		/// <para>Caveat, so the table is not over-trusted: it mispredicts Tahoma at 20ppem (it says
+		/// +1, the specimen shows none), so it is good but not exact.</para></summary>
 		/// <summary>NARROWED: the TOTAL here is right and the SPLIT is what is wrong.
 		/// <para>Measured with MeasureText rather than with ink, which is integer arithmetic and
 		/// cannot carry an antialiased fringe (Probe.MeasuredPadding). The PADDED width agrees with
