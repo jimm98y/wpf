@@ -3509,7 +3509,11 @@ namespace WgpuInterop.Tests.Text
         /// <para>Written into the same file (WPF_STAGE_REPORT) as A and B.</para></summary>
         /// <summary>NOTE: every face here is the REGULAR one, and the text specimen now says the
         /// worst rows in the whole matrix are ITALIC -- Segoe UI italic and bold-italic at 20ppem
-        /// are 1.03M and 0.92M, 42% of that size. No controlled instrument covers them.
+        /// are 764,521 and 832,847, 41% of that size, at 0.591 and 0.349 error per unit of ink
+        /// where every other row sits between 0.057 and 0.116. (Earlier revisions of this note
+        /// quoted 1.03M and 0.92M, measured before the specimen's two columns were stopped from
+        /// overlapping at that size; the conclusion survived the correction, the numbers did not.)
+        /// No controlled instrument covers them.
         /// <para>What is known about those rows, measured: total ink matches Windows to 0.8%, the
         /// R/G/B channels are balanced to 0.8% (so it is not lamp order), no integer shift improves
         /// them, and the ink centroid drifts less than a pixel (so the advances do not accumulate).
