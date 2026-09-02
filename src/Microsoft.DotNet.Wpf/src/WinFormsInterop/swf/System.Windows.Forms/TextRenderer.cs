@@ -599,6 +599,22 @@ namespace System.Windows.Forms
 		/// <summary>The left and right margins Windows leaves around text, in pixels: an
 		/// overhang of a sixth of the font's height, doubled when the caller asks for padding on
 		/// both sides, and half as much again on the right to leave room for an italic.</summary>
+		/// <summary>NARROWED: the TOTAL here is right and the SPLIT is what is wrong.
+		/// <para>Measured with MeasureText rather than with ink, which is integer arithmetic and
+		/// cannot carry an antialiased fringe (Probe.MeasuredPadding). The PADDED width agrees with
+		/// Windows' at every face and size tried -- 20ppem gives 22/22, 21/21, 19/19, 24/24, 21/21 --
+		/// so left+right together is correct and AutoSize label widths are correct with it.</para>
+		/// <para>But text drawn into those correct widths still lands a pixel out for some faces at
+		/// some sizes, and only the LEFT margin moves the run. So the remaining fault is the split of
+		/// a total that is already right: something like our (3,4) against Windows' (2,5), which
+		/// measures identical in width and one pixel apart on screen.</para>
+		/// <para>Do not measure the split with ink -- three attempts did, and all three reported
+		/// different padding for faces at the SAME Font.Height because the two draws land on
+		/// different integer positions and the fringe column moves with them. MeasureText with
+		/// NoPadding is not a clean zero either: our bare widths differ from Windows' (10 against 13
+		/// at 20ppem) while the padded ones agree, and Windows' own totals do not fit its documented
+		/// left+(int)(1.5*left) rule at every size (16ppem Arial gives 8, which is no overhang at
+		/// all). Find a measurement that isolates LEFT without drawing a glyph.</para></summary>
 		private static void GlyphOverhang (Font font, TextFormatFlags flags, out int left, out int right)
 		{
 			left = right = 0;
