@@ -3464,6 +3464,13 @@ namespace WgpuInterop.Tests.Text
         [InlineData("Arial")]
         [InlineData("Times New Roman")]
         [InlineData("Consolas")]
+        // Verdana and Tahoma were missing, and they are the two faces the text specimen now says
+        // are worst: at 16ppem Verdana carries a rigid one-pixel x displacement in all four styles
+        // (1.19-1.27M each, 82-91% of it removed by shifting the row) while Tahoma at the same
+        // Font.Height does not. This stage draws at a FIXED PEN with no Label and no margin in the
+        // way, so it is the place to reproduce that without a window capture.
+        [InlineData("Verdana")]
+        [InlineData("Tahoma")]
         public void StageC_ClearTypeAgainstGdis(string family)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
