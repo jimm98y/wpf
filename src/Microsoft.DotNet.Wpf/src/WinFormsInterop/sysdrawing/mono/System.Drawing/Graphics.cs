@@ -1735,6 +1735,23 @@ namespace System.Drawing
 			// all -- our Label draws through Graphics.DrawString, not TextRenderer -- so changing it
 			// moves nothing here and does move MeasureText, hence AutoSize widths. Change one at a
 			// time and re-measure; changing both together is what made the first attempt unreadable.
+			// NARROWED FURTHER, and the answer is that GDI+'s margin is not a function of Height.
+			// At 16ppem Verdana and Tahoma both have Font.Height 20 -- ours and Windows' agree on that
+			// exactly -- and both faces' 'a' has left side bearing 0 in both stacks when drawn at a
+			// fixed pen (InkLeft_AgainstGdis). Yet in a Label:
+			//
+			//     Verdana   our origin 4   Windows' 3
+			//     Tahoma    our origin 4   Windows' 4
+			//
+			// Same height, same lsb, different margin, so no rounding of Height/6 can produce both.
+			// Verdana is the TALLER of the two by float line spacing (19.445 against 19.310) and gets
+			// the SMALLER margin, so it is not monotone in height either.
+			//
+			// Worth chasing: it is 64% of the difference at 16ppem (a rigid one-pixel shift of all four
+			// Verdana styles, 82-91% of each row's error). The run origin is confirmed as the cause --
+			// WGPU_TRACE_TEXT shows both faces emitted at originX 4 -- so the remaining unknown is what
+			// GDI+ derives ITS margin from. Try the face's own overhang metrics next (OS/2, hhea, the
+			// glyph bounding box against the advance), not the line height.
 			return (float) Math.Ceiling (font.Height / 6f);
 		}
 

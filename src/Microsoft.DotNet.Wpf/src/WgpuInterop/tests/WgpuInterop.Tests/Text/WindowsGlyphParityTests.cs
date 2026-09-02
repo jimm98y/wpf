@@ -3452,6 +3452,54 @@ namespace WgpuInterop.Tests.Text
             lock (Repertoire) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>WHERE THE FIRST GLYPH LANDS, at a fixed pen, ours against GDI's.
+        /// <para>The text specimen shows whole rows displaced by one pixel -- 64% of the error at
+        /// 16ppem is a rigid shift of Verdana's four styles -- and a displaced run can only come
+        /// from the origin the run starts at or from the first glyph's fitted left edge. This asks
+        /// the second question with no Label, no margin and no window in the way: draw at PenX and
+        /// report the first inked column.</para>
+        /// <para>Set WPF_INKLEFT_REPORT.</para></summary>
+        [Fact]
+        public void InkLeft_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_INKLEFT_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_INKLEFT_REPORT to collect this");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== first inked column at a fixed pen (PenX=" + PenX + "), ours vs GDI");
+            report.AppendLine("   face              ppem  ours  gdi  d");
+            foreach (string family in new[] { "Segoe UI", "Arial", "Times New Roman", "Verdana",
+                                              "Tahoma", "Consolas" })
+            {
+                string? file = FontFiles.Find(family, bold: false, italic: false);
+                if (file is null) continue;
+                var font = new TrueTypeFont(File.ReadAllBytes(file!));
+                foreach (int ppem in new[] { 9, 10, 11, 12, 13, 16, 20 })
+                {
+                    int baseline = ppem + 12;
+                    const string Text = "abcdefghijklm";
+                    byte[] theirs = Gdi.Draw(Text, family, ppem, PenX, baseline, Width, Height);
+                    byte[] ours = Ours(font, Text, ppem, baseline);
+                    int a = FirstInkColumn(ours), b = FirstInkColumn(theirs);
+                    report.AppendLine($"   {family,-16} {ppem,4} {a,5} {b,4} {a - b,3}"
+                                      + ((a - b) != 0 ? "   <--" : ""));
+                }
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The first column carrying ink in a COVERAGE MASK -- one byte a pixel, which is
+        /// what Gdi.Draw and Ours return. Reading them as RGBA made every column look inked and the
+        /// probe answered 0 for everything.</summary>
+        private static int FirstInkColumn(byte[] mask)
+        {
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    if (mask[y * Width + x] > 8) return x;
+            return -1;
+        }
+
         /// <summary>STAGE C of the pipeline decomposition: the finished ClearType pixels, per face.
         /// <para>Stages A and B live in GdiStageTests and compare GEOMETRY -- the unhinted outline,
         /// then the fitted one -- through one rasterizer, so they say nothing about the three lamps,
