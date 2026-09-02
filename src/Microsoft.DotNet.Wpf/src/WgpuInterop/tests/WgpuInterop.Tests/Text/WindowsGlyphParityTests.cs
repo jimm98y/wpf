@@ -3507,6 +3507,18 @@ namespace WgpuInterop.Tests.Text
         /// whole pipeline, over the same repertoire and the same sizes, so the three numbers can be
         /// read side by side and the stage that carries the difference is the one to work on.</para>
         /// <para>Written into the same file (WPF_STAGE_REPORT) as A and B.</para></summary>
+        /// <summary>NOTE: every face here is the REGULAR one, and the text specimen now says the
+        /// worst rows in the whole matrix are ITALIC -- Segoe UI italic and bold-italic at 20ppem
+        /// are 1.03M and 0.92M, 42% of that size. No controlled instrument covers them.
+        /// <para>What is known about those rows, measured: total ink matches Windows to 0.8%, the
+        /// R/G/B channels are balanced to 0.8% (so it is not lamp order), no integer shift improves
+        /// them, and the ink centroid drifts less than a pixel (so the advances do not accumulate).
+        /// The parity suite, which draws at a fixed pen, rates italic at 20ppem its BEST case. So
+        /// what is left is per-glyph sub-pixel placement in the app, and extending this theory to
+        /// the styled faces is how to see it without a window.</para>
+        /// <para>Caveat for anyone measuring the specimen at 20ppem: the line OVERFLOWS its column
+        /// there and both sides are clipped at the same x, so ink extents cannot detect advance
+        /// drift at that size -- use the centroid.</para></summary>
         [Theory]
         [InlineData("Segoe UI")]
         [InlineData("Arial")]

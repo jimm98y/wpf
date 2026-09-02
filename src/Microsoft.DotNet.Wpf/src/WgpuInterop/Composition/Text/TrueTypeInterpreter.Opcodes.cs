@@ -615,7 +615,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (s_traceGetInfo)
                                 Console.Error.WriteLine(
                                     $"      GETINFO selector={selector} -> {result}"
-                                    + $"  (prep={_inPreProgram}, ct={ClearTypeInfo})");
+                                    + $"  (prep={_inPreProgram}, ct={ClearTypeInfo}, ppem={_ppem})");
                             Push(result);
                             break;
                         }
