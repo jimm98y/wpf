@@ -57,6 +57,28 @@ namespace System.Windows.Forms.Theming.Default
 		/// TextAlign to TextFormatFlags. Left undone deliberately -- it changes every Label in the
 		/// port and the flag mapping has to be right before it can be measured, which is more than a
 		/// one-line change deserves at the end of a session.</para></summary>
+		/// <summary>This ignores Label.UseCompatibleTextRendering, and ROUTING IT TO TextRenderer
+		/// DOES NOT HELP -- tried, measured, reverted, recorded here so it is not tried again.
+		/// <para>The property defaults to false, and a Windows Label with it false draws through
+		/// TextRenderer, that is GDI. Adding that branch here changes nothing at all in this port:
+		/// XplatUI.RunningOnUnix returns TRUE under the GPU rasterizer by design -- the Graphics a
+		/// control is handed records into a WebGPU scene and has no GDI behind it, so GetHdc fails --
+		/// and TextRenderer.DrawTextInternal therefore falls back to DrawStringGdi anyway. The text
+		/// specimen moved from 37,412,409 to 37,418,235, which is capture noise.</para>
+		/// <para>So we cannot BE on GDI's path; the difference has to be emulated. What is left is a
+		/// one-pixel margin, and both attempts to measure the target failed for the same reason:</para>
+		/// <para>Probe.Margins draws a glyph twice, once with padding and once without, and subtracts,
+		/// so the bearing cancels. Against GDI+ it looks clean -- round(em/6), uniform across all six
+		/// faces. Against TextRenderer, which is the one that matters, it is NOISY: the padding comes
+		/// back different for faces at the SAME Font.Height (10ppem Arial 12 -> 3 but Times 12 -> 2;
+		/// 20ppem Verdana 25 -> 5 but Tahoma 25 -> 4). The two draws land on different integer
+		/// positions and the fringe column moves with them, so the instrument carries the same one
+		/// pixel of error as the thing being measured.</para>
+		/// <para>NEXT: measure the padding without moving the glyph -- draw at the SAME position both
+		/// times and read the difference out of the layout rectangle rather than the ink, or compare
+		/// MeasureText against MeasureText with NoPadding, which is integer arithmetic and cannot
+		/// carry a fringe. Do not fit another rounding of Font.Height to the ink table above.</para>
+		/// </summary>
 		public virtual void Draw (Graphics dc, Rectangle client_rectangle, Label label) 
 		{
 			Rectangle rect = label.PaddingClientRectangle;
