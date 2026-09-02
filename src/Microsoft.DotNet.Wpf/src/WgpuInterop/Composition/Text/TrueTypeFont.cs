@@ -60,6 +60,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// False when the face has no table for the size, and the advance has to be computed.</summary>
         bool TryGetDeviceAdvance(int glyphId, float pixelsPerEm, out float advance);
 
+        /// <summary>The device advance this glyph gets at this size, ALWAYS -- the face's own
+        /// table if it ships one, its hinted phantom if it does not, and the scaled advance if
+        /// neither applies. TryGetDeviceAdvance answers only the first two and leaves the caller
+        /// to invent the third, and the two callers that did invented it differently.</summary>
+        float DeviceAdvance(int glyphId, float pixelsPerEm);
+
         /// <summary>Whether the face asks to be smoothed in BOTH directions at this size.</summary>
         bool WantsSymmetricSmoothing(float pixelsPerEm);
 
@@ -637,6 +643,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// computing. Without it the two call each other for ever.</summary>
         [ThreadStatic] private static bool s_measuringAdvance;
 
+        public float DeviceAdvance(int glyphId, float pixelsPerEm)
+            => CompatibleAdvance(glyphId, pixelsPerEm, (int) MathF.Round(pixelsPerEm));
+
         /// <summary>The advance a BI-LEVEL rasterizer would give this glyph -- what compatible
         /// widths means, and what the fitted glyph has to be corrected onto.
         /// <para>'hdmx' is a cache of exactly these numbers, so a face that ships one is answered
@@ -651,7 +660,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// look them up in. Segoe UI, Arial, Times, Tahoma and Consolas all ship 'hdmx' and never
         /// reached this path, which is why the fallback could be wrong for as long as it was.</para>
         /// </summary>
-        private float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
+        /// <summary>Internal so a probe can ask the PRODUCT rather than reimplement it: the
+        /// advance test used to duplicate this arithmetic and then disagreed with the product
+        /// after it was fixed, reporting a difference that had already been repaired.</summary>
+        internal float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
         {
             if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
             if (TryGetHintedAdvance(gid, pixelsPerEm, out float hinted)) return hinted;
@@ -663,8 +675,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // SPACE is 512 units of a 2048 em, which is 2.5 pixels at 10ppem: we rounded it to 2
             // where Windows uses 3. The specimen line has two spaces in it, so every Times row came
             // out two pixels short of Windows' in all four styles.
-            return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
-                               MidpointRounding.AwayFromZero);
+            // THROUGH 26.6 FIRST. TrueType scales to a sixty-fourth of a pixel and rounds there,
+            // and only then rounds to whole pixels; rounding once in float is not the same
+            // function and differs exactly where the two roundings straddle a half.
+            //
+            // Segoe UI's italic space is 563 units of a 2048 em, which is 5.4980 pixels at 20ppem:
+            // one rounding gives 5, but 5.4980 lands on 351.875 sixty-fourths, which rounds to 352
+            // -- exactly 5.5 -- and then to 6, which is what Windows uses. Its REGULAR space is
+            // 561 units, 5.4785 pixels, 350.625 sixty-fourths, 351, 5.484, 5 -- and Windows uses 5.
+            // No single rounding of the float can separate those two.
+            //
+            // A space has no outline, so nothing else intercepts this: the specimen's Segoe UI
+            // italic and bold-italic rows at 20ppem drifted a pixel per space, two by end of line.
+            // ...but only where the face is GRID-FITTED. Consolas at 10ppem and Segoe UI italic at
+            // 20ppem have the SAME scaled advance, 5.498046875, and Windows answers 5 for one and
+            // 6 for the other -- so it cannot be a function of that number alone. What separates
+            // them is the 'gasp': Consolas asks for no gridfit at 10 and below, Segoe UI is fitted
+            // at 20. An unfitted face keeps its linear advance and is rounded once; a fitted one
+            // goes through the sixty-fourths the fitting works in and is rounded twice.
+            if (!FaceWantsGridFit(pixelsPerEm))
+                return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
+                                   MidpointRounding.AwayFromZero);
+
+            int sixtyFourths = (int) MathF.Round(Advance(gid) * 64f * pixelsPerEm / PixelsPerEm,
+                                                 MidpointRounding.AwayFromZero);
+            return MathF.Round(sixtyFourths / 64f, MidpointRounding.AwayFromZero);
         }
 
         // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of

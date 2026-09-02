@@ -462,33 +462,55 @@ namespace WgpuInterop.Tests.Text
         /// them.</para>
         /// <para>Reported only: set WPF_ADVANCE_REPORT.</para></summary>
         [Theory]
-        [InlineData("Segoe UI")]
-        [InlineData("Arial")]
-        [InlineData("Consolas")]
-        // Times and Verdana added: the text specimen makes Times its worst face at 10ppem, where
-        // its line comes out two pixels short of Windows' in all four styles.
-        [InlineData("Times New Roman")]
-        [InlineData("Verdana")]
-        public void Advances_MatchWindows(string family)
+        // EVERY STYLE, not just regular. The specimen's worst rows are italic -- Segoe UI italic
+        // at 20ppem drifts progressively left, a pixel by mid-line and two by the end, which is an
+        // advance deficit -- and this probe could not see it because it only ever built the
+        // regular face. An instrument that tests one style cannot find a bug in another.
+        [InlineData("Segoe UI", false, false)]
+        [InlineData("Segoe UI", true, false)]
+        [InlineData("Segoe UI", false, true)]
+        [InlineData("Segoe UI", true, true)]
+        [InlineData("Arial", false, false)]
+        [InlineData("Arial", true, false)]
+        [InlineData("Arial", false, true)]
+        [InlineData("Arial", true, true)]
+        [InlineData("Times New Roman", false, false)]
+        [InlineData("Times New Roman", true, false)]
+        [InlineData("Times New Roman", false, true)]
+        [InlineData("Times New Roman", true, true)]
+        [InlineData("Verdana", false, false)]
+        [InlineData("Verdana", true, false)]
+        [InlineData("Verdana", false, true)]
+        [InlineData("Verdana", true, true)]
+        [InlineData("Tahoma", false, false)]
+        [InlineData("Tahoma", true, false)]
+        [InlineData("Tahoma", false, true)]
+        [InlineData("Tahoma", true, true)]
+        [InlineData("Consolas", false, false)]
+        [InlineData("Consolas", true, false)]
+        [InlineData("Consolas", false, true)]
+        [InlineData("Consolas", true, true)]
+        public void Advances_MatchWindows(string family, bool bold, bool italic)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
             string? path = Environment.GetEnvironmentVariable("WPF_ADVANCE_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_ADVANCE_REPORT to collect this");
-            string? file = FontFiles.Find(family, bold: false, italic: false);
+            string? file = FontFiles.Find(family, bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {family}");
 
             const string Repertoire =
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,";
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
             var report = new System.Text.StringBuilder();
-            report.AppendLine($"== {family}  advances (ours - GDI), per size");
+            string style = (bold ? "B" : "") + (italic ? "I" : "");
+            report.AppendLine($"== {family} {(style.Length == 0 ? "R" : style),-2}  advances (ours - GDI), per size");
 
-            foreach (int ppem in new[] { 9, 10, 11, 12, 13, 16, 19 })
+            foreach (int ppem in new[] { 9, 10, 11, 12, 13, 16, 19, 20 })
             {
                 IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
                 var lf = new LOGFONTW
                 {
-                    lfHeight = -ppem, lfWeight = 400, lfCharSet = 1,
+                    lfHeight = -ppem, lfWeight = bold ? 700 : 400, lfItalic = (byte) (italic ? 1 : 0), lfCharSet = 1,
                     lfQuality = ClearTypeQuality, lfFaceName = family,
                 };
                 IntPtr hf = CreateFontIndirectW(ref lf);
@@ -504,13 +526,9 @@ namespace WgpuInterop.Tests.Text
                         var w = new int[1];
                         if (!GetCharWidthI(dc, 0, 1, gi, w)) continue;
 
-                        int mine = ((IHintedGlyphFont) font).TryGetDeviceAdvance(gi[0], ppem, out float a)
-                            ? (int) MathF.Round(a)
-                            // Away from zero, the same as the renderer's fallback: rounding this
-                            // the other way here made the probe report a difference the product
-                            // does not have.
-                            : (int) MathF.Round(font.Advance(gi[0]) * ppem / font.PixelsPerEm,
-                                                MidpointRounding.AwayFromZero);
+                        // Ask the PRODUCT, do not reimplement it. This duplicated the fallback
+                        // arithmetic and kept reporting a difference after the product was fixed.
+                        int mine = (int) font.CompatibleAdvance(gi[0], ppem, ppem);
                         if (mine != w[0])
                         {
                             off++;

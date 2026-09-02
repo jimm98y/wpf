@@ -4595,10 +4595,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     float step;
                     if (hintPpem > 0f)
                     {
+                        // ONE source for the device advance. This asked TryGetDeviceAdvance and
+                        // invented its own answer when that said no -- which is every blank glyph,
+                        // so every SPACE was quantised by a different rule here than anywhere else
+                        // and drifted a pixel per space wherever the two rules disagreed.
                         step = hinted is not null
-                               && hinted.TryGetDeviceAdvance(g.GlyphId, hintPpem, out float device)
-                               ? device / deviceScale
-                               : MathF.Round(g.Advance * scale * deviceScale, MidpointRounding.AwayFromZero) / deviceScale;
+                               ? hinted.DeviceAdvance(g.GlyphId, hintPpem) / deviceScale
+                               : MathF.Round(g.Advance * scale * deviceScale,
+                                             MidpointRounding.AwayFromZero) / deviceScale;
                         // The pair adjustment, on the same whole-device-pixel grid as the advance.
                         // It has to be added HERE and not folded into the advance, because the
                         // branch above throws the shaped advance away for the face's own.
