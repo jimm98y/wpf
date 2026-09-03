@@ -577,7 +577,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // black-and-white rasterization and might have been expected to hint as
                             // one: saying no turns twenty-three disagreements with Windows into a
                             // hundred and five. It reports greyscale.
-                            if ((s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0) result |= 1 << 12;
+                            // WPF_CT_GREY=0 answers NO, which is what GetGlyphOutline measurably answers --
+            // the GETINFO oracle reads the greyscale bit CLEAR through GGO. It matters
+            // because a face branches on it: Consolas's prep writes an extra half pixel into
+            // its stem control value on the greyscale branch, so claiming greyscale while
+            // comparing against GGO makes every stem in the face half a pixel too fat.
+            if (!s_greyNever && (s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0)
+                result |= 1 << 12;
                             if (ClearTypeInfo)
                             {
                                 // WHAT GDI ANSWERS WHEN IT IS ACTUALLY DRAWING CLEARTYPE, which is
@@ -1201,6 +1207,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_cutInDivisor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CUTIN_DIV"), out int cd) && cd > 0
                 ? cd : ClearTypeGrid;
+
+        /// <summary>Answer GETINFO "not greyscale" however the rest of the configuration
+        /// reads. WPF_CT_GREY=0. See the call site.</summary>
+        private static readonly bool s_greyNever =
+            Environment.GetEnvironmentVariable("WPF_CT_GREY") == "0";
 
         private static readonly bool s_keepAllDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";

@@ -3503,9 +3503,20 @@ namespace WgpuInterop.Tests.Text
             int gid = font.GlyphIndex(parts[1][0]);
             float ppem = float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
             Console.Error.WriteLine($"=== {parts[0]} '{parts[1]}' gid={gid} at {ppem}ppem ===");
+            // WPF_HINT_DUMP_BILEVEL=1 traces the program in the mode GetGlyphOutline is in,
+            // which is the only mode with an exact oracle to check the trace against.
+            TrueTypeInterpreter.BiLevelPass =
+                Environment.GetEnvironmentVariable("WPF_HINT_DUMP_BILEVEL") == "1";
+            bool savedSub = TrueTypeFont.SubpixelFitting;
+            if (TrueTypeInterpreter.BiLevelPass) TrueTypeFont.SubpixelFitting = false;
             TrueTypeInterpreter.s_dumpGlyph = true;
             try { ((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out _); }
-            finally { TrueTypeInterpreter.s_dumpGlyph = false; }
+            finally
+            {
+                TrueTypeInterpreter.s_dumpGlyph = false;
+                TrueTypeInterpreter.BiLevelPass = false;
+                TrueTypeFont.SubpixelFitting = savedSub;
+            }
         }
 
         /// <summary>How many glyphs a face's OWN hinting program fits so badly that the fitting has

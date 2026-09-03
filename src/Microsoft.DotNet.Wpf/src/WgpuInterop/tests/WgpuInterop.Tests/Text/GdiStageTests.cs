@@ -626,6 +626,12 @@ namespace WgpuInterop.Tests.Text
 
             bool saved = TrueTypeFont.SubpixelFitting;
             TrueTypeFont.SubpixelFitting = false;
+            // GGO hints as a GREYSCALE rasterizer -- measured: through it GDI reports the
+            // ClearType, compatible-width and symmetric bits all clear. Without
+            // WPF_XMATCH_BILEVEL=1 this compares our ClearType-mode fit against a bi-level
+            // oracle, which is two different programs and not a measure of anything.
+            TrueTypeInterpreter.BiLevelPass =
+                Environment.GetEnvironmentVariable("WPF_XMATCH_BILEVEL") == "1";
             try
             {
                 foreach (int ppem in new[] { 11, 12, 13, 16, 19 })
@@ -655,8 +661,176 @@ namespace WgpuInterop.Tests.Text
                                       + $"   [{differing}]");
                 }
             }
-            finally { TrueTypeFont.SubpixelFitting = saved; }
+            finally
+            {
+                TrueTypeFont.SubpixelFitting = saved;
+                TrueTypeInterpreter.BiLevelPass = false;
+            }
             lock (s_reportLock) File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>AND WHAT IT SAYS: THE INTERPRETER IS EXACT.
+        /// <para>Asked in the mode the oracle is actually in, our grid-fitting reproduces GDI's
+        /// point for point:</para>
+        /// <code>
+        ///   Consolas  @16   62 of 62 glyphs exact, 0 of 1751 points differ in x or y
+        ///   Segoe UI  @16   62 of 62 glyphs exact, 0 of 1504 points differ in x or y
+        ///   Consolas  @12   60 of 62,  45 points in x
+        ///   Segoe UI  @12   49 of 62,   1 in x, 27 in y
+        ///   Arial     @12   49 of 53,   4 in x,  8 in y
+        /// </code>
+        /// <para>Two whole faces, every glyph, every point, both axes. Whatever is wrong with our
+        /// ClearType text, the machine that runs the hinting programs is not it -- and that retires
+        /// a suspicion the investigation has carried from the start.</para>
+        /// <para>THE THING THAT MADE IT LOOK BROKEN WAS ONE BIT. Before this, the same comparison
+        /// said 0 of 62 on x and 33 of 62 on y for Arial, and both numbers were artefacts:</para>
+        /// <para>First, mode. GGO hints as a GREYSCALE rasterizer -- asked through it, GDI reports
+        /// the ClearType, compatible-width and symmetric bits all clear while reporting the same
+        /// rasterizer version 42. Comparing our ClearType-mode fit against it compares two
+        /// different programs. WPF_GGOPTS_BILEVEL=1 and WPF_XMATCH_BILEVEL=1 exist for that.</para>
+        /// <para>Second, the greyscale bit itself. The bi-level pass answers GETINFO "greyscale,
+        /// yes", which is right for GDI rendering a grey bitmap and wrong for GGO, which the
+        /// oracle measures answering NO. Consolas branches on it: its prep writes an extra half
+        /// pixel into stem control value 420 on the greyscale branch (1.0469 -> 1.0156 -> 1.5156),
+        /// so every stem in the face came out half a pixel fat -- 'H' 1.52 wide against GDI's 1.00,
+        /// and 1054 of 1751 points differing. WPF_CT_GREY=0 answers as GGO answers, and Consolas
+        /// goes to 62 of 62. That is a TEST facility and not a product fix: the two contexts really
+        /// do get different answers from GDI, and the shipping ClearType path already answers no.
+        /// </para>
+        /// <para>Third, the instrument. The coordinate tests compare SORTED SETS OF DISTINCT
+        /// VALUES, so they pair the third-smallest of ours with the third-smallest of theirs, and
+        /// GGO's implied on-curve midpoints -- which our figures do not carry -- count as
+        /// differences on their own. Arial's V, X, K, M and A each report several disagreements
+        /// there and are exact point for point.</para>
+        /// <para>Where that leaves the search: the face's own program, the interpreter that runs
+        /// it, and the mode it is dispatched in are all now accounted for. What is left in the
+        /// ClearType path is the layer we invented on top of it.</para></summary>
+        /// <summary>OUR FITTED POINTS AGAINST GDI'S OWN, one point at a time, with no solver.
+        /// <para>The x-coordinate work has had to infer GDI's geometry from its lamps, because
+        /// GetGlyphOutline renders greyscale and cannot see a face's ClearType branch. On Y there is
+        /// no such problem: y is hinted the same way in both renderers, so GGO is AUTHORITATIVE and
+        /// a disagreement is a plain interpreter bug rather than a question about ClearType.</para>
+        /// <para>Pairing the two point lists is the whole difficulty, and GGO solves it itself:
+        /// asked for the same glyph unhinted it returns the SAME sequence in the SAME order, so
+        /// matching our unfitted points against GGO's unfitted ones fixes the correspondence, and
+        /// the fitted values can then be compared index for index. Comparing sorted sets of
+        /// distinct values -- which is what the coordinate tests do -- cannot do this: it pairs the
+        /// third-smallest of ours with the third-smallest of theirs, which are not the same
+        /// point.</para>
+        /// <para>WPF_GGOPTS=family/char/ppem.</para></summary>
+        [Fact]
+        public void FittedPoints_AgainstGdisOwn()
+        {
+            string? spec = Environment.GetEnvironmentVariable("WPF_GGOPTS");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GGOPTS=family/char/ppem");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string[] parts = spec!.Split('/');
+            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            int ppem = int.Parse(parts[^1]);
+
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            bool saved = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = false;               // the full fit, both axes
+            // GGO ANSWERS AS A GREYSCALE RASTERIZER -- measured, not assumed: asked through
+            // GGO, GDI reports the ClearType, compatible-width and symmetric bits all CLEAR
+            // while reporting the same rasterizer version 42. Comparing our ClearType-mode
+            // fit against it is comparing two different programs, so WPF_GGOPTS_BILEVEL=1
+            // puts this side into the mode the oracle is actually in.
+            bool bilevel = Environment.GetEnvironmentVariable("WPF_GGOPTS_BILEVEL") == "1";
+            bool quiet = Environment.GetEnvironmentVariable("WPF_GGOPTS_QUIET") == "1";
+            TrueTypeInterpreter.BiLevelPass = bilevel;
+            TrueTypeInterpreter.s_capturePoints = true;
+            try
+            {
+                string chars = parts[1] == "*"
+                    ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+                    : parts[1];
+                int gTotal = 0, gExact = 0, pTotal = 0, pOffX = 0, pOffY = 0;
+                foreach (char c in chars)
+                {
+                    if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem, out _))
+                    { Console.Error.WriteLine($"'{c}': we decline to fit it"); continue; }
+                    TrueTypeInterpreter.GlyphPoints? pts = font.LastHintedPoints;
+                    if (pts is null || pts.PointCount == 0) continue;
+
+                    List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true));
+                    List<Vector2> fitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false));
+                    if (plain.Count != fitted.Count || plain.Count == 0)
+                    { Console.Error.WriteLine($"'{c}': GGO gave {plain.Count}/{fitted.Count}"); continue; }
+
+                    // GGO reports y DOWNWARD from the baseline; the interpreter works upward.
+                    int shown = 0, offX = 0, offY = 0, paired = 0;
+                    double worstX = 0, worstY = 0;
+                    var lines = new List<string>();
+                    for (int i = 0; i < pts.PointCount; i++)
+                    {
+                        int j = Nearest(plain, pts.StartX[i], -pts.StartY[i]);
+                        if (j < 0) continue;
+                        paired++;
+                        float gdiY = -fitted[j].Y, gdiX = fitted[j].X;
+                        double dy = pts.FitY[i] - gdiY, dx = pts.FitX[i] - gdiX;
+                        bool badX = Math.Abs(dx) > 1.0 / 64, badY = Math.Abs(dy) > 1.0 / 64;
+                        if (badX) { offX++; if (Math.Abs(dx) > Math.Abs(worstX)) worstX = dx; }
+                        if (badY) { offY++; if (Math.Abs(dy) > Math.Abs(worstY)) worstY = dy; }
+                        if ((badX || badY) && shown++ < 12 && !quiet)
+                            lines.Add($"      pt{i,-3} {(pts.OnCurve[i] ? "on " : "off")}"
+                                + $" start({pts.StartX[i]:0.00},{pts.StartY[i]:0.00})"
+                                + $" ours ({pts.FitX[i]:0.000},{pts.FitY[i]:0.000})"
+                                + $" gdi ({gdiX:0.000},{gdiY:0.000})"
+                                + $"  d {dx * 64:+0.0;-0.0},{dy * 64:+0.0;-0.0} /64");
+                    }
+                    gTotal++;
+                    if (offX == 0 && offY == 0) gExact++;
+                    pTotal += paired; pOffX += offX; pOffY += offY;
+                    if (!quiet || offX + offY > 0)
+                        Console.Error.WriteLine($"'{c}' @{ppem}: {paired} of {pts.PointCount}"
+                            + $" points paired, {offX} differ in x"
+                            + $" (worst {worstX * 64:+0.0;-0.0}/64), {offY} in y"
+                            + $" (worst {worstY * 64:+0.0;-0.0}/64)");
+                    foreach (string l in lines) Console.Error.WriteLine(l);
+                }
+                Console.Error.WriteLine($"TOTAL {parts[0]} @{ppem}"
+                    + $"{(bilevel ? " bi-level" : " ClearType")}: {gExact} of {gTotal} glyphs"
+                    + $" exact; of {pTotal} points {pOffX} differ in x, {pOffY} in y");
+            }
+            finally
+            {
+                TrueTypeInterpreter.s_capturePoints = false;
+                TrueTypeFont.SubpixelFitting = saved;
+                TrueTypeInterpreter.BiLevelPass = false;
+            }
+        }
+
+        /// <summary>Every point of an outline in the order it was reported, so two outlines of the
+        /// same glyph can be paired by index.</summary>
+        private static List<Vector2> Flatten(List<PathFigure> figures)
+        {
+            var outp = new List<Vector2>();
+            foreach (PathFigure f in figures)
+            {
+                outp.Add(f.Start);
+                foreach (PathSegment seg in f.Segments)
+                    foreach (Vector2 v in Points(seg)) outp.Add(v);
+            }
+            return outp;
+        }
+
+        /// <summary>Which reported point is the one the interpreter calls <paramref name="x"/>,
+        /// <paramref name="y"/>. GGO's unfitted outline is the same numbers the interpreter starts
+        /// from, so this is an identity in all but rounding -- a match further than a quarter pixel
+        /// away is not a match, and saying so is what keeps a mispairing from being read as a
+        /// disagreement.</summary>
+        private static int Nearest(List<Vector2> pts, float x, float y)
+        {
+            int best = -1;
+            double bestD = 0.25;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                double d = Math.Abs(pts[i].X - x) + Math.Abs(pts[i].Y - y);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
         }
 
         /// <summary>The same, on the y axis -- so a change can be charged to the axis it moved.</summary>
