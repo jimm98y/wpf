@@ -49,11 +49,21 @@ namespace WgpuInterop.Tests.Text
             /// rendered position reads it back. 0 means an ordinary bar.</para></summary>
             public readonly int Probe;
 
+            /// <summary>The left side bearing to DECLARE, which need not be the outline's own left
+            /// edge.
+            /// <para>It matters for any probe that sweeps the bar's position. hmtx writes the
+            /// bearing as the bar's own Left by default, so moving the outline moves the declared
+            /// bearing with it and the sweep varies TWO things at once -- which is enough to make
+            /// the measured output advance faster than the input and no quantiser fit. Pin this to
+            /// hold the bearing still and vary only the outline's phase.</para></summary>
+            public readonly int Lsb;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
-                       bool noProgram = false, int probe = 0)
+                       bool noProgram = false, int probe = 0, int lsb = int.MinValue)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
                 NoProgram = noProgram; Probe = probe;
+                Lsb = lsb == int.MinValue ? left : lsb;
             }
         }
 
@@ -326,7 +336,7 @@ namespace WgpuInterop.Tests.Text
             for (int i = 0; i < numGlyphs; i++)
             {
                 WriteU16(m, 1200);
-                WriteI16(m, i > 0 && i - 1 < bars.Count ? bars[i - 1].Left : 0);
+                WriteI16(m, i > 0 && i - 1 < bars.Count ? bars[i - 1].Lsb : 0);
             }
             return m.ToArray();
         }

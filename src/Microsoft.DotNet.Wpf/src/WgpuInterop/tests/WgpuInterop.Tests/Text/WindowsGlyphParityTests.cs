@@ -3531,6 +3531,13 @@ namespace WgpuInterop.Tests.Text
             // offset by it. An unhinted bar must come back exactly where its outline puts it, so
             // whatever it comes back short by IS the constant.
             var bars = new List<SyntheticFont.Bar>();
+            // THE DECLARED BEARING MOVES WITH THE OUTLINE, which is hmtx's default here and is
+            // what makes this a sweep at all. Holding it still was tried and is the opposite
+            // mistake: a glyph is drawn at its origin, xMin minus the bearing, so pinning the
+            // bearing while moving xMin moves the origin with it and every bar lands in the SAME
+            // place. Measured that way GDI's left edge stays near 2.9 while the model's input
+            // climbs to 3.94, which reads as an MDAP moving a point by up to 40/64 and is entirely
+            // the instrument.
             bars.Add(new SyntheticFont.Bar(Width0, 384, 384 + Width0, round: false,
                                            minDistance: false, noProgram: true));
             for (int step = 0; step < 16; step++)
