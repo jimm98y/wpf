@@ -2943,6 +2943,8 @@ namespace WgpuInterop.Tests.Text
             int inRange = 0, inRangeTotal = 0;
             double moved = 0;
             int touchedOk = 0, touchedTotal = 0, interpOk = 0, interpTotal = 0;
+            int outlineOnly = 0, cvOnly = 0, bothWork = 0, neitherWorks = 0;
+            int rigidBefore = 0, rigidAfter = 0, rigidGlyphs = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3053,6 +3055,26 @@ namespace WgpuInterop.Tests.Text
                         first = end + 1;
                     }
 
+                    // THE SAME GLYPH FITTED THE OTHER WAY. Our model of GDI's ClearType x takes
+                    // the OUTLINE distance almost always, because the control-value cut-in is
+                    // divided by sixteen. Fitting it again with the cut-in whole takes the CONTROL
+                    // VALUE almost always. Every coordinate then has two candidate positions, and
+                    // GDI's own pixels can be asked which of them it used -- which is a far better
+                    // question than "is ours allowed", because it names the alternative.
+                    int savedDiv = TrueTypeInterpreter.s_cutInDivisor;
+                    float[] cvFit;
+                    try
+                    {
+                        TrueTypeInterpreter.s_cutInDivisor = 1;
+                        // A FRESH face: the hinted outline is cached per (glyph, size), so asking
+                        // the same instance twice returns the first answer and the second
+                        // configuration silently measures as a no-op.
+                        var other = new TrueTypeFont(File.ReadAllBytes(file!));
+                        ((IHintedGlyphFont) other).TryGetHintedOutline(other.GlyphIndex(c), ppem, out _);
+                        cvFit = other.LastHintedPoints?.FitX ?? Array.Empty<float>();
+                    }
+                    finally { TrueTypeInterpreter.s_cutInDivisor = savedDiv; }
+
                     // AND HOW OFTEN OUR OWN COORDINATE IS ONE GDI ALLOWS. The impossible count
                     // above judges the touch set; this judges the geometry we actually ship,
                     // and it is the only measure of our CLEARTYPE fitting there is -- GGO
@@ -3072,7 +3094,47 @@ namespace WgpuInterop.Tests.Text
                         if (pts.TouchedX[i]) { touchedTotal++; if (ok) touchedOk++; }
                         else { interpTotal++; if (ok) interpOk++; }
                         if (ok) inRange++;
+
+                        // Which distance GDI used, where the two disagree enough to tell.
+                        if (pts.TouchedX[i] && i < cvFit.Length)
+                        {
+                            bool cvOk = cvFit[i] >= ql - 1f / 64f && cvFit[i] <= qh + 1f / 64f;
+                            if (Math.Abs(cvFit[i] - pts.FitX[i]) > 1f / 64f)
+                            {
+                                if (ok && !cvOk) outlineOnly++;
+                                else if (cvOk && !ok) cvOnly++;
+                                else if (ok) bothWork++;
+                                else neitherWorks++;
+                            }
+                        }
                     }
+                    // AND WHETHER A RIGID SHIFT WOULD FIX THE GLYPH. Asking for the best whole-
+                    // glyph displacement before theorising about shape is the lesson this
+                    // investigation has had to learn twice. If a glyph's coordinates come good
+                    // together under one shift, the fault is where the glyph was PUT -- its origin,
+                    // or the first point anchored to a phantom -- and not how it was shaped.
+                    int atZero = 0, atBest = 0, bestShift = 0;
+                    for (int k = -8; k <= 8; k++)
+                    {
+                        int fit = 0;
+                        for (int i = 0; i < pts.PointCount; i++)
+                        {
+                            (float ql, float qh) = Range(i);
+                            float v = pts.FitX[i] + k / 64f;
+                            if (v >= ql - 1f / 64f && v <= qh + 1f / 64f) fit++;
+                        }
+                        if (k == 0) atZero = fit;
+                        if (fit > atBest) { atBest = fit; bestShift = k; }
+                    }
+                    rigidBefore += atZero;
+                    rigidAfter += atBest;
+                    if (bestShift != 0 && atBest > atZero)
+                    {
+                        rigidGlyphs++;
+                        Console.Error.WriteLine($"      '{c}' a rigid {bestShift:+0;-0}/64 would take"
+                            + $" {atZero} of {pts.PointCount} coordinates to {atBest}");
+                    }
+
                     totalPoints += pts.PointCount;
                     totalUntouched += untouched;
                     totalImpossible += impossible.Count;
@@ -3097,6 +3159,11 @@ namespace WgpuInterop.Tests.Text
                 + $" ({100.0 * touchedOk / Math.Max(1, touchedTotal):0.0}%) are allowed;"
                 + $" of the ones IUP interpolated, {interpOk} of {interpTotal}"
                 + $" ({100.0 * interpOk / Math.Max(1, interpTotal):0.0}%)");
+            Console.Error.WriteLine($"      a per-glyph rigid shift would take {rigidBefore}"
+                + $" coordinates to {rigidAfter}, helping {rigidGlyphs} glyphs");
+            Console.Error.WriteLine($"      where the two distances disagree: outline is the one"
+                + $" GDI allows {outlineOnly}x, the control value {cvOnly}x,"
+                + $" either would do {bothWork}x, neither {neitherWorks}x");
         }
 
         /// <summary>GDI's own fitted x coordinates, and the interval of each that the pixels allow.

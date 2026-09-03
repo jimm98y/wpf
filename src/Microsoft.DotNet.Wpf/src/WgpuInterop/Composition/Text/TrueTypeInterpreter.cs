@@ -454,6 +454,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>WHICH DISTANCE GDI USED, ASKED PER COORDINATE -- and what is left after it.
+        /// <para>Aggregate scores can only say that dividing the control-value cut-in by sixteen
+        /// beats dividing it by one. They cannot say which distance GDI used at any particular
+        /// point. Fitting the same glyph TWICE in one process -- once as we ship it, once with the
+        /// cut-in whole so the control value is taken instead -- gives every coordinate two
+        /// candidate positions, and GDI's own pixels can then be asked which of the two it
+        /// allows.</para>
+        /// <code>
+        ///   where the two disagree      outline   control value   either   neither
+        ///   Segoe UI                          5               0        0         0
+        ///   Tahoma                            3               0        0         3
+        ///   Arial                            39               2        0        14
+        /// </code>
+        /// <para>So the outline is the right choice, per coordinate and not merely on average.
+        /// What the same table says more usefully is how RARELY the choice arises at all: five
+        /// coordinates of Segoe UI's fifty-four, six of Tahoma's fifty-two. The cut-in question is
+        /// settled and it is not what is wrong with the other forty-odd.</para>
+        /// <para>ASK FOR THE RIGID SHIFT. Several glyphs are wrong by a single small displacement
+        /// of the whole outline rather than by their shape:</para>
+        /// <code>
+        ///   Tahoma 'H'   a rigid -8/64 takes  6 of 12 coordinates to 12 of 12
+        ///   Arial  'H'   a rigid -6/64 takes  6 of 12 coordinates to 12 of 12
+        ///   Tahoma '0'   a rigid +2/64 takes 20 of 36 to 26      Arial 'n'  +4/64  8 of 23 to 13
+        /// </code>
+        /// <para>An 'H' whose every coordinate comes good under one eighth of a pixel is not a
+        /// mis-shaped glyph, it is a correctly shaped one in the wrong place -- and both stems
+        /// moving together says the stem widths are already right, which is what Tahoma's total
+        /// indifference to the stem fat says too. The shifts are a few sixty-fourths and they
+        /// differ per glyph in size and sign, so this is not a global offset to subtract; it is
+        /// whatever decides where a glyph's first anchor lands.</para>
+        /// <para>It is NOT that GDI rounds positions on a coarser grid than distances, which is the
+        /// obvious form for such a rule. Swept on the specimen, position grids of 2, 3, 4, 6 and 8
+        /// give 2,923,379 / 2,769,651 / 2,639,246 / 2,527,726 / 2,473,521 -- monotonically
+        /// approaching, and never reaching, the 2,343,248 of rounding positions exactly as finely
+        /// as everything else.</para></summary>
         /// <summary>AND WHICH COORDINATES ARE WRONG: the ones the program PLACES, not the ones
         /// IUP carries.
         /// <para>The same instrument, asked a second question. For every coordinate, is the value

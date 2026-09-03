@@ -1214,7 +1214,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_CUTIN_DIV: what the control-value cut-in is divided by in the ClearType
         /// direction. 16 is the paper's sixteenth.</summary>
-        private static readonly int s_cutInDivisor =
+        /// <para>Settable, so a test can fit the same glyph both ways in one process and ask
+        /// GDI's own pixels which one it used.</para>
+        internal static int s_cutInDivisor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CUTIN_DIV"), out int cd) && cd > 0
                 ? cd : ClearTypeGrid;
 
