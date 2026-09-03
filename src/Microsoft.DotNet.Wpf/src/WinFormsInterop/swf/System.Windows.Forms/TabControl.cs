@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -1291,6 +1291,9 @@ namespace System.Windows.Forms {
 			}
 		}
 		
+		private static readonly bool s_tabTrace =
+			Environment.GetEnvironmentVariable ("WPF_TAB_TRACE") == "1";
+
 		private void SizeTab (TabPage page, int i, int row_width, ref int xpos, ref int ypos, 
 								Size spacing, int prev_row, ref int begin_prev, bool widthOnly) 
 		{				
@@ -1325,6 +1328,18 @@ namespace System.Windows.Forms {
 
 			if (i == SelectedIndex)
 				width += ThemeEngine.Current.TabControlSelectedSpacing;
+
+			// WPF_TAB_TRACE=1 prints the arithmetic. The tab strip is one of the few places left
+			// where our chrome differs from Windows' by a pixel, and the PIXELS ALONE CANNOT SAY
+			// WHY: the dark columns in the strip are not the tab boundaries -- ExpandSelected moves
+			// them afterwards -- so reading widths off the screen gives a floor of 46 where the
+			// arithmetic here uses 48, and "fixing" the constant to match that reading would have
+			// been wrong. This prints what the code actually computed.
+			if (s_tabTrace)
+				Console.Error.WriteLine ($"TAB {i} '{page.Text}' caption={TabCaptionSize (page.Text).Width}"
+					+ $" padding={Padding.X} floor={MinimumTabWidth}"
+					+ $" spacing={ThemeEngine.Current.TabControlSelectedSpacing}"
+					+ $" selected={i == SelectedIndex} -> width={width} xpos={xpos}");
 			
 			if (widthOnly) {
 				page.TabBounds = new Rectangle (xpos, 0, width, 0);
