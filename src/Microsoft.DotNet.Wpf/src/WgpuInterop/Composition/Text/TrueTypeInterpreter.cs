@@ -474,16 +474,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>ASK FOR THE RIGID SHIFT. Several glyphs are wrong by a single small displacement
         /// of the whole outline rather than by their shape:</para>
         /// <code>
-        ///   Tahoma 'H'   a rigid -8/64 takes  6 of 12 coordinates to 12 of 12
-        ///   Arial  'H'   a rigid -6/64 takes  6 of 12 coordinates to 12 of 12
-        ///   Tahoma '0'   a rigid +2/64 takes 20 of 36 to 26      Arial 'n'  +4/64  8 of 23 to 13
+        ///   Tahoma 'H'   a rigid  -8/64 takes  6 of 12 coordinates to 12 of 12
+        ///   Arial  'H'   a rigid  -6/64 takes  6 of 12 coordinates to 12 of 12
+        ///   Arial  'c'   a rigid +19/64 takes 17 of 27 to 26
+        ///   Arial  'd'   a rigid +24/64 takes 14 of 30 to 26
+        ///   Tahoma 'd'   a rigid +19/64 takes 21 of 39 to 28
+        ///   totals   Tahoma 228 -> 265 of 554   Arial 194 -> 237 of 471   Segoe UI 180 -> 201 of 440
         /// </code>
         /// <para>An 'H' whose every coordinate comes good under one eighth of a pixel is not a
         /// mis-shaped glyph, it is a correctly shaped one in the wrong place -- and both stems
         /// moving together says the stem widths are already right, which is what Tahoma's total
-        /// indifference to the stem fat says too. The shifts are a few sixty-fourths and they
-        /// differ per glyph in size and sign, so this is not a global offset to subtract; it is
-        /// whatever decides where a glyph's first anchor lands.</para>
+        /// indifference to the stem fat says too.</para>
+        /// <para>Read the TOTALS with care, though: a free per-glyph shift is a fitted parameter,
+        /// and on intervals this wide some of that five to nine per cent is what any free parameter
+        /// picks up. The individual glyphs are the real evidence -- 6 of 12 to 12 of 12, or 14 of
+        /// 30 to 26 of 30, is not something a shift finds by luck. Treat the totals as an upper
+        /// bound on what a placement rule could ever buy.</para>
+        /// <para>The search was ORIGINALLY plus or minus eight sixty-fourths and several glyphs
+        /// reported a best shift of exactly the limit, which means the search was choosing the
+        /// answer rather than the glyph. Widened to plus or minus thirty-two the shifts run to
+        /// 24/64, a third of a pixel, and differ per glyph in size and sign -- so this is not a
+        /// global offset to subtract; it is whatever decides where a glyph's first anchor
+        /// lands.</para>
+        /// <para>NOT the left side bearing, which is the obvious candidate: if GDI put a glyph's
+        /// left edge on a whole pixel and we left it where the outline falls, the shift would be
+        /// exactly what rounding that edge costs. Printed beside the measured shift it agrees for
+        /// Segoe UI's 'H' and 'P' (-7 predicted against -8 measured) and for nothing else -- and
+        /// those two share a left edge of 1.109, so that is one coincidence rather than two. Tahoma
+        /// 'H' wants -8 and the rule predicts +7.</para>
         /// <para>It is NOT that GDI rounds positions on a coarser grid than distances, which is the
         /// obvious form for such a rule. Swept on the specimen, position grids of 2, 3, 4, 6 and 8
         /// give 2,923,379 / 2,769,651 / 2,639,246 / 2,527,726 / 2,473,521 -- monotonically

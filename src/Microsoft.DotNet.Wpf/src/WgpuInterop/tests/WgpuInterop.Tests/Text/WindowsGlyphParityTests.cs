@@ -3114,7 +3114,10 @@ namespace WgpuInterop.Tests.Text
                     // together under one shift, the fault is where the glyph was PUT -- its origin,
                     // or the first point anchored to a phantom -- and not how it was shaped.
                     int atZero = 0, atBest = 0, bestShift = 0;
-                    for (int k = -8; k <= 8; k++)
+                    // WIDE ENOUGH NOT TO CLIP. At plus or minus eight several glyphs reported
+                    // a best shift of exactly the limit, which means the search, not the
+                    // glyph, was choosing the answer.
+                    for (int k = -32; k <= 32; k++)
                     {
                         int fit = 0;
                         for (int i = 0; i < pts.PointCount; i++)
@@ -3131,8 +3134,19 @@ namespace WgpuInterop.Tests.Text
                     if (bestShift != 0 && atBest > atZero)
                     {
                         rigidGlyphs++;
+                        // AND WHAT WOULD PREDICT IT. If GDI puts a glyph's LEFT EDGE on a
+                        // whole pixel and we leave it where the outline falls, the shift is
+                        // exactly what rounding that edge would cost -- a few sixty-fourths,
+                        // differing per glyph in size and sign, which is the shape of what
+                        // the measurement shows.
+                        float xMin = float.MaxValue;
+                        for (int i = 0; i < pts.PointCount; i++)
+                            if (pts.StartX[i] < xMin) xMin = pts.StartX[i];
+                        float lsbRound = MathF.Round(xMin) - xMin;
                         Console.Error.WriteLine($"      '{c}' a rigid {bestShift:+0;-0}/64 would take"
-                            + $" {atZero} of {pts.PointCount} coordinates to {atBest}");
+                            + $" {atZero} of {pts.PointCount} coordinates to {atBest}"
+                            + $"   (left edge {xMin:0.000}, rounding it would move"
+                            + $" {lsbRound * 64:+0.0;-0.0}/64)");
                     }
 
                     totalPoints += pts.PointCount;
