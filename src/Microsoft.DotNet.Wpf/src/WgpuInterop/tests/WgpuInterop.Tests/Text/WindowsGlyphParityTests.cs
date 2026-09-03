@@ -749,7 +749,15 @@ namespace WgpuInterop.Tests.Text
             string? file = FontFiles.Find(ProbeFamily(), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no Segoe UI bold={bold} italic={italic}");
 
-            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            // SYNTHESISE THE STYLE THE FILE DOES NOT DECLARE, exactly as the renderer does.
+            // Without this the suite is measuring nothing for any face that ships no
+            // italic: FontFiles.Find falls back to the upright file, we draw it upright,
+            // and GDI shears its own -- Tahoma's italic rows came out six to twenty times
+            // worse than its roman for that reason alone, which reads exactly like a
+            // hinting catastrophe and is a bug in the test.
+            byte[] bytes = File.ReadAllBytes(file!);
+            FontFiles.DeclaredStyle(bytes, 0, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic);
             string style = (bold ? "b" : "") + (italic ? "i" : "");
             int baseline = ppem + 12;
 
