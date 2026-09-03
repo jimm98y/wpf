@@ -4471,6 +4471,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>A face that has the run's characters, when the requested one does not.
+        /// <para>GDI does not stop at the face it was asked for: a character that face lacks is
+        /// drawn from a linked one, which is why Chinese in a Segoe UI label comes out as Chinese
+        /// and not as boxes. We had no such step, and it shows -- at 16ppem the CJK, kana, hangul
+        /// and symbol samples all came back with EXACTLY 26,190 of ink, which is one .notdef box
+        /// drawn four times, against GDI's 37,485 / 42,075 / 41,455 / 69,233 of real glyphs.</para>
+        /// <para>This substitutes for the WHOLE RUN, which is the case that matters and the only one
+        /// reachable without changing the pipeline: ShapedGlyph carries a glyph id and no font, so
+        /// a run whose glyphs come from two faces cannot be expressed. A label is one script far
+        /// more often than not, and a run of mixed scripts still improves -- the script the
+        /// requested face lacks stops being boxes -- so this is worth having before the larger
+        /// change.</para></summary>
+        private Text.IFont? LinkedFontFor(string text, Text.IFont current)
+        {
+            if (current is not Text.IShapingFont shaping) return null;
+            char needed = '\0';
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c) || char.IsSurrogate(c)) continue;
+                if (shaping.GlyphIndex(c) > 0) return null;   // the face copes; nothing to do
+                if (needed == '\0') needed = c;
+            }
+            if (needed == '\0') return null;
+
+            if (_linkCache.TryGetValue(needed, out Text.IFont? cached)) return cached;
+            Text.IFont? found = null;
+            foreach (string family in Text.FontFiles.LinkCandidates())
+            {
+                if (LoadFamily(family, 0) is not Text.IFont f) continue;
+                if (f is Text.IShapingFont sf && sf.GlyphIndex(needed) > 0) { found = f; break; }
+            }
+            _linkCache[needed] = found;
+            return found;
+        }
+
+        private readonly Dictionary<char, Text.IFont?> _linkCache = new();
+
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (s_traceText)
@@ -4493,6 +4530,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // The face this run asked for. Style is per-run, so it cannot be resolved once at
             // construction the way the regular face is.
             Text.IFont font = FontFor(run.Simulations, run.FontFamily);
+            // If that face has none of the run's characters, draw them from one that
+            // does, the way GDI links rather than drawing boxes.
+            if (LinkedFontFor(run.Text, font) is Text.IFont linked) font = linked;
             Text.IGlyphOutlineFont? outline = ReferenceEquals(font, _font)
                 ? _outlineFont
                 : font as Text.IGlyphOutlineFont;

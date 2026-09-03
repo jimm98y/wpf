@@ -212,6 +212,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>So when the guess misses, read the 'name' table of every font in the directories
         /// and build the map from what the faces actually declare. Done once, lazily, and only on a
         /// miss, so the families in the table above never pay for it.</para></summary>
+        /// <summary>Families to try, in order, for a character the requested face lacks.
+        /// <para>The named ones first because they are what Windows itself links to and they cover
+        /// the scripts a UI actually meets; then everything installed, so a character none of them
+        /// has is still found if anything on the machine has it.</para>
+        /// <para>This is not GDI's own list -- that lives in the registry under FontLink\SystemLink
+        /// and is the thing to read if these ever disagree with Windows about WHICH face a
+        /// character comes from. Getting the script right is the first order of business; getting
+        /// the same face as GDI is the second.</para></summary>
+        public static IEnumerable<string> LinkCandidates()
+        {
+            foreach (string named in new[]
+            {
+                "Segoe UI", "Segoe UI Symbol", "Segoe UI Emoji", "Microsoft YaHei", "SimSun",
+                "Microsoft JhengHei", "Yu Gothic UI", "MS Gothic", "Malgun Gothic",
+                "Nirmala UI", "Segoe UI Historic", "Arial Unicode MS", "Microsoft Sans Serif",
+            })
+                yield return named;
+            foreach (string scanned in ScannedFamilies().Keys) yield return scanned;
+        }
+
         private static Dictionary<string, string?[]>? s_scanned;
 
         /// <summary>What the scan found, for a diagnostic that can say whether it ran at all.

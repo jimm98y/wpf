@@ -3964,6 +3964,80 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>CHARACTERS THE REQUESTED FACE DOES NOT HAVE.
+        /// <para>Everything measured in this file is Latin, drawn in a face that has it. GDI does
+        /// not stop at the requested face: for a character it lacks, it font-links to one that has
+        /// it, which is why a Chinese word in a Segoe UI label comes out as Chinese and not as a row
+        /// of boxes. The WinForms path here has no such step -- WPF's own text stack has
+        /// TypefaceMap, the GDI+ one has nothing -- so the question is what we actually draw.</para>
+        /// <para>Reports, per character: whether the face has a glyph for it at all, and how much
+        /// ink each renderer puts down. Ink near zero on our side against real ink on GDI's is a
+        /// character we are dropping; similar ink is a character the face had after all.</para>
+        /// <para>WPF_FALLBACK_REPORT=&lt;path&gt; to collect it.</para></summary>
+        [Fact]
+        public void CharactersTheFaceLacks_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_FALLBACK_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_FALLBACK_REPORT to collect this");
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no probe face");
+
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== {ProbeFamily()} at 16ppem: characters the face may not have");
+            report.AppendLine("   char        glyph?      our ink   windows ink   verdict");
+            (char c, string name)[] cases =
+            {
+                ('A', "latin A"), ('é', "e acute"), ('Ж', "cyrillic ZHE"),
+                ('α', "greek alpha"), ('中', "cjk zhong"), ('あ', "hiragana a"),
+                ('한', "hangul han"), ('א', "hebrew alef"), ('ا', "arabic alef"),
+                ('☃', "snowman"), ('€', "euro"), ('→', "right arrow"),
+            };
+            var raw = new byte[Width * Height * 4];
+            foreach ((char c, string name) in cases)
+            {
+                int gid = font.GlyphIndex(c);
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), ProbeFamily(), 16, PenX, 28, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                long theirs = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch = 0; ch < 3; ch++) theirs += 255 - raw[i * 4 + ch];
+                byte[] ours = OursRgba(font, c.ToString(), 16, 28, correction: true);
+                long mine = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch = 0; ch < 3; ch++) mine += 255 - ours[i * 4 + ch];
+
+                // WHICH FACE WOULD BE LINKED TO. The renderer substitutes for the whole run
+                // when the requested face has none of its characters, so the useful thing to
+                // report is whether a candidate exists and which one -- the ink columns only
+                // say that OUR box and GDI's glyph differ.
+                string linked = "-";
+                if (gid <= 0)
+                    foreach (string cand in FontFiles.LinkCandidates())
+                    {
+                        string? cf = FontFiles.Find(cand, false, false);
+                        if (cf is null) continue;
+                        try
+                        {
+                            byte[] cb = File.ReadAllBytes(cf);
+                            int so = FontFiles.SfntOffset(cb);
+                            if (CffFont.IsCff(cb, so)) continue;
+                            if (new TrueTypeFont(cb, false, false, so).GlyphIndex(c) > 0)
+                            { linked = cand; break; }
+                        }
+                        catch (Exception) { }
+                    }
+                string verdict = gid <= 0 ? (linked == "-" ? "DROPPED, no candidate" : "links to " + linked)
+                               : theirs < 200 ? "neither draws it"
+                               : "the face has it";
+                report.AppendLine($"   U+{(int) c:X4} {name,-12} {(gid > 0 ? "yes" : "NO "),-6}"
+                                  + $"{mine,10}   {theirs,11}   {verdict}");
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
