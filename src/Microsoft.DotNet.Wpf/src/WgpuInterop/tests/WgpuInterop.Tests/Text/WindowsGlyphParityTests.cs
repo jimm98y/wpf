@@ -3964,6 +3964,71 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>HOW OUR WEIGHT TRACKS GDI'S, by size and by boldness.
+        /// <para>The specimen is tracked as one absolute total, which cannot be compared across
+        /// sizes: a 40ppem line has five times the ink of a 10ppem one, so the same absolute error
+        /// is a far smaller disagreement. Measured against the ink Windows actually puts down, the
+        /// whole remaining Latin problem is SMALL SIZES -- 11.9% at 10-12ppem against 3.4% at 40 --
+        /// and within a size it is THIN STEMS: at 12ppem the bold faces disagree by half as much as
+        /// the regular ones, across all six faces.</para>
+        /// <para>That is the shape of the residual, so it is worth a report that does not need the
+        /// specimen app: ink ratio and differing pixels per face, per weight, per size. A stem two
+        /// pixels wide is placed by rounding and a stem one pixel wide is placed by the filter,
+        /// which is why the two weights answer differently.</para>
+        /// <para>WPF_WEIGHT_REPORT=&lt;path&gt; to collect it.</para></summary>
+        [Fact]
+        public void HowOurWeightTracksGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_WEIGHT_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_WEIGHT_REPORT to collect this");
+
+            const string Sample = "Handgloves mio";
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
+            report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ");
+            var raw = new byte[Width * Height * 4];
+
+            foreach (string family in new[]
+                     { "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas" })
+                foreach (bool bold in new[] { false, true })
+                    foreach (int ppem in new[] { 8, 10, 12, 16, 24 })
+                    {
+                        string? file = FontFiles.Find(family, bold, italic: false);
+                        if (file is null) continue;
+                        byte[] bytes = File.ReadAllBytes(file);
+                        int sfnt = FontFiles.SfntOffset(bytes, family, bold);
+                        if (CffFont.IsCff(bytes, sfnt)) continue;
+                        FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out _);
+                        var font = new TrueTypeFont(bytes, bold && !fileBold, false, sfnt);
+
+                        Gdi.s_rawRgb = raw;
+                        Gdi.Draw(Sample, family, ppem, PenX, 28, Width, Height, bold, false);
+                        Gdi.s_rawRgb = null;
+                        byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
+
+                        long theirs = 0, mine = 0;
+                        int differ = 0;
+                        for (int i = 0; i < Width * Height; i++)
+                        {
+                            bool any = false;
+                            for (int ch = 0; ch < 3; ch++)
+                            {
+                                theirs += 255 - raw[i * 4 + ch];
+                                mine += 255 - ours[i * 4 + ch];
+                                if (raw[i * 4 + ch] != ours[i * 4 + ch]) any = true;
+                            }
+                            if (any) differ++;
+                        }
+                        report.AppendLine($"   {family,-16} {(bold ? "B" : "R")}   {ppem,4}"
+                                          + $" {mine,9} {theirs,9}"
+                                          + $"   {(theirs == 0 ? 0 : mine / (double) theirs),5:0.000}"
+                                          + $"   {differ,6}");
+                    }
+
+            File.AppendAllText(path!, report.ToString());
+        }
+
         /// <summary>DOES GDI REORDER? The question this suite's oracle cannot answer about itself.
         /// <para>The oracle everywhere else is ExtTextOutW, which shapes a complex script but does
         /// NOT apply the bidirectional algorithm -- that is DrawTextW's job, and DrawText is what
