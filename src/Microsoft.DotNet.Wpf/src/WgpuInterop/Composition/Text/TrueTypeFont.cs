@@ -1619,6 +1619,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// same size prefers different rounding depending on whether a plain Label draws it or a
         /// control's paint path does. The difference between those two is where the text lands --
         /// sub-pixel phase at real layout positions -- so that is what to look at next.</para>
+        /// <summary>RE-SWEPT 2026-09-03 ON THE TEXT SPECIMEN, after the interpreter was proved
+        /// exact against GetGlyphOutline, and every invented rule here came back a clear optimum.
+        /// <para>The proof changed what these knobs mean. Our grid-fitting reproduces GDI's own
+        /// fitted points exactly -- Consolas and Segoe UI at 16ppem are 62 of 62 glyphs and 0 of
+        /// ~1700 points differing in either axis -- so what is left in the ClearType path is this
+        /// layer and nothing underneath it. That made it worth asking whether the layer should
+        /// exist at all. It should.</para>
+        /// <para>Text specimen, six faces x four styles at 12ppem, SUM|d| against Windows,
+        /// baseline 2,343,248:</para>
+        /// <code>
+        ///   XHintMode      2  2,343,248   16  2,351,674    7  2,822,569
+        ///                  6  3,226,503   13  3,244,256    0  3,993,305   17  5,393,616
+        ///   NOROUND_X                        2,378,210
+        ///   stem fat       0  2,363,864    3  2,351,479    6  2,343,248 (shipped)
+        ///                  9  2,365,051   12  2,378,821
+        ///   x deltas   touched 2,796,868  inline 4,982,305   all 5,286,060
+        /// </code>
+        /// <para>Two of those are worth reading as facts about GDI rather than as scores.
+        /// Rounding x to WHOLE PIXELS -- which is exactly what the interpreter does in the bi-level
+        /// mode where it is provably exact -- is the worst result on the board at 5,393,616. GDI
+        /// does not grid-fit x when it draws ClearType, and the sixteenth grid is close enough to
+        /// not rounding (2,343,248 against 2,378,210) to be a statement of that rather than a rule
+        /// in its own right. And suppressing the x deltas is worth 2.9 MILLION, more than
+        /// everything else here put together.</para>
+        /// <para>Arial alone says the same: 455,540 shipped, 470,257 without the rounding, 465,011
+        /// without the stem fat. These are not constants fitted to Segoe UI that the other faces
+        /// merely tolerate.</para>
+        /// <para>AND THE ERROR IS NOT PLACEMENT. Every band of the specimen answers dx=0, dy=0 when
+        /// asked for the rigid shift that would fit it best. What is left is per-glyph shape, and
+        /// it is very unevenly spread -- error per unit of ink at 12ppem:</para>
+        /// <code>
+        ///   Segoe UI BI 0.010   Segoe UI I 0.016   Segoe UI B 0.053   Verdana B 0.065
+        ///   Tahoma B 0.073      Tahoma BI 0.080    Times BI 0.099     Consolas BI 0.106
+        ///   Segoe UI R 0.112    Arial I 0.119      Arial B 0.122      Consolas B 0.122
+        ///   Times B 0.121       Times R 0.125      Arial BI 0.125     Consolas I 0.132
+        ///   Verdana BI 0.140    Consolas R 0.147   Verdana I 0.158    Arial R 0.197
+        ///   Verdana R 0.197     Tahoma I 0.218     Tahoma R 0.225     Times I 0.268
+        /// </code>
+        /// <para>Segoe UI's italics are twenty-five times better than the worst row and ten times
+        /// better than Segoe UI's own roman. The thing an italic does not have is upright stems to
+        /// grid-fit, so the x rules barely touch it -- which is the same statement as the table
+        /// above, from the other side: where this layer does nothing we match GDI almost exactly,
+        /// and where it acts we are ten times worse. It is a local optimum and it is also the whole
+        /// of the remaining error.</para></summary>
         internal static readonly int XHintMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 5;
 

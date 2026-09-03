@@ -2652,13 +2652,20 @@ namespace WgpuInterop.Tests.Text
             // against the position the outline alone puts it in.
             // Negative entries ask the EXACT question the face asks (== the bit), not merely
             // "non-zero" -- which is the difference between a branch being taken and not.
-            int[] selectors = { 0, 1, 32, 64, 128, 256, 512, 1024, 2048,
-                                -32, -64, -128, -256, -512, -1024, -2048 };
+            // 2 and 4 are here because nothing had ever asked them, and they are not idle
+            // questions: GDI's ClearType rasterizer works in a space stretched three times
+            // in x, so 'stretched' is exactly the kind of thing it might answer yes to --
+            // and a face that branches on it would hint differently for reasons no amount of
+            // looking at the ClearType bit could explain.
+            int[] selectors = { 0, 1, 2, 4, 32, 64, 128, 256, 512, 1024, 2048,
+                                -2, -4, -32, -64, -128, -256, -512, -1024, -2048 };
             string[] names =
             {
-                "(no program, baseline)", "rasterizer version", "greyscale", "ClearType enabled",
+                "(no program, baseline)", "rasterizer version", "rotated", "stretched",
+                "greyscale", "ClearType enabled",
                 "compatible widths", "horizontal LCD stripes", "BGR order",
                 "sub-pixel positioned", "symmetric rendering",
+                "rotated == bit", "stretched == bit",
                 "greyscale == bit", "ClearType == bit", "compatible widths == bit",
                 "stripes == bit", "BGR == bit", "sub-pixel pos == bit", "symmetric == bit",
             };
