@@ -3508,6 +3508,15 @@ namespace WgpuInterop.Tests.Text
         /// half-lamp difference in where the lamp grid is assumed to start would produce exactly
         /// this. Tested: WPF_SUBPIXEL_SAMPLE=centre moves the specimen by 529 out of 2,343,248, so
         /// the sampling phase is not it either.</para>
+        /// <para>TWO THINGS THAT DO NOT EXPLAIN THE TIES, so nobody retries them. Narrowing the
+        /// bar does not: at 48, 80, 160 and 256 font units the mean tie count is 107, 107,
+        /// 108, 108 -- so it is not lamp saturation. And our lamp QUANTISER does not, which is
+        /// the more surprising one: SubpixelLevels is 3, each lamp taking one of {0, half, 1},
+        /// which sets a floor of a third of a lamp -- a ninth of a pixel, near enough the 9/64
+        /// the ranges actually measure. It looked like the whole answer. Setting
+        /// WPF_SUBPIXEL_QUANT=0, which keeps the exact area and removes that floor entirely,
+        /// leaves the mean tie count at 108. Unchanged. So something else makes a hundred
+        /// distinct rectangles render bit-identically here and it is not yet known what.</para>
         /// <para>TO MAKE THIS DECISIVE the probe glyph has to constrain harder than one bar can.
         /// Two or three bars at known separations in ONE glyph would do it -- the lamp pattern
         /// stops saturating and the ties collapse -- and that means teaching SyntheticFont to write
@@ -3524,7 +3533,12 @@ namespace WgpuInterop.Tests.Text
             // 2048 units per em at 16ppem is 128 units to the pixel, so 8 units is a sixteenth of
             // one. Sweep a whole pixel of PHASE at a fixed width, which is the variable the rule
             // has to be a function of.
-            const int Width0 = 160;                       // 1.25px at 16ppem
+            // WPF_STEMPROBE_W in font units. A WIDE bar saturates its lamps and a whole
+            // neighbourhood of geometries draws it identically; a narrow one has a sharp
+            // profile that moves distinctly, so the ties should collapse and the readout
+            // tighten. 160 units is 1.25px at 16ppem.
+            int Width0 = int.TryParse(Environment.GetEnvironmentVariable("WPF_STEMPROBE_W"),
+                                      out int w0) && w0 > 0 ? w0 : 160;
             // A NO-PROGRAM CONTROL FIRST. Where the model thinks a bar's left edge is and where
             // GDI actually draws it differ by a constant -- the side bearing the synthetic font
             // happens to declare -- and without measuring that constant every reading below is
