@@ -510,6 +510,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// is a systematic LIGHTNESS: ink against Windows runs 0.9914 at 14, 0.9855 at 16 and
         /// 0.9982 at 18, so the worst size is also the lightest, and about a sixth of the error
         /// there is a net ink deficit rather than misplaced ink.</para></summary>
+        /// <summary>WHERE THE TEXT WORK ENDS, stated as three numbers.
+        /// <para>OUR STEM PLACEMENT IS UNBIASED. Sweeping a global x offset against GDI's own
+        /// allowed ranges over 42 exactly solved stems, zero is the optimum -- 57 per cent of
+        /// left edges inside, against 55 at -3/64, 48 at -8/64, 43 at +2/64 and 24 at +8/64 --
+        /// and the signed error runs -12/64 to +11/64 with a median of -2. There is no
+        /// systematic shift to remove; the error is scatter about a correct centre.</para>
+        /// <para>THE SCATTER IS ABOUT TWICE THE TOLERANCE. Our stems land within +/-12/64 of
+        /// GDI's, and a geometry error under 6/64 cannot appear in the output at all (see
+        /// HowFinelyOurRasterizerResolves). Half the scatter therefore shows and half does
+        /// not, which is exactly the 52 to 57 per cent of stems that measure indistinguishable
+        /// from GDI's.</para>
+        /// <para>So the arithmetic of what is left: to do better the scatter has to halve, and
+        /// halving it means reproducing GDI's per-stem choice. Every mechanism that could --
+        /// the rounding grid, the control values, the cut-in, the minimum distance, the
+        /// deltas, the anchor, a damping factor, a grid on the left edge or the right or the
+        /// centre -- has been measured and closed. What remains is not a rule waiting to be
+        /// found but a per-stem quantity, and the rendered output cannot supply it: its own
+        /// resolution is 6/64, coarser than the correction needed.</para></summary>
         /// <summary>AND WHY VERDANA AND TAHOMA DIFFER: MIRP against MDRP. Not a missing rule.
         /// <para>The face-dependence looked like the last big clue. It is not a clue, it is a
         /// consequence, and the mechanism is visible in one census of the x pass:</para>
