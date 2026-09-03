@@ -1722,6 +1722,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// GDI keeps a width difference between those two stems that we do not -- so whatever it
         /// does to x, it is not a grid, and it is not nothing.</para>
         /// </summary>
+        /// <summary>HOW MUCH OF THE X FITTING TO KEEP, in thousandths. WPF_CT_XBLEND.
+        /// <para>Asked because GDI treats two sibling faces completely differently and neither the
+        /// gasp nor the GETINFO answers distinguish them: solved against GDI's own ClearType
+        /// intervals, Verdana's ClearType x IS its bi-level x at every size (95 to 98 per cent,
+        /// against 7 for the unhinted outline) while Tahoma's is nearer the UNHINTED outline than
+        /// its bi-level fit (11 per cent against 44). If GDI damps the x fitting rather than
+        /// applying or skipping it whole, a single fraction between the two should beat both ends
+        /// -- and a fraction is one number for every face, not a table of them.</para>
+        /// <para>MEASURED AND WRONG. On the specimen at 12ppem, blends of 0.7, 0.8, 0.9, 0.95 and
+        /// 0.999 give 2,556,431 / 2,427,298 / 2,361,618 / 2,354,726 / 2,373,491 against 2,343,248
+        /// for keeping all of it. The curve rises monotonically as the fraction falls, so GDI
+        /// applies the x fitting WHOLE and the difference between the two faces is not a damping
+        /// factor. Kept, default off, because it is the only way to re-ask the question.</para>
+        /// <para>TWO CONFOUNDS, and the first is why this looked promising at all. Capturing
+        /// plainX is what the blend needs, and the compatible-width correction is gated on NOT
+        /// having captured it -- so the first sweep silently measured the loss of that correction
+        /// too, put every blend above 3,000,000, and made 0.99 look 750,000 worse than 1.0. The
+        /// guard now admits the blend. The second is still there and is why 0.999 measures 30,000
+        /// short of 1.0 rather than equalling it: capturing plainX also fills plainPhantom, which
+        /// turns on a shift inside CompatibleWidthMode 2 that is otherwise skipped. Neither
+        /// changes the conclusion -- every blend is worse -- but a smaller effect measured this way
+        /// would have been swamped.</para></summary>
+        internal static readonly int XBlend =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_XBLEND"), out int xb) ? xb : 1000;
+
         private static readonly int XGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_GRID"), out int xg) && xg > 0 ? xg : 0;
 
@@ -1765,6 +1790,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // XHintMode 5 already falls to the branch that restores x wholesale, which IS the
             // y-only fit. Shipping behaviour is untouched -- nothing sets this but the tests.
             if ((ForceYOnlyFit
+                 || (XBlend > 0 && XBlend < 1000 && SubpixelFitting)
                  || (SubpixelFitting && XHintMode != 1 && XHintMode != 2 && XHintMode != 5 && XHintMode != 6 && XHintMode != 7 && XHintMode != 8 && XHintMode != 11 && XHintMode != 12 && XHintMode != 13 && XHintMode != 14 && XHintMode != 16 && XHintMode != 17))
                 && !glyph.Composite
                 && interpreter.PrepareForSize(pixelsPerEm))
@@ -1979,7 +2005,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // depth + 1) -- so every component is a SIMPLE glyph that has already had this
             // correction applied to it. A composite assembled from corrected parts is already
             // correct, and applying it again would correct it twice.</para>
-            if (CompatibleWidthMode != 0 && plainX is null
+            // The blend needs plainX captured, and this correction is gated on NOT having captured
+            // it -- so without this clause, measuring the blend silently measures the loss of the
+            // compatible-width correction as well, which is worth about 750,000 on its own and
+            // makes a blend of 0.99 look 750,000 worse than a blend of 1.
+            if (CompatibleWidthMode != 0 && (plainX is null || (XBlend > 0 && XBlend < 1000))
                 && (s_compatWidthComposite || !glyph.Composite)
                 && !s_measuringAdvance && glyph.X.Length > glyph.PointCount + 1)
             {
@@ -2142,6 +2172,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         int shift = plainMin - hintedMin;
                         for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift;
                     }
+                }
+                else if (XBlend > 0 && XBlend < 1000)
+                {
+                    // Keep a FRACTION of what the fitting moved, rather than all of it or none.
+                    for (int i = 0; i < glyph.PointCount; i++)
+                        glyph.X[i] = plainX[i]
+                                   + (int) (((long) (glyph.X[i] - plainX[i]) * XBlend) / 1000);
                 }
                 else
                 {
