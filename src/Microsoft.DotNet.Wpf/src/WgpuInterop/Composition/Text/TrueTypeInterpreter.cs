@@ -990,7 +990,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>Verdana is why this is a knob. It ships no 'hdmx', so its advances come from this
         /// phantom, and they came out thirteen pixels short over a line of fifty. Its program never
         /// MOVES the phantom -- it only reads it, as the rp0 of the MIRP that places the right edge
-        /// -- so whatever GDI has there, it has before the first instruction.</para></summary>
+        /// -- so whatever GDI has there, it has before the first instruction.</para>
+        /// <para>NOT quantizing it (2) is the only knob in this file that moves Times' italic,
+        /// the worst row in the specimen: mean |per-glyph displacement| 0.311 -> 0.274. It is
+        /// still not the answer, because it BREAKS the faces that were right: Segoe UI's italic
+        /// goes 0.010 -> 0.188 and Times' own roman 0.025 -> 0.056, while Arial's roman improves
+        /// 0.234 -> 0.201. A knob whose best value differs per face is a sign that GDI is doing
+        /// something here we are approximating, not a setting to pick. Default stays 0.</para></summary>
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp : 0;
 
