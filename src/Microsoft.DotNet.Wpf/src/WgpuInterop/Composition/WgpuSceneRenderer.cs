@@ -4483,7 +4483,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// more often than not, and a run of mixed scripts still improves -- the script the
         /// requested face lacks stops being boxes -- so this is worth having before the larger
         /// change.</para></summary>
-        private Text.IFont? LinkedFontFor(string text, Text.IFont current)
+        private Text.IFont? LinkedFontFor(string text, Text.IFont current, string? requested)
         {
             if (current is not Text.IShapingFont shaping) return null;
             char needed = '\0';
@@ -4495,18 +4495,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             if (needed == '\0') return null;
 
-            if (_linkCache.TryGetValue(needed, out Text.IFont? cached)) return cached;
+            if (_linkCache.TryGetValue((requested, needed), out Text.IFont? cached)) return cached;
             Text.IFont? found = null;
-            foreach (string family in Text.FontFiles.LinkCandidates())
+            foreach (string family in Text.FontFiles.LinkCandidates(requested))
             {
                 if (LoadFamily(family, 0) is not Text.IFont f) continue;
                 if (f is Text.IShapingFont sf && sf.GlyphIndex(needed) > 0) { found = f; break; }
             }
-            _linkCache[needed] = found;
+            _linkCache[(requested, needed)] = found;
             return found;
         }
 
-        private readonly Dictionary<char, Text.IFont?> _linkCache = new();
+        private readonly Dictionary<(string?, char), Text.IFont?> _linkCache = new();
 
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
@@ -4532,7 +4532,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Text.IFont font = FontFor(run.Simulations, run.FontFamily);
             // If that face has none of the run's characters, draw them from one that
             // does, the way GDI links rather than drawing boxes.
-            if (LinkedFontFor(run.Text, font) is Text.IFont linked) font = linked;
+            if (LinkedFontFor(run.Text, font, run.FontFamily) is Text.IFont linked) font = linked;
             Text.IGlyphOutlineFont? outline = ReferenceEquals(font, _font)
                 ? _outlineFont
                 : font as Text.IGlyphOutlineFont;

@@ -4038,10 +4038,31 @@ namespace WgpuInterop.Tests.Text
             if (!string.IsNullOrEmpty(path)) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>What share of GDI's inked pixels are neither black nor white.
+        /// <para>A face with EMBEDDED BITMAP STRIKES is drawn from them by GDI at the sizes they
+        /// cover, and a 1-bit strike has no intermediate values at all. So this separates "GDI
+        /// antialiased an outline" from "GDI blitted a bitmap", which no ink ratio can.</para>
+        /// </summary>
+        private static int Greys(byte[] raw)
+        {
+            int inked = 0, grey = 0;
+            for (int i = 0; i < Width * Height; i++)
+            {
+                int b = raw[i * 4], g = raw[i * 4 + 1], r = raw[i * 4 + 2];
+                if (r == 255 && g == 255 && b == 255) continue;
+                inked++;
+                if (r != 0 || g != 0 || b != 0) grey++;
+            }
+            return inked == 0 ? 0 : grey * 100 / inked;
+        }
+
         /// <summary>The face the renderer will link to for this text, or the requested one when
         /// it copes -- the same choice EmitText makes.</summary>
+        internal static string s_drawnBy = "";
+
         private static TrueTypeFont FaceThatDraws(TrueTypeFont requested, string text)
         {
+            s_drawnBy = ProbeFamily();
             char needed = ' ';
             foreach (char c in text)
             {
@@ -4050,7 +4071,7 @@ namespace WgpuInterop.Tests.Text
                 if (needed == ' ') needed = c;
             }
             if (needed == ' ') return requested;
-            foreach (string family in FontFiles.LinkCandidates())
+            foreach (string family in FontFiles.LinkCandidates(ProbeFamily()))
             {
                 string? file = FontFiles.Find(family, bold: false, italic: false);
                 if (file is null) continue;
@@ -4061,7 +4082,7 @@ namespace WgpuInterop.Tests.Text
                 TrueTypeFont candidate;
                 try { candidate = new TrueTypeFont(bytes, false, false, sfnt); }
                 catch (Exception) { continue; }
-                if (candidate.GlyphIndex(needed) > 0) return candidate;
+                if (candidate.GlyphIndex(needed) > 0) { s_drawnBy = family; return candidate; }
             }
             return requested;
         }
@@ -4290,6 +4311,7 @@ namespace WgpuInterop.Tests.Text
                 // glyph count for a script the probe family does not have was measuring nothing:
                 // every non-Latin row said "0 substituted" because every glyph id was 0.
                 TrueTypeFont drawn = FaceThatDraws(font, text);
+                string drawnBy = s_drawnBy;
                 var shaped = new List<ShapedGlyph>();
                 new OpenTypeTextShaper().Shape(drawn, text, shaped);
                 int substituted = 0;
@@ -4298,7 +4320,8 @@ namespace WgpuInterop.Tests.Text
                 report.AppendLine($"   {name,-24} {mine2,10}   {theirs2,11}   "
                                   + $"{(theirs2 == 0 ? 0 : mine2 / (double) theirs2),6:0.000}"
                                   + $"   {differing,12}   {text.Length}ch -> {shaped.Count}gl,"
-                                  + $" {substituted} substituted");
+                                  + $" {substituted} substituted   {drawnBy}"
+                                  + $"   GDI greys {Greys(raw)}%");
             }
 
             File.AppendAllText(path!, report.ToString());

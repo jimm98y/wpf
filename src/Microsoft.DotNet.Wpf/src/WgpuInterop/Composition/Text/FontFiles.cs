@@ -15,6 +15,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
@@ -220,8 +221,81 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and is the thing to read if these ever disagree with Windows about WHICH face a
         /// character comes from. Getting the script right is the first order of business; getting
         /// the same face as GDI is the second.</para></summary>
-        public static IEnumerable<string> LinkCandidates()
+        /// <summary>GDI's OWN font-link list, read from the registry.
+        /// <para>Which face a character comes from when the requested one lacks it is not a matter
+        /// of taste: Windows keeps an ordered list per family under FontLink\SystemLink, and GDI
+        /// walks it. Guessing a good order instead got the script right and the FACE wrong -- our
+        /// Chinese was drawn in Microsoft YaHei against GDI's choice, 12% too much ink, which is a
+        /// visibly different typeface and not a rendering difference at all.</para>
+        /// <para>Each line is "FILE.TTC,Face Name", sometimes just a file. The face name is what
+        /// this returns, because that is what the rest of this class resolves.</para></summary>
+        public static IEnumerable<string> SystemLink(string family)
         {
+            if (!OperatingSystem.IsWindows()) return System.Array.Empty<string>();
+            if (s_systemLink is null)
+                s_systemLink = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            if (s_systemLink.TryGetValue(family, out string[]? cached)) return cached;
+
+            var faces = new List<string>();
+            foreach (string line in MultiString(
+                         @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink", family))
+            {
+                int comma = line.IndexOf(',');
+                // "MSGOTHIC.TTC,MS UI Gothic" -- the part after the comma names the FACE inside a
+                // collection, and a line without one names a file whose family we already know.
+                string face = comma >= 0 ? line.Substring(comma + 1)
+                                         : Path.GetFileNameWithoutExtension(line);
+                if (!string.IsNullOrWhiteSpace(face)) faces.Add(face.Trim());
+            }
+            return s_systemLink[family] = faces.ToArray();
+        }
+
+        private static Dictionary<string, string[]>? s_systemLink;
+
+        /// <summary>One REG_MULTI_SZ value, or nothing at all if it is absent.</summary>
+        private static string[] MultiString(string subKey, string valueName)
+        {
+            if (!OperatingSystem.IsWindows()) return System.Array.Empty<string>();
+            const int HkeyLocalMachine = unchecked((int) 0x80000002);
+            const int KeyRead = 0x20019, ErrorSuccess = 0;
+
+            if (RegOpenKeyExW((IntPtr) HkeyLocalMachine, subKey, 0, KeyRead, out IntPtr key) != ErrorSuccess)
+                return System.Array.Empty<string>();
+            try
+            {
+                int size = 0;
+                if (RegQueryValueExW(key, valueName, IntPtr.Zero, out int _, null, ref size) != ErrorSuccess
+                    || size <= 0)
+                    return System.Array.Empty<string>();
+                var buffer = new byte[size];
+                if (RegQueryValueExW(key, valueName, IntPtr.Zero, out int _, buffer, ref size) != ErrorSuccess)
+                    return System.Array.Empty<string>();
+
+                // REG_MULTI_SZ: UTF-16 strings, each null-terminated, the lot ending in a second null.
+                string all = System.Text.Encoding.Unicode.GetString(buffer, 0, size);
+                return all.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            }
+            finally { RegCloseKey(key); }
+        }
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int RegOpenKeyExW(IntPtr key, string subKey, int options, int desired,
+                                                out IntPtr result);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int RegQueryValueExW(IntPtr key, string valueName, IntPtr reserved,
+                                                   out int type, byte[]? data, ref int size);
+
+        [DllImport("advapi32.dll")]
+        private static extern int RegCloseKey(IntPtr key);
+
+        public static IEnumerable<string> LinkCandidates(string? requested = null)
+        {
+            // What Windows itself would do, first.
+            if (requested is not null)
+                foreach (string linked in SystemLink(requested)) yield return linked;
+            foreach (string fallback in SystemLink("Segoe UI")) yield return fallback;
+
             foreach (string named in new[]
             {
                 "Segoe UI", "Segoe UI Symbol", "Segoe UI Emoji", "Microsoft YaHei", "SimSun",
