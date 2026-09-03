@@ -922,7 +922,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// takes a number here -- 3 puts them on the lamp grid, which is the resolution the text is
         /// actually DRAWN at, as opposed to the sixteenth the program rounds against.</summary>
         /// <summary>WPF_CT_DISTGRID: the grid DISTANCES round on in the ClearType direction, as a
-        /// divisor of a pixel (1 = whole pixels). 0 leaves them on the virtual grid.</summary>
+        /// divisor of a pixel (1 = whole pixels). 0 leaves them on the virtual grid.
+        /// <para>THE LAMP GRID (3) IS REFUTED, 2026-09-04. It is the principled value -- the
+        /// resolution the text is actually drawn at -- and it is worse on the specimen at both
+        /// sizes tried: 2,280,836 -> 2,758,075 at 12ppem and 2,802,395 -> 3,630,114 at 16. Putting
+        /// POSITIONS on it too (WPF_CT_POSGRID=3) is worse again, 3,130,907 / 4,140,016, and
+        /// positions alone are 2,699,699 / 3,412,076.</para>
+        /// <para>AND IT LOOKED LIKE A WIN FIRST, which is the part worth keeping. Measured as the
+        /// mean per-glyph displacement over seven to nine letters it improved Times' italic 0.242
+        /// -> 0.162 and Segoe UI 0.116 -> 0.094, and summed over four faces it was ahead. The
+        /// specimen -- twenty-four rows of about fifty characters -- says the opposite by twenty
+        /// percent. The per-glyph report is for DIAGNOSIS, naming which glyphs are wrong; it is far
+        /// too small a sample to CHOOSE a knob with. Tune on the specimen.</para></summary>
         private static readonly int s_distanceGrid =
             Environment.GetEnvironmentVariable("WPF_CT_DISTGRID") == "physical" ? 1
             : int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DISTGRID"), out int dg) ? dg : 0;
