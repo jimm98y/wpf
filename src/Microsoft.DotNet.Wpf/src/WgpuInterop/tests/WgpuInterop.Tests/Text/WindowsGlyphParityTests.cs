@@ -3964,6 +3964,64 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>THE WIDTH WE MEASURE A STRING TO BE, against the width GDI measures.
+        /// <para>Layout is built on this number, not on the pixels: a tab is sized to its caption,
+        /// a label to its text, a column to its header. If it is a pixel out, every edge downstream
+        /// of it is a pixel out, and the ink that lands inside can still be perfect -- which is
+        /// exactly what the control window shows, where the tab strip's separators sit a column
+        /// apart while the captions themselves match.</para>
+        /// <para>GDI's answer is GetTextExtentPoint32W, which is what TextRenderer.MeasureText with
+        /// NoPadding reports and what a control's own layout asks for.</para>
+        /// <para>WPF_WIDTH_REPORT=&lt;path&gt; to collect it.</para></summary>
+        [Fact]
+        public void TheWidthWeMeasureAString_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? path = Environment.GetEnvironmentVariable("WPF_WIDTH_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_WIDTH_REPORT to collect this");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== string width, ours against GDI's GetTextExtentPoint32W");
+            report.AppendLine("   face              ppem   text            ours   gdi   delta");
+
+            string[] samples =
+            {
+                "Shapes", "Text", "Media", "Label", "Button", "CheckBox", "OK", "Cancel",
+                "MonthCalendar", "September 2026", "Today: 9/4/2026", "Handgloves mio",
+                "iiiii", "WWWWW", "lll", "...", "  ",
+            };
+
+            foreach (string family in new[] { "Segoe UI", "Tahoma", "Arial" })
+                foreach (int ppem in new[] { 12, 16 })
+                {
+                    string? file = FontFiles.Find(family, bold: false, italic: false);
+                    if (file is null) continue;
+                    byte[] bytes = File.ReadAllBytes(file);
+                    int sfnt = FontFiles.SfntOffset(bytes, family);
+                    if (CffFont.IsCff(bytes, sfnt)) continue;
+                    var font = new TrueTypeFont(bytes, false, false, sfnt);
+
+                    foreach (string text in samples)
+                    {
+                        int gdi = Gdi.TextWidth(text, family, ppem);
+                        // Ours the way a caller measures it: the shaped advances, on the device
+                        // grid the face itself reports, which is what the renderer steps by.
+                        var shaped = new List<ShapedGlyph>();
+                        new OpenTypeTextShaper().Shape(font, text, shaped);
+                        float ours = 0f;
+                        foreach (ShapedGlyph g in shaped)
+                            ours += font.TryGetDeviceAdvance(g.GlyphId, ppem, out float dev)
+                                    ? dev
+                                    : MathF.Round(g.Advance * (ppem / (float) font.PixelsPerEm));
+                        int mine = (int) MathF.Round(ours);
+                        report.AppendLine($"   {family,-16} {ppem,4}   {text,-16} {mine,5} {gdi,5}"
+                                          + $"   {mine - gdi,5}");
+                    }
+                }
+
+            File.AppendAllText(path!, report.ToString());
+        }
+
         /// <summary>WHERE EACH GLYPH LANDS, ours against GDI's, one isolated stem at a time.
         /// <para>The run's first and last inked columns match GDI's exactly, so the advances add up
         /// to the same total -- and yet the ink-weighted centre of the run moves by up to a pixel.
@@ -6278,6 +6336,36 @@ namespace WgpuInterop.Tests.Text
 
             [DllImport("user32.dll", CharSet = CharSet.Unicode)]
             private static extern int DrawTextW(IntPtr hdc, string text, int count, ref RECT rect, uint format);
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct SIZE { public int cx, cy; }
+
+            [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+            private static extern bool GetTextExtentPoint32W(IntPtr hdc, string text, int count, out SIZE size);
+
+            /// <summary>The width GDI measures a string to be -- what a control's layout asks for,
+            /// and what TextRenderer.MeasureText with NoPadding reports.</summary>
+            public static int TextWidth(string text, string family, int ppem,
+                                        bool bold = false, bool italic = false)
+            {
+                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                var lf = new LOGFONTW
+                {
+                    lfHeight = -ppem,
+                    lfWeight = bold ? 700 : 400,
+                    lfItalic = (byte) (italic ? 1 : 0),
+                    lfCharSet = 1,
+                    lfQuality = ClearTypeQuality,
+                    lfFaceName = family,
+                };
+                IntPtr font = CreateFontIndirectW(ref lf);
+                IntPtr old = SelectObject(dc, font);
+                GetTextExtentPoint32W(dc, text, text.Length, out SIZE size);
+                SelectObject(dc, old);
+                DeleteObject(font);
+                DeleteDC(dc);
+                return size.cx;
+            }
 
             [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
             [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
