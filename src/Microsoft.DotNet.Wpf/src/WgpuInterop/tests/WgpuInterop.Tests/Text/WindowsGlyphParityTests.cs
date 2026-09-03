@@ -3907,6 +3907,63 @@ namespace WgpuInterop.Tests.Text
             File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>EVERY INSTALLED FAMILY OPENS. A guard, not a report.
+        /// <para>The renderer answers a family it cannot open by drawing in the FALLBACK typeface
+        /// and saying nothing -- one <c>catch (Exception) { return null; }</c> in LoadFamily hides
+        /// every cause -- so a font-resolution bug is invisible until someone looks at a page and
+        /// wonders why it is in the wrong face. Four such causes were found in one session:</para>
+        /// <code>
+        ///   a collection has no sfnt at offset 0        Cambria
+        ///   the filename guess misses                   Trebuchet MS
+        ///   PostScript outlines need the other reader   any OpenType/CFF family
+        ///   the family has no regular face              Brush Script MT and six others
+        /// </code>
+        /// <para>Each was silent, and each would have been loud here. So this asserts rather than
+        /// reports: every family the name scan finds must resolve to a file and that file must
+        /// open, in every style.</para>
+        /// <para>It is machine-dependent by nature -- it asks about the fonts that are installed --
+        /// so it names what failed rather than just counting, and a face that GDI itself would
+        /// refuse is a legitimate reason to add an exclusion here with the reason written down.
+        /// </para></summary>
+        [Fact]
+        public void EveryInstalledFamily_ResolvesAndOpens()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "reads the installed faces");
+
+            var failures = new List<string>();
+            int checkedFaces = 0;
+            foreach (string fam in FontFiles.ScannedFamilyNames())
+                foreach ((string label, bool bold, bool italic) in
+                         new[] { ("regular", false, false), ("bold", true, false), ("italic", false, true) })
+                {
+                    string? file = FontFiles.Find(fam, bold, italic);
+                    if (file is null) { failures.Add($"{fam} {label}: no file"); continue; }
+                    byte[] bytes;
+                    try { bytes = File.ReadAllBytes(file); }
+                    catch (IOException e) { failures.Add($"{fam} {label}: unreadable -- {e.Message}"); continue; }
+                    catch (UnauthorizedAccessException) { continue; }   // a font we are not allowed to read
+                    int sfnt = FontFiles.SfntOffset(bytes);
+                    try
+                    {
+                        // Exactly what the renderer does, so that passing here means it works there.
+                        if (CffFont.IsCff(bytes, sfnt)) _ = new CffFont(bytes, false, false, sfnt);
+                        else _ = new TrueTypeFont(bytes, false, false, sfnt);
+                        checkedFaces++;
+                    }
+                    catch (Exception e)
+                    {
+                        failures.Add($"{fam} {label}: {System.IO.Path.GetFileName(file)}"
+                                     + $" would fall back -- {e.Message}");
+                    }
+                }
+
+            Assert.True(checkedFaces > 0, "the name scan found no families at all");
+            Assert.True(failures.Count == 0,
+                        $"{failures.Count} of {checkedFaces + failures.Count} faces would silently draw"
+                        + " in the fallback typeface:" + Environment.NewLine
+                        + string.Join(Environment.NewLine, failures));
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
