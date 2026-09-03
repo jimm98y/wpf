@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -44,6 +44,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public const float DefaultTolerance = 0.025f;
 
+        /// <summary>The tolerance GLYPHS are flattened at, which is finer than the default.
+        /// <para>A flattening chord sags INWARD on a convex curve, so it can only ever
+        /// under-cover, and a lamp is a third of a pixel -- a 0.025px sag is up to seven per
+        /// cent of a lamp, one-sided, and text is nothing but small convex curves. Measured on
+        /// the text specimen it is worth about eight hundredths of a per cent of the whole
+        /// difference at EVERY size:</para>
+        /// <code>
+        ///   ppem        10        12        14        16        20      TOTAL
+        ///   0.025  1,623,912 2,343,248 1,982,506 2,882,767 2,331,725  11,164,158
+        ///   0.004  1,612,629 2,338,570 1,965,325 2,860,019 2,299,096  11,075,639
+        ///   0.001  1,611,687 2,338,583 1,965,321 2,857,435 2,296,048  11,069,074
+        /// </code>
+        /// <para>0.001 buys a further 0.06 per cent for two and a half times the segments, so
+        /// 0.004 is where it settles. The ink ratio against Windows moves 0.9855 to 0.9863 at
+        /// 16ppem, in the direction the mechanism predicts, which is what makes this a fix
+        /// rather than a fitted constant.</para>
+        /// <para>Kept separate from the default so that ordinary geometry -- a large rounded
+        /// rectangle, a circle -- does not pay two and a half times the segments for an
+        /// accuracy only text at a few pixels an em can use. WPF_CURVE_TOL overrides
+        /// both.</para></summary>
+        public static readonly float GlyphTolerance =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_TOL"),
+                           System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float gt)
+                && gt > 0 ? gt : 0.004f;
+
+        /// <summary>The tolerance a caller gets when it does not name one. WPF_CURVE_TOL.
+        /// <para>Worth a knob because 0.025px is not obviously below the floor for TEXT. A
+        /// flattening chord sags INWARD on a convex curve, so it can only ever under-cover,
+        /// and a lamp is a third of a pixel -- so a 0.025px sag is up to seven per cent of a
+        /// lamp, one-sided. The specimen is measurably light (ink against Windows 0.9855 at
+        /// 16ppem), which is the symptom that mechanism would produce.</para></summary>
+        public static readonly float Tolerance =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_TOL"),
+                           System.Globalization.NumberStyles.Float,
+                           System.Globalization.CultureInfo.InvariantCulture, out float t)
+                && t > 0 ? t : DefaultTolerance;
+
         // Upper bounds. A degenerate control point (NaN, or a coordinate near float.Max) must
         // not be able to turn one curve into an unbounded vertex stream; the caps also keep
         // the GPU per-fragment segment loops finite.
@@ -76,6 +114,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int QuadraticSteps(Vector2 p0, Vector2 c, Vector2 p1, float tolerance)
         {
+            // A caller that names no tolerance passes zero and means the default;
+            // resolving it here keeps every entry point honouring WPF_CURVE_TOL.
+            if (!(tolerance > 0f)) tolerance = Tolerance;
             Vector2 d = p0 - 2f * c + p1;
             return StepsFromSquareLaw(d.Length() * 0.25f, tolerance);
         }
@@ -87,6 +128,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int CubicSteps(Vector2 p0, Vector2 c1, Vector2 c2, Vector2 p1, float tolerance)
         {
+            // A caller that names no tolerance passes zero and means the default;
+            // resolving it here keeps every entry point honouring WPF_CURVE_TOL.
+            if (!(tolerance > 0f)) tolerance = Tolerance;
             float m = MathF.Max((p0 - 2f * c1 + c2).Length(), (c1 - 2f * c2 + p1).Length());
             return StepsFromSquareLaw(0.75f * m, tolerance);
         }
@@ -100,6 +144,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int CircleSteps(float radius, float tolerance)
         {
+            // A caller that names no tolerance passes zero and means the default;
+            // resolving it here keeps every entry point honouring WPF_CURVE_TOL.
+            if (!(tolerance > 0f)) tolerance = Tolerance;
             if (!(radius > 0f) || float.IsNaN(radius)) return 3;
             if (!(tolerance > 0f)) return MaxRingSteps;
             if (tolerance >= radius) return 3;                     // coarser than the shape itself
@@ -121,6 +168,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int ArcCount(float radius, float sweepRadians, float tolerance)
         {
+            // A caller that names no tolerance passes zero and means the default;
+            // resolving it here keeps every entry point honouring WPF_CURVE_TOL.
+            if (!(tolerance > 0f)) tolerance = Tolerance;
             float sweep = MathF.Abs(sweepRadians);
             if (!(sweep > 0f) || float.IsNaN(sweep)) return 1;
             int quadrants = Math.Max(1, (int)Math.Ceiling(sweep / (MathF.PI / 2f)));

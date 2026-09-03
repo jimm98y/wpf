@@ -55,7 +55,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int FlattenToEdges(PathGeometry path, List<float> edges,
             out float minX, out float minY, out float maxX, out float maxY,
-            float tolerance = CurveFlattener.DefaultTolerance)
+            float tolerance = 0f)
         {
             minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
             List<List<Vector2>> contours = Flatten(path, tolerance);
@@ -246,7 +246,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public static int FlattenCenterlineSegments(PathGeometry path, List<float> segs,
             out float minX, out float minY, out float maxX, out float maxY,
-            float tolerance = CurveFlattener.DefaultTolerance)
+            float tolerance = 0f)
         {
             minX = float.MaxValue; minY = float.MaxValue; maxX = float.MinValue; maxY = float.MinValue;
             int count = 0;
@@ -307,7 +307,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return a0 + s * d0;
         }
 
-        public static CoverageMask Rasterize(PathGeometry path, float tolerance = CurveFlattener.DefaultTolerance)
+        public static CoverageMask Rasterize(PathGeometry path, float tolerance = 0f)
         {
             List<List<Vector2>> contours = Flatten(path, tolerance);
             if (contours.Count == 0)
@@ -490,7 +490,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int SubpixelRowsForRun;
 
         public static SubpixelMask RasterizeSubpixel(PathGeometry path,
-                                                     float tolerance = CurveFlattener.DefaultTolerance)
+                                                     float tolerance = 0f)
         {
             List<List<Vector2>> contours = Flatten(path, tolerance);
             if (contours.Count == 0) return default;
@@ -848,7 +848,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// Used to build a region-sized clip/opacity mask aligned to a card-sized layer.
         /// </summary>
         public static byte[] RasterizeInto(PathGeometry path, int width, int height, int originX, int originY,
-            float tolerance = CurveFlattener.DefaultTolerance)
+            float tolerance = 0f)
         {
             List<List<Vector2>> contours = Flatten(path, tolerance);
             return FillCoverage(contours, path.FillRule, originX, originY, width, height);

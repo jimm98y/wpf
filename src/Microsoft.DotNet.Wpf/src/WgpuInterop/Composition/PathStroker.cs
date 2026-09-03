@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -24,7 +24,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     internal static class PathStroker
     {
         public static PathGeometry Stroke(PathGeometry geometry, StrokeStyle style,
-            float tolerance = CurveFlattener.DefaultTolerance)
+            float tolerance = 0f)
         {
             float half = (float)(style.Thickness / 2.0);
             var contours = new List<PathFigure>();

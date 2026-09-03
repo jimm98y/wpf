@@ -3530,7 +3530,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // paid once per glyph per size, not once per frame.
                         PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? _symmetricRows : 0;
                         PathRasterizer.SubpixelMask sm;
-                        try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased)); }
+                        try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
+                                                    CurveFlattener.GlyphTolerance); }
                         finally { PathRasterizer.SubpixelRowsForRun = 0; }
                         if (sm.IsEmpty) return;
                         // Corrected AFTER the filter, and it was worth checking which way round:
@@ -3674,7 +3675,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (!ClearType || _transparentTarget || !IsAxisAligned(world)) return false;
 
-            PathRasterizer.SubpixelMask mask = PathRasterizer.RasterizeSubpixel(geometry);
+            PathRasterizer.SubpixelMask mask =
+                PathRasterizer.RasterizeSubpixel(geometry, CurveFlattener.GlyphTolerance);
             if (mask.IsEmpty) return false;
 
             (IntPtr tex, IntPtr view) = CreateRgbaTexture(mask.Rgba, mask.Width, mask.Height);
