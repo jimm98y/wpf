@@ -3301,7 +3301,38 @@ namespace WgpuInterop.Tests.Text
         /// -- which makes the answer independent of every coordinate outside it, the thing the
         /// single-coordinate solve could never claim -- and report every pair that reaches the
         /// minimum, as (left, width), because that is the form a rule would be written in.</para>
-        /// <para>WPF_SOLVESTEM=char@ppem, with WPF_FACE to choose the face.</para></summary>
+        /// <para>WPF_SOLVESTEM=char@ppem, with WPF_FACE to choose the face.</para>
+        /// <para>Each stem also prints one machine-readable line -- face, char, ppem, our left and
+        /// width, the UNFITTED left and width, GDI's allowed left and width, the residual, and
+        /// whether ours is among the winners -- because a rule for stem placement has to be a rule
+        /// about something, and the unfitted position is the only candidate that does not
+        /// presuppose the answer.</para>
+        /// <para>WHAT IT SAYS, over 131 stems from Tahoma and Arial at 12 and 16ppem. The solve is
+        /// EXACT on 27 of them; on the rest no pair in the search box reproduces GDI's lamps,
+        /// because neighbouring curves contribute to those columns too, so read the rule fit on the
+        /// 27 and not on the whole:</para>
+        /// <code>
+        ///   GDI's stem LEFT EDGE                 GDI's stem WIDTH
+        ///     ours as shipped        52%           ours as shipped        89%
+        ///     the unfitted value     33%           the unfitted value     78%
+        ///     unfitted round 1/3     33%           unfitted round 1/3     22%
+        ///     unfitted round 1/16    30%           unfitted round 1px      7%
+        ///     unfitted round 1px     26%
+        ///     unfitted floor 1/3     26%
+        ///     unfitted floor 1px     22%
+        ///     unfitted floor 1/2     22%
+        /// </code>
+        /// <para>Our widths are right 89 per cent of the time and our left edges 52, which is the
+        /// same split the gradient census and the per-coordinate solve both reported. And OURS IS
+        /// THE BEST OF EVERY CANDIDATE: no rounding of the unfitted left edge onto a whole pixel, a
+        /// half, a third or a sixteenth, in either direction, comes within twenty points of it. So
+        /// GDI's stem placement is not a grid applied to the outline, and the family of rules of
+        /// that shape is now closed against an oracle that is unconditional per stem rather than
+        /// per coordinate.</para>
+        /// <para>The one clue the lines carry is that WE AND GDI MOVE DIFFERENT EDGES. Tahoma's 'H'
+        /// at 16ppem: the left stem starts at 1.1875 unfitted, GDI puts it at about 1.02 and we
+        /// leave it at 1.188; the right stem starts at 8.0781, GDI leaves it there and we move it
+        /// to 8.250. Both of us move one edge and not the other, and we pick the other one.</para></summary>
         [Fact]
         public void SolveOneStemJointly()
         {
@@ -3319,8 +3350,28 @@ namespace WgpuInterop.Tests.Text
             Gdi.s_rawRgb = raw;
             Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
             Gdi.s_rawRgb = null;
-            Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
-                                                                     out List<PathFigure> ours));
+            // WHERE THE OUTLINE PUT EACH EDGE BEFORE FITTING. A rule for GDI's stem placement
+            // has to be a rule about something, and the unfitted position is the only
+            // candidate that does not presuppose the answer.
+            TrueTypeInterpreter.s_capturePoints = true;
+            List<PathFigure> ours;
+            TrueTypeInterpreter.GlyphPoints? pts;
+            try
+            {
+                Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(
+                                 font.GlyphIndex(c), ppem, out ours));
+                pts = font.LastHintedPoints;
+            }
+            finally { TrueTypeInterpreter.s_capturePoints = false; }
+
+            var plainOf = new Dictionary<float, float>();
+            if (pts is not null)
+                for (int i = 0; i < pts.PointCount; i++)
+                {
+                    float key = MathF.Round(pts.FitX[i], 3);
+                    if (!plainOf.ContainsKey(key)) plainOf[key] = pts.StartX[i];
+                }
+            float Plain(float v) => plainOf.TryGetValue(MathF.Round(v, 3), out float u) ? u : v;
 
             var xs = new SortedSet<float>();
             foreach (PathFigure f in ours) CollectXs(f, xs);
@@ -3365,6 +3416,12 @@ namespace WgpuInterop.Tests.Text
                     + $" ours {(oursWins ? "IS" : "is NOT")} among them");
                 Console.Error.WriteLine($"      GDI allows left {lLo:0.000}..{lHi:0.000},"
                     + $" width {wLo:0.000}..{wHi:0.000}");
+                // And the same thing in a form a script can fit a rule to.
+                Console.Error.WriteLine($"STEM {ProbeFamily()},{c},{ppem},"
+                    + $"{a0:0.0000},{b0 - a0:0.0000},"
+                    + $"{Plain(a0):0.0000},{Plain(b0) - Plain(a0):0.0000},"
+                    + $"{lLo:0.0000},{lHi:0.0000},{wLo:0.0000},{wHi:0.0000},"
+                    + $"{best:0},{(oursWins ? 1 : 0)}");
             }
         }
 
