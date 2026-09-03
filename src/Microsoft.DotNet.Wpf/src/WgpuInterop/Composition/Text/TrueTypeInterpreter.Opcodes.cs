@@ -231,8 +231,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x3D: _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
                     case 0x4D: _gs.AutoFlip = true; break;                              // FLIPON
                     case 0x4E: _gs.AutoFlip = false; break;                             // FLIPOFF
-                    case 0x5E: _gs.DeltaBase = Pop(); break;                            // SDB
-                    case 0x5F: _gs.DeltaShift = Pop(); break;                           // SDS
+                    case 0x5E:                                                        // SDB
+                        _gs.DeltaBase = Pop();
+                        if (_dumpActive) Console.Error.WriteLine($"      SDB {_gs.DeltaBase}");
+                        break;
+                    case 0x5F:                                                        // SDS
+                        _gs.DeltaShift = Pop();
+                        if (_dumpActive) Console.Error.WriteLine($"      SDS {_gs.DeltaShift}");
+                        break;
                     case 0x7A: _gs.Round = RoundMode.Off; break;                        // ROFF
                     case 0x7C: _gs.Round = RoundMode.UpToGrid; break;                   // RUTG
                     case 0x7D: _gs.Round = RoundMode.DownToGrid; break;                 // RDTG
@@ -1210,6 +1216,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Answer GETINFO "not greyscale" however the rest of the configuration
         /// reads. WPF_CT_GREY=0. See the call site.</summary>
+        /// <summary>WPF_CT_SIGNCV=outline: when auto-flip is OFF and the control value points
+        /// the other way from the outline, use the outline distance.
+        /// <para>MEASURED AND NOT SHIPPED, and worth keeping for the case that produced it. Times
+        /// New Roman's ITALIC 'i' at 12ppem comes out a whole pixel left of GDI at every one of its
+        /// 42 points, while being EXACT at 11, 13, 14 and 16. Traced instruction by instruction
+        /// against the exact oracle: the face turns auto-flip off, anchors the glyph from the
+        /// phantom origin with cvt[25] = -0.4844px against an outline distance of +0.5156px, and
+        /// the two straddle the half pixel -- the control value rounds to 0 and the outline
+        /// distance to +1. GDI has +1, so GDI used the outline. FreeType would produce 0 here as
+        /// well, so this is a genuine GDI divergence and not an ordinary bug.</para>
+        /// <para>But it does not generalise, which is why it is off. Over six faces at 12ppem the
+        /// points differing from GDI go 243 -> 230: Times italic gains 41, and Times roman loses 17
+        /// and Arial 11. A rule that fixes one face by breaking two is not the rule, and the
+        /// narrower reading does not help -- WPF_CT_SIGNCV=phantom, restricting it to distances
+        /// measured from a phantom point, measures IDENTICALLY, because every sign-disagreeing
+        /// MIRP in this corpus is already anchored to one.</para>
+        /// <para>What the case does establish is that a whole-pixel error can survive in a single
+        /// glyph at a single size, invisible in every aggregate, and that it can now be run to the
+        /// instruction that causes it. That is what the oracle is for.</para></summary>
+        private static readonly bool s_signCvOutline =
+            Environment.GetEnvironmentVariable("WPF_CT_SIGNCV") == "outline";
+
+        /// <summary>WPF_CT_SIGNCV=phantom: the same, but only when the distance is measured
+        /// from a PHANTOM point -- the glyph origin or its advance, which are not outline
+        /// points and whose "distance" is the side bearing rather than a stem.</summary>
+        private static readonly bool s_signCvPhantom =
+            Environment.GetEnvironmentVariable("WPF_CT_SIGNCV") == "phantom";
+
         private static readonly bool s_greyNever =
             Environment.GetEnvironmentVariable("WPF_CT_GREY") == "0";
 
@@ -1419,11 +1453,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" op=0x{op:X2}({Convert.ToString(op & 0x1F, 2).PadLeft(5, '0')}) roundState={_gs.Round}"
                     + $" instrCtrl={_gs.InstructControl}"
                     + $" swValue={_gs.SingleWidthValue / 64f:0.0000} swCutIn={_gs.SingleWidthCutIn / 64f:0.0000}"
+                    + $" autoFlip={_gs.AutoFlip} point={p}"
                     + $" axis={(IsHorizontalProjection ? "x" : "y")}");
 
             // A control value pointing the other way from the outline is the wrong one to use; with
             // auto-flip on, take its size and the outline's direction.
             if (_gs.AutoFlip && (original ^ value) < 0) value = -value;
+
+            // AND WHEN AUTO-FLIP IS OFF, GDI APPEARS TO REJECT IT ALTOGETHER rather than move
+            // the point backwards. WPF_CT_SIGNCV=outline. Found on Times New Roman's italic
+            // 'i' at 12ppem, which we draw a whole pixel left of GDI at every one of its 42
+            // points while being exact at 11, 13, 14 and 16: the face turns auto-flip off,
+            // anchors the glyph from the phantom origin with cvt[25] = -0.4844px against an
+            // outline distance of +0.5156px, and the two roundings differ by exactly the
+            // pixel -- the control value rounds to 0 and the outline distance to +1.
+            if (!_gs.AutoFlip && (original ^ value) < 0
+                && (s_signCvOutline
+                    || (s_signCvPhantom && _gs.Rp0 >= ZoneOf(_gs.Zp0).PointCount - 4)))
+                value = original;
 
             // A control value spent on an x distance is a stem width, and under ClearType those are
             // whole pixels whether or not the instruction asked for rounding.
@@ -1866,7 +1913,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // Reversed -- and it is worth saying, because the specification's own wording reads
                 // the other way -- eighty-four of the ninety-five glyphs stop matching Windows.
                 int p = Pop(), spec = Pop();
-                if (!DeltaApplies(spec, rangeOffset, out int amount)) continue;
+                bool fires = DeltaApplies(spec, rangeOffset, out int amount);
+                if (_dumpActive)
+                    Console.Error.WriteLine($"      DELTAP pt{p} spec=0x{spec:X2}"
+                        + $" ppem={((spec >> 4) & 0x0F) + _gs.DeltaBase + rangeOffset}"
+                        + $" (base {_gs.DeltaBase}, shift {_gs.DeltaShift}, range +{rangeOffset}, we are {_ppem})"
+                        + $" {(fires ? $"FIRES {amount / 64f:0.0000}px" : "no")}");
+                if (!fires) continue;
 
                 Zone z = ZoneOf(_gs.Zp0);
                 if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)) continue;

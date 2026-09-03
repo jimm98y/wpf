@@ -159,13 +159,14 @@ namespace WgpuInterop.Tests.Text
         /// fitted outline through OUR ClearType pipeline, and this is where that outline comes
         /// from. Same assembly, same namespace.</summary>
         internal static List<PathFigure> GdiOutline(char c, string family, int ppem, bool unhinted,
-                                                   int xScale = 1, bool bold = false)
+                                                   int xScale = 1, bool bold = false,
+                                                   bool italic = false)
         {
             var figures = new List<PathFigure>();
             IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
             var lf = new LOGFONTW
             {
-                lfHeight = -ppem, lfWeight = bold ? 700 : 400, lfCharSet = 1,
+                lfHeight = -ppem, lfWeight = bold ? 700 : 400, lfItalic = (byte) (italic ? 1 : 0), lfCharSet = 1,
                 lfQuality = ClearTypeQuality, lfFaceName = family,
             };
             IntPtr font = CreateFontIndirectW(ref lf);
@@ -747,12 +748,20 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_GGOPTS");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GGOPTS=family/char/ppem");
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            // family/chars/ppem, with an optional /B, /I or /BI. The styles are not a luxury:
+            // Times New Roman's ITALIC is the worst face and size in the whole specimen and on the
+            // parity suite alike, and until this parsed a style suffix the exact oracle could only
+            // ever be pointed at romans.
             string[] parts = spec!.Split('/');
-            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            string styleSpec = parts.Length > 3 ? parts[3] : "";
+            bool bold = styleSpec.Contains('B'), italic = styleSpec.Contains('I');
+            string? file = FontFiles.Find(parts[0], bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
-            int ppem = int.Parse(parts[^1]);
+            int ppem = int.Parse(parts[2]);
 
-            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            byte[] faceBytes = File.ReadAllBytes(file!);
+            FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
             bool saved = TrueTypeFont.SubpixelFitting;
             TrueTypeFont.SubpixelFitting = false;               // the full fit, both axes
             // GGO ANSWERS AS A GREYSCALE RASTERIZER -- measured, not assumed: asked through
@@ -778,8 +787,10 @@ namespace WgpuInterop.Tests.Text
                     TrueTypeInterpreter.GlyphPoints? pts = font.LastHintedPoints;
                     if (pts is null || pts.PointCount == 0) continue;
 
-                    List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true));
-                    List<Vector2> fitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false));
+                    List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true,
+                                                             bold: bold, italic: italic));
+                    List<Vector2> fitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false,
+                                                              bold: bold, italic: italic));
                     // FITTING CHANGES HOW GGO SEGMENTS THE OUTLINE, so its two reports need not be
                     // the same length and CANNOT ALWAYS BE PAIRED. Grid-fitting leaves points
                     // collinear or coincident, GDI emits a line where it emitted a spline, and the
@@ -795,8 +806,10 @@ namespace WgpuInterop.Tests.Text
                     bool onCurveOnly = plain.Count != fitted.Count;
                     if (onCurveOnly)
                     {
-                        plain = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: true));
-                        fitted = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: false));
+                        plain = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: true,
+                                                          bold: bold, italic: italic));
+                        fitted = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: false,
+                                                           bold: bold, italic: italic));
                     }
                     if (plain.Count != fitted.Count || plain.Count == 0)
                     {
@@ -839,7 +852,7 @@ namespace WgpuInterop.Tests.Text
                             + $" (worst {worstY * 64:+0.0;-0.0}/64)");
                     foreach (string l in lines) Console.Error.WriteLine(l);
                 }
-                Console.Error.WriteLine($"TOTAL {parts[0]} @{ppem}"
+                Console.Error.WriteLine($"TOTAL {parts[0]}{(styleSpec == "" ? "" : " " + styleSpec)} @{ppem}"
                     + $"{(bilevel ? " bi-level" : " ClearType")}: {gExact} of {gTotal} glyphs"
                     + $" exact; of {pTotal} points {pOffX} differ in x, {pOffY} in y"
                     + (unpairable == 0 ? "" : $"   [{unpairable} glyphs unpairable]"));
