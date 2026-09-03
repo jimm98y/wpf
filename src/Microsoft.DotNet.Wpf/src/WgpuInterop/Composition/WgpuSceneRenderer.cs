@@ -4452,6 +4452,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // wrong typeface and nothing said so.
                 int sfnt = Text.FontFiles.SfntOffset(bytes);
                 Text.FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                // POSTSCRIPT OUTLINES ARE A DIFFERENT READER. TrueTypeFont throws on a CFF
+                // face -- it has no 'glyf' -- and the catch below would turn that into the
+                // same silent fallback to the default typeface that collections and unresolved
+                // families had. ManagedFontResolver, which is the WPF text path, has always
+                // made this choice; this is the WinForms path catching up.
+                // UNVERIFIED BY RENDERING: no CFF face is installed on the machine this was
+                // written on, and TestFonts.FindCff looks for STIX on macOS and Linux. What is
+                // tested is the discriminator and the reader, separately and already.
+                if (Text.CffFont.IsCff(bytes, sfnt))
+                    return new Text.CffFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
                 return new Text.TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic,
                                              sfnt);
             }
