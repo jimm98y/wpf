@@ -1301,6 +1301,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_minDistMdrp =
             Environment.GetEnvironmentVariable("WPF_CT_MINDIST_MDRP") == "1";
 
+        /// <summary>WPF_CT_DELTA_SCALE: the fraction of an x delta to keep, in thousandths, where
+        /// the ClearType rule would drop it. 0 drops it, which is what ships.
+        /// <para>Asked because the specimen's error is not monotonic in size. It peaks at ppem 12,
+        /// 16 and 20 and dips at 10, 14 and 18 -- 2,882,808 at 16 against 1,982,506 at 14 and
+        /// 1,990,770 at 18, uniformly across all six faces and all four styles, so not a layout
+        /// artefact. Those peaks are 9pt, 12pt and 15pt: the common UI sizes, which is where a
+        /// face carries the most hand-tuned deltas, and x deltas are the one thing we drop
+        /// wholesale.</para>
+        /// <para>MEASURED AND WRONG, and the finer instrument matters: only "all", "none" and
+        /// "touched" had ever been compared, so "a fraction" was untested. At ppem 16, scales of
+        /// 0.1, 0.2, 0.333 and 0.5 give 2,900,810 / 3,008,225 / 3,225,611 / 3,565,972 against
+        /// 2,882,808 for dropping them. Monotonic from the very first tenth, so it is not that
+        /// these deltas are too big -- GDI does not want them in x AT ALL, and the rule that ships
+        /// is right at every granularity now tested.</para>
+        /// <para>The size pattern it was built to explain is real and remains open. Specimen by
+        /// size: 1,623,912 at 10ppem, 2,343,248 at 12, 1,982,506 at 14, 2,882,808 at 16,
+        /// 1,990,770 at 18, 2,331,757 at 20. Not monotonic, and 16 is forty per cent above BOTH
+        /// its neighbours -- uniformly across all six faces and all four styles, so not a row
+        /// artefact, and Segoe UI is exempt (its italic holds 0.013 and 0.007 error per ink at
+        /// 16). Not placement either: every band answers a rigid shift of zero at 16 as at 12.
+        /// The peaks are 9pt, 12pt and 15pt, which is suggestive and so far no more than
+        /// that.</para>
+        /// <para>Also not the stem-fat band, which is gated to ppem 10-13 and so inactive at the
+        /// spike. Widening it does buy 7,920 at 16 -- and costs 12,050 at 14, 38,222 at 18 and
+        /// 85,810 at 20, for a net loss of 128,241 across the six sizes. The shipped band is the
+        /// optimum.</para></summary>
+        private static readonly int s_deltaScale =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DELTA_SCALE"), out int ds) ? ds : 0;
+
         /// <summary>Do NOT halve the minimum distance in the ClearType direction.</summary>
         internal static readonly bool s_fullMinDistance =
             Environment.GetEnvironmentVariable("WPF_CT_MINDIST") == "full";
@@ -2002,7 +2031,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!fires) continue;
 
                 Zone z = ZoneOf(_gs.Zp0);
-                if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)) continue;
+                if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false))
+                {
+                    // SCALED RATHER THAN DROPPED. Microsoft's own account of why ClearType
+                    // discards these is not that they mean nothing but that they are too big:
+                    // "previous usage with bi-level rendering was relatively sloppy leading to
+                    // extreme exaggeration of delta like instructions". A delta written to flip
+                    // one whole pixel is three lamps' worth of movement in a direction that now
+                    // has three times the resolution -- so a fraction of it is the reading that
+                    // sits between dropping it (what ships) and running it whole (measured much
+                    // worse). WPF_CT_DELTA_SCALE is that fraction in thousandths.
+                    if (s_deltaScale <= 0) continue;
+                    amount = (int) (((long) amount * s_deltaScale) / 1000);
+                    if (amount == 0) continue;
+                }
                 MoveDirect(z, p, MulFix(amount, _gs.FreeX << 2), MulFix(amount, _gs.FreeY << 2), touch);
             }
         }
