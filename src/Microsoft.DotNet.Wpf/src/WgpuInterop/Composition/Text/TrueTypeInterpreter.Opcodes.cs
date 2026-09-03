@@ -618,6 +618,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // question, so an unexercised answer looked like an irrelevant
                                 // one. WPF_CT_SYMINFO=0 turns it back off.
                                 if (SymmetricRenderingAnswer && (selector & 2048) != 0) result |= 1 << 18;
+                                // AND NOT 'GREYSCALE CLEARTYPE' (4096, result bit 19), which
+                                // is measured and not merely unimplemented. THREE OF THE SIX
+                                // specimen faces ask it -- Verdana, Tahoma and Arial all do,
+                                // Segoe UI does not, which is to say every rule in this file
+                                // was tuned on the one face that never asks. GDI answers it
+                                // CLEAR in all three contexts the oracle can reach: drawing
+                                // ClearType, through GetGlyphOutline, and through a stretched
+                                // MAT2. Answering nothing is therefore answering correctly.
                             }
                             // NOT ClearType, and it was tried: saying so makes Segoe UI hint its
                             // stems to exactly one pixel where GDI's own geometry is a pixel and a

@@ -2665,17 +2665,23 @@ namespace WgpuInterop.Tests.Text
             // in x, so 'stretched' is exactly the kind of thing it might answer yes to --
             // and a face that branches on it would hint differently for reasons no amount of
             // looking at the ClearType bit could explain.
-            int[] selectors = { 0, 1, 2, 4, 32, 64, 128, 256, 512, 1024, 2048,
-                                -2, -4, -32, -64, -128, -256, -512, -1024, -2048 };
+            // 4096 is 'ClearType greyscale', and it is here because THREE OF SIX faces in the
+            // specimen ask it -- Verdana, Tahoma and Arial all do, Segoe UI does not -- and
+            // nothing had ever answered it. Every rule in this file was tuned on the one face
+            // that never asks.
+            int[] selectors = { 0, 1, 2, 4, 32, 64, 128, 256, 512, 1024, 2048, 4096,
+                                -2, -4, -32, -64, -128, -256, -512, -1024, -2048, -4096 };
             string[] names =
             {
                 "(no program, baseline)", "rasterizer version", "rotated", "stretched",
                 "greyscale", "ClearType enabled",
                 "compatible widths", "horizontal LCD stripes", "BGR order",
                 "sub-pixel positioned", "symmetric rendering",
+                "greyscale ClearType",
                 "rotated == bit", "stretched == bit",
                 "greyscale == bit", "ClearType == bit", "compatible widths == bit",
                 "stripes == bit", "BGR == bit", "sub-pixel pos == bit", "symmetric == bit",
+                "greyscale ClearType == bit",
             };
 
             var bars = new List<SyntheticFont.Bar>();
