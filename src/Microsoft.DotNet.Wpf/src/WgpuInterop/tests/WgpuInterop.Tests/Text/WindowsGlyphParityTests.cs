@@ -4004,13 +4004,56 @@ namespace WgpuInterop.Tests.Text
             byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
 
             List<double> mine = Centres(ours), theirs = Centres(raw);
+            // AND THE VERTICAL DISTRIBUTION. On a SLANTED glyph the two are not independent: ink
+            // at the top sits further right than ink at the bottom, so a glyph that is a row taller
+            // than GDI's has an x centroid further right WITHOUT being displaced in x at all. A
+            // horizontal measurement alone cannot tell "moved sideways" from "different height",
+            // and on an italic those are the two things worth telling apart.
+            List<(double Y, int Top, int Bottom)> mineY = Verticals(ours), theirsY = Verticals(raw);
             Console.Error.WriteLine($"== {parts[0]} @{ppem}{(style == "" ? "" : "/" + style)}:"
                                     + $" {theirs.Count} stems from GDI, {mine.Count} from us");
-            Console.Error.WriteLine("   char    GDI x      our x     delta");
+            Console.Error.WriteLine("   char    GDI x      our x     delta        dy   top  bottom");
             for (int i = 0; i < mine.Count && i < theirs.Count; i++)
+            {
+                string vertical = i < mineY.Count && i < theirsY.Count
+                    ? $"   {mineY[i].Y - theirsY[i].Y,+6:+0.00;-0.00; 0.00}"
+                      + $"   {mineY[i].Top - theirsY[i].Top,3}   {mineY[i].Bottom - theirsY[i].Bottom,3}"
+                    : "";
                 Console.Error.WriteLine($"   {(i < letters.Length ? letters[i] : '?'),3}"
                                         + $"   {theirs[i],9:0.000}   {mine[i],8:0.000}"
-                                        + $"   {mine[i] - theirs[i],+7:+0.000;-0.000; 0.000}");
+                                        + $"   {mine[i] - theirs[i],+7:+0.000;-0.000; 0.000}" + vertical);
+            }
+        }
+
+        /// <summary>The ink-weighted y centre of each column group, and the rows it spans.</summary>
+        private static List<(double Y, int Top, int Bottom)> Verticals(byte[] rgba)
+        {
+            var columns = new double[Width];
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    for (int ch = 0; ch < 3; ch++)
+                        columns[x] += 255 - rgba[(y * Width + x) * 4 + ch];
+
+            var result = new List<(double, int, int)>();
+            int at = 0;
+            while (at < Width)
+            {
+                if (columns[at] <= 255) { at++; continue; }
+                int from = at;
+                while (at < Width && columns[at] > 255) at++;
+                double weight = 0, moment = 0;
+                int top = -1, bottom = -1;
+                for (int y = 0; y < Height; y++)
+                {
+                    double row = 0;
+                    for (int x = from; x < at; x++)
+                        for (int ch = 0; ch < 3; ch++) row += 255 - rgba[(y * Width + x) * 4 + ch];
+                    weight += row; moment += row * y;
+                    if (row > 255) { if (top < 0) top = y; bottom = y; }
+                }
+                if (weight > 0) result.Add((moment / weight, top, bottom));
+            }
+            return result;
         }
 
         /// <summary>The ink-weighted x centre of every separated column group.</summary>
