@@ -2941,6 +2941,7 @@ namespace WgpuInterop.Tests.Text
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
             int totalPoints = 0, totalUntouched = 0, totalImpossible = 0;
             int inRange = 0, inRangeTotal = 0;
+            double moved = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3059,6 +3060,9 @@ namespace WgpuInterop.Tests.Text
                     {
                         (float ql, float qh) = Range(i);
                         inRangeTotal++;
+                        // How far the x fitting moved this point at all. If the machinery
+                        // were as inert as each knob measures, this would be near zero.
+                        moved += Math.Abs(pts.FitX[i] - pts.StartX[i]);
                         if (pts.FitX[i] >= ql - 1f / 64f && pts.FitX[i] <= qh + 1f / 64f)
                             inRange++;
                     }
@@ -3079,7 +3083,8 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine($"TOTAL {totalPoints} points, {totalUntouched} interpolated,"
                 + $" {totalImpossible} impossible under our touch set;"
                 + $" {inRange} of {inRangeTotal} of our own coordinates"
-                + $" ({100.0 * inRange / Math.Max(1, inRangeTotal):0.0}%) are ones GDI allows");
+                + $" ({100.0 * inRange / Math.Max(1, inRangeTotal):0.0}%) are ones GDI allows;"
+                + $" our x fitting moves a point {moved / Math.Max(1, inRangeTotal):0.000}px on average");
         }
 
         /// <summary>GDI's own fitted x coordinates, and the interval of each that the pixels allow.

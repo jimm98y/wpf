@@ -1081,8 +1081,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (keepMinimum)
             {
-                if (original >= 0) { if (distance < _gs.MinimumDistance) distance = _gs.MinimumDistance; }
-                else { if (distance > -_gs.MinimumDistance) distance = -_gs.MinimumDistance; }
+                // MIRP has always reduced the minimum in the ClearType direction and MDRP has
+                // always used it whole, which cannot both be right. WPF_CT_MINDIST_MDRP=1 makes
+                // them agree, so the difference can be measured instead of inherited.
+                int floor = s_minDistMdrp ? EffectiveMinimumDistance() : _gs.MinimumDistance;
+                if (original >= 0) { if (distance < floor) distance = floor; }
+                else { if (distance > -floor) distance = -floor; }
             }
 
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
@@ -1250,6 +1254,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_keepAllDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";
 
+        /// <summary>The floor a fitting instruction may not move a point closer than.
+        /// <para>A minimum distance of one PIXEL is a bi-level idea: it exists so a stem cannot
+        /// vanish between two sample points. ClearType samples x three times as finely, so the
+        /// same floor is three times too coarse there -- and since GDI neither rounds x nor listens
+        /// to the control values in that direction, this clamp is very nearly the ONLY thing left
+        /// that moves x at all. WPF_CT_MINDIST_DIV divides it; the shipped 2 was inherited rather
+        /// than measured.</para></summary>
+        private int EffectiveMinimumDistance()
+            => InClearTypeDirection && !s_fullMinDistance && !BiLevelPass && s_minDistDiv > 1
+                   ? _gs.MinimumDistance / s_minDistDiv
+                   : _gs.MinimumDistance;
+
+        /// <summary>WPF_CT_MINDIST_DIV: what the minimum distance is divided by in the ClearType
+        /// direction. 1 leaves it whole; 3 is the lamp, which is what the extra resolution is.
+        /// <para>MEASURED AND INERT, which is the point of recording it. On the text specimen at
+        /// 12ppem, divisors 1, 2, 3 and 4 all give 2,343,248 -- not close, IDENTICAL -- and making
+        /// MDRP agree with MIRP moves it by 26 at divisor 3 and by nothing at divisor 2. The clamp
+        /// binds too rarely at these sizes to matter, because the distances a program asks for are
+        /// already a pixel or more.</para>
+        /// <para>So the reasoning that led here was wrong. Having excluded the rounding, the
+        /// control values and the deltas, the minimum distance looked like the only thing left that
+        /// could still move x. It is not moving anything either.</para>
+        /// <para>What is actually true is smaller and stranger: the whole x fitting moves a point
+        /// 0.092px on average in Segoe UI and 0.144px in Tahoma. A tenth of a pixel is a THIRD OF A
+        /// LAMP, and ClearType turns that into a visible change of colour, which is why displacing
+        /// points by so little is worth 1.65 million on the specimen against not displacing them at
+        /// all. The remaining difference is therefore a precision problem in the range of a few
+        /// sixty-fourths, not a missing mechanism -- 65 to 78 per cent of our coordinates already
+        /// land inside the interval GDI's own pixels allow.</para></summary>
+        private static readonly int s_minDistDiv =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINDIST_DIV"), out int md) && md > 0
+                ? md : 2;
+
+        /// <summary>WPF_CT_MINDIST_MDRP=1: apply that reduction to MDRP as well as MIRP.</summary>
+        private static readonly bool s_minDistMdrp =
+            Environment.GetEnvironmentVariable("WPF_CT_MINDIST_MDRP") == "1";
+
         /// <summary>Do NOT halve the minimum distance in the ClearType direction.</summary>
         internal static readonly bool s_fullMinDistance =
             Environment.GetEnvironmentVariable("WPF_CT_MINDIST") == "full";
@@ -1416,8 +1457,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                           && !(s_cutInUnroundedOnly && round);
             int cutIn = (shrink ? _gs.ControlValueCutIn / s_cutInDivisor
                                 : _gs.ControlValueCutIn) * stretch;
-            int minimum = (InClearTypeDirection && !s_fullMinDistance && !BiLevelPass ? _gs.MinimumDistance / 2
-                                                : _gs.MinimumDistance) * stretch;
+            int minimum = EffectiveMinimumDistance() * stretch;
 
             if (_gs.SingleWidthCutIn > 0
                 && Math.Abs(value - _gs.SingleWidthValue * stretch) < _gs.SingleWidthCutIn * stretch)
