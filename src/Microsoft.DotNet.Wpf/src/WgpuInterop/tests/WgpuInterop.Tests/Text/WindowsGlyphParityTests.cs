@@ -3859,12 +3859,22 @@ namespace WgpuInterop.Tests.Text
             var report = new System.Text.StringBuilder();
             report.AppendLine("== gasp as the product reads it: gridfit / symmetric, by size");
             report.AppendLine("   family                    style   8   12   16   18   20   24");
+            var scanned = FontFiles.ScannedFamilyNames();
+            report.AppendLine($"   (the name-table scan found {scanned.Count} families"
+                + $"; Trebuchet present: {System.Linq.Enumerable.Contains(scanned, "Trebuchet MS")})");
             foreach (string fam in families)
                 foreach ((string label, bool bold, bool italic) in
                          new[] { ("R", false, false), ("B", true, false), ("I", false, true) })
                 {
                     string? file = FontFiles.Find(fam, bold, italic);
-                    if (file is null) { continue; }
+                    if (file is null)
+                    {
+                        // Say so. A family that does not resolve renders in the FALLBACK face,
+                        // which is the quietest way for text to be wrong, so it must not be a
+                        // silent "continue" here of all places.
+                        report.AppendLine($"   {fam,-24} {label,-5}  NOT FOUND");
+                        continue;
+                    }
                     byte[] bytes;
                     try { bytes = File.ReadAllBytes(file); } catch (IOException) { continue; }
                     // A .ttc holds several faces and needs an offset; opening it at zero

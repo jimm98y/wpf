@@ -183,8 +183,138 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 string? path = Locate(stem + suffix + ext) ?? (suffix.Length > 0 ? Locate(stem + ext) : null);
                 if (path != null) return path;
             }
+
+            // The guess missed, so ask the files what they are called.
+            if (ScannedFamilies().TryGetValue(family, out string?[]? declared))
+                foreach (int candidate in Order(slot))
+                    if (declared[candidate] != null) return declared[candidate];
             return null;
         }
+
+        /// <summary>Every installed family, found by asking the FILES what they are called.
+        /// <para>The table above plus a naming guess resolves the families this port was tested
+        /// with and silently fails for the rest, because the guess is "the family with its spaces
+        /// removed": Trebuchet MS lives in trebuc.ttf and Book Antiqua in BKANT.TTF, so neither is
+        /// found. The renderer's caller then falls back to the default face, so the text draws in
+        /// the wrong typeface with nothing to say so -- the same failure Cambria had for a
+        /// different reason.</para>
+        /// <para>So when the guess misses, read the 'name' table of every font in the directories
+        /// and build the map from what the faces actually declare. Done once, lazily, and only on a
+        /// miss, so the families in the table above never pay for it.</para></summary>
+        private static Dictionary<string, string?[]>? s_scanned;
+
+        /// <summary>What the scan found, for a diagnostic that can say whether it ran at all.
+        /// </summary>
+        internal static IReadOnlyCollection<string> ScannedFamilyNames() => ScannedFamilies().Keys;
+
+        private static Dictionary<string, string?[]> ScannedFamilies()
+        {
+            if (s_scanned is not null) return s_scanned;
+            var found = new Dictionary<string, string?[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (string dir in s_directories.Value)
+            {
+                string[] files;
+                try { files = Directory.GetFiles(dir); }
+                catch (IOException) { continue; }
+                catch (UnauthorizedAccessException) { continue; }
+                foreach (string path in files)
+                {
+                    string ext = Path.GetExtension(path);
+                    if (!ext.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
+                        && !ext.Equals(".otf", StringComparison.OrdinalIgnoreCase)
+                        && !ext.Equals(".ttc", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    byte[] head;
+                    try
+                    {
+                        // The name table can sit anywhere in the file, so the whole thing has to be
+                        // read. These are a few hundred kilobytes each and this runs once.
+                        head = File.ReadAllBytes(path);
+                    }
+                    catch (IOException) { continue; }
+                    catch (UnauthorizedAccessException) { continue; }
+
+                    foreach (int sfnt in FaceOffsets(head))
+                    {
+                        if (!ReadNames(head, sfnt, out string? family, out bool bold, out bool italic))
+                            continue;
+                        int slot = (bold ? 1 : 0) | (italic ? 2 : 0);
+                        if (!found.TryGetValue(family!, out string?[]? slots))
+                            found[family!] = slots = new string?[4];
+                        slots[slot] ??= path;
+                    }
+                }
+            }
+            return s_scanned = found;
+        }
+
+        /// <summary>Where each face's sfnt header starts: one entry for a font, several for a
+        /// collection.</summary>
+        private static IEnumerable<int> FaceOffsets(byte[] data)
+        {
+            if (data.Length >= 12 && data[0] == (byte) 't' && data[1] == (byte) 't'
+                && data[2] == (byte) 'c' && data[3] == (byte) 'f')
+            {
+                int count = Be32(data, 8);
+                for (int i = 0; i < count && 12 + i * 4 + 4 <= data.Length; i++)
+                {
+                    int off = Be32(data, 12 + i * 4);
+                    if (off > 0 && off < data.Length) yield return off;
+                }
+                yield break;
+            }
+            yield return 0;
+        }
+
+        /// <summary>The family this face declares, and whether it calls itself bold or italic.
+        /// <para>Name id 1 is the family and id 2 the subfamily, and the subfamily is the styles in
+        /// words -- so it is read rather than guessed from the filename, which is the mistake that
+        /// made this necessary.</para></summary>
+        private static bool ReadNames(byte[] d, int sfnt, out string? family, out bool bold, out bool italic)
+        {
+            family = null; bold = italic = false;
+            if (sfnt + 12 > d.Length) return false;
+            int numTables = Be16(d, sfnt + 4);
+            int nameOff = -1;
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = sfnt + 12 + i * 16;
+                if (rec + 16 > d.Length) return false;
+                if (d[rec] == 'n' && d[rec + 1] == 'a' && d[rec + 2] == 'm' && d[rec + 3] == 'e')
+                { nameOff = Be32(d, rec + 8); break; }
+            }
+            if (nameOff < 0 || nameOff + 6 > d.Length) return false;
+            int count = Be16(d, nameOff + 2), strings = nameOff + Be16(d, nameOff + 4);
+            string? subfamily = null;
+            for (int i = 0; i < count; i++)
+            {
+                int rec = nameOff + 6 + i * 12;
+                if (rec + 12 > d.Length) break;
+                int platform = Be16(d, rec), nameId = Be16(d, rec + 6);
+                int len = Be16(d, rec + 8), off = strings + Be16(d, rec + 10);
+                if (nameId != 1 && nameId != 2) continue;
+                if (off + len > d.Length || len <= 0) continue;
+                // Platform 3 (Windows) is UTF-16BE; platform 1 (Mac) is single-byte.
+                string value = platform == 3
+                    ? System.Text.Encoding.BigEndianUnicode.GetString(d, off, len)
+                    : System.Text.Encoding.ASCII.GetString(d, off, len);
+                if (nameId == 1) family ??= value;
+                else subfamily ??= value;
+            }
+            if (string.IsNullOrWhiteSpace(family)) return false;
+            if (subfamily is not null)
+            {
+                bold = subfamily.Contains("bold", StringComparison.OrdinalIgnoreCase);
+                italic = subfamily.Contains("italic", StringComparison.OrdinalIgnoreCase)
+                         || subfamily.Contains("oblique", StringComparison.OrdinalIgnoreCase);
+            }
+            return true;
+        }
+
+        private static int Be16(byte[] d, int at) => (d[at] << 8) | d[at + 1];
+
+        private static int Be32(byte[] d, int at)
+            => (d[at] << 24) | (d[at + 1] << 16) | (d[at + 2] << 8) | d[at + 3];
 
         private static int[] Order(int slot) => slot switch
         {
