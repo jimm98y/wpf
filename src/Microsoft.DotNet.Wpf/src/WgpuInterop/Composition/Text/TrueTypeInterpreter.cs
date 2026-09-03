@@ -453,6 +453,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>WHAT WHOLE-PIXEL MDAP DOES PER GLYPH, and two hypotheses it kills.
+        /// <para>Solved against GDI's own coordinates at 12ppem, coordinates landing inside the
+        /// interval GDI's pixels allow, default sixteenth grid against POSGRID=physical:</para>
+        /// <code>
+        ///   improves   H 1->4   N 9->14  M 13->20  n 8->10  c 11->16  P 7->9   q 14->16
+        ///              h 7->9   L 1->2   I 0->1    d 14->15
+        ///   worsens    8 84->47  s 51->39  0 20->4  o 12->6  a 16->12  T 2->0   E 4->2
+        ///   unchanged  m g l F u
+        ///   totals     327 against 276, so the fine grid wins overall
+        /// </code>
+        /// <para>DEAD: 'the round state tells them apart'. Every glyph tried -- the ones that want
+        /// the coarse grid and the ones that do not -- executes RTG and nothing else, so the state
+        /// MDAP rounds under is identical and cannot be the discriminator.</para>
+        /// <para>DEAD: 'straight glyphs want whole pixels, round ones want the fine grid'. It fits
+        /// H, N, M against o, a, 8 and then fails both ways: c, d and q are round and IMPROVE,
+        /// while T, E and F are straight and get WORSE.</para>
+        /// <para>What the table does show is that the loss tracks the number of COORDINATES, not
+        /// the shape: the three worst are the three most complex glyphs (90, 54 and 26 coordinates)
+        /// while the simple ones improve sharply. That is the signature of an ANCHOR moving and IUP
+        /// dragging everything after it, which would mean whole-pixel MDAP is right and our
+        /// handling of the points it drags is what is wrong. Testing that means comparing touch
+        /// sets glyph by glyph, which is the tool the stem-width notes describe and which nothing
+        /// has yet built.</para></summary>
         /// <summary>AND THE IP IS INNOCENT -- it is the MDAP after it, which makes the remaining
         /// problem a CONFLICT rather than a bug.
         /// <para>Point 1 of 'H' is interpolated between rp1 = point 5 and rp2 = point 13, the
