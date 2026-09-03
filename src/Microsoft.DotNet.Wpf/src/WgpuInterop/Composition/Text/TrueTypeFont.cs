@@ -1619,6 +1619,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// same size prefers different rounding depending on whether a plain Label draws it or a
         /// control's paint path does. The difference between those two is where the text lands --
         /// sub-pixel phase at real layout positions -- so that is what to look at next.</para>
+        /// <summary>WHAT THE REMAINING ERROR IS, stated as a number rather than a suspicion.
+        /// <para>Turn our x hinting off entirely (XHintMode 0, which restores the scaled outline's
+        /// x and keeps the hinted advance) and score every row of the specimen against Windows.
+        /// Every row gets worse -- 2,343,248 to 3,993,314 -- with two exceptions:</para>
+        /// <code>
+        ///   Segoe UI I    x hinted  9,760      x not hinted  9,760      IDENTICAL
+        ///   Segoe UI BI  x hinted 10,189      x not hinted 10,189      IDENTICAL
+        /// </code>
+        /// <para>Byte for byte the same, because Segoe UI's italic hints in y and does nothing in
+        /// x -- it is not that we decline to fit it, which was checked: nothing is discarded. And
+        /// those two rows are our BEST results by a factor of ten, at 0.016 and 0.010 error per
+        /// unit of ink where the rest of the specimen runs 0.05 to 0.27.</para>
+        /// <para>So: where neither renderer hints x we agree with GDI to about 0.013. Where both
+        /// do, we are ten to twenty times worse. The whole of the remaining difference is that our
+        /// x fitting is not GDI's x fitting -- and it is not the rounding grid (whole pixels are
+        /// the worst result on the board, no rounding ties the sixteenth), not the stem fat (Tahoma
+        /// moves 55 parts in 482,000 across its whole range), not the suppressed deltas (worth 2.9
+        /// million in the right direction), not the cut-in divisor (a smooth minimum at 16), not
+        /// the rasterizer (gamma is a symmetric minimum at 1.20 and the coverage chain is proved
+        /// exact), not placement (every band wants a rigid shift of zero), not accumulation (no
+        /// drift left to right along any line), and not the interpreter (which reproduces GDI's own
+        /// fitted points exactly in the mode where GDI can be asked).</para>
+        /// <para>It also sizes the prize. Twenty-four rows at the quality of the two that agree
+        /// would be roughly 250,000 against 2,343,248 -- so the x fitting is worth about ninety
+        /// percent of what is left, and nothing else is worth chasing before it.</para></summary>
         /// <summary>RE-SWEPT 2026-09-03 ON THE TEXT SPECIMEN, after the interpreter was proved
         /// exact against GetGlyphOutline, and every invented rule here came back a clear optimum.
         /// <para>The proof changed what these knobs mean. Our grid-fitting reproduces GDI's own

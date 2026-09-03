@@ -2940,6 +2940,7 @@ namespace WgpuInterop.Tests.Text
             int ppem = int.Parse(parts[1]), baseline = ppem + 12;
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
             int totalPoints = 0, totalUntouched = 0, totalImpossible = 0;
+            int inRange = 0, inRangeTotal = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3050,6 +3051,17 @@ namespace WgpuInterop.Tests.Text
                         first = end + 1;
                     }
 
+                    // AND HOW OFTEN OUR OWN COORDINATE IS ONE GDI ALLOWS. The impossible count
+                    // above judges the touch set; this judges the geometry we actually ship,
+                    // and it is the only measure of our CLEARTYPE fitting there is -- GGO
+                    // renders greyscale and cannot see the ClearType branch at all.
+                    for (int i = 0; i < pts.PointCount; i++)
+                    {
+                        (float ql, float qh) = Range(i);
+                        inRangeTotal++;
+                        if (pts.FitX[i] >= ql - 1f / 64f && pts.FitX[i] <= qh + 1f / 64f)
+                            inRange++;
+                    }
                     totalPoints += pts.PointCount;
                     totalUntouched += untouched;
                     totalImpossible += impossible.Count;
@@ -3065,7 +3077,9 @@ namespace WgpuInterop.Tests.Text
             finally { TrueTypeInterpreter.s_capturePoints = false; }
 
             Console.Error.WriteLine($"TOTAL {totalPoints} points, {totalUntouched} interpolated,"
-                + $" {totalImpossible} impossible under our touch set");
+                + $" {totalImpossible} impossible under our touch set;"
+                + $" {inRange} of {inRangeTotal} of our own coordinates"
+                + $" ({100.0 * inRange / Math.Max(1, inRangeTotal):0.0}%) are ones GDI allows");
         }
 
         /// <summary>GDI's own fitted x coordinates, and the interval of each that the pixels allow.
