@@ -4120,15 +4120,25 @@ namespace WgpuInterop.Tests.Text
             Gdi.s_rawRgb = null;
             byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
 
-            // The row with the most ink: the middle of the stem, wherever it landed.
+            // The row that departs furthest FROM THE PAPER -- not the row with the most "ink".
+            // Ink is 255 minus the value, so on a dark background every background row scores
+            // higher than the text does and the probe lands on row 0, which is exactly the case
+            // the Ink/Paper knobs exist to measure. Distance from the paper colour works for
+            // either polarity.
+            int paperR = (int) ((Paper >> 16) & 0xFF), paperG = (int) ((Paper >> 8) & 0xFF);
+            int paperB = (int) (Paper & 0xFF);
             int best = 0;
             long bestInk = -1;
             for (int y = 0; y < Height; y++)
             {
-                long ink = 0;
+                long away = 0;
                 for (int x = 0; x < Width; x++)
-                    for (int ch = 0; ch < 3; ch++) ink += 255 - raw[(y * Width + x) * 4 + ch];
-                if (ink > bestInk) { bestInk = ink; best = y; }
+                {
+                    int i = (y * Width + x) * 4;
+                    away += Math.Abs(raw[i + 2] - paperR) + Math.Abs(raw[i + 1] - paperG)
+                            + Math.Abs(raw[i] - paperB);
+                }
+                if (away > bestInk) { bestInk = away; best = y; }
             }
 
             Console.Error.WriteLine($"== {parts[0]} '{parts[1]}' @{ppem}{(style == "" ? "" : "/" + style)}, row {best}"
@@ -4146,7 +4156,8 @@ namespace WgpuInterop.Tests.Text
                 // channel-order trap that once reported a control glyph as 336 lamps wrong.
                 int gr = raw[i + 2], gg = raw[i + 1], gb = raw[i];
                 int orr = ours[i], og = ours[i + 1], ob = ours[i + 2];
-                if (gr == 255 && gg == 255 && gb == 255 && orr == 255 && og == 255 && ob == 255)
+                if (gr == paperR && gg == paperG && gb == paperB
+                    && orr == paperR && og == paperG && ob == paperB)
                     continue;
                 Console.Error.WriteLine($"   {y,3} {x,3}   {gr,3} {gg,3} {gb,3}       {orr,3} {og,3} {ob,3}"
                                         + $"      {orr - gr,4} {og - gg,4} {ob - gb,4}");
@@ -4176,7 +4187,7 @@ namespace WgpuInterop.Tests.Text
             var report = new System.Text.StringBuilder();
             report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
             report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ"
-                              + "   centroid dx   edge deltas");
+                              + "    sum|d|   centroid dx   edge deltas");
             var raw = new byte[Width * Height * 4];
 
             foreach (string family in new[]
@@ -4206,6 +4217,7 @@ namespace WgpuInterop.Tests.Text
                         // lamps by eye, and by eye is not a measurement. A centroid is one number
                         // per side and it is what says whether a face sits where GDI puts it.
                         double sx = 0, tx = 0;
+                        long sumd = 0;
                         for (int i = 0; i < Width * Height; i++)
                         {
                             bool any = false;
@@ -4215,7 +4227,20 @@ namespace WgpuInterop.Tests.Text
                                 int t = 255 - raw[i * 4 + ch], m = 255 - ours[i * 4 + ch];
                                 theirs += t; mine += m;
                                 tx += t * (double) x; sx += m * (double) x;
-                                if (raw[i * 4 + ch] != ours[i * 4 + ch]) any = true;
+                                // MAGNITUDE, not just a count. A count of "any channel differs"
+                                // saturates: white text on blue reported 25,722 differing pixels
+                                // against ~420 for black on white, and every one of them was off
+                                // by one or two. The sum says which of those is actually worse.
+                                // CHANNEL ORDER. The DIB is BGRA and ours is RGBA, so comparing
+                                // index to index subtracts GDI's blue from our red. Summing 255-v
+                                // over all three channels does not care -- which is why the ink and
+                                // the centroid were right -- but a per-channel difference does, and
+                                // on a coloured ground it is catastrophic: white on blue reported
+                                // 25,722 differing pixels and a sum|d| of 11 million, both of them
+                                // the background being compared with itself in the wrong order.
+                                int gdi = raw[i * 4 + (2 - ch)];
+                                sumd += Math.Abs(gdi - ours[i * 4 + ch]);
+                                if (gdi != ours[i * 4 + ch]) any = true;
                             }
                             if (any) differ++;
                         }
@@ -4244,7 +4269,7 @@ namespace WgpuInterop.Tests.Text
                         report.AppendLine($"   {family,-16} {(bold ? "B" : italic ? "I" : "R")}   {ppem,4}"
                                           + $" {mine,9} {theirs,9}"
                                           + $"   {(theirs == 0 ? 0 : mine / (double) theirs),5:0.000}"
-                                          + $"   {differ,6}   {dx,6:+0.000;-0.000; 0.000}"
+                                          + $"   {differ,6} {sumd,9}   {dx,6:+0.000;-0.000; 0.000}"
                                           + $"   L{ourL - gdiL,3} R{ourR - gdiR,3}"
                                           + $"   width {(ourR - ourL) - (gdiR - gdiL),3}");
                     }
@@ -4611,7 +4636,7 @@ namespace WgpuInterop.Tests.Text
                         for (int ch = 0; ch < 3; ch++)
                         {
                             ink += 255 - pix[i * 4 + ch];
-                            if (raw0[i * 4 + ch] != pix[i * 4 + ch]) any = true;
+                            if (raw0[i * 4 + (2 - ch)] != pix[i * 4 + ch]) any = true;
                         }
                         if (any) differ++;
                     }
@@ -4664,7 +4689,8 @@ namespace WgpuInterop.Tests.Text
                 int differing = 0;
                 for (int i2 = 0; i2 < Width * Height; i2++)
                     for (int ch = 0; ch < 3; ch++)
-                        if (raw[i2 * 4 + ch] != ours2[i2 * 4 + ch]) { differing++; break; }
+                        // BGRA against RGBA: index to index compares GDI's blue with our red.
+                        if (raw[i2 * 4 + (2 - ch)] != ours2[i2 * 4 + ch]) { differing++; break; }
                 // What the shaper made of it: fewer glyphs than characters means a ligature
                 // formed, and a glyph id that differs from the plain cmap mapping means a
                 // positional form was substituted. Ratios alone cannot tell either.
