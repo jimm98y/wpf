@@ -1942,13 +1942,19 @@ namespace System.Drawing
 							// ON a pixel row, and on its CENTRE. A rule left at whatever fraction the
 							// arithmetic lands on is spread over two rows and fills neither, which came
 							// out as a pale line a row below the solid one Windows draws.
+							// The rule is rw pixels wide, so it ENDS at tx + rw - 1: DrawLine takes
+							// an inclusive end point -- it fills |x2-x1|+1 columns, which is GDI+'s
+							// own semantics -- and passing tx + rw drew one column too many. The
+							// LinkLabel's underline ran 15..65 where Windows draws 15..64, which is
+							// a whole extra pixel of saturated colour and one of the twenty worst
+							// pixels in the entire control window.
 							if (font.Underline) {
 								float uy = MathF.Floor (top + emPx) - 1f;
-								GpuRecorder.DrawLine (tx, uy, tx + rw, uy, argb);
+								GpuRecorder.DrawLine (tx, uy, tx + rw - 1f, uy, argb);
 							}
 							if (font.Strikeout) {
 								float sy = MathF.Floor (top + emPx * 0.55f);
-								GpuRecorder.DrawLine (tx, sy, tx + rw, sy, argb);
+								GpuRecorder.DrawLine (tx, sy, tx + rw - 1f, sy, argb);
 							}
 						}
 					}
