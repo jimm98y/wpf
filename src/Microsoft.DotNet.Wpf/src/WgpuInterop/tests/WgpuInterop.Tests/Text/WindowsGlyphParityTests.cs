@@ -3650,6 +3650,75 @@ namespace WgpuInterop.Tests.Text
             return new List<PathFigure> { f };
         }
 
+        /// <summary>HOW FINELY OUR OWN RASTERIZER CAN TELL TWO GEOMETRIES APART.
+        /// <para>The stem probe finds about a hundred rectangles rendering bit-identically, and
+        /// neither narrowing the bar nor removing the lamp quantiser changes that. If the reason is
+        /// that our rasterizer cannot resolve a sixty-fourth of a pixel, that is not a probe
+        /// artefact at all -- it would mean the whole sixteenth-of-a-pixel x grid the hinting works
+        /// on is thrown away downstream, and every measurement taken through this rasterizer has a
+        /// floor nobody has stated.</para>
+        /// <para>So ask it directly: slide one rectangle right in 64ths and find the first offset
+        /// whose rendering differs from the original at all.</para>
+        /// <para>WPF_RESOLUTION=&lt;path&gt; to collect it.</para>
+        /// <para>ANSWER, and it closes the probe's open question. Sliding a rectangle right
+        /// from x=3.0 in 64ths, the first offset whose rendering differs at all:</para>
+        /// <code>
+        ///   width 0.375  3/64      width 1.250  6/64      width 2.000  1/64
+        ///   width 0.750  6/64      width 1.500  6/64
+        /// </code>
+        /// <para>Six sixty-fourths for most widths, which is the tie width the stem probe
+        /// measures, so the probe's hundred identical rectangles are this and nothing more
+        /// mysterious. It is NOT the lamp quantiser -- WPF_SUBPIXEL_QUANT=0 keeps the exact
+        /// area and gives the same 3/6/6/6/1 -- and it is not a snap, because it depends on
+        /// the width. It is PHASE. A lamp is a third of a pixel, so an edge sitting mid-lamp
+        /// moves 1/64 and changes that lamp's coverage by about 4.7 per cent, which the
+        /// contrast curve does not carry as far as one output byte. Width 2.0 is the tell: at
+        /// x=3.0 both its edges land on lamp boundaries -- 3.0 and 5.0 are both multiples of a
+        /// third -- so a 64th immediately opens a new lamp and shows.</para>
+        /// <para>The useful consequence is a TOLERANCE. A geometry error under about six
+        /// sixty-fourths, a tenth of a pixel, cannot appear in the output at all; our stem
+        /// placement errors run 0.1 to 0.2px, which is just above it. So the target is not
+        /// GDI's exact coordinate, which no oracle can supply, but being within 6/64 of it --
+        /// and on left edges we already are, 52 per cent of the time.</para></summary>
+        [Fact]
+        public void HowFinelyOurRasterizerResolves()
+        {
+            string? path = Environment.GetEnvironmentVariable("WPF_RESOLUTION");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_RESOLUTION to collect this");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== the smallest shift our rasterizer renders differently");
+            report.AppendLine("   width   first offset that changes ANY byte");
+            foreach (float width in new[] { 0.375f, 0.75f, 1.25f, 1.5f, 2.0f })
+            {
+                byte[] baseline = RenderRect(3.0f, width);
+                int first = 0;
+                for (int k = 1; k <= 64; k++)
+                {
+                    byte[] moved = RenderRect(3.0f + k / 64f, width);
+                    bool same = baseline.Length == moved.Length;
+                    for (int i = 0; same && i < baseline.Length; i++)
+                        if (baseline[i] != moved[i]) same = false;
+                    if (!same) { first = k; break; }
+                }
+                report.AppendLine($"   {width,5:0.000}   {(first == 0 ? "none within a pixel" : first + "/64")}");
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>One rectangle, rasterized the way the probe rasterizes it.</summary>
+        private static byte[] RenderRect(float left, float width)
+        {
+            PathRasterizer.SubpixelMask m = PathRasterizer.RasterizeSubpixel(
+                new PathGeometry(FillRule.NonZero, Rectangle(left + PenX, width)));
+            if (m.IsEmpty) return Array.Empty<byte>();
+            var outp = new byte[m.Rgba.Length + 2];
+            Array.Copy(m.Rgba, outp, m.Rgba.Length);
+            outp[^2] = (byte) m.OriginX;
+            outp[^1] = (byte) m.Width;
+            return outp;
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
