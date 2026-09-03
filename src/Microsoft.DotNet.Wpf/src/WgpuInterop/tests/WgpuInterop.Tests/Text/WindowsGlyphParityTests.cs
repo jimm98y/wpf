@@ -4056,6 +4056,24 @@ namespace WgpuInterop.Tests.Text
             return inked == 0 ? 0 : grey * 100 / inked;
         }
 
+        /// <summary>What share of the inked pixels are SATURATED -- far from grey.
+        /// <para>ClearType fringes are coloured too, but only slightly and only at edges. A big
+        /// share here means colour artwork: the renderer drew an emoji rather than a letter.</para>
+        /// </summary>
+        private static int Colour(byte[] raw)
+        {
+            int inked = 0, coloured = 0;
+            for (int i = 0; i < Width * Height; i++)
+            {
+                int b = raw[i * 4], g = raw[i * 4 + 1], r = raw[i * 4 + 2];
+                if (r == 255 && g == 255 && b == 255) continue;
+                inked++;
+                int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                if (max - min > 60) coloured++;
+            }
+            return inked == 0 ? 0 : coloured * 100 / inked;
+        }
+
         /// <summary>The face the renderer will link to for this text, or the requested one when
         /// it copes -- the same choice EmitText makes.</summary>
         internal static string s_drawnBy = "";
@@ -4071,7 +4089,7 @@ namespace WgpuInterop.Tests.Text
                 if (needed == ' ') needed = c;
             }
             if (needed == ' ') return requested;
-            foreach (string family in FontFiles.LinkCandidates(ProbeFamily()))
+            foreach (string family in FontFiles.LinkCandidates(ProbeFamily(), needed))
             {
                 string? file = FontFiles.Find(family, bold: false, italic: false);
                 if (file is null) continue;
@@ -4258,6 +4276,8 @@ namespace WgpuInterop.Tests.Text
                 ("あいう", "kana aiu"),
                 ("日本語", "japanese nihongo"),
                 ("カタカナ", "katakana"),
+                ("☃", "snowman"),
+                ("☺", "smiling face"),
                 // Lam-alef: the one Arabic pair with no unjoined spelling, so it exercises the
                 // LIGATURE path rather than the positional one. Two glyphs must become one.
                 ("لا", "arabic lam-alef"),
@@ -4265,6 +4285,56 @@ namespace WgpuInterop.Tests.Text
             };
             // The face that actually DRAWS the non-Latin samples is the linked one, not the
             // probe family -- reporting the probe's tables for them measures the wrong font.
+            report.AppendLine("   SystemLink[" + ProbeFamily() + "] = "
+                              + string.Join(" | ", FontFiles.SystemLink(ProbeFamily())));
+            // WHICH FACE DID GDI USE? Asked by reproduction rather than by classifying pixels:
+            // render the character in every installed face that has it and see which one matches.
+            // A metric that tries to tell "colour artwork" from "text" fails on ClearType, whose
+            // fringes are colourful too -- Latin scored 76% on exactly such a test.
+            foreach (char probe in new[] { '☃', '☺' })
+            {
+                var raw0 = new byte[Width * Height * 4];
+                Gdi.s_rawRgb = raw0;
+                Gdi.Draw(probe.ToString(), ProbeFamily(), 16, PenX, 28, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                long theirInk = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch = 0; ch < 3; ch++) theirInk += 255 - raw0[i * 4 + ch];
+                report.AppendLine($"   U+{(int) probe:X4}: GDI ink {theirInk}. Which face reproduces it?");
+                foreach (string family in FontFiles.ScannedFamilyNames())
+                {
+                    string? f = FontFiles.Find(family, false, false);
+                    if (f is null) continue;
+                    byte[] fb;
+                    try { fb = File.ReadAllBytes(f); } catch (IOException) { continue; }
+                    catch (UnauthorizedAccessException) { continue; }
+                    int off = FontFiles.SfntOffset(fb, family);
+                    if (CffFont.IsCff(fb, off)) continue;
+                    TrueTypeFont candidate;
+                    try { candidate = new TrueTypeFont(fb, false, false, off); }
+                    catch (Exception) { continue; }
+                    if (candidate.GlyphIndex(probe) <= 0) continue;
+                    byte[] pix = OursRgba(candidate, probe.ToString(), 16, 28, correction: true);
+                    int differ = 0;
+                    long ink = 0;
+                    for (int i = 0; i < Width * Height; i++)
+                    {
+                        bool any = false;
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            ink += 255 - pix[i * 4 + ch];
+                            if (raw0[i * 4 + ch] != pix[i * 4 + ch]) any = true;
+                        }
+                        if (any) differ++;
+                    }
+                    // No filter on the emoji faces: the question is what GDI's ink of 69,233
+                    // could possibly be, and every monochrome candidate is a third of it.
+                    if (differ < 400 || family.Contains("Emoji") || family.Contains("Symbol"))
+                        report.AppendLine($"      {family,-28} ink {ink,7} differ {differ,5}"
+                                          + $" colour {Colour(pix)}%");
+                }
+            }
+
             foreach (string linked in new[] { "Nirmala UI", "Microsoft YaHei" })
             {
                 string? lf = FontFiles.Find(linked, bold: false, italic: false);
@@ -4324,7 +4394,8 @@ namespace WgpuInterop.Tests.Text
                                   + $"{(theirs2 == 0 ? 0 : mine2 / (double) theirs2),6:0.000}"
                                   + $"   {differing,12}   {text.Length}ch -> {shaped.Count}gl,"
                                   + $" {substituted} substituted   {drawnBy}"
-                                  + $"   greys GDI {Greys(raw)}% ours {Greys(ours2)}%");
+                                  + $"   greys GDI {Greys(raw)}% ours {Greys(ours2)}%"
+                                  + $"   colour GDI {Colour(raw)}% ours {Colour(ours2)}%");
             }
 
             File.AppendAllText(path!, report.ToString());

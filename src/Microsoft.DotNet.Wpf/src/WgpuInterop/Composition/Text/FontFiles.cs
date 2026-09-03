@@ -264,11 +264,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             foreach (string line in MultiString(
                          @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink", family))
             {
-                int comma = line.IndexOf(',');
-                // "MSGOTHIC.TTC,MS UI Gothic" -- the part after the comma names the FACE inside a
+                // "MSGOTHIC.TTC,MS UI Gothic" -- the second field names the FACE inside a
                 // collection, and a line without one names a file whose family we already know.
-                string face = comma >= 0 ? line.Substring(comma + 1)
-                                         : Path.GetFileNameWithoutExtension(line);
+                // There may be a THIRD and fourth field: "MEIRYO.TTC,Meiryo UI,128,96" scales the
+                // linked face to 128/96 of the asked-for size. Taking everything after the first
+                // comma made the face name "Meiryo UI,128,96", which resolves to nothing.
+                string[] fields = line.Split(',');
+                string face = fields.Length > 1 ? fields[1]
+                                                : Path.GetFileNameWithoutExtension(fields[0]);
                 if (!string.IsNullOrWhiteSpace(face)) faces.Add(face.Trim());
             }
             return s_systemLink[family] = faces.ToArray();
@@ -313,8 +316,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         [DllImport("advapi32.dll")]
         private static extern int RegCloseKey(IntPtr key);
 
-        public static IEnumerable<string> LinkCandidates(string? requested = null)
+        /// <summary>An EMOJI face comes before the link list for an emoji codepoint.
+        /// <para>Segoe UI Emoji is not in SystemLink at all, and yet GDI draws the snowman from it:
+        /// asked which installed face reproduces GDI's U+2603, only Segoe UI Emoji does, at 68,659
+        /// of ink against GDI's 69,233 where every other candidate is a third of that. So the link
+        /// list is not the whole rule -- an emoji codepoint goes to the emoji face first, and only
+        /// then to whatever else happens to have a picture of a snowman.</para></summary>
+        private static bool IsEmoji(char c)
+            => c is >= '☀' and <= '➿'          // symbols and dingbats
+               || c is >= '️' and <= '️'       // the variation selector itself
+               || c is >= '⬀' and <= '⯿';      // arrows and shapes drawn as emoji
+
+        public static IEnumerable<string> LinkCandidates(string? requested = null, char needed = ' ')
         {
+            if (needed != ' ' && IsEmoji(needed))
+            {
+                yield return "Segoe UI Emoji";
+                yield return "Segoe UI Symbol";
+            }
+
             // What Windows itself would do, first.
             if (requested is not null)
                 foreach (string linked in SystemLink(requested)) yield return linked;
@@ -423,8 +443,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int len = Be16(d, rec + 8), off = strings + Be16(d, rec + 10);
                 if (nameId != 1 && nameId != 2) continue;
                 if (off + len > d.Length || len <= 0) continue;
-                // Platform 3 (Windows) is UTF-16BE; platform 1 (Mac) is single-byte.
-                string value = platform == 3
+                // Platform 3 (Windows) AND platform 0 (Unicode) are UTF-16BE; platform 1 (Mac)
+                // is single-byte. Reading a platform-0 record as ASCII keeps every second byte --
+                // the NULs -- and the family comes out as " A r i a l ", which then matches
+                // nothing anyone asks for. It was visible only in a report that happened to print
+                // the scanned names.
+                string value = platform == 3 || platform == 0
                     ? System.Text.Encoding.BigEndianUnicode.GetString(d, off, len)
                     : System.Text.Encoding.ASCII.GetString(d, off, len);
                 if (nameId == 1) family ??= value;

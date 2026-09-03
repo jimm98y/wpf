@@ -311,8 +311,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // ---- IColorGlyphFont ----
 
+        /// <summary>WPF_COLR=0 draws a colour font's glyphs as plain outlines, which is what GDI
+        /// does with one -- it has no COLR support at all. For asking what GDI drew.</summary>
+        private static readonly bool s_noColor =
+            System.Environment.GetEnvironmentVariable("WPF_COLR") == "0";
+
         public bool TryGetColorLayers(int glyphId, out IReadOnlyList<ColorGlyphLayer> layers)
         {
+            if (s_noColor) { layers = System.Array.Empty<ColorGlyphLayer>(); return false; }
             if (_color != null) return _color.TryGetColorLayers(glyphId, out layers);
             layers = System.Array.Empty<ColorGlyphLayer>();
             return false;

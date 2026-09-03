@@ -4500,7 +4500,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             if (_linkCache.TryGetValue((requested, needed), out Text.IFont? cached)) return cached;
             Text.IFont? found = null;
-            foreach (string family in Text.FontFiles.LinkCandidates(requested))
+            foreach (string family in Text.FontFiles.LinkCandidates(requested, needed))
             {
                 if (LoadFamily(family, 0) is not Text.IFont f) continue;
                 if (f is Text.IShapingFont sf && sf.GlyphIndex(needed) > 0) { found = f; break; }
