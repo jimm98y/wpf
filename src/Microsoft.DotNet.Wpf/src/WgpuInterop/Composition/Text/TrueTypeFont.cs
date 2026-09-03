@@ -1741,7 +1741,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// grid-fit, so the x rules barely touch it -- which is the same statement as the table
         /// above, from the other side: where this layer does nothing we match GDI almost exactly,
         /// and where it acts we are ten times worse. It is a local optimum and it is also the whole
-        /// of the remaining error.</para></summary>
+        /// of the remaining error.</para>
+        /// <para>CORRECTION, 2026-09-04: "an italic is barely touched, and where this layer does
+        /// nothing we match GDI almost exactly" is true of SEGOE UI's italic and not of italics.
+        /// Measured per glyph, drawn spaced, as the ink centroid against GDI's at 12ppem:</para>
+        /// <code>
+        ///   Segoe UI italic      +0.027  +0.012  +0.014      (and Arial's is as good)
+        ///   Times New Roman R    +0.067  +0.019  -0.012  -0.020  -0.021   -- exact
+        ///   Times New Roman I    -0.254  -0.277  -0.407  -0.485  -0.526   -- a THIRD to a HALF
+        ///                                                                    of a pixel
+        /// </code>
+        /// <para>Times' italic is one of the worst rows in the whole specimen (0.267 of its own ink
+        /// at 12ppem) while its roman is one of the best, so this is not "italics are easy". Nor is
+        /// the layer failing to touch it: turning x hinting off entirely makes Times' italic WORSE
+        /// (-0.433 / -0.338 / -0.521 / -0.544 / -0.551), so the layer acts on it and helps, and
+        /// there is a residual of about 0.45px underneath that it only partly corrects.</para>
+        /// <para>Ruled out for that residual: the fitted points (against GetGlyphOutline in its own
+        /// mode, Times italic is 7 of 10 glyphs exact with 2 points differing in x), a synthesized
+        /// oblique on top of a real italic (head.macStyle declares italic and DeclaredStyle reads
+        /// macStyle, not the name table), lsb != xMin (they are EQUAL for every glyph measured in
+        /// timesi, times and segoeuii), and accumulating advance error (the deltas do not grow
+        /// along the run -- 'n' after 'm' is -0.219 after -0.526). Unexplained, and named here so
+        /// the next attempt starts from a face where the layer demonstrably matters.</para>
+        /// </summary>
         internal static readonly int XHintMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_HINT"), out int xh) ? xh : 5;
 
