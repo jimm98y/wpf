@@ -2945,6 +2945,8 @@ namespace WgpuInterop.Tests.Text
             int touchedOk = 0, touchedTotal = 0, interpOk = 0, interpTotal = 0;
             int outlineOnly = 0, cvOnly = 0, bothWork = 0, neitherWorks = 0;
             int rigidBefore = 0, rigidAfter = 0, rigidGlyphs = 0;
+            int bilevelOk = 0, unhintedOk = 0, oracleTotal = 0;
+            int oursOnOracle = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3075,6 +3077,20 @@ namespace WgpuInterop.Tests.Text
                     }
                     finally { TrueTypeInterpreter.s_cutInDivisor = savedDiv; }
 
+                    // WHAT IS GDI'S CLEARTYPE X, ASKED WITHOUT A MODEL AT ALL.
+                    //
+                    // There are two oracles and they have never been put side by side.
+                    // GetGlyphOutline gives GDI's own BI-LEVEL fitted x exactly, and the lamp
+                    // solver gives the interval its CLEARTYPE pixels allow. So ask, of GDI's
+                    // bi-level answer and of the plain scaled outline, which one lands inside
+                    // GDI's own ClearType interval. Neither is a guess about what GDI does: both
+                    // are things GDI itself produced.
+                    List<Vector2> ggoPlain = GdiStageTests.Flatten(
+                        GdiStageTests.GdiOutline(c, ProbeFamily(), ppem, unhinted: true));
+                    List<Vector2> ggoFit = GdiStageTests.Flatten(
+                        GdiStageTests.GdiOutline(c, ProbeFamily(), ppem, unhinted: false));
+                    bool ggoUsable = ggoPlain.Count == ggoFit.Count && ggoPlain.Count > 0;
+
                     // AND HOW OFTEN OUR OWN COORDINATE IS ONE GDI ALLOWS. The impossible count
                     // above judges the touch set; this judges the geometry we actually ship,
                     // and it is the only measure of our CLEARTYPE fitting there is -- GGO
@@ -3094,6 +3110,22 @@ namespace WgpuInterop.Tests.Text
                         if (pts.TouchedX[i]) { touchedTotal++; if (ok) touchedOk++; }
                         else { interpTotal++; if (ok) interpOk++; }
                         if (ok) inRange++;
+
+                        if (ggoUsable)
+                        {
+                            int j = GdiStageTests.Nearest(ggoPlain, pts.StartX[i], -pts.StartY[i]);
+                            if (j >= 0)
+                            {
+                                oracleTotal++;
+                                float bilevel = ggoFit[j].X, plainX = ggoPlain[j].X;
+                                if (bilevel >= ql - 1f / 64f && bilevel <= qh + 1f / 64f) bilevelOk++;
+                                if (plainX >= ql - 1f / 64f && plainX <= qh + 1f / 64f) unhintedOk++;
+                                // Ours over the SAME subset, or the three numbers are not
+                                // comparable: the two oracles can only be read on glyphs
+                                // GGO reports consistently, and ours is defined everywhere.
+                                if (ok) oursOnOracle++;
+                            }
+                        }
 
                         // Which distance GDI used, where the two disagree enough to tell.
                         if (pts.TouchedX[i] && i < cvFit.Length)
@@ -3173,6 +3205,12 @@ namespace WgpuInterop.Tests.Text
                 + $" ({100.0 * touchedOk / Math.Max(1, touchedTotal):0.0}%) are allowed;"
                 + $" of the ones IUP interpolated, {interpOk} of {interpTotal}"
                 + $" ({100.0 * interpOk / Math.Max(1, interpTotal):0.0}%)");
+            Console.Error.WriteLine($"      of {oracleTotal} coordinates, GDI's own BI-LEVEL answer"
+                + $" is inside GDI's ClearType interval {bilevelOk} times"
+                + $" ({100.0 * bilevelOk / Math.Max(1, oracleTotal):0.0}%), the plain scaled outline"
+                + $" {unhintedOk} times ({100.0 * unhintedOk / Math.Max(1, oracleTotal):0.0}%),"
+                + $" and ours {oursOnOracle}"
+                + $" ({100.0 * oursOnOracle / Math.Max(1, oracleTotal):0.0}%)");
             Console.Error.WriteLine($"      a per-glyph rigid shift would take {rigidBefore}"
                 + $" coordinates to {rigidAfter}, helping {rigidGlyphs} glyphs");
             Console.Error.WriteLine($"      where the two distances disagree: outline is the one"

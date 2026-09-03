@@ -887,7 +887,7 @@ namespace WgpuInterop.Tests.Text
 
         /// <summary>Every point of an outline in the order it was reported, so two outlines of the
         /// same glyph can be paired by index.</summary>
-        private static List<Vector2> Flatten(List<PathFigure> figures)
+        internal static List<Vector2> Flatten(List<PathFigure> figures)
         {
             var outp = new List<Vector2>();
             foreach (PathFigure f in figures)
@@ -904,7 +904,7 @@ namespace WgpuInterop.Tests.Text
         /// from, so this is an identity in all but rounding -- a match further than a quarter pixel
         /// away is not a match, and saying so is what keeps a mispairing from being read as a
         /// disagreement.</summary>
-        private static int Nearest(List<Vector2> pts, float x, float y)
+        internal static int Nearest(List<Vector2> pts, float x, float y)
         {
             int best = -1;
             double bestD = 0.25;

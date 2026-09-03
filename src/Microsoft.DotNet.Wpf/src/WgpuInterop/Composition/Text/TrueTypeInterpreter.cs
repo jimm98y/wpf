@@ -454,6 +454,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>WHAT GDI'S CLEARTYPE X IS, ASKED WITHOUT A MODEL.
+        /// <para>Two oracles had never been put side by side. GetGlyphOutline gives GDI's own
+        /// BI-LEVEL fitted x exactly; the lamp solver gives the interval its CLEARTYPE pixels
+        /// allow. So ask which of GDI's own two answers -- its bi-level fit, or the plain scaled
+        /// outline it starts from -- lands inside its own ClearType interval. Neither is a guess:
+        /// both are things GDI itself produced. Ours is scored over the same coordinates.</para>
+        /// <code>
+        ///                 GDI bi-level   plain outline   OURS
+        ///   Segoe UI          41.8%          49.2%       70.3%   (256 coordinates)
+        ///   Tahoma            13.9%          47.2%       64.8%   (352)
+        ///   Arial             48.3%          47.2%       56.1%   (180)
+        ///   Verdana           94.1%           8.4%       94.1%   (322)
+        /// </code>
+        /// <para>Three things follow. GDI's ClearType x is NOT its bi-level x and NOT the plain
+        /// outline -- it is a third thing, which is what this layer has always assumed but never
+        /// demonstrated. Our model beats both of GDI's own answers on every face, by a wide margin
+        /// on three of them, so it is right in KIND and the remaining third is precision. And
+        /// shipping the bi-level fit, which the stage notes kept raising as the obvious thing to
+        /// try, is dead: it scores 13.9 per cent on Tahoma.</para>
+        /// <para>The relationship is FACE-DEPENDENT, which is the new fact. Verdana's ClearType x
+        /// is its bi-level x -- 94.1 per cent, against 8.4 for the unhinted outline, so the
+        /// intervals are tight and discriminating rather than permissive -- and we match it exactly
+        /// there. Tahoma's is nothing like its bi-level x. Whatever distinguishes the two faces is
+        /// worth more than another rule fitted across all of them.</para>
+        /// <para>READ THE PERCENTAGE FOR WHAT IT IS. Each interval is computed with the OTHER
+        /// coordinates held at their solved values, so it says whether one coordinate is
+        /// individually defensible, not whether the glyph as a whole renders like GDI's. Verdana
+        /// scores 94 per cent here and still measures 0.197 error per unit of ink on the specimen;
+        /// those are not in contradiction.</para></summary>
         /// <summary>WHICH DISTANCE GDI USED, ASKED PER COORDINATE -- and what is left after it.
         /// <para>Aggregate scores can only say that dividing the control-value cut-in by sixteen
         /// beats dividing it by one. They cannot say which distance GDI used at any particular
