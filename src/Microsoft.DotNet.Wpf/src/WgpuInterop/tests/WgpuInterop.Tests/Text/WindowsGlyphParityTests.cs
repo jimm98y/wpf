@@ -4035,6 +4035,64 @@ namespace WgpuInterop.Tests.Text
                 report.AppendLine($"   U+{(int) c:X4} {name,-12} {(gid > 0 ? "yes" : "NO "),-6}"
                                   + $"{mine,10}   {theirs,11}   {verdict}");
             }
+            // AND WHOLE WORDS, because a script is more than its letters. Arabic letters
+            // change shape with their neighbours and Devanagari reorders them, and this shaper is
+            // one glyph per character plus kerning -- no substitution and no reordering -- so a
+            // word is where that shows and a single letter is not.
+            (string text, string name)[] words =
+            {
+                ("Wave", "latin word"),
+                ("بتث", "arabic beh teh theh"),
+                ("العربية", "arabic al-arabiyya"),
+                ("हिन्दी", "devanagari hindi"),
+                ("中文", "chinese zhongwen"),
+                // Lam-alef: the one Arabic pair with no unjoined spelling, so it exercises the
+                // LIGATURE path rather than the positional one. Two glyphs must become one.
+                ("لا", "arabic lam-alef"),
+                ("الله", "arabic allah"),
+            };
+            if (font.Gsub is GsubTable g0)
+            {
+                report.AppendLine("   scripts: " + string.Join(" ", g0.Scripts()));
+                report.AppendLine("   arab features: " + string.Join(" ", g0.Features("arab")));
+                foreach (string f in g0.Features("arab"))
+                    report.AppendLine($"      {f}: lookup types "
+                                      + string.Join(",", g0.LookupTypes("arab", f)));
+            }
+            report.AppendLine("   word                        our ink   windows ink   ratio"
+                              + "   differing px");
+            foreach ((string text, string name) in words)
+            {
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(text, ProbeFamily(), 16, PenX, 28, Width, Height, false, false);
+                Gdi.s_rawRgb = null;
+                long theirs2 = 0;
+                for (int i2 = 0; i2 < Width * Height; i2++)
+                    for (int ch = 0; ch < 3; ch++) theirs2 += 255 - raw[i2 * 4 + ch];
+                byte[] ours2 = OursRgba(font, text, 16, 28, correction: true);
+                long mine2 = 0;
+                for (int i2 = 0; i2 < Width * Height; i2++)
+                    for (int ch = 0; ch < 3; ch++) mine2 += 255 - ours2[i2 * 4 + ch];
+                // Ink is blind to ORDER, and Arabic reads right to left: a word laid out
+                // backwards has exactly the ink of one laid out correctly. So count pixels too.
+                int differing = 0;
+                for (int i2 = 0; i2 < Width * Height; i2++)
+                    for (int ch = 0; ch < 3; ch++)
+                        if (raw[i2 * 4 + ch] != ours2[i2 * 4 + ch]) { differing++; break; }
+                // What the shaper made of it: fewer glyphs than characters means a ligature
+                // formed, and a glyph id that differs from the plain cmap mapping means a
+                // positional form was substituted. Ratios alone cannot tell either.
+                var shaped = new List<ShapedGlyph>();
+                new OpenTypeTextShaper().Shape(font, text, shaped);
+                int substituted = 0;
+                for (int g = 0; g < shaped.Count && g < text.Length; g++)
+                    if (shaped[g].GlyphId != font.GlyphIndex(text[g])) substituted++;
+                report.AppendLine($"   {name,-24} {mine2,10}   {theirs2,11}   "
+                                  + $"{(theirs2 == 0 ? 0 : mine2 / (double) theirs2),6:0.000}"
+                                  + $"   {differing,12}   {text.Length}ch -> {shaped.Count}gl,"
+                                  + $" {substituted} substituted");
+            }
+
             File.AppendAllText(path!, report.ToString());
         }
 

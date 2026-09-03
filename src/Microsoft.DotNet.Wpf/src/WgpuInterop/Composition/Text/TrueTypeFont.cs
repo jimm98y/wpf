@@ -76,7 +76,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     }
 
     internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont,
-                                         IHintedGlyphFont
+                                         IHintedGlyphFont,
+                                         IOpenTypeShapingFont
     {
         // Glyphs are rasterized with the em square at this many pixels; the
         // renderer scales the atlas quad to the requested EmSize.
@@ -288,7 +289,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (tables.TryGetValue("kern", out int kern))
                 ParseKern(kern);
+
+            // The substitutions the face makes to its own glyphs -- the four Arabic positional
+            // forms among them. Absent from most Latin faces, and absent here until Arabic was
+            // measured and found to be drawing isolated letters.
+            if (tables.TryGetValue("GSUB", out int gsub))
+                Gsub = new GsubTable(_data, gsub);
         }
+
+        /// <summary>The face's GSUB table, or null when it has none.</summary>
+        public GsubTable? Gsub { get; }
 
         // ---- IColorGlyphFont ----
 

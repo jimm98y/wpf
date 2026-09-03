@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -69,7 +69,14 @@ namespace WgpuInterop.Tests.Harness
         /// <summary>A renderer over the shared device, with its own caches.</summary>
         internal WgpuSceneRenderer NewRenderer() => new(Gpu);
 
-        internal WgpuSceneRenderer NewRenderer(IFont font) => new(Gpu, font);
+        /// <summary>The SHAPER THE WINDOW SHIPS, not the pass-through one.
+        /// <para>This defaulted to SimpleTextShaper, so every parity measurement in this suite was
+        /// made against a renderer configured differently from the one under test: no kerning, and
+        /// no contextual forms. Arabic measured as isolated letters here while the window joined
+        /// them. An instrument that renders differently from the product answers a question nobody
+        /// asked.</para></summary>
+        internal WgpuSceneRenderer NewRenderer(IFont font)
+            => new(Gpu, font, new OpenTypeTextShaper());
 
         /// <summary>
         /// Realize a render-data blob as the content of visual <paramref name="hVisual"/> and return
