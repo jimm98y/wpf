@@ -48,9 +48,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public readonly Brush? Brush;
 
         /// <summary>
-        /// True when this is colour artwork (a COLR layer or a bitmap) rather than a plain outline.
-        /// Callers use it to skip the text gamma correction: that exists for thin monochrome stems
-        /// against a background, and applying it to artwork shifts its colours.
+        /// True when this is not a plain outline: a COLR layer, a colour bitmap, or a monochrome
+        /// bitmap STRIKE. Callers use it to skip the text filtering and gamma correction, which
+        /// exist for thin stems against a background -- artwork is shifted by them, and a strike is
+        /// a rendering that is already finished and must be blitted as it stands.
         /// </summary>
         public readonly bool IsColorLayer;
 
@@ -121,7 +122,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (font is null) return;
 
-            if (bitmapFont != null && TryPaintBitmap(bitmapFont, font, glyphId, scale, gx, gy, into))
+            if (bitmapFont != null
+                && TryPaintBitmap(bitmapFont, font, glyphId, scale, gx, gy, into, hintedPixelsPerEm))
                 return;
 
             if (colorFont != null &&
@@ -161,9 +163,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // kind of draw, so it inherits the transform, clip, opacity and sampling that every other
         // image in the scene already gets, on both text paths, with no renderer changes at all.
         private static bool TryPaintBitmap(IBitmapGlyphFont bitmapFont, IGlyphOutlineFont font, int glyphId,
-                                           float scale, float gx, float gy, List<GlyphFill> into)
+                                           float scale, float gx, float gy, List<GlyphFill> into,
+                                           float hintedPixelsPerEm)
         {
-            if (!bitmapFont.TryGetGlyphBitmap(glyphId, out BitmapGlyph bmp) || bmp.Png is null) return false;
+            // The em size this run is drawn at, which a MONOCHROME strike must match exactly. The
+            // caller already knows it when it is fitting to a device size, and that is the number
+            // that counts -- deriving it from PixelsPerEm * scale instead gave the FONT's base em
+            // rather than the run's, so no strike ever matched and none was ever drawn.
+            int ppem = hintedPixelsPerEm > 0f
+                ? (int) System.MathF.Round(hintedPixelsPerEm)
+                : (int) System.MathF.Round(font.PixelsPerEm * scale);
+            if (!bitmapFont.TryGetGlyphBitmap(glyphId, out BitmapGlyph bmp, ppem) || bmp.Png is null)
+                return false;
+
+            if (bmp.Mono) return PaintMono(bmp, scale, gx, gy, into);
 
             DecodedBitmap? decoded = Decode(bmp);
             if (decoded is null) return false;
@@ -184,6 +197,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var rect = new List<PathFigure>(1) { Rectangle(x0, y0, w, h) };
             var brush = new ImageBrush(d.Rgba, d.Width, d.Height);
             into.Add(new GlyphFill(rect, null, isColorLayer: true, brush));
+            return true;
+        }
+
+        /// <summary>Draws a monochrome strike as GEOMETRY -- one rectangle per run of set pixels.
+        /// <para>Not as an image, deliberately. A 1-bit strike is COVERAGE, not artwork: it has to
+        /// take the run's foreground colour, and be gamma-corrected like any other text, which is
+        /// exactly what a GlyphFill with a null Color already does. Emitting it as an ImageBrush
+        /// would bake in a colour and skip the correction, so black text would work and every
+        /// other colour would be wrong.</para>
+        /// <para>The rectangles are whole pixels on integer boundaries, so they rasterize to the
+        /// bitmap GDI blitted rather than to a resampling of it.</para></summary>
+        private static bool PaintMono(in BitmapGlyph bmp, float scale, float gx, float gy,
+                                      List<GlyphFill> into)
+        {
+            byte[] mask = bmp.Png;
+            var figures = new List<PathFigure>();
+            // Strike pixels are device pixels; `scale` is what takes those into the caller's
+            // space, exactly as it does for a fitted outline.
+            float x0 = gx + bmp.BearingX * scale, y0 = gy - bmp.BearingY * scale;
+            for (int y = 0; y < bmp.PixelHeight; y++)
+            {
+                int x = 0;
+                while (x < bmp.PixelWidth)
+                {
+                    if (mask[y * bmp.PixelWidth + x] == 0) { x++; continue; }
+                    int from = x;
+                    while (x < bmp.PixelWidth && mask[y * bmp.PixelWidth + x] != 0) x++;
+                    figures.Add(Rectangle(x0 + from * scale, y0 + y * scale,
+                                          (x - from) * scale, scale));
+                }
+            }
+            if (figures.Count == 0) return false;
+            // Colour NULL so it takes the run's foreground, and flagged as artwork so it does not
+            // go through the text filter: GDI blits these pixels, it does not antialias them. Drawn
+            // through the glyph path instead, our CJK came out 82% grey where GDI's is 0% -- the
+            // ClearType filter spreading a bitmap that was hand-tuned to whole pixels.
+            into.Add(new GlyphFill(figures, null, isColorLayer: true, null));
             return true;
         }
 

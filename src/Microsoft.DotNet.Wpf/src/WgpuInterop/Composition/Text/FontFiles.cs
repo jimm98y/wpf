@@ -104,6 +104,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return off > 0 && off < data.Length ? off : 0;
         }
 
+        /// <summary>Where the requested FAMILY's face starts in a collection.
+        /// <para>The overload above returns the first face in the file, which is right for a plain
+        /// font and wrong for every family that is not first in its collection. msgothic.ttc holds
+        /// MS Gothic, MS UI Gothic and MS PGothic; asking for MS UI Gothic got MS Gothic, and since
+        /// the two share their kanji and differ in their kana, CJK measured EXACT for Chinese and
+        /// 3% out for hiragana -- a discrepancy that looked like a bitmap decoding bug and was a
+        /// font identity bug. PMingLiU, MS PGothic and their kin are all in the same position.</para>
+        /// <para>The faces are asked what they are called rather than assumed to be in any order,
+        /// and only for a collection, so a plain font pays nothing.</para></summary>
+        public static int SfntOffset(byte[] data, string? family, bool bold = false, bool italic = false)
+        {
+            if (string.IsNullOrEmpty(family)) return SfntOffset(data);
+            int fallback = -1;
+            foreach (int sfnt in FaceOffsets(data))
+            {
+                if (!ReadNames(data, sfnt, out string? declared, out bool isBold, out bool isItalic))
+                    continue;
+                if (!string.Equals(declared, family, StringComparison.OrdinalIgnoreCase)) continue;
+                if (isBold == bold && isItalic == italic) return sfnt;
+                if (fallback < 0) fallback = sfnt;      // the family, in another style
+            }
+            return fallback >= 0 ? fallback : SfntOffset(data);
+        }
+
         public static string? Find(string? family, bool bold, bool italic)
         {
             if (string.IsNullOrWhiteSpace(family)) return null;

@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -29,8 +29,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     /// <summary>One glyph's colour bitmap: the encoded image plus where it sits on the baseline.</summary>
     internal readonly struct BitmapGlyph
     {
-        /// <summary>The encoded image (PNG).</summary>
+        /// <summary>The encoded image (PNG), or the unpacked 1-byte-per-pixel MASK when
+        /// <see cref="Mono"/> -- one field, because a glyph is one or the other.</summary>
         public readonly byte[] Png;
+
+        /// <summary>True when this is a monochrome strike: <see cref="Png"/> holds coverage, not an
+        /// image, and it takes the run's TEXT COLOUR rather than carrying its own.</summary>
+        public readonly bool Mono;
 
         /// <summary>Bitmap size in pixels.</summary>
         public readonly int PixelWidth, PixelHeight;
@@ -41,9 +46,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The strike this came from, in pixels per em; the scale reference for the above.</summary>
         public readonly int PpemX, PpemY;
 
-        public BitmapGlyph(byte[] png, int pixelWidth, int pixelHeight, int bearingX, int bearingY, int ppemX, int ppemY)
+        public BitmapGlyph(byte[] png, int pixelWidth, int pixelHeight, int bearingX, int bearingY,
+                           int ppemX, int ppemY, bool mono = false)
         {
             Png = png;
+            Mono = mono;
             PixelWidth = pixelWidth; PixelHeight = pixelHeight;
             BearingX = bearingX; BearingY = bearingY;
             PpemX = ppemX; PpemY = ppemY;
@@ -54,7 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     internal interface IBitmapGlyphFont
     {
         /// <summary>The glyph's colour bitmap, or false when it has none.</summary>
-        bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph);
+        bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph, int ppem = 0);
     }
 
     internal sealed class BitmapGlyphTable
@@ -62,7 +69,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly byte[] _data;
         private readonly int _cbdt;
         private readonly List<Strike> _strikes = new();
-        private readonly Dictionary<int, BitmapGlyph?> _cache = new();
+        private readonly Dictionary<(int Glyph, int Ppem), BitmapGlyph?> _cache = new();
 
         /// <summary>One CBLC strike: a pixel size, and the index subtables that map glyphs to CBDT.</summary>
         private readonly struct Strike
@@ -130,23 +137,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>True when the font actually carries usable strikes.</summary>
         public bool HasStrikes => _strikes.Count > 0 || _sbixStrikes.Count > 0;
 
-        public bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph)
+        /// <summary>The glyph's bitmap. <paramref name="ppem"/> is the size the run is being
+        /// drawn at, or 0 for "any strike will do".
+        /// <para>It matters for a MONOCHROME strike and not for a colour one. A colour bitmap is
+        /// artwork and scales; a 1-bit strike is a hand-tuned rendering of the glyph AT ONE SIZE,
+        /// and stretching a 16-pixel bitmap to 30 pixels looks far worse than the outline it was
+        /// meant to replace. So those are used only at their own size -- which is also GDI's
+        /// rule.</para></summary>
+        public bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph, int ppem = 0)
         {
-            if (_cache.TryGetValue(glyphId, out BitmapGlyph? cached))
+            if (_cache.TryGetValue((glyphId, ppem), out BitmapGlyph? cached))
             {
                 glyph = cached ?? default;
                 return cached.HasValue;
             }
 
-            BitmapGlyph? found = Build(glyphId);
-            _cache[glyphId] = found;
+            BitmapGlyph? found = Build(glyphId, ppem);
+            _cache[(glyphId, ppem)] = found;
             glyph = found ?? default;
             return found.HasValue;
         }
 
         // The largest strike that has this glyph. Emoji fonts usually ship exactly one (Noto Color
         // Emoji is 136ppem); where there are several, the biggest scales down most cleanly.
-        private BitmapGlyph? Build(int glyphId)
+        private BitmapGlyph? Build(int glyphId, int ppem)
         {
             BitmapGlyph? best = null;
             foreach (Strike s in _strikes)
@@ -154,6 +168,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (glyphId < s.FirstGlyph || glyphId > s.LastGlyph) continue;
                 BitmapGlyph? g = FromStrike(s, glyphId);
                 if (g is null) continue;
+                if (g.Value.Mono && s.PpemY != ppem) continue;   // only at its own size
                 if (best is null || g.Value.PpemY > best.Value.PpemY) best = g;
             }
 
@@ -274,11 +289,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         length = imageSize;
                         break;
                     }
+                    case 4:   // sparse: (glyphId, offset) pairs, variable-size images
+                    {
+                        int numGlyphs = (int) U32(sub + 8);
+                        int pairs = sub + 12;
+                        int index = -1;
+                        for (int j = 0; j < numGlyphs; j++)
+                        {
+                            if (pairs + j * 4 + 4 > _data.Length) break;
+                            if (U16(pairs + j * 4) == glyphId) { index = j; break; }
+                        }
+                        if (index < 0 || pairs + (index + 1) * 4 + 2 > _data.Length) return null;
+                        int from = U16(pairs + index * 4 + 2), to = U16(pairs + (index + 1) * 4 + 2);
+                        at = imageDataOffset + from;
+                        length = to - from;
+                        break;
+                    }
                     default:
-                        return null;   // formats 4 and anything unknown: not seen in colour emoji fonts
+                        return null;   // anything unknown, rather than guessed at
                 }
 
                 if (length <= 0 || at < 0 || at + length > _data.Length) return null;
+                // Index formats 2 and 5 carry bigGlyphMetrics of their own, right after the
+                // constant image size -- image format 5 has none and gets them from there.
+                int bigMetrics = indexFormat == 2 || indexFormat == 5 ? sub + 12 : -1;
+                if (imageFormat is 1 or 2 or 5 or 6 or 7)
+                    return ReadMono(imageFormat, at, length, strike, bigMetrics);
                 return ReadImage(imageFormat, at, length, strike);
             }
             return null;
@@ -335,6 +371,81 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (width <= 0 || height <= 0) { width = strike.PpemX; height = strike.PpemY; }
 
             return new BitmapGlyph(png, width, height, bearingX, bearingY, strike.PpemX, strike.PpemY);
+        }
+
+        /// <summary>An UNCOMPRESSED bitmap: the pre-colour EBDT formats, one bit per pixel.
+        /// <para>These are why Japanese and Chinese text on Windows is pixel-crisp at UI sizes
+        /// while the Latin beside it is smooth: msgothic.ttc carries a hand-tuned strike at every
+        /// size from 7 to 22 ppem and GDI draws it in preference to the outline. Measured against
+        /// GDI, NONE of its inked pixels for a CJK word are grey -- 0%, against 91% for Latin --
+        /// which is a bitmap blit and cannot be anything else.</para>
+        /// <para>Format 5 has no metrics of its own and takes them from the index subtable, which
+        /// is the only reason bigMetricsAt is threaded down here.</para></summary>
+        private BitmapGlyph? ReadMono(int imageFormat, int at, int length, in Strike strike,
+                                      int bigMetricsAt)
+        {
+            int width, height, bearingX, bearingY, headerSize;
+            bool bitAligned;
+
+            switch (imageFormat)
+            {
+                case 1:   // smallGlyphMetrics + byte-aligned rows
+                case 2:   // smallGlyphMetrics + bit-aligned rows
+                    if (length < 5) return null;
+                    height = _data[at];
+                    width = _data[at + 1];
+                    bearingX = (sbyte) _data[at + 2];
+                    bearingY = (sbyte) _data[at + 3];
+                    headerSize = 5;
+                    bitAligned = imageFormat == 2;
+                    break;
+
+                case 6:   // bigGlyphMetrics + byte-aligned rows
+                case 7:   // bigGlyphMetrics + bit-aligned rows
+                    if (length < 8) return null;
+                    height = _data[at];
+                    width = _data[at + 1];
+                    bearingX = (sbyte) _data[at + 2];
+                    bearingY = (sbyte) _data[at + 3];
+                    headerSize = 8;
+                    bitAligned = imageFormat == 7;
+                    break;
+
+                case 5:   // bit-aligned rows, metrics from the index subtable
+                    if (bigMetricsAt < 0 || bigMetricsAt + 8 > _data.Length) return null;
+                    height = _data[bigMetricsAt];
+                    width = _data[bigMetricsAt + 1];
+                    bearingX = (sbyte) _data[bigMetricsAt + 2];
+                    bearingY = (sbyte) _data[bigMetricsAt + 3];
+                    headerSize = 0;
+                    bitAligned = true;
+                    break;
+
+                default:
+                    return null;
+            }
+
+            if (width <= 0 || height <= 0 || width > 512 || height > 512) return null;
+            int bits = at + headerSize;
+            int needed = bitAligned ? (width * height + 7) / 8 : (width + 7) / 8 * height;
+            if (bits < 0 || bits + needed > _data.Length) return null;
+
+            // One byte per pixel, so the painter can walk rows without unpacking again.
+            var mask = new byte[width * height];
+            for (int y = 0; y < height; y++)
+            {
+                // Byte-aligned rows restart on a byte boundary; bit-aligned ones run straight on.
+                int rowBit = bitAligned ? y * width : y * ((width + 7) / 8) * 8;
+                for (int x = 0; x < width; x++)
+                {
+                    int bit = rowBit + x;
+                    int b = _data[bits + (bit >> 3)];
+                    if ((b & (0x80 >> (bit & 7))) != 0) mask[y * width + x] = 255;
+                }
+            }
+
+            return new BitmapGlyph(mask, width, height, bearingX, bearingY,
+                                   strike.PpemX, strike.PpemY, mono: true);
         }
 
         private int U16(int o) => (_data[o] << 8) | _data[o + 1];

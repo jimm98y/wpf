@@ -4255,6 +4255,9 @@ namespace WgpuInterop.Tests.Text
                 ("ગુજરાતી", "gujarati gujarati"),
                 ("മലയാളം", "malayalam malayalam"),
                 ("中文", "chinese zhongwen"),
+                ("あいう", "kana aiu"),
+                ("日本語", "japanese nihongo"),
+                ("カタカナ", "katakana"),
                 // Lam-alef: the one Arabic pair with no unjoined spelling, so it exercises the
                 // LIGATURE path rather than the positional one. Two glyphs must become one.
                 ("لا", "arabic lam-alef"),
@@ -4321,7 +4324,7 @@ namespace WgpuInterop.Tests.Text
                                   + $"{(theirs2 == 0 ? 0 : mine2 / (double) theirs2),6:0.000}"
                                   + $"   {differing,12}   {text.Length}ch -> {shaped.Count}gl,"
                                   + $" {substituted} substituted   {drawnBy}"
-                                  + $"   GDI greys {Greys(raw)}%");
+                                  + $"   greys GDI {Greys(raw)}% ours {Greys(ours2)}%");
             }
 
             File.AppendAllText(path!, report.ToString());

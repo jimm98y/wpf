@@ -4450,7 +4450,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // opening it at zero threw 'missing head table', which the catch below turned
                 // into a silent fallback to the default face -- so the family drew in the
                 // wrong typeface and nothing said so.
-                int sfnt = Text.FontFiles.SfntOffset(bytes);
+                // ...and a collection holds SEVERAL families, so which face is asked for by
+                // name. Face zero of msgothic.ttc is MS Gothic, not the MS UI Gothic that was
+                // requested, and they differ in exactly their kana.
+                int sfnt = Text.FontFiles.SfntOffset(bytes, family, bold, italic);
                 Text.FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
                 // POSTSCRIPT OUTLINES ARE A DIFFERENT READER. TrueTypeFont throws on a CFF
                 // face -- it has no 'glyf' -- and the catch below would turn that into the

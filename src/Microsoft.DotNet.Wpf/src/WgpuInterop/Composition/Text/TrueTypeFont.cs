@@ -192,6 +192,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _glyfOffset = hasOutlines ? glyf : -1;
 
             int glyphCount = U16(maxp + 4);
+            // EBLC/EBDT is the same layout as CBLC/CBDT with monochrome images instead of PNGs,
+            // so it is read by the same parser. The East Asian faces ship these -- and GDI draws
+            // them in preference to the outline, which is why CJK is crisp at UI sizes.
+            if (!tables.ContainsKey("CBLC") && tables.TryGetValue("EBLC", out int eblc)
+                && tables.TryGetValue("EBDT", out int ebdt))
+            {
+                var strikes = new BitmapGlyphTable(_data, eblc, ebdt);
+                if (strikes.HasStrikes) _bitmaps = strikes;
+            }
             if (tables.TryGetValue("CBLC", out int cblc) && tables.TryGetValue("CBDT", out int cbdt))
             {
                 var bitmaps = new BitmapGlyphTable(_data, cblc, cbdt);
@@ -311,9 +320,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // ---- IBitmapGlyphFont ----
 
-        public bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph)
+        public bool TryGetGlyphBitmap(int glyphId, out BitmapGlyph glyph, int ppem = 0)
         {
-            if (_bitmaps != null) return _bitmaps.TryGetGlyphBitmap(glyphId, out glyph);
+            if (_bitmaps != null) return _bitmaps.TryGetGlyphBitmap(glyphId, out glyph, ppem);
             glyph = default;
             return false;
         }
