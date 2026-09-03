@@ -378,6 +378,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (dumping) DumpFinal();
                 }
 
+                if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
             }
@@ -453,6 +454,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>WHOSE TOUCH SET IS IT: the first DERIVED fact about the residue.
+        /// <para>WhichPointsGdiTouchedInX asks the question the coordinate comparisons could not.
+        /// IUP can only put an untouched point where its two nearest touched neighbours put it, so
+        /// feeding it GDI's OWN anchor positions gives the value GDI would have to have if it
+        /// interpolated that point. Where GDI has something else, GDI touched it. That is a
+        /// derivation, not a preference between two fits.</para>
+        /// <para>At 12ppem over 23 glyphs: 542 points, 413 of which we interpolate, and 36 of those
+        /// (four more are the solver's own coordinate-sharing and are excluded) CANNOT be what GDI
+        /// has. So our touch set is not GDI's -- but it is very nearly right, and it is EXACTLY
+        /// right for eight whole glyphs: H, I, l, T, E, F, L and m have nothing left to explain at
+        /// the level of the touch set.</para>
+        /// <para>Where the rest sit is the shape of the answer. M's middle V (points 7 to 12) is
+        /// the largest single group, and GDI draws it NARROWER at both tops -- inward on the left
+        /// arm and inward on the right. N's two diagonal ends go the same way. The other class is
+        /// the top of a bowl at the x-height line: d, q and c all miss at the point whose start y
+        /// is 6.14, and d and q miss it by 24/64 of a pixel, the largest differences in the
+        /// table.</para>
+        /// <para>Which retires the reading of the whole-pixel-MDAP table that suggested this: N and
+        /// M becoming near-exact under the coarse grid is a COINCIDENCE, the anchors moving so far
+        /// that IUP happens to drop the diagonals near where GDI has them. The grid was never the
+        /// question.</para>
+        /// <para>Three mechanisms checked and eliminated, so that they are not tried again:</para>
+        /// <para>The MODE IS NOT THE GATE. storage[2] is 6 here -- bi-level 0, plus 2 for the
+        /// ClearType bit, plus 4 for compatible widths -- and every GETINFO answer feeding it has
+        /// been measured against GDI's own. We run the instructions GDI runs.</para>
+        /// <para>OUR IUP IS NOT THE DIFFERENCE. Carry is instruction-for-instruction the reference
+        /// implementation, including the part that catches people out: the inside/outside test on
+        /// the SCALED start but the proportion in FONT UNITS. The first version of the test above
+        /// interpolated in pixels for both and manufactured four findings out of the 64th of a
+        /// pixel between them.</para>
+        /// <para>AND IT IS NOT THE X DELTAS. Segoe UI's M ends with three DELTAPs in x after IUP,
+        /// one of them encoding this very size, and SkipDeltaInClearTypeDirection drops all three.
+        /// Restoring them is exactly the shape of "GDI moves a point we interpolate" and it is
+        /// wrong: WPF_CT_DELTA=all takes the impossible count from 36 to 60. WPF_CT_DELTA=touched
+        /// changes nothing at all. The rule that ships is the rule GDI uses.</para>
+        /// <para>So the instructions, the interpolation between them, and the deltas after them are
+        /// all accounted for, and GDI still places three dozen points where none of them can. What
+        /// is left is that GDI moves those points with something this interpreter does not run at
+        /// all -- and the group it moves, diagonals and bowl tops, is the group a rasterizer would
+        /// treat specially rather than one a font program would single out.</para></summary>
         /// <summary>WHAT WHOLE-PIXEL MDAP DOES PER GLYPH, and two hypotheses it kills.
         /// <para>Solved against GDI's own coordinates at 12ppem, coordinates landing inside the
         /// interval GDI's pixels allow, default sixteenth grid against POSGRID=physical:</para>
@@ -922,6 +963,56 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int _contourCount;
         private int _realPoints;
+
+        /// <summary>Where every point of the last hinted glyph started, where it finished, and
+        /// WHICH OF THEM THE PROGRAM TOUCHED IN X.
+        /// <para>The touch set is the thing the fitted coordinates cannot be read for directly and
+        /// the thing that decides everything after it: a point the program touches is placed by an
+        /// instruction, a point it does not is placed by IUP interpolating between the two nearest
+        /// touched ones. Two interpreters that touch different sets produce different outlines from
+        /// identical instructions, and no amount of comparing coordinates says which set was used.
+        /// GDI's set is not observable either -- but it is DERIVABLE, because IUP can only ever put
+        /// an untouched point where its anchors put it, so a coordinate GDI has that no IUP could
+        /// produce proves GDI touched that point.</para></summary>
+        internal sealed class GlyphPoints
+        {
+            public float[] StartX = Array.Empty<float>();   // scaled, unfitted, pixels
+            public float[] FitX = Array.Empty<float>();      // after the glyph's program
+            public float[] StartY = Array.Empty<float>();
+            public int[] OrusX = Array.Empty<int>();      // font units -- what IUP takes its ratio in
+            public float[] FitY = Array.Empty<float>();
+            public bool[] TouchedX = Array.Empty<bool>();
+            public bool[] OnCurve = Array.Empty<bool>();
+            public int[] EndPoints = Array.Empty<int>();
+            public int PointCount;
+        }
+
+        internal static bool s_capturePoints;
+        internal GlyphPoints? LastPoints;
+
+        private void CapturePoints(GlyphProgram glyph)
+        {
+            Zone z = _glyphZone;
+            int n = glyph.PointCount;
+            var g = new GlyphPoints
+            {
+                StartX = new float[n], FitX = new float[n],
+                StartY = new float[n], FitY = new float[n], OrusX = new int[n],
+                TouchedX = new bool[n], OnCurve = new bool[n],
+                EndPoints = (int[]) glyph.EndPoints.Clone(), PointCount = n,
+            };
+            for (int i = 0; i < n; i++)
+            {
+                g.StartX[i] = z.OrgX[i] / 64f;
+                g.FitX[i] = z.CurX[i] / 64f;
+                g.StartY[i] = z.OrgY[i] / 64f;
+                g.OrusX[i] = z.OrusX[i];
+                g.FitY[i] = z.CurY[i] / 64f;
+                g.TouchedX[i] = (z.Tags[i] & TagTouchX) != 0;
+                g.OnCurve[i] = (z.Tags[i] & TagOn) != 0;
+            }
+            LastPoints = g;
+        }
 
         private void StoreGlyph(GlyphProgram glyph)
         {

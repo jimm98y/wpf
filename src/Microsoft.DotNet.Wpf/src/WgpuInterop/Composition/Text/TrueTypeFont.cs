@@ -475,6 +475,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The face's own hinting machine, built once. Null when the face carries no
         /// hints, or when its tables are unreadable -- either way the outline is fitted by analysis
         /// instead, which is what a face without hints has always had.</summary>
+        /// <summary>The points of the glyph hinted last, once <see cref="TrueTypeInterpreter
+        /// .s_capturePoints"/> is on -- the only way to see which points the face's program
+        /// touched, which no fitted outline records.</summary>
+        internal TrueTypeInterpreter.GlyphPoints? LastHintedPoints => _interpreter?.LastPoints;
+
         private TrueTypeInterpreter? Interpreter()
         {
             if (_interpreterTried) return _interpreter;

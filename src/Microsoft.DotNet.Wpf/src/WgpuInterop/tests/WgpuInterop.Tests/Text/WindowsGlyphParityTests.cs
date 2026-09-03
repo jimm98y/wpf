@@ -2884,6 +2884,219 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine(sb.ToString());
         }
 
+        /// <summary>WHICH POINTS GDI TOUCHED IN X, derived rather than guessed.
+        /// <para>Every rule tried so far has been a rule about VALUES -- which grid a coordinate
+        /// rounds on, how wide a stem comes out. All of them failed, and the per-glyph table under
+        /// XWholePixelGrid says why they were bound to: whole-pixel MDAP makes the simple glyphs
+        /// nearly exact and the complex ones much worse, which is not what a wrong rounding looks
+        /// like. It is what a wrong TOUCH SET looks like -- move an anchor and IUP drags every
+        /// point behind it, so the damage grows with the number of points rather than with the
+        /// size of the error.</para>
+        /// <para>The touch set is not observable, but it is derivable. IUP can only put an
+        /// untouched point where its two nearest touched neighbours put it: proportionally if the
+        /// point started between them, shifted by the nearer one's delta if it started outside. So
+        /// take OUR touch set, compute what IUP would have to produce from GDI's OWN anchor
+        /// positions, and ask whether GDI's coordinate for that point is a value that prediction
+        /// allows. Where it is not, GDI touched a point we interpolate -- and that is a fact about
+        /// GDI, not a preference between two fits.</para>
+        /// <para>Ask it against the INTERVAL, never against the single solved value: the solver's
+        /// answer is its own tie-break wherever the pixels leave a coordinate free, and reading
+        /// that as GDI's position is what produced this investigation's retracted conclusions.</para>
+        /// <para>WPF_TOUCHSETS=chars@ppem, e.g. "HNM8s0@12".</para></summary>
+        [Fact]
+        public void WhichPointsGdiTouchedInX()
+        {
+            string? spec = Environment.GetEnvironmentVariable("WPF_TOUCHSETS");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_TOUCHSETS=chars@ppem");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no Segoe UI");
+
+            string[] parts = spec!.Split('@');
+            int ppem = int.Parse(parts[1]), baseline = ppem + 12;
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            int totalPoints = 0, totalUntouched = 0, totalImpossible = 0;
+
+            TrueTypeInterpreter.s_capturePoints = true;
+            try
+            {
+                foreach (char c in parts[0])
+                {
+                    var raw = new byte[Width * Height * 4];
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height,
+                             false, false);
+                    Gdi.s_rawRgb = null;
+                    if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                      out List<PathFigure> ours))
+                        continue;
+                    TrueTypeInterpreter.GlyphPoints? pts = font.LastHintedPoints;
+                    if (pts is null || pts.PointCount == 0) continue;
+
+                    SolveGdiX(ours, baseline, raw, out Dictionary<float, float> move,
+                              out Dictionary<float, float> lo, out Dictionary<float, float> hi);
+
+                    // GDI's value for a point is the solved value of the coordinate our fit put it
+                    // at. Points that share a coordinate share an answer -- the pixels cannot tell
+                    // them apart either, so no information is lost that the oracle ever had.
+                    float GdiAt(int i)
+                    {
+                        float k = MathF.Round(pts.FitX[i], 3);
+                        return move.TryGetValue(k, out float v) ? v : pts.FitX[i];
+                    }
+                    (float, float) Range(int i)
+                    {
+                        float k = MathF.Round(pts.FitX[i], 3);
+                        return lo.TryGetValue(k, out float a2) ? (a2, hi[k]) : (GdiAt(i), GdiAt(i));
+                    }
+
+                    var impossible = new List<int>();
+                    var detail = new List<string>();
+                    // THE SOLVER ANSWERS PER COORDINATE, NOT PER POINT. Points our fit put
+                    // on the same x move together in the descent and come back with one
+                    // answer between them, so a point sharing its x with a TOUCHED point is
+                    // reported wherever the touched one wanted to be, and the difference is
+                    // the instrument, not GDI. Count the sharers and say so.
+                    var sharers = new Dictionary<float, (int all, int touched)>();
+                    for (int i = 0; i < pts.PointCount; i++)
+                    {
+                        float k = MathF.Round(pts.FitX[i], 3);
+                        sharers.TryGetValue(k, out (int all, int touched) v);
+                        sharers[k] = (v.all + 1, v.touched + (pts.TouchedX[i] ? 1 : 0));
+                    }
+                    int untouched = 0, first = 0;
+                    foreach (int end in pts.EndPoints)
+                    {
+                        int n = end - first + 1;
+                        if (n <= 0) { first = end + 1; continue; }
+                        var touched = new List<int>();
+                        for (int i = first; i <= end; i++) if (pts.TouchedX[i]) touched.Add(i);
+                        if (touched.Count == 0) { first = end + 1; continue; }
+
+                        for (int t = 0; t < touched.Count; t++)
+                        {
+                            int a = touched[t], b = touched[(t + 1) % touched.Count];
+                            // Walk the points strictly between the two anchors, wrapping round the
+                            // contour the way IUP does.
+                            for (int step = 1; ; step++)
+                            {
+                                int i = first + ((a - first + step) % n);
+                                if (i == b) break;
+                                untouched++;
+                                // IUP, exactly as the interpreter runs it: the inside/outside
+                                // test on the SCALED start, the proportion in FONT UNITS. The two
+                                // disagree by up to a 64th, which is the size of several of the
+                                // differences being judged here, so approximating one with the
+                                // other decides the answer.
+                                int r1 = a, r2 = b;
+                                if (pts.OrusX[r1] > pts.OrusX[r2]) (r1, r2) = (r2, r1);
+                                float o1 = pts.StartX[r1], o2 = pts.StartX[r2];
+                                float d1 = GdiAt(r1) - o1, d2 = GdiAt(r2) - o2;
+                                float op = pts.StartX[i], predicted;
+                                if (op <= o1) predicted = op + d1;
+                                else if (op >= o2) predicted = op + d2;
+                                else if (pts.OrusX[r1] == pts.OrusX[r2]) predicted = op + d2;
+                                else
+                                    predicted = (o1 + d1)
+                                        + (pts.OrusX[i] - pts.OrusX[r1])
+                                          * ((o2 + d2 - (o1 + d1))
+                                             / (pts.OrusX[r2] - pts.OrusX[r1]));
+
+                                (float rl, float rh) = Range(i);
+                                float gap = predicted < rl ? rl - predicted
+                                          : predicted > rh ? predicted - rh : 0f;
+                                // A 64th of tolerance is not slack, it is the quantum the whole
+                                // pipeline works in: our anchors and GDI's differ by rounding
+                                // alone, and IUP carries that difference into every point behind
+                                // them. Only a gap LARGER than the quantum says anything.
+                                if (gap > 1f / 64f)
+                                {
+                                    impossible.Add(i);
+                                    detail.Add($"      pt{i,-3} {(pts.OnCurve[i] ? "on " : "off")}"
+                                        + $" start({op:0.00},{pts.StartY[i]:0.00}) ours {pts.FitX[i]:0.000}"
+                                        + $" iup-from-gdi {predicted:0.000} but gdi allows"
+                                        + $" [{rl:0.000},{rh:0.000}]  gap {gap * 64:0.0}/64"
+                                        + $" [shared by {sharers[MathF.Round(pts.FitX[i], 3)].all},"
+                                          + $" {sharers[MathF.Round(pts.FitX[i], 3)].touched} touched]"
+                                        + $"  anchors {a}(start {pts.StartX[a]:0.00} gdi {GdiAt(a):0.000})"
+                                        + $",{b}(start {pts.StartX[b]:0.00} gdi {GdiAt(b):0.000})");
+                                }
+                            }
+                        }
+                        first = end + 1;
+                    }
+
+                    totalPoints += pts.PointCount;
+                    totalUntouched += untouched;
+                    totalImpossible += impossible.Count;
+                    int ourTouched = 0;
+                    for (int i = 0; i < pts.PointCount; i++) if (pts.TouchedX[i]) ourTouched++;
+                    Console.Error.WriteLine($"'{c}' @{ppem}: {pts.PointCount} points, we touch"
+                        + $" {ourTouched} in x; of {untouched} we interpolate, {impossible.Count}"
+                        + " cannot be what GDI has"
+                        + (impossible.Count == 0 ? "" : " -- points " + string.Join(",", impossible)));
+                    foreach (string d in detail) Console.Error.WriteLine(d);
+                }
+            }
+            finally { TrueTypeInterpreter.s_capturePoints = false; }
+
+            Console.Error.WriteLine($"TOTAL {totalPoints} points, {totalUntouched} interpolated,"
+                + $" {totalImpossible} impossible under our touch set");
+        }
+
+        /// <summary>GDI's own fitted x coordinates, and the interval of each that the pixels allow.
+        /// <para>Coordinate descent over the distinct x values of our fit, scoring against GDI's
+        /// lamps -- sound because the rasterizer reproduces GDI's lamps exactly given the right
+        /// outline, so a fit returns GDI's geometry rather than a resemblance of it.</para></summary>
+        private static void SolveGdiX(List<PathFigure> ours, int baseline, byte[] raw,
+                                      out Dictionary<float, float> move,
+                                      out Dictionary<float, float> lo,
+                                      out Dictionary<float, float> hi)
+        {
+            var xs = new SortedSet<float>();
+            foreach (PathFigure f in ours) CollectXs(f, xs);
+            var order = new List<float>(xs);
+            move = new Dictionary<float, float>();
+            foreach (float x in order) move[x] = x;
+            Dictionary<float, float> m = move;
+            double Err() => GlyphLampError(Remap(ours, m), PenX, baseline, raw);
+            double best = Err();
+            for (int pass = 0; pass < 4; pass++)
+            {
+                bool moved = false;
+                foreach (float x in order)
+                {
+                    float keep = m[x], bestAt = keep;
+                    for (int j = -24; j <= 24; j++)
+                    {
+                        int k = s_solveReverse ? -j : j;
+                        m[x] = keep + k / 64f;
+                        double err = Err();
+                        if (err < best - 1e-9) { best = err; bestAt = m[x]; moved = true; }
+                    }
+                    m[x] = bestAt;
+                }
+                if (!moved) break;
+            }
+            lo = new Dictionary<float, float>();
+            hi = new Dictionary<float, float>();
+            foreach (float x in order)
+            {
+                float keep = m[x];
+                float a = keep, b = keep;
+                bool any = false;
+                for (int k = -24; k <= 24; k++)
+                {
+                    m[x] = keep + k / 64f;
+                    if (Err() > best + 1e-9) continue;
+                    if (!any) { a = m[x]; any = true; }
+                    b = m[x];
+                }
+                m[x] = keep;
+                lo[x] = a; hi[x] = b;
+            }
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
