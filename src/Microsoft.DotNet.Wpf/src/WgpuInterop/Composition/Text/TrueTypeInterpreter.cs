@@ -453,6 +453,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>'H' AT 12PPEM, RUN TO THE INSTRUCTION. The smallest fully-characterised case
+        /// of what is left, so the next attempt has somewhere concrete to start.
+        /// <para>GDI's geometry is exactly recoverable here -- the solver reaches residual 0 -- and
+        /// it is 1.0, 2.094, 7.0, 8.094 against our 1.125, 2.219, 6.812, 7.906. Both stems are
+        /// 1.094 pixels wide on BOTH sides, so the MIRP that sets stroke weight is right and
+        /// s_stemFat is right with it. The whole difference is where the two stems SIT: GDI puts
+        /// their left edges on whole pixels 6.0 apart, we put them 5.687 apart.</para>
+        /// <para>The second stem's edge is point 1, and the trace says exactly what happens to it:
+        /// IP at ip 99 interpolates it from 6.44 to 6.78, MDAP[r] at ip 100 rounds that to 6.8125
+        /// on the sixteenth grid, and the DELTA at ip 103 does not move it because x-direction
+        /// deltas are suppressed under ClearType. GDI ends at 7.0.</para>
+        /// <para>So the question is narrow: is GDI's 7.0 a different ROUNDING of our 6.78, or a
+        /// different INTERPOLATION that lands near 7.0 and rounds to it? The first is ruled out --
+        /// every position grid was re-swept and all are worse (see below), and whole-pixel MDAP
+        /// costs 9.1M against 5.2M. So look at IP: what it interpolates between, and whether GDI's
+        /// reference points are the ones we use.</para></summary>
         /// <summary>THE ROUNDING FAMILY WAS RE-SWEPT AFTER THE PLACEMENT WORK AND IS STILL CLOSED.
         /// <para>Everything below had been rejected against the OLD geometry -- before the margin
         /// came from GDI's tmHeight, before advances went through 26.6 and LTSH -- so the
