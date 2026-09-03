@@ -3329,10 +3329,38 @@ namespace WgpuInterop.Tests.Text
         /// GDI's stem placement is not a grid applied to the outline, and the family of rules of
         /// that shape is now closed against an oracle that is unconditional per stem rather than
         /// per coordinate.</para>
-        /// <para>The one clue the lines carry is that WE AND GDI MOVE DIFFERENT EDGES. Tahoma's 'H'
-        /// at 16ppem: the left stem starts at 1.1875 unfitted, GDI puts it at about 1.02 and we
-        /// leave it at 1.188; the right stem starts at 8.0781, GDI leaves it there and we move it
-        /// to 8.250. Both of us move one edge and not the other, and we pick the other one.</para></summary>
+        /// <para>THE ANCHOR HYPOTHESIS IS DEAD, AND IT DIED OF MY OWN BIAS. It looked as though
+        /// we and GDI hold different edges: Tahoma's 'H' at 16ppem has GDI moving the left stem's
+        /// outer edge and leaving the right stem's, and us doing the opposite. Counted over the
+        /// exactly solved stems that came out 9 to 1 in favour of GDI holding the RIGHT edge --
+        /// and the count was worthless, because I derived the right edge's allowed range as
+        /// lLo+wLo..lHi+wHi. That combines two extremes no single winner reaches, so it is far too
+        /// wide, and it is exactly the range the test compares against. With the right edge's own
+        /// marginal emitted from the winners the asymmetry vanishes: GDI holds the left edge twice,
+        /// the right three times, either seven, and NEITHER fifteen, with median displacements of
+        /// 8.5/64 on the left and 9.5/64 on the right. Symmetric. GDI has no preferred edge; it
+        /// TRANSLATES the stem, keeping the width, which is what the gradient census said from the
+        /// pixels.</para>
+        /// <para>AND NO GRID DESCRIBES THAT TRANSLATION. Over 42 exactly solved stems from Tahoma,
+        /// Arial and Verdana, with every marginal -- left, right, width and centre -- emitted from
+        /// the winners rather than inferred:</para>
+        /// <code>
+        ///   centre on a whole pixel    5%      left on a whole pixel   19%
+        ///   centre on a half          12%      left on a third         45%
+        ///   centre on a third         21%      right on a whole pixel  26%
+        ///   centre on a sixth         36%      right on a third        43%
+        ///   centre = unfitted centre  45%
+        ///   centre = OUR centre       67%
+        /// </code>
+        /// <para>Ours is the best predictor of every feature of GDI's stem -- 52 per cent of left
+        /// edges, 89 of widths, 67 of centres -- and nothing built out of a grid comes near it, on
+        /// any of the three features, against whole pixels, halves, thirds or sixths.</para>
+        /// <para>So the search for "GDI's stem rule" is finished, not stalled: there is no rule of
+        /// that shape to find. GDI's ClearType stem placement is the outcome of the face's own
+        /// program under conditions we already reproduce better than any alternative anyone has
+        /// proposed, and the residue is per-stem detail below a sixteenth of a pixel. Anything
+        /// further needs a different kind of evidence, not another candidate rule.</para>
+        </summary>
         [Fact]
         public void SolveOneStemJointly()
         {
@@ -3402,13 +3430,25 @@ namespace WgpuInterop.Tests.Text
                     }
 
                 float wLo = float.MaxValue, wHi = float.MinValue, lLo = float.MaxValue, lHi = float.MinValue;
+                // The RIGHT edge's own marginal, not the sum of the other two. Deriving it as
+                // lLo+wLo..lHi+wHi combines two extremes that no single winner reaches, so it
+                // is far too wide -- and it is exactly the range a test of "which edge did GDI
+                // hold" compares against, so the slack biases that test toward the right edge.
+                float rLo = float.MaxValue, rHi = float.MinValue;
+                float cLo = float.MaxValue, cHi = float.MinValue;
                 foreach ((int da, int db) w in winners)
                 {
-                    float left = a0 + w.da / 64f, width = (b0 + w.db / 64f) - left;
+                    float left = a0 + w.da / 64f, right = b0 + w.db / 64f;
+                    float width = right - left;
                     if (left < lLo) lLo = left;
                     if (left > lHi) lHi = left;
+                    if (right < rLo) rLo = right;
+                    if (right > rHi) rHi = right;
                     if (width < wLo) wLo = width;
                     if (width > wHi) wHi = width;
+                    float centre = (left + right) / 2;
+                    if (centre < cLo) cLo = centre;
+                    if (centre > cHi) cHi = centre;
                 }
                 bool oursWins = winners.Contains((0, 0));
                 Console.Error.WriteLine($"    stem {a0:0.000}..{b0:0.000} (ours w={b0 - a0:0.000})"
@@ -3421,6 +3461,8 @@ namespace WgpuInterop.Tests.Text
                     + $"{a0:0.0000},{b0 - a0:0.0000},"
                     + $"{Plain(a0):0.0000},{Plain(b0) - Plain(a0):0.0000},"
                     + $"{lLo:0.0000},{lHi:0.0000},{wLo:0.0000},{wHi:0.0000},"
+                    + $"{rLo:0.0000},{rHi:0.0000},"
+                    + $"{cLo:0.0000},{cHi:0.0000},"
                     + $"{best:0},{(oursWins ? 1 : 0)}");
             }
         }
