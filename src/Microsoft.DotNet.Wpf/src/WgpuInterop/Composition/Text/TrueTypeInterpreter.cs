@@ -471,6 +471,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the top of a bowl at the x-height line: d, q and c all miss at the point whose start y
         /// is 6.14, and d and q miss it by 24/64 of a pixel, the largest differences in the
         /// table.</para>
+        /// <para>And it PEAKS WHERE THE ERROR PEAKS. Same 23 glyphs, same 413 interpolated
+        /// points, by size: 11 impossible at 9ppem, 14 at 10, 40 at 12, 28 at 16. The band
+        /// 11 to 13 that measures three times worse than its neighbours is the band where our
+        /// touch set diverges most from GDI's, which is the first account of that band that
+        /// does not have to invoke a stem-width rule nobody can find.</para>
         /// <para>Which retires the reading of the whole-pixel-MDAP table that suggested this: N and
         /// M becoming near-exact under the coarse grid is a COINCIDENCE, the anchors moving so far
         /// that IUP happens to drop the diagonals near where GDI has them. The grid was never the
