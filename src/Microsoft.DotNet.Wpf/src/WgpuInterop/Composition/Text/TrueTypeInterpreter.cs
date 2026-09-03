@@ -516,6 +516,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// left edges inside, against 55 at -3/64, 48 at -8/64, 43 at +2/64 and 24 at +8/64 --
         /// and the signed error runs -12/64 to +11/64 with a median of -2. There is no
         /// systematic shift to remove; the error is scatter about a correct centre.</para>
+        /// <para>AND IT IS GEOMETRY, NOT RASTERIZATION -- the last alternative, checked rather
+        /// than assumed. On the no-program synthetic bars, which are pure rasterization with no
+        /// hinting anywhere, our lamp coverage against GDI's differs in 0 lamps at 8, 9, 18 and
+        /// 19ppem and in 24 to 160 elsewhere, out of 115,000 to 322,000 compared at each size:
+        /// six hundredths of one per cent at worst. Nothing that small can produce a scatter of
+        /// twelve sixty-fourths in where a stem lands.</para>
         /// <para>THE SCATTER IS ABOUT TWICE THE TOLERANCE. Our stems land within +/-12/64 of
         /// GDI's, and a geometry error under 6/64 cannot appear in the output at all (see
         /// HowFinelyOurRasterizerResolves). Half the scatter therefore shows and half does
