@@ -1923,7 +1923,11 @@ namespace System.Drawing
 								WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, col), emPx, sims, family, out ux, out unused2);
 							WebGpuBackend.GpuRaster.MeasureText (line.Substring (col, 1), emPx, sims, family, out uw, out unused2);
 							float uy = ty + i * lineHeight + baseline + emPx;
-							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw, uy, argb);
+							// uw wide, so it ENDS at one less -- DrawLine's end point is inclusive.
+							// The same off-by-one as the underline below, found there against
+							// Windows' LinkLabel; this one only shows when the mnemonics are
+							// displayed, which is why the window never caught it.
+							GpuRecorder.DrawLine (tx + ux, uy, tx + ux + uw - 1f, uy, argb);
 						}
 					}
 
