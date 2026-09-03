@@ -4038,6 +4038,34 @@ namespace WgpuInterop.Tests.Text
             if (!string.IsNullOrEmpty(path)) File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>The face the renderer will link to for this text, or the requested one when
+        /// it copes -- the same choice EmitText makes.</summary>
+        private static TrueTypeFont FaceThatDraws(TrueTypeFont requested, string text)
+        {
+            char needed = ' ';
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
+                if (requested.GlyphIndex(c) > 0) return requested;
+                if (needed == ' ') needed = c;
+            }
+            if (needed == ' ') return requested;
+            foreach (string family in FontFiles.LinkCandidates())
+            {
+                string? file = FontFiles.Find(family, bold: false, italic: false);
+                if (file is null) continue;
+                byte[] bytes;
+                try { bytes = File.ReadAllBytes(file); } catch (IOException) { continue; }
+                int sfnt = FontFiles.SfntOffset(bytes);
+                if (CffFont.IsCff(bytes, sfnt)) continue;
+                TrueTypeFont candidate;
+                try { candidate = new TrueTypeFont(bytes, false, false, sfnt); }
+                catch (Exception) { continue; }
+                if (candidate.GlyphIndex(needed) > 0) return candidate;
+            }
+            return requested;
+        }
+
         /// <summary>The same column profile, for what WE draw.</summary>
         private double[] OurProfile(TrueTypeFont font, string text)
         {
@@ -4192,12 +4220,41 @@ namespace WgpuInterop.Tests.Text
                 ("بتث", "arabic beh teh theh"),
                 ("العربية", "arabic al-arabiyya"),
                 ("हिन्दी", "devanagari hindi"),
+                // Reph: an initial ra+virama is drawn as a mark ABOVE the end of the cluster,
+                // which is the other reordering Indic needs and a different code path from the
+                // pre-base matra.
+                ("कर्म", "devanagari karma (reph)"),
+                ("स्त्री", "devanagari stri (3 conjunct)"),
+                // The other Indic scripts, to find out whether this generalises or was fitted to
+                // the one script that was measured.
+                ("বাংলা", "bengali bangla"),
+                ("தமிழ்", "tamil tamizh"),
+                ("తెలుగు", "telugu telugu"),
+                ("ಕನ್ನಡ", "kannada kannada"),
+                ("ગુજરાતી", "gujarati gujarati"),
+                ("മലയാളം", "malayalam malayalam"),
                 ("中文", "chinese zhongwen"),
                 // Lam-alef: the one Arabic pair with no unjoined spelling, so it exercises the
                 // LIGATURE path rather than the positional one. Two glyphs must become one.
                 ("لا", "arabic lam-alef"),
                 ("الله", "arabic allah"),
             };
+            // The face that actually DRAWS the non-Latin samples is the linked one, not the
+            // probe family -- reporting the probe's tables for them measures the wrong font.
+            foreach (string linked in new[] { "Nirmala UI", "Microsoft YaHei" })
+            {
+                string? lf = FontFiles.Find(linked, bold: false, italic: false);
+                if (lf is null) continue;
+                byte[] lbytes = File.ReadAllBytes(lf);
+                if (CffFont.IsCff(lbytes, FontFiles.SfntOffset(lbytes))) continue;
+                var lfont = new TrueTypeFont(lbytes, false, false, FontFiles.SfntOffset(lbytes));
+                if (lfont.Gsub is not GsubTable lg) { report.AppendLine($"   {linked}: no GSUB"); continue; }
+                report.AppendLine($"   {linked} scripts: " + string.Join(" ", lg.Scripts()));
+                foreach (string sc in new[] { "knd2", "tml2" })
+                    foreach (string f in lg.Features(sc))
+                        report.AppendLine($"      {sc}/{f}: types "
+                                          + string.Join(",", lg.LookupTypes(sc, f)));
+            }
             if (font.Gsub is GsubTable g0)
             {
                 report.AppendLine("   scripts: " + string.Join(" ", g0.Scripts()));
@@ -4229,11 +4286,15 @@ namespace WgpuInterop.Tests.Text
                 // What the shaper made of it: fewer glyphs than characters means a ligature
                 // formed, and a glyph id that differs from the plain cmap mapping means a
                 // positional form was substituted. Ratios alone cannot tell either.
+                // Shaped with the face that will actually DRAW it. Reporting the probe family's
+                // glyph count for a script the probe family does not have was measuring nothing:
+                // every non-Latin row said "0 substituted" because every glyph id was 0.
+                TrueTypeFont drawn = FaceThatDraws(font, text);
                 var shaped = new List<ShapedGlyph>();
-                new OpenTypeTextShaper().Shape(font, text, shaped);
+                new OpenTypeTextShaper().Shape(drawn, text, shaped);
                 int substituted = 0;
                 for (int g = 0; g < shaped.Count && g < text.Length; g++)
-                    if (shaped[g].GlyphId != font.GlyphIndex(text[g])) substituted++;
+                    if (shaped[g].GlyphId != drawn.GlyphIndex(text[g])) substituted++;
                 report.AppendLine($"   {name,-24} {mine2,10}   {theirs2,11}   "
                                   + $"{(theirs2 == 0 ? 0 : mine2 / (double) theirs2),6:0.000}"
                                   + $"   {differing,12}   {text.Length}ch -> {shaped.Count}gl,"

@@ -77,6 +77,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 foreach ((int type, int _) in SubTables(lookup)) yield return type;
         }
 
+        /// <summary>Whether the face registers this script AT ALL.
+        /// <para>Strictly: unlike the feature lookups, this must not fall back to the face's
+        /// default script, or every tag ever asked about comes back present.</para></summary>
+        public bool HasScript(string script) => ScriptTable(script) != 0;
+
         /// <summary>The scripts the face registers.</summary>
         public IEnumerable<string> Scripts()
         {
