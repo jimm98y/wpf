@@ -1761,6 +1761,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>And nothing is clamped. A point outside the pair is EXTRAPOLATED by the same ratio;
         /// carrying it along with the nearer reference instead is a reasonable-sounding rule that
         /// the rasterizer this has to agree with does not have.</para></summary>
+        /// <summary>WHY THE TRACE ABOVE EXISTS, and what it settled about Tahoma's 'H'.
+        /// <para>That glyph's left stem is exactly where GDI has it and its whole RIGHT stem sits
+        /// about 0.11px too far right, which looked at first like a rigid displacement of the
+        /// glyph and is not. Followed to the instruction, the right stem is placed by an IP whose
+        /// two references are BOTH PHANTOM POINTS -- rp1 the origin, rp2 the advance -- so what
+        /// that instruction does is scale the glyph into its compatible width, and the ratio is
+        /// the whole story.</para>
+        /// <para>Measured rather than inferred, which mattered: the face's design advance is 1383
+        /// font units and the advance phantom sits at 8.000px, so we compress by 8/8.10 = 0.988
+        /// where GDI's own intervals want about 0.964. Quantizing the phantom differently is not
+        /// the answer -- WPF_PP2_ROUND measures 2,343,248 rounded, 2,482,248 not quantized at all,
+        /// and 7,182,196 ceiled -- so rounding it is right and already what ships.</para>
+        /// <para>AND THE RATIO IS NOT SYSTEMATIC, which is what kills the idea. Solved against
+        /// GDI's pixels at 12ppem, Tahoma's 'H' and 'n' are too far right on their right-hand side,
+        /// its 'o' is 0.68px WIDER than GDI's overall, and its 'm' sits up to 0.6px LEFT. One
+        /// compression ratio cannot produce all three. What is left is per-glyph shape.</para>
+        /// <para>Also dead, and reverted rather than shipped: rounding a distance measured from a
+        /// PHANTOM point on the whole pixel while everything else keeps the fine grid. It reads
+        /// well -- such a distance is a side bearing, which decides where a glyph sits between its
+        /// neighbours rather than how it is shaped -- and it changes NOTHING, 2,343,248 either way,
+        /// because the instructions that place these edges measure from outline points. The 'H'
+        /// instruction this was built for has rp0=1.</para></summary>
         private void InterpolatePoints()
         {
             Zone z0 = ZoneOf(_gs.Zp0), z1 = ZoneOf(_gs.Zp1), z2 = ZoneOf(_gs.Zp2);
@@ -1785,6 +1807,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 ? DualProject(z1.OrgX[_gs.Rp2] - baseX, z1.OrgY[_gs.Rp2] - baseY)
                 : DualProject(z1.OrusX[_gs.Rp2] - baseX, z1.OrusY[_gs.Rp2] - baseY);
             int curRange = Project(z1.CurX[_gs.Rp2] - baseCurX, z1.CurY[_gs.Rp2] - baseCurY);
+
+            if (_dumpActive)
+                Console.Error.WriteLine($"      IP between rp1={_gs.Rp1} and rp2={_gs.Rp2}:"
+                    + $" font units {baseX} to {(twilight ? z1.OrgX[_gs.Rp2] : z1.OrusX[_gs.Rp2])}"
+                    + $" (range {oldRange}), pixels {baseCurX / 64f:0.000} to"
+                    + $" {z1.CurX[_gs.Rp2] / 64f:0.000} (range {curRange / 64f:0.000})"
+                    + $" -- scaling by {(oldRange == 0 ? 0 : 64.0 * curRange / oldRange):0.0000}"
+                    + $" px per font unit");
 
             for (int i = 0; i < _gs.Loop; i++)
             {
