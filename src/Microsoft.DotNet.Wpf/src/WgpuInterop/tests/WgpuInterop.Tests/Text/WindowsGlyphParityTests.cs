@@ -3964,6 +3964,72 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>ONE SCANLINE THROUGH ONE STEM, ours against GDI's, as RGB triples.
+        /// <para>At a size the face declines to grid-fit there is no interpreter in the way: the
+        /// outline is the scaled outline, which we already know matches GDI's exactly. So whatever
+        /// disagrees at 8ppem is the RASTERIZER, THE FILTER AND THE CURVE and nothing else -- the
+        /// cleanest view of the ClearType stage available, with the hinting confound removed.</para>
+        /// <para>It prints values rather than a score because the question is the SHAPE of the
+        /// disagreement: a stem one lamp too far left, one lamp too wide, or the same lamps at
+        /// different heights are three different bugs and one number cannot tell them apart. And
+        /// the ink is NOT the thing to match -- raising the contrast until the ink agrees leaves
+        /// the differing-pixel count exactly where it was.</para>
+        /// <para>WPF_SCANLINE=family/char/ppem.</para></summary>
+        [Fact]
+        public void OneScanlineThroughAStem_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_SCANLINE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SCANLINE=family/char/ppem");
+            string[] parts = spec!.Split('/');
+            Assert.True(parts.Length == 3, "WPF_SCANLINE=family/char/ppem");
+            int ppem = int.Parse(parts[2]);
+
+            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0]);
+            var font = new TrueTypeFont(bytes, false, false, sfnt);
+
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, false, false);
+            Gdi.s_rawRgb = null;
+            byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
+
+            // The row with the most ink: the middle of the stem, wherever it landed.
+            int best = 0;
+            long bestInk = -1;
+            for (int y = 0; y < Height; y++)
+            {
+                long ink = 0;
+                for (int x = 0; x < Width; x++)
+                    for (int ch = 0; ch < 3; ch++) ink += 255 - raw[(y * Width + x) * 4 + ch];
+                if (ink > bestInk) { bestInk = ink; best = y; }
+            }
+
+            Console.Error.WriteLine($"== {parts[0]} '{parts[1]}' @{ppem}, row {best}"
+                                    + $" (grid-fit: {font.WantsGridFit(ppem)})");
+            // SEVERAL ROWS, not one. A feature can be absent from a row because it is thin and
+            // we drew it lightly, or because it is THERE AND ONE ROW UP -- and a single scanline
+            // cannot tell those apart. It read as a sampling problem until the rows either side
+            // showed the ink sitting a row away.
+            Console.Error.WriteLine("   y   x     GDI  (r,g,b)      ours (r,g,b)      delta");
+            for (int y = Math.Max(0, best - 2); y <= Math.Min(Height - 1, best + 2); y++)
+            for (int x = 0; x < Width; x++)
+            {
+                int i = (y * Width + x) * 4;
+                // The DIB is BGRA and ours is RGBA: read each in its own order, which is the
+                // channel-order trap that once reported a control glyph as 336 lamps wrong.
+                int gr = raw[i + 2], gg = raw[i + 1], gb = raw[i];
+                int orr = ours[i], og = ours[i + 1], ob = ours[i + 2];
+                if (gr == 255 && gg == 255 && gb == 255 && orr == 255 && og == 255 && ob == 255)
+                    continue;
+                Console.Error.WriteLine($"   {y,3} {x,3}   {gr,3} {gg,3} {gb,3}       {orr,3} {og,3} {ob,3}"
+                                        + $"      {orr - gr,4} {og - gg,4} {ob - gb,4}");
+            }
+        }
+
         /// <summary>HOW OUR WEIGHT TRACKS GDI'S, by size and by boldness.
         /// <para>The specimen is tracked as one absolute total, which cannot be compared across
         /// sizes: a 40ppem line has five times the ink of a 10ppem one, so the same absolute error

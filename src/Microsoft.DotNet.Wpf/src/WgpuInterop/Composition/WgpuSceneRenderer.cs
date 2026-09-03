@@ -89,9 +89,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// suite runs 10..20ppem only, so it cannot see the first regime at all, and the
         /// evidence for vertical sampling THERE is separate and stands: our lamp spread against
         /// GDI's is 1.193 at 7ppem and 1.153 at 8 where 11-19 sit at 0.97-1.04. Splitting the
-        /// two keeps that and takes the 20ppem win.</para></summary>
+        /// two keeps that and takes the 20ppem win.</para>
+        /// <para>THREE, re-measured once each row was thresholded before the rows were averaged
+        /// rather than after (see PathRasterizer.RowsThenThreshold). Two was chosen under the old
+        /// order, where extra samples could only make a horizontal feature vanish. On the specimen:
+        /// ppem 8 gives 3,237,055 / 3,078,070 / 3,175,540 and ppem 10 gives 1,459,248 / 1,420,779 /
+        /// 1,450,748 for two, three and four -- and an ODD count wins for the reason already
+        /// written down below, that it includes the scanline centre and GDI samples there.</para>
+        /// </summary>
         private static readonly int SymmetricRows =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 2;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 3;
 
         /// <summary>Vertical samples when the face asks for symmetric smoothing and IS
         /// grid-fitted -- WPF_SYM_ROWS_FIT, one. See SymmetricRows for why these are two.</summary>

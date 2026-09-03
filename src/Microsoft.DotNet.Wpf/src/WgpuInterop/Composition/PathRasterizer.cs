@@ -562,10 +562,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     c[i] = new Vector2(c[i].X * scale, c[i].Y);
 
             int subWidth = width * SubpixelsPerPixel;
-            byte[] samples = FillCoverage(contours, path.FillRule, originX * scale, originY,
-                                          subWidth * HalfLamps, height,
-                                          SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows,
-                                          MinStemSubpixels * HalfLamps, CentreSample);
+            int rows = SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows;
+            byte[] samples = RowsThenThreshold(contours, path.FillRule, originX * scale, originY,
+                                               subWidth, height, rows);
             // Filtering the 6x samples STRAIGHT into lamps was tried, on the grounds that the paper
             // calls this "a 6x1 filtering technique" -- one operation, six samples in and three
             // lamps out -- where ours is two, thresholding each half-lamp at 128 and then running a
@@ -574,8 +573,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // same order it costs 759,520 -> 803,759, and 822,317 / 841,529 at other gammas. The
             // threshold earns its place: it sharpens, and averaging the fine samples instead gives
             // away the edge.
-            samples = HalfLamps > 1 ? CollapseHalfLamps(samples, subWidth, height) : samples;
-            Quantize(samples);
             // SYMMETRIC SMOOTHING, when the face's gasp asks for it at this size. It is a
             // filter and not more samples: sweeping the vertical SAMPLE count at 20ppem gives
             // 2,299,096 / 3,281,860 / 2,303,143 / 2,496,104 for one to four, worst at the even
@@ -902,7 +899,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return FillCoverage(contours, path.FillRule, originX, originY, width, height);
         }
 
-        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height, int verticalSamples = VerticalSamples, float minSpan = 0f, bool centreSample = false)
+        /// <summary>THRESHOLD EACH ROW, THEN AVERAGE THEM -- not the other way round.
+        /// <para>The half-lamp threshold is a binarization and it is right: it sharpens a vertical
+        /// edge and it is what makes our lamps GDI's. But it was applied to rows that had ALREADY
+        /// been averaged together, which conflates the two axes. A horizontal bar covering 28% of a
+        /// pixel row averages to about 71, thresholds to NOTHING, and the bar disappears; with two
+        /// coarse samples the same bar rounds the other way and comes out solid black.</para>
+        /// <para>Segoe UI's 'H' at 8ppem showed both. Its two stems matched GDI byte for byte on
+        /// every row while its CROSSBAR was absent at sixteen samples and full black at two, where
+        /// GDI draws it across two rows at 219 and 182.</para>
+        /// <para>The comment on SubpixelRows states the assumption that made the old order safe --
+        /// "y hinting has already put every horizontal edge on a pixel boundary and there is no
+        /// partial row" -- and that is exactly false where the face's gasp declines to grid-fit:
+        /// below 9ppem for all six specimen faces, and below 11 for Consolas, which is why Consolas
+        /// is the one face that over-inks at 10ppem.</para>
+        /// <para>One row is the overwhelmingly common case and takes the same path it always did.
+        /// </para></summary>
+        private static byte[] RowsThenThreshold(List<List<Vector2>> contours, FillRule fillRule,
+                                                int originX, int originY, int subWidth, int height,
+                                                int rows)
+        {
+            if (rows < 1) rows = 1;
+            byte[] One(float offset)
+            {
+                byte[] one = FillCoverage(contours, fillRule, originX, originY,
+                                          subWidth * HalfLamps, height, 1,
+                                          MinStemSubpixels * HalfLamps, CentreSample, offset);
+                one = HalfLamps > 1 ? CollapseHalfLamps(one, subWidth, height) : one;
+                Quantize(one);
+                return one;
+            }
+
+            if (rows == 1) return One(0.5f);
+
+            var accum = new int[subWidth * height];
+            for (int r = 0; r < rows; r++)
+            {
+                byte[] one = One((r + 0.5f) / rows);
+                for (int i = 0; i < accum.Length && i < one.Length; i++) accum[i] += one[i];
+            }
+            var samples = new byte[subWidth * height];
+            for (int i = 0; i < samples.Length; i++) samples[i] = (byte) (accum[i] / rows);
+            return samples;
+        }
+
+        private static byte[] FillCoverage(List<List<Vector2>> contours, FillRule fillRule, int originX, int originY, int width, int height, int verticalSamples = VerticalSamples, float minSpan = 0f, bool centreSample = false, float rowOffset = -1f)
         {
             var bytes = new byte[width * height];
             if (width <= 0 || height <= 0 || contours.Count == 0) return bytes;
@@ -933,7 +974,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int rowBase = py * width;
                 for (int s = 0; s < verticalSamples; s++)
                 {
-                    float sampleY = originY + py + (s + 0.5f) / verticalSamples;
+                    // rowOffset places THE one sample when the caller is stepping the rows
+                    // itself, so that each row can be thresholded before they are averaged.
+                    float sampleY = originY + py
+                                    + (rowOffset >= 0f ? rowOffset : (s + 0.5f) / verticalSamples);
                     crossings.Clear();
                     foreach (Edge e in edges)
                     {
