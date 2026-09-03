@@ -453,6 +453,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>AND THE IP IS INNOCENT -- it is the MDAP after it, which makes the remaining
+        /// problem a CONFLICT rather than a bug.
+        /// <para>Point 1 of 'H' is interpolated between rp1 = point 5 and rp2 = point 13, the
+        /// ADVANCE phantom. That phantom is rounded before the program runs -- 8.537 pixels to 9 --
+        /// while its unscaled original stays 8.537, so IP legitimately stretches everything between
+        /// them by 9.000/8.537. Working it in the font units IP actually uses:</para>
+        /// <code>
+        ///   1.13 + 910 units * 7.87px / 1268 units = 6.778
+        /// </code>
+        /// <para>which is exactly what we produce, so our IP matches the specification and GDI
+        /// arrives at the same 6.778. The whole difference is the MDAP[r] that follows: GDI rounds
+        /// 6.778 to 7.0 and we round it to 6.8125. Both of 'H''s stem edges are whole pixels in
+        /// GDI (1.0 and 7.0) and sixteenths in ours (1.125 and 6.8125), so for THIS glyph a
+        /// whole-pixel MDAP is exactly right.</para>
+        /// <para>It is not right generally: making MDAP round on whole pixels costs 9,137,908
+        /// against 5,226,015. So some glyphs want the coarse grid and others do not, and the
+        /// question is what tells them apart -- not which single grid is correct, because neither
+        /// is. Note that not rounding x AT ALL costs only 1.7%, so the fine grid is nearly the same
+        /// as no rounding; the coarse one is the only real choice being made.</para>
+        /// <para>A promising place to look: MDAP[r] rounds with the round state the PROGRAM set,
+        /// and ours multiplies by the ClearType grid before applying it, which overrides what the
+        /// face asked for. Segoe UI's 'H' runs with roundState=ToGrid -- whole pixels -- and that
+        /// is what GDI gives it. Check what round state the glyphs that PREFER the fine grid are
+        /// running under before changing anything.</para></summary>
         /// <summary>'H' AT 12PPEM, RUN TO THE INSTRUCTION. The smallest fully-characterised case
         /// of what is left, so the next attempt has somewhere concrete to start.
         /// <para>GDI's geometry is exactly recoverable here -- the solver reaches residual 0 -- and
