@@ -3359,8 +3359,7 @@ namespace WgpuInterop.Tests.Text
         /// that shape to find. GDI's ClearType stem placement is the outcome of the face's own
         /// program under conditions we already reproduce better than any alternative anyone has
         /// proposed, and the residue is per-stem detail below a sixteenth of a pixel. Anything
-        /// further needs a different kind of evidence, not another candidate rule.</para>
-        </summary>
+        /// further needs a different kind of evidence, not another candidate rule.</para></summary>
         [Fact]
         public void SolveOneStemJointly()
         {
