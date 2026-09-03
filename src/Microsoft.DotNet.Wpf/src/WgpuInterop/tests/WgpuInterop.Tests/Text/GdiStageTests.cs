@@ -779,13 +779,35 @@ namespace WgpuInterop.Tests.Text
                     ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
                     : parts[1];
                 int gTotal = 0, gExact = 0, pTotal = 0, pOffX = 0, pOffY = 0;
-                int unpairable = 0;
+                int unpairable = 0, notFitted = 0, gdiFittedAnyway = 0;
                 foreach (char c in chars)
                 {
                     if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem, out _))
                     { Console.Error.WriteLine($"'{c}': we decline to fit it"); continue; }
                     TrueTypeInterpreter.GlyphPoints? pts = font.LastHintedPoints;
-                    if (pts is null || pts.PointCount == 0) continue;
+                    // NOT a silent skip. This said nothing, and a face whose interpreter never
+                    // runs at a size reported "0 of 0 glyphs exact" -- which reads as "nothing to
+                    // report" and means "we did not grid-fit this face at all". Consolas at 10ppem
+                    // was in that state, and it is the worst face in the pixel comparison.
+                    if (pts is null || pts.PointCount == 0)
+                    {
+                        notFitted++;
+                        // ...and DID GDI? Declining to fit is only a bug if GDI fitted. Its own
+                        // two reports answer it: identical fitted and unfitted outlines mean GDI
+                        // declined as well, which is gasp doing its job and not a disagreement.
+                        List<Vector2> gdiPlain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true,
+                                                                    bold: bold, italic: italic));
+                        List<Vector2> gdiFitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false,
+                                                                     bold: bold, italic: italic));
+                        bool gdiFitTooo = gdiPlain.Count != gdiFitted.Count;
+                        for (int i = 0; !gdiFitTooo && i < gdiPlain.Count; i++)
+                            if (gdiPlain[i] != gdiFitted[i]) gdiFitTooo = true;
+                        if (gdiFitTooo) gdiFittedAnyway++;
+                        if (!quiet)
+                            Console.Error.WriteLine($"'{c}': WE DID NOT GRID-FIT IT"
+                                + (gdiFitTooo ? " -- BUT GDI DID" : " (nor did GDI)"));
+                        continue;
+                    }
 
                     List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true,
                                                              bold: bold, italic: italic));
@@ -855,7 +877,9 @@ namespace WgpuInterop.Tests.Text
                 Console.Error.WriteLine($"TOTAL {parts[0]}{(styleSpec == "" ? "" : " " + styleSpec)} @{ppem}"
                     + $"{(bilevel ? " bi-level" : " ClearType")}: {gExact} of {gTotal} glyphs"
                     + $" exact; of {pTotal} points {pOffX} differ in x, {pOffY} in y"
-                    + (unpairable == 0 ? "" : $"   [{unpairable} glyphs unpairable]"));
+                    + (unpairable == 0 ? "" : $"   [{unpairable} glyphs unpairable]")
+                    + (notFitted == 0 ? "" : $"   [{notFitted} NOT GRID-FITTED BY US,"
+                                                  + $" GDI fitted {gdiFittedAnyway} of them]"));
             }
             finally
             {

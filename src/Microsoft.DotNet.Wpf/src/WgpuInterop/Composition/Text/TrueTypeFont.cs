@@ -999,9 +999,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// one and what we did with all of them.</para></summary>
         public bool WantsGridFit(float pixelsPerEm) => FaceWantsGridFit(pixelsPerEm);
 
+        /// <summary>WPF_GASP_FIT=always grid-fits whatever the face's gasp says.
+        /// <para>For asking an empirical question the oracles cannot answer. Consolas' gasp clears
+        /// GRIDFIT for ppem 10 and below, so we do not fit it there -- and GDI's GetGlyphOutline
+        /// fits it anyway, because GGO hints the outline regardless of gasp, which is a fact about
+        /// the ORACLE and not about what the renderer does. Consolas is also the worst face in the
+        /// pixel comparison at those sizes, so the question is worth settling by rendering.</para>
+        /// </summary>
+        private static readonly bool s_alwaysFit =
+            System.Environment.GetEnvironmentVariable("WPF_GASP_FIT") == "always";
+
         private bool FaceWantsGridFit(float pixelsPerEm)
         {
-            if (_gasp < 0) return true;
+            if (_gasp < 0 || s_alwaysFit) return true;
 
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ranges = U16(_gasp + 2);
