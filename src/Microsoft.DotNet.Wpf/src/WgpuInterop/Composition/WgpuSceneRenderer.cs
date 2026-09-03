@@ -4446,8 +4446,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // tahomabd.ttf, which is not the regular file, so the old test said 'styled' and
                 // suppressed BOTH simulations -- upright bold where Windows shears it.
                 byte[] bytes = System.IO.File.ReadAllBytes(path);
-                Text.FontFiles.DeclaredStyle(bytes, 0, out bool fileBold, out bool fileItalic);
-                return new Text.TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic);
+                // A COLLECTION HAS NO SFNT AT BYTE ZERO. Cambria resolves to cambria.ttc, and
+                // opening it at zero threw 'missing head table', which the catch below turned
+                // into a silent fallback to the default face -- so the family drew in the
+                // wrong typeface and nothing said so.
+                int sfnt = Text.FontFiles.SfntOffset(bytes);
+                Text.FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                return new Text.TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic,
+                                             sfnt);
             }
             catch (Exception)
             {

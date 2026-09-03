@@ -3837,6 +3837,60 @@ namespace WgpuInterop.Tests.Text
             File.AppendAllText(path!, report.ToString());
         }
 
+        /// <summary>WHAT THE PRODUCT'S OWN PARSER MAKES OF EACH FACE'S 'gasp'.
+        /// <para>Asked because a scratchpad probe reported four common faces as having no gasp at
+        /// all when they demonstrably do, and the difference matters: a face we think has no gasp
+        /// gets no grid fitting and no symmetric smoothing from us at any size. The question is not
+        /// what a script thinks, it is what THIS parser does, so ask it directly.</para>
+        /// <para>WPF_GASP_REPORT=&lt;path&gt; to collect it.</para></summary>
+        [Fact]
+        public void EveryFacesGasp_AsWeReadIt()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "reads the installed faces");
+            string? path = Environment.GetEnvironmentVariable("WPF_GASP_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GASP_REPORT to collect this");
+
+            string[] families =
+            {
+                "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas",
+                "Calibri", "Georgia", "Courier New", "Trebuchet MS", "Segoe UI Semibold",
+                "Microsoft Sans Serif", "Cambria", "Candara", "Corbel", "Constantia",
+            };
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== gasp as the product reads it: gridfit / symmetric, by size");
+            report.AppendLine("   family                    style   8   12   16   18   20   24");
+            foreach (string fam in families)
+                foreach ((string label, bool bold, bool italic) in
+                         new[] { ("R", false, false), ("B", true, false), ("I", false, true) })
+                {
+                    string? file = FontFiles.Find(fam, bold, italic);
+                    if (file is null) { continue; }
+                    byte[] bytes;
+                    try { bytes = File.ReadAllBytes(file); } catch (IOException) { continue; }
+                    // A .ttc holds several faces and needs an offset; opening it at zero
+                    // throws for a missing 'head'. Report which files that is rather than
+                    // failing the run, because 'we cannot read this face at all' is itself
+                    // the answer to the question being asked.
+                    TrueTypeFont font;
+                    try { font = new TrueTypeFont(bytes, false, false, FontFiles.SfntOffset(bytes)); }
+                    catch (Exception ex)
+                    {
+                        report.AppendLine($"   {fam,-24} {label,-5}  UNREADABLE: "
+                            + $"{System.IO.Path.GetFileName(file)} -- {ex.Message}");
+                        continue;
+                    }
+                    var row = new System.Text.StringBuilder();
+                    foreach (int ppem in new[] { 8, 12, 16, 18, 20, 24 })
+                    {
+                        bool grid = ((IHintedGlyphFont) font).WantsGridFit(ppem);
+                        bool sym = ((IHintedGlyphFont) font).WantsSymmetricSmoothing(ppem);
+                        row.Append($"  {(grid ? "G" : "-")}{(sym ? "S" : "-")} ");
+                    }
+                    report.AppendLine($"   {fam,-24} {label,-5}{row}");
+                }
+            File.AppendAllText(path!, report.ToString());
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));

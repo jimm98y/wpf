@@ -82,6 +82,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// this machine has nothing by that name. A style with no file of its own resolves to the
         /// regular one, which the font stack then synthesizes -- that is what the bold and oblique
         /// flags on TrueTypeFont are for.</summary>
+        /// <summary>Where a face's sfnt header starts in the file: 0 for an ordinary font, and
+        /// the first face's offset for a COLLECTION.
+        /// <para>A .ttc begins with a 'ttcf' header and a table of offsets, one per face, so
+        /// there is no sfnt at byte zero and everything that reads a table directory from
+        /// there fails. Cambria is the case in point: FontFiles resolves it to cambria.ttc,
+        /// the renderer opened it at zero, TrueTypeFont threw "missing 'head' table", the
+        /// catch swallowed it and the family fell back to the default face -- so Cambria text
+        /// drew in the wrong typeface entirely, silently.</para>
+        /// <para>The first face is the right one for a family lookup: a collection groups
+        /// related faces and the one the family names comes first.</para></summary>
+        public static int SfntOffset(byte[] data)
+        {
+            if (data.Length < 16 || data[0] != (byte) 't' || data[1] != (byte) 't'
+                || data[2] != (byte) 'c' || data[3] != (byte) 'f')
+                return 0;
+            int count = (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11];
+            if (count <= 0 || data.Length < 16) return 0;
+            int off = (data[12] << 24) | (data[13] << 16) | (data[14] << 8) | data[15];
+            return off > 0 && off < data.Length ? off : 0;
+        }
+
         public static string? Find(string? family, bool bold, bool italic)
         {
             if (string.IsNullOrWhiteSpace(family)) return null;
