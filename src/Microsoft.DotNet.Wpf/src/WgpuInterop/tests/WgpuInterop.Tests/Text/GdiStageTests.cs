@@ -747,6 +747,7 @@ namespace WgpuInterop.Tests.Text
                     ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
                     : parts[1];
                 int gTotal = 0, gExact = 0, pTotal = 0, pOffX = 0, pOffY = 0;
+                int unpairable = 0;
                 foreach (char c in chars)
                 {
                     if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem, out _))
@@ -756,8 +757,32 @@ namespace WgpuInterop.Tests.Text
 
                     List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true));
                     List<Vector2> fitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false));
+                    // FITTING CHANGES HOW GGO SEGMENTS THE OUTLINE, so its two reports need not be
+                    // the same length and CANNOT ALWAYS BE PAIRED. Grid-fitting leaves points
+                    // collinear or coincident, GDI emits a line where it emitted a spline, and the
+                    // implied on-curve midpoints go with it -- in BOTH directions: Times New
+                    // Roman's 'B' at 12ppem reports 70 points unfitted against 59 fitted, and
+                    // counting only the on-curve ones reverses it to 40 against 49. So the
+                    // on-curve fallback below is a partial remedy, not a fix, and it buys nothing
+                    // on Times: the round glyphs stay unpairable.
+                    // This is a LIMIT OF THE ORACLE and it is not neutral -- the glyphs it drops
+                    // are the curved ones, which is to say the ones this investigation cares
+                    // about. The count of them is reported, so the sample is never silently
+                    // biased; do not read a face's total without it.
+                    bool onCurveOnly = plain.Count != fitted.Count;
+                    if (onCurveOnly)
+                    {
+                        plain = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: true));
+                        fitted = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: false));
+                    }
                     if (plain.Count != fitted.Count || plain.Count == 0)
-                    { Console.Error.WriteLine($"'{c}': GGO gave {plain.Count}/{fitted.Count}"); continue; }
+                    {
+                        unpairable++;
+                        if (!quiet)
+                            Console.Error.WriteLine($"'{c}': unpairable, GGO segments it"
+                                + $" {plain.Count} points unfitted against {fitted.Count} fitted");
+                        continue;
+                    }
 
                     // GGO reports y DOWNWARD from the baseline; the interpreter works upward.
                     int shown = 0, offX = 0, offY = 0, paired = 0;
@@ -765,6 +790,7 @@ namespace WgpuInterop.Tests.Text
                     var lines = new List<string>();
                     for (int i = 0; i < pts.PointCount; i++)
                     {
+                        if (onCurveOnly && !pts.OnCurve[i]) continue;
                         int j = Nearest(plain, pts.StartX[i], -pts.StartY[i]);
                         if (j < 0) continue;
                         paired++;
@@ -792,7 +818,8 @@ namespace WgpuInterop.Tests.Text
                 }
                 Console.Error.WriteLine($"TOTAL {parts[0]} @{ppem}"
                     + $"{(bilevel ? " bi-level" : " ClearType")}: {gExact} of {gTotal} glyphs"
-                    + $" exact; of {pTotal} points {pOffX} differ in x, {pOffY} in y");
+                    + $" exact; of {pTotal} points {pOffX} differ in x, {pOffY} in y"
+                    + (unpairable == 0 ? "" : $"   [{unpairable} glyphs unpairable]"));
             }
             finally
             {
@@ -800,6 +827,26 @@ namespace WgpuInterop.Tests.Text
                 TrueTypeFont.SubpixelFitting = saved;
                 TrueTypeInterpreter.BiLevelPass = false;
             }
+        }
+
+        /// <summary>Only the points the curve passes THROUGH, in order -- the ones a grid fit
+        /// cannot add or remove, so they pair by index even when the two reports differ in
+        /// length.</summary>
+        private static List<Vector2> FlattenOnCurve(List<PathFigure> figures)
+        {
+            var outp = new List<Vector2>();
+            foreach (PathFigure f in figures)
+            {
+                outp.Add(f.Start);
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: outp.Add(l.Point); break;
+                        case QuadraticBezierSegment q: outp.Add(q.Point); break;
+                        case CubicBezierSegment cu: outp.Add(cu.Point); break;
+                    }
+            }
+            return outp;
         }
 
         /// <summary>Every point of an outline in the order it was reported, so two outlines of the
