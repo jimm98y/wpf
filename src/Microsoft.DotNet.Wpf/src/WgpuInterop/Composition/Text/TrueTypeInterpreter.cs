@@ -454,6 +454,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>AND WHY VERDANA AND TAHOMA DIFFER: MIRP against MDRP. Not a missing rule.
+        /// <para>The face-dependence looked like the last big clue. It is not a clue, it is a
+        /// consequence, and the mechanism is visible in one census of the x pass:</para>
+        /// <code>
+        ///   Verdana 'H'   10 MIRP, 8 of them taking a control value in x, 0 MDRP
+        ///   Tahoma  'H'    6 MDRP, 1 MIRP, 0 control values taken in x
+        /// </code>
+        /// <para>MIRP measures against a CONTROL VALUE; MDRP measures the OUTLINE. Verdana's
+        /// control values agree closely with its own outline distances -- it is a regularly hinted
+        /// face -- so the cut-in never rejects them and the grid has nothing to quantize, and its
+        /// ClearType fit comes out equal to its bi-level fit. Tahoma's MDRPs have no control value
+        /// at all, so their ONLY quantization is the rounding grid: whole pixels under bi-level,
+        /// sixteenths under ClearType, and the two modes therefore share almost nothing.</para>
+        /// <para>Measured as displacement from the unhinted outline, which is the same statement
+        /// without the percentages:</para>
+        /// <code>
+        ///               GDI bi-level moves    our ClearType moves
+        ///   Verdana          0.321px               0.321px      identical
+        ///   Tahoma           0.426px               0.156px
+        ///   Arial            0.302px               0.090px
+        ///   Segoe UI         0.254px               0.094px
+        /// </code>
+        /// <para>So we track GDI in BOTH regimes: full for Verdana, where GDI's ClearType is its
+        /// bi-level fit and ours is too, and damped for the other three, where GDI's ClearType is
+        /// nothing like its bi-level fit and ours is not either. There is no third behaviour hiding
+        /// behind the split, and the model is structurally right for every face tried.</para>
+        /// <para>Which also says where Tahoma's remaining error must live. Its x is decided
+        /// entirely by rounding MDRP's outline distance on the fine grid; the grid constant is a
+        /// measured optimum at every size; so what is left is detail below a sixteenth of a pixel
+        /// and not a mechanism.</para></summary>
         /// <summary>WHAT GDI'S CLEARTYPE X IS, ASKED WITHOUT A MODEL.
         /// <para>Two oracles had never been put side by side. GetGlyphOutline gives GDI's own
         /// BI-LEVEL fitted x exactly; the lamp solver gives the interval its CLEARTYPE pixels

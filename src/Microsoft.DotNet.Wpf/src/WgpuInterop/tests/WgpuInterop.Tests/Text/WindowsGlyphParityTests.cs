@@ -2953,6 +2953,7 @@ namespace WgpuInterop.Tests.Text
             int rigidBefore = 0, rigidAfter = 0, rigidGlyphs = 0;
             int bilevelOk = 0, unhintedOk = 0, oracleTotal = 0;
             int oursOnOracle = 0;
+            double movedBilevel = 0, movedOurs = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3130,6 +3131,12 @@ namespace WgpuInterop.Tests.Text
                                 // comparable: the two oracles can only be read on glyphs
                                 // GGO reports consistently, and ours is defined everywhere.
                                 if (ok) oursOnOracle++;
+                                // HOW FAR EACH MODE MOVES X AT ALL. GDI's bi-level fit
+                                // against the outline it started from, and ours against the
+                                // same, so the two can be compared as displacements rather
+                                // than as scores.
+                                movedBilevel += Math.Abs(bilevel - plainX);
+                                movedOurs += Math.Abs(pts.FitX[i] - plainX);
                             }
                         }
 
@@ -3217,6 +3224,9 @@ namespace WgpuInterop.Tests.Text
                 + $" {unhintedOk} times ({100.0 * unhintedOk / Math.Max(1, oracleTotal):0.0}%),"
                 + $" and ours {oursOnOracle}"
                 + $" ({100.0 * oursOnOracle / Math.Max(1, oracleTotal):0.0}%)");
+            Console.Error.WriteLine($"      displacement from the unhinted outline:"
+                + $" GDI bi-level {movedBilevel / Math.Max(1, oracleTotal):0.000}px per point,"
+                + $" ours {movedOurs / Math.Max(1, oracleTotal):0.000}px");
             Console.Error.WriteLine($"      a per-glyph rigid shift would take {rigidBefore}"
                 + $" coordinates to {rigidAfter}, helping {rigidGlyphs} glyphs");
             Console.Error.WriteLine($"      where the two distances disagree: outline is the one"
