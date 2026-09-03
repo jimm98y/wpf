@@ -454,6 +454,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>AND WHAT THE BAND IS MADE OF: STEM SIDES, MISPLACED RATHER THAN MIS-SIZED.
+        /// <para>The structural report classifies each differing pixel by the direction of GDI's
+        /// own gradient there -- a mostly horizontal gradient is a VERTICAL edge, which is the side
+        /// of a stem. Tahoma's roman, at its band size and at the two sizes either side:</para>
+        /// <code>
+        ///        differing   sum      hist tail    edge  vertical/horizontal/diagonal
+        ///   @14      1513    78,984   232/24        36,649 /  7,190 / 35,145
+        ///   @16      3140   198,252   850/226      117,990 / 12,382 / 67,880
+        ///   @18      1674    82,211   104/31        26,251 /  6,704 / 49,256
+        /// </code>
+        /// <para>At the band size the vertical-edge term is three to four times its neighbours',
+        /// 1766 of the 3140 differing pixels lie on one, and the tail of the histogram -- pixels
+        /// wrong by a LOT rather than a little -- goes up eight-fold. So the band is stem sides,
+        /// which is what its name always said, now shown on a face and a size that have nothing to
+        /// do with the original observation.</para>
+        /// <para>And they are MISPLACED, not mis-sized: the signed sum at 16 is -1,782 against an
+        /// absolute 198,252, so what is wrong cancels almost exactly between the two sides of a
+        /// stem. That is the signature of a stem sitting a fraction of a pixel to one side, not of
+        /// one drawn too thin or too fat -- which agrees with the per-coordinate solve, where
+        /// Tahoma's 'H' has a correct left stem and a right stem 0.11px too far right, and with
+        /// the face's total indifference to the stem-fat constant.</para>
+        /// <para>The specimen's net LIGHTNESS at that size is a separate and much smaller effect:
+        /// ink against Windows is 0.9855 at 16 against 0.9914 at 14 and 0.9982 at 18, about a
+        /// sixth of the error, and the stem-fat correction cannot recover it -- switched on at 16
+        /// it moves the ink ratio only to 0.9863, because at that size the fattening quantizes
+        /// away.</para></summary>
         /// <summary>THE "11 TO 13 BAND" IS NOT ABOUT THOSE SIZES. Every face has a band, and it
         /// sits somewhere else.
         /// <para>That band has been treated throughout as a property of the sizes 11, 12 and 13,
