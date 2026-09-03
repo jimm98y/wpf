@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -181,8 +181,15 @@ namespace WgpuInterop.Tests.Text
         }
 
         /// <summary>
-        /// End to end: a monochrome outline fallback would render black or grey on white, so a
-        /// SATURATED pixel is the thing only real colour layers can produce.
+        /// End to end, on the STRING path -- which is WinForms, and on Windows is deliberately
+        /// monochrome now, because GDI has no COLR support and draws the emoji face's outline.
+        /// <para>So this asserts the platform rule, and does it against the protocol path as its
+        /// own control rather than against a fixed threshold. The old test asked whether ANY pixel
+        /// had a channel spread over 40 and said that "only real colour layers can produce" it,
+        /// which is not true with ClearType: its fringes are colourful, so the test went on passing
+        /// after this path was switched to monochrome, and would have gone on passing if colour had
+        /// broken outright. A share of SATURATED pixels, measured against the path that still
+        /// draws colour, separates the two by a factor of several.</para>
         /// </summary>
         [Fact]
         public void ColrGlyph_RendersSaturatedColour()
@@ -211,8 +218,61 @@ namespace WgpuInterop.Tests.Text
             }
 
             Assert.True(ink > 20, $"the colour glyph rendered almost nothing ({ink} ink pixels)");
-            Assert.True(maxSat > 40,
-                $"max saturation was {maxSat}; a monochrome fallback cannot be distinguished from colour layers below this");
+
+            int stringPath = SaturatedShare(img);
+            int protocolPath = SaturatedShare(ProtocolPathRender(font, gid, W, H, emSize));
+            if (OperatingSystem.IsWindows())
+                Assert.True(protocolPath > stringPath * 2 && protocolPath > 20,
+                    $"on Windows the string path is monochrome by design (GDI has no COLR), so it"
+                    + $" should be far less saturated than the protocol path -- string {stringPath}%,"
+                    + $" protocol {protocolPath}%. Equal shares mean the platform rule is not being"
+                    + " applied; a low protocol share means colour broke everywhere.");
+            else
+                Assert.True(stringPath > 20,
+                    $"only {stringPath}% of the inked pixels are saturated; off Windows this path"
+                    + " draws the colour layers and there is nothing to match GDI about");
+            _ = maxSat;
+        }
+
+        /// <summary>The same glyph through WPF's OWN text path -- already-shaped glyph indices
+        /// arriving as a DrawGlyphRun, rather than a string this renderer shapes itself.
+        /// <para>Shared, because it is both a test of that path and the CONTROL for the string
+        /// path: it still draws the colour layers on every platform, so the two together say
+        /// whether monochrome on Windows is a deliberate rule or a break.</para></summary>
+        private byte[] ProtocolPathRender(TrueTypeFont font, int gid, int w, int h, float emSize)
+        {
+            const uint hRoot = 2, hBlack = 3, hRun = 20, hContent = 6;
+
+            var engine = new MilcoreEngine { FontResolver = _ => font };
+            engine.CreateOrAddRef(hRoot, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(hBlack, 0, 0, 0, 1));
+
+            var indices = new ushort[] { (ushort) gid };
+            var advances = new float[] { font.Advance(gid) * (emSize / font.PixelsPerEm) };
+
+            engine.CreateOrAddRef(hRun, MilResourceTypeId.Null);
+            engine.BeginCommand(MilCmd.GlyphRun(hRun, 0, 8f, 52f, emSize, indices, advances));
+            engine.EndCommand();
+
+            return RenderContent(engine, MilCmd.DrawGlyphRunRecord(hBlack, hRun),
+                                 w, h, hVisual: hRoot, hContent: hContent);
+        }
+
+        /// <summary>The share of inked pixels that are strongly coloured.
+        /// <para>A share, not a maximum: one colourful pixel proves nothing when ClearType puts a
+        /// red edge on one side of every stem and a blue one on the other.</para></summary>
+        private static int SaturatedShare(byte[] img)
+        {
+            int inked = 0, saturated = 0;
+            for (int i = 0; i < img.Length; i += 4)
+            {
+                int r = img[i], g = img[i + 1], b = img[i + 2];
+                int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                if (max >= 250 && min >= 250) continue;
+                inked++;
+                if (max - min > 80) saturated++;
+            }
+            return inked == 0 ? 0 : saturated * 100 / inked;
         }
 
 
@@ -249,22 +309,7 @@ namespace WgpuInterop.Tests.Text
 
             const int W = 64, H = 64;
             const float emSize = 48f;
-            const uint hRoot = 2, hBlack = 3, hRun = 20, hContent = 6;
-
-            var engine = new MilcoreEngine { FontResolver = _ => font };
-            engine.CreateOrAddRef(hRoot, MilResourceTypeId.Visual);
-            engine.SubmitCommand(MilCmd.SolidColorBrush(hBlack, 0, 0, 0, 1));
-
-            var indices = new ushort[] { (ushort)gid };
-            var advances = new float[] { font.Advance(gid) * (emSize / font.PixelsPerEm) };
-
-            engine.CreateOrAddRef(hRun, MilResourceTypeId.Null);
-            engine.BeginCommand(MilCmd.GlyphRun(hRun, 0, 8f, 52f, emSize, indices, advances));
-            engine.EndCommand();
-
-            byte[] img = RenderContent(engine,
-                MilCmd.DrawGlyphRunRecord(hBlack, hRun),
-                W, H, hVisual: hRoot, hContent: hContent);
+            byte[] img = ProtocolPathRender(font, gid, W, H, emSize);
 
             int maxSat = 0, ink = 0;
             for (int i = 0; i < img.Length; i += 4)

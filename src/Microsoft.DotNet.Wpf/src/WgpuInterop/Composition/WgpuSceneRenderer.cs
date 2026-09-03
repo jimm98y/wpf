@@ -4606,7 +4606,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // rather than per glyph. Colour layers cannot join that batch -- they carry their own
                 // colours -- so the batch is flushed first and they are drawn in order on top.
                 var batch = new List<PathFigure>();
-                var colorFont = font as Text.IColorGlyphFont;
+                // COLOUR EMOJI, EXCEPT WHERE GDI IS THE THING WE MUST MATCH.
+                //
+                // This is the string-run path, which is WinForms; WPF's own text arrives already
+                // positioned and does not come through here. On Windows the reference for a
+                // WinForms window is GDI, and GDI HAS NO COLR SUPPORT AT ALL -- it draws the emoji
+                // face's plain outline. Measured at 16ppem: our colour snowman is 261,562 of ink
+                // against GDI's 69,233, and the same glyph as an outline is 68,659. So on Windows
+                // this path draws what GDI draws, and everywhere else -- and on WPF's own text,
+                // whose reference is DirectWrite, which does draw colour -- the artwork stands.
+                //
+                // Only the COLR layers are dropped. The BITMAP path stays: it is what draws the
+                // embedded CJK strikes that GDI itself blits, and turning it off here would undo
+                // the one script that matches Windows exactly.
+                var colorFont = OperatingSystem.IsWindows() ? null : font as Text.IColorGlyphFont;
                 // The pen starts on a whole pixel and moves by whole pixels, which is how Windows
                 // lays a string out: each glyph's advance is rounded to a pixel before the next glyph
                 // is placed. Carrying the fractions along instead left every run a shade narrower than
