@@ -96,6 +96,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _hdmxOffset = -1;   // first device-metrics row, or -1 when the face ships none
         private int _hdmxStride;        // bytes per row
         private int _hdmxRecords;       // how many rows
+        private int _ltshOffset = -1;   // per-glyph linear threshold, or -1 when the face ships none
+        private int _ltshGlyphs;
         private readonly int _glyfOffset;
         private readonly uint[] _loca;          // numGlyphs+1 glyph data offsets
         private readonly ushort[] _advanceWidths;
@@ -248,6 +250,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _hdmxOffset = hdmx + 8;
                     _hdmxStride = stride;
                     _hdmxRecords = records;
+                }
+            }
+
+            // 'LTSH' -- the LINEAR THRESHOLD, one ppem per glyph: at and above it the glyph's
+            // advance is exactly the scaled design advance, and below it the face's hinting moves
+            // it. GDI consults this before it consults the hinted phantom, and we did not consult
+            // it at all, so eight of Arial Italic's capitals came out a pixel wide at 9ppem: their
+            // thresholds are 6 and 7, so Windows takes the linear advance (6.4995 -> 6) where we
+            // ran the program and got exactly 6.5, which rounds to 7.
+            if (tables.TryGetValue("LTSH", out int ltsh) && U16(ltsh) == 0)
+            {
+                int count = U16(ltsh + 2);
+                if (count > 0 && ltsh + 4 + count <= _data.Length)
+                {
+                    _ltshOffset = ltsh + 4;
+                    _ltshGlyphs = count;
                 }
             }
 
@@ -666,6 +684,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
         {
             if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
+            // THEN THE LINEAR THRESHOLD. At or above it the face declares its own advance linear,
+            // so the scaled design advance IS the answer and the glyph program must not be asked.
+            // Segoe UI's italic space is the case that shows both sides of this: its threshold is
+            // 21, so at 20ppem it is NOT linear and takes the sixty-fourths path to 6, while the
+            // regular face's threshold is 1 and the same size takes the linear path to 5.
+            if (_ltshOffset >= 0 && gid >= 0 && gid < _ltshGlyphs)
+            {
+                int threshold = _data[_ltshOffset + gid];
+                if (threshold > 0 && ppemI >= threshold)
+                    return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
+                                       MidpointRounding.AwayFromZero);
+            }
             if (TryGetHintedAdvance(gid, pixelsPerEm, out float hinted)) return hinted;
             // AWAY FROM ZERO, because that is what GDI does and MathF.Round does not: its default
             // is banker's rounding, which sends a half DOWN to the even number.
