@@ -454,6 +454,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>AND WHICH COORDINATES ARE WRONG: the ones the program PLACES, not the ones
+        /// IUP carries.
+        /// <para>The same instrument, asked a second question. For every coordinate, is the value
+        /// we ship one that GDI's own pixels allow -- and was it placed by a fitting instruction or
+        /// interpolated between two that were:</para>
+        /// <code>
+        ///                 program PLACED        IUP interpolated
+        ///   Segoe UI     30 of  54  55.6%      150 of 202  74.3%
+        ///   Tahoma       19 of  52  36.5%      209 of 300  69.7%
+        ///   Arial        55 of  98  56.1%      139 of 190  73.2%
+        /// </code>
+        /// <para>Consistent across three faces that share no hinting style: the coordinates a
+        /// fitting instruction decides are wrong roughly twice as often as the ones IUP carries,
+        /// and the interpolated ones inherit their error from those anchors rather than adding one.
+        /// So the fault is in placement, not interpolation, and the two want completely different
+        /// fixes -- which is why separating them matters more than the totals do.</para>
+        /// <para>It also sharpens the contradiction worth handing on. Our model of GDI's ClearType
+        /// x is "measure the outline, barely round it": the cut-in divided by sixteen means the
+        /// control value is almost never taken. That model is a smooth optimum -- divisors 8 and 32
+        /// are both worse, and taking the control value always is catastrophic -- yet it leaves
+        /// half the placed coordinates outside what GDI allows. So GDI takes the control value
+        /// SOMETIMES, in a pattern a single threshold does not capture, and the next thing to look
+        /// for is what decides it.</para></summary>
         /// <summary>WHOSE TOUCH SET IS IT: the first DERIVED fact about the residue.
         /// <para>WhichPointsGdiTouchedInX asks the question the coordinate comparisons could not.
         /// IUP can only put an untouched point where its two nearest touched neighbours put it, so

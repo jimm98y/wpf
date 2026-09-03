@@ -2942,6 +2942,7 @@ namespace WgpuInterop.Tests.Text
             int totalPoints = 0, totalUntouched = 0, totalImpossible = 0;
             int inRange = 0, inRangeTotal = 0;
             double moved = 0;
+            int touchedOk = 0, touchedTotal = 0, interpOk = 0, interpTotal = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
             try
@@ -3063,8 +3064,14 @@ namespace WgpuInterop.Tests.Text
                         // How far the x fitting moved this point at all. If the machinery
                         // were as inert as each knob measures, this would be near zero.
                         moved += Math.Abs(pts.FitX[i] - pts.StartX[i]);
-                        if (pts.FitX[i] >= ql - 1f / 64f && pts.FitX[i] <= qh + 1f / 64f)
-                            inRange++;
+                        // AND WHICH KIND OF COORDINATE IS WRONG. A point the program PLACED
+                        // being out of range indicts a fitting instruction; an INTERPOLATED
+                        // one indicts the anchors it hangs between. The two want completely
+                        // different fixes, and nothing has ever separated them.
+                        bool ok = pts.FitX[i] >= ql - 1f / 64f && pts.FitX[i] <= qh + 1f / 64f;
+                        if (pts.TouchedX[i]) { touchedTotal++; if (ok) touchedOk++; }
+                        else { interpTotal++; if (ok) interpOk++; }
+                        if (ok) inRange++;
                     }
                     totalPoints += pts.PointCount;
                     totalUntouched += untouched;
@@ -3085,6 +3092,11 @@ namespace WgpuInterop.Tests.Text
                 + $" {inRange} of {inRangeTotal} of our own coordinates"
                 + $" ({100.0 * inRange / Math.Max(1, inRangeTotal):0.0}%) are ones GDI allows;"
                 + $" our x fitting moves a point {moved / Math.Max(1, inRangeTotal):0.000}px on average");
+            Console.Error.WriteLine($"      of the coordinates the program PLACED,"
+                + $" {touchedOk} of {touchedTotal}"
+                + $" ({100.0 * touchedOk / Math.Max(1, touchedTotal):0.0}%) are allowed;"
+                + $" of the ones IUP interpolated, {interpOk} of {interpTotal}"
+                + $" ({100.0 * interpOk / Math.Max(1, interpTotal):0.0}%)");
         }
 
         /// <summary>GDI's own fitted x coordinates, and the interval of each that the pixels allow.
