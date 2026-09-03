@@ -1641,6 +1641,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// exact), not placement (every band wants a rigid shift of zero), not accumulation (no
         /// drift left to right along any line), and not the interpreter (which reproduces GDI's own
         /// fitted points exactly in the mode where GDI can be asked).</para>
+        /// <para>AND THE PAPER'S OWN MODEL IS REFUTED, which is worth stating because it is the
+        /// obvious thing to try. If ClearType simply turns x rounding off, the MIRP should take
+        /// the CONTROL VALUE -- the designer's standard stem width -- and use it unrounded. That
+        /// is WPF_CT_NOROUND_X=1 with WPF_CT_CUTIN_DIV=1, and it measures 3,788,143 against
+        /// 2,343,248; without the stem fat, 3,817,113. What ships instead divides the cut-in by
+        /// sixteen, which means the control value is almost never taken and the OUTLINE distance
+        /// is used instead. So GDI does not merely stop rounding x in ClearType -- it stops
+        /// listening to the control values as well, and fits x from the outline's own
+        /// measurements. What still moves the glyph is the minimum-distance clamp, which is
+        /// spec behaviour and not a rounding at all.</para>
         /// <para>It also sizes the prize. Twenty-four rows at the quality of the two that agree
         /// would be roughly 250,000 against 2,343,248 -- so the x fitting is worth about ninety
         /// percent of what is left, and nothing else is worth chasing before it.</para></summary>
