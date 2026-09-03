@@ -2325,7 +2325,8 @@ namespace WgpuInterop.Tests.Text
 
         /// <summary>Squared lamp difference between our rasterization of a glyph's figures, placed at
         /// (x, baseline), and GDI's own drawing of it.</summary>
-        private static double GlyphLampError(List<PathFigure> figures, float x, float baseline, byte[] raw)
+        private static double GlyphLampError(List<PathFigure> figures, float x, float baseline,
+                                             byte[] raw, int fromX = 0, int toX = int.MaxValue)
         {
             var moved = new List<PathFigure>(figures.Count);
             foreach (PathFigure f in figures)
@@ -2354,8 +2355,11 @@ namespace WgpuInterop.Tests.Text
             if (m.IsEmpty) return double.MaxValue;
 
             double e = 0;
+            // A COLUMN WINDOW, so one stem can be scored on its own pixels and the answer
+            // owes nothing to coordinates outside it.
+            int lo = Math.Max(0, fromX), hi = Math.Min(Width - 1, toX);
             for (int y = 0; y < Height; y++)
-                for (int px = 0; px < Width; px++)
+                for (int px = lo; px <= hi; px++)
                 {
                     int i = (y * Width + px) * 4;
                     int gy = y - (int) m.OriginY, gx = px - (int) m.OriginX;
@@ -3284,6 +3288,83 @@ namespace WgpuInterop.Tests.Text
                 }
                 m[x] = keep;
                 lo[x] = a; hi[x] = b;
+            }
+        }
+
+        /// <summary>GDI'S STEM POSITION AND WIDTH, SOLVED JOINTLY -- the constraint the
+        /// per-coordinate intervals cannot give.
+        /// <para>Every solve so far has moved ONE coordinate and held the rest still, so its
+        /// interval is conditional on values that are themselves probably wrong, and a pair of such
+        /// intervals says much less than it appears to. A stem is two coordinates that only mean
+        /// anything together: what its pixels determine is the PAIR.</para>
+        /// <para>So vary both edges over a neighbourhood, score only the COLUMNS THE STEM OCCUPIES
+        /// -- which makes the answer independent of every coordinate outside it, the thing the
+        /// single-coordinate solve could never claim -- and report every pair that reaches the
+        /// minimum, as (left, width), because that is the form a rule would be written in.</para>
+        /// <para>WPF_SOLVESTEM=char@ppem, with WPF_FACE to choose the face.</para></summary>
+        [Fact]
+        public void SolveOneStemJointly()
+        {
+            string? spec = Environment.GetEnvironmentVariable("WPF_SOLVESTEM");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SOLVESTEM=char@ppem");
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows draws the reference");
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, $"this machine has no {ProbeFamily()}");
+
+            string[] parts = spec!.Split('@');
+            char c = parts[0][0];
+            int ppem = int.Parse(parts[1]), baseline = ppem + 12;
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(c.ToString(), ProbeFamily(), ppem, PenX, baseline, Width, Height, false, false);
+            Gdi.s_rawRgb = null;
+            Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                                                                     out List<PathFigure> ours));
+
+            var xs = new SortedSet<float>();
+            foreach (PathFigure f in ours) CollectXs(f, xs);
+            var order = new List<float>(xs);
+            Console.Error.WriteLine($"=== {ProbeFamily()} '{c}' @{ppem}: {order.Count} distinct x"
+                                    + $" -- {string.Join(" ", order)}");
+
+            for (int k = 0; k + 1 < order.Count; k++)
+            {
+                float a0 = order[k], b0 = order[k + 1];
+                if (b0 - a0 < 0.4f || b0 - a0 > 4f) continue;    // a hairline or a counter, not a stem
+                int colLo = (int) MathF.Floor(PenX + a0) - 2;
+                int colHi = (int) MathF.Ceiling(PenX + b0) + 2;
+
+                var move = new Dictionary<float, float>();
+                foreach (float x in order) move[x] = x;
+                double best = double.MaxValue;
+                var winners = new List<(int da, int db)>();
+                for (int da = -14; da <= 14; da++)
+                    for (int db = -14; db <= 14; db++)
+                    {
+                        move[a0] = a0 + da / 64f;
+                        move[b0] = b0 + db / 64f;
+                        double err = GlyphLampError(Remap(ours, move), PenX, baseline, raw,
+                                                    colLo, colHi);
+                        if (err < best - 1e-9) { best = err; winners.Clear(); }
+                        if (err < best + 1e-9) winners.Add((da, db));
+                    }
+
+                float wLo = float.MaxValue, wHi = float.MinValue, lLo = float.MaxValue, lHi = float.MinValue;
+                foreach ((int da, int db) w in winners)
+                {
+                    float left = a0 + w.da / 64f, width = (b0 + w.db / 64f) - left;
+                    if (left < lLo) lLo = left;
+                    if (left > lHi) lHi = left;
+                    if (width < wLo) wLo = width;
+                    if (width > wHi) wHi = width;
+                }
+                bool oursWins = winners.Contains((0, 0));
+                Console.Error.WriteLine($"    stem {a0:0.000}..{b0:0.000} (ours w={b0 - a0:0.000})"
+                    + $" columns {colLo}..{colHi}: residual {best:0}, {winners.Count} pairs reach it,"
+                    + $" ours {(oursWins ? "IS" : "is NOT")} among them");
+                Console.Error.WriteLine($"      GDI allows left {lLo:0.000}..{lHi:0.000},"
+                    + $" width {wLo:0.000}..{wHi:0.000}");
             }
         }
 
