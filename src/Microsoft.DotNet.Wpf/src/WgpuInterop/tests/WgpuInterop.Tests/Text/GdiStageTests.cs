@@ -289,6 +289,29 @@ namespace WgpuInterop.Tests.Text
         /// ClearType rasterizes in. Divide x back by three and compare against what we ship (y-only)
         /// and against a full fit. Whichever it lands on is the answer; if it lands on neither, that
         /// difference IS the missing geometry, in a form we can finally look at.</para>
+        /// <para>THE PREMISE IS FALSE, MEASURED 2026-09-03 -- and this stage has been steering
+        /// the x search ever since it was written, so the correction matters more than the stage
+        /// does. Asked through a stretched MAT2, GDI answers:</para>
+        /// <code>
+        ///   selector             drawn(ClearType)   GGO   GGO stretched 3x
+        ///   4  stretched                        0     0                 10   &lt;- set
+        ///   64 ClearType enabled               10     0                  0   &lt;- still clear
+        /// </code>
+        /// <para>So tripling x does NOT ask for the glyph the way ClearType asks for it. It asks
+        /// the bi-level program, on a three-times-finer grid, having additionally told the face it
+        /// is being STRETCHED -- a third program again, and one every face is entitled to branch
+        /// on (Segoe UI's prep asks selector 4 in its first four questions).</para>
+        /// <para>Which retires what this stage was read as saying. "GDI puts each stem on a lamp,
+        /// and our 'm' carries its second and third stems a third of a pixel right of GDI's" is a
+        /// statement about the stretched bi-level program, not about ClearType geometry -- and it
+        /// is the observation the whole lamp-grid family of x rules was built on. Those rules
+        /// measure badly on the text oracle (XHintMode 6 costs 883,255 at 12ppem against the
+        /// sixteenth grid), and this is why.</para>
+        /// <para>It also says something the stage cannot: GDI tells the face it is stretched when
+        /// it IS, and does not when drawing ClearType. So GDI's ClearType hinting runs in ordinary
+        /// unstretched space and the three-times supersampling happens after it, inside the
+        /// rasterizer, where the font program cannot see it. A face therefore never fits anything
+        /// to the lamp grid, and no rule that puts our x on it can be right.</para>
         /// <para>Reported only: set WPF_STAGE_REPORT.</para></summary>
         [Theory]
         [InlineData("Segoe UI")]

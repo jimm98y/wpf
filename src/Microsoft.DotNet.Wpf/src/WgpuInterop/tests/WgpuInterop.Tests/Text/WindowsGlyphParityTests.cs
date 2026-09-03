@@ -2681,11 +2681,11 @@ namespace WgpuInterop.Tests.Text
 
             var report = new System.Text.StringBuilder();
             report.AppendLine($"== what GDI answers GETINFO, read off the ink at {ProbePpem}ppem");
-            report.AppendLine("   selector  meaning                    drawn(ClearType)      GGO(greyscale)");
+            report.AppendLine("   selector  meaning                    drawn(ClearType)      GGO(greyscale)     GGO stretched 3x");
             try
             {
                 var raw = new byte[Width * Height * 4];
-                int baseDrawn = -1, baseGgo = -1;
+                int baseDrawn = -1, baseGgo = -1, baseWide = -1;
                 for (int i = 0; i < selectors.Length; i++)
                 {
                     string ch = ((char) (0x41 + i)).ToString();
@@ -2695,10 +2695,19 @@ namespace WgpuInterop.Tests.Text
                     int drawn = InkLeftColumn(raw);
                     var ggoFig = GdiStageTests.GdiOutlineAt(ch[0], Fam, ProbePpem, 0, 0);
                     int ggo = ggoFig.Count == 0 ? -1 : (int) MathF.Round(XLeft(ggoFig));
-                    if (i == 0) { baseDrawn = drawn; baseGgo = ggo; }
+                    // AND THE SAME QUESTION THROUGH A STRETCHED MAT2, because stage D's
+                    // whole premise is that asking GGO for the glyph tripled in x asks for
+                    // it in the space ClearType rasterizes in. If GDI still answers "not
+                    // ClearType" there, the stretch buys a finer grid and NOT the face's
+                    // ClearType branch, and stage D is reading the bi-level program.
+                    var wideFig = GdiStageTests.GdiOutline(ch[0], Fam, ProbePpem,
+                                                          unhinted: false, xScale: 3);
+                    int wide = wideFig.Count == 0 ? -1 : (int) MathF.Round(XLeft(wideFig) * 3);
+                    if (i == 0) { baseDrawn = drawn; baseGgo = ggo; baseWide = wide; }
                     string d = drawn < 0 ? "no ink" : (drawn - baseDrawn).ToString();
                     string g = ggo < 0 ? "no outline" : (ggo - baseGgo).ToString();
-                    report.AppendLine($"   {selectors[i],8}  {names[i],-25}  {d,14}  {g,18}");
+                    string wd = wide < 0 ? "no outline" : (wide - baseWide).ToString();
+                    report.AppendLine($"   {selectors[i],8}  {names[i],-25}  {d,14}  {g,18}  {wd,18}");
                 }
                 report.AppendLine("   (selector 1 shifts by VERSION MINUS 32 pixels; every other row"
                                   + " shifts ten pixels when the bit is set and none when it is not)");
