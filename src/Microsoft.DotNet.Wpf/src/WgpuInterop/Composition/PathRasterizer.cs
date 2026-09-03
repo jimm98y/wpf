@@ -788,6 +788,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <para>So 20ppem and up is a real second front, it is named (symmetric smoothing), and it
         /// is NOT reachable by turning this up. It is also outside every size the control window
         /// uses, which is why it has not been chased.</para></summary>
+        /// <para>RE-SWEPT after RowsThenThreshold made extra samples safe -- under the old order
+        /// they could only destroy a partial row, so the original sweep could not have found a
+        /// larger count even if one were right. One is STILL best, and not marginally: ppem 12
+        /// gives 2,280,798 / 2,857,655 / 2,944,613 and ppem 16 gives 2,802,363 / 3,608,890 /
+        /// 3,723,098 for one, three and five. The reasoning above holds -- where the face is
+        /// grid-fitted there is no partial row to find, and sampling for one only softens an edge
+        /// GDI keeps sharp. Do not sweep this again without a reason that is not "more samples
+        /// must be better".</para></summary>
         private static readonly int SubpixelRows =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_ROWS"), out int r) ? r : 1;
 
