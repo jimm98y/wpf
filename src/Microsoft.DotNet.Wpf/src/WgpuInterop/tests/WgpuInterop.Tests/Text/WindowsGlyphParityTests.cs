@@ -3466,6 +3466,169 @@ namespace WgpuInterop.Tests.Text
             }
         }
 
+        /// <summary>WHERE GDI PUTS A STEM, read off a font that contains nothing else.
+        /// <para>Every attempt to find GDI's stem rule so far has inferred it from real faces,
+        /// where dozens of instructions interact and any candidate can be defended or attacked by
+        /// choosing a different glyph. The rule families are now closed that way and none of them
+        /// fitted -- so the thing to change is not the candidate but the KIND of evidence.</para>
+        /// <para>The synthetic bar's program is already the minimal case, and nothing else:</para>
+        /// <code>
+        ///   SVTCA[x]
+        ///   PUSHB 0     MDAP[1]        round the LEFT edge to the grid
+        ///   PUSHB 1,cvt MIRP           place the RIGHT edge at the control value
+        ///   IUP[x]
+        /// </code>
+        /// <para>So sweeping the bar's unfitted left edge in fine steps and reading back where GDI
+        /// put the two edges measures the two functions directly: what MDAP does to a POSITION and
+        /// what MIRP does with a WIDTH. No other instruction can be blamed, and the input is known
+        /// exactly rather than solved for.</para>
+        /// <para>Reading back is the same inversion the coverage work relies on: our rasterizer
+        /// reproduces GDI's lamps exactly given the right rectangle, so the rectangle that
+        /// reproduces GDI's row IS what GDI drew. Searched on the 64th grid over both edges.</para>
+        /// <para>WPF_STEMPROBE=&lt;path&gt; to collect it.</para>
+        /// <para>WHAT IT MEASURED, AND WHAT IT DID NOT. At 16ppem with a 1.25px outline width,
+        /// GDI places the bar consistently LEFT of where its outline is, by 4 to 16 sixty-fourths,
+        /// mean about -10/64. We place it exactly at the outline, because our MDAP rounds on the
+        /// sixteenth grid and the input is already there. That is the same direction as every
+        /// finding on real faces -- our stems sit right of GDI's -- now shown on a font that
+        /// contains one bar, one MDAP and one MIRP and nothing else, with the input known rather
+        /// than solved for.</para>
+        /// <para>But it is NOT a rule, and the reason is the instrument. A single isolated bar
+        /// saturates its lamps, so a whole neighbourhood of geometries draws it identically: every
+        /// row here has 100 to 121 rectangles reaching residual ZERO, and the allowed left edge is
+        /// a range about 9/64 wide. Read as ranges rather than as the sweep's first winner -- which
+        /// is the trap this file has recorded three times -- no quantiser survives:</para>
+        /// <code>
+        ///   round to a whole pixel   input 3.250 wants >= 3.094, whole gives 3.000
+        ///   round to a third         input 3.188 allows <= 3.078, a third gives 3.333
+        ///   floor to a third         input 3.250 wants >= 3.094, floor gives 3.000
+        ///   round to a sixth         input 3.188 allows <= 3.078, a sixth gives 3.167
+        /// </code>
+        /// <para>The mean shift is close to a sixth of a pixel, which is half a lamp, and a
+        /// half-lamp difference in where the lamp grid is assumed to start would produce exactly
+        /// this. Tested: WPF_SUBPIXEL_SAMPLE=centre moves the specimen by 529 out of 2,343,248, so
+        /// the sampling phase is not it either.</para>
+        /// <para>TO MAKE THIS DECISIVE the probe glyph has to constrain harder than one bar can.
+        /// Two or three bars at known separations in ONE glyph would do it -- the lamp pattern
+        /// stops saturating and the ties collapse -- and that means teaching SyntheticFont to write
+        /// a multi-bar glyph, which it cannot do today.</para></summary>
+        [Fact]
+        public void WhereGdiPutsAStem()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? path = Environment.GetEnvironmentVariable("WPF_STEMPROBE");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_STEMPROBE to collect this");
+
+            const string Family = "WpfStemPlace";
+            const int Ppem = 16;
+            // 2048 units per em at 16ppem is 128 units to the pixel, so 8 units is a sixteenth of
+            // one. Sweep a whole pixel of PHASE at a fixed width, which is the variable the rule
+            // has to be a function of.
+            const int Width0 = 160;                       // 1.25px at 16ppem
+            // A NO-PROGRAM CONTROL FIRST. Where the model thinks a bar's left edge is and where
+            // GDI actually draws it differ by a constant -- the side bearing the synthetic font
+            // happens to declare -- and without measuring that constant every reading below is
+            // offset by it. An unhinted bar must come back exactly where its outline puts it, so
+            // whatever it comes back short by IS the constant.
+            var bars = new List<SyntheticFont.Bar>();
+            bars.Add(new SyntheticFont.Bar(Width0, 384, 384 + Width0, round: false,
+                                           minDistance: false, noProgram: true));
+            for (int step = 0; step < 16; step++)
+            {
+                int left = 384 + step * 8;
+                bars.Add(new SyntheticFont.Bar(Width0, left, left + Width0, round: true,
+                                               minDistance: false));
+            }
+            byte[] fontBytes = SyntheticFont.Build(Family, bars);
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI would not accept the probe font");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== where GDI puts a stem: {Family} at {Ppem}ppem,"
+                              + $" outline width {Width0 / 128.0:0.0000}px, MIRP round=true");
+            report.AppendLine("   unfitted left -> GDI left, GDI width      (all in pixels)");
+            try
+            {
+                var raw = new byte[Width * Height * 4];
+                var font = new TrueTypeFont(fontBytes);
+                float offset = 0;
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    int baseline = Ppem + 12;
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Family, Ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+
+                    float plainLeft = bars[i].Left * Ppem / (float) SyntheticFont.UnitsPerEm;
+                    float plainWidth = Width0 * Ppem / (float) SyntheticFont.UnitsPerEm;
+                    float lLo = float.MaxValue, lHi = float.MinValue;
+                    float wLo = float.MaxValue, wHi = float.MinValue;
+                    int hits = 0;
+
+                    // Invert: which rectangles reproduce GDI's lamps. There are MANY -- a bar's
+                    // row saturates, so a whole neighbourhood of geometries draws it identically --
+                    // so report the RANGE and never the sweep's first winner, which is the trap
+                    // that has caught this investigation three times.
+                    double best = double.MaxValue;
+                    for (int pass = 0; pass < 2; pass++)
+                        for (int l = -40; l <= 40; l++)
+                            for (int w = -24; w <= 24; w++)
+                            {
+                                float left = plainLeft + l / 64f, wid = plainWidth + w / 64f;
+                                if (wid <= 0.05f) continue;
+                                double err = GlyphLampError(Rectangle(left, wid), PenX, baseline, raw);
+                                if (pass == 0) { if (err < best - 1e-9) best = err; continue; }
+                                if (err > best + 1e-9) continue;
+                                if (left < lLo) lLo = left;
+                                if (left > lHi) lHi = left;
+                                if (wid < wLo) wLo = wid;
+                                if (wid > wHi) wHi = wid;
+                                hits++;
+                            }
+
+                    float ourLeft = float.NaN, ourWidth = float.NaN;
+                    if (((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(ch[0]), Ppem,
+                                                                      out List<PathFigure> mine))
+                    {
+                        var xs = new SortedSet<float>();
+                        foreach (PathFigure f in mine) CollectXs(f, xs);
+                        if (xs.Count >= 2) { ourLeft = xs.Min; ourWidth = xs.Max - xs.Min; }
+                    }
+
+                    if (i == 0)
+                    {
+                        // The control. Its own allowed range straddles where its outline is; the
+                        // centre of that range against the outline is the model's offset.
+                        offset = (lLo + lHi) / 2 - plainLeft;
+                        report.AppendLine($"   control (no program): outline {plainLeft:0.0000},"
+                            + $" GDI allows {lLo:0.0000}..{lHi:0.0000} w {wLo:0.0000}..{wHi:0.0000}"
+                            + $"  => model offset {offset * 64:+0.0;-0.0}/64");
+                        continue;
+                    }
+                    report.AppendLine($"   {plainLeft,7:0.0000} -> left"
+                        + $" {lLo - offset,7:0.0000}..{lHi - offset,7:0.0000}"
+                        + $" w {wLo,6:0.0000}..{wHi,6:0.0000}"
+                        + $"   ours {ourLeft,7:0.0000} w {ourWidth,6:0.0000}"
+                        + $"   ties {hits,4}"
+                        + $"   MDAP {((lLo + lHi) / 2 - offset - plainLeft) * 64,6:+0.0;-0.0}/64");
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>A bar as a path, for inverting GDI's lamps back into a rectangle.</summary>
+        private static List<PathFigure> Rectangle(float left, float width)
+        {
+            var f = new PathFigure(new Vector2(left, 0f)) { Closed = true };
+            f.Segments.Add(new LineSegment(new Vector2(left + width, 0f)));
+            f.Segments.Add(new LineSegment(new Vector2(left + width, -10.9375f)));
+            f.Segments.Add(new LineSegment(new Vector2(left, -10.9375f)));
+            return new List<PathFigure> { f };
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
