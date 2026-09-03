@@ -453,6 +453,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>THE ROUNDING FAMILY WAS RE-SWEPT AFTER THE PLACEMENT WORK AND IS STILL CLOSED.
+        /// <para>Everything below had been rejected against the OLD geometry -- before the margin
+        /// came from GDI's tmHeight, before advances went through 26.6 and LTSH -- so the
+        /// rejections were worth re-testing rather than inheriting. Measured on the text specimen,
+        /// 12ppem plus 16ppem, against 5,226,015 for what ships:</para>
+        /// <code>
+        ///   positions on whole pixels (POSGRID=physical)   9,137,908
+        ///   the same, MDAP only       (POSGRID=mdap)       9,137,908
+        ///   positions on halves       (POSGRID=2)          6,839,925
+        ///   positions on lamps/thirds (POSGRID=3)          6,262,097
+        ///   positions on sixths       (POSGRID=6)          5,656,160
+        ///   x not rounded at all      (NOROUND_X=1)        5,314,730
+        ///   x-hint mode 6             (WPF_X_HINT=6)      13,811,139 over 9/12/16/20
+        /// </code>
+        /// <para>Every one is worse, so the shipped rules stand. Note how little NOROUND_X costs --
+        /// 1.7% -- which says our rounding is close to neutral and is NOT what separates us from
+        /// GDI. 'H' at 12ppem is the case to think with: our stem is 1.09 pixels wide against
+        /// GDI's 1.078, so the WIDTH is right, and the whole difference is that our left edge lands
+        /// on 1.125 (the sixteenth grid) where GDI has it on 1.0. No grid produces both that and
+        /// the rest of the repertoire.</para>
+        /// <para>So stop looking for a grid. What is left is which INSTRUCTIONS run and what they
+        /// compute -- the touch-set comparison described in the stem-width notes.</para></summary>
+
         internal static bool XThirdGrid =>
             TrueTypeFont.XHintMode == 6 || TrueTypeFont.XHintMode == 13
             || TrueTypeFont.XHintMode == 14;
