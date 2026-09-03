@@ -454,6 +454,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static bool XWholePixelGrid => TrueTypeFont.XHintMode == 17;
 
+        /// <summary>THE "11 TO 13 BAND" IS NOT ABOUT THOSE SIZES. Every face has a band, and it
+        /// sits somewhere else.
+        /// <para>That band has been treated throughout as a property of the sizes 11, 12 and 13,
+        /// because Segoe UI is the face every measurement was taken on. Asked of the other faces,
+        /// error per unit of ink on the isolated-glyph harness:</para>
+        /// <code>
+        ///               @11   @12   @13   @14   @15   @16   @17   @18
+        ///   Segoe UI    27.9  26.3  27.5  11.1  10.4   9.8   8.2   9.0
+        ///   Tahoma      90.1  35.0  28.1  15.6  27.2  31.6  12.2  10.0
+        ///   Arial                         16.6  22.8  25.5  21.0  14.0
+        ///   Verdana                       18.7  30.9  15.6   9.4  11.1
+        /// </code>
+        /// <para>Segoe UI's band is 11 to 13 and it is clean by 14. Tahoma's and Arial's are at 15
+        /// and 16, where Segoe UI is at its best. Verdana's is at 15. So the band is a property of
+        /// the FACE, not of the size -- and the same statement holds on the specimen, where the
+        /// error peaks at 16 for exactly the four faces whose bands are there and Segoe UI is
+        /// exempt.</para>
+        /// <para>This unifies two mysteries that have been chased separately: the 11-13 band and
+        /// the specimen's non-monotonic size curve (1,623,912 / 2,343,248 / 1,982,506 / 2,882,808 /
+        /// 1,990,770 / 2,331,757 at 10 to 20) are the same phenomenon, seen once per face. Which
+        /// also means the band is not evidence for a size-gated rule, and the ppem gates in this
+        /// file -- the stem-fat band at 10 to 13 above all -- are fitted to where ONE face's band
+        /// happens to fall. Widening that band was measured and loses 128,241 across six sizes, so
+        /// the constant is right for the corpus and wrong in principle.</para>
+        /// <para>Excluded for the peak, all measured at 16ppem: placement (every band wants a rigid
+        /// shift of zero), the contrast curve (gamma is a clean minimum at 1.20 there as at 12),
+        /// the suppressed x deltas at any fraction, and the stem-fat band. What the peak does carry
+        /// is a systematic LIGHTNESS: ink against Windows runs 0.9914 at 14, 0.9855 at 16 and
+        /// 0.9982 at 18, so the worst size is also the lightest, and about a sixth of the error
+        /// there is a net ink deficit rather than misplaced ink.</para></summary>
         /// <summary>AND WHY VERDANA AND TAHOMA DIFFER: MIRP against MDRP. Not a missing rule.
         /// <para>The face-dependence looked like the last big clue. It is not a clue, it is a
         /// consequence, and the mechanism is visible in one census of the x pass:</para>
