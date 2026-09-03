@@ -58,11 +58,22 @@ namespace WgpuInterop.Tests.Text
             /// hold the bearing still and vary only the outline's phase.</para></summary>
             public readonly int Lsb;
 
+            /// <summary>Shear the bar: how far right its TOP edge sits from its bottom, in
+            /// font units. Zero is an upright bar.
+            /// <para>Every coverage check this suite has ever run used upright bars, so it
+            /// only ever tested VERTICAL edges. A third of the remaining disagreement with GDI
+            /// sits on diagonals, and a diagonal edge is the one place where the decision to
+            /// take a single vertical sample per row -- right for a horizontal edge, because
+            /// GDI has no vertical antialiasing -- has never been checked against GDI at
+            /// all.</para></summary>
+            public readonly int Slant;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
-                       bool noProgram = false, int probe = 0, int lsb = int.MinValue)
+                       bool noProgram = false, int probe = 0, int lsb = int.MinValue,
+                       int slant = 0)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
-                NoProgram = noProgram; Probe = probe;
+                NoProgram = noProgram; Probe = probe; Slant = slant;
                 Lsb = lsb == int.MinValue ? left : lsb;
             }
         }
@@ -154,14 +165,18 @@ namespace WgpuInterop.Tests.Text
             // A PROBE DECLARES A WIDE BOX, because it shifts itself a long way and GDI rasterizes
             // only inside the glyph's own bounding box -- a 42-pixel shift off a 300-unit box came
             // back as no ink at all, which reads exactly like 'the program did nothing'.
-            WriteI16(s, b.Probe != 0 ? b.Right + 8000 : b.Right); WriteI16(s, Top);   // xMax yMax
+            WriteI16(s, b.Probe != 0 ? b.Right + 8000 : b.Right + (b.Slant > 0 ? b.Slant : 0));
+            WriteI16(s, Top);                            // xMax yMax
             WriteU16(s, 3);                              // endPtsOfContours[0]
             WriteU16(s, instructions ? program.Length : 0);
             if (instructions) s.Write(program, 0, program.Length);
 
             // Four points, all on-curve, x and y as signed 16-bit deltas.
             for (int i = 0; i < 4; i++) s.WriteByte(0x01);        // ON_CURVE, 16-bit deltas
-            WriteI16(s, b.Left); WriteI16(s, b.Right - b.Left); WriteI16(s, 0); WriteI16(s, b.Left - b.Right);
+            // Bottom-left, bottom-right, top-right, top-left. The slant displaces the two TOP
+            // points, so the bar keeps its horizontal width and leans.
+            WriteI16(s, b.Left); WriteI16(s, b.Right - b.Left);
+            WriteI16(s, b.Slant); WriteI16(s, b.Left - b.Right);
             WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
         }
 

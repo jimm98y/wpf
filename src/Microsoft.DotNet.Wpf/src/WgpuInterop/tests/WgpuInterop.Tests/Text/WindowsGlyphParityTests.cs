@@ -3719,6 +3719,124 @@ namespace WgpuInterop.Tests.Text
             return outp;
         }
 
+        /// <summary>IS OUR COVERAGE GDI'S ON A DIAGONAL EDGE? Nothing has ever asked.
+        /// <para>Every coverage check in this suite uses upright bars, so all of them test vertical
+        /// edges and none tests a slanted one. That matters because a third of what is left
+        /// disagrees on diagonals -- classified by GDI's own gradient, Tahoma's roman at 16ppem
+        /// splits 117,990 vertical, 12,382 horizontal, 67,880 diagonal -- and because a diagonal is
+        /// the one place the decision to take a SINGLE vertical sample per row has never been
+        /// checked. One sample is provably right for a horizontal edge, since GDI has no vertical
+        /// antialiasing; on a slanted edge it is an assumption.</para>
+        /// <para>So: the same no-program bars, sheared, rendered by both, lamps compared.</para>
+        /// <para>WPF_DIAG_REPORT=&lt;path&gt; to collect it.</para>
+        /// <para>ANSWER: our diagonals are FINE, and the hypothesis is dead. Differing lamps,
+        /// slant against ppem, with slant 0 as the control:</para>
+        /// <code>
+        ///   slant     @12   @16   @20
+        ///       0      24    33   103
+        ///     120       0     0    68
+        ///     300       4     8    62
+        ///     600      14    18    76
+        /// </code>
+        /// <para>A slanted edge agrees with GDI as closely as an upright one and at 12 and
+        /// 16ppem rather more closely. So one vertical sample per row is right for a diagonal
+        /// too, and the diagonal third of the remaining error is not rasterization: those
+        /// points are placed by IUP between the stem anchors, so it is inherited from stem
+        /// placement like everything else. 20ppem is worse at every slant including none,
+        /// which is the symmetric-smoothing front and not this.</para>
+        /// <para>The control earned its place. Written with GDI's buffer and ours indexed the
+        /// same way -- ours is RGBA and GDI's is BGRA -- it compared GDI's red against our
+        /// blue and reported the UPRIGHT bars differing in 336 of 456 lamps at a mean of 124.
+        /// A slant-only test would have called that a diagonal problem.</para></summary>
+        [Fact]
+        public void CoverageOnADiagonal_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? path = Environment.GetEnvironmentVariable("WPF_DIAG_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_DIAG_REPORT to collect this");
+
+            const string Family = "WpfDiagProbe";
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== is our lamp coverage GDI's on a SLANTED edge?");
+            report.AppendLine("   slant   ppem   lamps      differing    worst   mean|d| on those");
+
+            // 0 is the control and must reproduce the upright result: near enough zero.
+            foreach (int slant in new[] { 0, 120, 300, 600 })
+            {
+                var bars = new List<SyntheticFont.Bar>();
+                for (int units = 96; units <= 288; units += 24)
+                    bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false,
+                                                   noProgram: true, slant: slant));
+                byte[] fontBytes = SyntheticFont.Build(Family + slant, bars);
+                int count = 0;
+                IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+                if (handle == IntPtr.Zero || count == 0)
+                {
+                    report.AppendLine($"   {slant,5}   GDI refused the font");
+                    continue;
+                }
+                try
+                {
+                    var font = new TrueTypeFont(fontBytes);
+                    var raw = new byte[Width * Height * 4];
+                    foreach (int ppem in new[] { 12, 16, 20 })
+                    {
+                        long compared = 0, differing = 0, worst = 0, sum = 0;
+                        for (int i = 0; i < bars.Count; i++)
+                        {
+                            string ch = ((char) (0x41 + i)).ToString();
+                            int baseline = ppem + 12;
+                            Gdi.s_rawRgb = raw;
+                            Gdi.Draw(ch, Family + slant, ppem, PenX, baseline, Width, Height,
+                                     false, false);
+                            Gdi.s_rawRgb = null;
+                            byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+                            // ROWS ONLY ONE SIDE INKS ARE A DIFFERENT QUESTION -- the vertical
+                            // extent, which is SubpixelRows and already understood -- and they
+                            // carry a full-ink difference each, so including them swamps the
+                            // horizontal coverage this is asking about. The control proves it:
+                            // with them in, an UPRIGHT bar reported 350 of 470 lamps differing
+                            // at a mean of 121, against the near-exact answer the same bars give
+                            // in CoverageFloor.
+                            for (int y = 0; y < Height; y++)
+                            {
+                                bool gRow = false, oRow = false;
+                                for (int x = 0; x < Width && !(gRow && oRow); x++)
+                                    for (int c = 0; c < 3; c++)
+                                    {
+                                        if (raw[(y * Width + x) * 4 + (2 - c)] != 255) gRow = true;
+                                        if (ours[(y * Width + x) * 4 + c] != 255) oRow = true;
+                                    }
+                                if (!gRow || !oRow) continue;
+                                for (int x = 0; x < Width; x++)
+                                for (int c = 0; c < 3; c++)
+                                {
+                                    int k = y * Width + x;
+                                    int g = 255 - raw[k * 4 + (2 - c)];
+                                    // OURS IS RGBA AND GDI'S BUFFER IS BGRA. Reading both with
+                                    // the same index compares GDI's red against our blue, which
+                                    // is what made the upright control report 336 of 456 lamps
+                                    // differing at a mean of 124 when the same bars are near
+                                    // exact. The control is there to catch exactly this.
+                                    int o = 255 - ours[k * 4 + c];
+                                    if (g == 0 && o == 0) continue;
+                                    compared++;
+                                    int d = Math.Abs(g - o);
+                                    if (d == 0) continue;
+                                    differing++; sum += d;
+                                    if (d > worst) worst = d;
+                                }
+                            }
+                        }
+                        report.AppendLine($"   {slant,5}   {ppem,4}   {compared,8}   {differing,8}"
+                            + $"   {worst,6}   {(differing == 0 ? 0 : sum / (double) differing),8:0.0}");
+                    }
+                }
+                finally { RemoveFontMemResourceEx(handle); }
+            }
+            File.AppendAllText(path!, report.ToString());
+        }
+
         private static void CollectXs(PathFigure f, SortedSet<float> xs)
         {
             xs.Add(MathF.Round(f.Start.X, 3));
