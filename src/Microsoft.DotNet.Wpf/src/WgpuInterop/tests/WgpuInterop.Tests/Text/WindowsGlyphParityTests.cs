@@ -3964,6 +3964,79 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>WHERE EACH GLYPH LANDS, ours against GDI's, one isolated stem at a time.
+        /// <para>The run's first and last inked columns match GDI's exactly, so the advances add up
+        /// to the same total -- and yet the ink-weighted centre of the run moves by up to a pixel.
+        /// Both can be true at once if individual glyphs sit on different columns INSIDE the run
+        /// and the differences cancel by the end, which is what two different rounding rules for a
+        /// per-glyph advance would do.</para>
+        /// <para>So this asks each glyph separately. Spaced 'l's are the probe because a lone
+        /// vertical stem has an unambiguous centre and nothing to overlap with, and its centroid is
+        /// read to a hundredth of a pixel rather than eyeballed off a column of lamp values.</para>
+        /// <para>WPF_GLYPH_LANDS=family/ppem[/B|I|BI].</para></summary>
+        [Fact]
+        public void WhereEachGlyphLands_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_GLYPH_LANDS");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec),
+                            "set WPF_GLYPH_LANDS=family/ppem[/style[/chars]]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[1]);
+            string style = parts.Length > 2 ? parts[2].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            // Each glyph SEPARATED, so that a glyph whose ink sits differently can be named.
+            // Repeating one letter proved the pen is right; it cannot say which letters are not.
+            string letters = parts.Length > 3 ? parts[3] : "llllllllllll";
+            string Sample = string.Join(" ", letters.ToCharArray());
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(Sample, parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+            byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
+
+            List<double> mine = Centres(ours), theirs = Centres(raw);
+            Console.Error.WriteLine($"== {parts[0]} @{ppem}{(style == "" ? "" : "/" + style)}:"
+                                    + $" {theirs.Count} stems from GDI, {mine.Count} from us");
+            Console.Error.WriteLine("   char    GDI x      our x     delta");
+            for (int i = 0; i < mine.Count && i < theirs.Count; i++)
+                Console.Error.WriteLine($"   {(i < letters.Length ? letters[i] : '?'),3}"
+                                        + $"   {theirs[i],9:0.000}   {mine[i],8:0.000}"
+                                        + $"   {mine[i] - theirs[i],+7:+0.000;-0.000; 0.000}");
+        }
+
+        /// <summary>The ink-weighted x centre of every separated column group.</summary>
+        private static List<double> Centres(byte[] rgba)
+        {
+            var columns = new double[Width];
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    for (int ch = 0; ch < 3; ch++)
+                        columns[x] += 255 - rgba[(y * Width + x) * 4 + ch];
+
+            var centres = new List<double>();
+            int at = 0;
+            while (at < Width)
+            {
+                // A threshold, not "any ink": a ClearType fringe is not a glyph.
+                if (columns[at] <= 255) { at++; continue; }
+                int from = at;
+                while (at < Width && columns[at] > 255) at++;
+                double weight = 0, moment = 0;
+                for (int x = from; x < at; x++) { weight += columns[x]; moment += columns[x] * x; }
+                if (weight > 0) centres.Add(moment / weight);
+            }
+            return centres;
+        }
+
         /// <summary>ONE SCANLINE THROUGH ONE STEM, ours against GDI's, as RGB triples.
         /// <para>At a size the face declines to grid-fit there is no interpreter in the way: the
         /// outline is the scaled outline, which we already know matches GDI's exactly. So whatever
