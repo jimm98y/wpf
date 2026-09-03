@@ -664,6 +664,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public float DeviceAdvance(int glyphId, float pixelsPerEm)
             => CompatibleAdvance(glyphId, pixelsPerEm, (int) MathF.Round(pixelsPerEm));
 
+        /// <summary>WHERE THE TEXT DIFFERENCE STANDS, once this and the margin were fixed.
+        /// <para>PLACEMENT IS SOLVED. Letting every 16-pixel window of the specimen shift
+        /// independently to its best offset removes 0% of the difference at 9 and 12ppem, and no
+        /// row at 16 or 20ppem wants a shift at all. Every advance matches GDI across six faces,
+        /// four styles and 9..20ppem. Nothing positional is left to find.</para>
+        /// <para>THE SHADING IS RIGHT TOO. Subpixel gamma is a clean symmetric minimum at the
+        /// default 1.20 -- 1.15 and 1.25 both cost about 137,000 at 12ppem -- which is exactly
+        /// what this machine's FontSmoothingGamma of 1200 derives.</para>
+        /// <para>SO WHAT REMAINS IS THE FITTED OUTLINE. 223 of 291 solved coordinates now land
+        /// inside the interval GDI's own pixels allow, and the 68 that do not are the whole of the
+        /// remaining difference. 'H' at 12ppem is still the clearest case: GDI's stem starts on a
+        /// lamp boundary (73 153 255 197 111 36, 2.157px) and ours straddles one
+        /// (36 111 197 197 111 36, 1.799px).</para>
+        /// <para>The x-hint mode is not the lever -- re-swept on this geometry, mode 5 beats mode 6
+        /// by 9,429,383 to 13,811,139 over 9/12/16/20ppem -- so this is the interpreter's own
+        /// per-glyph fitting, and see stem-width notes in TrueTypeInterpreter for what has already
+        /// been eliminated there.</para></summary>
         /// <summary>The advance a BI-LEVEL rasterizer would give this glyph -- what compatible
         /// widths means, and what the fitted glyph has to be corrected onto.
         /// <para>'hdmx' is a cache of exactly these numbers, so a face that ships one is answered
