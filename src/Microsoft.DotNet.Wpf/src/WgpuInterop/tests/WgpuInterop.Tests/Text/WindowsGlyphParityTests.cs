@@ -3964,6 +3964,153 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>DOES GDI REORDER? The question this suite's oracle cannot answer about itself.
+        /// <para>The oracle everywhere else is ExtTextOutW, which shapes a complex script but does
+        /// NOT apply the bidirectional algorithm -- that is DrawTextW's job, and DrawText is what
+        /// stock WinForms draws its labels through. So "our Arabic agrees with the oracle" leaves
+        /// the product question open: a word laid out left to right has exactly the ink of the same
+        /// word laid out right to left, and every measurement here is made on ink.</para>
+        /// <para>A COLUMN INK PROFILE settles it. Reordering mirrors the profile, so comparing
+        /// DrawText's profile against ExtTextOut's -- and against ExtTextOut's REVERSED -- says
+        /// which way round DrawText put the letters, with no dependence on where either API chose
+        /// to put the baseline. Latin is the control: it must match forwards.</para></summary>
+        [Fact]
+        public void DoesGdiReorderRightToLeftText()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            // A GUARD, not a report: the numbers are decisive rather than marginal, so this can
+            // assert. WPF_RTL_REPORT only decides whether the working is written down.
+            string? path = Environment.GetEnvironmentVariable("WPF_RTL_REPORT");
+
+            string? file = FontFiles.Find(ProbeFamily(), bold: false, italic: false);
+            Assert.SkipWhen(file is null, "this machine has no probe face");
+            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== {ProbeFamily()} at 16ppem: ExtTextOutW against DrawTextW");
+            report.AppendLine("   word                     forward err   reversed err   verdict");
+            (string text, string name)[] cases =
+            {
+                ("Wave", "latin control"),
+                ("\u0628\u062A\u062B", "arabic beh teh theh"),
+                ("\u0627\u0644\u0639\u0631\u0628\u064A\u0629", "arabic al-arabiyya"),
+                ("\u05D0\u05D1\u05D2", "hebrew alef bet gimel"),
+            };
+            foreach ((string text, string name) in cases)
+            {
+                double[] eto = Profile(text, useDrawText: false);
+                s_lastInk[0] = s_ink; s_lastSpan[0] = s_span;
+                double[] dt = Profile(text, useDrawText: true);
+                s_lastInk[1] = s_ink; s_lastSpan[1] = s_span;
+                // And the same call as a RightToLeft control makes it.
+                s_rtl = true;
+                double[] rtl = Profile(text, useDrawText: true);
+                s_rtl = false;
+                var rtlReversed = (double[]) rtl.Clone();
+                Array.Reverse(rtlReversed);
+                double rtlForward = Distance(eto, rtl), rtlBackward = Distance(eto, rtlReversed);
+
+                // And OURS against GDI's, which is the question that matters: the two GDI APIs
+                // agreeing tells us what GDI does, not whether we do the same.
+                double[] ours = OurProfile(font, text);
+                var oursReversed = (double[]) ours.Clone();
+                Array.Reverse(oursReversed);
+                double ourForward = Distance(eto, ours), ourBackward = Distance(eto, oursReversed);
+                var reversed = (double[]) dt.Clone();
+                Array.Reverse(reversed);   // realigned by the shift search below
+                double forward = Distance(eto, dt), backward = Distance(eto, reversed);
+                report.AppendLine($"   {name,-22} {forward,12:0.000}   {backward,12:0.000}   "
+                                  + (forward <= backward ? "same order" : "GDI REORDERS")
+                                  + $"   | DT_RTLREADING {rtlForward,6:0.000} vs {rtlBackward,6:0.000} "
+                                  + (rtlForward <= rtlBackward ? "same order" : "REORDERS")
+                                  + $"   | OURS {ourForward,6:0.000} vs {ourBackward,6:0.000} "
+                                  + (ourForward <= ourBackward ? "agrees" : "OUR ORDER IS WRONG"));
+
+                Assert.True(forward < backward,
+                            $"GDI's two APIs disagree about the order of '{name}' -- DrawTextW"
+                            + $" reorders where ExtTextOutW does not ({forward:0.000} forward,"
+                            + $" {backward:0.000} reversed), so the oracle this suite uses"
+                            + " everywhere else is the wrong one for this text.");
+                Assert.True(ourForward < ourBackward,
+                            $"we lay '{name}' out in the opposite order to GDI"
+                            + $" ({ourForward:0.000} forward, {ourBackward:0.000} reversed)");
+            }
+            if (!string.IsNullOrEmpty(path)) File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>The same column profile, for what WE draw.</summary>
+        private double[] OurProfile(TrueTypeFont font, string text)
+        {
+            byte[] rgba = OursRgba(font, text, 16, 28, correction: true);
+            var columns = new double[Width];
+            double total = 0;
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        double ink = 255 - rgba[(y * Width + x) * 4 + ch];
+                        columns[x] += ink;
+                        total += ink;
+                    }
+            if (total > 0) for (int x = 0; x < Width; x++) columns[x] /= total;
+            return columns;
+        }
+
+        /// <summary>Ink per column, normalised, so two renderings can
+        /// be compared without agreeing about where the text begins.</summary>
+        private static readonly double[] s_lastInk = new double[2];
+        private static readonly string[] s_lastSpan = new string[2];
+        private static double s_ink;
+        private static bool s_rtl;
+        private static string s_span = "";
+
+        private static double[] Profile(string text, bool useDrawText)
+        {
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.s_useDrawText = useDrawText;
+            Gdi.s_rtlReading = s_rtl;
+            Gdi.Draw(text, ProbeFamily(), 16, PenX, 28, Width, Height, false, false);
+            Gdi.s_useDrawText = false;
+            Gdi.s_rawRgb = null;
+
+            var columns = new double[Width];
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    for (int ch = 0; ch < 3; ch++)
+                        columns[x] += 255 - raw[(y * Width + x) * 4 + ch];
+
+            s_ink = 0;
+            foreach (double c in columns) s_ink += c;
+            int first = 0, last = Width - 1;
+            while (first < Width && columns[first] < 1) first++;
+            while (last > first && columns[last] < 1) last--;
+            s_span = $"{first}..{last}";
+            if (s_ink > 0) for (int x = 0; x < Width; x++) columns[x] /= s_ink;
+            return columns;
+        }
+
+        /// <summary>Distance at the best rigid shift.
+        /// <para>Fixed-width bins made this instrument fail its own control: GDI's two APIs end the
+        /// Latin word one pixel apart, every bin boundary moved, and the error came out at 0.996
+        /// where the answer is "the same". A shift is not a reordering, so search it out first.
+        /// </para></summary>
+        private static double Distance(double[] a, double[] b)
+        {
+            double best = double.MaxValue;
+            for (int shift = -8; shift <= 8; shift++)
+            {
+                double sum = 0;
+                for (int i = 0; i < a.Length; i++)
+                {
+                    int j = i + shift;
+                    sum += Math.Abs(a[i] - (j >= 0 && j < b.Length ? b[j] : 0));
+                }
+                if (sum < best) best = sum;
+            }
+            return best;
+        }
+
         /// <summary>CHARACTERS THE REQUESTED FACE DOES NOT HAVE.
         /// <para>Everything measured in this file is Latin, drawn in a face that has it. GDI does
         /// not stop at the requested face: for a character it lacks, it font-links to one that has
@@ -5654,6 +5801,12 @@ namespace WgpuInterop.Tests.Text
                 public int biClrUsed, biClrImportant;
             }
 
+            [StructLayout(LayoutKind.Sequential)]
+            private struct RECT { public int Left, Top, Right, Bottom; }
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            private static extern int DrawTextW(IntPtr hdc, string text, int count, ref RECT rect, uint format);
+
             [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
             [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
             [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
@@ -5793,6 +5946,17 @@ namespace WgpuInterop.Tests.Text
 
             /// <summary>Coverage of the string, 0 where the paper shows through and 255 where the ink
             /// is solid -- the same thing our renderer's mask holds.</summary>
+            /// <summary>Set to draw through DrawTextW instead of ExtTextOutW.
+            /// <para>They are not the same API for a complex script: ExtTextOutW shapes but does
+            /// NOT apply the bidirectional algorithm, while DrawTextW does. Stock WinForms draws
+            /// its labels through DrawText, so which of the two we must agree with is a question
+            /// about the product, not about this probe.</para></summary>
+            internal static bool s_useDrawText;
+
+            /// <summary>DT_RTLREADING, which is what WinForms adds for a RightToLeft control.
+            /// </summary>
+            internal static bool s_rtlReading;
+
             public static byte[] Draw(string text, string family, int ppem, int penX, int baseline,
                                       int w, int h, bool bold = false, bool italic = false,
                                       int quality = ClearTypeQuality)
@@ -5843,7 +6007,24 @@ namespace WgpuInterop.Tests.Text
                 SetTextColor(dc, (int)(((Ink & 0xFF) << 16) | (Ink & 0xFF00) | ((Ink >> 16) & 0xFF)));
                 SetBkMode(dc, Transparent);
                 SetTextAlign(dc, TaBaseline | TaLeft);
-                bool drew = ExtTextOutW(dc, penX, baseline, 0, IntPtr.Zero, text, (uint)text.Length, IntPtr.Zero);
+                bool drew;
+                if (s_useDrawText)
+                {
+                    // TA_TOP, because DrawText requires it and the TA_BASELINE this DC is set up
+                    // with put the whole line above the bitmap -- it drew ZERO ink and the probe
+                    // read that as "the two APIs agree".
+                    SetTextAlign(dc, TaLeft);
+                    // DT_NOCLIP | DT_SINGLELINE | DT_NOPREFIX. DrawText lays a LINE out, so the
+                    // baseline lands where the font's ascent puts it rather than where we asked;
+                    // the comparison this serves is GDI against GDI, aligned on ink.
+                    var rect = new RECT { Left = penX, Top = 4, Right = w, Bottom = h };
+                    uint flags = 0x0100 | 0x0020 | 0x0800 | (s_rtlReading ? 0x00020000u : 0u);
+                    drew = DrawTextW(dc, text, text.Length, ref rect, flags) != 0;
+                }
+                else
+                {
+                    drew = ExtTextOutW(dc, penX, baseline, 0, IntPtr.Zero, text, (uint)text.Length, IntPtr.Zero);
+                }
                 GdiFlush();
 
                 var rgba = new byte[w * h * 4];
