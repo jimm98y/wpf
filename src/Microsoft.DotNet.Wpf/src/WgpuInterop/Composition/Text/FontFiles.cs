@@ -186,8 +186,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             // The guess missed, so ask the files what they are called.
             if (ScannedFamilies().TryGetValue(family, out string?[]? declared))
+            {
                 foreach (int candidate in Order(slot))
                     if (declared[candidate] != null) return declared[candidate];
+                // AND THEN ANY FACE THE FAMILY HAS. Order() walks towards the regular, which
+                // is no help to a family that HAS no regular: Brush Script MT, Vivaldi,
+                // Lucida Calligraphy and Harlow Solid ship an italic and nothing else, and
+                // Magneto and Berlin Sans FB Demi ship a bold. Asking those for their regular
+                // returned null and the renderer drew the whole family in the fallback face.
+                // A face of the family in the wrong style is far closer to right than a
+                // different typeface, and it is what the name says the user asked for.
+                for (int i = 0; i < declared.Length; i++)
+                    if (declared[i] != null) return declared[i];
+            }
             return null;
         }
 

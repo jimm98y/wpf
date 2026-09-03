@@ -3850,7 +3850,13 @@ namespace WgpuInterop.Tests.Text
             string? path = Environment.GetEnvironmentVariable("WPF_GASP_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_GASP_REPORT to collect this");
 
-            string[] families =
+            // EVERY family the machine has, when WPF_GASP_ALL is set. The named list is the
+            // regression view; the full sweep is the hunt, because the renderer answers a
+            // family it cannot open by drawing in the FALLBACK face and saying nothing, so
+            // the only way to find those is to ask about all of them.
+            string[] families = Environment.GetEnvironmentVariable("WPF_GASP_ALL") == "1"
+                ? System.Linq.Enumerable.ToArray(FontFiles.ScannedFamilyNames())
+                : new[]
             {
                 "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas",
                 "Calibri", "Georgia", "Courier New", "Trebuchet MS", "Segoe UI Semibold",
