@@ -60,6 +60,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 0.004 is where it settles. The ink ratio against Windows moves 0.9855 to 0.9863 at
         /// 16ppem, in the direction the mechanism predicts, which is what makes this a fix
         /// rather than a fitted constant.</para>
+        /// <para>AND EVERY OTHER KNOB WAS RE-SWEPT AFTER IT, because this file's own rule is
+        /// that a geometry-level change makes the rest stale. None moved: gamma is still a
+        /// clean minimum at 1.20 (1.17 and 1.23 give 2,962,941 and 2,967,828 against
+        /// 2,860,019 at 16ppem), stem fat still 6 (3 and 9 give 2,347,178 and 2,359,248
+        /// against 2,338,608 at 12ppem), the control-value cut-in still divided by 16 (8 and
+        /// 32 give 2,572,083 and 2,429,427), XHintMode still 5, and the contrast curve still
+        /// applied AFTER the filter rather than before it -- that last one was explicitly
+        /// flagged as settled under an older coverage model and re-testable, and it measures
+        /// 2,772,488 and 3,444,957 the other way at 12 and 16ppem. So this correction is
+        /// orthogonal to all of them.</para>
         /// <para>Kept separate from the default so that ordinary geometry -- a large rounded
         /// rectangle, a circle -- does not pay two and a half times the segments for an
         /// accuracy only text at a few pixels an em can use. WPF_CURVE_TOL overrides
