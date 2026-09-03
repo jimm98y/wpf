@@ -3982,18 +3982,25 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_SCANLINE");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SCANLINE=family/char/ppem");
             string[] parts = spec!.Split('/');
-            Assert.True(parts.Length == 3, "WPF_SCANLINE=family/char/ppem");
+            Assert.True(parts.Length is 3 or 4, "WPF_SCANLINE=family/char/ppem[/B|I|BI]");
             int ppem = int.Parse(parts[2]);
+            // The style, because the worst rows in the specimen are ITALIC on the faces that are
+            // not Segoe UI and a probe that can only ask about the regular weight cannot see them.
+            string style = parts.Length == 4 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            string? file = FontFiles.Find(parts[0], bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
-            int sfnt = FontFiles.SfntOffset(bytes, parts[0]);
-            var font = new TrueTypeFont(bytes, false, false, sfnt);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            // The file may not declare the style asked for, in which case the face is synthesised
+            // -- the same choice the renderer makes, so that the two sides are the same glyph.
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, false, false);
+            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
             byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
 
@@ -4008,7 +4015,7 @@ namespace WgpuInterop.Tests.Text
                 if (ink > bestInk) { bestInk = ink; best = y; }
             }
 
-            Console.Error.WriteLine($"== {parts[0]} '{parts[1]}' @{ppem}, row {best}"
+            Console.Error.WriteLine($"== {parts[0]} '{parts[1]}' @{ppem}{(style == "" ? "" : "/" + style)}, row {best}"
                                     + $" (grid-fit: {font.WantsGridFit(ppem)})");
             // SEVERAL ROWS, not one. A feature can be absent from a row because it is thin and
             // we drew it lightly, or because it is THERE AND ONE ROW UP -- and a single scanline
@@ -4052,44 +4059,78 @@ namespace WgpuInterop.Tests.Text
             const string Sample = "Handgloves mio";
             var report = new System.Text.StringBuilder();
             report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
-            report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ");
+            report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ"
+                              + "   centroid dx   edge deltas");
             var raw = new byte[Width * Height * 4];
 
             foreach (string family in new[]
                      { "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas" })
-                foreach (bool bold in new[] { false, true })
+                foreach ((bool bold, bool italic) in
+                     new[] { (false, false), (true, false), (false, true) })
                     foreach (int ppem in new[] { 8, 10, 12, 16, 24 })
                     {
-                        string? file = FontFiles.Find(family, bold, italic: false);
+                        string? file = FontFiles.Find(family, bold, italic);
                         if (file is null) continue;
                         byte[] bytes = File.ReadAllBytes(file);
-                        int sfnt = FontFiles.SfntOffset(bytes, family, bold);
+                        int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
                         if (CffFont.IsCff(bytes, sfnt)) continue;
-                        FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out _);
-                        var font = new TrueTypeFont(bytes, bold && !fileBold, false, sfnt);
+                        FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                        var font = new TrueTypeFont(bytes, bold && !fileBold,
+                                                    italic && !fileItalic, sfnt);
 
                         Gdi.s_rawRgb = raw;
-                        Gdi.Draw(Sample, family, ppem, PenX, 28, Width, Height, bold, false);
+                        Gdi.Draw(Sample, family, ppem, PenX, 28, Width, Height, bold, italic);
                         Gdi.s_rawRgb = null;
                         byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
 
                         long theirs = 0, mine = 0;
                         int differ = 0;
+                        // The ink-weighted x CENTROID of each side. Reading a displacement off a
+                        // column of lamp values is guesswork -- Times italic looked like one to two
+                        // lamps by eye, and by eye is not a measurement. A centroid is one number
+                        // per side and it is what says whether a face sits where GDI puts it.
+                        double sx = 0, tx = 0;
                         for (int i = 0; i < Width * Height; i++)
                         {
                             bool any = false;
+                            int x = i % Width;
                             for (int ch = 0; ch < 3; ch++)
                             {
-                                theirs += 255 - raw[i * 4 + ch];
-                                mine += 255 - ours[i * 4 + ch];
+                                int t = 255 - raw[i * 4 + ch], m = 255 - ours[i * 4 + ch];
+                                theirs += t; mine += m;
+                                tx += t * (double) x; sx += m * (double) x;
                                 if (raw[i * 4 + ch] != ours[i * 4 + ch]) any = true;
                             }
                             if (any) differ++;
                         }
-                        report.AppendLine($"   {family,-16} {(bold ? "B" : "R")}   {ppem,4}"
+                        double dx = (mine > 0 ? sx / mine : 0) - (theirs > 0 ? tx / theirs : 0);
+
+                        // WHERE THE RUN STARTS AND WHERE IT ENDS, on each side. A centroid that
+                        // has moved says the run is not where GDI's is; it cannot say whether the
+                        // pen started somewhere else or the ADVANCES accumulated differently, and
+                        // those are different bugs. Edges separate them: a matching left edge with
+                        // a moved right edge is width, both moved together is the pen.
+                        int ourL = -1, ourR = -1, gdiL = -1, gdiR = -1;
+                        for (int x = 0; x < Width; x++)
+                        {
+                            long o = 0, g = 0;
+                            for (int y = 0; y < Height; y++)
+                                for (int ch = 0; ch < 3; ch++)
+                                {
+                                    o += 255 - ours[(y * Width + x) * 4 + ch];
+                                    g += 255 - raw[(y * Width + x) * 4 + ch];
+                                }
+                            // A threshold, not "any ink": a single ClearType fringe lamp is not an
+                            // edge, and reading one as an edge is a trap this suite has hit before.
+                            if (o > 255) { if (ourL < 0) ourL = x; ourR = x; }
+                            if (g > 255) { if (gdiL < 0) gdiL = x; gdiR = x; }
+                        }
+                        report.AppendLine($"   {family,-16} {(bold ? "B" : italic ? "I" : "R")}   {ppem,4}"
                                           + $" {mine,9} {theirs,9}"
                                           + $"   {(theirs == 0 ? 0 : mine / (double) theirs),5:0.000}"
-                                          + $"   {differ,6}");
+                                          + $"   {differ,6}   {dx,6:+0.000;-0.000; 0.000}"
+                                          + $"   L{ourL - gdiL,3} R{ourR - gdiR,3}"
+                                          + $"   width {(ourR - ourL) - (gdiR - gdiL),3}");
                     }
 
             File.AppendAllText(path!, report.ToString());
