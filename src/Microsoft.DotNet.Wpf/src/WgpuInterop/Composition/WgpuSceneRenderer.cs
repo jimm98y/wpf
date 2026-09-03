@@ -72,6 +72,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private int _symmetricRows;
 
+        /// <summary>Whether symmetric smoothing also softens across ROWS. WPF_SYM_VERTICAL=1.</summary>
+        private static readonly bool s_symVertical =
+            Environment.GetEnvironmentVariable("WPF_SYM_VERTICAL") == "1";
+
         /// <summary>Vertical samples when the face asks for symmetric smoothing AND is not
         /// being grid-fitted -- WPF_SYM_ROWS, two.
         /// <para>Segoe UI asks for symmetric smoothing in two places and they are not the same
@@ -3529,6 +3533,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // shader has no notion of that. Glyph masks are cached by shape, so this is
                         // paid once per glyph per size, not once per frame.
                         PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? _symmetricRows : 0;
+                        PathRasterizer.SymmetricVerticalForRun =
+                            _symmetricSmoothing && s_symVertical;
                         PathRasterizer.SubpixelMask sm;
                         try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
                                                     CurveFlattener.GlyphTolerance); }

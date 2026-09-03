@@ -489,6 +489,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// through the generic shape path, which knows nothing about fonts.</para></summary>
         internal static int SubpixelRowsForRun;
 
+        /// <summary>Whether the face asked for SYMMETRIC SMOOTHING at this size, set by the
+        /// renderer from the gasp for the same reason SubpixelRowsForRun is.</summary>
+        internal static bool SymmetricVerticalForRun;
+
+        /// <summary>MEASURED AND WRONG IN THIS FORM, and kept because the gap it was built for
+        /// is real and someone will try this first.
+        /// <para>At 20ppem, where every face in the specimen has the gasp bit, a tent applied
+        /// to the quantized lamps costs 8,795,316 at [1,2,1], 6,586,550 at [1,4,1] and
+        /// 5,510,843 at [1,6,1], against 2,299,096 with no smoothing at all -- converging back
+        /// toward off as the filter weakens, which says any amount of it hurts. So symmetric
+        /// smoothing is not a vertical blur of the lamps, at least not after quantization and
+        /// before the horizontal filter.</para>
+        /// <para>The gap remains, and is the sharpest unexplained signature left in the text:
+        /// Segoe UI's horizontal-edge disagreement runs 3,197 at 18ppem and 3,627 at 19, then
+        /// 33,287 at 20 -- ten times, at exactly the size its gasp gains SYM_SMOOTHING -- with
+        /// the count of such pixels going 63 to 536 and the signed sum from +3,565 to -21,149.
+        /// Whatever GDI does there, it is named, it is size-gated by the face, and we do not
+        /// do it.</para></summary>
+        /// <summary>Soften each lamp against the rows above and below it, which is what
+        /// symmetric smoothing does to a horizontal edge. WPF_SYM_FILTER gives the middle
+        /// weight; 2 is the [1,2,1] tent.</summary>
+        private static readonly int SymmetricMiddle =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_FILTER"), out int sm)
+                && sm >= 0 ? sm : 2;
+
+        private static byte[] SmoothRows(byte[] src, int w, int h)
+        {
+            var dst = new byte[src.Length];
+            int mid = SymmetricMiddle, total = mid + 2;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int up = src[(y > 0 ? y - 1 : y) * w + x];
+                    int dn = src[(y < h - 1 ? y + 1 : y) * w + x];
+                    dst[y * w + x] = (byte) ((up + src[y * w + x] * mid + dn) / total);
+                }
+            return dst;
+        }
+
         public static SubpixelMask RasterizeSubpixel(PathGeometry path,
                                                      float tolerance = 0f)
         {
@@ -537,6 +576,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // away the edge.
             samples = HalfLamps > 1 ? CollapseHalfLamps(samples, subWidth, height) : samples;
             Quantize(samples);
+            // SYMMETRIC SMOOTHING, when the face's gasp asks for it at this size. It is a
+            // filter and not more samples: sweeping the vertical SAMPLE count at 20ppem gives
+            // 2,299,096 / 3,281,860 / 2,303,143 / 2,496,104 for one to four, worst at the even
+            // counts, because an odd count includes the scanline centre and GDI samples there.
+            // What the gasp bit actually turns on is softening across ROWS, and its absence is
+            // visible: Segoe UI's horizontal-edge disagreement is about 3,200 at 18 and 19ppem
+            // and 33,287 at 20, which is exactly where its gasp gains the bit.
+            if (SymmetricVerticalForRun && height > 2)
+                samples = SmoothRows(samples, subWidth, height);
             // The contrast curve, if it is to be applied to the RAW LAMPS rather than to the filtered
             // result. Set by the renderer, which owns the curve; null means correct afterwards as
             // before. See WgpuSceneRenderer.s_correctBeforeFilter.
