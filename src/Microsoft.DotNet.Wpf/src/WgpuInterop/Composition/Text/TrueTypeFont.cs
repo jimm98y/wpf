@@ -945,6 +945,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool GaspFlags(float pixelsPerEm, int want)
         {
             if (_gasp < 0) return false;
+            // A VERSION 0 TABLE DOES NOT HAVE THE SYMMETRIC BITS. It defines GRIDFIT and
+            // DOGRAY and nothing else, so reading bit 2 or 3 out of it reads a bit the face
+            // never wrote and answers NO to a question it was never asked. The rasterizer has
+            // to supply its own behaviour there, and GDI's is evidently yes: Times and Arial
+            // ship version 1 for their romans and version 0 for every styled face, so this is
+            // the difference between arial.ttf answering symmetric at 20ppem and arialbd.ttf
+            // not -- and answering yes for the version 0 files is worth 62,829 at 18ppem and
+            // 49,059 at 20 on the text specimen.
+            if (want == GaspSymmetricSmoothing && U16(_gasp) == 0) return true;
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
