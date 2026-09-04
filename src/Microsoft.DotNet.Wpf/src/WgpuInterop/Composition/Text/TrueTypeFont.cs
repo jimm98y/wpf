@@ -1052,7 +1052,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// to answer and we are inside the hinter. The recursion silently stops most of the
         /// repertoire drawing and reports itself as a large improvement.</para>
         /// <para>1 scales x onto the hdmx advance, 2 translates the glyph back onto its original
-        /// left side bearing (measured: no effect), 0 does neither. WPF_CT_COMPATWIDTH.</para></summary>
+        /// left side bearing (measured: no effect), 0 does neither. WPF_CT_COMPATWIDTH.</para>
+        /// <para>WHAT IT IS ACTUALLY DOING, 2026-09-04, now that GDI's ClearType outline can be
+        /// SOLVED FOR rather than guessed at (SolveGdisStemGeometry). It SQUEEZES THE GLYPH. Arial
+        /// 'I' at 16ppem: the program computes a stem of 1.438 and this scaling delivers 1.078,
+        /// where GDI draws 1.453. Turn it off and our widths track GDI's within six hundredths at
+        /// every size tried:</para>
+        /// <code>
+        ///              with squeeze     without        GDI
+        ///   ppem 12    1.063            1.063          1.125
+        ///   ppem 13    0.891            1.188          1.125-1.203
+        ///   ppem 16    1.078            1.438          1.453-1.500
+        /// </code>
+        /// <para>And yet turning it off costs the specimen 2,280,798 -> 2,978,594 at 12ppem. Both
+        /// are true because it is COMPENSATING, not correcting: our glyph's ink sits too far RIGHT
+        /// inside its advance box -- at 16ppem our left edge is 1.438 against GDI's 0.625 -- and
+        /// squeezing the glyph drags it left. It buys a better position by paying in stem width,
+        /// and on an aggregate that trade wins.</para>
+        /// <para>So this stays ON, and it is not the fix. The fix is the POSITION: get the ink
+        /// where GDI puts it inside the box and this can go, because compatible widths is a
+        /// statement about the ADVANCE -- "glyphs adjusted post hinting in order to return advance
+        /// widths exactly the same as bi-level" -- and an advance can be honoured without
+        /// distorting the outline that sits inside it. Note the pen itself is NOT the problem:
+        /// spaced glyphs land on GDI's sub-pixel centres exactly (WhereEachGlyphLands), so the
+        /// advances are right and it is the ink within the box that is displaced.</para></summary>
         /// <summary>How far the fitted advance may be from the bi-level one, in percent, and still be
         /// scaled onto it.
         /// <para>25. Swept on the text specimen: 15% costs 1,025,604 (too many real corrections
