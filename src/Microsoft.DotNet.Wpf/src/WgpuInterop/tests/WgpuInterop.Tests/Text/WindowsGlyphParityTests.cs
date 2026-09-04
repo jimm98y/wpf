@@ -4089,6 +4089,18 @@ namespace WgpuInterop.Tests.Text
                                     + $"  resid {best,7}{(best == 0 ? " SOLVED" : "")}"
                                     + $"   L in [{loL,6:0.000},{hiL,6:0.000}]"
                                     + $" W in [{loW,6:0.000},{hiW,6:0.000}]");
+            // THE CONVENTION CHECK. Everything here rests on placing an outline the way the real
+            // renderer places a glyph; if it does not, every "GDI left" is off by a constant and
+            // the absolute numbers are fiction. Render the same glyph through the ordinary path and
+            // through the figure path and compare the two scores: they must agree.
+            byte[] endToEnd = OursRgba(font, c.ToString(), ppem, 28, correction: true);
+            long e2e = 0;
+            for (int i = 0; i < Width * Height; i++)
+                for (int ch = 0; ch < 3; ch++)
+                    e2e += Math.Abs(raw[i * 4 + (2 - ch)] - endToEnd[i * 4 + ch]);
+            long viaFigures = Score(left, right - left);
+            Console.Error.WriteLine($"   convention  end-to-end {e2e}  via figures {viaFigures}"
+                                    + (e2e == viaFigures ? "  AGREE" : "  DISAGREE -- absolute values are unsafe"));
             Console.Error.WriteLine($"== {parts[0]} '{c}' @{ppem}{(style == "" ? "" : "/" + style)}");
             Console.Error.WriteLine($"   ours      left {left,7:0.000}  width {right - left,7:0.000}"
                                     + $"   sum|d| {Score(left, right - left),8}");
