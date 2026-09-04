@@ -2180,6 +2180,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             glyph.X[i] = p0 + (int) MathF.Round((glyph.X[i] - p0) * (target / (float) fitted));
                     }
                 }
+                // MODE 5: buy the same MOVE without paying in stem width.
+                //
+                // The scale above is the largest correction in this path and it works, but the
+                // solver says what it costs: GDI keeps the natural stem width and we crush it --
+                // Arial 'I' at 16ppem fits to 1.438, the scale delivers 1.078, GDI draws 1.453.
+                // The scale earns its place by dragging the ink LEFT, nearer where GDI puts it,
+                // and it pays for that with every stem in the glyph.
+                //
+                // So: translate the ink by exactly what the scale would have moved its centre, and
+                // set the advance to the target directly. Same displacement, same advance, stems
+                // untouched.
+                else if (CompatibleWidthMode == 5 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    float wanted5 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target5 = (int) MathF.Round(wanted5 * 64f);
+                    int off5 = Math.Abs(target5 - fitted) * 100;
+                    if (target5 > 0 && target5 != fitted && off5 <= fitted * CompatibleWidthTolerance)
+                    {
+                        int lo = int.MaxValue, hi = int.MinValue;
+                        for (int i = 0; i < glyph.PointCount; i++)
+                        {
+                            if (glyph.X[i] < lo) lo = glyph.X[i];
+                            if (glyph.X[i] > hi) hi = glyph.X[i];
+                        }
+                        if (lo <= hi)
+                        {
+                            float s5 = target5 / (float) fitted;
+                            int shift5 = (int) MathF.Round((s5 - 1f) * ((lo + hi) * 0.5f - p0));
+                            for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift5;
+                            if (glyph.X.Length > glyph.PointCount + 1)
+                                glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target5;
+                        }
+                    }
+                }
             }
 
             // MODE 3: compatible widths, and then put the glyph back on the left edge it had before
