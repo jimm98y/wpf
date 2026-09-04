@@ -1133,6 +1133,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_compatWidthComposite =
             Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH_COMPOSITE") == "1";
 
+        /// <summary>How wide a gap in x separates one feature from the next, in 64ths, for the
+        /// piecewise displacement of mode 6. WPF_CT_STEMGAP.</summary>
+        /// <summary>WPF_CT_CW_TRACE=1 prints the fitted advance, the target and their ratio.</summary>
+        private static readonly bool s_cwTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1";
+
+        private static readonly int StemGap64 =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMGAP"), out int sg) && sg > 0
+                ? sg : 48;
+
         internal static readonly int CompatibleWidthMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 1;
 
@@ -1973,8 +1983,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool savedBi = TrueTypeInterpreter.BiLevelPass;
             if (small) TrueTypeInterpreter.BiLevelPass = true;
             bool hinted;
+            // The advance the glyph will be LAID OUT at, for advance-phantom mode 3. Never asked
+            // for during a bi-level pass: that pass is how this number is computed in the first
+            // place, and asking from inside it recurses.
+            int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
+            if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
+                TrueTypeInterpreter.CompatibleAdvance64 =
+                    (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
+                                                        (int) MathF.Round(pixelsPerEm)) * 64f);
             try { hinted = interpreter.Hint(glyph, pixelsPerEm); }
-            finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+            finally
+            {
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
+            }
             if (!hinted) return null;
 
             // SNAP THE GLYPH ONTO THE PIXEL GRID, KEEPING THE SHAPE THE FITTING GAVE IT.
@@ -2173,11 +2195,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // wide against 3.33 unhinted, a third wider than the letter, and it is the second
                     // most expensive glyph in the whole repertoire. A glyph asking for a large
                     // correction is one whose fitted advance cannot be trusted -- leave it alone.
+                    // WHAT THE CORRECTION IS CORRECTING. The scale is target/fitted, so it is a
+                    // measure of how far our HINTED advance has drifted from the one Windows lays
+                    // out with. Where that ratio is 1 there is nothing to correct and nothing to
+                    // distort; where it is far from 1 the glyph is squeezed to make up for it. So
+                    // the ratio is the actual defect, and the squeeze is its symptom.
+                    if (s_cwTrace)
+                        Console.Error.WriteLine($"CW gid={gid} ppem={ppemI} fitted={fitted / 64f:0.000}"
+                            + $" target={target / 64f:0.000} ratio={(fitted == 0 ? 0 : target / (float) fitted):0.0000}");
                     int off = Math.Abs(target - fitted) * 100;
                     if (target > 0 && target != fitted && off <= fitted * CompatibleWidthTolerance)
                     {
                         for (int i = 0; i < glyph.X.Length; i++)
                             glyph.X[i] = p0 + (int) MathF.Round((glyph.X[i] - p0) * (target / (float) fitted));
+                    }
+                }
+                // MODE 6: the displacement applied BETWEEN features and not within them.
+                //
+                // The scale beats a plain translation because GDI's displacement grows across the
+                // glyph; it loses stem width because it also grows WITHIN each stem. So group the
+                // points into features -- runs of x with no gap wider than a stem -- and move each
+                // group as a unit by the scale's displacement at its own centre. Between groups the
+                // spacing still stretches; inside one, every distance is preserved.
+                //
+                // Clustering on x is a proxy for "stem": it is what can be had without asking which
+                // points the program touched, and it puts the two stems of an 'n' in two groups
+                // where a per-CONTOUR rule would put them in one.
+                else if (CompatibleWidthMode == 6 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    float wanted6 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target6 = (int) MathF.Round(wanted6 * 64f);
+                    int off6 = Math.Abs(target6 - fitted) * 100;
+                    if (target6 > 0 && target6 != fitted && off6 <= fitted * CompatibleWidthTolerance
+                        && glyph.PointCount > 0)
+                    {
+                        var order = new int[glyph.PointCount];
+                        for (int i = 0; i < order.Length; i++) order[i] = i;
+                        Array.Sort(order, (a, b) => glyph.X[a].CompareTo(glyph.X[b]));
+
+                        float s6 = target6 / (float) fitted;
+                        int gap = StemGap64;
+                        int runStart = 0;
+                        var shift = new int[glyph.PointCount];
+                        for (int i = 1; i <= order.Length; i++)
+                        {
+                            bool split = i == order.Length
+                                         || glyph.X[order[i]] - glyph.X[order[i - 1]] > gap;
+                            if (!split) continue;
+                            int lo6 = glyph.X[order[runStart]], hi6 = glyph.X[order[i - 1]];
+                            int d = (int) MathF.Round((s6 - 1f) * ((lo6 + hi6) * 0.5f - p0));
+                            for (int k = runStart; k < i; k++) shift[order[k]] = d;
+                            runStart = i;
+                        }
+                        for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift[i];
+                        if (glyph.X.Length > glyph.PointCount + 1)
+                            glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target6;
                     }
                 }
                 // MODE 5: buy the same MOVE without paying in stem width.

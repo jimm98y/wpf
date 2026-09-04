@@ -4321,6 +4321,8 @@ namespace WgpuInterop.Tests.Text
                 "Shapes", "Text", "Media", "Label", "Button", "CheckBox", "OK", "Cancel",
                 "MonthCalendar", "September 2026", "Today: 9/4/2026", "Handgloves mio",
                 "iiiii", "WWWWW", "lll", "...", "  ",
+                // Single glyphs, to read one advance rather than a sum of them.
+                "I", "II", "l", "n", "W",
             };
 
             foreach (string family in new[] { "Segoe UI", "Tahoma", "Arial" })

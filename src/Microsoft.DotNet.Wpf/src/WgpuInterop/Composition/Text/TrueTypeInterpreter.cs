@@ -1008,6 +1008,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// goes 0.010 -> 0.188 and Times' own roman 0.025 -> 0.056, while Arial's roman improves
         /// 0.234 -> 0.201. A knob whose best value differs per face is a sign that GDI is doing
         /// something here we are approximating, not a setting to pick. Default stays 0.</para></summary>
+        /// <summary>The advance the glyph will actually be laid out at, in 64ths, or 0 when it is
+        /// not known. Set by the font before a ClearType run; used only by advance-phantom mode 3.
+        /// </summary>
+        internal static int CompatibleAdvance64;
+
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp : 0;
 
@@ -1189,6 +1194,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
                 2 => z.CurX[glyph.PointCount + 1],                   // leave it alone
+                // 3: THE BOX THE PROGRAM SHOULD BE FITTING INSIDE. Compatible widths means the
+                // glyph is laid out at the BI-LEVEL advance, and that is the advance Windows uses:
+                // Arial's 'I' at 16ppem advances 3px, not the 4 its linear width rounds to. Start
+                // the ClearType run with that box and the program is positioning within the same
+                // space GDI's is, instead of inside a box a pixel too wide that a later scale then
+                // has to squeeze -- which is what damages the stems.
+                3 when CompatibleAdvance64 > 0
+                    => z.CurX[glyph.PointCount] + CompatibleAdvance64,
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
 
