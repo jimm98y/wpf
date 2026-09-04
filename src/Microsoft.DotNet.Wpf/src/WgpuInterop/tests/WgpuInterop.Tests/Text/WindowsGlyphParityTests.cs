@@ -3964,6 +3964,317 @@ namespace WgpuInterop.Tests.Text
                         + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>SOLVE FOR GDI'S STEM: the left edge and width that reproduce its pixels.
+        /// <para>There has never been an oracle for GDI's ClearType-mode outline. GetGlyphOutline
+        /// answers for its own mode and the two disagree, so every rule for x fitting has had to be
+        /// guessed at and scored on aggregates. But our rasterizer reproduces GDI's lamps EXACTLY
+        /// for a given outline, which makes the outline recoverable: for a glyph that is a single
+        /// rectangle, render every plausible (left, width) and see which one GDI drew.</para>
+        /// <para>'I' in most faces is exactly that rectangle, so it is where this can be done
+        /// without assuming anything. The y extents are taken from our own fitted outline: y is not
+        /// in question -- the bi-level comparison pairs every point in both axes -- and holding
+        /// them fixed keeps the search two-dimensional.</para>
+        /// <para>WPF_STEMSOLVE=family/char/ppem[/B|I|BI].</para></summary>
+        [Fact]
+        public void SolveGdisStemGeometry()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_STEMSOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_STEMSOLVE=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            char c = parts[1][0];
+            int gid = font.GlyphIndex(c);
+            Assert.True(gid > 0, $"{parts[0]} has no '{c}'");
+            Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out List<PathFigure> fitted)
+                        && fitted.Count > 0, "we do not grid-fit it at this size");
+
+            float left = float.MaxValue, right = float.MinValue, top = float.MinValue, bottom = float.MaxValue;
+            foreach (PathFigure f in fitted)
+            {
+                void See(Vector2 p)
+                {
+                    if (p.X < left) left = p.X;
+                    if (p.X > right) right = p.X;
+                    if (p.Y < bottom) bottom = p.Y;
+                    if (p.Y > top) top = p.Y;
+                }
+                See(f.Start);
+                foreach (PathSegment sg in f.Segments)
+                    if (sg is LineSegment ls) See(ls.Point);
+                    else if (sg is QuadraticBezierSegment qs) { See(qs.Control); See(qs.Point); }
+            }
+
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+
+            long Score(float l, float w)
+            {
+                // The fitted outline is ALREADY in the renderer's space -- ScaleFigures only
+                // translates it -- so the rectangle is placed the same way, not flipped. Flipping
+                // it put the glyph above the baseline and scored 22,860 where our own outline
+                // scores 3,060, which is how the mistake announced itself.
+                var rect = new List<PathFigure>(1) { RectFigure(PenX + l, 28f + bottom, w, top - bottom) };
+                byte[] ours = OursRgbaFromFigures(rect, font);
+                long sum = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch = 0; ch < 3; ch++)
+                        sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                return sum;
+            }
+
+            // Coarse then fine, because a full sixty-fourth sweep of both axes is 16,000 renders.
+            float bestL = left, bestW = right - left;
+            long best = long.MaxValue;
+            for (int li = -16; li <= 16; li++)
+                for (int wi = -16; wi <= 24; wi++)
+                {
+                    float l = left + li / 16f, w = (right - left) + wi / 16f;
+                    if (w <= 0.1f) continue;
+                    long sc = Score(l, w);
+                    if (sc < best) { best = sc; bestL = l; bestW = w; }
+                }
+            for (int li = -8; li <= 8; li++)
+                for (int wi = -8; wi <= 8; wi++)
+                {
+                    float l = bestL + li / 64f, w = bestW + wi / 64f;
+                    if (w <= 0.1f) continue;
+                    long sc = Score(l, w);
+                    if (sc < best) { best = sc; bestL = l; bestW = w; }
+                }
+
+            // THE SOLUTION IS AN INTERVAL, not a point. Several (left, width) pairs can rasterize
+            // to the same lamps, so reading a rule off whichever one the search happened to reach
+            // would be reading noise. Scan the neighbourhood for every pair that also scores zero
+            // and report the extremes; a rule has to fit inside these, and a narrow interval is
+            // itself the evidence that the answer is well determined.
+            float loL = bestL, hiL = bestL, loW = bestW, hiW = bestW;
+            if (best == 0)
+                for (int li = -24; li <= 24; li++)
+                    for (int wi = -24; wi <= 24; wi++)
+                    {
+                        float l = bestL + li / 64f, w = bestW + wi / 64f;
+                        if (w <= 0.1f || Score(l, w) != 0) continue;
+                        if (l < loL) loL = l; if (l > hiL) hiL = l;
+                        if (w < loW) loW = w; if (w > hiW) hiW = w;
+                    }
+
+            // The natural width too: the question a rule has to answer is what GDI does to it.
+            float natL = float.MaxValue, natR = float.MinValue;
+            if (font.TryGetGlyphOutline(gid, out List<PathFigure> plain))
+                foreach (PathFigure f in plain)
+                {
+                    void SeeX(Vector2 p) { if (p.X < natL) natL = p.X; if (p.X > natR) natR = p.X; }
+                    SeeX(f.Start);
+                    foreach (PathSegment sg in f.Segments)
+                        if (sg is LineSegment l2) SeeX(l2.Point);
+                        else if (sg is QuadraticBezierSegment q2) { SeeX(q2.Control); SeeX(q2.Point); }
+                }
+            float natScale = ppem / (float) font.PixelsPerEm;
+            Console.Error.WriteLine($"{ppem,4}  natural {natL * natScale,7:0.000} {(natR - natL) * natScale,7:0.000}"
+                                    + $"  ours {left,7:0.000} {right - left,7:0.000}"
+                                    + $"  GDI {bestL,7:0.000} {bestW,7:0.000}"
+                                    + $"  resid {best,7}{(best == 0 ? " SOLVED" : "")}"
+                                    + $"   L in [{loL,6:0.000},{hiL,6:0.000}]"
+                                    + $" W in [{loW,6:0.000},{hiW,6:0.000}]");
+            Console.Error.WriteLine($"== {parts[0]} '{c}' @{ppem}{(style == "" ? "" : "/" + style)}");
+            Console.Error.WriteLine($"   ours      left {left,7:0.000}  width {right - left,7:0.000}"
+                                    + $"   sum|d| {Score(left, right - left),8}");
+            Console.Error.WriteLine($"   GDI's     left {bestL,7:0.000}  width {bestW,7:0.000}"
+                                    + $"   sum|d| {best,8}"
+                                    + (best == 0 ? "   SOLVED EXACTLY" : ""));
+            Console.Error.WriteLine($"   in 64ths  left {bestL * 64,7:0}      width {bestW * 64,7:0}");
+        }
+
+        /// <summary>A closed rectangle as a path figure, y up from the baseline.</summary>
+        private static PathFigure RectFigure(float x, float yTop, float w, float h)
+        {
+            var f = new PathFigure(new Vector2(x, yTop)) { Closed = true };
+            f.Segments.Add(new LineSegment(new Vector2(x + w, yTop)));
+            f.Segments.Add(new LineSegment(new Vector2(x + w, yTop + h)));
+            f.Segments.Add(new LineSegment(new Vector2(x, yTop + h)));
+            return f;
+        }
+
+        /// <summary>IS THE PER-GLYPH ERROR A DISPLACEMENT OR A SHAPE?
+        /// <para>Everything downstream of x-fitting is proved: the rasterizer reproduces GDI's
+        /// lamps exactly for a given outline, and the interpreter reproduces GDI's own fitted
+        /// points exactly in the one mode GDI can be asked about. So GDI's PIXELS determine GDI's
+        /// POINTS, and the open question is what its ClearType-mode points are.</para>
+        /// <para>This separates two very different answers cheaply: take OUR fitted outline, slide
+        /// it in sixty-fourths of a pixel, and render each offset through our own rasterizer. If
+        /// some offset reproduces GDI's pixels, then GDI fitted the same SHAPE and only placed it
+        /// differently, and the rule to find is one number per glyph. If none does, GDI's stems sit
+        /// differently WITHIN the glyph and no placement rule can ever match it.</para>
+        /// <para>The outline is translated here rather than by moving the pen: the pen is rounded
+        /// to whole pixels and the atlas rasterizes once per size, so a sub-pixel pen offset is
+        /// quietly discarded -- which the first attempt at this did not notice, and it reported the
+        /// same error at every offset.</para>
+        /// <para>WPF_SHIFTSOLVE=family/chars/ppem[/B|I|BI].</para></summary>
+        [Fact]
+        public void CanAShiftOfOursReproduceGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_SHIFTSOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SHIFTSOLVE=family/chars/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            Console.Error.WriteLine($"== {parts[0]} @{ppem}{(style == "" ? "" : "/" + style)}:"
+                                    + " can a sub-pixel shift of OUR fitted outline reproduce GDI's?");
+            // Candidate predictors, printed beside the answer. A shift that varies per glyph is
+            // only useful if something about the glyph predicts it, and these are what a placement
+            // rule could plausibly be made of: where the glyph's ink starts before fitting, where
+            // it starts after, and how far the fitting moved it.
+            Console.Error.WriteLine("   char   at 0/64    best  sum|d|   unfitted  fitted   moved"
+                                    + "   verdict");
+
+            var raw = new byte[Width * Height * 4];
+            foreach (char c in parts[1])
+            {
+                int gid = font.GlyphIndex(c);
+                if (gid <= 0) continue;
+                if (!((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out List<PathFigure> fitted)
+                    || fitted.Count == 0)
+                {
+                    Console.Error.WriteLine($"   {c}    (we do not grid-fit it at this size)");
+                    continue;
+                }
+
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                Gdi.s_rawRgb = null;
+
+                // AND THE SAME GLYPH FITTED THE OTHER WAY. Our BI-LEVEL fitting reproduces GDI's
+                // own fitted points exactly -- 4 of 4 for this glyph, in the one mode GDI can be
+                // asked about -- so if GDI's ClearType rendering is its bi-level outline, rendering
+                // ours should reach GDI's pixels where the ClearType fitting cannot.
+                bool savedBi = TrueTypeInterpreter.BiLevelPass;
+                List<PathFigure> biFitted;
+                try
+                {
+                    // BEFORE constructing: 'prep' runs once, at construction, and it is prep that
+                    // rounds the stem CVTs according to what GETINFO answered. Setting the flag
+                    // afterwards leaves those CVTs as the ClearType pass computed them, and the
+                    // outline comes back byte-identical -- which is what the first attempt showed.
+                    TrueTypeInterpreter.BiLevelPass = true;
+                    var biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                    if (!((IHintedGlyphFont) biFont).TryGetHintedOutline(gid, ppem, out biFitted))
+                        biFitted = new List<PathFigure>();
+                }
+                finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+
+                long biBest = long.MaxValue;
+                int biStep = 0;
+                for (int step = -64; step <= 64 && biFitted.Count > 0; step++)
+                {
+                    List<PathFigure> placed = GlyphRunPainter.ScaleFigures(
+                        biFitted, 1f, PenX + step / 64f, 28f);
+                    byte[] ours = OursRgbaFromFigures(placed, font);
+                    long sum = 0;
+                    for (int i = 0; i < Width * Height; i++)
+                        for (int ch = 0; ch < 3; ch++)
+                            sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                    if (sum < biBest) { biBest = sum; biStep = step; }
+                }
+
+                long atZero = -1, best = long.MaxValue;
+                int bestStep = 0;
+                for (int step = -64; step <= 64; step++)
+                {
+                    // The fitted outline is in device pixels with the baseline at y=0 and y up,
+                    // which is what GlyphRunPainter places with scale 1.
+                    List<PathFigure> placed = GlyphRunPainter.ScaleFigures(
+                        fitted, 1f, PenX + step / 64f, 28f);
+                    byte[] ours = OursRgbaFromFigures(placed, font);
+                    long sum = 0;
+                    for (int i = 0; i < Width * Height; i++)
+                        for (int ch = 0; ch < 3; ch++)
+                            sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                    if (step == 0) atZero = sum;
+                    if (sum < best) { best = sum; bestStep = step; }
+                }
+
+                // The left extreme of the outline, unfitted and fitted, in pixels.
+                float unfittedLeft = float.MaxValue, fittedLeft = float.MaxValue;
+                if (font.TryGetGlyphOutline(gid, out List<PathFigure> plain))
+                    foreach (PathFigure f in plain)
+                    {
+                        if (f.Start.X < unfittedLeft) unfittedLeft = f.Start.X;
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment ls && ls.Point.X < unfittedLeft) unfittedLeft = ls.Point.X;
+                            else if (sg is QuadraticBezierSegment qs && qs.Point.X < unfittedLeft) unfittedLeft = qs.Point.X;
+                    }
+                foreach (PathFigure f in fitted)
+                {
+                    if (f.Start.X < fittedLeft) fittedLeft = f.Start.X;
+                    foreach (PathSegment sg in f.Segments)
+                        if (sg is LineSegment ls && ls.Point.X < fittedLeft) fittedLeft = ls.Point.X;
+                        else if (sg is QuadraticBezierSegment qs && qs.Point.X < fittedLeft) fittedLeft = qs.Point.X;
+                }
+                // And the RIGHT extreme, so a single-stem glyph's WIDTH can be compared. For a
+                // glyph that is one rectangle, width is the only thing "shape" can mean, so where
+                // no shift reaches GDI it is the width that differs.
+                float unfittedRight = float.MinValue, fittedRight = float.MinValue;
+                if (font.TryGetGlyphOutline(gid, out List<PathFigure> plain2))
+                    foreach (PathFigure f in plain2)
+                    {
+                        if (f.Start.X > unfittedRight) unfittedRight = f.Start.X;
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment ls && ls.Point.X > unfittedRight) unfittedRight = ls.Point.X;
+                            else if (sg is QuadraticBezierSegment qs && qs.Point.X > unfittedRight) unfittedRight = qs.Point.X;
+                    }
+                foreach (PathFigure f in fitted)
+                {
+                    if (f.Start.X > fittedRight) fittedRight = f.Start.X;
+                    foreach (PathSegment sg in f.Segments)
+                        if (sg is LineSegment ls && ls.Point.X > fittedRight) fittedRight = ls.Point.X;
+                        else if (sg is QuadraticBezierSegment qs && qs.Point.X > fittedRight) fittedRight = qs.Point.X;
+                }
+                float scale = ppem / (float) font.PixelsPerEm;
+                float unfittedPx = unfittedLeft * scale;
+
+                string verdict = best == 0 ? "EXACT -- placement alone explains it"
+                               : best * 4 < atZero ? "MOSTLY placement"
+                               : best < atZero ? "partly placement"
+                               : "NOT placement -- the shape differs";
+                Console.Error.WriteLine($"   {c}   {atZero,8}  {bestStep,4}/64 {best,8}"
+                                        + $"   {unfittedPx,8:0.000} {fittedLeft,7:0.000}"
+                                        + $" {fittedLeft - unfittedPx,7:+0.000;-0.000; 0.000}"
+                                        // WHERE GDI PUT IT: our fitted left plus the shift that
+                                        // reproduces GDI's pixels. Only meaningful when the shift
+                                        // actually reaches GDI -- a glyph whose shape differs has
+                                        // no single answer -- so it is marked when it is trustworthy.
+                                        + $"   w {(unfittedRight - unfittedLeft) * scale,6:0.000}"
+                                        + $"->{fittedRight - fittedLeft,6:0.000}"
+                                        + $"   gdiLeft {fittedLeft + bestStep / 64f,6:0.000}"
+                                        + $"{(best * 8 < atZero ? "*" : " ")}"
+                                        + $"   BI-LEVEL {biStep,4}/64 {biBest,8}"
+                                        + $"   {verdict}");
+            }
+        }
+
         /// <summary>THE WIDTH WE MEASURE A STRING TO BE, against the width GDI measures.
         /// <para>Layout is built on this number, not on the pixels: a tab is sized to its caption,
         /// a label to its text, a column to its header. If it is a pixel out, every edge downstream
