@@ -4061,6 +4061,7 @@ namespace WgpuInterop.Tests.Text
             // and report the extremes; a rule has to fit inside these, and a narrow interval is
             // itself the evidence that the answer is well determined.
             float loL = bestL, hiL = bestL, loW = bestW, hiW = bestW;
+            float loR = bestL + bestW, hiR = bestL + bestW;
             if (best == 0)
                 for (int li = -24; li <= 24; li++)
                     for (int wi = -24; wi <= 24; wi++)
@@ -4069,6 +4070,13 @@ namespace WgpuInterop.Tests.Text
                         if (w <= 0.1f || Score(l, w) != 0) continue;
                         if (l < loL) loL = l; if (l > hiL) hiL = l;
                         if (w < loW) loW = w; if (w > hiW) hiW = w;
+                        // AND THE RIGHT EDGE. For a stem about a pixel wide, left and width trade
+                        // off against each other -- move the left edge right and widen to match and
+                        // the lamps can come out the same. If that is what is happening the
+                        // solution set is a diagonal, the individual numbers mean little, and only
+                        // the combination is determined. This says which.
+                        float r = l + w;
+                        if (r < loR) loR = r; if (r > hiR) hiR = r;
                     }
 
             // The natural width too: the question a rule has to answer is what GDI does to it.
@@ -4088,7 +4096,8 @@ namespace WgpuInterop.Tests.Text
                                     + $"  GDI {bestL,7:0.000} {bestW,7:0.000}"
                                     + $"  resid {best,7}{(best == 0 ? " SOLVED" : "")}"
                                     + $"   L in [{loL,6:0.000},{hiL,6:0.000}]"
-                                    + $" W in [{loW,6:0.000},{hiW,6:0.000}]");
+                                    + $" W in [{loW,6:0.000},{hiW,6:0.000}]"
+                                    + $" R in [{loR,6:0.000},{hiR,6:0.000}]");
             // THE CONVENTION CHECK. Everything here rests on placing an outline the way the real
             // renderer places a glyph; if it does not, every "GDI left" is off by a constant and
             // the absolute numbers are fiction. Render the same glyph through the ordinary path and
