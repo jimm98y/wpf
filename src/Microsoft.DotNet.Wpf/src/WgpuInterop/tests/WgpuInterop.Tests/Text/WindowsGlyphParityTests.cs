@@ -4573,12 +4573,19 @@ namespace WgpuInterop.Tests.Text
             string? path = Environment.GetEnvironmentVariable("WPF_WEIGHT_REPORT");
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_WEIGHT_REPORT to collect this");
 
-            const string Sample = "Handgloves mio";
+            // THE SPECIMEN, IN PROCESS. The six faces and four styles the text specimen draws,
+            // over its sizes -- but rendered offscreen against GDI's in-memory DIB instead of
+            // grabbed off the screen. That matters beyond convenience: the screen harness needs an
+            // interactive desktop, and when the session stops being capturable it returns two BLACK
+            // images and a difference of ZERO, which reads as perfect parity. This cannot do that.
+            const string Sample = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
             var report = new System.Text.StringBuilder();
             report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
             report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ"
                               + "    sum|d|   centroid dx   edge deltas");
             var raw = new byte[Width * Height * 4];
+            long grandTotal = 0;
+            int rowCount = 0;
 
             foreach (string family in new[]
                      { "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas" })
@@ -4656,6 +4663,8 @@ namespace WgpuInterop.Tests.Text
                             if (o > 255) { if (ourL < 0) ourL = x; ourR = x; }
                             if (g > 255) { if (gdiL < 0) gdiL = x; gdiR = x; }
                         }
+                        grandTotal += sumd;
+                        rowCount++;
                         report.AppendLine($"   {family,-16} {(bold ? "B" : italic ? "I" : "R")}   {ppem,4}"
                                           + $" {mine,9} {theirs,9}"
                                           + $"   {(theirs == 0 ? 0 : mine / (double) theirs),5:0.000}"
@@ -4664,6 +4673,8 @@ namespace WgpuInterop.Tests.Text
                                           + $"   width {(ourR - ourL) - (gdiR - gdiL),3}");
                     }
 
+            report.AppendLine($"   TOTAL over {rowCount} rows: sum|d| {grandTotal}");
+            Console.Error.WriteLine($"IN-PROCESS SPECIMEN: {grandTotal} over {rowCount} rows");
             File.AppendAllText(path!, report.ToString());
         }
 
