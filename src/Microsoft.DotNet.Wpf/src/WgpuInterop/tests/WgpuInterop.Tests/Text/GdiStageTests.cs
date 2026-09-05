@@ -847,21 +847,27 @@ namespace WgpuInterop.Tests.Text
                     bool showAll = Environment.GetEnvironmentVariable("WPF_GGOPTS_ALL") == "1";
                     double worstX = 0, worstY = 0;
                     var lines = new List<string>();
+                    // A SYNTHESIZED OBLIQUE -- Tahoma has no italic face -- is hinted upright and
+                    // sheared afterwards, on both sides. The interpreter's captured points are the
+                    // upright ones; GDI reports the sheared outline. Shear ours the same way before
+                    // pairing, or only the baseline pairs (6 of 24 points of Tahoma's 'o') and
+                    // every "difference" above it is the slant itself.
+                    float shear = font.ObliqueShearApplied;
                     for (int i = 0; i < pts.PointCount; i++)
                     {
                         if (onCurveOnly && !pts.OnCurve[i]) continue;
-                        int j = Nearest(plain, pts.StartX[i], -pts.StartY[i]);
+                        int j = Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
                         if (j < 0) continue;
                         paired++;
                         float gdiY = -fitted[j].Y, gdiX = fitted[j].X;
-                        double dy = pts.FitY[i] - gdiY, dx = pts.FitX[i] - gdiX;
+                        double dy = pts.FitY[i] - gdiY, dx = pts.FitX[i] + shear * pts.FitY[i] - gdiX;
                         bool badX = Math.Abs(dx) > 1.0 / 64, badY = Math.Abs(dy) > 1.0 / 64;
                         if (badX) { offX++; if (Math.Abs(dx) > Math.Abs(worstX)) worstX = dx; }
                         if (badY) { offY++; if (Math.Abs(dy) > Math.Abs(worstY)) worstY = dy; }
                         if ((badX || badY || showAll) && shown++ < (showAll ? 999 : 12) && !quiet)
                             lines.Add($"      pt{i,-3} {(pts.OnCurve[i] ? "on " : "off")}"
                                 + $" start({pts.StartX[i]:0.00},{pts.StartY[i]:0.00})"
-                                + $" ours ({pts.FitX[i]:0.000},{pts.FitY[i]:0.000})"
+                                + $" ours ({pts.FitX[i] + shear * pts.FitY[i]:0.000},{pts.FitY[i]:0.000})"
                                 + $" gdi ({gdiX:0.000},{gdiY:0.000})"
                                 + $"  d {dx * 64:+0.0;-0.0},{dy * 64:+0.0;-0.0} /64");
                     }

@@ -2118,7 +2118,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     amount = (int) (((long) amount * s_deltaScale) / 1000);
                     if (amount == 0) continue;
                 }
-                MoveDirect(z, p, MulFix(amount, _gs.FreeX << 2), MulFix(amount, _gs.FreeY << 2), touch);
+                // A DELTA IS A DISTANCE ALONG THE PROJECTION VECTOR, realised by moving along the
+                // freedom vector by however much that takes -- the same division by fv.pv that every
+                // MIRP and MDRP makes, and both Windows rasterizers make it here too (FreeType:
+                // Ins_DELTAP goes through func_move, and Direct_Move divides by F_dot_P). This used
+                // to move the raw amount along freedom, which is right only while the two vectors
+                // coincide. Tahoma's 'V' at 12ppem is where they do not: its inner diagonals are
+                // MIRPed perpendicular to the OUTER ones with freedom on x, and the right-hand
+                // projection points LEFT, so fv.pv is -0.952 -- GDI's DELTAP of -1/8 there moves
+                // the point +8/64 in x and ours moved it -8/64, sixteen sixty-fourths apart, and
+                // the inner vertex it then positions off both diagonals landed 22/64 too high.
+                // Where the vectors merely lean (Verdana Italic's stems, fv.pv 0.966) the deltas
+                // were a sixty-fourth short: -16/64 asked, -17/64 in GDI.
+                MoveDirect(z, p, MulDiv(amount, _gs.FreeX, _dotProduct), MulDiv(amount, _gs.FreeY, _dotProduct), touch);
             }
         }
 

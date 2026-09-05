@@ -137,7 +137,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             float.TryParse(Environment.GetEnvironmentVariable("WPF_OBLIQUE_SHEAR"),
                            System.Globalization.NumberStyles.Float,
                            System.Globalization.CultureInfo.InvariantCulture, out float os)
-                ? os : 0.3385f;                              // MEASURED off GDI, see below
+                ? os : 87f / 256f;                           // 0.33984375, GDI's own, see below
+        // GDI'S OWN NUMBER, READ OFF ITS FITTED POINTS. GetGlyphOutline reports the simulated
+        // italic as the UPRIGHT hinted outline sheared afterwards, x += shear * y, rounded to a
+        // sixty-fourth. Pairing our upright fit with it (FittedPoints_AgainstGdisOwn shears ours
+        // the same way) leaves the shear as the only unknown, and 'l', 'H' and 'd' at 96 and 250
+        // pixels an em pin it to [0.339844, 0.339864]: 87/256 exactly, provided a half rounds up,
+        // and Tahoma's simulated italic pairs 24 of 24 points of 'o' and 39 of 39 of 'd' with
+        // nothing further than half a sixty-fourth from GDI's. The two paragraphs below are the
+        // earlier measurements that got within 0.4% of it from the pixels alone.
+        //
         // MEASURED OFF GDI'S OWN PIXELS, not swept against a specimen. Draw a vertical stem with
         // GDI's simulated italic, take the sub-pixel CENTROID of each row's ink -- for a single
         // stem that is its centre line -- and the slope through those centroids is the shear. Over
@@ -511,6 +520,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// .s_capturePoints"/> is on -- the only way to see which points the face's program
         /// touched, which no fitted outline records.</summary>
         internal TrueTypeInterpreter.GlyphPoints? LastHintedPoints => _interpreter?.LastPoints;
+
+        /// <summary>The x-shear a synthesized oblique adds to every point AFTER hinting (x += shear * y,
+        /// y up), 0 for a face drawn as it is. The oracle tests need it: the interpreter's captured
+        /// points are upright and GDI's report of a simulated italic is not.</summary>
+        internal float ObliqueShearApplied => _shear;
 
         private TrueTypeInterpreter? Interpreter()
         {
@@ -1332,7 +1346,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     for (int i = 0; i < pts.Length; i++)
                         // PLUS, because y is still up here -- the flip to y-down is the second
                         // component of this very expression. Minus leans the glyph backwards.
-                        pts[i] = new Vector2(pts[i].X + _shear * pts[i].Y, -pts[i].Y);   // y-down
+                        pts[i] = new Vector2(Sheared(pts[i]), -pts[i].Y);   // y-down
             }
 
             var built = new List<PathFigure>(working.Count);
@@ -1389,13 +1403,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             foreach ((Vector2[] pts, _) in working)
                 for (int i = 0; i < pts.Length; i++)
                     // Plus, for the same reason: these are the HINTED points, still y-up.
-                    pts[i] = new Vector2(pts[i].X + _shear * pts[i].Y, -pts[i].Y);
+                    pts[i] = new Vector2(Sheared(pts[i]), -pts[i].Y);
 
             var built = new List<PathFigure>(working.Count);
             foreach ((Vector2[] pts, bool[] on) in working)
                 built.Add(BuildContourFigure(pts, on));
             return built;
         }
+
+        /// <summary>The simulated italic's x for a hinted point (y up, pixels): x + shear * y,
+        /// ROUNDED TO A SIXTY-FOURTH the way the rasterizer's 26.6 arithmetic leaves it. With the
+        /// shear 87/256 that rounding is a genuine tie at every y that is 2 mod 4 sixty-fourths,
+        /// and GDI takes the upper value each time ('l' at 250ppem: 4132.5 -> 4133). Without it the
+        /// float shear lands half a sixty-fourth short of GDI on every such point.</summary>
+        private float Sheared(Vector2 p)
+            => _shear == 0f ? p.X
+                            : MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f;
 
         private static readonly List<PathFigure> s_noFigures = new();
 
