@@ -444,7 +444,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // what that costs: a vertical SHPIX of -199/64 -- more than three
                                 // pixels -- lands its bottom vertex BELOW the baseline, where GDI's
                                 // W stops on it and the unhinted outline never goes below it either.
-                                if (s_shpixNeedsTouch && !_inPreProgram && !IsHorizontalFreedom
+                                //
+                                // A CLEARTYPE RULE, AND ONLY A CLEARTYPE RULE. GDI's bi-level
+                                // rasterizer executes every SHPIX as written: Tahoma Bold's function
+                                // 55 shifts a round glyph's diagonal extremes a whole pixel OUTWARD
+                                // between 9 and 13ppem -- eight untouched points of 'O', 'Q', 'C',
+                                // 'G', the bowls of a/d/e/g/q, the spine of 's' -- and GetGlyphOutline's
+                                // fitted points carry every one of those shifts, while the SAME face's
+                                // ClearType pixels do not (executing them there puts 's'@12 at 1,676
+                                // differing lamps against 491). Refusing them in the bi-level pass was
+                                // 49 of Tahoma Bold's 1,688 points a pixel off at 12ppem, 27 of Segoe
+                                // UI's, 28 of Times'; letting the pass run them plainly leaves 7, 0, 7.
+                                if (s_shpixNeedsTouch && ClearTypeInfo && !NativeClearTypeMode
+                                    && !_inPreProgram && !IsHorizontalFreedom
                                     && (uint) sp < (uint) z.PointCount
                                     && (z.Tags[sp] & TagTouchY) == 0) continue;
                                 MoveDirect(z, sp, dx, dy, touch);
