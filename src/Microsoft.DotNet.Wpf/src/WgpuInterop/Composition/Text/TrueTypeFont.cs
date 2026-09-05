@@ -1220,6 +1220,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int ExtenderMargin =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_EXTMARGIN"), out int em) ? em : 3;
 
+        /// <summary>Widest link (64ths) mode 10 treats as a STEM to snap to whole pixels; wider is
+        /// spacing. WPF_CT_STEMMAX.</summary>
+        private static readonly int s_stemMax =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMMAX"), out int sm10) ? sm10 : 192;
+
         private static readonly int CompatibleWidthTolerance =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CWTOL"), out int ct2) ? ct2 : 25;
 
@@ -2489,6 +2494,89 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         for (int i = 0; i < n7; i++) glyph.X[i] += shift[i];
                         if (glyph.X.Length > glyph.PointCount + 1)
                             glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target7;
+                    }
+                }
+                // MODE 10: GDI'S ACTUAL STEM ALIGNMENT, read from dwrite.dll's GC* chain.
+                //
+                // The edge solver proved no whole-glyph model (mode 1's scale, mode 7's feature-
+                // rigid move) can match GDI, because GDI does not treat the glyph as one body. Its
+                // GCCalcLocs/GCFindLocs (in dwrite's classic scaler) grid-fit each STEM on its own:
+                // the stem's centre is rounded to the pixel grid and its two edges are snapped to
+                // whole pixels -- floor the left, ceil the right -- so every stem lands on a whole
+                // number of pixels. Between stems the outline interpolates. This is Beat Stamm's
+                // intelligent scaling; here is the first brick of it -- the per-stem whole-pixel
+                // snap -- with the ratio-alignment and path-spacing still to come.
+                //
+                // A "stem" is ONE link the program made (ReadXLinks) -- the reference point and the
+                // point placed from it -- NOT the union-find feature, which chains a whole glyph's
+                // links together and would snap two stems as if they were one.
+                else if (CompatibleWidthMode == 10 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    int n = glyph.PointCount;
+                    if (n > 0)
+                    {
+                        var la = new int[n * 2]; var lb = new int[n * 2];
+                        int links = interpreter.ReadXLinks(la, lb);
+
+                        // GCCalcLocs + GCFindLocs, per stem (units are 64ths; 64 = one pixel): round
+                        // the stem's CENTRE to the grid, floor the left edge, ceil the right, so the
+                        // stem covers whole pixels. Accumulate each point's target and average, so a
+                        // point shared by two links settles between them.
+                        static int Floor64(int v) => (v >> 6) << 6;
+                        static int Ceil64(int v) => ((v + 63) >> 6) << 6;
+                        static int Round64(int v) => (int) MathF.Round(v / 64f) * 64;
+                        var acc = new long[n]; var cnt = new int[n];
+                        void Aim(int pt, int target) { acc[pt] += target; cnt[pt]++; }
+                        for (int k = 0; k < links; k++)
+                        {
+                            int r = la[k], p = lb[k];
+                            if ((uint) r >= (uint) n || (uint) p >= (uint) n) continue;
+                            int e0 = Math.Min(glyph.X[r], glyph.X[p]);
+                            int e1 = Math.Max(glyph.X[r], glyph.X[p]);
+                            // Only a STEM is snapped to whole pixels; a wide black link is spacing
+                            // (the far side of an 'n' placed across the whole glyph) and goes through
+                            // a different GDI path. Gate on width. WPF_CT_STEMMAX, in 64ths.
+                            if (e1 - e0 > s_stemMax) continue;
+                            int centre = (e0 + e1) / 2;
+                            int rc = Round64(centre);
+                            int half = (e1 - e0) / 2;
+                            int newLo = Floor64(rc - half);
+                            int newHi = Ceil64(rc + half);
+                            if (newHi < newLo + 64) newHi = newLo + 64;
+                            bool rIsLo = glyph.X[r] <= glyph.X[p];
+                            Aim(r, rIsLo ? newLo : newHi);
+                            Aim(p, rIsLo ? newHi : newLo);
+                        }
+
+                        var shift = new int[n];
+                        var order = new System.Collections.Generic.List<int>();
+                        for (int i = 0; i < n; i++)
+                            if (cnt[i] > 0) { shift[i] = (int) (acc[i] / cnt[i]) - glyph.X[i]; order.Add(i); }
+
+                        // Points no link placed: interpolate between the nearest placed points in x.
+                        order.Sort((a, b) => glyph.X[a].CompareTo(glyph.X[b]));
+                        if (order.Count > 0)
+                            for (int i = 0; i < n; i++)
+                            {
+                                if (cnt[i] > 0) continue;
+                                int x = glyph.X[i];
+                                if (x <= glyph.X[order[0]]) { shift[i] = shift[order[0]]; continue; }
+                                if (x >= glyph.X[order[^1]]) { shift[i] = shift[order[^1]]; continue; }
+                                int k = 1;
+                                while (glyph.X[order[k]] < x) k++;
+                                int a = order[k - 1], b = order[k];
+                                int span = glyph.X[b] - glyph.X[a];
+                                shift[i] = span <= 0 ? shift[a]
+                                    : shift[a] + (int) MathF.Round((shift[b] - shift[a]) * (x - glyph.X[a]) / (float) span);
+                            }
+
+                        for (int i = 0; i < n; i++) glyph.X[i] += shift[i];
+
+                        // The advance stays the compatible (hdmx) width, as GDI's does.
+                        int ppemI10 = (int) MathF.Round(pixelsPerEm);
+                        int target10 = (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm, ppemI10) * 64f);
+                        if (target10 > 0 && glyph.X.Length > glyph.PointCount + 1)
+                            glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target10;
                     }
                 }
                 // MODE 5: buy the same MOVE without paying in stem width.

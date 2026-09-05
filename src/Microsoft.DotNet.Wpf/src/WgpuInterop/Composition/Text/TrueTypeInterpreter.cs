@@ -1456,6 +1456,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _realPoints = glyph.PointCount;
             if (_xLink.Length < _realPoints) _xLink = new int[_realPoints];
             for (int i = 0; i < _realPoints; i++) _xLink[i] = i;
+            if (_linkA.Length < _realPoints * 2) { _linkA = new int[_realPoints * 2]; _linkB = new int[_realPoints * 2]; }
+            _linkCount = 0;
         }
 
         // ---- x features ------------------------------------------------------------------------
@@ -1494,8 +1496,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if (_inPreProgram || zoneP != 1 || zoneR != 1 || !IsHorizontalFreedom) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
+            // The INDIVIDUAL link (r -> p), kept as its own pair. The union-find below merges the
+            // whole glyph's links into features, but GDI's stem records are one link each -- an 'H'
+            // crossbar ties both stems into one feature yet they are two stems -- so the compatible
+            // -width pass that grid-fits each stem needs the pairs, not the closure.
+            if (_linkCount < _linkA.Length) { _linkA[_linkCount] = r; _linkB[_linkCount] = p; _linkCount++; }
             int a = FindX(p), b = FindX(r);
             if (a != b) _xLink[a] = b;
+        }
+
+        private int[] _linkA = new int[64], _linkB = new int[64];
+        private int _linkCount;
+
+        /// <summary>The individual (reference, placed) x-links the program made -- one stem each.
+        /// Returns the count; fills the caller's arrays.</summary>
+        internal int ReadXLinks(int[] a, int[] b)
+        {
+            int n = Math.Min(_linkCount, Math.Min(a.Length, b.Length));
+            Array.Copy(_linkA, a, n); Array.Copy(_linkB, b, n);
+            return n;
         }
 
         /// <summary>After a Hint: each outline point's feature (the index of a representative
