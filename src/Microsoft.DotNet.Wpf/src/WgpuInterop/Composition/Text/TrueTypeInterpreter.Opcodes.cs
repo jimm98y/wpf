@@ -436,16 +436,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // puts that arm a pixel left of where GDI draws it.
                                 if (!s_runShpix
                                     && (!s_runShpixOutline || (uint) sp >= (uint) _realPoints || amount % 64 == 0
-                                        || (s_shpixOutlineAxis && _gs.FreeY != 0)
-                                        || (s_shpixOutWhen.Contains("touchedx") && (z.Tags[sp] & TagTouchX) == 0)
-                                        || (s_shpixOutWhen.Contains("touchedy") && (z.Tags[sp] & TagTouchY) == 0)
-                                        || (s_shpixOutWhen.Contains("inline") && _iupDone)
+                                        // ...and only INLINE, before the interpolation.
+                                        || (s_shpixOutInline && _iupDone)
+                                        // The rest narrow it further and are all off by default;
+                                        // each of them carries what it measured.
+                                        || (s_shpixOutPost && !_iupDone)
+                                        || (s_shpixOutTouchedX && (z.Tags[sp] & TagTouchX) == 0)
+                                        || (s_shpixOutTouchedY && (z.Tags[sp] & TagTouchY) == 0)
+                                        || (s_shpixOutMax > 0 && (amount > s_shpixOutMax || amount < -s_shpixOutMax))
                                         || (s_shpixDiag
                                             && (amount > s_shpixDiagMax || amount < -s_shpixDiagMax)
-                                            && OnDiagonalEdge(z, sp))
-                                        || (s_shpixOutMax > 0 && (amount > s_shpixOutMax || amount < -s_shpixOutMax))
-
-                                        || (s_shpixOutWhen.Contains("post") && !_iupDone))
+                                            && OnDiagonalEdge(z, sp)))
                                     && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
                                 // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
                                 // paper's sentence quoted below ends "we keep only deltas on touched
@@ -1303,10 +1304,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_runShpix =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
 
-        /// <summary>WPF_CT_SHPIX_AXIS=1: the outline exemption above applies only to a PURE
-        /// horizontal nudge. A diagonal freedom vector counts as the ClearType direction whenever it
-        /// leans that way, so the fractional-nudge exemption was also letting the faces' DIAGONAL
-        /// control through -- moving the point in y as well as x.</summary>
         /// <summary>WPF_CT_SHPIX_PAIR=1: refuse a pair of fractional nudges that move two DIAGONAL
         /// points against each other. Measured, close, and not shipped.
         /// <para>It is the best account yet of which fractional nudges GDI's ClearType runs. Over
@@ -1449,12 +1446,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>WPF_CT_SHPIX_OUT=all restores the old behaviour; touchedx / touchedy / post narrow
         /// it other ways, and relaxing "inline" to also admit a nudge on an already-touched point
         /// gives back most of the win. All measured worse: 5,487,903 / 5,833,707 / 5,934,331, and
-        /// 5,588,808 (x-touched) / 5,550,695 (y-touched).</para></summary>
+        /// 5,588,808 (x-touched) / 5,550,695 (y-touched).</para>
+        /// <para>ASKING THE FREEDOM VECTOR was the first guess and is measured to change NOTHING.
+        /// A diagonal freedom vector counts as the ClearType direction whenever it leans that way,
+        /// so the exemption looked as though it might be letting a face's DIAGONAL control through
+        /// as well -- but every SHPIX that reaches it has FreeY of exactly zero, and refusing the
+        /// leaning ones moves the specimen by not one pixel. No knob is kept for it.</para>
+        /// </summary>
         private static readonly string s_shpixOutWhen =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_OUT") ?? "inline";
 
-        private static readonly bool s_shpixOutlineAxis =
-            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_AXIS") == "1";
+        // Read once. These are asked of every nudged point, and a string scan there is four of them.
+        private static readonly bool s_shpixOutInline = s_shpixOutWhen.Contains("inline");
+        private static readonly bool s_shpixOutPost = s_shpixOutWhen.Contains("post");
+        private static readonly bool s_shpixOutTouchedX = s_shpixOutWhen.Contains("touchedx");
+        private static readonly bool s_shpixOutTouchedY = s_shpixOutWhen.Contains("touchedy");
 
         private static readonly bool s_runShpixOutline =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "outline"
