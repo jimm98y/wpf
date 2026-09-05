@@ -266,6 +266,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private GraphicsState _gs;
         private GraphicsState _prepState;      // what 'prep' left behind, restored per glyph
+
+        /// <summary>Whether the pre-program run for the current size set INSTCTRL selector 1,
+        /// "inhibit grid-fitting": no glyph program runs, and the glyph is drawn and spaced as
+        /// scaled. Valid after <see cref="PrepareForSize"/>.</summary>
+        internal bool GridFitInhibited => (_prepState.InstructControl & 1) != 0;
         private bool _prepRun;
         private bool _inPreProgram;
         private bool _inComposite;
@@ -347,7 +352,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // accent, and with the identity they read 39 font units as 39 PIXELS.
                 _measureScale = glyph.Composite ? 1 << 16 : _scale;
 
-                if (glyph.Instructions.Length > 0)
+                // A PRE-PROGRAM MAY SWITCH THE GLYPH PROGRAMS OFF. INSTCTRL selector 1 is "inhibit
+                // grid-fitting", and a face sets it in 'prep' at the sizes it does not want hinted
+                // -- Verdana below 9ppem -- after which the rasterizer runs no glyph program at all:
+                // the outline stays as scaled and the phantom points stay where the scaling rounded
+                // them. We ran the programs anyway. Verdana's 'i' at 8ppem then placed its advance
+                // phantom stem-right plus a rounded side bearing, 3 pixels, where GDI's unrun glyph
+                // keeps round(2.195) = 2; 'l' the same, two pixels of drift a line.
+                if (glyph.Instructions.Length > 0 && !GridFitInhibited)
                 {
                     _gs = _prepState;
                     _gs.Loop = 1;
@@ -1004,7 +1016,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// round lowercase (a b d e g o p q all land on 8 at twelve pixels an em, from linear widths
         /// spread over 7.15 to 7.48) on the bi-level branch, and leaves them alone on the ClearType
         /// one. Answering "ClearType" during a compatible-width measurement got us the ClearType
-        /// branch's advances, which are not what Windows lays out with.</para></summary>
+        /// branch's advances, which are not what Windows lays out with.</para>
+        /// <para>And it is NOT the other way round either, tested 2026-09-05 when Arial Regular's
+        /// 7 and 8ppem advances came out hinted where GDI's ClearType realization spaces them
+        /// linearly: letting the bi-level pass hear ClearType -- everywhere, or in fpgm/prep only,
+        /// with and without symmetric smoothing, grey, stripes, versions 35 to 42 -- never made
+        /// Arial 8 linear (best 212 of 213 pixels a line) and broke Arial and Times at 9, 10, 14
+        /// and 20 (+5 to +14 a line). The answer was the 'gasp', see
+        /// TrueTypeFont.GaspDeclinesClearTypeGridFit.</para></summary>
         internal static bool ClearTypeInfo =>
             s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering && !BiLevelPass;
 
@@ -1354,6 +1373,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
             z.CurX[glyph.PointCount + 1] = s_advancePhantom switch
             {
+                // THE BI-LEVEL PASS IS THE MEASUREMENT OF THE ADVANCE, and a bi-level rasterizer
+                // rounds the phantom before the first instruction, whatever mode the drawing run
+                // is in. Mode 7 leaves it unrounded for the ClearType run (that is what mode 7 is),
+                // and this measurement inherited that: Verdana 'x' at 9ppem starts pp2 at 5.33,
+                // its two DELTAs add 2 and a third takes 0.75 off -- 6.58, rounds to 7 -- where
+                // GDI starts at 5, ends at 6.25 and spaces the glyph at 6. Same for 'i' and 'l'
+                // at 8ppem: 2.195 + 1 - 0.25 = 2.95 -> 3 against GDI's 2.
+                _ when BiLevelPass => Pix(z.CurX[glyph.PointCount + 1]),
                 1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
                 2 => z.CurX[glyph.PointCount + 1],                   // leave it alone
                 // 3: THE BOX THE PROGRAM SHOULD BE FITTING INSIDE. Compatible widths means the

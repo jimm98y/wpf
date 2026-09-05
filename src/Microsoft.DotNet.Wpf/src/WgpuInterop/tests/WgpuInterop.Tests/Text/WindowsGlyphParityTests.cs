@@ -5032,6 +5032,14 @@ namespace WgpuInterop.Tests.Text
                         // those are different bugs. Edges separate them: a matching left edge with
                         // a moved right edge is width, both moved together is the pen.
                         int ourL = -1, ourR = -1, gdiL = -1, gdiR = -1;
+                        // WPF_WEIGHT_COLUMNS=Family|R|ppem prints this row's ink, column by column,
+                        // as runs: where each side's ink starts and stops. An edge delta says the
+                        // line came out a different length; the runs say WHICH glyph moved.
+                        bool columns = Environment.GetEnvironmentVariable("WPF_WEIGHT_COLUMNS")
+                                       == $"{family}|{(bold ? "B" : italic ? "I" : "R")}|{ppem}";
+                        var oRuns = new System.Text.StringBuilder("      ours runs:");
+                        var gRuns = new System.Text.StringBuilder("      gdi  runs:");
+                        bool oIn = false, gIn = false;
                         for (int x = 0; x < Width; x++)
                         {
                             long o = 0, g = 0;
@@ -5045,7 +5053,15 @@ namespace WgpuInterop.Tests.Text
                             // edge, and reading one as an edge is a trap this suite has hit before.
                             if (o > 255) { if (ourL < 0) ourL = x; ourR = x; }
                             if (g > 255) { if (gdiL < 0) gdiL = x; gdiR = x; }
+                            if (columns)
+                            {
+                                if (o > 255 && !oIn) { oRuns.Append($" {x}"); oIn = true; }
+                                if (o <= 255 && oIn) { oRuns.Append($"-{x - 1}"); oIn = false; }
+                                if (g > 255 && !gIn) { gRuns.Append($" {x}"); gIn = true; }
+                                if (g <= 255 && gIn) { gRuns.Append($"-{x - 1}"); gIn = false; }
+                            }
                         }
+                        if (columns) { report.AppendLine(oRuns.ToString()); report.AppendLine(gRuns.ToString()); }
                         grandTotal += sumd;
                         rowCount++;
                         report.AppendLine($"   {family,-16} {(bold ? "B" : italic ? "I" : "R")}   {ppem,4}"
@@ -6726,25 +6742,36 @@ namespace WgpuInterop.Tests.Text
             string? file = FontFiles.Find(family, bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {family}");
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            // AS THE RENDERER HAS THE STATICS, or as a bare process has them. The weight report
+            // renders through a ClearType renderer, which sets both of these; this probe runs
+            // before any renderer exists and measured with both off -- and Arial at 8ppem came
+            // out exact here and ten pixels wide in the specimen. WPF_ADVANCES_CT=1 asks the
+            // question the specimen asks.
+            var log = new System.Text.StringBuilder();
+            bool ct = Environment.GetEnvironmentVariable("WPF_ADVANCES_CT") == "1";
+            bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
+            if (ct) { TrueTypeFont.SubpixelFitting = true; TrueTypeFont.ClearTypeRendering = true; }
+            try
+            {
 
             // THE SPACE IS IN HERE ON PURPOSE. It is a glyph with no ink, so every instrument
             // that looks at pixels is blind to it, and its advance displaces everything after it
             // just as surely as a letter's does.
             const string Letters = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
             int ourTotal = 0, gdiTotal = 0;
-            var log = new System.Text.StringBuilder();
             log.AppendLine($"== {family}{(bold ? " Bold" : italic ? " Italic" : "")} @ {ppem}ppem");
             log.AppendLine($"   our file: {file}");
             foreach (char c in Letters)
             {
                 int gid = font.GlyphIndex(c);
                 int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
-                // The renderer's own rule: the device advance where the face has one, and the
-                // scaled design advance rounded where it does not. A glyph with no outline -- the
-                // SPACE -- has no device advance at all, and reading that as zero made Verdana look
-                // eight pixels adrift when nothing was wrong.
-                bool device = font.TryGetDeviceAdvance(gid, ppem, out float ours);
-                if (!device) ours = MathF.Round(font.LinearAdvanceForTest(gid, ppem));
+                // THE PRODUCT'S OWN NUMBER, from the method the renderer steps the pen with. This
+                // used to re-derive it -- the device advance where the face has one, a banker's
+                // rounding of the scaled design advance where it does not -- and the re-derivation
+                // put Times' SPACE at 10ppem (2.5 pixels) at 2 where the renderer, rounding away
+                // from zero like GDI, has 3: a two-pixel drift that was the probe's and not ours.
+                bool device = font.TryGetDeviceAdvance(gid, ppem, out _);
+                float ours = font.DeviceAdvance(gid, ppem);
                 int oursI = (int) MathF.Round(ours);
                 ourTotal += oursI; gdiTotal += gdi;
                 bool hinted = font.FaceHintsGlyph(gid, ppem);
@@ -6754,7 +6781,12 @@ namespace WgpuInterop.Tests.Text
                 // less the ink's own width. If GDI builds the advance from the hinted ink plus this,
                 // the model below reproduces it.
                 float rsb = font.RightSideBearingForTest(gid, ppem);
-                if (oursI != gdi)
+                // WPF_ADVANCES_ALL=1 lists every glyph, =linear those where the linear advance
+                // rounded once disagrees with GDI -- the question being whether GDI hinted at all.
+                string? listing = Environment.GetEnvironmentVariable("WPF_ADVANCES_ALL");
+                bool list = listing == "1"
+                    || (listing == "linear" && (int) MathF.Round(linear, MidpointRounding.AwayFromZero) != gdi);
+                if (oursI != gdi || list)
                     log.AppendLine($"  '{c}' gid {gid,4}  gdi {gdi,3}  ours {oursI,3}"
                                    + $"  linear {linear,6:0.000}  faceHints={hinted}"
                                    + $"  pp {font.HintedPhantomsForTest(gid, ppem).Pp1,6:0.000}"
@@ -6776,8 +6808,7 @@ namespace WgpuInterop.Tests.Text
             {
                 int gid = font.GlyphIndex(c);
                 int gdi = Gdi.LayoutAdvance(c, family, ppem, bold, italic);
-                float ours = font.TryGetDeviceAdvance(gid, ppem, out float dv)
-                    ? dv : MathF.Round(font.LinearAdvanceForTest(gid, ppem));
+                float ours = font.DeviceAdvance(gid, ppem);
                 running += (int) MathF.Round(ours) - gdi;
                 trail.Append(running == 0 ? "." : running.ToString("+0;-0"));
             }
@@ -6824,6 +6855,8 @@ namespace WgpuInterop.Tests.Text
                 log.AppendLine(t4.ToString());
                 log.AppendLine($"  rounded kern total {totalKern}");
             }
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSub; TrueTypeFont.ClearTypeRendering = savedCt; }
             throw new Xunit.Sdk.XunitException(log.ToString());
         }
 
@@ -7199,13 +7232,36 @@ namespace WgpuInterop.Tests.Text
                 return (U16(head, 18), U16(entry, 0));
             }
 
+            /// <summary>A DC with a 32bpp surface selected, which is what a font has to be
+            /// realized on for GDI to answer as it draws.
+            /// <para>A bare CreateCompatibleDC is a ONE-BIT surface, and GDI realizes a ClearType
+            /// font on it as bi-level: for Arial Regular at 7 and 8ppem GetCharWidthI then returns
+            /// the hinted widths (195, 203 over the probe's alphabet) where the same call on the
+            /// 32bpp DC that ExtTextOutW draws into returns the linear ones (205, 213). The face's
+            /// program branches on GETINFO's ClearType answer, and the answer depends on the
+            /// surface. Every other face, style and size measured agrees between the two -- which is
+            /// how the wrong DC went unnoticed for as long as it did.</para></summary>
+            private static IntPtr ColourDc(out IntPtr dib)
+            {
+                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                var header = new BITMAPINFOHEADER
+                {
+                    biSize = Marshal.SizeOf<BITMAPINFOHEADER>(),
+                    biWidth = 8, biHeight = -8, biPlanes = 1, biBitCount = 32, biCompression = BiRgb,
+                };
+                dib = CreateDIBSection(dc, ref header, DibRgbColors, out _, IntPtr.Zero, 0);
+                Assert.True(dib != IntPtr.Zero, "GDI would not give us a bitmap");
+                SelectObject(dc, dib);
+                return dc;
+            }
+
             /// <summary>The advance GDI lays this glyph out with under a ClearType DC -- the number
             /// that decides where the NEXT glyph starts. A different question from how wide the ink
             /// is, and the only glyph property whose error ACCUMULATES.</summary>
             public static int LayoutAdvance(char c, string family, int ppem,
                                             bool bold = false, bool italic = false)
             {
-                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                IntPtr dc = ColourDc(out IntPtr dib);
                 var lf = new LOGFONTW
                 {
                     lfHeight = -ppem, lfWeight = bold ? 700 : 400,
@@ -7221,13 +7277,14 @@ namespace WgpuInterop.Tests.Text
                 SelectObject(dc, oldFont);
                 DeleteObject(font);
                 DeleteDC(dc);
+                DeleteObject(dib);
                 return widths[0];
             }
 
             public static (int Index, int OriginX, int BlackBoxX, int CellIncX) HintedMetrics(
                 char c, string family, int ppem, bool bold = false, bool italic = false)
             {
-                IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+                IntPtr dc = ColourDc(out IntPtr dib);
                 var lf = new LOGFONTW
                 {
                     lfHeight = -ppem, lfWeight = bold ? 700 : 400,
@@ -7246,6 +7303,7 @@ namespace WgpuInterop.Tests.Text
                 SelectObject(dc, oldFont);
                 DeleteObject(font);
                 DeleteDC(dc);
+                DeleteObject(dib);
                 return (idx[0], gm.gmptGlyphOriginX, (int)gm.gmBlackBoxX, gm.gmCellIncX);
             }
 

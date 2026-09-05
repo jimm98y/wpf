@@ -98,6 +98,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _hdmxStride;        // bytes per row
         private int _hdmxRecords;       // how many rows
         private int _ltshOffset = -1;   // per-glyph linear threshold, or -1 when the face ships none
+
+        /// <summary>head.flags bit 4, "instructions may alter advance width". When a face leaves it
+        /// CLEAR its advance is the scaled design advance rounded once, whatever its program
+        /// leaves between the phantom points -- see <see cref="CompatibleAdvance"/>.</summary>
+        private const int HeadInstructionsAlterAdvance = 0x10;
+        private bool _instructionsMayAlterAdvance = true;
         private int _ltshGlyphs;
         private readonly int _glyfOffset;
         private readonly uint[] _loca;          // numGlyphs+1 glyph data offsets
@@ -220,6 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             int unitsPerEm = U16(head + 18);
             int indexToLocFormat = (short)U16(head + 50);
+            _instructionsMayAlterAdvance = (U16(head + 16) & HeadInstructionsAlterAdvance) != 0;
             _unitsPerEm = unitsPerEm;
             _scale = BaseEmPixels / (float)unitsPerEm;
             _numGlyphs = U16(maxp + 4);
@@ -575,6 +582,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (MathF.Abs(pixelsPerEm - ppem) > 0.01f || ppem <= 0 || ppem > 255) return false;
 
             if (TryGetHdmxAdvance(glyphId, ppem, out advance)) return true;
+            if (!_instructionsMayAlterAdvance)      // head.flags bit 4 clear: linear, rounded once
+            {
+                advance = MathF.Round(Advance(glyphId) * pixelsPerEm / PixelsPerEm, MidpointRounding.AwayFromZero);
+                return true;
+            }
 
             return TryGetHintedAdvance(glyphId, pixelsPerEm, out advance);
         }
@@ -731,6 +743,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
         {
             if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
+            // THEN THE FACE THAT SAYS ITS PROGRAM NEVER MOVES THE ADVANCE (head.flags bit 4 clear):
+            // the design advance rounded once, and the program is not asked -- its phantom points
+            // round differently (Consolas at 10ppem: 5.498 -> 5 here, 6 by the phantoms, 50 pixels
+            // over a line). The long note below on the space explains how this was found.
+            if (!_instructionsMayAlterAdvance)
+                return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
+                                   MidpointRounding.AwayFromZero);
             // THEN THE LINEAR THRESHOLD. At or above it the face declares its own advance linear,
             // so the scaled design advance IS the answer and the glyph program must not be asked.
             // Segoe UI's italic space is the case that shows both sides of this: its threshold is
@@ -743,7 +762,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
                                        MidpointRounding.AwayFromZero);
             }
-            if (TryGetHintedAdvance(gid, pixelsPerEm, out float hinted)) return hinted;
+            // THEN THE SIZES WHERE THE FACE'S 'gasp' TELLS A CLEARTYPE RASTERIZER NOT TO FIT. GDI
+            // does not run the program there at all, so the advance is the scaled design advance
+            // through the sixty-fourths below -- NOT the bi-level hinted one. Arial Regular at 7 and
+            // 8ppem is the face that can tell: its program narrows 'k' 'v' 'x' 'y' from 4 to 3 and
+            // 'm' from 6.66 to 6, and GDI's ClearType realization lays them out at 4 and 7 (a
+            // one-bit DC, where gasp does not apply and the program runs, at 3 and 6 -- which is
+            // the DC the advance probe used to measure on, and why this was invisible). The gasp
+            // gate that used to sit here was right about the sizes and wrong about the rounding:
+            // it rounded the design advance ONCE, and Segoe UI Italic 'n' (4.496 -> 288/64 -> 4.5
+            // -> 5) and Verdana Bold 'o' (5.492 -> 6) looked like hinted advances until the
+            // sixty-fourths were put back. A VERSION 0 table has no ClearType bits and GDI fits
+            // those faces at every size: Arial Bold 'w' at 8ppem is 6.22 linear and 5 in GDI.
+            if (!(ClearTypeRendering && GaspDeclinesClearTypeGridFit(pixelsPerEm))
+                && TryGetHintedAdvance(gid, pixelsPerEm, out float hinted))
+                return hinted;
             // AWAY FROM ZERO, because that is what GDI does and MathF.Round does not: its default
             // is banker's rounding, which sends a half DOWN to the even number.
             //
@@ -764,16 +797,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //
             // A space has no outline, so nothing else intercepts this: the specimen's Segoe UI
             // italic and bold-italic rows at 20ppem drifted a pixel per space, two by end of line.
-            // ...but only where the face is GRID-FITTED. Consolas at 10ppem and Segoe UI italic at
-            // 20ppem have the SAME scaled advance, 5.498046875, and Windows answers 5 for one and
-            // 6 for the other -- so it cannot be a function of that number alone. What separates
-            // them is the 'gasp': Consolas asks for no gridfit at 10 and below, Segoe UI is fitted
-            // at 20. An unfitted face keeps its linear advance and is rounded once; a fitted one
-            // goes through the sixty-fourths the fitting works in and is rounded twice.
-            if (!FaceWantsGridFit(pixelsPerEm))
-                return MathF.Round(Advance(gid) * pixelsPerEm / PixelsPerEm,
-                                   MidpointRounding.AwayFromZero);
-
+            // ...but only where the face SAYS ITS PROGRAM MAY MOVE THE ADVANCE. Consolas at 10ppem
+            // and Segoe UI italic at 20ppem have the SAME scaled advance, 5.498046875, and Windows
+            // answers 5 for one and 6 for the other -- so it cannot be a function of that number
+            // alone. What separates them is head.flags bit 4: Segoe UI sets it, Consolas does not,
+            // and a face that declares its advances linear is spaced at the design advance rounded
+            // ONCE, whatever its phantom points would have rounded to. Consolas is the proof, at
+            // every size measured: 9ppem 4.948 -> 5, 10 5.498 -> 5, 30 16.494 -> 16 (the
+            // sixty-fourths would say 17: 1055.625 -> 1056 -> 16.5 -> 17), 50 27.49 -> 27.
+            //
+            // This used to read the 'gasp' instead -- Consolas asks for no gridfit at 10ppem and
+            // below, and that happened to separate the same two cases. It was the wrong table:
+            // GDI's advance is the bi-level hinted advance at EVERY size, gasp or no gasp (its
+            // GetCharWidth32 is identical under DRAFT, NONANTIALIASED, ANTIALIASED and CLEARTYPE
+            // quality), and the gasp gate left Times Bold, Arial Bold, Verdana Bold and Segoe UI
+            // Italic drifting up to seven pixels a line at 8ppem, where every one of them asks for
+            // no gridfit and Windows spaces them by their programs regardless. (The bit-4 face has
+            // already been answered above, before the program was asked.)
             int sixtyFourths = (int) MathF.Round(Advance(gid) * 64f * pixelsPerEm / PixelsPerEm,
                                                  MidpointRounding.AwayFromZero);
             return MathF.Round(sixtyFourths / 64f, MidpointRounding.AwayFromZero);
@@ -788,15 +828,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// run, or the glyph has no outline for one to run on.</summary>
         private bool TryGetHintedAdvance(int glyphId, float pixelsPerEm, out float advance)
         {
-            // THE FACE'S 'gasp' GOVERNS THIS TOO. TryGetHintedOutline already declines to fit
-            // where the designer says not to, and this measured the advance by running the
-            // program anyway -- so a glyph was DRAWN unfitted and SPACED as if it had been fitted.
-            // Consolas asks for no gridfit at 10ppem and below; its scaled advance there is 5.498,
-            // Windows spaces it at 5, and the fitted phantom rounds to 6. One pixel a glyph, fifty
-            // glyphs, and our line came out 49 pixels longer than Windows' -- every letter past
-            // the first landing somewhere else. It was invisible in the old specimen because that
-            // drew almost everything at 9pt, where the face does fit.
-            if (!FaceWantsGridFit(pixelsPerEm)) { advance = 0f; return false; }
+            // THE FACE'S 'gasp' DOES NOT GOVERN THIS. It did for a while: TryGetHintedOutline
+            // declines to fit where the designer says not to, and Consolas at 10ppem -- gasp says no
+            // gridfit, scaled advance 5.498, Windows 5, fitted phantom 6, 49 pixels over a line of
+            // fifty -- looked like the same rule. It was head.flags bit 4 (Consolas' program may not
+            // alter its advances, and CompatibleAdvance answers that face before it gets here), and
+            // gating on gasp cost every OTHER face its hinted advances at the sizes it asks not to
+            // be fitted: Times Bold, Arial Bold, Verdana Bold and Segoe UI Italic all drifted up to
+            // seven pixels a line at 8ppem, where Windows draws the unfitted outline but spaces it
+            // by what the program did. A glyph is DRAWN by its gasp and SPACED by its program.
 
             // NOT keyed by the hinting mode, because it is not measured in one: see below.
             var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
@@ -872,7 +912,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // just as hard -- at 7ppem it took Segoe UI from 88,963 of ink to 136,090 where GDI, told
             // the same thing by the same table, stays at 89,485. Where the designer says do not fit,
             // the outline as drawn is the answer.
-            if (!FaceWantsGridFit(pixelsPerEm))
+            // ...and the face's PRE-PROGRAM says so too, by a different route: INSTCTRL selector 1
+            // at the sizes it does not want fitted, which switches the glyph programs off in the
+            // rasterizer. Verdana uses both tables and they agree; a face that uses only this one
+            // must be read here or its glyphs are fitted where Windows leaves them alone.
+            if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm))
             {
                 // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
                 // are promised a device-pixel outline and scale everything else by the reciprocal of
@@ -950,7 +994,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _vdmx = -1;         // 'VDMX' table offset, or -1 when the face ships none
 
         private const int GaspGridfit = 0x0001;
+        private const int GaspSymmetricGridfit = 0x0004;
         private const int GaspSymmetricSmoothing = 0x0008;
+
+        /// <summary>Whether a VERSION 1 'gasp' clears SYMMETRIC_GRIDFIT at this size -- the face
+        /// telling a ClearType rasterizer not to run its program. A version 0 table cannot say
+        /// so, and GDI fits those faces (Arial Bold, Arial Italic, Times Bold) at every size.
+        /// See <see cref="CompatibleAdvance"/>.</summary>
+        private bool GaspDeclinesClearTypeGridFit(float pixelsPerEm)
+        {
+            if (_gasp < 0 || U16(_gasp) == 0) return false;
+            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ranges = U16(_gasp + 2);
+            int at = _gasp + 4;
+            for (int i = 0; i < ranges; i++, at += 4)
+                if (ppem <= U16(at))
+                    return (U16(at + 2) & GaspSymmetricGridfit) == 0;
+            return false;
+        }
 
         /// <summary>Whether the face asks for SYMMETRIC SMOOTHING at this size -- antialiasing in
         /// both directions rather than along the lamps only.
@@ -1009,9 +1070,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_alwaysFit =
             System.Environment.GetEnvironmentVariable("WPF_GASP_FIT") == "always";
 
+        /// <summary>Whether the face's own pre-program, run for this size, inhibits grid-fitting
+        /// (INSTCTRL selector 1). See <see cref="TrueTypeInterpreter.GridFitInhibited"/>.</summary>
+        private bool PrepInhibitsGridFit(float pixelsPerEm)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            return interpreter is not null && interpreter.PrepareForSize(pixelsPerEm) && interpreter.GridFitInhibited;
+        }
+
         private bool FaceWantsGridFit(float pixelsPerEm)
         {
             if (_gasp < 0 || s_alwaysFit) return true;
+
+            // A VERSION 0 'gasp' IS NOT CONSULTED FOR CLEARTYPE. It only has the two bi-level bits
+            // (GRIDFIT, DOGRAY), and GDI's ClearType rasterizer fits a version 0 face at every
+            // size whatever its GRIDFIT bit says -- Arial Bold, Arial Italic and Times Bold all
+            // clear it at 8ppem and below, and Windows' 8ppem 'w' in Arial Bold is 5 pixels wide
+            // where the linear advance is 6.22: that width comes out of the program. Their
+            // advances (CompatibleAdvance) already went that way; drawing them fitted too took
+            // the text specimen from 6,309,064 to 5,847,329 -- Arial B 8 206,036 -> 33,088,
+            // Arial I 8 171,215 -> 31,037, Times B 8 185,165 -> 37,703, everything else unmoved.
+            // Version 1 tables carry SYMMETRIC_GRIDFIT, and GaspDeclinesClearTypeGridFit reads
+            // that; GRIDFIT below is what the bi-level rasterizer would read.
+            if (U16(_gasp) == 0) return true;
 
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ranges = U16(_gasp + 2);
