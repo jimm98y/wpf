@@ -1906,6 +1906,17 @@ namespace WgpuInterop.Tests.Text
             return renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
         }
 
+        /// <summary>KERN THE WAY THE ORACLE KERNS. ExtTextOutW does not apply pair adjustments and
+        /// DrawTextW does -- measured, Arial 16ppem "AVAVAVAVAVAVAVAVAVAV": ExtTextOut 218 pixels of
+        /// ink, DrawText 199, one per pair; "Z A" 23 against 22 -- so a run drawn here has to be
+        /// kerned or not according to which of the two is on the other side. It was always kerned,
+        /// and the weight specimen carries the pair (space, A) in Arial and Times: every capital and
+        /// everything after them sat a pixel left of ExtTextOut's from 10ppem up, which is why those
+        /// two faces scored five times Segoe UI's and why "A K N R W X Y Z" spaced out scored more
+        /// than twice the same letters run together. Not a rendering difference at all -- the pen
+        /// was asked one question and the oracle another.</summary>
+        private static int OracleSimulations => Gdi.s_useDrawText ? 0 : GlyphRunDraw.NoKerningSimulation;
+
         private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
                                 float dx = 0f)
         {
@@ -1923,7 +1934,7 @@ namespace WgpuInterop.Tests.Text
             // "our filter is wrong" from "the window puts glyphs somewhere the probe never does".
             root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + dx + ShiftX, baseline + ShiftY),
                 ppem, RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
-                                          (byte)(Ink & 0xFF), 255)));
+                                          (byte)(Ink & 0xFF), 255), OracleSimulations));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction;
             return renderer.RenderToRgba(root, Width, Height,
@@ -1980,7 +1991,7 @@ namespace WgpuInterop.Tests.Text
             var root = new SceneVisual();
             root.Content.Add(new GlyphRunDraw(text, new Vector2(PenX + ShiftX, baseline + ShiftY),
                 ppem, RgbaColor.FromBytes((byte)((Ink >> 16) & 0xFF), (byte)((Ink >> 8) & 0xFF),
-                                          (byte)(Ink & 0xFF), 255)));
+                                          (byte)(Ink & 0xFF), 255), OracleSimulations));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction ?? !RawCoverage;
             byte[] rgba = renderer.RenderToRgba(root, Width, Height,
@@ -4948,7 +4959,9 @@ namespace WgpuInterop.Tests.Text
             // grabbed off the screen. That matters beyond convenience: the screen harness needs an
             // interactive desktop, and when the session stops being capturable it returns two BLACK
             // images and a difference of ZERO, which reads as perfect parity. This cannot do that.
-            const string Sample = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
+            // WPF_WEIGHT_SAMPLE overrides the text -- to score one word, or one letter.
+            string Sample = Environment.GetEnvironmentVariable("WPF_WEIGHT_SAMPLE") is { Length: > 0 } ws
+                ? ws : "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
             var report = new System.Text.StringBuilder();
             report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
             report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ"
