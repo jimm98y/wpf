@@ -4308,6 +4308,7 @@ namespace WgpuInterop.Tests.Text
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = true;
             var raw = new byte[Width * Height * 4];
+            byte[] lastOurs = Array.Empty<byte>();
             long Score(List<PathFigure> placed)
             {
                 var root = new SceneVisual();
@@ -4315,6 +4316,7 @@ namespace WgpuInterop.Tests.Text
                                                   new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)),
                                                   isGlyph: true) { PixelAligned = true });
                 byte[] ours = renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
+                lastOurs = ours;
                 long sum = 0;
                 for (int i = 0; i < Width * Height; i++)
                     for (int ch = 0; ch < 3; ch++)
@@ -4362,14 +4364,44 @@ namespace WgpuInterop.Tests.Text
                 Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
                 Gdi.s_rawRgb = null;
 
-                int[] edge = new int[Edges(fitted).Count];
-                Edges(fitted).CopyTo(edge);
+                // WPF_EDGESOLVE_PERPOINT=1: every point its own unknown. The distinct-x grouping
+                // cannot say that GDI moved apart two points OUR fit left at the same x -- which is
+                // what the crossing strokes of an 'x' or 'k' do -- so this mode unties them, at the
+                // price of wider ambiguity runs and a slower sweep.
+                bool perPoint = Environment.GetEnvironmentVariable("WPF_EDGESOLVE_PERPOINT") == "1";
+                int[] edge;
+                if (perPoint)
+                {
+                    var flat = new List<int>();
+                    void SeeP(Vector2 p) => flat.Add((int) MathF.Round(p.X * 64f));
+                    foreach (PathFigure f in fitted)
+                    {
+                        SeeP(f.Start);
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment ls) SeeP(ls.Point);
+                            else if (sg is QuadraticBezierSegment qs) { SeeP(qs.Control); SeeP(qs.Point); }
+                            else if (sg is CubicBezierSegment cs) { SeeP(cs.Control1); SeeP(cs.Control2); SeeP(cs.Point); }
+                    }
+                    edge = flat.ToArray();
+                }
+                else
+                {
+                    edge = new int[Edges(fitted).Count];
+                    Edges(fitted).CopyTo(edge);
+                }
                 int[] delta = new int[edge.Length];
                 int[] runLo = new int[edge.Length], runHi = new int[edge.Length];
+                int placedIndex = 0;
+                int dyAll = 0;
                 List<PathFigure> Placed()
                 {
+                    placedIndex = 0;
                     Vector2 M(Vector2 p)
-                        => new(PenX + p.X + delta[Array.IndexOf(edge, (int) MathF.Round(p.X * 64f))] / 64f, 28f + p.Y);
+                    {
+                        int slot = perPoint ? placedIndex++
+                                            : Array.IndexOf(edge, (int) MathF.Round(p.X * 64f));
+                        return new(PenX + p.X + delta[slot] / 64f, 28f + p.Y + dyAll / 64f);
+                    }
                     var placed = new List<PathFigure>(fitted.Count);
                     foreach (PathFigure f in fitted)
                     {
@@ -4388,8 +4420,25 @@ namespace WgpuInterop.Tests.Text
                 }
 
                 long atStart = Score(Placed()), best = atStart;
+
+                // A RIGID SHIFT FIRST. Some glyphs are our shape half a pixel away -- Verdana's
+                // roman 'w' at 12ppem -- and starting the descent from the best whole-glyph offset
+                // keeps the single-edge passes from tearing the shape apart on the way there.
+                {
+                    int bestG = 0; long lowestG = best;
+                    for (int g = -48; g <= 48; g++)
+                    {
+                        if (g == 0) continue;
+                        for (int k = 0; k < edge.Length; k++) delta[k] = g;
+                        long s = Score(Placed());
+                        if (s < lowestG) { lowestG = s; bestG = g; }
+                    }
+                    for (int k = 0; k < edge.Length; k++) delta[k] = bestG;
+                    best = lowestG;
+                }
+
                 int passes = 0;
-                for (bool moved = true; moved && passes < 6; passes++)
+                for (bool moved = true; moved && passes < 8; passes++)
                 {
                     moved = false;
                     for (int k = 0; k < edge.Length; k++)
@@ -4424,6 +4473,26 @@ namespace WgpuInterop.Tests.Text
                                                     + string.Join(' ', System.Linq.Enumerable.Select(scores, (s, i) => (i - 64) % 8 == 0 ? $"{i - 64}:{s}" : "")));
                         if (mid != was) moved = true;
                     }
+
+                    // PAIRS. Two neighbouring edges are usually the two sides of one stroke, and
+                    // for a diagonal that crosses another -- the strokes of an 'x' or a 'k' --
+                    // moving either side alone makes the stroke the wrong width, a local minimum
+                    // the single-edge sweep cannot leave. Slide each adjacent pair together before
+                    // calling the pass settled.
+                    for (int k = 0; k + 1 < edge.Length; k++)
+                    {
+                        int wasA = delta[k], wasB = delta[k + 1];
+                        int bestD = 0; long lowestP = best;
+                        for (int d = -24; d <= 24; d++)
+                        {
+                            if (d == 0) continue;
+                            delta[k] = wasA + d; delta[k + 1] = wasB + d;
+                            long s = Score(Placed());
+                            if (s < lowestP) { lowestP = s; bestD = d; }
+                        }
+                        delta[k] = wasA + bestD; delta[k + 1] = wasB + bestD;
+                        if (bestD != 0) { best = lowestP; moved = true; }
+                    }
                 }
                 // Recentre every edge in its run once the others have settled, so the printed
                 // answer is the middle of the final run and not where the descent happened to stop.
@@ -4432,11 +4501,73 @@ namespace WgpuInterop.Tests.Text
                         delta[k] = (runLo[k] + runHi[k]) / 2;
                 best = Score(Placed());
 
+                // WPF_EDGESOLVE_DUMP=<dir>: GDI's bitmap and the solved one, side by side on
+                // disk, because a residual no move can reach needs to be LOOKED at.
+                void DumpPair(string tag)
+                {
+                    if (Environment.GetEnvironmentVariable("WPF_EDGESOLVE_DUMP") is not { Length: > 0 } dir) return;
+                    Directory.CreateDirectory(dir);
+                    var g = new byte[Width * Height * 4];
+                    var d = new byte[Width * Height * 4];
+                    for (int i = 0; i < Width * Height; i++)
+                    {
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            g[i * 4 + ch] = raw[i * 4 + (2 - ch)];
+                            int dd = Math.Abs(raw[i * 4 + (2 - ch)] - lastOurs[i * 4 + ch]);
+                            d[i * 4 + ch] = (byte) Math.Max(0, 255 - dd * 4);
+                        }
+                        g[i * 4 + 3] = d[i * 4 + 3] = 255;
+                    }
+                    string stem = $"{parts[0]}-{(style == "" ? "R" : style)}-{ppem}-{(int) c}-{tag}";
+                    PngWriter.Write(Path.Combine(dir, stem + "-gdi.png"), g, Width, Height);
+                    PngWriter.Write(Path.Combine(dir, stem + "-ours.png"), lastOurs, Width, Height);
+                    PngWriter.Write(Path.Combine(dir, stem + "-dif.png"), d, Width, Height);
+                }
+
+                // WHAT IS LEFT, IS IT Y? A residual the x moves cannot reach may be a glyph whose
+                // ClearType y-fit differs from ours. A rigid vertical offset cannot SOLVE that,
+                // but it can implicate it: if sliding the whole solved outline up or down takes
+                // a real bite out of the residual, the unknown is in y, not x.
+                int bestDy = 0;
+                if (best > 0)
+                {
+                    long lowestY = best;
+                    for (int dy = -12; dy <= 12; dy++)
+                    {
+                        if (dy == 0) continue;
+                        dyAll = dy;
+                        long s = Score(Placed());
+                        if (s < lowestY) { lowestY = s; bestDy = dy; }
+                    }
+                    dyAll = bestDy;
+                    if (bestDy != 0)
+                    {
+                        // One more x pass with the better y, so the report reflects both.
+                        for (int k = 0; k < edge.Length; k++)
+                        {
+                            int was = delta[k]; long lowest = long.MaxValue; int at = was;
+                            for (int d = was - 12; d <= was + 12; d++)
+                            {
+                                delta[k] = d;
+                                long s = Score(Placed());
+                                if (s < lowest) { lowest = s; at = d; }
+                            }
+                            delta[k] = at;
+                            best = lowest;
+                        }
+                    }
+                    else best = lowestY;
+                }
+                best = Score(Placed());
+                DumpPair("solved");
+
                 int gdiAdvance = Gdi.TextWidth(c.ToString(), parts[0], ppem, bold, italic);
                 var sb = new System.Text.StringBuilder();
                 sb.Append($"== {parts[0]} '{c}' @{ppem}{(style == "" ? "" : "/" + style)}"
                           + $"  linear {font.Advance(gid) * natScale:0.000}  GDI adv {gdiAdvance}"
                           + $"  at start {atStart}  after {passes} passes {best}"
+                          + (bestDy != 0 ? $"  [dy {bestDy}/64 helps]" : "")
                           + (best == 0 ? "  SOLVED EXACTLY" : "  NOT EXACT") + '\n');
                 sb.Append("   edge   ours(64)  ours(px)   GDI(64)  GDI(px)   delta   run\n");
                 for (int k = 0; k < edge.Length; k++)
@@ -4445,6 +4576,28 @@ namespace WgpuInterop.Tests.Text
                 sb.Append("   bi-level edges(64): " + string.Join(' ', Edges(bi)) + '\n');
                 sb.Append("   natural  edges(64): " + string.Join(' ', Edges(natural)) + '\n');
                 Console.Error.Write(sb.ToString());
+
+                // WPF_EDGESOLVE_TSV: the same answer as one machine-readable line per glyph, so a
+                // few hundred solves become a TABLE of GDI's ClearType x rather than scrollback.
+                if (Environment.GetEnvironmentVariable("WPF_EDGESOLVE_TSV") is { Length: > 0 } tsv)
+                {
+                    string L(System.Collections.Generic.IEnumerable<int> xs) => string.Join(',', xs);
+                    var solved = new int[edge.Length];
+                    var slo = new int[edge.Length];
+                    var shi = new int[edge.Length];
+                    for (int k = 0; k < edge.Length; k++)
+                    {
+                        solved[k] = edge[k] + delta[k];
+                        slo[k] = edge[k] + runLo[k];
+                        shi[k] = edge[k] + runHi[k];
+                    }
+                    File.AppendAllText(tsv,
+                        parts[0] + "\t" + (style == "" ? "R" : style) + "\t" + ppem + "\t" + c
+                        + "\t" + atStart + "\t" + best
+                        + "\t" + gdiAdvance * 64 + "\t" + (int) MathF.Round(font.Advance(gid) * natScale * 64f)
+                        + "\t" + L(edge) + "\t" + L(solved) + "\t" + L(slo) + "\t" + L(shi)
+                        + "\t" + L(Edges(bi)) + "\t" + L(Edges(natural)) + "\n");
+                }
             }
         }
 
