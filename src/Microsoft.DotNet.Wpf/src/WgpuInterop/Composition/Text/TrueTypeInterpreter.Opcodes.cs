@@ -1103,7 +1103,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (p >= z.PointCount) { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
 
             int linkType = EffectiveLinkType(op & 3, _gs.Zp1, p, _gs.Zp0, _gs.Rp0);
-            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
+            // THE DISTANCE IS TAKEN IN FONT UNITS AND SCALED ONCE, not read off the scaled points.
+            // Consolas 'R' at 12ppem places its bowl's right side with MDRP[round] from the stem,
+            // 596 units away: the scaled points are 287.25 -> 287 and 63.75 -> 64, sixty-fourths
+            // apart 223 = 3.48px, which rounds to 3; the distance itself scales to 223.5 -> 224 =
+            // 3.50px, which rounds to 4 -- and 4 is where GDI's bowl is (31 of the glyph's 37
+            // points a pixel left of GDI's, whole face 45 -> 0 at 12ppem; Times B@12 4 -> 1,
+            // Times I 41/20 -> 35/13, Verdana I@16 21 -> 9, Tahoma R@12 3 -> 0; the ClearType
+            // weight 5,618,455 -> 5,604,278). The same for MIRP's outline distance, which only
+            // feeds the cut-in test and the sign, moved nothing in either oracle and is left alone.
+            // WPF_MDRP_EXACT=0 subtracts the scaled points as before.
+            int original = s_mdrpExact
+                ? MeasureOriginalExact(_gs.Zp1, p, _gs.Zp0, _gs.Rp0)
+                : MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
 
             // The single width: a face may declare one measurement that every stem of that size
             // should collapse to, and anything within the cut-in of it becomes it.
@@ -1234,6 +1246,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // Was a documented deviation ("GDI reports symmetric, we do not"). It was not a
         // deviation, it was a bug in the probe: see s_symmetricInfoForced above.
+
+        /// <summary>MDRP measures its original distance in font units and scales it once, as MD
+        /// does; WPF_MDRP_EXACT=0 subtracts the scaled points instead. See the MDRP site.</summary>
+        private static readonly bool s_mdrpExact =
+            Environment.GetEnvironmentVariable("WPF_MDRP_EXACT") != "0";
 
         /// <summary>WPF_MD_SPEC=0 restores the old MD operand pairing.</summary>
         private static readonly bool s_mdOldOrder =

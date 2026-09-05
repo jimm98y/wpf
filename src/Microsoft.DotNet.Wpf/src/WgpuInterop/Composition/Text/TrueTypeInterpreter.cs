@@ -1611,8 +1611,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The same distance taken from the outline in FONT UNITS and scaled afterwards,
         /// which is a hair more exact -- the points were rounded to the grid on the way in, and this
-        /// has not been. Only MD asks for it, and only outside the twilight zone, whose points were
-        /// never in the outline to begin with.</summary>
+        /// has not been. MD and MDRP ask for it, and only outside the twilight zone, whose points
+        /// were never in the outline to begin with.</summary>
         private int MeasureOriginalExact(int zoneA, int a, int zoneB, int b)
         {
             Zone za = ZoneOf(zoneA), zb = ZoneOf(zoneB);
