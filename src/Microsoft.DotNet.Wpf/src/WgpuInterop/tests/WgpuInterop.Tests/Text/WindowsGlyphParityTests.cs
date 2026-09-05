@@ -5008,6 +5008,11 @@ namespace WgpuInterop.Tests.Text
         /// pixels wide is placed by rounding and a stem one pixel wide is placed by the filter,
         /// which is why the two weights answer differently.</para>
         /// <para>WPF_WEIGHT_REPORT=&lt;path&gt; to collect it.</para></summary>
+        private static int[] WeightSizes =>
+            Environment.GetEnvironmentVariable("WPF_WEIGHT_SIZES") is { Length: > 0 } ws
+                ? Array.ConvertAll(ws.Split(','), int.Parse)
+                : new[] { 8, 10, 12, 16, 24 };
+
         [Fact]
         public void HowOurWeightTracksGdis()
         {
@@ -5035,7 +5040,12 @@ namespace WgpuInterop.Tests.Text
                      { "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas" })
                 foreach ((bool bold, bool italic) in
                      new[] { (false, false), (true, false), (false, true) })
-                    foreach (int ppem in new[] { 8, 10, 12, 16, 24 })
+                    // WPF_WEIGHT_SIZES overrides these. The five are the specimen's, and they are
+                    // a BLIND SPOT as well as a sample: a rule can be worth a quarter of a million
+                    // over them and cost pixels at 9, 11 and 13, where nothing in this report would
+                    // ever see it. The per-glyph parity ratchets do -- which is how the half-pixel
+                    // SHPIX cap was caught -- and this is so the question can be asked here first.
+                    foreach (int ppem in WeightSizes)
                     {
                         string? file = FontFiles.Find(family, bold, italic);
                         if (file is null) continue;

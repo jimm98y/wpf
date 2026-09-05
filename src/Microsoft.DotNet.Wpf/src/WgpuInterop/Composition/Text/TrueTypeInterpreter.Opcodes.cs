@@ -440,6 +440,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                         || (s_shpixOutWhen.Contains("touchedx") && (z.Tags[sp] & TagTouchX) == 0)
                                         || (s_shpixOutWhen.Contains("touchedy") && (z.Tags[sp] & TagTouchY) == 0)
                                         || (s_shpixOutWhen.Contains("inline") && _iupDone)
+                                        || (s_shpixOutMax > 0 && (amount > s_shpixOutMax || amount < -s_shpixOutMax))
+
                                         || (s_shpixOutWhen.Contains("post") && !_iupDone))
                                     && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
                                 // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
@@ -1274,6 +1276,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// horizontal nudge. A diagonal freedom vector counts as the ClearType direction whenever it
         /// leans that way, so the fractional-nudge exemption was also letting the faces' DIAGONAL
         /// control through -- moving the point in y as well as x.</summary>
+        /// <summary>HALF A PIXEL: MEASURED, REAL, AND NOT SHIPPABLE YET. WPF_CT_SHPIX_MAX, in
+        /// 64ths, 0 for no cap.
+        /// <para>The exemption below is for a face NUDGING a stem's side -- a sub-pixel adjustment
+        /// ClearType can render because it has thirds of a pixel to render it in. A face also writes
+        /// fractional SHPIXes that are not nudges but grid decisions: Verdana Bold's 'W' at 12ppem
+        /// pulls its leftmost point +33/64 and its rightmost -33/64, half a pixel each, narrowing
+        /// the letter by a whole pixel to fit the bi-level grid -- and GDI's ClearType draws it two
+        /// columns WIDER, at very nearly the unhinted width (ours 0.89..12.67 against an unhinted
+        /// 0.39..13.15).</para>
+        /// <para>Half a pixel is where the line falls on the specimen's five sizes, and it falls
+        /// SHARPLY: 5,485,079 at no cap, 5,254,863 at 32, 5,420,178 at 33 -- one sixty-fourth wider
+        /// and two thirds of the win is gone; 31 is worse than either neighbour (5,334,450), so a
+        /// nudge of exactly half a pixel is one GDI runs. Verdana Bold -97,263, Tahoma Bold -79,451,
+        /// Verdana Italic -70,044, eight faces untouched.</para>
+        /// <para>AND IT DESTROYS TAHOMA AT ELEVEN PIXELS AN EM, which is why it is off. Asked at 9,
+        /// 11, 13, 14, 18 and 20 -- sizes the five-size specimen cannot see, which is what
+        /// WPF_WEIGHT_SIZES is for -- the cap costs 125,979, ALL of it at 11 and all of it Tahoma:
+        /// roman +219,204, italic +217,694, nearly every letter going from about 500 to 10-15,000.
+        /// Tahoma's 'b' at 11 nudges two points by -54/64 and -46/64, both the same way, so the
+        /// letter MOVES and keeps its shape, and GDI draws exactly that; the cap refuses both and
+        /// leaves the unhinted outline. Same MDAP[r]-then-SHPIX shape as Verdana's 'W', opposite
+        /// answer. Over all eleven sizes the cap is still ahead -- 11,841,895 -> 11,737,658, and
+        /// every cap from 40 to 64 is worse -- but a rule that takes a face from exact to badly
+        /// wrong at a size people read text at is not a rule yet.</para>
+        /// <para>Two readings of the difference, both measured, both wrong. "A nudge never moves an
+        /// outer edge" (refuse the exemption for the glyph's leftmost and rightmost points):
+        /// 5,641,263 alone, 5,561,076 with the cap -- and it cannot be right, because Tahoma's
+        /// honoured pair is on its outer edges too. "An opposing pair is a width, not a position"
+        /// (refuse the second of two fractional nudges of opposite sign and put the first back):
+        /// 11,841,895 -> 12,207,689 over the eleven sizes. Faces nudge the two stems of an 'n' in
+        /// opposite directions all the time; the pair in a 'W' is not special for opposing.</para>
+        /// </summary>
+        private static readonly int s_shpixOutMax =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SHPIX_MAX"), out int sm) ? sm : 0;
+
         /// <summary>WHEN A FRACTIONAL NUDGE COUNTS: only INLINE, before IUP.
         /// <para>The exemption below lets a face's fractional SHPIX through in the ClearType
         /// direction where a whole-pixel one is refused. Taken over the whole program it also let
