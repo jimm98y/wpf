@@ -1014,7 +1014,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static int CompatibleAdvance64;
 
         private static readonly int s_advancePhantom =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
+            // Mode 7 of the compatible-width correction moves features by how far the LINEAR
+            // advance is from the one the glyph is laid out at, so its run starts with the
+            // advance phantom on the linear advance, unrounded.
+            : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode == 8 ? 4 : 0;
 
         private static readonly bool s_ctInfoAllowed =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
@@ -1189,6 +1193,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Segoe UI italic at 9pt goes 9,760 -> 152,480. Rounding the span instead of the
             // phantoms fixes the italics and loses the rest: 10,686,251 against 10,072,594 here.
             // Measured every way round; this is the best of them.
+            // MODE 4: PRE-SCALE. The glyph arrives already stretched onto the advance it will be
+            // laid out at -- every x, phantoms included, scaled by that advance over the linear
+            // one -- and the program then runs on it with the control values left alone. A stem
+            // placed by MIRP keeps its control-value width; a point placed relative to an
+            // untouched neighbour rides on the scaled outline. Nothing is corrected afterwards.
+            if (s_advancePhantom == 4 && !glyph.Composite && CompatibleAdvance64 > 0 && !BiLevelPass)
+            {
+                int lin = z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount];
+                if (lin > 0 && lin != CompatibleAdvance64)
+                {
+                    float ratio = CompatibleAdvance64 / (float) lin;
+                    for (int i = 0; i < n; i++)
+                    {
+                        z.OrgX[i] = z.CurX[i] = (int) MathF.Round(z.CurX[i] * ratio);
+                        z.OrusX[i] = (int) MathF.Round(z.OrusX[i] * ratio);
+                    }
+                }
+            }
             z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
             z.CurX[glyph.PointCount + 1] = s_advancePhantom switch
             {
@@ -1200,7 +1222,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // the ClearType run with that box and the program is positioning within the same
                 // space GDI's is, instead of inside a box a pixel too wide that a later scale then
                 // has to squeeze -- which is what damages the stems.
-                3 when CompatibleAdvance64 > 0
+                3 or 4 when CompatibleAdvance64 > 0
                     => z.CurX[glyph.PointCount] + CompatibleAdvance64,
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
@@ -1209,6 +1231,60 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 z.Contours[i] = glyph.EndPoints[i];
             _contourCount = glyph.EndPoints.Length;
             _realPoints = glyph.PointCount;
+            if (_xLink.Length < _realPoints) _xLink = new int[_realPoints];
+            for (int i = 0; i < _realPoints; i++) _xLink[i] = i;
+        }
+
+        // ---- x features ------------------------------------------------------------------------
+
+        /// <summary>WHICH POINTS THE PROGRAM TIED TOGETHER IN X. Every MDRP, MIRP, MSIRP and ALIGNRP
+        /// places a point at a distance from a reference point, and every SHP moves one by what its
+        /// reference moved: the two are one feature -- the two sides of a stem, the bar of a 'T'
+        /// riding on its stem, the arm ends of an 'E' spaced from each other. Union-find over the
+        /// glyph's outline points, reset per glyph. IP does not link (it interpolates BETWEEN two
+        /// features), nor does SHPIX (a nudge, not a placement), nor anything from the phantoms
+        /// or twilight -- a stem MIRP'd from the advance phantom is its own feature.</summary>
+        private int[] _xLink = Array.Empty<int>();
+
+        private int FindX(int p)
+        {
+            while (_xLink[p] != p) { _xLink[p] = _xLink[_xLink[p]]; p = _xLink[p]; }
+            return p;
+        }
+
+        /// <summary>WPF_CT_LINKTYPES: which MDRP/MIRP distance types tie points into one feature --
+        /// bit 0 grey, bit 1 black, bit 2 white; default black only. Beat Stamm's account of GDI's
+        /// compatible widths has the rasterizer telling "black links" (stroke weights, kept) from
+        /// "white links" (positions, scaled), so the partition is worth a knob -- and it is the
+        /// knob that mattered: over the weight report (six faces, three styles, five sizes) black
+        /// only scores 10,399,039 against 10,867,238 for all three, 10,777,519 for grey+black and
+        /// 10,466,790 for black+white. A grey MDRP is how a slanted stem's far corner is placed
+        /// from its near one (Verdana Italic's 'l': 0xC0 from the bottom-right to the top-right),
+        /// and a white one spaces strokes apart; tying either into the feature makes the whole
+        /// glyph one rigid body, which is exactly the scale-within-a-stem mode 7 exists to avoid.
+        /// </summary>
+        private static readonly int s_linkTypes =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_LINKTYPES"), out int lt) ? lt : 2;
+
+        private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1)
+        {
+            if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
+            if (_inPreProgram || zoneP != 1 || zoneR != 1 || !IsHorizontalFreedom) return;
+            if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
+            int a = FindX(p), b = FindX(r);
+            if (a != b) _xLink[a] = b;
+        }
+
+        /// <summary>After a Hint: each outline point's feature (the index of a representative
+        /// point) and whether the program touched it in x.</summary>
+        internal void ReadXFeatures(int[] feature, bool[] touchedX)
+        {
+            int n = Math.Min(feature.Length, _realPoints);
+            for (int i = 0; i < n; i++)
+            {
+                feature[i] = FindX(i);
+                touchedX[i] = (_glyphZone.Tags[i] & TagTouchX) != 0;
+            }
         }
 
         private int _contourCount;

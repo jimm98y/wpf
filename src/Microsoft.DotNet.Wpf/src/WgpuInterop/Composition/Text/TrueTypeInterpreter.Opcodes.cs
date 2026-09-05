@@ -355,6 +355,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                     distance = org;
                             }
 
+                            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
                             MovePoint(z, p, distance - current);
                             _gs.Rp1 = _gs.Rp0;
                             _gs.Rp2 = p;
@@ -369,6 +370,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 int p = Pop();
                                 Zone z = ZoneOf(_gs.Zp1);
                                 if (p >= z.PointCount) continue;
+                                LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
                             }
                             _gs.Loop = 1;
@@ -422,7 +424,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // GDI's own output here: executing SHPIX costs 681,513 -> 743,730.
                                 // Refusing it in the ClearType direction, as DELTAP is refused,
                                 // measures better. WPF_CT_SHPIX=run tries it the other way.
-                                if (!s_runShpix && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
+                                // ...and WPF_CT_SHPIX=outline, which mode 7 of the compatible-width
+                                // correction implies, executes the FRACTIONAL ones on outline points
+                                // and refuses the rest. Arial writes two kinds: whole-pixel shifts
+                                // gated on a ppem range -- of the advance phantom (its bi-level
+                                // advance, which we lay out with already) and, at some sizes, of a
+                                // stem or an arm -- and fractional nudges of a stem's side tagged
+                                // with the rendering mode the face read back from GETINFO. GDI's
+                                // solved edges include every nudge and none of the whole pixels:
+                                // 'E' at 16ppem carries a -64 on its middle arm, and executing it
+                                // puts that arm a pixel left of where GDI draws it.
+                                if (!s_runShpix
+                                    && (!s_runShpixOutline || (uint) sp >= (uint) _realPoints || amount % 64 == 0)
+                                    && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
                                 // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
                                 // paper's sentence quoted below ends "we keep only deltas on touched
                                 // points in the non-ClearType direction", and we were applying the
@@ -1098,6 +1112,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, op & 3);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
@@ -1219,6 +1234,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// it. Measured worse -- see the note at the SHPIX site.</summary>
         private static readonly bool s_runShpix =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
+
+        private static readonly bool s_runShpixOutline =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "outline"
+            || (Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null && TrueTypeFont.CompatibleWidthMode is 7 or 8);
 
         /// <summary>WPF_CT_CUTIN_DIV: what the control-value cut-in is divided by in the ClearType
         /// direction. 16 is the paper's sixteenth.</summary>
@@ -1691,6 +1710,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else { if (distance > -floor) distance = -floor; }
             }
 
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, op & 3);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
@@ -1755,6 +1775,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // touch-set difference -- kept expressible so the next reader need not re-derive
                 // that.
                 if (p == refPoint && _gs.Zp2 == refZone && !s_shpMovesRefPoint) continue;
+                LinkX(_gs.Zp2, p, refZone, refPoint);
                 MoveDirect(z, p, dx, dy, touch);
             }
             _gs.Loop = 1;
@@ -1773,7 +1794,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             for (int p = first; p <= last && p < z.PointCount; p++)
                 if (p != refPoint || _gs.Zp2 != refZone)
+                {
+                    LinkX(_gs.Zp2, p, refZone, refPoint);
                     MoveDirect(z, p, dx, dy, 0);
+                }
         }
 
         private void ShiftZone(bool useRp1)

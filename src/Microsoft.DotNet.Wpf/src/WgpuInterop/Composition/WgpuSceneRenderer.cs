@@ -4117,21 +4117,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static long HashGeometry(PathGeometry g, float dx, float dy)
         {
-            long h = 17 * 31 + (int)g.FillRule;
-            long HashV(Vector2 v) => ((long)BitConverter.SingleToInt32Bits(v.X + dx) << 32) ^ (uint)BitConverter.SingleToInt32Bits(v.Y + dy);
+            // FNV-style xor-multiply per coordinate, the same mixing the layer-cache key uses --
+            // NOT "h * 31 + (xBits << 32 ^ yBits)". That put x in the top half of the word and
+            // then multiplied it by 31 per point and by 32 and 397 for the flags, so a change in
+            // two consecutive points' x whose float bits differed by a multiple of 2^22 (one whole
+            // pixel for an x in [2,4), two in [4,8) ...) was shifted clean out of the 64-bit key.
+            // A rectangle drawn 2.16px wide and then 3.16px wide got the SAME mask-cache key and
+            // was drawn stale; the edge solver in the parity tests found it when a stem one whole
+            // pixel wider scored identically to the narrow one.
+            long h = (17L * 31 + (int)g.FillRule) * 1099511628211L;
+            long HashV(long h0, Vector2 v)
+            {
+                h0 = (h0 ^ BitConverter.SingleToInt32Bits(v.X + dx)) * 1099511628211L;
+                return (h0 ^ BitConverter.SingleToInt32Bits(v.Y + dy)) * 1099511628211L;
+            }
             foreach (PathFigure f in g.Figures)
             {
-                h = h * 31 + HashV(f.Start);
+                h = HashV(h, f.Start);
                 foreach (PathSegment s in f.Segments)
                 {
                     h = s switch
                     {
-                        LineSegment l => h * 31 + HashV(l.Point),
-                        QuadraticBezierSegment q => (h * 31 + HashV(q.Control)) * 31 + HashV(q.Point),
-                        CubicBezierSegment c => ((h * 31 + HashV(c.Control1)) * 31 + HashV(c.Control2)) * 31 + HashV(c.Point),
-                        _ => h * 31,
+                        LineSegment l => HashV(h, l.Point),
+                        QuadraticBezierSegment q => HashV(HashV(h, q.Control), q.Point),
+                        CubicBezierSegment c => HashV(HashV(HashV(h, c.Control1), c.Control2), c.Point),
+                        _ => (h ^ 0x5bd1e995L) * 1099511628211L,
                     };
                 }
+                // A figure boundary, so two figures sharing points do not hash as one longer figure.
+                h = (h ^ (f.Closed ? 0x9e37L : 0x79b9L)) * 1099511628211L;
             }
             return h;
         }

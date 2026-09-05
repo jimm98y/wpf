@@ -130,392 +130,398 @@ namespace WgpuInterop.Tests.Text
         /// up are the sizes we got worse at.</para></summary>
         private static readonly Dictionary<string, int> Allowed = new()
         {
-            ["!"] = 15,
-            ["#"] = 4,
-            ["$"] = 34,
-            ["%"] = 44,
-            ["&"] = 14,
-            ["("] = 16,
+            ["!"] = 1,
+            ["#"] = 3,
+            ["$"] = 15,
+            ["%"] = 8,
+            ["&"] = 15,
+            ["("] = 3,
             [")"] = 10,
             ["*"] = 2,
-            ["+"] = 11,
-            [","] = 6,
-            ["."] = 6,
-            ["/"] = 1,
-            ["0"] = 4,
-            ["0123456789@11"] = 17,
-            ["0123456789@12"] = 77,
-            ["0123456789@12b"] = 48,
+            ["+"] = 0,
+            [","] = 7,
+            ["."] = 0,
+            ["/"] = 15,
+            ["0"] = 9,
+            ["0123456789@11"] = 9,
+            ["0123456789@12"] = 98,
+            ["0123456789@12b"] = 26,
             ["0123456789@12bi"] = 9,
             ["0123456789@12i"] = 12,
-            ["0123456789@13"] = 11,
-            ["0123456789@16"] = 86,
-            ["0123456789@16b"] = 69,
+            ["0123456789@13"] = 22,
+            ["0123456789@16"] = 67,
+            ["0123456789@16b"] = 36,
             ["0123456789@16bi"] = 8,
             ["0123456789@16i"] = 14,
-            ["0123456789@19"] = 81,
-            ["1"] = 19,
-            ["2"] = 8,
-            ["3"] = 2,
-            ["4"] = 14,
-            ["5"] = 8,
-            ["6"] = 11,
-            ["7"] = 1,
-            ["8"] = 5,
-            ["9"] = 5,
+            ["0123456789@19"] = 78,
+            ["1"] = 2,
+            ["2"] = 6,
+            ["3"] = 11,
+            ["4"] = 15,
+            ["5"] = 10,
+            ["6"] = 9,
+            ["7"] = 16,
+            ["8"] = 10,
+            ["9"] = 10,
             [":"] = 4,
-            [";"] = 8,
-            ["<"] = 14,
-            ["="] = 6,
-            [">"] = 14,
-            ["?"] = 8,
-            ["@"] = 47,
-            ["["] = 13,
-            ["]"] = 22,
-            ["^"] = 1,
-            ["`"] = 2,
-            ["A"] = 3,
-            ["a"] = 14,
-            ["ABCDEFGHIJKLM@11"] = 144,
-            ["abcdefghijklm@11"] = 200,
-            ["ABCDEFGHIJKLM@12"] = 221,
-            ["abcdefghijklm@12"] = 157,
-            ["ABCDEFGHIJKLM@13"] = 325,
-            ["abcdefghijklm@13"] = 213,
-            ["ABCDEFGHIJKLM@16"] = 83,
-            ["abcdefghijklm@16"] = 124,
-            ["ABCDEFGHIJKLM@19"] = 137,
-            ["abcdefghijklm@19"] = 118,
-            ["B"] = 20,
-            ["b"] = 12,
-            ["C"] = 9,
-            ["c"] = 14,
-            ["Cancel Apply@12b"] = 120,
+            [";"] = 7,
+            ["<"] = 8,
+            ["="] = 2,
+            [">"] = 7,
+            ["?"] = 5,
+            ["@"] = 2,
+            ["["] = 11,
+            ["]"] = 21,
+            ["^"] = 6,
+            ["`"] = 4,
+            ["A"] = 0,
+            ["a"] = 5,
+            ["ABCDEFGHIJKLM@11"] = 57,
+            ["abcdefghijklm@11"] = 91,
+            ["ABCDEFGHIJKLM@12"] = 56,
+            ["abcdefghijklm@12"] = 72,
+            ["ABCDEFGHIJKLM@13"] = 44,
+            ["abcdefghijklm@13"] = 77,
+            ["ABCDEFGHIJKLM@16"] = 24,
+            ["abcdefghijklm@16"] = 51,
+            ["ABCDEFGHIJKLM@19"] = 17,
+            ["abcdefghijklm@19"] = 110,
+            ["B"] = 10,
+            ["b"] = 8,
+            ["C"] = 7,
+            ["c"] = 5,
+            ["Cancel Apply@12b"] = 36,
             ["Cancel Apply@12bi"] = 7,
             ["Cancel Apply@12i"] = 6,
-            ["Cancel Apply@16b"] = 84,
+            ["Cancel Apply@16b"] = 39,
             ["Cancel Apply@16bi"] = 2,
             ["Cancel Apply@16i"] = 9,
-            ["D"] = 26,
-            ["d"] = 20,
-            ["E"] = 9,
-            ["e"] = 12,
-            ["F"] = 9,
-            ["f"] = 18,
-            ["G"] = 23,
-            ["g"] = 21,
-            ["H"] = 35,
-            ["h"] = 8,
-            ["Handgloves@12b"] = 86,
+            ["D"] = 4,
+            ["d"] = 6,
+            ["E"] = 0,
+            ["e"] = 2,
+            ["F"] = 0,
+            ["f"] = 8,
+            ["G"] = 6,
+            ["g"] = 7,
+            ["H"] = 9,
+            ["h"] = 3,
+            ["Handgloves@12b"] = 29,
             ["Handgloves@12bi"] = 6,
             ["Handgloves@12i"] = 9,
-            ["Handgloves@16b"] = 77,
+            ["Handgloves@16b"] = 23,
             ["Handgloves@16bi"] = 1,
             ["Handgloves@16i"] = 6,
-            ["I"] = 18,
-            ["Illinois still@11"] = 91,
-            ["Illinois still@12"] = 64,
-            ["Illinois still@13"] = 94,
-            ["Illinois still@16"] = 73,
-            ["Illinois still@19"] = 78,
-            ["J"] = 10,
-            ["K"] = 14,
-            ["k"] = 3,
-            ["L"] = 10,
-            ["M"] = 35,
-            ["m"] = 35,
-            ["N"] = 21,
-            ["n"] = 8,
-            ["NOPQRSTUVWXYZ@11"] = 118,
-            ["nopqrstuvwxyz@11"] = 187,
-            ["NOPQRSTUVWXYZ@12"] = 134,
-            ["nopqrstuvwxyz@12"] = 106,
-            ["NOPQRSTUVWXYZ@13"] = 199,
-            ["nopqrstuvwxyz@13"] = 146,
+            ["I"] = 9,
+            ["Illinois still@11"] = 41,
+            ["Illinois still@12"] = 26,
+            ["Illinois still@13"] = 40,
+            ["Illinois still@16"] = 20,
+            ["Illinois still@19"] = 182,
+            ["J"] = 0,
+            ["K"] = 4,
+            ["k"] = 9,
+            ["\\"] = 16,
+            ["r"] = 1,
+            ["j"] = 3,
+            ["-"] = 1,
+            ["W"] = 4,
+            ["L"] = 0,
+            ["M"] = 7,
+            ["m"] = 16,
+            ["N"] = 6,
+            ["n"] = 3,
+            ["NOPQRSTUVWXYZ@11"] = 103,
+            ["nopqrstuvwxyz@11"] = 58,
+            ["NOPQRSTUVWXYZ@12"] = 69,
+            ["nopqrstuvwxyz@12"] = 51,
+            ["NOPQRSTUVWXYZ@13"] = 91,
+            ["nopqrstuvwxyz@13"] = 67,
             ["NOPQRSTUVWXYZ@16"] = 55,
-            ["nopqrstuvwxyz@16"] = 110,
-            ["NOPQRSTUVWXYZ@19"] = 89,
-            ["nopqrstuvwxyz@19"] = 138,
-            ["O"] = 30,
-            ["o"] = 16,
-            ["P"] = 21,
-            ["p"] = 12,
-            ["Příliš@12b"] = 78,
+            ["nopqrstuvwxyz@16"] = 41,
+            ["NOPQRSTUVWXYZ@19"] = 101,
+            ["nopqrstuvwxyz@19"] = 57,
+            ["O"] = 7,
+            ["o"] = 9,
+            ["P"] = 3,
+            ["p"] = 8,
+            ["Příliš@12b"] = 15,
             ["Příliš@12bi"] = 10,
             ["Příliš@12i"] = 18,
-            ["Příliš@16b"] = 95,
+            ["Příliš@16b"] = 18,
             ["Příliš@16bi"] = 26,
             ["Příliš@16i"] = 25,
-            ["Q"] = 3,
-            ["q"] = 20,
-            ["R"] = 16,
-            ["repertoire@10"] = 636,
-            ["repertoire@10b"] = 660,
+            ["Q"] = 8,
+            ["q"] = 5,
+            ["R"] = 2,
+            ["repertoire@10"] = 560,
+            ["repertoire@10b"] = 533,
             ["repertoire@10bi"] = 321,
             ["repertoire@10i"] = 302,
-            ["repertoire@11"] = 1576,
-            ["repertoire@11b"] = 858,
+            ["repertoire@11"] = 859,
+            ["repertoire@11b"] = 551,
             ["repertoire@11bi"] = 302,
             ["repertoire@11i"] = 257,
-            ["repertoire@12"] = 1654,
-            ["repertoire@12b"] = 1087,
+            ["repertoire@12"] = 794,
+            ["repertoire@12b"] = 785,
             ["repertoire@12bi"] = 280,
             ["repertoire@12i"] = 297,
-            ["repertoire@13"] = 1942,
-            ["repertoire@13b"] = 844,
+            ["repertoire@13"] = 794,
+            ["repertoire@13b"] = 656,
             ["repertoire@13bi"] = 270,
             ["repertoire@13i"] = 292,
-            ["repertoire@14"] = 981,
-            ["repertoire@14b"] = 909,
+            ["repertoire@14"] = 888,
+            ["repertoire@14b"] = 692,
             ["repertoire@14bi"] = 296,
             ["repertoire@14i"] = 323,
-            ["repertoire@15"] = 1104,
-            ["repertoire@15b"] = 1001,
+            ["repertoire@15"] = 919,
+            ["repertoire@15b"] = 820,
             ["repertoire@15bi"] = 323,
             ["repertoire@15i"] = 340,
-            ["repertoire@16"] = 1104,
-            ["repertoire@16b"] = 1194,
+            ["repertoire@16"] = 745,
+            ["repertoire@16b"] = 869,
             ["repertoire@16bi"] = 367,
             ["repertoire@16i"] = 429,
-            ["repertoire@17"] = 1033,
-            ["repertoire@17b"] = 1179,
+            ["repertoire@17"] = 760,
+            ["repertoire@17b"] = 976,
             ["repertoire@17bi"] = 390,
             ["repertoire@17i"] = 360,
-            ["repertoire@18"] = 1154,
-            ["repertoire@18b"] = 1044,
+            ["repertoire@18"] = 864,
+            ["repertoire@18b"] = 839,
             ["repertoire@18bi"] = 367,
             ["repertoire@18i"] = 350,
-            ["repertoire@19"] = 1459,
-            ["repertoire@19b"] = 1502,
+            ["repertoire@19"] = 861,
+            ["repertoire@19b"] = 940,
             ["repertoire@19bi"] = 403,
             ["repertoire@19i"] = 370,
-            ["repertoire@20"] = 2223,
-            ["repertoire@20b"] = 1945,
+            ["repertoire@20"] = 1822,
+            ["repertoire@20b"] = 1467,
             ["repertoire@20bi"] = 1041,
             ["repertoire@20i"] = 920,
             ["S"] = 3,
-            ["s"] = 3,
-            ["Shapes 2026@11"] = 102,
-            ["Shapes 2026@12"] = 83,
-            ["Shapes 2026@13"] = 71,
-            ["Shapes 2026@16"] = 106,
-            ["Shapes 2026@19"] = 76,
-            ["T"] = 9,
-            ["t"] = 16,
-            ["U"] = 12,
-            ["u"] = 12,
-            ["V"] = 3,
+            ["s"] = 2,
+            ["Shapes 2026@11"] = 41,
+            ["Shapes 2026@12"] = 53,
+            ["Shapes 2026@13"] = 57,
+            ["Shapes 2026@16"] = 49,
+            ["Shapes 2026@19"] = 34,
+            ["T"] = 10,
+            ["t"] = 1,
+            ["U"] = 3,
+            ["u"] = 2,
+            ["V"] = 10,
             ["v"] = 2,
             ["w"] = 2,
-            ["X"] = 5,
-            ["x"] = 8,
-            ["Y"] = 1,
-            ["y"] = 3,
-            ["Z"] = 10,
-            ["z"] = 4,
-            ["{"] = 24,
-            ["|"] = 12,
-            ["}"] = 26,
-            ["~"] = 8,
-            ["à@11"] = 16,
-            ["à@12"] = 16,
-            ["à@13"] = 12,
-            ["à@16"] = 13,
-            ["à@19"] = 12,
-            ["Á@11"] = 3,
-            ["á@11"] = 14,
-            ["Á@12"] = 5,
-            ["á@12"] = 16,
+            ["X"] = 7,
+            ["x"] = 12,
+            ["Y"] = 3,
+            ["y"] = 4,
+            ["Z"] = 3,
+            ["z"] = 0,
+            ["{"] = 11,
+            ["|"] = 0,
+            ["}"] = 8,
+            ["~"] = 6,
+            ["à@11"] = 8,
+            ["à@12"] = 7,
+            ["à@13"] = 4,
+            ["à@16"] = 6,
+            ["à@19"] = 10,
+            ["Á@11"] = 2,
+            ["á@11"] = 7,
+            ["Á@12"] = 2,
+            ["á@12"] = 8,
             ["Á@13"] = 2,
-            ["á@13"] = 13,
-            ["Á@16"] = 2,
-            ["á@16"] = 12,
-            ["Á@19"] = 6,
-            ["á@19"] = 12,
-            ["â@11"] = 16,
-            ["â@12"] = 19,
-            ["â@13"] = 13,
-            ["â@16"] = 12,
-            ["â@19"] = 17,
-            ["ã@11"] = 17,
-            ["ã@12"] = 15,
-            ["ã@13"] = 16,
-            ["ã@16"] = 14,
-            ["ã@19"] = 16,
+            ["á@13"] = 6,
+            ["Á@16"] = 4,
+            ["á@16"] = 9,
+            ["Á@19"] = 5,
+            ["á@19"] = 9,
+            ["â@11"] = 9,
+            ["â@12"] = 9,
+            ["â@13"] = 6,
+            ["â@16"] = 6,
+            ["â@19"] = 15,
+            ["ã@11"] = 8,
+            ["ã@12"] = 9,
+            ["ã@13"] = 8,
+            ["ã@16"] = 7,
+            ["ã@19"] = 13,
             ["Ä@11"] = 5,
-            ["ä@11"] = 14,
-            ["Ä@12"] = 3,
-            ["ä@12"] = 15,
-            ["Ä@13"] = 1,
-            ["ä@13"] = 12,
-            ["Ä@16"] = 6,
-            ["ä@16"] = 17,
+            ["ä@11"] = 8,
+            ["Ä@12"] = 0,
+            ["ä@12"] = 5,
+            ["Ä@13"] = 2,
+            ["ä@13"] = 4,
+            ["Ä@16"] = 3,
+            ["ä@16"] = 12,
             ["Ä@19"] = 5,
-            ["ä@19"] = 12,
-            ["å@11"] = 19,
-            ["å@12"] = 20,
-            ["å@13"] = 11,
-            ["å@16"] = 10,
-            ["å@19"] = 17,
-            ["ç@11"] = 18,
-            ["ç@12"] = 22,
-            ["ç@13"] = 23,
-            ["ç@16"] = 14,
-            ["ç@19"] = 12,
-            ["è@11"] = 20,
-            ["è@12"] = 15,
-            ["è@13"] = 25,
-            ["è@16"] = 13,
-            ["è@19"] = 4,
-            ["É@11"] = 3,
-            ["é@11"] = 20,
-            ["É@12"] = 11,
-            ["é@12"] = 17,
-            ["É@13"] = 19,
-            ["é@13"] = 22,
-            ["É@16"] = 4,
-            ["é@16"] = 9,
-            ["É@19"] = 19,
-            ["é@19"] = 7,
-            ["ê@11"] = 19,
-            ["ê@12"] = 17,
-            ["ê@13"] = 26,
-            ["ê@16"] = 12,
-            ["ê@19"] = 7,
-            ["ë@11"] = 19,
-            ["ë@12"] = 12,
-            ["ë@13"] = 22,
-            ["ë@16"] = 14,
+            ["ä@19"] = 7,
+            ["å@11"] = 12,
+            ["å@12"] = 10,
+            ["å@13"] = 10,
+            ["å@16"] = 11,
+            ["å@19"] = 16,
+            ["ç@11"] = 8,
+            ["ç@12"] = 14,
+            ["ç@13"] = 9,
+            ["ç@16"] = 16,
+            ["ç@19"] = 15,
+            ["è@11"] = 8,
+            ["è@12"] = 6,
+            ["è@13"] = 7,
+            ["è@16"] = 7,
+            ["è@19"] = 3,
+            ["É@11"] = 2,
+            ["é@11"] = 8,
+            ["É@12"] = 2,
+            ["é@12"] = 4,
+            ["É@13"] = 5,
+            ["é@13"] = 7,
+            ["É@16"] = 3,
+            ["é@16"] = 7,
+            ["É@19"] = 2,
+            ["é@19"] = 2,
+            ["ê@11"] = 7,
+            ["ê@12"] = 4,
+            ["ê@13"] = 9,
+            ["ê@16"] = 10,
+            ["ê@19"] = 5,
+            ["ë@11"] = 8,
+            ["ë@12"] = 2,
+            ["ë@13"] = 8,
+            ["ë@16"] = 11,
             ["ë@19"] = 2,
-            ["ì@11"] = 4,
-            ["ì@12"] = 2,
+            ["ì@11"] = 9,
+            ["ì@12"] = 3,
             ["ì@13"] = 3,
-            ["ì@16"] = 4,
-            ["ì@19"] = 3,
-            ["í@11"] = 3,
-            ["í@12"] = 2,
-            ["í@13"] = 3,
+            ["ì@16"] = 5,
+            ["ì@19"] = 29,
+            ["í@11"] = 10,
+            ["í@12"] = 3,
+            ["í@13"] = 2,
             ["í@16"] = 2,
-            ["í@19"] = 2,
-            ["î@11"] = 6,
-            ["î@12"] = 6,
+            ["í@19"] = 23,
+            ["î@11"] = 12,
+            ["î@12"] = 5,
             ["î@13"] = 6,
-            ["î@16"] = 3,
-            ["î@19"] = 11,
-            ["ï@11"] = 1,
+            ["î@16"] = 4,
+            ["î@19"] = 27,
+            ["ï@11"] = 8,
             ["ï@12"] = 2,
             ["ï@13"] = 2,
-            ["ï@19"] = 4,
-            ["Ñ@11"] = 12,
-            ["ñ@11"] = 21,
-            ["Ñ@12"] = 22,
-            ["ñ@12"] = 11,
-            ["Ñ@13"] = 57,
-            ["ñ@13"] = 18,
-            ["Ñ@16"] = 11,
-            ["ñ@16"] = 20,
-            ["Ñ@19"] = 17,
-            ["ñ@19"] = 41,
-            ["ò@11"] = 29,
-            ["ò@12"] = 18,
-            ["ò@13"] = 29,
-            ["ò@16"] = 13,
-            ["ò@19"] = 8,
-            ["ó@11"] = 29,
-            ["ó@12"] = 18,
-            ["ó@13"] = 27,
-            ["ó@16"] = 14,
+            ["ï@19"] = 26,
+            ["ï@16"] = 4,
+            ["Ñ@11"] = 16,
+            ["ñ@11"] = 11,
+            ["Ñ@12"] = 7,
+            ["ñ@12"] = 7,
+            ["Ñ@13"] = 13,
+            ["ñ@13"] = 7,
+            ["Ñ@16"] = 14,
+            ["ñ@16"] = 5,
+            ["Ñ@19"] = 6,
+            ["ñ@19"] = 7,
+            ["ò@11"] = 9,
+            ["ò@12"] = 11,
+            ["ò@13"] = 15,
+            ["ò@16"] = 6,
+            ["ò@19"] = 9,
+            ["ó@11"] = 7,
+            ["ó@12"] = 13,
+            ["ó@13"] = 14,
+            ["ó@16"] = 5,
             ["ó@19"] = 8,
-            ["ô@11"] = 30,
-            ["ô@12"] = 21,
-            ["ô@13"] = 28,
-            ["ô@16"] = 13,
+            ["ô@11"] = 10,
+            ["ô@12"] = 14,
+            ["ô@13"] = 14,
+            ["ô@16"] = 8,
             ["ô@19"] = 8,
-            ["õ@11"] = 25,
-            ["õ@12"] = 20,
-            ["õ@13"] = 32,
-            ["õ@16"] = 11,
-            ["õ@19"] = 13,
-            ["Ö@11"] = 28,
-            ["ö@11"] = 27,
-            ["Ö@12"] = 30,
-            ["ö@12"] = 17,
-            ["Ö@13"] = 34,
-            ["ö@13"] = 28,
-            ["Ö@16"] = 12,
-            ["ö@16"] = 13,
-            ["Ö@19"] = 5,
+            ["õ@11"] = 5,
+            ["õ@12"] = 11,
+            ["õ@13"] = 17,
+            ["õ@16"] = 6,
+            ["õ@19"] = 9,
+            ["Ö@11"] = 14,
+            ["ö@11"] = 8,
+            ["Ö@12"] = 8,
+            ["ö@12"] = 9,
+            ["Ö@13"] = 10,
+            ["ö@13"] = 12,
+            ["Ö@16"] = 9,
+            ["ö@16"] = 11,
+            ["Ö@19"] = 7,
             ["ö@19"] = 8,
             ["ù@11"] = 11,
-            ["ù@12"] = 15,
-            ["ù@13"] = 7,
+            ["ù@12"] = 6,
+            ["ù@13"] = 5,
             ["ù@16"] = 3,
-            ["ù@19"] = 37,
-            ["ú@11"] = 13,
-            ["ú@12"] = 14,
-            ["ú@13"] = 7,
-            ["ú@16"] = 3,
-            ["ú@19"] = 40,
-            ["û@11"] = 14,
-            ["û@12"] = 18,
-            ["û@13"] = 12,
-            ["û@16"] = 5,
-            ["û@19"] = 38,
-            ["Ü@11"] = 10,
+            ["ù@19"] = 4,
+            ["ú@11"] = 12,
+            ["ú@12"] = 6,
+            ["ú@13"] = 5,
+            ["ú@16"] = 4,
+            ["ú@19"] = 4,
+            ["û@11"] = 13,
+            ["û@12"] = 8,
+            ["û@13"] = 9,
+            ["û@16"] = 4,
+            ["û@19"] = 7,
+            ["Ü@11"] = 18,
             ["ü@11"] = 11,
-            ["Ü@12"] = 12,
-            ["ü@12"] = 13,
-            ["Ü@13"] = 26,
-            ["ü@13"] = 5,
+            ["Ü@12"] = 3,
+            ["ü@12"] = 4,
+            ["Ü@13"] = 5,
+            ["ü@13"] = 4,
             ["Ü@16"] = 4,
             ["ü@16"] = 8,
-            ["Ü@19"] = 7,
-            ["ü@19"] = 40,
-            ["ý@11"] = 15,
-            ["ý@12"] = 5,
+            ["Ü@19"] = 5,
+            ["ü@19"] = 3,
+            ["ý@11"] = 4,
+            ["ý@12"] = 6,
             ["ý@13"] = 5,
-            ["ý@16"] = 5,
-            ["ý@19"] = 3,
-            ["ÿ@11"] = 16,
+            ["ý@16"] = 13,
+            ["ý@19"] = 4,
+            ["ÿ@11"] = 6,
             ["ÿ@12"] = 4,
             ["ÿ@13"] = 5,
-            ["ÿ@16"] = 7,
+            ["ÿ@16"] = 13,
             ["ÿ@19"] = 3,
-            ["Č@11"] = 21,
-            ["Č@12"] = 14,
-            ["Č@13"] = 20,
-            ["Č@16"] = 7,
-            ["Č@19"] = 11,
-            ["Ř@11"] = 9,
-            ["Ř@12"] = 23,
-            ["Ř@13"] = 37,
-            ["Ř@16"] = 19,
-            ["Ř@19"] = 20,
-            ["Š@11"] = 16,
-            ["š@11"] = 16,
+            ["Č@11"] = 8,
+            ["Č@12"] = 11,
+            ["Č@13"] = 5,
+            ["Č@16"] = 5,
+            ["Č@19"] = 4,
+            ["Ř@11"] = 13,
+            ["Ř@12"] = 9,
+            ["Ř@13"] = 13,
+            ["Ř@16"] = 6,
+            ["Ř@19"] = 8,
+            ["Š@11"] = 10,
+            ["š@11"] = 11,
             ["Š@12"] = 5,
-            ["š@12"] = 7,
-            ["Š@13"] = 5,
-            ["š@13"] = 12,
-            ["Š@16"] = 11,
-            ["š@16"] = 8,
-            ["Š@19"] = 2,
-            ["š@19"] = 6,
-            ["ů@11"] = 17,
-            ["ů@12"] = 17,
-            ["ů@13"] = 11,
-            ["ů@16"] = 1,
-            ["ů@19"] = 39,
-            ["Ž@11"] = 9,
-            ["ž@11"] = 7,
-            ["Ž@12"] = 14,
-            ["ž@12"] = 8,
+            ["š@12"] = 6,
+            ["Š@13"] = 11,
+            ["š@13"] = 17,
+            ["Š@16"] = 20,
+            ["š@16"] = 12,
+            ["Š@19"] = 4,
+            ["š@19"] = 3,
+            ["ů@11"] = 14,
+            ["ů@12"] = 5,
+            ["ů@13"] = 12,
+            ["ů@16"] = 4,
+            ["ů@19"] = 6,
+            ["Ž@11"] = 3,
+            ["ž@11"] = 3,
+            ["Ž@12"] = 6,
+            ["ž@12"] = 3,
             ["Ž@13"] = 8,
-            ["ž@13"] = 5,
-            ["Ž@16"] = 8,
-            ["ž@16"] = 3,
-            ["Ž@19"] = 12,
-            ["ž@19"] = 6,
+            ["ž@13"] = 3,
+            ["Ž@16"] = 7,
+            ["ž@16"] = 2,
+            ["Ž@19"] = 9,
+            ["ž@19"] = 7,
         };
 
         private static int AllowanceFor(string key)
@@ -4091,6 +4097,34 @@ namespace WgpuInterop.Tests.Text
                         else if (sg is QuadraticBezierSegment q2) { SeeX(q2.Control); SeeX(q2.Point); }
                 }
             float natScale = ppem / (float) font.PixelsPerEm;
+            // And the BI-LEVEL fit and GDI's own advance, because the ClearType outline turned out
+            // to be placed relative to those, not to the natural outline or to our ClearType fit.
+            // BiLevelPass must be set BEFORE the face is constructed: the face reads it once.
+            float biL = float.NaN, biW = float.NaN;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = TrueTypeFont.SubpixelFitting;
+            TrueTypeInterpreter.BiLevelPass = true;
+            TrueTypeFont.SubpixelFitting = false;
+            try
+            {
+                var biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                if (((IHintedGlyphFont) biFont).TryGetHintedOutline(gid, ppem, out List<PathFigure> bi) && bi.Count > 0)
+                {
+                    float lo = float.MaxValue, hi = float.MinValue;
+                    foreach (PathFigure f in bi)
+                    {
+                        void SeeX(Vector2 p) { if (p.X < lo) lo = p.X; if (p.X > hi) hi = p.X; }
+                        SeeX(f.Start);
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment l3) SeeX(l3.Point);
+                            else if (sg is QuadraticBezierSegment q3) { SeeX(q3.Control); SeeX(q3.Point); }
+                    }
+                    biL = lo; biW = hi - lo;
+                }
+            }
+            finally { TrueTypeInterpreter.BiLevelPass = savedBi; TrueTypeFont.SubpixelFitting = savedSub; }
+            int gdiAdvance = Gdi.TextWidth(c.ToString(), parts[0], ppem, bold, italic);
+            Console.Error.WriteLine($"{ppem,4}  bilevel {biL,7:0.000} {biW,7:0.000}  GDI advance {gdiAdvance}"
+                                    + $"  linear {font.Advance(gid) * natScale:0.000}");
             Console.Error.WriteLine($"{ppem,4}  natural {natL * natScale,7:0.000} {(natR - natL) * natScale,7:0.000}"
                                     + $"  ours {left,7:0.000} {right - left,7:0.000}"
                                     + $"  GDI {bestL,7:0.000} {bestW,7:0.000}"
@@ -4119,6 +4153,53 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine($"   in 64ths  left {bestL * 64,7:0}      width {bestW * 64,7:0}");
         }
 
+        /// <summary>THE LAMPS OF A RUN, one row, straight from GDI: which subpixels each stem of
+        /// "IIII" occupies, so the advance GDI actually LAYS OUT with can be read off the ink
+        /// instead of trusted from GetTextExtentPoint32. WPF_RUNPROBE=family/text/ppem[/style].</summary>
+        [Fact]
+        public void LampsOfAGdiRun()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_RUNPROBE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_RUNPROBE=family/text/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            if (file is not null)
+            {
+                byte[] bytes = File.ReadAllBytes(file);
+                int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+                FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                float natScale = ppem / (float) font.PixelsPerEm;
+                foreach (char c in System.Linq.Enumerable.Distinct(parts[1]))
+                {
+                    int gid = font.GlyphIndex(c);
+                    Console.Error.WriteLine($"adv {ppem} '{c}' linear {font.Advance(gid) * natScale:0.000}"
+                                            + $" GDI {Gdi.TextWidth(c.ToString(), parts[0], ppem, bold, italic)}"
+                                            // The three advances GDI can be asked for: the string
+                                            // extent, the layout width, and the bi-level cell.
+                                            + $" charW {Gdi.LayoutAdvance(c, parts[0], ppem, bold, italic)}"
+                                            + $" cellInc {Gdi.HintedMetrics(c, parts[0], ppem, bold, italic).CellIncX}");
+                }
+            }
+            int y = 28 - ppem / 3;
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"row {y}, pen {PenX}: ");
+            for (int x = 0; x < Math.Min(Width, PenX + ppem * parts[1].Length + 4); x++)
+            {
+                int i = (y * Width + x) * 4;
+                sb.Append($"{x}:{255 - raw[i + 2]:000},{255 - raw[i + 1]:000},{255 - raw[i]:000} ");
+            }
+            Console.Error.WriteLine(sb.ToString());
+        }
+
         /// <summary>A closed rectangle as a path figure, y up from the baseline.</summary>
         private static PathFigure RectFigure(float x, float yTop, float w, float h)
         {
@@ -4127,6 +4208,233 @@ namespace WgpuInterop.Tests.Text
             f.Segments.Add(new LineSegment(new Vector2(x + w, yTop + h)));
             f.Segments.Add(new LineSegment(new Vector2(x, yTop + h)));
             return f;
+        }
+
+        /// <summary>A STEM ONE WHOLE PIXEL WIDER MUST NOT BE HANDED THE NARROW STEM'S MASK.
+        /// <para>The mask cache hashed a geometry as h * 31 + (xBits &lt;&lt; 32 ^ yBits) per point.
+        /// With x in the top half of the word, two consecutive points whose x moved by a float-bit
+        /// difference of 2^22 -- one pixel for x in [2,4), two in [4,8) -- multiplied out to a
+        /// multiple of 2^64 once the flag multipliers were applied, and the wider shape got the
+        /// narrower shape's cached texture. Found by the edge solver: the right edge of an 'I'
+        /// scored identically at +0 and +64 sixty-fourths. One renderer, two rectangles, and the
+        /// second must not come back as the first.</para></summary>
+        [Fact]
+        public void AWiderRectangleIsNotTheCachedNarrowOne()
+        {
+            string? file = FontFiles.Find("Arial", false, false);
+            Assert.SkipWhen(file is null, "this machine has no Arial");
+            byte[] bytes = File.ReadAllBytes(file!);
+            var font = new TrueTypeFont(bytes, false, false, FontFiles.SfntOffset(bytes, "Arial", false, false));
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            byte[] One(int left64, int right64)
+            {
+                var root = new SceneVisual();
+                var rect = new List<PathFigure>(1) { RectFigure(PenX + left64 / 64f, 28f - 11f, (right64 - left64) / 64f, 11f) };
+                root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, rect),
+                                                  new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)),
+                                                  isGlyph: true) { PixelAligned = true });
+                return renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
+            }
+            byte[] narrow = One(43, 138), wide = One(43, 202), narrowAgain = One(43, 138);
+            long widerDiff = 0, sameDiff = 0;
+            for (int i = 0; i < narrow.Length; i++)
+            {
+                widerDiff += Math.Abs(narrow[i] - wide[i]);
+                sameDiff += Math.Abs(narrow[i] - narrowAgain[i]);
+            }
+            Assert.Equal(0, sameDiff);
+            Assert.True(widerDiff > 1000, $"a rectangle one pixel wider drew the same pixels (|d| = {widerDiff})");
+        }
+
+        /// <summary>SOLVE FOR GDI'S EDGES: the x of every vertical edge that reproduces its pixels.
+        /// <para>The stem solver recovers GDI's outline for a glyph that is one rectangle, and the
+        /// shift solver asks whether a single translation of ours explains the rest. Between them
+        /// lies every straight-sided glyph -- H, N, E, T, L, F have their x in a handful of
+        /// vertical edges -- and each edge can be solved for on its own. Our fitted points are
+        /// grouped by their x (to a sixty-fourth), every group is an edge, and each is slid in
+        /// sixty-fourths while the others hold still, keeping the position that leaves GDI's
+        /// pixels least disagreed with; repeated until nothing moves. The rasterizer being exact,
+        /// a glyph GDI fitted with the same topology reaches zero, and the per-edge answer -- our
+        /// x, GDI's x, the difference -- is what every x rule so far has had to be guessed at
+        /// without.</para>
+        /// <para>An exact match is a run of positions about a sixth of a pixel wide, so the run is
+        /// printed and its middle is the reported answer, not whichever end the sweep met first.
+        /// The bi-level fitting's edges are printed beside, since that outline keeps being the
+        /// suspect.</para>
+        /// <para>WPF_EDGESOLVE=family/chars/ppem[/B|I|BI].</para></summary>
+        [Fact]
+        public void SolveGdisEdges()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_EDGESOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_EDGESOLVE=family/chars/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            float natScale = ppem / (float) font.PixelsPerEm;
+
+            // The bi-level fitting, for reference. Prep runs at construction, so a separate font.
+            bool savedBi = TrueTypeInterpreter.BiLevelPass;
+            TrueTypeFont biFont;
+            try
+            {
+                TrueTypeInterpreter.BiLevelPass = true;
+                biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            }
+            finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+
+            // ONE renderer for the whole search. The shift solver builds one per render, and at a
+            // few thousand renders a glyph that is minutes and gigabytes.
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            var raw = new byte[Width * Height * 4];
+            long Score(List<PathFigure> placed)
+            {
+                var root = new SceneVisual();
+                root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                                                  new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)),
+                                                  isGlyph: true) { PixelAligned = true });
+                byte[] ours = renderer.RenderToRgba(root, Width, Height, RgbaColor.FromBytes(255, 255, 255, 255));
+                long sum = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch = 0; ch < 3; ch++)
+                        sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                return sum;
+            }
+
+            static SortedSet<int> Edges(List<PathFigure> figures)
+            {
+                var keys = new SortedSet<int>();
+                void See(Vector2 p) => keys.Add((int) MathF.Round(p.X * 64f));
+                foreach (PathFigure f in figures)
+                {
+                    See(f.Start);
+                    foreach (PathSegment sg in f.Segments)
+                        if (sg is LineSegment ls) See(ls.Point);
+                        else if (sg is QuadraticBezierSegment qs) { See(qs.Control); See(qs.Point); }
+                        else if (sg is CubicBezierSegment cs) { See(cs.Control1); See(cs.Control2); See(cs.Point); }
+                }
+                return keys;
+            }
+
+            foreach (char c in parts[1])
+            {
+                int gid = font.GlyphIndex(c);
+                if (gid <= 0 || !((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out List<PathFigure> fitted)
+                    || fitted.Count == 0)
+                {
+                    Console.Error.WriteLine($"== {parts[0]} '{c}' @{ppem}: not fitted");
+                    continue;
+                }
+                List<PathFigure> bi;
+                try
+                {
+                    // The glyph program consults the flag too, not only prep.
+                    TrueTypeInterpreter.BiLevelPass = true;
+                    bi = ((IHintedGlyphFont) biFont).TryGetHintedOutline(gid, ppem, out List<PathFigure> b)
+                        ? b : new List<PathFigure>();
+                }
+                finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
+                List<PathFigure> natural = font.TryGetGlyphOutline(gid, out List<PathFigure> plain)
+                    ? GlyphRunPainter.ScaleFigures(plain, natScale, 0f, 0f) : new List<PathFigure>();
+
+                Gdi.s_rawRgb = raw;
+                Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                Gdi.s_rawRgb = null;
+
+                int[] edge = new int[Edges(fitted).Count];
+                Edges(fitted).CopyTo(edge);
+                int[] delta = new int[edge.Length];
+                int[] runLo = new int[edge.Length], runHi = new int[edge.Length];
+                List<PathFigure> Placed()
+                {
+                    Vector2 M(Vector2 p)
+                        => new(PenX + p.X + delta[Array.IndexOf(edge, (int) MathF.Round(p.X * 64f))] / 64f, 28f + p.Y);
+                    var placed = new List<PathFigure>(fitted.Count);
+                    foreach (PathFigure f in fitted)
+                    {
+                        var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                        foreach (PathSegment sg in f.Segments)
+                            nf.Segments.Add(sg switch
+                            {
+                                LineSegment l => new LineSegment(M(l.Point)),
+                                QuadraticBezierSegment q => new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                                CubicBezierSegment k => new CubicBezierSegment(M(k.Control1), M(k.Control2), M(k.Point)),
+                                _ => sg,
+                            });
+                        placed.Add(nf);
+                    }
+                    return placed;
+                }
+
+                long atStart = Score(Placed()), best = atStart;
+                int passes = 0;
+                for (bool moved = true; moved && passes < 6; passes++)
+                {
+                    moved = false;
+                    for (int k = 0; k < edge.Length; k++)
+                    {
+                        int was = delta[k];
+                        long lowest = long.MaxValue;
+                        var scores = new long[129];
+                        for (int d = -64; d <= 64; d++)
+                        {
+                            delta[k] = d;
+                            scores[d + 64] = Score(Placed());
+                            if (scores[d + 64] < lowest) lowest = scores[d + 64];
+                        }
+                        // The run of the lowest score that contains the current position if one
+                        // does, else the run nearest to it; the edge settles at its middle.
+                        int bestLo = int.MinValue, bestHi = int.MinValue, bestDist = int.MaxValue;
+                        for (int d = -64; d <= 64; d++)
+                        {
+                            if (scores[d + 64] != lowest) continue;
+                            int lo = d;
+                            while (d + 1 <= 64 && scores[d + 65] == lowest) d++;
+                            int dist = was < lo ? lo - was : was > d ? was - d : 0;
+                            if (dist < bestDist) { bestDist = dist; bestLo = lo; bestHi = d; }
+                        }
+                        int mid = (bestLo + bestHi) / 2;
+                        if (bestLo <= was && was <= bestHi) mid = was;   // already inside: hold still
+                        delta[k] = mid;
+                        runLo[k] = bestLo; runHi[k] = bestHi;
+                        best = lowest;
+                        if (Environment.GetEnvironmentVariable("WPF_EDGESOLVE_TRACE") == "1")
+                            Console.Error.WriteLine($"      pass {passes} edge {k}: was {was} lowest {lowest} run [{bestLo},{bestHi}] -> {mid}   "
+                                                    + string.Join(' ', System.Linq.Enumerable.Select(scores, (s, i) => (i - 64) % 8 == 0 ? $"{i - 64}:{s}" : "")));
+                        if (mid != was) moved = true;
+                    }
+                }
+                // Recentre every edge in its run once the others have settled, so the printed
+                // answer is the middle of the final run and not where the descent happened to stop.
+                if (best == 0)
+                    for (int k = 0; k < edge.Length; k++)
+                        delta[k] = (runLo[k] + runHi[k]) / 2;
+                best = Score(Placed());
+
+                int gdiAdvance = Gdi.TextWidth(c.ToString(), parts[0], ppem, bold, italic);
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"== {parts[0]} '{c}' @{ppem}{(style == "" ? "" : "/" + style)}"
+                          + $"  linear {font.Advance(gid) * natScale:0.000}  GDI adv {gdiAdvance}"
+                          + $"  at start {atStart}  after {passes} passes {best}"
+                          + (best == 0 ? "  SOLVED EXACTLY" : "  NOT EXACT") + '\n');
+                sb.Append("   edge   ours(64)  ours(px)   GDI(64)  GDI(px)   delta   run\n");
+                for (int k = 0; k < edge.Length; k++)
+                    sb.Append($"   {k,3}   {edge[k],7}  {edge[k] / 64f,8:0.000}   {edge[k] + delta[k],7}"
+                              + $"  {(edge[k] + delta[k]) / 64f,7:0.000}   {delta[k],5}   [{runLo[k]},{runHi[k]}]\n");
+                sb.Append("   bi-level edges(64): " + string.Join(' ', Edges(bi)) + '\n');
+                sb.Append("   natural  edges(64): " + string.Join(' ', Edges(natural)) + '\n');
+                Console.Error.Write(sb.ToString());
+            }
         }
 
         /// <summary>IS THE PER-GLYPH ERROR A DISPLACEMENT OR A SHAPE?
@@ -4221,7 +4529,18 @@ namespace WgpuInterop.Tests.Text
                 }
 
                 long atZero = -1, best = long.MaxValue;
-                int bestStep = 0;
+                int bestStep = 0, firstExact = int.MinValue, lastExact = int.MinValue;
+                // WPF_SHIFTSOLVE_COLS=lo,hi confines the comparison to pixel columns lo..hi
+                // (from the pen), so one FEATURE of a glyph -- a stem, a bar's end -- can be
+                // asked for its own shift, separately from the rest of the glyph.
+                int colLo = int.MinValue, colHi = int.MaxValue;
+                string? cols = Environment.GetEnvironmentVariable("WPF_SHIFTSOLVE_COLS");
+                if (!string.IsNullOrEmpty(cols))
+                {
+                    string[] lh = cols.Split(',');
+                    colLo = PenX + int.Parse(lh[0]);
+                    colHi = PenX + int.Parse(lh[1]);
+                }
                 for (int step = -64; step <= 64; step++)
                 {
                     // The fitted outline is in device pixels with the baseline at y=0 and y up,
@@ -4231,10 +4550,17 @@ namespace WgpuInterop.Tests.Text
                     byte[] ours = OursRgbaFromFigures(placed, font);
                     long sum = 0;
                     for (int i = 0; i < Width * Height; i++)
+                    {
+                        int col = i % Width;
+                        if (col < colLo || col > colHi) continue;
                         for (int ch = 0; ch < 3; ch++)
                             sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                    }
                     if (step == 0) atZero = sum;
                     if (sum < best) { best = sum; bestStep = step; }
+                    // The whole run of exact shifts, not just the first: the edges resolve to a
+                    // sixth of a pixel, so the run is ~10 steps wide and its ENDS bound GDI's edge.
+                    if (sum == 0) { if (firstExact == int.MinValue) firstExact = step; lastExact = step; }
                 }
 
                 // The left extreme of the outline, unfitted and fitted, in pixels.
@@ -4276,6 +4602,42 @@ namespace WgpuInterop.Tests.Text
                 float scale = ppem / (float) font.PixelsPerEm;
                 float unfittedPx = unfittedLeft * scale;
 
+                // EACH END ON ITS OWN. A glyph's left feature and right feature can be placed by
+                // different rules -- one hangs off the origin phantom, the other off the advance
+                // phantom -- so the exact run is also asked of the first three ink columns and the
+                // last three, separately. WPF_SHIFTSOLVE_ENDS=1.
+                string ends = "";
+                if (Environment.GetEnvironmentVariable("WPF_SHIFTSOLVE_ENDS") == "1")
+                {
+                    (int first, int last, int bestAt) Sweep(int lo, int hi)
+                    {
+                        int f = int.MinValue, l = int.MinValue, bAt = 0;
+                        long b = long.MaxValue;
+                        for (int step = -64; step <= 64; step++)
+                        {
+                            List<PathFigure> placed = GlyphRunPainter.ScaleFigures(
+                                fitted, 1f, PenX + step / 64f, 28f);
+                            byte[] ours = OursRgbaFromFigures(placed, font);
+                            long sum = 0;
+                            for (int i = 0; i < Width * Height; i++)
+                            {
+                                int col = i % Width;
+                                if (col < lo || col > hi) continue;
+                                for (int ch = 0; ch < 3; ch++)
+                                    sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                            }
+                            if (sum < b) { b = sum; bAt = step; }
+                            if (sum == 0) { if (f == int.MinValue) f = step; l = step; }
+                        }
+                        return (f, l, bAt);
+                    }
+                    int lc = PenX + (int) Math.Floor(fittedLeft), rc = PenX + (int) Math.Floor(fittedRight);
+                    var L = Sweep(lc - 1, lc + 2);
+                    var R = Sweep(rc - 2, rc + 1);
+                    ends = $"   L{(L.first == int.MinValue ? $"~{L.bestAt}" : $"[{L.first},{L.last}]")}"
+                         + $" R{(R.first == int.MinValue ? $"~{R.bestAt}" : $"[{R.first},{R.last}]")}";
+                }
+
                 string verdict = best == 0 ? "EXACT -- placement alone explains it"
                                : best * 4 < atZero ? "MOSTLY placement"
                                : best < atZero ? "partly placement"
@@ -4292,7 +4654,13 @@ namespace WgpuInterop.Tests.Text
                                         + $"   gdiLeft {fittedLeft + bestStep / 64f,6:0.000}"
                                         + $"{(best * 8 < atZero ? "*" : " ")}"
                                         + $"   BI-LEVEL {biStep,4}/64 {biBest,8}"
-                                        + $"   {verdict}");
+                                        // The exact run in 64ths, the natural (linear) advance and
+                                        // GDI's ClearType advance: the placement rule's inputs.
+                                        + (firstExact == int.MinValue ? "   exact none"
+                                           : $"   exact [{firstExact},{lastExact}]")
+                                        + $"   adv {font.Advance(gid) * scale,6:0.000}->"
+                                        + $"{Gdi.TextWidth(c.ToString(), parts[0], ppem, bold, italic)}"
+                                        + $"   {verdict}{ends}");
             }
         }
 
@@ -5577,7 +5945,7 @@ namespace WgpuInterop.Tests.Text
         // is protected -- this is the guard reporting one more glyph we cannot run faithfully,
         // which is true and should go back to 0 when the branch is fixed. Not a licence to let it
         // climb: raise this only with the glyph named and the reason understood.
-        [InlineData("Arial", 1)]
+        [InlineData("Arial", 0)]
         [InlineData("Times New Roman", 0)]
         [InlineData("Comic Sans MS", 0)]
         // Verdana and Tahoma were not on this list, and Verdana is the worst face on the six-face
@@ -5893,17 +6261,17 @@ namespace WgpuInterop.Tests.Text
         /// </summary>
         private static readonly Dictionary<string, int> InkAllowed = new()
         {
-            ["b@10"] = 34,
-            ["b@11"] = 18,
-            ["b@12"] = 101,
-            ["b@13"] = 27,
-            ["b@14"] = 49,
-            ["b@15"] = 13,
-            ["b@16"] = 24,
-            ["b@17"] = 17,
-            ["b@18"] = 7,
-            ["b@19"] = 12,
-            ["b@20"] = 64,
+            ["b@10"] = 31,
+            ["b@11"] = 113,
+            ["b@12"] = 114,
+            ["b@13"] = 67,
+            ["b@14"] = 18,
+            ["b@15"] = 40,
+            ["b@16"] = 23,
+            ["b@17"] = 23,
+            ["b@18"] = 16,
+            ["b@19"] = 17,
+            ["b@20"] = 40,
             ["bi@10"] = 108,
             ["bi@11"] = 68,
             ["bi@12"] = 84,
@@ -5926,17 +6294,17 @@ namespace WgpuInterop.Tests.Text
             ["i@18"] = 43,
             ["i@19"] = 56,
             ["i@20"] = 80,
-            ["regular@10"] = 141,
-            ["regular@11"] = 148,
-            ["regular@12"] = 231,
-            ["regular@13"] = 38,
-            ["regular@14"] = 9,
-            ["regular@15"] = 125,
-            ["regular@16"] = 101,
-            ["regular@17"] = 26,
-            ["regular@18"] = 39,
-            ["regular@19"] = 51,
-            ["regular@20"] = 162,
+            ["regular@10"] = 213,
+            ["regular@11"] = 152,
+            ["regular@12"] = 43,
+            ["regular@13"] = 110,
+            ["regular@14"] = 28,
+            ["regular@15"] = 31,
+            ["regular@16"] = 96,
+            ["regular@17"] = 85,
+            ["regular@18"] = 42,
+            ["regular@19"] = 43,
+            ["regular@20"] = 90,
         };
 
 

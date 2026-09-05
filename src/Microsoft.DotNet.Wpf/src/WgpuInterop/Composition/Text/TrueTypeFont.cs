@@ -1143,8 +1143,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMGAP"), out int sg) && sg > 0
                 ? sg : 48;
 
+        /// <summary>WPF_CT_COMPATWIDTH: how a ClearType-fitted outline is brought to the advance
+        /// the glyph is laid out at (the bi-level one, via hdmx). 0 not at all; 1 the tolerance-
+        /// gated x scale that shipped first; 7 (the default) the per-feature rigid move described
+        /// at its branch below; 2-6 and 8 are experiments kept expressible, each documented where
+        /// it runs.</summary>
         internal static readonly int CompatibleWidthMode =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 1;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 7;
 
         /// <summary>Whether a fitted outline is still the glyph it started as.
         /// <para>GRID FITTING MOVES EDGES TO THE GRID -- by definition less than a pixel, plus a
@@ -2250,6 +2255,104 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         for (int i = 0; i < glyph.PointCount; i++) glyph.X[i] += shift[i];
                         if (glyph.X.Length > glyph.PointCount + 1)
                             glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target6;
+                    }
+                }
+                // MODE 7: GDI'S RULE, read off its solved edges rather than guessed.
+                //
+                // The per-edge solver (SolveGdisEdges) recovers where GDI put every vertical edge
+                // of a straight-sided glyph, to a sixty-fourth, residual zero. Across Arial's
+                // I H E F L T i l at 10-24ppem -- 338 edges -- the placement that lands 294 of
+                // them inside GDI's run, and misses the rest by under a sixth of a pixel, is:
+                //   run the program with the advance phantom on the UNROUNDED linear advance and
+                //   the face's fractional x nudges executed (both arranged for by this mode);
+                //   then move every FEATURE rigidly by (A/lin - 1) times its centre, where A is
+                //   the advance the glyph is laid out at, lin the linear one, and a feature is
+                //   the set of points the program placed from one another (the interpreter's
+                //   union-find over MDRP/MIRP/MSIRP/ALIGNRP/SHP).
+                // The mode-1 scale is this with three things wrong: it uses A/round(lin), it
+                // scales WITHIN a stem (crushing it), and its tolerance gate turns it off exactly
+                // where the displacement is largest. Points the program never touched in x are
+                // moved by interpolating the displacement between their x-neighbours.
+                //
+                // SHIPPED (the default) since it scores 10,399,039 on the weight report against
+                // mode 1's 11,584,399, with the interpreter tying only BLACK links into features
+                // (WPF_CT_LINKTYPES). What it still gets wrong, measured: Verdana's bold and
+                // italic (683,018 -> 717,121 and 570,573 -> 752,685), Tahoma's bold (329,998 ->
+                // 340,471) and Consolas' italic (286,761 -> 369,475); every other face and style
+                // improves, Tahoma's roman by a third. The per-edge solver says GDI does NOT move
+                // Consolas' 'l' at 16ppem (our raw outline is exact) nor Tahoma's 'l' at 12
+                // though it moves both faces' 'I' -- Beat Stamm's "damage control" for glyphs
+                // without counterforms -- and that Verdana Italic's slanted stems are neither
+                // scaled nor left alone but drawn with a different slant; neither rule is known
+                // yet, and the mode-1 tolerance gate that happened to skip them is not it either
+                // (mode 1 is worse than mode 0 for Consolas, and equal elsewhere).
+                else if (CompatibleWidthMode == 7 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    int n7 = glyph.PointCount;
+                    float wanted7 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target7 = (int) MathF.Round(wanted7 * 64f);
+                    if (target7 > 0 && target7 != fitted && n7 > 0)
+                    {
+                        var feature = new int[n7];
+                        var touched = new bool[n7];
+                        interpreter.ReadXFeatures(feature, touched);
+                        float s7 = target7 / (float) fitted;
+
+                        // The centre of each feature, over its touched points.
+                        var lo7 = new int[n7]; var hi7 = new int[n7];
+                        Array.Fill(lo7, int.MaxValue); Array.Fill(hi7, int.MinValue);
+                        int touchedCount = 0;
+                        for (int i = 0; i < n7; i++)
+                        {
+                            if (!touched[i]) continue;
+                            touchedCount++;
+                            int f = feature[i];
+                            if (glyph.X[i] < lo7[f]) lo7[f] = glyph.X[i];
+                            if (glyph.X[i] > hi7[f]) hi7[f] = glyph.X[i];
+                        }
+                        var shift = new int[n7];
+                        // NOTHING FITTED IN X, NOTHING MOVED. Segoe UI's italic has no x
+                        // instructions at all, and the edge solver finds GDI drawing its scaled
+                        // outline untouched -- 'I', 'H' and 'l' at 12ppem exact as they are --
+                        // where its linear advance (3.19) and the advance it is laid out at (3)
+                        // differ as much as Arial's do. So the displacement is not a scale of the
+                        // outline onto the advance; it is a displacement of what the program
+                        // PLACED, and an outline the program left alone stays where it was.
+                        if (touchedCount > 0)
+                        {
+                            for (int i = 0; i < n7; i++)
+                                if (touched[i])
+                                    shift[i] = (int) MathF.Round((s7 - 1f) * ((lo7[feature[i]] + hi7[feature[i]]) * 0.5f - p0));
+
+                            // Untouched points: interpolate between the nearest touched points
+                            // in x, clamped beyond the outermost.
+                            var order = new int[touchedCount];
+                            for (int i = 0, k = 0; i < n7; i++) if (touched[i]) order[k++] = i;
+                            Array.Sort(order, (a, b) => glyph.X[a].CompareTo(glyph.X[b]));
+                            for (int i = 0; i < n7; i++)
+                            {
+                                if (touched[i]) continue;
+                                int x = glyph.X[i];
+                                if (x <= glyph.X[order[0]]) { shift[i] = shift[order[0]]; continue; }
+                                if (x >= glyph.X[order[^1]]) { shift[i] = shift[order[^1]]; continue; }
+                                int k = 1;
+                                while (glyph.X[order[k]] < x) k++;
+                                int a = order[k - 1], b = order[k];
+                                int span = glyph.X[b] - glyph.X[a];
+                                shift[i] = span <= 0 ? shift[a]
+                                    : shift[a] + (int) MathF.Round((shift[b] - shift[a]) * (x - glyph.X[a]) / (float) span);
+                            }
+                        }
+                        if (s_cwTrace)
+                        {
+                            var tr = new System.Text.StringBuilder($"CW7 gid={gid} ppem={ppemI} fitted={fitted} target={target7} s={s7:0.0000} p0={p0}\n");
+                            for (int i = 0; i < n7; i++)
+                                tr.Append($"   pt{i,2} x={glyph.X[i],5} {(touched[i] ? "T" : ".")} feat={feature[i],2} shift={shift[i],3}\n");
+                            Console.Error.Write(tr.ToString());
+                        }
+                        for (int i = 0; i < n7; i++) glyph.X[i] += shift[i];
+                        if (glyph.X.Length > glyph.PointCount + 1)
+                            glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target7;
                     }
                 }
                 // MODE 5: buy the same MOVE without paying in stem width.
