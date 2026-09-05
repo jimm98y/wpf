@@ -217,6 +217,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             public int[] CurX, CurY;      // where the points are now, 26.6
             public int[] OrgX, OrgY;      // where they started, scaled, 26.6
             public int[] OrusX, OrusY;    // where they started, unscaled -- font units
+            public int[] InkX;            // where they started in x BEFORE the compatible-width
+                                          // pre-scale -- what a BLACK distance is measured on
             public byte[] Tags;
             public int[] Contours;
             public int PointCount;
@@ -226,6 +228,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 CurX = new int[points]; CurY = new int[points];
                 OrgX = new int[points]; OrgY = new int[points];
                 OrusX = new int[points]; OrusY = new int[points];
+                InkX = new int[points];
                 Tags = new byte[points];
                 Contours = new int[Math.Max(1, contours)];
                 PointCount = points;
@@ -378,6 +381,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (dumping) DumpFinal();
                 }
 
+                // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
+                // nothing GDI could recognise as a stroke or a position to scale -- and GDI leaves
+                // it alone. Segoe UI Italic's 'a' at 12ppem runs one SVTCA[x] and then hints only y;
+                // GDI's ink is 5.68px wide, the UNSCALED width, while the hdmx advance is 7 against
+                // a linear 6.5. Pre-scaled it came out 6.11px wide and 776,000 worse. So: undo the
+                // pre-scale when the program did not constrain x at all.
+                if (_preScaled && s_blackOnInk && !AnyTouchedX())
+                    for (int i = 0; i < _realPoints; i++)
+                        _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
                 if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
@@ -1018,7 +1030,131 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Mode 7 of the compatible-width correction moves features by how far the LINEAR
             // advance is from the one the glyph is laid out at, so its run starts with the
             // advance phantom on the linear advance, unrounded.
-            : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode == 8 ? 4 : 0;
+            : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode is 8 or 9 ? 4 : 0;
+
+        /// <summary>MODE 9: the pre-scale of mode 8, with BLACK distances measured on the outline
+        /// as it was before the pre-scale. Mode 8 scaled everything, so an MDRP across a stem
+        /// measured a squeezed stem and rounded that; here the positions arrive scaled (white
+        /// space, SHPIX nudges and interpolations ride on the scaled outline) while a black
+        /// MDRP/MIRP still sees the stem at its true width. This is the reading of GDI's own
+        /// edges that reproduces Consolas 'l'/'I', Tahoma 'l' at 12 and 16 and Verdana 'l' at
+        /// once, where mode 7's feature centres cannot: the stem of Consolas 'l' rides with the
+        /// foot it is interpolated inside and does not move, while 'I', anchored by MDAP, moves
+        /// with its scaled anchor.</summary>
+        private static readonly bool s_blackOnInk = TrueTypeFont.CompatibleWidthMode == 9;
+        private bool _preScaled;
+        private float _preScaleRatio = 1f;
+        /// <summary>WPF_CT_WHITECVT=1: under mode 9, scale white/grey control values by the pre-scale ratio.</summary>
+        private static readonly bool s_scaleWhiteCvt = Environment.GetEnvironmentVariable("WPF_CT_WHITECVT") == "1";
+
+        /// <summary>STAMM'S DOUBLE-CHECK. Compatible widths keep stroke weights and scale stroke
+        /// positions, and the rasterizer tells them apart by "patterns of TrueType code
+        /// conventionally associated with constraining stroke weights and positions" -- but then
+        /// "sometimes I tried to 'double-check': maybe this 'white link' was meant to be a 'black
+        /// link?'" (Raster Tragedy ch.4). The reverse check is what this is: a link the program
+        /// calls BLACK whose chord runs through a COUNTER is not a stroke's weight, it is a
+        /// position, and GDI scales it. Arial 'd' MIRPs bowl-left to stem-right (cvt[116], 10.84px
+        /// at 24ppem) as black; GDI's ink is WIDER than natural there (bowl-left 1.19, stem-right
+        /// 12.33 = 10.84 x 1.049), and reading that link as white takes the edge-solver residual
+        /// of 'd'@24 from 8,312 to 2,058 with the stem-right edge exact.
+        /// <para>The test is the midpoint of the chord, sampled a hair to either side (the two
+        /// ends can be ADJACENT points -- the angled cut of Arial Italic 'e''s terminal -- and then
+        /// the chord IS the outline). Specimen: 10,399,039 -> 10,319,044, no face worse.</para>
+        /// <para>WPF_CT_BLACKMAX picks the rule: unset/-1 this midpoint test; 0 off (mode 7 as
+        /// shipped before); N>0 a milli-em ceiling on a stroke instead (200: 10,337,183, catches
+        /// Arial's diagonal 'v'/'W'/'x' links and Consolas '0' bowl-to-bowl along its slash, but
+        /// flips bold stems below 180 and every Times Italic 'f'@24 link); -2 the whole chord in
+        /// ink (10,340,031: Times Italic +23k); -4 midpoint AND the link no longer than 1.5x the
+        /// horizontal ink run it crosses (10,332,950: wins the diagonals at 24ppem and loses them
+        /// at 10-16, so GDI's diagonal rule is not this); -5 midpoint AND a pixel ceiling
+        /// WPF_CT_BLACKMAXPX in 1/64 px (320: 10,321,848). WPF_CT_BLACKMID=1 adds the midpoint
+        /// test to a milli-em ceiling (200: 10,320,295).</para></summary>
+        private static readonly bool s_blackMidToo = Environment.GetEnvironmentVariable("WPF_CT_BLACKMID") == "1";
+        private static readonly int s_blackMaxPx =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_BLACKMAXPX"), out int bpx) ? bpx : 0;
+        private static readonly int s_blackMaxMilliEm =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_BLACKMAX"), out int bm) ? bm : -1;
+
+        /// <summary>The distance type a link is treated as: the program's, unless it is a black
+        /// link that measures a position rather than a stroke (see <see cref="s_blackMaxMilliEm"/>).</summary>
+        private int EffectiveLinkType(int programType, int zoneP, int p, int zoneR, int r)
+        {
+            if (programType != 1 || s_blackMaxMilliEm == 0 || !IsHorizontalProjection) return programType;
+            if (s_blackMaxMilliEm < 0 || s_blackMidToo)
+            {
+                if (zoneP != 1 || zoneR != 1 || p >= _realPoints || r >= _realPoints) return programType;
+                Zone z = _glyphZone;
+                float mx = (z.OrusX[p] + z.OrusX[r]) / 2f, my = (z.OrusY[p] + z.OrusY[r]) / 2f;
+                float dx = z.OrusX[p] - z.OrusX[r], dy = z.OrusY[p] - z.OrusY[r];
+                float len = MathF.Sqrt(dx * dx + dy * dy), eps = _unitsPerEm / 128f;
+                float nx = len > 0 ? -dy / len * eps : 0, ny = len > 0 ? dx / len * eps : eps;
+                bool inInk = InInk(z, mx + nx, my + ny) || InInk(z, mx - nx, my - ny);
+                if (inInk && s_blackMaxMilliEm == -2)
+                    for (int k = 1; k <= 7 && inInk; k += 2)
+                    {
+                        float t = k / 8f, sx = z.OrusX[r] + dx * t, sy = z.OrusY[r] + dy * t;
+                        inInk = InInk(z, sx + nx, sy + ny) || InInk(z, sx - nx, sy - ny);
+                    }
+                if (inInk && s_blackMaxMilliEm == -4)
+                {
+                    float run = HorizontalInkRun(z, mx, my + ny, dx < 0 ? -nx : nx);
+                    if (run <= 0) run = HorizontalInkRun(z, mx, my - ny, dx < 0 ? -nx : nx);
+                    if (MathF.Abs(dx) > 1.5f * run + eps) inInk = false;
+                }
+                if (inInk && s_blackMaxMilliEm == -5 && s_blackMaxPx > 0
+                    && Math.Abs(MeasureOriginal(zoneP, p, zoneR, r, black: true)) > s_blackMaxPx)
+                    inInk = false;
+                if (_dumpActive && !inInk)
+                    Console.Error.WriteLine($"      black link {r}->{p} ({z.OrusX[r]},{z.OrusY[r]})->({z.OrusX[p]},{z.OrusY[p]}) spans a counter: WHITE");
+                if (!inInk) return 2;
+                if (s_blackMaxMilliEm < 0) return 1;
+            }
+            int ink = Math.Abs(MeasureOriginal(zoneP, p, zoneR, r, black: true));
+            long threshold = (long) s_blackMaxMilliEm * _ppem * 64 / 1000;
+            if (_dumpActive && ink > threshold && zoneP == 1 && zoneR == 1 && p < _realPoints && r < _realPoints)
+            {
+                Zone z = _glyphZone;
+                Console.Error.WriteLine($"      black link {r}->{p} ({z.OrusX[r]},{z.OrusY[r]})->({z.OrusX[p]},{z.OrusY[p]}) {ink / 64f:0.00}px over threshold: WHITE");
+            }
+            return ink > threshold ? 2 : programType;
+        }
+
+        /// <summary>The length of the horizontal run of ink through (x + ox, y), marched outwards
+        /// in steps of 1/256 em until the outline is left on each side.</summary>
+        private float HorizontalInkRun(Zone z, float x, float y, float ox)
+        {
+            float step = _unitsPerEm / 256f;
+            if (!InInk(z, x + ox, y)) return 0;
+            float left = x + ox, right = x + ox;
+            for (int i = 0; i < 512 && InInk(z, left - step, y); i++) left -= step;
+            for (int i = 0; i < 512 && InInk(z, right + step, y); i++) right += step;
+            return right - left;
+        }
+
+        /// <summary>Non-zero winding of the unscaled outline at (x, y) in font units. Its control
+        /// polygon stands in for the curves -- exact enough for a point deep in a stem or a
+        /// counter, which is all this is asked about.</summary>
+        private bool InInk(Zone z, float x, float y)
+        {
+            int winding = 0, start = 0;
+            for (int c = 0; c < _contourCount; c++)
+            {
+                int end = z.Contours[c];
+                if (end < start) { start = end + 1; continue; }
+                for (int i = start; i <= end; i++)
+                {
+                    int j = i == end ? start : i + 1;
+                    float x0 = z.OrusX[i], y0 = z.OrusY[i], x1 = z.OrusX[j], y1 = z.OrusY[j];
+                    if (y0 <= y ? y1 > y : y1 <= y)
+                    {
+                        float cross = (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0);
+                        if (y1 > y0 ? cross > 0 : cross < 0) winding += y1 > y0 ? 1 : -1;
+                    }
+                }
+                start = end + 1;
+            }
+            return winding != 0;
+        }
 
         private static readonly bool s_ctInfoAllowed =
             Environment.GetEnvironmentVariable("WPF_CT_INFO") != "0";
@@ -1168,6 +1304,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     z.OrgX[i] = z.CurX[i] = MulFix(glyph.X[i], _scale);
                     z.OrgY[i] = z.CurY[i] = MulFix(glyph.Y[i], _scale);
                 }
+                z.InkX[i] = z.OrgX[i];
 
                 // Assigning the tags is also what UNTOUCHES the points. A component's own program
                 // will have touched some of them; the composite's program is entitled to move them
@@ -1198,12 +1335,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // one -- and the program then runs on it with the control values left alone. A stem
             // placed by MIRP keeps its control-value width; a point placed relative to an
             // untouched neighbour rides on the scaled outline. Nothing is corrected afterwards.
+            _preScaled = false;
             if (s_advancePhantom == 4 && !glyph.Composite && CompatibleAdvance64 > 0 && !BiLevelPass)
             {
                 int lin = z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount];
                 if (lin > 0 && lin != CompatibleAdvance64)
                 {
                     float ratio = CompatibleAdvance64 / (float) lin;
+                    _preScaled = true;
+                    _preScaleRatio = ratio;
                     for (int i = 0; i < n; i++)
                     {
                         z.OrgX[i] = z.CurX[i] = (int) MathF.Round(z.CurX[i] * ratio);
@@ -1285,6 +1425,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 feature[i] = FindX(i);
                 touchedX[i] = (_glyphZone.Tags[i] & TagTouchX) != 0;
             }
+        }
+
+        private bool AnyTouchedX()
+        {
+            for (int i = 0; i < _realPoints; i++)
+                if ((_glyphZone.Tags[i] & TagTouchX) != 0) return true;
+            return false;
         }
 
         private int _contourCount;
@@ -1402,10 +1549,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>How far apart two points were in the ORIGINAL outline, on the pixel grid --
         /// the scaled starting positions, before anything moved them. What MDRP and MIRP measure.
         /// </summary>
-        private int MeasureOriginal(int zoneA, int a, int zoneB, int b)
+        private int MeasureOriginal(int zoneA, int a, int zoneB, int b, bool black = false)
         {
             Zone za = ZoneOf(zoneA), zb = ZoneOf(zoneB);
             if (a >= za.PointCount || b >= zb.PointCount) return 0;
+            // A stroke's weight is what it was before the compatible-width pre-scale (mode 9).
+            if (black && s_blackOnInk && _preScaled && zoneA == 1 && zoneB == 1)
+                return DualProject(za.InkX[a] - zb.InkX[b], za.OrgY[a] - zb.OrgY[b]);
             return DualProject(za.OrgX[a] - zb.OrgX[b], za.OrgY[a] - zb.OrgY[b]);
         }
 

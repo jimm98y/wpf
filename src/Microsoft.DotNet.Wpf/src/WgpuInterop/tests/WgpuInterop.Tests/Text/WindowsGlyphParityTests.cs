@@ -5041,6 +5041,25 @@ namespace WgpuInterop.Tests.Text
                                           + $"   {differ,6} {sumd,9}   {dx,6:+0.000;-0.000; 0.000}"
                                           + $"   L{ourL - gdiL,3} R{ourR - gdiR,3}"
                                           + $"   width {(ourR - ourL) - (gdiR - gdiL),3}");
+
+                        // WPF_WEIGHT_PERGLYPH=1: the same row, one glyph at a time, so a change
+                        // that helps one letter and hurts another can be told apart from one that
+                        // helps the face. A face total is the sum of sixty decisions.
+                        if (Environment.GetEnvironmentVariable("WPF_WEIGHT_PERGLYPH") == "1")
+                            foreach (char c in System.Linq.Enumerable.Distinct(Sample))
+                            {
+                                if (c == ' ') continue;
+                                string one = c.ToString();
+                                Gdi.s_rawRgb = raw;
+                                Gdi.Draw(one, family, ppem, PenX, 28, Width, Height, bold, italic);
+                                Gdi.s_rawRgb = null;
+                                byte[] oneOurs = OursRgba(font, one, ppem, 28, correction: true);
+                                long d1 = 0;
+                                for (int i = 0; i < Width * Height; i++)
+                                    for (int ch = 0; ch < 3; ch++)
+                                        d1 += Math.Abs(raw[i * 4 + (2 - ch)] - oneOurs[i * 4 + ch]);
+                                report.AppendLine($"      glyph {family}|{(bold ? "B" : italic ? "I" : "R")}|{ppem}|{c} {d1}");
+                            }
                     }
 
             report.AppendLine($"   TOTAL over {rowCount} rows: sum|d| {grandTotal}");

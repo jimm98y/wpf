@@ -1148,6 +1148,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// gated x scale that shipped first; 7 (the default) the per-feature rigid move described
         /// at its branch below; 2-6 and 8 are experiments kept expressible, each documented where
         /// it runs.</summary>
+        private static readonly int s_minFeatures =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT"), out int mf) ? mf : 0;
+        private static readonly int s_minFeatSqueezeOnly =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_SQUEEZE"), out int ms) ? ms : 0;
+
         internal static readonly int CompatibleWidthMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 7;
 
@@ -2276,7 +2281,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 //
                 // SHIPPED (the default) since it scores 10,399,039 on the weight report against
                 // mode 1's 11,584,399, with the interpreter tying only BLACK links into features
-                // (WPF_CT_LINKTYPES). What it still gets wrong, measured: Verdana's bold and
+                // (WPF_CT_LINKTYPES) -- and 10,319,044 once a black link whose chord crosses a
+                // COUNTER is read as the position it is (TrueTypeInterpreter.EffectiveLinkType,
+                // Stamm's double-check; Arial 'd' MIRPs bowl-left to stem-right as black and GDI
+                // scales it). What it still gets wrong, measured: Verdana's bold and
                 // italic (683,018 -> 717,121 and 570,573 -> 752,685), Tahoma's bold (329,998 ->
                 // 340,471) and Consolas' italic (286,761 -> 369,475); every other face and style
                 // improves, Tahoma's roman by a third. The per-edge solver says GDI does NOT move
@@ -2318,6 +2326,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // differ as much as Arial's do. So the displacement is not a scale of the
                         // outline onto the advance; it is a displacement of what the program
                         // PLACED, and an outline the program left alone stays where it was.
+                        // EXPERIMENT (WPF_CT_MINFEAT): damage control as 'no counterform to
+                        // absorb the squeeze' -- a glyph whose program placed fewer than this
+                        // many distinct features in x is left where the program put it.
+                        int distinct7 = 0;
+                        if (s_minFeatures > 0)
+                        {
+                            var seen7 = new bool[n7];
+                            for (int i = 0; i < n7; i++)
+                                if (touched[i] && !seen7[feature[i]]) { seen7[feature[i]] = true; distinct7++; }
+                            if (distinct7 < s_minFeatures && (s_minFeatSqueezeOnly == 0 || s7 < 1f)) touchedCount = 0;
+                        }
                         if (touchedCount > 0)
                         {
                             for (int i = 0; i < n7; i++)

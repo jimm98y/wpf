@@ -1090,7 +1090,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Zone z = ZoneOf(_gs.Zp1);
             if (p >= z.PointCount) { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
 
-            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+            int linkType = EffectiveLinkType(op & 3, _gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
 
             // The single width: a face may declare one measurement that every stem of that size
             // should collapse to, and anything within the cut-in of it becomes it.
@@ -1112,7 +1113,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
-            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, op & 3);
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
@@ -1237,7 +1238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_runShpixOutline =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "outline"
-            || (Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null && TrueTypeFont.CompatibleWidthMode is 7 or 8);
+            || (Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null && TrueTypeFont.CompatibleWidthMode is 7 or 8 or 9);
 
         /// <summary>WPF_CT_CUTIN_DIV: what the control-value cut-in is divided by in the ClearType
         /// direction. 16 is the paper's sixteenth.</summary>
@@ -1395,6 +1396,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int cvt = Pop(), p = Pop();
             Zone z = ZoneOf(_gs.Zp1);
             int value = (uint)cvt < _scaledCvt.Length ? _scaledCvt[cvt] : 0;
+            int linkType = EffectiveLinkType(op & 3, _gs.Zp1, p, _gs.Zp0, _gs.Rp0);
 
             // EVERY PIXEL DISTANCE belongs to the stretched space, not just the control value. The
             // cut-ins and the minimum distance are measured against distances that are now three
@@ -1404,6 +1406,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Segoe UI, which is the shape of a threshold misfiring rather than a fitting choice.
             int stretch = XSpace3x && IsHorizontalProjection ? 3 : 1;
             value *= stretch;
+
+            // MODE 9: a control value that is a POSITION (white or grey link) belongs to the
+            // pre-scaled space too -- Arial's lsb is a MIRP from the left phantom whose cvt wins
+            // the cut-in, so without this the pre-scale never reaches the stem.
+            if (s_scaleWhiteCvt && _preScaled && linkType != 1 && IsHorizontalProjection)
+                value = (int) MathF.Round(value * _preScaleRatio);
 
             // "SCVTCI[] reduces CVT cut-in to one sixteenth of its actual value ... SMD[] reduces
             // minimum distance to 1/2 of its actual value" -- Microsoft, TrueType and ClearType.
@@ -1539,7 +1547,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 z.CurY[p] = z.OrgY[p];
             }
 
-            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
 
             if (_dumpActive)
@@ -1710,7 +1718,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else { if (distance > -floor) distance = -floor; }
             }
 
-            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, op & 3);
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
