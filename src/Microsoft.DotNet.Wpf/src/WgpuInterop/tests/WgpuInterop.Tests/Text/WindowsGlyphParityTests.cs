@@ -4324,6 +4324,46 @@ namespace WgpuInterop.Tests.Text
                 return sum;
             }
 
+            // For each edge x, is it a VERTICAL feature (a stem side, neighbours running up
+            // and down) or a DIAGONAL? On the fitted outline: a point is vertical when the segment
+            // to at least one neighbour is steeper than 2:1.
+            static System.Collections.Generic.Dictionary<int, char> EdgeKind(List<PathFigure> figures)
+            {
+                var vote = new System.Collections.Generic.Dictionary<int, (int v, int d)>();
+                foreach (PathFigure f in figures)
+                {
+                    var pts = new List<Vector2> { f.Start };
+                    foreach (PathSegment sg in f.Segments)
+                        pts.Add(sg switch
+                        {
+                            LineSegment l => l.Point,
+                            QuadraticBezierSegment q => q.Point,
+                            CubicBezierSegment c => c.Point,
+                            _ => f.Start,
+                        });
+                    if (pts.Count > 1 && pts[^1] == pts[0]) pts.RemoveAt(pts.Count - 1);
+                    int m = pts.Count;
+                    for (int i = 0; i < m; i++)
+                    {
+                        Vector2 a = pts[(i - 1 + m) % m], p = pts[i], b = pts[(i + 1) % m];
+                        // WPF_EDGESOLVE_STEMSLOPE (default 2): how many times steeper than 45
+                        // a segment must be to count its point vertical. A true stem side is
+                        // near-infinite; an 'A' leg is ~3, an 'X' arm ~1.
+                        float stemSlope = float.TryParse(Environment.GetEnvironmentVariable(
+                            "WPF_EDGESOLVE_STEMSLOPE"), out float ss) ? ss : 2f;
+                        bool Steep(Vector2 u, Vector2 w)
+                            => MathF.Abs(w.Y - u.Y) > stemSlope * MathF.Abs(w.X - u.X);
+                        bool vert = Steep(a, p) || Steep(p, b);
+                        int key = (int) MathF.Round(p.X * 64f);
+                        (int v, int d) cur = vote.TryGetValue(key, out var t) ? t : (0, 0);
+                        vote[key] = vert ? (cur.v + 1, cur.d) : (cur.v, cur.d + 1);
+                    }
+                }
+                var kind = new System.Collections.Generic.Dictionary<int, char>();
+                foreach (var kv in vote) kind[kv.Key] = kv.Value.v >= kv.Value.d ? 'V' : 'D';
+                return kind;
+            }
+
             static SortedSet<int> Edges(List<PathFigure> figures)
             {
                 var keys = new SortedSet<int>();
@@ -4596,7 +4636,11 @@ namespace WgpuInterop.Tests.Text
                         + "\t" + atStart + "\t" + best
                         + "\t" + gdiAdvance * 64 + "\t" + (int) MathF.Round(font.Advance(gid) * natScale * 64f)
                         + "\t" + L(edge) + "\t" + L(solved) + "\t" + L(slo) + "\t" + L(shi)
-                        + "\t" + L(Edges(bi)) + "\t" + L(Edges(natural)) + "\n");
+                        + "\t" + L(Edges(bi)) + "\t" + L(Edges(natural))
+                        + "\t" + new string(System.Linq.Enumerable.ToArray(
+                            System.Linq.Enumerable.Select(edge, e =>
+                                EdgeKind(fitted).TryGetValue(e, out char kk) ? kk : '?')))
+                        + "\n");
                 }
             }
         }
