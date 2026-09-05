@@ -144,6 +144,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int)((v + (v >= 0 ? 0x8000 : -0x8000)) / 0x10000);
         }
 
+        // ...except when FONT UNITS are being scaled to the pixel grid. There Windows' rasterizer
+        // adds half and shifts, so an exact half rounds UP for either sign: -31.5 sixty-fourths is
+        // -31 to it and -32 to the symmetric rule above. Ties are rare and the difference looks
+        // like nothing, until a program branches on one. Times New Roman Italic's 'i' at 12ppem
+        // reads cvt[134] (-84 units, exactly -31.5 there), rounds it and adds it to the side
+        // bearing: at -31 the sum lands on a pixel and the function returns early; at -32 it does
+        // not, the function rewrites the side-bearing cvt to its fractional residue, and the MIRP
+        // that follows puts the glyph's leftmost point a whole pixel left of where Windows puts it,
+        // and every other point with it (42 of 42 points, all -64/64). Against GDI's own fitted
+        // points, floor-rounding the cvt fixed that glyph and Arial@16 (x 14 -> 3) and moved
+        // nothing else; floor-rounding the outline points as well took Consolas Italic@12 from 13
+        // differing points to 1 and Times Italic@16 from 36 to 29, again with no row worse.
+        // FreeType, incidentally, rounds symmetrically here too -- and so did we, from it.
+        internal static int ScaleUnits(int fontUnits, int scale16)
+        {
+            long v = (long)fontUnits * scale16;
+            return (int)((v + 0x8000) >> 16);
+        }
+
+        /// <summary>Font units to 26.6 pixels at the size last prepared, rounded the way Windows'
+        /// rasterizer rounds them (<see cref="ScaleUnits"/>).</summary>
+        private int Scale(int fontUnits) => ScaleUnits(fontUnits, _scale);
+
         /// <summary>a*b/c, rounded to nearest, and sign-symmetric: the magnitudes are what is
         /// divided, so a negative c cannot turn the rounding round the other way.</summary>
         internal static int MulDiv(int a, int b, int c)
@@ -419,7 +442,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Font units to 26.6 pixels at the size last prepared -- what a composite's
         /// component offsets have to be put through before they can be added to points that are
         /// already fitted.</summary>
-        internal int ScaleToPixels(int fontUnits) => MulFix(fontUnits, _scale);
+        internal int ScaleToPixels(int fontUnits) => Scale(fontUnits);
 
         /// <summary>A 26.6 distance rounded to a whole pixel, as the rasterizer rounds it.</summary>
         internal static int RoundToPixel(int f26d6) => Pix(f26d6);
@@ -1263,7 +1286,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_scaledCvt.Length != _controlValues.Length)
                 _scaledCvt = new int[_controlValues.Length];
             for (int i = 0; i < _controlValues.Length; i++)
-                _scaledCvt[i] = MulFix(_controlValues[i], _scale);
+                _scaledCvt[i] = Scale(_controlValues[i]);
         }
 
         private void ResetGraphicsState()
@@ -1320,8 +1343,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     z.OrusX[i] = glyph.X[i];
                     z.OrusY[i] = glyph.Y[i];
-                    z.OrgX[i] = z.CurX[i] = MulFix(glyph.X[i], _scale);
-                    z.OrgY[i] = z.CurY[i] = MulFix(glyph.Y[i], _scale);
+                    z.OrgX[i] = z.CurX[i] = Scale(glyph.X[i]);
+                    z.OrgY[i] = z.CurY[i] = Scale(glyph.Y[i]);
                 }
                 z.InkX[i] = z.OrgX[i];
 
@@ -1597,7 +1620,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (zoneA == 0 || zoneB == 0)
                 return DualProject(za.OrgX[a] - zb.OrgX[b], za.OrgY[a] - zb.OrgY[b]);
 
-            return MulFix(DualProject(za.OrusX[a] - zb.OrusX[b], za.OrusY[a] - zb.OrusY[b]), _measureScale);
+            return ScaleUnits(DualProject(za.OrusX[a] - zb.OrusX[b], za.OrusY[a] - zb.OrusY[b]), _measureScale);
         }
 
         /// <summary>Move a point by <paramref name="distance"/> ALONG THE PROJECTION vector, which

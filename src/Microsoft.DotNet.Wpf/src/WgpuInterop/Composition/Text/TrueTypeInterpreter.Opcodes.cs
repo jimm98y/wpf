@@ -134,7 +134,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x70:                                                          // WCVTF
                         {
                             int v = Pop(), i = Pop();
-                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = MulFix(v, _scale);
+                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = Scale(v);
                             break;
                         }
                     case 0x45:                                                          // RCVT
@@ -227,7 +227,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x1A: _gs.MinimumDistance = Pop(); break;                      // SMD
                     case 0x1D: _gs.ControlValueCutIn = Pop(); break;                    // SCVTCI
                     case 0x1E: _gs.SingleWidthCutIn = Pop(); break;                     // SSWCI
-                    case 0x1F: _gs.SingleWidthValue = MulFix(Pop(), _scale); break;      // SSW
+                    case 0x1F: _gs.SingleWidthValue = Scale(Pop()); break;              // SSW
                     case 0x3D: _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
                     case 0x4D: _gs.AutoFlip = true; break;                              // FLIPON
                     case 0x4E: _gs.AutoFlip = false; break;                             // FLIPOFF
