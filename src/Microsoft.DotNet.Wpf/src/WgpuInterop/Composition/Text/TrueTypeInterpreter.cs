@@ -196,12 +196,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>The 2.14 dot product two unit vectors and a displacement make: how far the
-        /// displacement reaches along the direction, in the displacement's own units.</summary>
+        /// displacement reaches along the direction, in the displacement's own units.
+        /// <para>TWO PRODUCTS, EACH ROUNDED TO 26.6 ON ITS OWN, then added -- not one exact sum
+        /// rounded once. That is how Windows' rasterizer projects (x * pv.x, rounded; plus y * pv.y,
+        /// rounded; each with half added and shifted, so a negative product rounds towards minus
+        /// infinity), and the difference between the two is the last bit of every slanted
+        /// measurement, which is to say every ITALIC and every DIAGONAL. Times New Roman Italic 'V'
+        /// at 12ppem showed it: its program projects along the italic slant (15744, -4533) and
+        /// MIRPs the first point from the origin phantom, moving along x. The point sits at
+        /// (117, -12) sixty-fourths; the exact projection is 115.75 and rounds to 116, but
+        /// 112.43 + 3.32 rounded separately is 112 + 3 = 115. One sixty-fourth in the projection
+        /// is 13.5 rather than 12.5 to move, which rounds the other way, and after the -1px DELTAP
+        /// that follows the point stands at 64 where the exact sum puts it at 62. Every point on
+        /// the left arm hangs off that one, so 27 of 34 points were two sixty-fourths left of GDI's
+        /// -- and only at 12ppem, because that is the size where both roundings sit on a boundary.
+        /// Against GDI's own fitted points, per face (x differing at 12/16): Arial Italic 6/31 ->
+        /// 0/0, Times Italic 35/13 -> 3/6, Verdana Italic 23/9 -> 6/1, Tahoma Italic 6/6 -> 1/0,
+        /// Arial 4/3 -> 0/1, Times Bold 1/11 -> 0/4, with the y column better nearly everywhere as
+        /// well; Times Regular alone gave back three points at each size. Weight 5,604,278 ->
+        /// 5,600,974, advances unmoved. WPF_PROJ_MODE=0 is the single exact sum; 2 rounds each
+        /// product symmetrically instead of by the shift, which is one point worse at three sizes
+        /// and better at none.</para></summary>
         private static int DotFix14(int x, int y, int ux, int uy)
         {
+            if (s_projMode == 1)
+                return (int)((((long)x * ux + 0x2000) >> 14) + (((long)y * uy + 0x2000) >> 14));
+            if (s_projMode == 2)
+            {
+                long a = (long)x * ux, b = (long)y * uy;
+                return (int)((a + (a >= 0 ? 0x2000 : -0x2000)) / 0x4000 + (b + (b >= 0 ? 0x2000 : -0x2000)) / 0x4000);
+            }
             long v = (long)x * ux + (long)y * uy;
             return (int)((v + (v >= 0 ? 0x2000 : -0x2000)) / 0x4000);
         }
+
+        /// <summary>How <see cref="DotFix14"/> rounds: 1 (default) as Windows does, 0 one exact
+        /// sum, 2 separate symmetric roundings.</summary>
+        private static readonly int s_projMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_PROJ_MODE"), out int m) ? m : 1;
 
         private static int Pix(int value) => (value + 32) & ~63;          // to the nearest whole pixel
         private static int Floor(int value) => value & ~63;
