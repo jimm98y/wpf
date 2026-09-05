@@ -435,7 +435,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // 'E' at 16ppem carries a -64 on its middle arm, and executing it
                                 // puts that arm a pixel left of where GDI draws it.
                                 if (!s_runShpix
-                                    && (!s_runShpixOutline || (uint) sp >= (uint) _realPoints || amount % 64 == 0)
+                                    && (!s_runShpixOutline || (uint) sp >= (uint) _realPoints || amount % 64 == 0
+                                        || (s_shpixOutlineAxis && _gs.FreeY != 0)
+                                        || (s_shpixOutWhen.Contains("touchedx") && (z.Tags[sp] & TagTouchX) == 0)
+                                        || (s_shpixOutWhen.Contains("touchedy") && (z.Tags[sp] & TagTouchY) == 0)
+                                        || (s_shpixOutWhen.Contains("inline") && _iupDone)
+                                        || (s_shpixOutWhen.Contains("post") && !_iupDone))
                                     && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
                                 // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
                                 // paper's sentence quoted below ends "we keep only deltas on touched
@@ -1264,6 +1269,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// it. Measured worse -- see the note at the SHPIX site.</summary>
         private static readonly bool s_runShpix =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
+
+        /// <summary>WPF_CT_SHPIX_AXIS=1: the outline exemption above applies only to a PURE
+        /// horizontal nudge. A diagonal freedom vector counts as the ClearType direction whenever it
+        /// leans that way, so the fractional-nudge exemption was also letting the faces' DIAGONAL
+        /// control through -- moving the point in y as well as x.</summary>
+        /// <summary>WHEN A FRACTIONAL NUDGE COUNTS: only INLINE, before IUP.
+        /// <para>The exemption below lets a face's fractional SHPIX through in the ClearType
+        /// direction where a whole-pixel one is refused. Taken over the whole program it also let
+        /// through every nudge written AFTER the interpolation, and those are the ones the ClearType
+        /// paper says the rasterizer drops -- the same inline/post-IUP line SkipDeltaInClearTypeDirection
+        /// draws for DELTAP ("an inline delta is a delta that occurs before the IUP instruction on a
+        /// previously touched point"). Drawing it for SHPIX as well is worth 5,600,974 -> 5,485,079
+        /// on the specimen: Verdana Italic 518,271 -> 480,236, Verdana Bold -22,467, Arial Italic
+        /// -15,003, nine faces better, six untouched, and the three that lose give up 1,549 between
+        /// the worst of them. It is the DIAGONAL letters it helps -- W w v x y k K Z A X 7 carry
+        /// 94,075 of the 115,895 -- which is where the post-IUP nudges are: a face has no stem to
+        /// nudge in a 'W', so what it writes there is a diagonal adjustment meant for the bi-level
+        /// grid, and GDI's ClearType does not run it.</para>
+        /// <para>WHAT IT COSTS, and it is not free: Arial's roman and bold write a nudge on the
+        /// apex of 'A' -- and on '5' and '6' -- after the interpolation, and GDI draws it (Arial R
+        /// 'A'@16 goes 510 -> 2,196). Verdana's and Tahoma's post-IUP nudges are the other way about
+        /// by an order of magnitude (Verdana B 'v'@12 5,376 -> 375, 'y'@12 5,949 -> 510, Verdana I
+        /// 'K'@24 11,086 -> 4,109, Arial R 'X'@24 13,316 -> 7,734), so the line is drawn where it
+        /// is until something separates those two cases.</para>
+        /// <para>WPF_CT_SHPIX_OUT=all restores the old behaviour; touchedx / touchedy / post narrow
+        /// it other ways, and relaxing "inline" to also admit a nudge on an already-touched point
+        /// gives back most of the win. All measured worse: 5,487,903 / 5,833,707 / 5,934,331, and
+        /// 5,588,808 (x-touched) / 5,550,695 (y-touched).</para></summary>
+        private static readonly string s_shpixOutWhen =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_OUT") ?? "inline";
+
+        private static readonly bool s_shpixOutlineAxis =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_AXIS") == "1";
 
         private static readonly bool s_runShpixOutline =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "outline"
