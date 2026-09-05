@@ -4935,6 +4935,67 @@ namespace WgpuInterop.Tests.Text
             }
         }
 
+        /// <summary>EVERY ROW OF ONE GLYPH: where the ink sits, ours against GDI's.
+        /// <para>A slanted stem crosses each pixel row at a different x, and the scanline probe
+        /// sees one row. The italics are the worst faces left in the specimen (Verdana Italic
+        /// alone is an eighth of it) and their error sits on the ascenders and the diagonals --
+        /// features that live in x DIFFERENTLY on every row. Per row: the centroid of each side's
+        /// ink in lamps, the total ink, and the difference, so a stem that leans by another slope,
+        /// starts a row higher, or is simply heavier can be told apart.</para>
+        /// <para>WPF_ROWPROFILE=family/char/ppem[/B|I|BI].</para></summary>
+        [Fact]
+        public void EveryRowOfAGlyph_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_ROWPROFILE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_ROWPROFILE=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length == 4 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+            byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
+
+            var log = new System.Text.StringBuilder();
+            log.AppendLine($"== {parts[0]} '{parts[1]}' @{ppem}{(style == "" ? "" : "/" + style)} (grid-fit: {font.WantsGridFit(ppem)})");
+            log.AppendLine("   y    gdi centre  ours centre   delta(lamps)   gdi ink  ours ink   |d|");
+            long total = 0;
+            for (int y = 0; y < Height; y++)
+            {
+                double gw = 0, gm = 0, ow = 0, om = 0; long d = 0;
+                for (int x = 0; x < Width; x++)
+                {
+                    int i = (y * Width + x) * 4;
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        // The DIB is BGRA, ours RGBA. Lamp positions: r = 3x, g = 3x + 1, b = 3x + 2.
+                        int g = 255 - raw[i + (2 - ch)], o = 255 - ours[i + ch];
+                        gw += g; gm += g * (3 * x + ch); ow += o; om += o * (3 * x + ch);
+                        d += Math.Abs(g - o);
+                    }
+                }
+                total += d;
+                if (gw == 0 && ow == 0) continue;
+                string gc = gw > 0 ? $"{gm / gw,10:0.00}" : "         -";
+                string oc = ow > 0 ? $"{om / ow,10:0.00}" : "         -";
+                string dc = gw > 0 && ow > 0 ? $"{om / ow - gm / gw,8:+0.00;-0.00}" : "       -";
+                log.AppendLine($"  {y,3}  {gc}   {oc}    {dc}       {gw / 255,7:0.00}  {ow / 255,7:0.00}  {d,6}");
+            }
+            log.AppendLine($"  total |d| {total}");
+            Console.Error.WriteLine(log.ToString());
+        }
+
         /// <summary>HOW OUR WEIGHT TRACKS GDI'S, by size and by boldness.
         /// <para>The specimen is tracked as one absolute total, which cannot be compared across
         /// sizes: a 40ppem line has five times the ink of a 10ppem one, so the same absolute error

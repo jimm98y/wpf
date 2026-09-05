@@ -1365,6 +1365,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_cutInFull =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_FULL") == "1";
 
+        /// <summary>WPF_CT_CUTIN_ROUNDONLY=1: apply the control-value cut-in ONLY where the MIRP
+        /// asked for rounding, in ClearType too -- the specification's rule, against the ClearType
+        /// paper's "do CVT cut-in ALWAYS". The bi-level pass always follows the specification.</summary>
+        private static readonly bool s_cutInRoundedOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_ROUNDONLY") == "1";
+
+        /// <summary>WPF_CT_CUTIN_SCOPE: which UNROUNDED MIRPs get the ClearType cut-in --
+        /// "nophantom" (default: any link between real outline points), "all" (phantom links too),
+        /// "black" (effective black links only).</summary>
+        private static readonly string s_cutInUnroundedScope =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_SCOPE") ?? "nophantom";
+
         /// <summary>Whether the point sits on a CURVE -- either of its neighbours in the same
         /// contour is an off-curve control point -- as opposed to a corner of a straight edge.
         /// </summary>
@@ -1597,9 +1609,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the control value raw and Segoe UI's 'l' came out 1.469px where GDI draws 1.0. BOTH
             // halves are needed -- the test has to happen at all, and the threshold has to be a
             // sixteenth, because the face sets the cut-in to 2.25px and nothing ever reaches that.
+            // ...WITH CLEARTYPE ON, AND BETWEEN REAL POINTS. Without ClearType the cut-in belongs
+            // to the ROUNDED MIRP alone, as the specification says, and an unrounded one takes its
+            // control value whatever the outline measures. Verdana Italic depends on that: function
+            // 58 parks the advance phantom at (cvt[100], cvt[3]) -- 2.5 by 12 pixels at 16ppem, the
+            // italic angle -- so that SPVTL[1] on the two phantoms yields a projection PERPENDICULAR
+            // TO THE STEMS, and every stem is then positioned along it. Both MIRPs are unrounded and
+            // both control values are miles from the phantom's outline distance (the advance, and
+            // zero), so cutting them in left the phantom on the baseline, the projection exactly
+            // vertical, and every ascender a pixel off GDI's: 'L' at 16ppem measured +62/64 on its
+            // stem top while every curve in the face was exact. Against GDI's own fitted points
+            // (bi-level GGO, Verdana Italic 16ppem) this takes the face from 685 points differing in
+            // x to 41, none by more than 2/64 except one 'Y' point.
+            // In ClearType the paper's "always" is real for stroke weights -- honouring the round
+            // bit there costs Times Italic 14k and Segoe UI 12k (5,845,962 against 5,644,642) -- but
+            // GDI still lets the phantom trick through, or Verdana Italic's stems would lean at the
+            // advance's angle. So a link touching a PHANTOM point is exempt: a phantom has no stroke
+            // to weigh. Black links only (the paper's "we assume the context is a stroke weight")
+            // measures the same everywhere but Consolas 'k'@16, whose grey pt3->pt10 link GDI does
+            // cut in (3,616 -> 1,340 with it) -- so it is the phantom, not the colour, that decides.
+            // Weight 5,847,329 -> 5,644,642, all of it Verdana Italic (752,685 -> 549,998).
+            // WPF_CT_CUTIN_SCOPE=all restores the cut-in on phantom links; =black restricts it.
             int distance = value;
             bool tookControlValue = true;
-            if (_gs.Zp0 == _gs.Zp1 && Math.Abs(value - original) >= cutIn)
+            bool phantomLink = _gs.Zp1 == 1 && (p >= _realPoints || _gs.Rp0 >= _realPoints);
+            bool unroundedScope = s_cutInUnroundedScope switch
+            {
+                "all" => true,
+                "black" => linkType == 1,
+                _ => !phantomLink,
+            };
+            bool cutInApplies = round || (!BiLevelPass && InClearTypeDirection && !s_cutInRoundedOnly && unroundedScope);
+            if (cutInApplies && _gs.Zp0 == _gs.Zp1 && Math.Abs(value - original) >= cutIn)
             { distance = original; tookControlValue = false; }
             // WPF_CT_NOROUND_X=1: do not round a control-value distance in the ClearType
             // direction. Visual TrueType, driven to Arial 'H' at 9pt/12ppem with pixels shown,

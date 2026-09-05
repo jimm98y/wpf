@@ -844,6 +844,7 @@ namespace WgpuInterop.Tests.Text
 
                     // GGO reports y DOWNWARD from the baseline; the interpreter works upward.
                     int shown = 0, offX = 0, offY = 0, paired = 0;
+                    bool showAll = Environment.GetEnvironmentVariable("WPF_GGOPTS_ALL") == "1";
                     double worstX = 0, worstY = 0;
                     var lines = new List<string>();
                     for (int i = 0; i < pts.PointCount; i++)
@@ -857,7 +858,7 @@ namespace WgpuInterop.Tests.Text
                         bool badX = Math.Abs(dx) > 1.0 / 64, badY = Math.Abs(dy) > 1.0 / 64;
                         if (badX) { offX++; if (Math.Abs(dx) > Math.Abs(worstX)) worstX = dx; }
                         if (badY) { offY++; if (Math.Abs(dy) > Math.Abs(worstY)) worstY = dy; }
-                        if ((badX || badY) && shown++ < 12 && !quiet)
+                        if ((badX || badY || showAll) && shown++ < (showAll ? 999 : 12) && !quiet)
                             lines.Add($"      pt{i,-3} {(pts.OnCurve[i] ? "on " : "off")}"
                                 + $" start({pts.StartX[i]:0.00},{pts.StartY[i]:0.00})"
                                 + $" ours ({pts.FitX[i]:0.000},{pts.FitY[i]:0.000})"
