@@ -1370,8 +1370,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter? interpreter = Interpreter();
             if (interpreter is null) return null;
 
+            interpreter.ResetNudgeWatch();
             GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
             if (glyph is null) return null;
+
+            // A SECOND PASS, when the first one saw the face nudge two diagonal points against each
+            // other. That pair is a width decision for the bi-level grid and ClearType does not take
+            // it -- see the SHPIX site -- and the only way to not take it is to run the program
+            // again without it, since by the time the second nudge arrives the first has already
+            // been measured from and interpolated through.
+            if (interpreter.SawOpposingDiagonalNudges)
+            {
+                interpreter.RefusingDiagonalNudges = true;
+                try { glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0) ?? glyph; }
+                finally { interpreter.RefusingDiagonalNudges = false; }
+            }
 
             // Back out as contours, in pixels. The machine works in 26.6 fixed point with y up; the
             // rest of the stack wants floating point with y down.

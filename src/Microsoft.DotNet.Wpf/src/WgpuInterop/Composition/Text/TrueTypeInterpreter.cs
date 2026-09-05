@@ -389,6 +389,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // of denting it -- which is how diacritics keep their distance from the base glyph.
             _inComposite = glyph.Composite;
             _iupDone = false;
+            _nudgeCount = 0; _nudgeDx = 0;
             if (!IsUsable || pixelsPerEm <= 0f) return false;
 
             try

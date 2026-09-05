@@ -440,6 +440,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                         || (s_shpixOutWhen.Contains("touchedx") && (z.Tags[sp] & TagTouchX) == 0)
                                         || (s_shpixOutWhen.Contains("touchedy") && (z.Tags[sp] & TagTouchY) == 0)
                                         || (s_shpixOutWhen.Contains("inline") && _iupDone)
+                                        || (s_shpixDiag
+                                            && (amount > s_shpixDiagMax || amount < -s_shpixDiagMax)
+                                            && OnDiagonalEdge(z, sp))
                                         || (s_shpixOutMax > 0 && (amount > s_shpixOutMax || amount < -s_shpixOutMax))
 
                                         || (s_shpixOutWhen.Contains("post") && !_iupDone))
@@ -466,6 +469,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                     && !_inPreProgram && !IsHorizontalFreedom
                                     && (uint) sp < (uint) z.PointCount
                                     && (z.Tags[sp] & TagTouchY) == 0) continue;
+                                // ON A DIAGONAL, A PAIR THAT OPPOSE EACH OTHER IS A WIDTH.
+                                // Tahoma's 'W' at 11ppem nudges two of its diagonal points -32/64
+                                // and -44/64, both the same way: the letter MOVES and keeps its
+                                // shape, and GDI draws exactly that. Verdana Bold's 'W' at 12 nudges
+                                // its leftmost +33/64 and its rightmost -33/64, closing the letter
+                                // up by a whole pixel onto the bi-level grid, and GDI draws it two
+                                // columns WIDER, at very nearly the unhinted width. A stroke that is
+                                // not vertical has no width to grid-fit, so an opposing pair is not
+                                // a nudge at all and none of it is run.
+                                //
+                                // NOTICED HERE, ACTED ON BY RUNNING THE PROGRAM AGAIN. Putting the
+                                // first of the pair back where it was, mid-run, leaves an outline
+                                // that no program produced: everything the face did in between --
+                                // an IP through the moved point, an MDRP measured from it -- has
+                                // already happened. Arial's 'w' at 11ppem is what that looked like,
+                                // fitted two pixels wider than its own outline and thrown out as
+                                // implausible. So the first pass only WATCHES, and RunFaceHints
+                                // re-runs the glyph with RefusingDiagonalNudges set.
+                                if (s_shpixPair && !_inPreProgram && ClearTypeInfo && !BiLevelPass
+                                    && IsHorizontalFreedom && dx != 0 && amount % 64 != 0
+                                    && _gs.Zp2 == 1 && (uint) sp < (uint) _realPoints
+                                    && OnDiagonalEdge(z, sp))
+                                {
+                                    if (RefusingDiagonalNudges) continue;
+                                    if (_nudgeCount > 0 && Math.Sign(dx) != Math.Sign(_nudgeDx))
+                                        SawOpposingDiagonalNudges = true;
+                                    else { _nudgeCount++; _nudgeDx = dx; }
+                                }
                                 MoveDirect(z, sp, dx, dy, touch);
                             }
                             _gs.Loop = 1;
@@ -1276,6 +1307,93 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// horizontal nudge. A diagonal freedom vector counts as the ClearType direction whenever it
         /// leans that way, so the fractional-nudge exemption was also letting the faces' DIAGONAL
         /// control through -- moving the point in y as well as x.</summary>
+        /// <summary>WPF_CT_SHPIX_PAIR=1: refuse a pair of fractional nudges that move two DIAGONAL
+        /// points against each other. Measured, close, and not shipped.
+        /// <para>It is the best account yet of which fractional nudges GDI's ClearType runs. Over
+        /// eleven sizes it is worth 11,841,895 -> 11,654,976, and where it wins it wins outright:
+        /// Verdana Bold -232,521 and Tahoma Bold -135,253, with Verdana Bold 'A'@16 going 10,069 ->
+        /// 0, 'W'@14 12,397 -> 137, 'W'@12 10,985 -> 510 and Tahoma Bold 'X'@16 12,315 -> 765.
+        /// It separates the two cases that no threshold could: Verdana Bold's 'W' at 12ppem opposes
+        /// (+33/64 leftmost, -33/64 rightmost, and GDI draws the letter two columns wider) while
+        /// Tahoma's 'W' at 11 does not (-32/64 and -44/64, both the same way, and GDI runs them).
+        /// </para>
+        /// <para>THREE COUNTEREXAMPLES keep it off. Arial's 'w' at 11ppem fits two pixels wider
+        /// than its own outline without its pair and is thrown out as implausible, so the letter
+        /// falls back to the unhinted fitter -- and that is not the mid-run rewind, which was the
+        /// first implementation and is why this watches and re-runs instead: the second pass is a
+        /// clean run and Arial still breaks. Times New Roman gives up 85,153 on its bold and 33,483
+        /// on its roman, its 'W' at 13ppem going 373 -> 4,387. Segoe UI's 'V', 'Z' and 'y' lose
+        /// a few pixels each. Serif diagonals and Arial's 'w' take an opposing pair that GDI
+        /// plainly runs, and until something separates THOSE from Verdana's, this is a rule with a
+        /// hole in it rather than a rule.</para></summary>
+        private static readonly bool s_shpixPair =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_PAIR") == "1";
+
+        private int _nudgeCount, _nudgeDx;
+
+        /// <summary>Set when this glyph's program nudged two diagonal points against each other.
+        /// Cleared by <see cref="ResetNudgeWatch"/>, not by each component's run, so a composite
+        /// carries what its parts saw.</summary>
+        internal bool SawOpposingDiagonalNudges;
+
+        /// <summary>The second pass: refuse every fractional nudge on a diagonal.</summary>
+        internal bool RefusingDiagonalNudges;
+
+        internal void ResetNudgeWatch() => SawOpposingDiagonalNudges = false;
+
+        /// <summary>WPF_CT_SHPIX_DIAG=1: refuse the exemption for a point that sits on a DIAGONAL
+        /// -- neither of its outline neighbours is roughly above or below it. A nudge is for a stem
+        /// side or a bowl extreme, both of which have a vertical edge through them; the half-pixel
+        /// pulls Verdana Bold puts on its 'W' are on the diagonal strokes themselves.
+        /// <para>Measured: refusing EVERY nudge on a diagonal is worth more than refusing only the
+        /// opposing pairs -- 11,841,895 -> 11,377,713 over eleven sizes against 11,638,887 -- but it
+        /// takes Tahoma's roman and italic 'W' at 11ppem from 1,278 to 17,529, and Tahoma's pair
+        /// there (-32/64 and -44/64) is one GDI plainly runs. WPF_CT_SHPIX_DIAGMAX caps it by size
+        /// and reaches 11,319,952 at 24/64, which is a fit, not a boundary (31 and 32 are worse).
+        /// The pair rule is the one that ships.</para></summary>
+        private static readonly bool s_shpixDiag =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_DIAG") == "1";
+
+        /// <summary>How steep an edge still counts as vertical: WPF_CT_SHPIX_DIAGRATIO to 1.</summary>
+        private static readonly int s_shpixDiagRatio =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SHPIX_DIAGRATIO"), out int dr) ? dr : 4;
+
+        /// <summary>How big a nudge on a diagonal is still honoured, in 64ths.
+        /// WPF_CT_SHPIX_DIAGMAX.</summary>
+        private static readonly int s_shpixDiagMax =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SHPIX_DIAGMAX"), out int dm) ? dm : 0;
+
+        /// <summary>Whether both of this point's contour neighbours lie off to the side of it,
+        /// rather than above or below -- measured in FONT UNITS, since at eleven pixels an em the
+        /// scaled sixty-fourths quantize a bowl's vertical tangent into a slope.</summary>
+        private bool OnDiagonalEdge(Zone z, int point)
+        {
+            if ((uint) point >= (uint) _realPoints || _contourCount == 0) return false;
+            int first = 0, last = _realPoints - 1;
+            for (int i = 0; i < _contourCount; i++)
+            {
+                int end = z.Contours[i];
+                if (point <= end) { last = Math.Min(end, _realPoints - 1); break; }
+                first = end + 1;
+            }
+            if (last <= first) return false;
+            int prev = point == first ? last : point - 1;
+            int next = point == last ? first : point + 1;
+            return Steep(z, point, prev) && Steep(z, point, next);
+
+            static bool Steep(Zone zz, int a, int b)
+            {
+                int dx = zz.OrusX[a] - zz.OrusX[b], dy = zz.OrusY[a] - zz.OrusY[b];
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+                // NOT vertical: the edge leans away from the point by more than one part in
+                // s_shpixDiagRatio. A stem side has dx of nothing at all; the rightmost point of a
+                // bowl has a vertical tangent and its neighbours are barely off it; a 'W' stroke
+                // runs a quarter of the letter sideways for every rise.
+                return dx * s_shpixDiagRatio > dy;
+            }
+        }
+
         /// <summary>HALF A PIXEL: MEASURED, REAL, AND NOT SHIPPABLE YET. WPF_CT_SHPIX_MAX, in
         /// 64ths, 0 for no cap.
         /// <para>The exemption below is for a face NUDGING a stem's side -- a sub-pixel adjustment
@@ -1300,13 +1418,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// answer. Over all eleven sizes the cap is still ahead -- 11,841,895 -> 11,737,658, and
         /// every cap from 40 to 64 is worse -- but a rule that takes a face from exact to badly
         /// wrong at a size people read text at is not a rule yet.</para>
-        /// <para>Two readings of the difference, both measured, both wrong. "A nudge never moves an
-        /// outer edge" (refuse the exemption for the glyph's leftmost and rightmost points):
-        /// 5,641,263 alone, 5,561,076 with the cap -- and it cannot be right, because Tahoma's
-        /// honoured pair is on its outer edges too. "An opposing pair is a width, not a position"
-        /// (refuse the second of two fractional nudges of opposite sign and put the first back):
-        /// 11,841,895 -> 12,207,689 over the eleven sizes. Faces nudge the two stems of an 'n' in
-        /// opposite directions all the time; the pair in a 'W' is not special for opposing.</para>
+        /// <para>WHAT REPLACED IT is the opposing-pair rule at the SHPIX site, which separates the
+        /// same two cases without a threshold: Verdana's pair oppose each other and Tahoma's do
+        /// not. "A nudge never moves an outer edge" was the other reading and is measured wrong
+        /// (5,641,263 alone, 5,561,076 with this cap) -- it cannot be right, because Tahoma's
+        /// honoured pair is on its outer edges too.</para>
         /// </summary>
         private static readonly int s_shpixOutMax =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SHPIX_MAX"), out int sm) ? sm : 0;
