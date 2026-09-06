@@ -2303,11 +2303,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Whether a rootless point's phase follows ExecutePhaseControl's ACTUAL param_3
         /// ("did any point close a cycle") rather than the blanket s_phaseRootDirect.
-        /// <para>This is GDI's rule and it measures WORSE: 5,936,734 against 5,841,656, sitting
-        /// between always-direct (5,841,656) and never-direct (6,295,263) exactly as a
-        /// sometimes-true flag would. The reason is the familiar one -- the flag is computed from
-        /// OUR tree, and our links are not GDI's, so our cycles are not GDI's either. Turn it on
-        /// (WPF_CT_PHASE_ROOTCYCLE=1) when the link set is right.</para></summary>
+        /// <para>This is GDI's rule, and it used to measure worse -- 5,936,734 against 5,841,656
+        /// -- because the flag is computed from OUR tree and our links were not GDI's. The note
+        /// here said to turn it on once the link set was right. It is: DoubleCheckLinkColor
+        /// decides the pairs now and its winding is the right way round. Turning it on is worth
+        /// 4,813,476 -> 4,368,478 on the specimen and 17,331,018 -> 15,662,723 on the holdout,
+        /// with 112 ratchets improved against 19 worse.</para></summary>
         /// <summary>WPF_CT_PHASE_XONLY=0 records the phase tree for every link, as we used to.
         /// GDI records only on the ClearType x axis (localGS+0xcc at every call site).</summary>
         private static readonly bool s_phaseXAxisOnly =
@@ -2318,7 +2319,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_FAITHFUL") != "0";
 
         private static readonly bool s_phaseRootFromCycle =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOTCYCLE") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOTCYCLE") is { } rc ? rc == "1"
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         private static readonly bool s_phaseLsbDirect =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_LSB") != "0";
