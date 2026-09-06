@@ -1778,6 +1778,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// recorded, the FIRST parent a point is given wins, and the second slot cleared.</summary>
         private void PhaseDistance(int r, int p)
         {
+            // GDI records nothing unless the PROJECTION IS ON THE CLEARTYPE (x) AXIS. Every
+            // AddDistance call site tests localGS+0xcc -- the flag itrp_SVTCA_1 sets when it puts
+            // the vectors on x under ClearType -- and skips the call outright when it is clear:
+            //     ldrh w8,[x19,#0xcc] ; cbz w8, skip ; ldrh w8,[x22,#0x1c0] ; tbz w8,#1, skip
+            // We had been recording every link, diagonal ones included, which fed the tree
+            // relationships GDI never puts in it.
+            if (s_phaseXAxisOnly && !InClearTypeDirection) return;
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
@@ -1810,6 +1817,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// parent slots are still empty -- the first proportion a point is given wins.</summary>
         private void PhaseProportion(int a, int placed, int b)
         {
+            if (s_phaseXAxisOnly && !InClearTypeDirection) return;   // same gate as AddDistance
             int n = _realPoints + 4;
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
@@ -1939,6 +1947,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// sometimes-true flag would. The reason is the familiar one -- the flag is computed from
         /// OUR tree, and our links are not GDI's, so our cycles are not GDI's either. Turn it on
         /// (WPF_CT_PHASE_ROOTCYCLE=1) when the link set is right.</para></summary>
+        /// <summary>WPF_CT_PHASE_XONLY=0 records the phase tree for every link, as we used to.
+        /// GDI records only on the ClearType x axis (localGS+0xcc at every call site).</summary>
+        private static readonly bool s_phaseXAxisOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_XONLY") != "0";
+
         private static readonly bool s_phaseRootFromCycle =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOTCYCLE") == "1";
 
