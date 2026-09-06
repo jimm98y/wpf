@@ -1470,6 +1470,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _phaseVal = new int[np]; _phaseDone = new bool[np];
             }
             for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
+            _phaseAnyCycle = false;
         }
 
         // ---- x features ------------------------------------------------------------------------
@@ -1781,7 +1782,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
             if (_phaseP0[p] >= 0) return;                     // already parented; first wins
-            if (PhaseDependsOn(r, p, 100)) return;            // would close a cycle
+            if (PhaseDependsOn(r, p, 100))
+            { _phaseAnyCycle = true; return; }            // would close a cycle; GDI flags it
             _phaseP0[p] = PhaseAncestor(r, p);
             _phaseP1[p] = -1;
         }
@@ -1812,7 +1814,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
             if ((uint) placed >= (uint) _phaseP0.Length) return;
-            if (PhaseDependsOn(a, placed, 100) || PhaseDependsOn(b, placed, 100)) return;
+            if (PhaseDependsOn(a, placed, 100) || PhaseDependsOn(b, placed, 100))
+            { _phaseAnyCycle = true; return; }          // GDI sets node[P].flags |= 1 here
             if (_phaseP0[placed] < 0 && _phaseP1[placed] < 0)
             { _phaseP0[placed] = a; _phaseP1[placed] = b; }
         }
@@ -1831,6 +1834,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private int[] _phasePartner = new int[128];
+
+        /// <summary>ExecutePhaseControl's param_3: whether ANY point in this glyph was flagged as
+        /// closing a cycle. PhaseShift consults it for a point with no parent -- such a point takes
+        /// the direct x*(ctFactor-1) when it is set and NOTHING when it is clear.</summary>
+        private bool _phaseAnyCycle;
 
         /// <summary>DoubleCheckLinkColor's precondition: the two points are consecutive on one
         /// contour and the segment between them is no steeper than 2:1.</summary>
@@ -1882,9 +1890,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (p >= _realPoints)                 // PHANTOM: the phase originates here (the advance)
                 phase = (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac);
             else if (a < 0)                        // a regular root the program left unanchored
-                // GDI gives it 0 only when PhaseShift's param_3 is clear; otherwise it takes the
-                // SAME direct x*(ctFactor-1) the phantoms do (the CompDiv branch reduces to it).
-                phase = s_phaseRootDirect ? (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac) : 0;
+                // PhaseShift gives it 0 when param_3 is clear and the same direct x*(ctFactor-1)
+                // the phantoms take when it is set (its CompDiv branch reduces to that). param_3 is
+                // "did any point close a cycle", which ExecutePhaseControl computes for the glyph.
+                phase = (s_phaseRootFromCycle ? _phaseAnyCycle : s_phaseRootDirect)
+                    ? (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac) : 0;
             else if (b < 0)                        // single parent: inherit its phase
             {
                 // ...unless the parent is the LSB phantom, which sits at x = 0, so its phase is
@@ -1921,6 +1931,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_phasePairs =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PAIRS") != "0";
+
+        /// <summary>Whether a rootless point's phase follows ExecutePhaseControl's ACTUAL param_3
+        /// ("did any point close a cycle") rather than the blanket s_phaseRootDirect.
+        /// <para>This is GDI's rule and it measures WORSE: 5,936,734 against 5,841,656, sitting
+        /// between always-direct (5,841,656) and never-direct (6,295,263) exactly as a
+        /// sometimes-true flag would. The reason is the familiar one -- the flag is computed from
+        /// OUR tree, and our links are not GDI's, so our cycles are not GDI's either. Turn it on
+        /// (WPF_CT_PHASE_ROOTCYCLE=1) when the link set is right.</para></summary>
+        private static readonly bool s_phaseRootFromCycle =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOTCYCLE") == "1";
 
         private static readonly bool s_phaseLsbDirect =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_LSB") != "0";
