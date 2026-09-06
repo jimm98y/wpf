@@ -1594,9 +1594,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINDIST_DIV"), out int md) && md > 0
                 ? md : 2;
 
-        /// <summary>WPF_CT_MINDIST_MDRP=1: apply that reduction to MDRP as well as MIRP.</summary>
+        /// <summary>WPF_CT_MINDIST_MDRP=0: go back to MDRP and MIRP disagreeing about it.
+        /// <para>They HAD been disagreeing: MIRP halved the minimum distance in the ClearType
+        /// direction and MDRP used it whole, which cannot both be right -- the spec gives the
+        /// two opcodes one minimum-distance rule, not two. Making them agree measures
+        /// 4,283,877 -> 4,187,741 on the specimen and 15,464,384 -> 15,074,881 on the holdout,
+        /// with 22 ratchets improved against 15.</para>
+        /// <para>Gated on WPF_CT_PHASE only so that WPF_CT_PHASE=0 stays an EXACT restore of
+        /// the configuration that shipped before the phase (5,485,079 to the digit). Nothing
+        /// about this rule depends on the phase.</para></summary>
         private static readonly bool s_minDistMdrp =
-            Environment.GetEnvironmentVariable("WPF_CT_MINDIST_MDRP") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_MINDIST_MDRP") is { } mm ? mm == "1"
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         /// <summary>WPF_CT_DELTA_SCALE: the fraction of an x delta to keep, in thousandths, where
         /// the ClearType rule would drop it. 0 drops it, which is what ships.
