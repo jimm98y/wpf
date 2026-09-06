@@ -1236,6 +1236,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>How wide a gap in x separates one feature from the next, in 64ths, for the
         /// piecewise displacement of mode 6. WPF_CT_STEMGAP.</summary>
         /// <summary>WPF_CT_CW_TRACE=1 prints the fitted advance, the target and their ratio.</summary>
+        /// <summary>How the ONE-FEATURE case of CompatibleWidthMode 7 is realized. See the note
+        /// at the use site: 0 = rigid slide (shipped), 1 = hold centre and scale, 2 = damped.</summary>
+        private static readonly int s_cw1Mode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1"), out int c1) ? c1 : 0;
+        private static readonly int s_cw1MinInk =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1_MININK"), out int c1i) ? c1i : 256;
+        private static readonly int s_cw1Damp =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1_DAMP"), out int c1d) ? c1d : 1000;
+
         private static readonly bool s_cwTrace =
             Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1";
 
@@ -2475,6 +2484,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             for (int i = 0; i < n7; i++)
                                 if (touched[i] && !seen7[feature[i]]) { seen7[feature[i]] = true; distinct7++; }
                             if (distinct7 < s_minFeatures && (s_minFeatSqueezeOnly == 0 || s7 < 1f)) touchedCount = 0;
+                        }
+                        // ONE FEATURE means mode 7's per-feature rigid move degenerates into a
+                        // pure TRANSLATION of the whole glyph -- it realizes the compatible width
+                        // by sliding the ink sideways and never widening it. Verdana 'w'@12 is the
+                        // worst case in the whole repertoire for exactly this reason (s=1.1192,
+                        // every touched point in feature 6, every shift +41), and the edge oracle
+                        // says GDI instead holds the ink's CENTRE and widens it. WPF_CT_CW1
+                        // selects how that case is realized: 0 = the rigid slide (shipped),
+                        // 1 = hold the centre and scale by s, 2 = hold the centre and scale by
+                        // s damped by WPF_CT_CW1_DAMP/1000.
+                        int distinctFeat = 0;
+                        {
+                            var seenF = new bool[n7];
+                            for (int i = 0; i < n7; i++)
+                                if (touched[i] && !seenF[feature[i]]) { seenF[feature[i]] = true; distinctFeat++; }
+                        }
+                        int inkLo = int.MaxValue, inkHi = int.MinValue;
+                        for (int i = 0; i < n7; i++)
+                        {
+                            if (glyph.X[i] < inkLo) inkLo = glyph.X[i];
+                            if (glyph.X[i] > inkHi) inkHi = glyph.X[i];
+                        }
+                        // ...but only where there is INK to absorb the widening. If the glyph IS
+                        // one stem ('l', 'i', 'j', 'f'), scaling about its centre widens the STEM
+                        // itself, which is plainly wrong and measures it: 'l' alone costs +87,540.
+                        // A lone stem must be TRANSLATED; a wide glyph with interpolated strokes
+                        // between its anchors must be WIDENED. WPF_CT_CW1_MININK is that gate, in
+                        // 64ths of a pixel of ink width.
+                        if (touchedCount > 0 && distinctFeat == 1 && s_cw1Mode != 0
+                            && inkHi - inkLo >= s_cw1MinInk)
+                        {
+                            int minX = inkLo, maxX = inkHi;
+                            float centre = (minX + maxX) * 0.5f;
+                            float k = s_cw1Mode == 2 ? 1f + (s7 - 1f) * (s_cw1Damp / 1000f) : s7;
+                            for (int i = 0; i < n7; i++)
+                                shift[i] = (int) MathF.Round((k - 1f) * (glyph.X[i] - centre));
+                            touchedCount = 0;          // shifts are already final for every point
                         }
                         if (touchedCount > 0)
                         {

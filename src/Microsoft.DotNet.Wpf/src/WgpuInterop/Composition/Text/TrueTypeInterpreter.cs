@@ -1500,6 +1500,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and a white one spaces strokes apart; tying either into the feature makes the whole
         /// glyph one rigid body, which is exactly the scale-within-a-stem mode 7 exists to avoid.
         /// </summary>
+        /// <summary>Width (64ths) above which an x-link is SPACING between features rather than
+        /// the two sides of one feature, so it does not merge them. See the use site.</summary>
+        private static readonly int s_featLink =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_FEATLINK"), out int fl) ? fl : int.MaxValue;
+
         private static readonly int s_linkTypes =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_LINKTYPES"), out int lt) ? lt : 2;
 
@@ -1524,6 +1529,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // crossbar ties both stems into one feature yet they are two stems -- so the compatible
             // -width pass that grid-fits each stem needs the pairs, not the closure.
             if (_linkCount < _linkA.Length) { _linkA[_linkCount] = r; _linkB[_linkCount] = p; _linkCount++; }
+            // A NARROW link ties two edges of ONE feature (a stem's two sides); a WIDE link is
+            // SPACING between two features. Merging both makes a 'w' a single feature -- all four
+            // diagonal strokes chained through the wide anchor links -- so the compatible-width
+            // pass can only slide the whole letter, never open the gaps between its strokes, which
+            // is what GDI does. WPF_CT_FEATLINK is the width (64ths) above which a link no longer
+            // merges. Default is unbounded, i.e. the old closure.
+            if (s_featLink < int.MaxValue)
+            {
+                int dx = _glyphZone.CurX[p] - _glyphZone.CurX[r];
+                if ((dx < 0 ? -dx : dx) > s_featLink) return;
+            }
             int a = FindX(p), b = FindX(r);
             if (a != b) _xLink[a] = b;
         }
