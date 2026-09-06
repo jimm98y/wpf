@@ -311,8 +311,25 @@ namespace WgpuInterop.Tests.Text
         /// <para>It also says something the stage cannot: GDI tells the face it is stretched when
         /// it IS, and does not when drawing ClearType. So GDI's ClearType hinting runs in ordinary
         /// unstretched space and the three-times supersampling happens after it, inside the
-        /// rasterizer, where the font program cannot see it. A face therefore never fits anything
-        /// to the lamp grid, and no rule that puts our x on it can be right.</para>
+        /// rasterizer, where the font program cannot see it.</para>
+        /// <para>THE LAST SENTENCE OF THAT USED TO READ "a face therefore never fits anything to
+        /// the lamp grid, and no rule that puts our x on it can be right", AND THAT PART IS WRONG.
+        /// The coordinates are unstretched, but the GRID IS NOT THE PIXEL GRID. GDI keeps two
+        /// complete sets of rounding functions and picks between them on the ClearType flag
+        /// (itrp_SVTCA_1 selects table entry n or n+8; the pointer array is at
+        /// PTR_itrp_RoundToDoubleGrid). Read side by side in fontdrvhost.exe, the binary that
+        /// actually renders, the subpixel set is the ordinary set with the grid quartered and the
+        /// engine compensation halved:</para>
+        /// <code>
+        ///   itrp_RoundToGrid        (v + c + 0x20) &amp; ~0x3f        RoundToGridSP        (v + c/2 + 2) &amp; ~3
+        ///   itrp_RoundToHalfGrid    (v + c &amp; ~0x3f) + 0x20         RoundToHalfGridSP    (v + c/2 &amp; ~3) + 2
+        ///   itrp_RoundToDoubleGrid  grid 32                        RoundToDoubleGridSP  grid 2
+        /// </code>
+        /// <para>So a face fitted under ClearType DOES round x on a sixteenth of a pixel -- in
+        /// unstretched coordinates, which is the part this stage got right. The two readings are
+        /// not in conflict once separated: STRETCHING the space is not how the finer grid is
+        /// reached, the round-function table is. Our ClearTypeGrid of 16 is that grid, and scaling
+        /// the value by 16 before rounding on 64 is algebraically the SP column above.</para>
         /// <para>Reported only: set WPF_STAGE_REPORT.</para></summary>
         [Theory]
         [InlineData("Segoe UI")]
