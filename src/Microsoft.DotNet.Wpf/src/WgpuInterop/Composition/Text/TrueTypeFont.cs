@@ -1248,6 +1248,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// glyph still solves EXACTLY, i.e. the edge set is untouched. 36/64 and 4px are a joint
         /// optimum on the weight specimen (5,485,079 -> 5,433,971) and 256/320/384 all agree, so
         /// the ink gate is a plateau rather than a knife edge. WPF_CT_MINFEAT_SHIFT / _INK.</summary>
+        private static readonly int s_cwDemean =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_DEMEAN"), out int cwm) ? cwm : 0;
         private static readonly int s_cwSpread =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_SPREAD"), out int cws) ? cws : 1000;
         private static readonly int s_cwDamp =
@@ -2711,6 +2713,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             for (int i = 0; i < n7; i++)
                                 tr.Append($"   pt{i,2} x={glyph.X[i],5} {(touched[i] ? "T" : ".")} feat={feature[i],2} shift={shift[i],3}\n");
                             Console.Error.Write(tr.ToString());
+                        }
+                        // GENERALISING THE ONE-FEATURE FIX. Suppressing the whole slide of a wide
+                        // one-feature glyph measured; the multi-feature glyphs left over (Tahoma
+                        // 'm'@16 6,028, Tahoma 'w'@12 4,626, Segoe UI 'm'@12 2,098 -- almost all
+                        // POSITION) get the same treatment applied to their COMMON part only:
+                        // subtract the mean slide, which removes the bulk translation of the
+                        // letter and leaves the spacing between its features untouched.
+                        if (s_cwDemean > 0 && touchedCount > 0 && distinct7 > 1)
+                        {
+                            long sum = 0; int cnt = 0;
+                            for (int i = 0; i < n7; i++) if (touched[i]) { sum += shift[i]; cnt++; }
+                            if (cnt > 0)
+                            {
+                                int mean = (int) MathF.Round(sum / (float) cnt);
+                                if (Math.Abs(mean) >= s_cwDemean && inkB - inkA >= s_minFeatInk)
+                                    for (int i = 0; i < n7; i++) shift[i] -= mean;
+                            }
                         }
                         // GDI WIDENS THE INK LESS THAN THE ADVANCE. Verdana 'w'@12 and Tahoma
                         // 'w'@12 both put GDI's ink stretch (1.036, 1.054) at roughly a third of
