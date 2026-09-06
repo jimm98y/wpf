@@ -1248,6 +1248,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// glyph still solves EXACTLY, i.e. the edge set is untouched. 36/64 and 4px are a joint
         /// optimum on the weight specimen (5,485,079 -> 5,433,971) and 256/320/384 all agree, so
         /// the ink gate is a plateau rather than a knife edge. WPF_CT_MINFEAT_SHIFT / _INK.</summary>
+        private static readonly int s_cwDamp =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_DAMP"), out int cwd) ? cwd : 1000;
         private static readonly int s_minFeatInk =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_INK"), out int mfi) ? mfi : 256;
         private static readonly int s_minFeatShift =
@@ -2605,6 +2607,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 tr.Append($"   pt{i,2} x={glyph.X[i],5} {(touched[i] ? "T" : ".")} feat={feature[i],2} shift={shift[i],3}\n");
                             Console.Error.Write(tr.ToString());
                         }
+                        // The slides come out systematically LARGE against GDI: the same rightward
+                        // bias the one-feature gate above removes for 'w' shows up per-feature on
+                        // multi-feature glyphs too (Tahoma 'm'@16 shifts 30/18/5, edges ~12/64
+                        // right of GDI). WPF_CT_CW_DAMP scales every slide, in thousandths.
+                        if (s_cwDamp != 1000)
+                            for (int i = 0; i < n7; i++)
+                                shift[i] = (int) MathF.Round(shift[i] * (s_cwDamp / 1000f));
                         for (int i = 0; i < n7; i++) glyph.X[i] += shift[i];
                         if (glyph.X.Length > glyph.PointCount + 1)
                             glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target7;
