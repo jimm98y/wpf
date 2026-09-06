@@ -1816,15 +1816,115 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int linear = _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
             if (linear <= 0 || CompatibleAdvance64 <= 0) return;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
-            if (_ctFrac == 0f) return;
+            // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
+            // integer arithmetic. Carrying it as a float rounded differently from GDI at the last
+            // bit, which on a 26.6 coordinate is a third of a pixel.
+            _ctFactor16 = (int) (((long) CompatibleAdvance64 << 16) / linear);
+            if (_ctFactor16 == 0x10000) return;
             BuildPhasePartners(_realPoints);
-            Array.Clear(_phaseDone, 0, _phaseDone.Length);
-            for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+            int n = _realPoints + 4;
+            if (_phaseFlags.Length < n) _phaseFlags = new byte[n + 8];
+            Array.Clear(_phaseFlags, 0, _phaseFlags.Length);
+            if (!s_phaseFaithful)
             {
-                if (i < _realPoints && (_glyphZone.Tags[i] & TagTouchX) == 0) continue;
-                int ph = PhaseOf(i);
-                if (ph != 0) _glyphZone.CurX[i] += ph;
+                Array.Clear(_phaseDone, 0, _phaseDone.Length);
+                for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+                {
+                    if (i < _realPoints && (_glyphZone.Tags[i] & TagTouchX) == 0) continue;
+                    int ph = PhaseOf(i);
+                    if (ph != 0) _glyphZone.CurX[i] += ph;
+                }
+                return;
             }
+            // ExecutePhaseControl@18007fc60 walks EVERY node in index order, phantoms included,
+            // and does not ask whether the point was touched.
+            for (int i = 0; i < n && i < _glyphZone.CurX.Length; i++) PhaseShiftNode(i);
+        }
+
+        /// <summary>PhaseShift@18007fd10, ported statement for statement. Unlike the earlier
+        /// PhaseOf this is not a pure function: GDI's version MOVES points as it walks, and which
+        /// points it moves is most of the rule.</summary>
+        /// <summary>ExecutePhaseControl's param_3: GDI computes it as "did any node close a
+        /// cycle", but that is decided by OUR tree, so it stays switchable.</summary>
+        /// <summary>WPF_CT_PHASE_PHANTOM=0 denies the two x phantoms their direct phase, which
+        /// makes them ordinary roots -- a bisection handle, not one of GDI's rules.</summary>
+        private static readonly bool s_phasePhantom =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PHANTOM") != "0";
+
+        private bool PhaseRootDirect =>
+            s_phaseRootFromCycle ? _phaseAnyCycle : s_phaseRootDirect;
+
+        private int PhaseShiftNode(int p)
+        {
+            if (p < 0 || (uint) p >= (uint) _phaseFlags.Length) return 0;
+            if ((uint) p >= (uint) _glyphZone.CurX.Length) return 0;
+            byte fl = _phaseFlags[p];
+            if ((fl & 4) != 0) return 0;                 // already on the stack: a cycle
+            _phaseFlags[p] = (byte) (fl | 4);
+            if ((fl & 2) == 0)
+            {
+                int a = _phaseP0[p], b = _phaseP1[p];
+                int v;
+                // The DIRECT branch is not "every phantom" -- it is exactly the two x phantoms
+                // (lastEnd+1 and lastEnd+2). The y phantoms take the ordinary tree path.
+                if (s_phasePhantom && (p == _realPoints || p == _realPoints + 1))
+                    v = PhaseDiv(2L * _glyphZone.CurX[p] * (_ctFactor16 - 0x10000));
+                else if (a < 0)
+                    v = PhaseRootDirect ? PhaseDiv(2L * _glyphZone.CurX[p] * (_ctFactor16 - 0x10000)) : 0;
+                else if (b < 0)
+                    v = PhaseShiftNode(a);
+                else
+                {
+                    int vb = PhaseShiftNode(b), va = PhaseShiftNode(a);
+                    v = CalcAvgXPhase(a, p, b, va, vb);
+                }
+                // A recursive call can finish THIS node through its partner (below), in which case
+                // GDI abandons everything it just computed and keeps the stored value.
+                if ((_phaseFlags[p] & 2) == 0)
+                {
+                    int mate = p < _phasePartner.Length ? _phasePartner[p] : -1;
+                    bool mateFree = mate >= 0 && mate < _glyphZone.CurX.Length
+                                    && (_phaseFlags[mate] & 2) == 0;
+                    if (!mateFree)
+                    {
+                        // Only a node with FEWER THAN TWO parents may be re-derived directly, and
+                        // only once its own x has come away from its parent's.
+                        if (PhaseRootDirect && b < 0 && (a < 0 || _glyphZone.OrgX[p] != _glyphZone.OrgX[a]))
+                            v = PhaseDiv(2L * _glyphZone.CurX[p] * (_ctFactor16 - 0x10000));
+                        // A ROOT IS NEVER MOVED. It still publishes its phase for its children to
+                        // inherit, but its own x stays where the interpreter left it -- which is
+                        // what keeps the advance phantom, a root, from drifting off the compatible
+                        // width the whole phase pass exists to reach.
+                        if (a >= 0) _glyphZone.CurX[p] += v;
+                    }
+                    else
+                    {
+                        // The PAIR rule, and it applies only to a node the tree did NOT already pin
+                        // between two parents: both edges move together by the phase of their
+                        // centre, and the partner is marked done so it is not phased twice.
+                        if (a < 0 || b < 0)
+                            v = PhaseDiv((long) (_glyphZone.CurX[p] + _glyphZone.CurX[mate])
+                                         * (_ctFactor16 - 0x10000));
+                        _glyphZone.CurX[p] += v;
+                        _glyphZone.CurX[mate] += v;
+                        _phaseVal[mate] = v;
+                        _phaseFlags[mate] |= 2;
+                    }
+                    _phaseVal[p] = v;
+                    _phaseFlags[p] |= 2;
+                }
+            }
+            _phaseFlags[p] &= 0xfb;
+            return _phaseVal[p];
+        }
+
+        /// <summary>CompDiv(0x20000, v), and the inline sequence the phantom branch uses instead of
+        /// calling it: v / 2^17 rounded half AWAY FROM ZERO. (The decompiler spells the truncation
+        /// out as "+ 0x1ffff when negative", which is what C# integer division already does.)</summary>
+        private static int PhaseDiv(long v)
+        {
+            v += v < 0 ? -0x10000L : 0x10000L;
+            return (int) (v / 0x20000L);
         }
 
         /// <summary>The partner map used by both phase entry points.</summary>
@@ -1914,6 +2014,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// closing a cycle. PhaseShift consults it for a point with no parent -- such a point takes
         /// the direct x*(ctFactor-1) when it is set and NOTHING when it is clear.</summary>
         private bool _phaseAnyCycle;
+        private byte[] _phaseFlags = new byte[128];   // 1 = cycle, 2 = done, 4 = on the stack
+        private int _ctFactor16;                      // GS+0x1d0: FixDiv(device, linear), 16.16
 
         /// <summary>DoubleCheckLinkColor's precondition: the two points are consecutive on one
         /// contour and the segment between them is no steeper than 2:1.</summary>
@@ -1989,7 +2091,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // Linear interpolation of the phase at p between references a and b, by p's x position.
         private int CalcAvgXPhase(int a, int p, int b, int phA, int phB)
         {
-            int xa = _glyphZone.CurX[a], xb = _glyphZone.CurX[b], xp = _glyphZone.CurX[p];
+            // +0x10 in CalcAvgXPhaseShift's element struct is OrgX. The phase MAGNITUDES come
+            // from CurX, but the ratio that mixes them is taken on the unfitted outline.
+            int xa = _glyphZone.OrgX[a], xb = _glyphZone.OrgX[b], xp = _glyphZone.OrgX[p];
             int lo = Math.Min(xa, xb), hi = Math.Max(xa, xb);
             if (xa >= xb) (phA, phB) = (phB, phA);   // GDI orders by x, swapping the phases
             if (lo == hi) return (phA + phB) / 2;
@@ -2018,6 +2122,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// GDI records only on the ClearType x axis (localGS+0xcc at every call site).</summary>
         private static readonly bool s_phaseXAxisOnly =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_XONLY") != "0";
+
+        /// <summary>WPF_CT_PHASE_FAITHFUL=0 goes back to the pure-function PhaseOf.</summary>
+        private static readonly bool s_phaseFaithful =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_FAITHFUL") != "0";
 
         private static readonly bool s_phaseRootFromCycle =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOTCYCLE") == "1";
