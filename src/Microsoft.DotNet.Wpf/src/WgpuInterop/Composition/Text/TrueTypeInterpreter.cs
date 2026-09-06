@@ -247,6 +247,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>By way of a 16.16 unit vector, then divided by four, because that is how the
         /// reference implementation does it and the last two bits of the answer decide which side of
         /// a pixel boundary a point on a long diagonal lands.</para></summary>
+        /// <summary>WPF_CT_NORM=twostep rounds the unit vector at 2.16 and divides by four, as
+        /// we used to. itrp_Normalize forms it in ONE rounded division and the second rounding
+        /// could land an LSB low, tilting every diagonal: 3,605,604 -> 3,602,444 on the
+        /// specimen, 12,621,181 -> 12,606,533 on the holdout, no ratchet moves.</summary>
+        private static readonly bool s_normDirect =
+            Environment.GetEnvironmentVariable("WPF_CT_NORM") != "twostep";
+
         private static void Normalize(int x, int y, out int nx, out int ny)
         {
             if (x == 0 && y == 0) { nx = 0x4000; ny = 0; return; }
@@ -254,6 +261,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             double length = Math.Sqrt((double)x * x + (double)y * y);
             if (length <= 0.0) { nx = 0x4000; ny = 0; return; }
 
+            if (s_normDirect)
+            {
+                // itrp_Normalize@180086738 forms the component as x * 0x40000000 / len, with
+                // half the divisor added first and the sign matched -- one rounded division
+                // straight to the unit vector. Rounding at 2.16 and then dividing by four
+                // truncates a second time and can land an LSB low, which tilts every diagonal.
+                nx = (int)Math.Round(x * 16384.0 / length);
+                ny = (int)Math.Round(y * 16384.0 / length);
+                return;
+            }
             long ux = (long)Math.Round(x * 65536.0 / length);
             long uy = (long)Math.Round(y * 65536.0 / length);
             nx = (int)(ux / 4);          // toward zero, as the integer division there does
