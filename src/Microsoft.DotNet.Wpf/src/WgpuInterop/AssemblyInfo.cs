@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Runtime.CompilerServices;
@@ -18,6 +18,9 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("WgpuInterop.CurveFidelityTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.ScaleProbe")]
 [assembly: InternalsVisibleTo("WgpuInterop.LocalCacheProbe")]
+// The GDI fitting probe (tests/WgpuInterop.GdiFitProbe): one glyph, our fitted outline beside
+// the pixels GDI draws for it, in a process small enough to step through under a debugger.
+[assembly: InternalsVisibleTo("WgpuInterop.GdiFitProbe")]
 // The cross-platform test suite (tests/WgpuInterop.Tests). Per-test-app entries are removed as
 // their apps are folded into it; the ones left belong to apps not yet migrated.
 [assembly: InternalsVisibleTo("WgpuInterop.Tests")]

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ONE GLYPH, OUR FIT BESIDE GDI'S PIXELS, IN A PROCESS SMALL ENOUGH TO DEBUG.
+
+    The parity suite answers "how far apart are we" over thousands of glyphs; this answers "what
+    exactly did each side do to THIS one", in a process that starts in a few milliseconds and has
+    no test host, no theory data and no other glyph in it. Set a breakpoint anywhere in the
+    interpreter and the next stop is the glyph you asked for.
+
+    It must produce the SAME fitted outline as the shipping pipeline or its conclusions do not
+    transfer, so it drives the same IHintedGlyphFont.TryGetHintedOutline the renderer does rather
+    than reaching past it. The check switch verifies that against a known-good edge list.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WgpuInterop.GdiFitProbe</AssemblyName>
+    <RootNamespace>WgpuInterop.GdiFitProbe</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\WgpuInterop.csproj" />
+  </ItemGroup>
+
+</Project>
