@@ -1756,9 +1756,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
         }
 
+        private static readonly bool s_ctPhaseRaw =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_BASE") == "raw";
+
         private void ApplyPhaseControl()
         {
-            if (s_ctPhaseFactor == 0) return;
+            if (s_ctPhaseFactor == 0 && !s_ctPhaseRaw) return;
+            // TEST OF THE OTHER ARCHITECTURE: GDI may SUPPRESS the bytecode's x-fitting in ClearType
+            // and build x from the RAW scaled outline + phase. Start from OrgX (scaled, unfitted) so
+            // the phase is not added on top of a base that already embodies it.
+            if (s_ctPhaseRaw)
+                for (int i = 0; i < _realPoints; i++) _glyphZone.CurX[i] = _glyphZone.OrgX[i];
             Array.Clear(_phaseDone, 0, _phaseDone.Length);
             for (int p = 0; p < _realPoints; p++)
             {
