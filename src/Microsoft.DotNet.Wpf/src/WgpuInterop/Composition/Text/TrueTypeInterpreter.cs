@@ -1515,8 +1515,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // and even when the reference is a PHANTOM (the advance/lsb). The phase ORIGINATES at
             // the phantoms and flows to whatever was placed from them, so filtering by link colour
             // (as the stem path below does) starves the tree and leaves most of the glyph unmoved.
-            if ((uint) p < (uint) _phaseP0.Length && (uint) r < (uint) _phaseP0.Length && _phaseP0[p] < 0)
-                _phaseP0[p] = PhaseAncestor(r, p);
+            PhaseDistance(r, p);
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -1771,6 +1770,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// one x therefore collapse to a single node, which is what makes a stem move as one.
         /// <para>Guarded like IndirectlyDependsOn: if the reference already depends on the point
         /// being placed, the link would close a cycle, so the reference is kept as-is.</para></summary>
+        /// <summary>AddDistance@1801db020, which every MDRP/MIRP/MSIRP/ALIGNRP/SHP calls: the
+        /// placed point takes ONE parent -- not the reference itself but the topmost ancestor
+        /// reachable from it through links whose ends share the same ORIGINAL x (PhaseAncestor).
+        /// Faithful to the original: indices checked and distinct, a cycle marked rather than
+        /// recorded, the FIRST parent a point is given wins, and the second slot cleared.</summary>
+        private void PhaseDistance(int r, int p)
+        {
+            int n = _realPoints + 4;
+            if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
+            if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
+            if (_phaseP0[p] >= 0) return;                     // already parented; first wins
+            if (PhaseDependsOn(r, p, 100)) return;            // would close a cycle
+            _phaseP0[p] = PhaseAncestor(r, p);
+            _phaseP1[p] = -1;
+        }
+
         /// <summary>IndirectlyDependsOn@1801db288: is <paramref name="target"/> an ancestor of
         /// <paramref name="node"/> in the phase tree? Depth-limited exactly as GDI's is (100,
         /// decremented by two per level), so a malformed program cannot spin.</summary>
@@ -1896,8 +1911,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
         }
 
+        /// <summary>Whether the PAIR rule is restricted to links GDI would call a stem (adjacent on
+        /// one contour, segment no steeper than 2:1 -- DoubleCheckLinkColor's own test). That IS
+        /// GDI's predicate, but it is applied to OUR link set, which is not GDI's, and it measures
+        /// worse for that reason: with the faithful tree, 6,654,259 filtered against 5,841,656
+        /// unfiltered. OFF until the links themselves are GDI's.</summary>
         private static readonly bool s_phasePairAdjacent =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") == "1";
 
         private static readonly bool s_phasePairs =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PAIRS") != "0";
