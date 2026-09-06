@@ -1507,14 +1507,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
+            // PHASE tree: record p's parent even when the reference is a PHANTOM (the advance/lsb),
+            // because the phase ORIGINATES at the phantoms and flows to points placed from them --
+            // rejecting phantom refs (as the stem path does below) would starve the whole tree.
+            if ((uint) p < (uint) _phaseP0.Length && (uint) r < (uint) _phaseP0.Length && _phaseP0[p] < 0)
+                _phaseP0[p] = r;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
             // strokes are placed by diagonal MIRPs (SDPVTL) that the horizontal-only path below
             // skips, yet each is one of GDI's stems. r and p are the stroke's two edges.
             if (_stemCount < _stemA.Length) { _stemA[_stemCount] = r; _stemB[_stemCount] = p; _stemCount++; }
-            // PHASE tree: record p's placement PARENT (the reference it was measured from), as GDI's
-            // AddDistance does. First parent wins; IP fills the second. Drives ExecutePhaseControl.
-            if ((uint) p < (uint) _phaseP0.Length && _phaseP0[p] < 0) _phaseP0[p] = r;
             if (!IsHorizontalFreedom) return;
             // The INDIVIDUAL link (r -> p), kept as its own pair. The union-find below merges the
             // whole glyph's links into features, but GDI's stem records are one link each -- an 'H'
@@ -1726,8 +1728,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_ctPhaseFactor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FACTOR"), out int pf) ? pf : 0;
 
-        // phase for a root point = x * ctFrac, ctFrac = (ctFactor-1) as a fraction of x.
-        private float CtFrac => s_ctPhaseFactor / 1000f;
+        // phase for a phantom = x * ctFrac; ctFrac = (ctFactor-1). Factor is in 1/10000 for a fine
+        // sweep, since the optimum sits near 0.002.
+        private float CtFrac => s_ctPhaseFactor / 10000f;
 
         private int PhaseOf(int p)
         {
@@ -1736,11 +1739,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _phaseDone[p] = true;                 // guard cycles
             int phase;
             int a = _phaseP0[p], b = _phaseP1[p];
-            if (a < 0)                            // root: placed from the phantom
+            if (p >= _realPoints)                 // PHANTOM: the phase originates here (the advance)
                 phase = (int) MathF.Round(_glyphZone.CurX[p] * CtFrac);
-            else if (b < 0)                       // single parent: inherit
+            else if (a < 0)                        // a regular root the program left unanchored: none
+                phase = 0;
+            else if (b < 0)                        // single parent: inherit its phase
                 phase = PhaseOf(a);
-            else                                  // interpolated between two: CalcAvgXPhaseShift
+            else                                   // between two references: interpolate (CalcAvgXPhase)
                 phase = CalcAvgXPhase(a, p, b, PhaseOf(a), PhaseOf(b));
             _phaseVal[p] = phase;
             return phase;
