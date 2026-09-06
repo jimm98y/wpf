@@ -1471,6 +1471,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
             _phaseAnyCycle = false;
+            _phaseApplied = false;
         }
 
         // ---- x features ------------------------------------------------------------------------
@@ -1776,6 +1777,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// reachable from it through links whose ends share the same ORIGINAL x (PhaseAncestor).
         /// Faithful to the original: indices checked and distinct, a cycle marked rather than
         /// recorded, the FIRST parent a point is given wins, and the second slot cleared.</summary>
+        /// <summary>WPF_CT_PHASE_ATIUP=1: run the phase where GDI runs it -- ONCE, from inside the
+        /// glyph program at the first IUP, rather than as a pass over the finished outline.
+        /// itrp_IUP calls ExecutePhaseControl guarded by elem[0x60] (the once-only flag), so the
+        /// displacement lands BEFORE that IUP interpolates and the untouched points are carried
+        /// along with it. A post-pass cannot reproduce that: it moves points the interpolation has
+        /// already placed.</summary>
+        private static readonly bool s_phaseAtIup =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATIUP") == "1";
+
+        private bool _phaseApplied;
+
+        /// <summary>Apply the phase to the live glyph zone, once per glyph. ctFactor is the
+        /// compatible advance over the linear one, as fs_NewGlyph computes it.</summary>
+        internal void ApplyPhaseAtIup()
+        {
+            // NOT ON A COMPOSITE. Our composites are assembled from components that were each
+            // hinted (and so each already phased) by their own HintedProgram call, so phasing the
+            // assembly again applies it twice -- 101 of the 224 EveryAccentedGlyph failures.
+            // GDI reaches composite offsets through scl_CalcComponentOffset, a different path.
+            if (!s_phaseAtIup || _phaseApplied || BiLevelPass || !TrueTypeFont.SubpixelFitting) return;
+            if (_inComposite) return;
+            if (!ClearTypeInfo) return;
+            _phaseApplied = true;
+            int adv = _realPoints + 1;
+            if (adv >= _glyphZone.CurX.Length) return;
+            int linear = _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
+            if (linear <= 0 || CompatibleAdvance64 <= 0) return;
+            _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
+            if (_ctFrac == 0f) return;
+            BuildPhasePartners(_realPoints);
+            Array.Clear(_phaseDone, 0, _phaseDone.Length);
+            for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+            {
+                if (i < _realPoints && (_glyphZone.Tags[i] & TagTouchX) == 0) continue;
+                int ph = PhaseOf(i);
+                if (ph != 0) _glyphZone.CurX[i] += ph;
+            }
+        }
+
+        /// <summary>The partner map used by both phase entry points.</summary>
+        private void BuildPhasePartners(int pointCount)
+        {
+            if (_phasePartner.Length < pointCount + 4) _phasePartner = new int[pointCount + 4];
+            for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
+            if (!s_phasePairs) return;
+            for (int k = 0; k < _linkCount; k++)
+            {
+                int r = _linkA[k], q = _linkB[k];
+                if ((uint) r >= (uint) pointCount || (uint) q >= (uint) pointCount) continue;
+                if (s_phasePairAdjacent && !PhaseAdjacent(r, q, pointCount)) continue;
+                if (_phasePartner[r] < 0 && _phasePartner[q] < 0)
+                { _phasePartner[r] = q; _phasePartner[q] = r; }
+            }
+        }
+
         private void PhaseDistance(int r, int p)
         {
             // GDI records nothing unless the PROJECTION IS ON THE CLEARTYPE (x) AXIS. Every
