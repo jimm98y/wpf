@@ -890,8 +890,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_stemSubpx =
             Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX") == "1";
 
+        /// <summary>Widen a black distance by this many 64ths inside the ppem band below.
+        /// <para>ZERO once the phase pass is doing the work. This was compensation: mode 7
+        /// scaled a fitted outline onto its advance about each feature's CENTRE, which pulls a
+        /// stem's two sides together and leaves stems thin in the band where a stem is about
+        /// one pixel. GDI's phase moves both sides of a paired stem by the SAME amount, so the
+        /// width survives and the fattening is pure harm -- the sweep is monotonic in it
+        /// (0: 4,283,877  2: 4,312,425  4: 4,336,228  6: 4,368,478  8: 4,392,620), the holdout
+        /// agrees (15,662,723 -> 15,464,384) and 128 ratchets improve against 28.</para></summary>
         private static readonly int s_stemFat =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 0 : 6;
         private static readonly int s_stemFatLo =
         // TEN, not eleven. Re-swept after the rasterizer version and the symmetric answer changed
         // the geometry underneath it: 10 measures 77,051 against 11's 77,111, and the ink error at
