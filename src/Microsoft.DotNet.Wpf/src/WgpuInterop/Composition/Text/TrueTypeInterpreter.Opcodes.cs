@@ -848,7 +848,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
 
         /// <summary>Sixty-fourths to add to a control-value stroke weight on the x axis, and the ppem
-        /// range to add them over. Diagnostic only -- see the note in MoveIndirectRelative.</summary>
+        /// range to add them over. Diagnostic only -- see the note in MoveIndirectRelative.
+        /// <para>NOW ZERO. The +6/64 was read off GDI's own coordinates for 'H' at 12ppem under
+        /// XHintMode 6 (70/64 = the control value's 64/64 plus six), but we SHIP XHintMode 5, and
+        /// the note below already says that under mode 5 the addition "disappears into the
+        /// quantiser". Measured under the mode we actually ship, it does not disappear -- it
+        /// costs. Over every size from 8 to 24 (306 rows) turning it off is
+        /// 19,753,494 -> 19,573,677, and the breakdown is as clean as a change gets:
+        /// 21 rows better, ZERO worse, 285 unchanged; only the band's own sizes move
+        /// (10 -19,220, 11 -52,348, 12 -59,405, 13 -48,844); and EVERY face improves
+        /// (Arial -77,020, Consolas -66,819, Segoe UI -22,521, Verdana -8,664, Times -4,793).
+        /// The specimen agrees (5,485,079 -> 5,406,454) and the edge oracle is untouched --
+        /// Verdana 'H'/'I'/'l'/'n' at 12ppem are bit-identical either way, which is the same
+        /// quantiser fact from the other side. This also matches what the note below concluded
+        /// on its own evidence: the width is PER-GLYPH, 'I' ends 5/64 BELOW the control value
+        /// where 'H' ends 6/64 above it, so "any rule that widens every stem is wrong before it
+        /// starts".</para>
+        /// <para>AND YET IT STAYS AT SIX, because the weight sum is the WRONG INSTRUMENT for it:
+        /// turning it off fails 166 tests -- TheWholeRepertoire_CoversTheSamePixelsAsWindows at
+        /// ppem 10, 11, 12 and 13 (the band's own sizes) and EveryGlyph_CoversTheSamePixelsAsWindows
+        /// for 'k', 'N' and others. Those ratchets compare our PIXELS against Windows' per glyph,
+        /// which is stricter and more direct than a sum of |d| over a specimen, and they say the
+        /// +6/64 makes individual glyphs match BETTER even while the aggregate weight gets worse.
+        /// The comment further down predicted exactly this: "The per-glyph parity ratchets do --
+        /// which is how the half-pixel SHPIX cap was caught". So the weight sum can improve while
+        /// pixel parity regresses, and where they disagree the ratchets win.
+        /// WPF_CT_STEMFAT=0 to re-measure.</para></summary>
         private static readonly int s_stemFat =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
         private static readonly int s_stemFatLo =
