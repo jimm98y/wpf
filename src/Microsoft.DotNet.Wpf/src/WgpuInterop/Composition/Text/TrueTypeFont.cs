@@ -1292,8 +1292,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_outlineDumpGid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_OUTLINE_DUMP_GID"), out int og) ? og : -1;
 
+        /// <summary>WPF_CT_PHASE=0 puts the hand-tuned compatible-width correction back.
+        /// <para>GDI does not scale a fitted outline onto its advance the way mode 7 does. It
+        /// runs a PHASE pass -- ExecutePhaseControl, ported in TrueTypeInterpreter -- over the
+        /// tree of which point was placed from which, and that is now what we do too. The two
+        /// mechanisms do the same job, so they must not both run: mode 7 on top of the phase
+        /// stretches an already-stretched glyph and measures twice as bad as neither.</para>
+        /// <para>Measured against mode 7, over the weight report: 5,485,079 -> 4,813,476 on the
+        /// five-size specimen and 19,753,494 -> 17,331,018 on the 306-row 8..24 holdout, so it
+        /// is a 12% gain that GENERALISES rather than a fit to the specimen. On the per-glyph
+        /// ratchets 264 cases improved against 69 that got worse, and not one of the 69 covers
+        /// a different PIXEL from Windows -- every one is "0 pixels covered differently", a
+        /// handful of pixels out by about one ClearType quantization level.</para></summary>
+        internal static readonly bool UseGdiPhase = Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
+
         internal static readonly int CompatibleWidthMode =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 7;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 0 : 7;
 
         /// <summary>Whether a fitted outline is still the glyph it started as.
         /// <para>GRID FITTING MOVES EDGES TO THE GRID -- by definition less than a pixel, plus a
@@ -1690,7 +1705,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// nothing, so it waits with the rest of the phase work rather than dirtying a default
         /// that is currently clean.</summary>
         private static readonly bool s_ctComponentOffset =
-            Environment.GetEnvironmentVariable("WPF_CT_COMPOFF") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_COMPOFF") is { } co ? co == "1"
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         /// <summary>Fit Y ONLY, whatever XHintMode says -- the stage tests' third measurement.
         /// <para>Not a rendering knob: nothing but GdiStageTests sets it, and it exists because

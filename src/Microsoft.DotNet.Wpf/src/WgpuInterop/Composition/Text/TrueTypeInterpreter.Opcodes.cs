@@ -1505,7 +1505,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_runShpixOutline =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "outline"
-            || (Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null && TrueTypeFont.CompatibleWidthMode is 7 or 8 or 9);
+            || (Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null
+                && (Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" || TrueTypeFont.CompatibleWidthMode is 7 or 8 or 9));
 
         /// <summary>WPF_CT_CUTIN_DIV: what the control-value cut-in is divided by in the ClearType
         /// direction. 16 is the paper's sixteenth.</summary>

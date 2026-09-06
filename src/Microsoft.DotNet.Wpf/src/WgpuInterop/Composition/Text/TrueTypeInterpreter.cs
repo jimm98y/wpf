@@ -1118,7 +1118,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
             // Mode 7 of the compatible-width correction moves features by how far the LINEAR
             // advance is from the one the glyph is laid out at, so its run starts with the
-            // advance phantom on the linear advance, unrounded.
+            // advance phantom on the linear advance, unrounded. The phase pass measures the
+            // same distance the same way and wants the same start.
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 2
             : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode is 8 or 9 ? 4 : 0;
 
         /// <summary>MODE 9: the pre-scale of mode 8, with BLACK distances measured on the outline
@@ -1827,10 +1829,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// along with it. A post-pass cannot reproduce that: it moves points the interpolation has
         /// already placed.</summary>
         private static readonly int s_phaseDepth =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEPTH"), out int pd) ? pd : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEPTH"), out int pd) ? pd
+            // 1: the COMPONENTS. With mode 7 gone there is nothing else correcting them, and
+            // phasing the assembly instead leaves each component where its own program put it
+            // (185 accented ratchets fail that way against 145 this way, 159 doing both).
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 1 : 0;
 
         private static readonly bool s_phaseAtIup =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATIUP") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATIUP") is { } ai ? ai == "1"
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         private bool _phaseApplied;
 
@@ -2180,7 +2187,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
 
         private static readonly bool s_phaseWindFlip =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_WIND") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_WIND") is { } pw ? pw == "1"
+            // The sense that makes a stem's two sides one PAIR. Backwards they never pair and
+            // each side takes its own phase: Segoe UI 'H'@12 came out 84 and 82 sixty-fourths
+            // wide against GDI's 75 and 75.
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         /// <summary>WPF_CT_PHASE_GDIPAIR=0 goes back to guessing partners from our own link list
         /// in BuildPhasePartners instead of taking them from AddDistance's param_5.</summary>
