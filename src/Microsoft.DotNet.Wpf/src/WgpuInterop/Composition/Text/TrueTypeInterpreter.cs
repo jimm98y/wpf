@@ -2191,6 +2191,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// measuring and is worse than leaving x alone: structural 3155 against 274. Every division
         /// of this labour has now been tried -- both grids fine (6), positions only (7), widths to a
         /// whole pixel (8), all of it (5) -- and all four are far behind mode 0.</para></summary>
+        /// <summary>WPF_CT_SROUND_SCALE=0 restores the old behaviour: an SROUND period compared
+        /// against a value already multiplied up for the finer ClearType grid.</summary>
+        private static readonly bool s_superRoundScaled =
+            Environment.GetEnvironmentVariable("WPF_CT_SROUND_SCALE") != "0";
+
         private int RoundDistance(int distance, bool position = false, bool mdap = false)
         {
             bool negative = distance < 0;
@@ -2307,11 +2312,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 case RoundMode.Super:
                 case RoundMode.Super45:
                     {
-                        int period = _gs.RoundPeriod;
+                        // THE VALUE HAS ALREADY BEEN SCALED BY `thirds` for the finer ClearType
+                        // grid, so the SROUND period, phase and threshold must be scaled with it --
+                        // they are in the same 26.6 the value was. Without this a font that sets
+                        // its own period rounds a 16x value against a 1x grid, which is not a finer
+                        // grid but a period sixteen times too small.
+                        // GDI does the mirror image: it keeps the value and divides the GRID. Its
+                        // two rounding-function tables (normal at PTR_itrp_RoundToDoubleGrid, the
+                        // ClearType set eight entries later) are the same code with the period
+                        // divided by 16 and the phase HALVED.
+                        // NOTE it is currently a no-op: SROUND is used by 'prep', and 'prep' is
+                        // excluded from the ClearType grid (see s_ctInPrep, measured and worse), so
+                        // every SROUND this specimen reaches has thirds == 1. Kept because it is
+                        // right, and because enabling the ClearType grid anywhere SROUND runs would
+                        // otherwise round a 16x value against a 1x period.
+                        int scale = s_superRoundScaled ? thirds : 1;
+                        int period = _gs.RoundPeriod * scale;
                         if (period <= 0) break;
-                        value = value - _gs.RoundPhase + _gs.RoundThreshold;
+                        int phase = _gs.RoundPhase * scale;
+                        int threshold = _gs.RoundThreshold * scale;
+                        value = value - phase + threshold;
                         value = value >= 0 ? value / period * period : -((-value + period - 1) / period * period);
-                        value += _gs.RoundPhase;
+                        value += phase;
                         break;
                     }
             }
