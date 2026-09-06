@@ -405,7 +405,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     case 0x29: break;                                                   // (unused)
 
-                    case 0x30: ApplyPhaseAtIup(); InterpolateUntouched(false); _iupDone = true; break;  // IUP[y]
+                    // NOT from IUP[y]. itrp_IUP gates ExecutePhaseControl on
+                    //     (gs[0x1c0] & 4) != (axis & 1)
+                    // -- it runs the phase only from the IUP on the CLEARTYPE axis, which is x.
+                    // We ran it from whichever IUP came first and let _phaseApplied keep the
+                    // rest; fonts write IUP[y] before IUP[x], so we phased before any x
+                    // instruction that sits between the two, and GDI phases after all of them.
+                    // WPF_CT_PHASE_IUPY=1 goes back to phasing at whichever comes first.
+                    case 0x30:
+                        if (s_phaseAtIupY) ApplyPhaseAtIup();
+                        InterpolateUntouched(false); _iupDone = true; break;                  // IUP[y]
                     // IUP[x] belongs, and it was worth checking: under ClearType x is fitted only
                     // lightly, so a rasterizer might reasonably leave every point the program did
                     // not explicitly move where the scaling put it. Skipping it costs 759,520 ->
@@ -1353,6 +1362,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_MD_SPEC") == "0";
 
         /// <summary>WPF_CT_SHPIXTOUCH=0 lets a vertical SHPIX move an untouched point.</summary>
+        /// <summary>WPF_CT_PHASE_IUPY=1: let IUP[y] run the phase too, as we used to.</summary>
+        private static readonly bool s_phaseAtIupY =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
+
         private static readonly bool s_shpixNeedsTouch =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIXTOUCH") != "0";
 
