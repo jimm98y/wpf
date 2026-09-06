@@ -1120,7 +1120,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // advance is from the one the glyph is laid out at, so its run starts with the
             // advance phantom on the linear advance, unrounded. The phase pass measures the
             // same distance the same way and wants the same start.
-            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 5
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 6
             : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode is 8 or 9 ? 4 : 0;
 
         /// <summary>MODE 9: the pre-scale of mode 8, with BLACK distances measured on the outline
@@ -1471,6 +1471,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // (The y phantoms below it round to a whole pixel unconditionally.)
                 5 => z.CurX[glyph.PointCount]
                      + (((z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount]) + 2) & ~3),
+                // 6: the same, but the ADVANCE IS TAKEN IN FONT UNITS AND SCALED ONCE.
+                // scl_RoundCurrentSideBearingPnt forms it as (xs[pp2] - xs[pp1]) * xScale, not
+                // as the difference of two already-scaled phantoms, and the two round apart --
+                // the same distinction WPF_MDRP_EXACT draws for a black distance.
+                6 => z.CurX[glyph.PointCount]
+                     + ((Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
 

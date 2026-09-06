@@ -1536,6 +1536,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>Settable, so a test can fit the same glyph both ways in one process and ask
         /// GDI's own pixels which one it used.</para>
         /// <summary>WPF_CT_CUTIN_EXACT=0 goes back to dividing the threshold and testing >=.</summary>
+        /// <summary>WPF_CT_CUTIN_SCOPE=gdi uses GDI's ACTUAL scope for the unrounded cut-in:
+        /// it applies whenever INSTCTRL selector 3 is clear, with no exception for links to a
+        /// PHANTOM point. That is what itrp_MIRP does and it measures WORSE -- 3,845,472 with
+        /// our phantom exception against 3,990,903 with GDI's rule.
+        /// <para>Which is evidence, not noise. The rule is not in doubt; if applying the cut-in
+        /// to a phantom link hurts, our PHANTOMS are not where GDI's are, and that is upstream
+        /// of MIRP. Worth reopening once the phantom setup is read end to end -- the advance is
+        /// right now (lamp grid, WPF_PP2_ROUND=5) but the LSB and the two y phantoms have not
+        /// been checked against scl_RoundCurrentSideBearingPnt's second half, which rounds them
+        /// to WHOLE pixels.</para></summary>
+        private static readonly bool s_cutInGdiScope =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_SCOPE") == "gdi";
+
         private static readonly bool s_cutInExact =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_EXACT") != "0";
 
@@ -1943,7 +1956,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 "black" => linkType == 1,
                 _ => !phantomLink,
             };
-            bool cutInApplies = round || (!BiLevelPass && InClearTypeDirection && !s_cutInRoundedOnly && unroundedScope);
+            // WHEN the unrounded cut-in applies is not a question about phantoms. itrp_MIRP
+            // runs it unconditionally on the ClearType axis while gs[0x88] bit 2 is CLEAR, and
+            // only inside the round branch while it is SET -- and gs[0x88] is itrp_INSTCTRL's
+            // word, so bit 2 is selector 3, NATIVE CLEARTYPE MODE, which we already read.
+            // WPF_CT_CUTIN_SCOPE goes back to the phantom-link guess.
+            bool cutInApplies = round || (!BiLevelPass && InClearTypeDirection && !s_cutInRoundedOnly
+                && (s_cutInGdiScope ? !NativeClearTypeMode : unroundedScope));
             // itrp_MIRP scales the DIFFERENCE, not the threshold, and compares STRICTLY:
             //     off the ClearType axis   cutIn <  (cvt - orig)        -> take the outline
             //     on it                    cutIn < ((cvt - orig) * 16)
