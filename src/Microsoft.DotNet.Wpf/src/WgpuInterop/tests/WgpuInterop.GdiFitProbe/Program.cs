@@ -179,9 +179,12 @@ namespace WgpuInterop.GdiFitProbe
             var px = new byte[W * H * 4];
             Marshal.Copy(bits, px, 0, px.Length);
 
-            // The three lamps of each pixel, as GDI laid them down: a DIB is BGRA, so the blue
-            // byte is the LEFT lamp and the red byte the right. Printed darkest-first so a column
-            // of ink reads as a column of hashes.
+            // The three lamps of each pixel, as GDI laid them down. A DIB is BGRA, and on an
+            // RGB-striped display ClearType's LEFTMOST lamp is RED -- so the left lamp is byte 2
+            // and the right lamp is byte 0, not the other way round. Getting this backwards is the
+            // instrument bug the parity suite's own diagonal probe already caught once (it
+            // compared GDI's red against our blue and called upright bars a diagonal problem), so
+            // the columns below are printed explicitly left to right.
             Console.WriteLine($"   GDI CLEARTYPE PIXELS (pen {PenX}, baseline {Baseline}), '.' = paper:");
             int top = H, bot = -1, left = W, right = -1;
             for (int y = 0; y < H; y++)
@@ -205,7 +208,7 @@ namespace WgpuInterop.GdiFitProbe
                 Console.WriteLine(sb.ToString());
             }
             Console.WriteLine($"     columns {left}..{right} (pen at {PenX}), rows {top}..{bot}");
-            Console.WriteLine("     per-column lamp triples (B G R = left mid right), ink rows only:");
+            Console.WriteLine("     per-column lamp triples (LEFT MID RIGHT, i.e. R G B), ink rows only:");
             for (int x = left; x <= right; x++)
             {
                 var sb = new StringBuilder($"     x{x,2} ");
@@ -213,7 +216,7 @@ namespace WgpuInterop.GdiFitProbe
                 {
                     int o = (y * W + x) * 4;
                     if (px[o] == 0xFF && px[o + 1] == 0xFF && px[o + 2] == 0xFF) continue;
-                    sb.Append($"y{y}:{px[o],3},{px[o + 1],3},{px[o + 2],3}  ");
+                    sb.Append($"y{y}:{px[o + 2],3},{px[o + 1],3},{px[o],3}  ");
                 }
                 Console.WriteLine(sb.ToString());
             }
