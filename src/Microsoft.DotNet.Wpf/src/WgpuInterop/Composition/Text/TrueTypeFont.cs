@@ -2441,6 +2441,62 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // scaled nor left alone but drawn with a different slant; neither rule is known
                 // yet, and the mode-1 tolerance gate that happened to skip them is not it either
                 // (mode 1 is worse than mode 0 for Consolas, and equal elsewhere).
+                else if (CompatibleWidthMode == 13 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    // GDI'S OWN UNIT IS THE LINKED PAIR, read from PhaseShift: when a point has a
+                    // link partner, GDI computes
+                    //     phase = CompDiv(0x20000, (x[partner] + x[p]) * (ctFactor - 1.0))
+                    //           = centre_of_pair * (ctFactor - 1)
+                    // and adds it to BOTH edges. So each STEM -- one link, reference and placed
+                    // point -- moves RIGIDLY by its own centre's displacement. Mode 7 uses the
+                    // union-find FEATURE instead, which chains every link in the glyph together
+                    // ('H's crossbar ties its two stems into one), so a whole letter slides where
+                    // GDI opens the gaps between its stems.
+                    int n13 = glyph.PointCount;
+                    float wanted13 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target13 = (int) MathF.Round(wanted13 * 64f);
+                    if (target13 > 0 && target13 != fitted && n13 > 0)
+                    {
+                        float f13 = target13 / (float) fitted - 1f;
+                        var la = new int[n13 * 2]; var lb = new int[n13 * 2];
+                        int nl = interpreter.ReadXLinks(la, lb);
+                        var disp = new int[n13];
+                        var have = new bool[n13];
+                        for (int k = 0; k < nl; k++)
+                        {
+                            int r = la[k], q = lb[k];
+                            if ((uint) r >= (uint) n13 || (uint) q >= (uint) n13) continue;
+                            int d = (int) MathF.Round((glyph.X[r] + glyph.X[q]) * 0.5f * f13);
+                            if (!have[r]) { disp[r] = d; have[r] = true; }
+                            if (!have[q]) { disp[q] = d; have[q] = true; }
+                        }
+                        int anchored = 0;
+                        for (int i = 0; i < n13; i++) if (have[i]) anchored++;
+                        if (anchored > 0)
+                        {
+                            // Everything the pairs did not place is carried between them, in x.
+                            var ord = new int[anchored];
+                            for (int i = 0, k = 0; i < n13; i++) if (have[i]) ord[k++] = i;
+                            Array.Sort(ord, (x1, x2) => glyph.X[x1].CompareTo(glyph.X[x2]));
+                            for (int i = 0; i < n13; i++)
+                            {
+                                if (have[i]) continue;
+                                int x = glyph.X[i];
+                                if (x <= glyph.X[ord[0]]) { disp[i] = disp[ord[0]]; continue; }
+                                if (x >= glyph.X[ord[^1]]) { disp[i] = disp[ord[^1]]; continue; }
+                                int k = 1;
+                                while (glyph.X[ord[k]] < x) k++;
+                                int aa = ord[k - 1], bb = ord[k];
+                                int span = glyph.X[bb] - glyph.X[aa];
+                                disp[i] = span <= 0 ? disp[aa]
+                                    : disp[aa] + (int) MathF.Round((disp[bb] - disp[aa]) * (x - glyph.X[aa]) / (float) span);
+                            }
+                            for (int i = 0; i < n13; i++) glyph.X[i] += disp[i];
+                            if (glyph.X.Length > glyph.PointCount + 1)
+                                glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target13;
+                        }
+                    }
+                }
                 else if (CompatibleWidthMode == 12 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
                     float wanted12 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
