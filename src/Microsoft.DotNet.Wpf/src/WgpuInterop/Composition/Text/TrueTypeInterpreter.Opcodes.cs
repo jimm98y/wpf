@@ -1528,6 +1528,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// direction. 16 is the paper's sixteenth.</summary>
         /// <para>Settable, so a test can fit the same glyph both ways in one process and ask
         /// GDI's own pixels which one it used.</para>
+        /// <summary>WPF_CT_CUTIN_EXACT=0 goes back to dividing the threshold and testing >=.</summary>
+        private static readonly bool s_cutInExact =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_EXACT") != "0";
+
         internal static int s_cutInDivisor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CUTIN_DIV"), out int cd) && cd > 0
                 ? cd : ClearTypeGrid;
@@ -1933,7 +1937,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _ => !phantomLink,
             };
             bool cutInApplies = round || (!BiLevelPass && InClearTypeDirection && !s_cutInRoundedOnly && unroundedScope);
-            if (cutInApplies && _gs.Zp0 == _gs.Zp1 && Math.Abs(value - original) >= cutIn)
+            // itrp_MIRP scales the DIFFERENCE, not the threshold, and compares STRICTLY:
+            //     off the ClearType axis   cutIn <  (cvt - orig)        -> take the outline
+            //     on it                    cutIn < ((cvt - orig) * 16)
+            // Dividing the threshold instead truncates -- the default cut-in is 68, and 68/16
+            // is 4, not 4.25 -- so a difference of exactly 4 discarded a control value GDI
+            // keeps, and >= discarded one more at the boundary itself.
+            bool over = s_cutInExact
+                ? (long) Math.Abs(value - original) * (shrink ? s_cutInDivisor : 1)
+                  > (long) _gs.ControlValueCutIn * stretch
+                : Math.Abs(value - original) >= cutIn;
+            if (cutInApplies && _gs.Zp0 == _gs.Zp1 && over)
             { distance = original; tookControlValue = false; }
             // WPF_CT_NOROUND_X=1: do not round a control-value distance in the ClearType
             // direction. Visual TrueType, driven to Arial 'H' at 9pt/12ppem with pixels shown,
