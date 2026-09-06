@@ -1784,6 +1784,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return cur;
         }
 
+        private int[] _phasePartner = new int[128];
+
         private int PhaseOf(int p)
         {
             if ((uint) p >= (uint) _phaseDone.Length) return 0;
@@ -1791,6 +1793,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _phaseDone[p] = true;                 // guard cycles
             int phase;
             int a = _phaseP0[p], b = _phaseP1[p];
+            // THE PAIR OVERRIDES THE TREE. PhaseShift computes, for a point with a link partner,
+            //     phase = CompDiv(0x20000, (x[partner] + x[p]) * (ctFactor - 1))
+            //           = centre_of_pair * ctFrac
+            // and applies it to BOTH edges, in preference to whatever the parent chain would have
+            // handed down. That is what makes a stem move by ITS OWN centre: Verdana 'n'@12's
+            // right stem (x 355 and 431) wants 393*ctFrac = 21, which is GDI's answer, where
+            // inheriting from the advance phantom gives 486*ctFrac = 26.
+            int mate = p < _phasePartner.Length ? _phasePartner[p] : -1;
+            if (mate >= 0 && mate < _glyphZone.CurX.Length)
+            {
+                phase = (int) MathF.Round((_glyphZone.CurX[p] + _glyphZone.CurX[mate]) * 0.5f * _ctFrac);
+                _phaseVal[p] = phase;
+                return phase;
+            }
             if (p >= _realPoints)                 // PHANTOM: the phase originates here (the advance)
                 phase = (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac);
             else if (a < 0)                        // a regular root the program left unanchored
@@ -1798,7 +1814,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // SAME direct x*(ctFactor-1) the phantoms do (the CompDiv branch reduces to it).
                 phase = s_phaseRootDirect ? (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac) : 0;
             else if (b < 0)                        // single parent: inherit its phase
-                phase = PhaseOf(a);
+            {
+                // ...unless the parent is the LSB phantom, which sits at x = 0, so its phase is
+                // 0*ctFrac = 0 and every point anchored to it inherits NO displacement at all.
+                // Verdana 'n'@12 shows the damage: its left stem gets 0 where mode 7 gives 5, and
+                // the glyph stretches from a dead left edge. Treat that anchor as no anchor.
+                phase = (s_phaseLsbDirect && a >= _realPoints && _glyphZone.CurX[a] == 0)
+                    ? (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac)
+                    : PhaseOf(a);
+            }
             else                                   // between two references: interpolate (CalcAvgXPhase)
                 phase = CalcAvgXPhase(a, p, b, PhaseOf(a), PhaseOf(b));
             _phaseVal[p] = phase;
@@ -1814,6 +1838,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (lo == hi) return (phA + phB) / 2;
             return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
         }
+
+        private static readonly bool s_phasePairs =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PAIRS") != "0";
+
+        private static readonly bool s_phaseLsbDirect =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_LSB") != "0";
 
         private static readonly bool s_phaseRootDirect =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOT") != "0";
@@ -1846,6 +1876,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // 1. Phase the points the program TOUCHED (and the phantoms). GDI runs this from
                 //    itrp_IUP, so only touched points move here.
                 Array.Clear(_phaseDone, 0, _phaseDone.Length);
+                // Build the partner map from the individual links the program made (one link =
+                // one stem: its reference and the point placed from it).
+                if (_phasePartner.Length < pointCount + 4) _phasePartner = new int[pointCount + 4];
+                for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
+                if (s_phasePairs)
+                    for (int k = 0; k < _linkCount; k++)
+                    {
+                        int r = _linkA[k], q = _linkB[k];
+                        if ((uint) r >= (uint) pointCount || (uint) q >= (uint) pointCount) continue;
+                        if (_phasePartner[r] < 0 && _phasePartner[q] < 0)
+                        { _phasePartner[r] = q; _phasePartner[q] = r; }
+                    }
                 for (int i = 0; i < pointCount + 2 && i < x.Length; i++)
                 {
                     if (i < pointCount && (_glyphZone.Tags[i] & TagTouchX) == 0) continue;
@@ -1889,6 +1931,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
             }
             finally { _glyphZone.CurX = saveX; }
+            if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+            {
+                var tb = new System.Text.StringBuilder($"CW11 ctFrac={_ctFrac:0.0000} pts={pointCount}\n");
+                for (int i = 0; i < pointCount && i < x.Length; i++)
+                    tb.Append($"   pt{i,2} pre={pre[i],5} post={x[i],5} d={x[i] - pre[i],4}"
+                        + $" {((_glyphZone.Tags[i] & TagTouchX) != 0 ? "T" : ".")}"
+                        + $" par={_phaseP0[i],3}\n");
+                Console.Error.Write(tb.ToString());
+            }
             return true;
         }
 
