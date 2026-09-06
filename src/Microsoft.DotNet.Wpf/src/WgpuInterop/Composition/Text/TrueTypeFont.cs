@@ -1241,13 +1241,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_cw1Mode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1"), out int c1) ? c1 : 0;
         /// <summary>A one-feature glyph is displaced RIGIDLY by (s-1)*(centre-p0). Above this
-        /// slide (64ths), and for a glyph at least <see cref="s_minFeatInk"/> wide, GDI does NOT
-        /// make that move -- it leaves the letter where the program put it and lets the side
-        /// bearings take up the advance. Verdana 'w'@12 is the case: mode 7 slides it +41/64 and
-        /// the edge oracle's starting error falls from 17,510 to 1,275 when it does not, while the
-        /// glyph still solves EXACTLY, i.e. the edge set is untouched. 36/64 and 4px are a joint
-        /// optimum on the weight specimen (5,485,079 -> 5,433,971) and 256/320/384 all agree, so
-        /// the ink gate is a plateau rather than a knife edge. WPF_CT_MINFEAT_SHIFT / _INK.</summary>
+        /// slide (64ths), and for a glyph at least <see cref="s_minFeatInk"/> wide, the letter is
+        /// left where the program put it and the side bearings take up the advance.
+        /// <para>DEFAULT OFF, because it does NOT generalise. On the specimen's five sizes
+        /// (8/10/12/16/24) it is worth 5,485,079 -> 5,433,971, and on the edge oracle Verdana
+        /// 'w'@12 goes 17,510 -> 1,275 while still solving exactly. But swept over EVERY size from
+        /// 8 to 24 it is a wash or worse: 19,753,494 off against 19,757,566 at 36/64, because the
+        /// three sizes it helps (10, 12, 14 -- two of them specimen sizes, which is why it looked
+        /// like a win) are paid for by the four it hurts (9 +32,325, 13 +15,943, 17 +51,835,
+        /// 18 +255). No threshold beats off over the full range: 28 -> 19,857,658,
+        /// 34 -> 19,771,482, 44 -> 19,853,597, and 56 never fires. Only 11 of 306 rows move at
+        /// all, so this is a size-specific redistribution rather than a correction.
+        /// WPF_CT_MINFEAT_SHIFT / _INK to re-enable.</para></summary>
         private static readonly int s_cwDemean =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_DEMEAN"), out int cwm) ? cwm : 0;
         private static readonly int s_cwSpread =
@@ -1257,9 +1262,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_minFeatS =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_S"), out int mfS) ? mfS : 0;
         private static readonly int s_minFeatInk =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_INK"), out int mfi) ? mfi : 256;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_INK"), out int mfi) ? mfi : 256;   // width gate, only used when _SHIFT is on
         private static readonly int s_minFeatShift =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_SHIFT"), out int mfs) ? mfs : 36;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_SHIFT"), out int mfs) ? mfs : 0;
         private static readonly int s_cw1MinInk =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1_MININK"), out int c1i) ? c1i : 256;
         private static readonly int s_cw1Damp =
