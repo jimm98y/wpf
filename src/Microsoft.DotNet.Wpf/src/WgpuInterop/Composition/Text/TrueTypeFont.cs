@@ -1240,6 +1240,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// at the use site: 0 = rigid slide (shipped), 1 = hold centre and scale, 2 = damped.</summary>
         private static readonly int s_cw1Mode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1"), out int c1) ? c1 : 0;
+        /// <summary>A one-feature glyph is displaced RIGIDLY by (s-1)*(centre-p0). Above this
+        /// slide (64ths), and for a glyph at least <see cref="s_minFeatInk"/> wide, GDI does NOT
+        /// make that move -- it leaves the letter where the program put it and lets the side
+        /// bearings take up the advance. Verdana 'w'@12 is the case: mode 7 slides it +41/64 and
+        /// the edge oracle's starting error falls from 17,510 to 1,275 when it does not, while the
+        /// glyph still solves EXACTLY, i.e. the edge set is untouched. 36/64 and 4px are a joint
+        /// optimum on the weight specimen (5,485,079 -> 5,433,971) and 256/320/384 all agree, so
+        /// the ink gate is a plateau rather than a knife edge. WPF_CT_MINFEAT_SHIFT / _INK.</summary>
+        private static readonly int s_minFeatInk =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_INK"), out int mfi) ? mfi : 256;
+        private static readonly int s_minFeatShift =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_SHIFT"), out int mfs) ? mfs : 36;
         private static readonly int s_cw1MinInk =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW1_MININK"), out int c1i) ? c1i : 256;
         private static readonly int s_cw1Damp =
@@ -2478,12 +2490,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // absorb the squeeze' -- a glyph whose program placed fewer than this
                         // many distinct features in x is left where the program put it.
                         int distinct7 = 0;
-                        if (s_minFeatures > 0)
                         {
                             var seen7 = new bool[n7];
                             for (int i = 0; i < n7; i++)
                                 if (touched[i] && !seen7[feature[i]]) { seen7[feature[i]] = true; distinct7++; }
-                            if (distinct7 < s_minFeatures && (s_minFeatSqueezeOnly == 0 || s7 < 1f)) touchedCount = 0;
+                        }
+                        if (s_minFeatures > 0)
+                        {
+                            // 1 = only when SQUEEZING, 2 = only when STRETCHING. The measured
+                            // asymmetry: leaving a one-feature glyph where the program put it is
+                            // right when s > 1 ('w' -38,670) and wrong when s < 1 ('l' +79,883,
+                            // 'v' +46,612, 'j' +34,864) -- a glyph being squeezed still has to be
+                            // slid onto its narrower advance, but one being stretched does not get
+                            // dragged along with it.
+                            bool sqOk = s_minFeatSqueezeOnly switch
+                            {
+                                1 => s7 < 1f,
+                                2 => s7 > 1f,
+                                _ => true,
+                            };
+                            if (distinct7 < s_minFeatures && sqOk) touchedCount = 0;
+                        }
+                        // A one-feature glyph is moved RIGIDLY by (s-1)*(centre-p0). That slide is
+                        // what GDI does not do to a wide letter: 'w' is slid +41/64 and GDI leaves
+                        // it within a couple of 64ths of where the program put it. Suppress only
+                        // the LARGE slides, which is the quantity that separates 'w' from the
+                        // narrow glyphs (whose centres are small, so whose slides are small).
+                        int inkA = int.MaxValue, inkB = int.MinValue;
+                        for (int i = 0; i < n7; i++)
+                        {
+                            if (glyph.X[i] < inkA) inkA = glyph.X[i];
+                            if (glyph.X[i] > inkB) inkB = glyph.X[i];
+                        }
+                        // ...and only for a glyph WIDE enough that a slide of that size is a
+                        // displacement of a letter rather than of a single stem: 'l' is one stem
+                        // ~1.7px wide and still wants its slide (+19,192 without this), 'w' is 9px.
+                        if (s_minFeatShift > 0 && touchedCount > 0 && distinct7 == 1
+                            && inkB - inkA >= s_minFeatInk)
+                        {
+                            int f1 = -1;
+                            for (int i = 0; i < n7 && f1 < 0; i++) if (touched[i]) f1 = feature[i];
+                            if (f1 >= 0)
+                            {
+                                float sl = (s7 - 1f) * ((lo7[f1] + hi7[f1]) * 0.5f - p0);
+                                if (MathF.Abs(sl) >= s_minFeatShift) touchedCount = 0;
+                            }
                         }
                         // ONE FEATURE means mode 7's per-feature rigid move degenerates into a
                         // pure TRANSLATION of the whole glyph -- it realizes the compatible width
