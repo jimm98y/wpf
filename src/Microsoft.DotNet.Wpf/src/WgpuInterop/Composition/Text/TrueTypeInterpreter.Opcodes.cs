@@ -150,7 +150,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         SetProjection(op == 0x01);
                         SetFreedom(op == 0x01);
                         break;
-                    case 0x02: case 0x03: SetProjection(op == 0x03); break;             // SPVTCA[a]
+                    case 0x02: case 0x03:                                               // SPVTCA[a]
+                        SetVectorLine(-1, -1); SetProjection(op == 0x03); break;
                     case 0x04: case 0x05: SetFreedom(op == 0x05); break;                // SFVTCA[a]
 
                     case 0x06: case 0x07:                                               // SPVTL[a]
@@ -208,6 +209,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             dy = z1.CurY[p2] - z2.CurY[p1];
                             if (op == 0x87) { int t = dx; dx = -dy; dy = t; }
                             Normalize(dx, dy, out _gs.ProjX, out _gs.ProjY);
+                            SetVectorLine(p2, p1);
                             ResetProjection();
                             break;
                         }
@@ -370,7 +372,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 int p = Pop();
                                 Zone z = ZoneOf(_gs.Zp1);
                                 if (p >= z.PointCount) continue;
-                                LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+                                LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
                             }
                             _gs.Loop = 1;
@@ -1215,7 +1217,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
-            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType);
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType, canProportion: true);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
@@ -2586,6 +2588,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int p1 = Pop(), p2 = Pop();
             Zone z1 = ZoneOf(_gs.Zp1), z2 = ZoneOf(_gs.Zp2);
             if (p1 >= z2.PointCount || p2 >= z1.PointCount) return (0x4000, 0);
+            SetVectorLine(p2, p1);
 
             int dx = z1.CurX[p2] - z2.CurX[p1];
             int dy = z1.CurY[p2] - z2.CurY[p1];

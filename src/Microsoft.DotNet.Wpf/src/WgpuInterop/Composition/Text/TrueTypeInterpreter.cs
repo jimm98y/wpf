@@ -1478,6 +1478,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
             for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
             _phaseGlyphStamp++;
+            _pvPtA = _pvPtB = -1;
             _phaseAnyCycle = false;
             _phaseApplied = false;
         }
@@ -1518,14 +1519,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_linkTypes =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_LINKTYPES"), out int lt) ? lt : 2;
 
-        private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1)
+        /// <summary>localGS+0xce / +0xd0: the two points SPVTL or SDPVTL took the projection
+        /// vector from, or -1 when it is on an axis. GDI keeps them beside the ClearType-x flag at
+        /// +0xcc and MDRP/ALIGNRP consult them before recording anything.</summary>
+        private int _pvPtA = -1, _pvPtB = -1;
+
+        private void SetVectorLine(int a, int b) { _pvPtA = a; _pvPtB = b; }
+
+        /// <summary>InterAlign@180294a80: does p sit between a and b in FONT UNITS?</summary>
+        private bool InterAlign(int a, int p, int b)
+        {
+            int[] x = _glyphZone.OrusX;
+            if ((uint) a >= (uint) x.Length || (uint) b >= (uint) x.Length) return false;
+            if ((uint) p >= (uint) x.Length) return false;
+            int lo = Math.Min(x[a], x[b]), hi = Math.Max(x[a], x[b]);
+            return x[p] >= lo && x[p] <= hi;
+        }
+
+        private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1,
+            bool canProportion = false)
         {
             if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
             // PHASE tree: record p's parent for EVERY link -- any colour, horizontal or diagonal,
             // and even when the reference is a PHANTOM (the advance/lsb). The phase ORIGINATES at
             // the phantoms and flows to whatever was placed from them, so filtering by link colour
             // (as the stem path below does) starves the tree and leaves most of the glyph unmoved.
-            PhaseDistance(r, p, PhaseLinkColour(r, p, distanceType));
+            // MDRP and ALIGNRP do NOT always record a distance. When the projection vector was
+            // taken from a line (SPVTL/SDPVTL) and the point being placed lies BETWEEN that line's
+            // two points, GDI records a PROPORTION instead -- two parents, so the point
+            // interpolates between them. Every other opcode (MIRP, MSIRP, SHP) only ever records a
+            // distance. This is where the density the phase walk needs comes from: a one-parent
+            // chain that bottoms out in a root cannot move at all, but a two-parent node can.
+            if (canProportion && s_phaseInterAlign && _pvPtA >= 0 && _pvPtB >= 0
+                && InterAlign(_pvPtA, p, _pvPtB))
+                PhaseProportion(_pvPtA, p, _pvPtB);
+            else
+                PhaseDistance(r, p, PhaseLinkColour(r, p, distanceType));
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -2132,6 +2161,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private sbyte[] _contourWind;
         private int _contourWindGlyph = -1, _phaseGlyphStamp;
+
+        /// <summary>WPF_CT_PHASE_INTERALIGN=0 drops MDRP/ALIGNRP's proportion branch.</summary>
+        private static readonly bool s_phaseInterAlign =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_INTERALIGN") != "0";
 
         private static readonly bool s_phaseTrace =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
