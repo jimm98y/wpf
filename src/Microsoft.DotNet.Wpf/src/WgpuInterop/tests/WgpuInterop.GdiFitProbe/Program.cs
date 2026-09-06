@@ -158,6 +158,19 @@ namespace WgpuInterop.GdiFitProbe
             Console.WriteLine(sb.ToString());
             Console.WriteLine("     (raw coverage, pre-contrast-curve -- NOT the same space as"
                 + " GDI's final 0 58 102 144 182 219 255)");
+
+            // ...and the same lamps put INTO GDI's space, so the two can actually be diffed. For
+            // black ink on white paper the shipped curve is a gamma-space blend, alpha =
+            // 1 - (1 - c)^(1/g), which leaves the paper-relative pixel at 255 * (1 - c)^(1/g).
+            float g = float.TryParse(Environment.GetEnvironmentVariable("WPF_SUBPIXEL_GAMMA"),
+                                     NumberStyles.Float, CultureInfo.InvariantCulture, out float gg)
+                ? gg : 1.20f;
+            var mapped = new SortedSet<int>();
+            foreach (int v in seen)
+                mapped.Add((int) MathF.Round(255f * MathF.Pow(1f - v / 255f, 1f / g)));
+            Console.WriteLine("     through the curve (gamma " + g.ToString("0.00", CultureInfo.InvariantCulture)
+                + "), as pixels: " + string.Join(" ", mapped));
+            Console.WriteLine("     GDI's final levels:                    0 58 102 144 182 219 255");
         }
 
         private static void DumpPoints(List<PathFigure> figures)
