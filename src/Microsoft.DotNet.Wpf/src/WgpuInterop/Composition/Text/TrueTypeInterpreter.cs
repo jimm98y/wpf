@@ -2042,7 +2042,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     ldrh w8,[x19,#0xcc] ; cbz w8, skip ; ldrh w8,[x22,#0x1c0] ; tbz w8,#1, skip
             // We had been recording every link, diagonal ones included, which fed the tree
             // relationships GDI never puts in it.
-            if (s_phaseXAxisOnly && !InClearTypeDirection) return;
+            if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
@@ -2100,7 +2100,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// parent slots are still empty -- the first proportion a point is given wins.</summary>
         private void PhaseProportion(int a, int placed, int b)
         {
-            if (s_phaseXAxisOnly && !InClearTypeDirection) return;   // same gate as AddDistance
+            if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;   // same gate as AddDistance
             int n = _realPoints + 4;
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
@@ -2350,6 +2350,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// with 112 ratchets improved against 19 worse.</para></summary>
         /// <summary>WPF_CT_PHASE_XONLY=0 records the phase tree for every link, as we used to.
         /// GDI records only on the ClearType x axis (localGS+0xcc at every call site).</summary>
+        /// <summary>WPF_CT_PHASE_AXIS=exact records the phase tree only where localGS+0xcc is
+        /// set -- an axis-EXACT projection, which is what AddDistance and AddProportion really
+        /// test. GDI's rule, and it measures WORSE: 4,067,369 against 3,605,604 for recording
+        /// on any horizontal-ish projection. Recording the DIAGONAL links GDI leaves out is
+        /// worth 462k to us, so something upstream of the tree differs. See the census note on
+        /// OnClearTypeAxis.</summary>
+        private static readonly bool s_phaseAxisExact =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_AXIS") == "exact";
+
         private static readonly bool s_phaseXAxisOnly =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_XONLY") != "0";
 
@@ -2568,7 +2577,65 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// moot for this face, and whatever those glyphs disagree about, it is not this.</para>
         /// </summary>
         private bool IsHorizontalProjection
-            => (_gs.ProjX < 0 ? -_gs.ProjX : _gs.ProjX) > (_gs.ProjY < 0 ? -_gs.ProjY : _gs.ProjY);
+        {
+            get
+            {
+                bool loose = (_gs.ProjX < 0 ? -_gs.ProjX : _gs.ProjX)
+                           > (_gs.ProjY < 0 ? -_gs.ProjY : _gs.ProjY);
+                if (s_projCensus && loose && !_inPreProgram)
+                {
+                    var key = (_gs.ProjX, _gs.ProjY);
+                    lock (s_projSeen)
+                    {
+                        if (!s_censusHooked)
+                        {
+                            s_censusHooked = true;
+                            AppDomain.CurrentDomain.ProcessExit += (_, _) => DumpProjCensus();
+                        }
+                        s_projSeen.TryGetValue(key, out long n); s_projSeen[key] = n + 1;
+                        if (++s_censusCount == 5000) DumpProjCensus();
+                    }
+                }
+                return loose;
+            }
+        }
+
+        /// <summary>localGS+0xcc exactly: itrp_SVTCA_1 writes 1 only when ClearType is on with
+        /// its axis on x, and SPVTL/SDPVTL only when the vector is EXACTLY (0x4000, 0). The
+        /// AddDistance and AddProportion call sites test this slot, not "mostly horizontal".
+        /// <para>Census (WPF_PROJ_CENSUS=1): of 159,581 horizontal-ish projections in the weight
+        /// run, 139,660 are axis-EXACT and the rest are real diagonals about 12 degrees off.
+        /// </para></summary>
+        internal bool OnClearTypeAxis =>
+            ClearTypeInfo && (s_ctInPrep || !_inPreProgram)
+            && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+
+        private static readonly bool s_projCensus =
+            Environment.GetEnvironmentVariable("WPF_PROJ_CENSUS") == "1";
+
+        private static bool s_censusHooked;
+        private static long s_censusCount;
+
+        internal static readonly System.Collections.Generic.Dictionary<(int, int), long> s_projSeen = new();
+
+        internal static void DumpProjCensus()
+        {
+            if (!s_projCensus) return;
+            lock (s_projSeen)
+            {
+                long total = 0, exact = 0;
+                foreach (var kv in s_projSeen)
+                {
+                    total += kv.Value;
+                    if (kv.Key.Item1 == 0x4000 && kv.Key.Item2 == 0) exact += kv.Value;
+                }
+                Console.Error.WriteLine($"PROJCENSUS total={total} exact={exact} distinct={s_projSeen.Count}");
+                var top = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<(int, int), long>>(s_projSeen);
+                top.Sort((x, y) => y.Value.CompareTo(x.Value));
+                for (int i = 0; i < top.Count && i < 12; i++)
+                    Console.Error.WriteLine($"PROJ ({top[i].Key.Item1},{top[i].Key.Item2}) {top[i].Value}");
+            }
+        }
 
         /// <summary>Whether the FREEDOM vector points along the ClearType direction.
         /// <para>Which vector a rule keys on is not a detail. The rounding rules are about the
