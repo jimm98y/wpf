@@ -1474,6 +1474,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
 
+            // scl_AdjustOldCharSideBearing@1801d97d0 / scl_AdjustOldPhantomSideBearing: the LSB
+            // phantom's ORIGINAL x is rounded on the same two-way gate as everything else --
+            // a whole pixel off the ClearType axis, a SIXTEENTH on it -- and the REAL points
+            // (0..lastEnd, not the phantoms) are translated by the difference before a single
+            // instruction runs. It is how the glyph is placed against its own origin, and it is
+            // why our left edge kept measuring a sixty-fourth or three right of GDI's.
+            if (s_lsbRound && !glyph.Composite && glyph.PointCount < n)
+            {
+                int pp1 = glyph.PointCount;
+                int org = z.OrgX[pp1];
+                int snapped = SubpixelFittingHere ? (org + 2) & ~3 : (org + 32) & ~63;
+                int delta = snapped - org;
+                if (delta != 0)
+                    for (int i = 0; i < glyph.PointCount; i++)
+                    { z.OrgX[i] += delta; z.CurX[i] += delta; z.InkX[i] += delta; }
+            }
+
             for (int i = 0; i < glyph.EndPoints.Length; i++)
                 z.Contours[i] = glyph.EndPoints[i];
             _contourCount = glyph.EndPoints.Length;
@@ -2191,6 +2208,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_phaseAtExecute =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATEXEC") != "0";
 
+        /// <summary>WPF_CT_LSBROUND=1: round the LSB phantom and translate, as GDI does.</summary>
+        private static readonly bool s_lsbRound =
+            Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") == "1";
+
+        /// <summary>Is the ClearType x grid in force for THIS run?</summary>
+        private static bool SubpixelFittingHere =>
+            TrueTypeFont.SubpixelFitting && !BiLevelPass;
+
         private static readonly bool s_phaseTrace =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
 
@@ -2554,7 +2579,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The delta rules' version of <see cref="InClearTypeDirection"/>, on freedom.</summary>
         internal bool DeltaInClearTypeDirection =>
-            ClearTypeInfo && IsHorizontalFreedom && !_inPreProgram;
+            ClearTypeInfo && !_inPreProgram
+            // itrp_DeltaEngine@180080d28 does not ask whether freedom is MOSTLY horizontal. On
+            // the ClearType x axis it runs a delta only when the freedom vector is EXACTLY
+            //     (0, 0x4000)  -- pure, positive y
+            // and skips everything else, so a diagonal freedom and a pure NEGATIVE y both go
+            // where our |x| > |y| test kept them. WPF_CT_DELTA_FREE=loose restores it.
+            && (s_deltaFreeExact ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000) : IsHorizontalFreedom);
+
+        private static readonly bool s_deltaFreeExact =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_FREE") != "loose";
 
         private int DualProject(int dx, int dy) => DotFix14(dx, dy, _gs.DualX, _gs.DualY);
 

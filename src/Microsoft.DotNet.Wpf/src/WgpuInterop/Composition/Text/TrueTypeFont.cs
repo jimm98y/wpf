@@ -1303,7 +1303,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// is a 12% gain that GENERALISES rather than a fit to the specimen. On the per-glyph
         /// ratchets 264 cases improved against 69 that got worse, and not one of the 69 covers
         /// a different PIXEL from Windows -- every one is "0 pixels covered differently", a
-        /// handful of pixels out by about one ClearType quantization level.</para></summary>
+        /// handful of pixels out by about one ClearType quantization level.</para>
+        /// <para>WPF_CT_PHASE=0 restores MODE 7, not the exact number that shipped before the
+        /// phase. It was bit-identical at 5,485,079 to begin with, and drifts as later rules
+        /// that have nothing to do with the phase land unconditionally -- itrp_DeltaEngine's
+        /// freedom test was the first, taking it to 5,481,176 (an improvement: the fix is right
+        /// either way). Rules that exist only to compensate for one mechanism or the other ARE
+        /// gated on this flag; rules that are simply correct are not.</para></summary>
         internal static readonly bool UseGdiPhase = Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
 
         internal static readonly int CompatibleWidthMode =
