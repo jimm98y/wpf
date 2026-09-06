@@ -1103,6 +1103,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static int CompatibleAdvance64;
 
+        /// <summary>Composite recursion depth of the glyph being hinted: 0 for a glyph asked for
+        /// directly, 1+ for a component of a composite. WPF_CT_PHASE_DEPTH selects which of them
+        /// the phase runs for.</summary>
+        internal static int HintDepth;
+
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
             // Mode 7 of the compatible-width correction moves features by how far the LINEAR
@@ -1783,6 +1788,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// displacement lands BEFORE that IUP interpolates and the untouched points are carried
         /// along with it. A post-pass cannot reproduce that: it moves points the interpolation has
         /// already placed.</summary>
+        private static readonly int s_phaseDepth =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEPTH"), out int pd) ? pd : 0;
+
         private static readonly bool s_phaseAtIup =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATIUP") == "1";
 
@@ -1797,7 +1805,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // assembly again applies it twice -- 101 of the 224 EveryAccentedGlyph failures.
             // GDI reaches composite offsets through scl_CalcComponentOffset, a different path.
             if (!s_phaseAtIup || _phaseApplied || BiLevelPass || !TrueTypeFont.SubpixelFitting) return;
-            if (_inComposite) return;
+            // s_phaseDepth: 0 = only a top-level glyph (components are phased by their own run
+            // and the assembly would apply it a second time), 1 = only components, 2 = both.
+            if (s_phaseDepth == 0 && HintDepth > 0) return;
+            if (s_phaseDepth == 1 && HintDepth == 0 && _inComposite) return;
             if (!ClearTypeInfo) return;
             _phaseApplied = true;
             int adv = _realPoints + 1;

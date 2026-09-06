@@ -2157,6 +2157,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // The advance the glyph will be LAID OUT at, for advance-phantom mode 3. Never asked
             // for during a bi-level pass: that pass is how this number is computed in the first
             // place, and asking from inside it recurses.
+            // The phase belongs to ONE glyph program. A composite's components are each hinted by
+            // their own HintedProgram(depth + 1) call, so without this every component is phased
+            // and the assembly inherits the sum -- which is 101 of the accented-glyph ratchets.
+            int savedDepth = TrueTypeInterpreter.HintDepth;
+            TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
                 TrueTypeInterpreter.CompatibleAdvance64 =
@@ -2167,6 +2172,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 TrueTypeInterpreter.BiLevelPass = savedBi;
                 TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
+                TrueTypeInterpreter.HintDepth = savedDepth;
             }
             if (!hinted) return null;
 
