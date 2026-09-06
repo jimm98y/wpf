@@ -251,6 +251,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// we used to. itrp_Normalize forms it in ONE rounded division and the second rounding
         /// could land an LSB low, tilting every diagonal: 3,605,604 -> 3,602,444 on the
         /// specimen, 12,621,181 -> 12,606,533 on the holdout, no ratchet moves.</summary>
+        /// <summary>WPF_CT_GRID_AXIS=exact rounds on the lamp grid only where localGS+0xcc is
+        /// set, i.e. never for a diagonal projection -- which is what itrp_MIRP does inline.</summary>
+        private static readonly bool s_gridAxisExact =
+            Environment.GetEnvironmentVariable("WPF_CT_GRID_AXIS") == "exact";
+
         private static readonly bool s_normDirect =
             Environment.GetEnvironmentVariable("WPF_CT_NORM") != "twostep";
 
@@ -2905,7 +2910,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        : physicalPosition ? 1
                        : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
-                       : InClearTypeDirection ? ClearTypeGrid
+                       : (s_gridAxisExact ? OnClearTypeAxis : InClearTypeDirection) ? ClearTypeGrid
                        : 1;
             // A SNAP ZONE was tried here -- pull a value onto a whole pixel when it lands within a
             // few 64ths of one, leave it alone otherwise. It is the one mechanism that would explain
