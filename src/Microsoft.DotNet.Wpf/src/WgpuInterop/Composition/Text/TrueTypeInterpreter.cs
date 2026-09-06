@@ -160,8 +160,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static int ScaleUnits(int fontUnits, int scale16)
         {
             long v = (long)fontUnits * scale16;
+            // itrp_GetCVTEntrySlow forms it as (v + (v >> 63) + 0x8000) >> 16. The middle term
+            // is -1 for a NEGATIVE product and 0 otherwise, so a value whose fraction is exactly
+            // a half rounds AWAY from zero on both sides; without it a negative half rounds up
+            // and the two sides of the origin are not treated alike. Scale runs on every control
+            // value and every point coordinate, so the difference is one 64th almost anywhere.
             return (int)((v + 0x8000) >> 16);
         }
+
+        /// <summary>A CONTROL VALUE is not scaled the way a point is. itrp_GetCVTEntrySlow
+        /// forms it as (v + (v >> 63) + 0x8000) >> 16 -- the middle term is -1 for a negative
+        /// product, so an exact half rounds AWAY from zero on both sides. The point scalers
+        /// (scl_ScaleOldCharPoints and its phantom twin) use a different multiply-and-shift
+        /// with no such term, so this belongs to the control values alone -- applying it to
+        /// both measures 3,634,447 against 3,598,948.
+        /// <para>AND IT MEASURES WORSE HERE, so it is OFF: 3,614,199 against 3,598,948. The
+        /// reading that fits is that GDI does not take this path for our sizes at all --
+        /// itrp_GetCVTEntryFast returns the stored value with NO scaling, so the array it reads
+        /// is already scaled and the rounding that produced it happened somewhere we have not
+        /// found. GetCVTEntrySlow is the fallback, not the common case, and mapping its
+        /// arithmetic onto our pre-scaling is putting it in the wrong place.</para>
+        /// <para>WPF_CT_CVTROUND=away turns it on.</para></summary>
+        internal static int ScaleControlValue(int fontUnits, int scale16)
+        {
+            long v = (long)fontUnits * scale16;
+            if (s_cvtHalfAway) v += v >> 63;
+            return (int)((v + 0x8000) >> 16);
+        }
+
+        private static readonly bool s_cvtHalfAway =
+            Environment.GetEnvironmentVariable("WPF_CT_CVTROUND") == "away";
 
         /// <summary>Font units to 26.6 pixels at the size last prepared, rounded the way Windows'
         /// rasterizer rounds them (<see cref="ScaleUnits"/>).</summary>
@@ -1361,7 +1389,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_scaledCvt.Length != _controlValues.Length)
                 _scaledCvt = new int[_controlValues.Length];
             for (int i = 0; i < _controlValues.Length; i++)
-                _scaledCvt[i] = Scale(_controlValues[i]);
+                _scaledCvt[i] = ScaleControlValue(_controlValues[i], _scale);
         }
 
         private void ResetGraphicsState()
