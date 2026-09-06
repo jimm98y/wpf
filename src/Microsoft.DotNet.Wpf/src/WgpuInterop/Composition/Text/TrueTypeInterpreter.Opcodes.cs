@@ -310,10 +310,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // is a real gap: MIAP is what places the left edge of a round glyph
                                 // against a control value, and round glyphs are exactly the ones the
                                 // per-glyph offset probe finds half a pixel out at 11ppem.
-                                int miapCutIn = InClearTypeDirection && !s_cutInFull && !BiLevelPass
-                                    ? _gs.ControlValueCutIn / ClearTypeGrid
-                                    : _gs.ControlValueCutIn;
-                                if (Math.Abs(value - here) > miapCutIn) value = here;
+                                // ...and the sixteen scales the DIFFERENCE, not the threshold,
+                                // for the reason MIRP's does: 68/16 truncates to 4 rather than
+                                // 4.25, so a difference of exactly 4 threw the control value away.
+                                bool miapShrink = InClearTypeDirection && !s_cutInFull && !BiLevelPass;
+                                bool miapOver = s_cutInExact
+                                    ? (long) Math.Abs(value - here) * (miapShrink ? ClearTypeGrid : 1)
+                                      > _gs.ControlValueCutIn
+                                    : Math.Abs(value - here)
+                                      > (miapShrink ? _gs.ControlValueCutIn / ClearTypeGrid
+                                                    : _gs.ControlValueCutIn);
+                                if (miapOver) value = here;
                                 value = RoundDistance(value, position: true);
                             }
                             MovePoint(z, p, value - here);
