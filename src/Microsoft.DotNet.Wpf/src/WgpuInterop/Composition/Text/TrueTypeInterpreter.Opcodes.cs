@@ -876,6 +876,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// WPF_CT_STEMFAT=0 to re-measure.</para></summary>
         /// <summary>WPF_CT_STEMSUBPX=1: take a black stem's ClearType width from the OUTLINE,
         /// floored to a whole subpixel. See the note at the use site.</summary>
+        private static readonly int s_stemSubpxRound =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX_ROUND"), out int sr) ? sr : 0;
+
+        private static readonly bool s_stemSubpxAdj =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX_ADJ") != "0";
+
         private static readonly bool s_stemSubpx =
             Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX") == "1";
 
@@ -1924,11 +1930,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // measures the stroke rather than the control value. This is the surgical form of that:
             // XHintMode 14 expresses the same idea but moves POSITIONS onto the third grid as well
             // and fails 361 tests, so change only the width.
+            // ...and only for a link GDI would call a STEM. DoubleCheckLinkColor accepts a pair
+            // only when the two points are ADJACENT ON THE SAME CONTOUR and the segment between
+            // them is no steeper than 2:1 -- which is exactly a stroke's two sides joined across
+            // its end ('H's stem edges are adjacent across the stem's foot). Without this the rule
+            // fires on every black link, most of which are spacing rather than weight.
             if (s_stemSubpx && !BiLevelPass && InClearTypeDirection && tookControlValue
-                && _gs.Zp0 == _gs.Zp1 && !phantomLink && linkType == 1)
+                && _gs.Zp0 == _gs.Zp1 && !phantomLink && linkType == 1
+                && (!s_stemSubpxAdj || PhaseAdjacent(_gs.Rp0, p, _realPoints)))
             {
                 int mag = original < 0 ? -original : original;
-                int thirds = (int) ((long) mag * 3 / 64);          // floor to whole subpixels
+                int thirds = s_stemSubpxRound == 1 ? (int) (((long) mag * 3 + 32) / 64)
+                           : s_stemSubpxRound == 2 ? (int) (((long) mag * 3 + 63) / 64)
+                           : (int) ((long) mag * 3 / 64);         // 0 floor, 1 nearest, 2 ceil
                 int snapped = (int) ((long) thirds * 64 / 3);
                 if (snapped > 0) distance = original < 0 ? -snapped : snapped;
             }
