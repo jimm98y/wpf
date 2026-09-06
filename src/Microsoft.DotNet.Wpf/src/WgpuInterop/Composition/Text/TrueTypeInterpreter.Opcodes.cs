@@ -149,9 +149,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x00: case 0x01:                                               // SVTCA[a]
                         SetProjection(op == 0x01);
                         SetFreedom(op == 0x01);
+                        LatchClearTypeAxis();
                         break;
                     case 0x02: case 0x03:                                               // SPVTCA[a]
-                        SetVectorLine(-1, -1); SetProjection(op == 0x03); break;
+                        SetVectorLine(-1, -1); SetProjection(op == 0x03); LatchClearTypeAxis(); break;
                     case 0x04: case 0x05: SetFreedom(op == 0x05); break;                // SFVTCA[a]
 
                     case 0x06: case 0x07:                                               // SPVTL[a]
@@ -160,6 +161,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             _gs.ProjX = _gs.DualX = vx;
                             _gs.ProjY = _gs.DualY = vy;
                             ResetProjection();
+                            LatchClearTypeAxis();
                             break;
                         }
                     case 0x08: case 0x09:                                               // SFVTL[a]
@@ -211,6 +213,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             Normalize(dx, dy, out _gs.ProjX, out _gs.ProjY);
                             SetVectorLine(p2, p1);
                             ResetProjection();
+                            LatchClearTypeAxis();
                             break;
                         }
 
@@ -1576,6 +1579,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_cutInExact =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_EXACT") != "0";
 
+        /// <summary>WPF_CT_CUTIN_AXIS=exact scales the cut-in only on an axis-EXACT projection,
+        /// which is what itrp_MIRP's localGS+0xcc branch does.</summary>
+        private static readonly bool s_cutInAxisExact =
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_AXIS") == "exact";
+
         internal static int s_cutInDivisor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CUTIN_DIV"), out int cd) && cd > 0
                 ? cd : ClearTypeGrid;
@@ -1872,7 +1880,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // though the round-off flag would require not doing so ... we assume that the context is
             // a STROKE WEIGHT", which is an UNROUNDED MIRP. A rounded one is spacing, and spacing
             // would keep the cut-in the face asked for.
-            bool shrink = !s_cutInFull && !BiLevelPass && InClearTypeDirection
+            bool shrink = !s_cutInFull && !BiLevelPass
+                          && (s_cutInAxisExact ? OnClearTypeAxis : InClearTypeDirection)
                           && !(s_cutInUnroundedOnly && round);
             int cutIn = (shrink ? _gs.ControlValueCutIn / s_cutInDivisor
                                 : _gs.ControlValueCutIn) * stretch;

@@ -461,6 +461,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _gs.ProjX = _gs.FreeX = _gs.DualX = 0x4000;
                     _gs.ProjY = _gs.FreeY = _gs.DualY = 0;
                     ResetProjection();
+                    LatchClearTypeAxis();
 
                     // The dump covers the GLYPH's own program only: the font program and prep run
                     // hundreds of instructions that are the same for every glyph and drown it.
@@ -2633,7 +2634,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </para></summary>
         internal bool OnClearTypeAxis =>
             ClearTypeInfo && (s_ctInPrep || !_inPreProgram)
-            && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+            && (s_ctAxisLatched ? _ctAxisFlag : _gs.ProjX == 0x4000 && _gs.ProjY == 0);
+
+        /// <summary>localGS+0xcc is LATCHED, not recomputed. Only five handlers write it --
+        /// itrp_SVTCA_0/_1, itrp_SPVTCA_0/_1, itrp_SPVTL and itrp_SDPVTL -- and SPVFS is NOT
+        /// among them, so setting the projection vector from the stack leaves the flag saying
+        /// whatever the last of those said. Recomputing it from the current vector, as we did,
+        /// is therefore not the same predicate at all.</summary>
+        private bool _ctAxisFlag;
+
+        internal void LatchClearTypeAxis()
+            => _ctAxisFlag = ClearTypeInfo && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+
+        private static readonly bool s_ctAxisLatched =
+            Environment.GetEnvironmentVariable("WPF_CT_AXIS_LATCH") != "0";
 
         private static readonly bool s_projCensus =
             Environment.GetEnvironmentVariable("WPF_PROJ_CENSUS") == "1";
