@@ -139,7 +139,13 @@ namespace WgpuInterop.GdiFitProbe
             if (m.IsEmpty) { Console.WriteLine("   OUR LAMPS: (empty)"); return; }
 
             var seen = new SortedSet<int>();
-            for (int i = 0; i < m.Rgba.Length; i++) seen.Add(m.Rgba[i]);
+            // RGB ONLY. The fourth byte is the ALPHA the compositor blends with -- the average
+            // of the three lamps -- so scanning it mixes two different quantities and invents
+            // levels that no lamp ever holds. (It cost me a wrong conclusion: with alpha in,
+            // the list showed 28 and 198, which are off the ladder three-level lamps through a
+            // three-tap box can produce, and looked like a broken quantiser.)
+            for (int i = 0; i + 3 < m.Rgba.Length; i += 4)
+            { seen.Add(m.Rgba[i]); seen.Add(m.Rgba[i + 1]); seen.Add(m.Rgba[i + 2]); }
             Console.WriteLine($"   OUR LAMPS: {m.Width}x{m.Height} at ({m.OriginX},{m.OriginY}), "
                 + $"{seen.Count} distinct lamp values");
             var sb = new StringBuilder("     values: ");
