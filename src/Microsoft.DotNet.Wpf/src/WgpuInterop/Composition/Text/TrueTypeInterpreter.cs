@@ -460,7 +460,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
                 if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting) ColorStems();
                 if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting) ValidateColoring();
-                if (s_ctPhase && !BiLevelPass && TrueTypeFont.SubpixelFitting) ApplyPhaseControl();
+                if (s_ctPhase != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting) ApplyPhaseControl();
                 if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
@@ -1505,13 +1505,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1)
         {
-            if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
-            // PHASE tree: record p's parent even when the reference is a PHANTOM (the advance/lsb),
-            // because the phase ORIGINATES at the phantoms and flows to points placed from them --
-            // rejecting phantom refs (as the stem path does below) would starve the whole tree.
+            // PHASE tree: record p's parent for EVERY link -- any colour, horizontal or diagonal,
+            // and even when the reference is a PHANTOM (the advance/lsb). The phase ORIGINATES at
+            // the phantoms and flows to whatever was placed from them, so filtering by link colour
+            // (as the stem path below does) starves the tree and leaves most of the glyph unmoved.
             if ((uint) p < (uint) _phaseP0.Length && (uint) r < (uint) _phaseP0.Length && _phaseP0[p] < 0)
                 _phaseP0[p] = r;
+            if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
             // strokes are placed by diagonal MIRPs (SDPVTL) that the horizontal-only path below
@@ -1736,15 +1737,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// x*(ctFactor-1); a point with one parent inherits it; a point interpolated between two
         /// (an IP) gets the linear interpolation of its parents' phases. The phase is added to x.
         /// ctFactor is WPF_CT_PHASE_FACTOR in thousandths (default 0 -> off effect until tuned).</summary>
-        private static readonly bool s_ctPhase =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE") == "1";
+        private static readonly int s_ctPhase =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE"), out int pm) ? pm : 0;
 
         private static readonly int s_ctPhaseFactor =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FACTOR"), out int pf) ? pf : 0;
 
-        // phase for a phantom = x * ctFrac; ctFrac = (ctFactor-1). Factor is in 1/10000 for a fine
-        // sweep, since the optimum sits near 0.002.
-        private float CtFrac => s_ctPhaseFactor / 10000f;
+        // phase for a phantom = x * ctFrac; ctFrac = (ctFactor-1) in GDI's terms. fs_NewGlyph
+        // computes ctFactor per GLYPH as |FixDiv(A,B)| of two advance-like quantities (default
+        // 1.0), so mode 2/3 derive it from this glyph's advances; mode 1 keeps the swept constant.
+        private float _ctFrac;
 
         private int PhaseOf(int p)
         {
@@ -1754,9 +1756,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int phase;
             int a = _phaseP0[p], b = _phaseP1[p];
             if (p >= _realPoints)                 // PHANTOM: the phase originates here (the advance)
-                phase = (int) MathF.Round(_glyphZone.CurX[p] * CtFrac);
-            else if (a < 0)                        // a regular root the program left unanchored: none
-                phase = 0;
+                phase = (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac);
+            else if (a < 0)                        // a regular root the program left unanchored
+                // GDI gives it 0 only when PhaseShift's param_3 is clear; otherwise it takes the
+                // SAME direct x*(ctFactor-1) the phantoms do (the CompDiv branch reduces to it).
+                phase = s_phaseRootDirect ? (int) MathF.Round(_glyphZone.CurX[p] * _ctFrac) : 0;
             else if (b < 0)                        // single parent: inherit its phase
                 phase = PhaseOf(a);
             else                                   // between two references: interpolate (CalcAvgXPhase)
@@ -1775,12 +1779,122 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
         }
 
+        private static readonly bool s_phaseRootDirect =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ROOT") != "0";
+
         private static readonly bool s_ctPhaseRaw =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_BASE") == "raw";
 
+        /// <summary>GDI's ACTUAL compatible-width mechanism, from fs_NewGlyph: ctFactor =
+        /// |FixDiv(deviceAdvance, linearAdvance)| and every point is displaced by
+        /// x*(ctFactor-1) propagated through the PLACEMENT TREE -- the phase originates at the
+        /// phantoms, a one-parent point inherits it, an interpolated point interpolates it.
+        /// This is what CompatibleWidthMode 7 approximates with feature centres.
+        /// <para>Returns false when there is no tree to propagate through.</para></summary>
+        internal bool ApplyCompatPhase(int[] x, int pointCount, float ctFactor)
+        {
+            if (_phaseP0.Length < pointCount + 4 || _realPoints != pointCount) return false;
+            _ctFrac = ctFactor - 1f;
+            if (_ctFrac == 0f) return true;
+            // Phase reads the CURRENT x of the phantoms and of the interpolation references, so
+            // point it at the caller's array (which is the fitted outline about to be corrected).
+            int[] saveX = _glyphZone.CurX;
+            var pre = new int[x.Length];
+            Array.Copy(x, pre, x.Length);
+            var tmp = new int[saveX.Length];
+            Array.Copy(saveX, tmp, saveX.Length);
+            for (int i = 0; i < x.Length && i < tmp.Length; i++) tmp[i] = x[i];
+            _glyphZone.CurX = tmp;
+            try
+            {
+                // 1. Phase the points the program TOUCHED (and the phantoms). GDI runs this from
+                //    itrp_IUP, so only touched points move here.
+                Array.Clear(_phaseDone, 0, _phaseDone.Length);
+                for (int i = 0; i < pointCount + 2 && i < x.Length; i++)
+                {
+                    if (i < pointCount && (_glyphZone.Tags[i] & TagTouchX) == 0) continue;
+                    int ph = PhaseOf(i);
+                    if (ph != 0) { x[i] += ph; tmp[i] = x[i]; }
+                }
+                // 2. ...and then IUP carries the untouched ones between them, which is the half
+                //    that makes the displacement a glyph rather than a scatter.
+                int point = 0;
+                for (int contour = 0; contour < _contourCount; contour++)
+                {
+                    int endPoint = Math.Min(_glyphZone.Contours[contour], pointCount - 1);
+                    int firstPoint = point;
+                    if (endPoint < firstPoint) { point = endPoint + 1; continue; }
+                    while (point <= endPoint && (_glyphZone.Tags[point] & TagTouchX) == 0) point++;
+                    if (point > endPoint) { point = endPoint + 1; continue; }
+                    int firstTouched = point, lastTouched = point;
+                    point++;
+                    while (point <= endPoint)
+                    {
+                        if ((_glyphZone.Tags[point] & TagTouchX) != 0)
+                        {
+                            CarryPhase(x, pre, lastTouched + 1, point - 1, lastTouched, point);
+                            lastTouched = point;
+                        }
+                        point++;
+                    }
+                    // wrap: the span after the last touched point runs back to the first
+                    if (lastTouched != firstTouched)
+                    {
+                        CarryPhase(x, pre, lastTouched + 1, endPoint, lastTouched, firstTouched);
+                        CarryPhase(x, pre, firstPoint, firstTouched - 1, lastTouched, firstTouched);
+                    }
+                    else
+                    {
+                        int d = x[firstTouched] - pre[firstTouched];
+                        for (int i = firstPoint; i <= endPoint; i++)
+                            if (i != firstTouched) x[i] += d;
+                    }
+                    point = endPoint + 1;
+                }
+            }
+            finally { _glyphZone.CurX = saveX; }
+            return true;
+        }
+
+        /// <summary>IUP's carry, but between the PRE-phase and POST-phase positions of the two
+        /// reference points: an untouched point keeps its place in the span it sits in.</summary>
+        private static void CarryPhase(int[] x, int[] pre, int lo, int hi, int a, int b)
+        {
+            if (lo > hi) return;
+            int oa = pre[a], ob = pre[b], na = x[a], nb = x[b];
+            if (oa > ob) { (oa, ob) = (ob, oa); (na, nb) = (nb, na); }
+            int span = ob - oa;
+            for (int i = lo; i <= hi; i++)
+            {
+                int o = pre[i];
+                if (span == 0) { x[i] += na - oa; continue; }
+                if (o <= oa) x[i] += na - oa;
+                else if (o >= ob) x[i] += nb - ob;
+                else x[i] = na + (int) (((long) (o - oa) * (nb - na)) / span);
+            }
+        }
+
         private void ApplyPhaseControl()
         {
-            if (s_ctPhaseFactor == 0 && !s_ctPhaseRaw) return;
+            int adv = _realPoints + 1;              // the advance phantom
+            switch (s_ctPhase)
+            {
+                case 2:                              // ctFactor = natural / hinted advance
+                    _ctFrac = _glyphZone.CurX[adv] == 0 ? 0f
+                        : (float) _glyphZone.OrgX[adv] / _glyphZone.CurX[adv] - 1f;
+                    break;
+                case 3:                              // ctFactor = hinted / natural advance
+                    _ctFrac = _glyphZone.OrgX[adv] == 0 ? 0f
+                        : (float) _glyphZone.CurX[adv] / _glyphZone.OrgX[adv] - 1f;
+                    break;
+                default:
+                    _ctFrac = s_ctPhaseFactor / 10000f;
+                    break;
+            }
+            if (Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEBUG") == "1")
+                Console.Error.WriteLine($"PHASE adv: org={_glyphZone.OrgX[adv]} cur={_glyphZone.CurX[adv]}"
+                    + $" frac={_ctFrac:0.0000} realPts={_realPoints} zoneN={_glyphZone.PointCount}");
+            if (_ctFrac == 0f && !s_ctPhaseRaw) return;
             // TEST OF THE OTHER ARCHITECTURE: GDI may SUPPRESS the bytecode's x-fitting in ClearType
             // and build x from the RAW scaled outline + phase. Start from OrgX (scaled, unfitted) so
             // the phase is not added on top of a base that already embodies it.

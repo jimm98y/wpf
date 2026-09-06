@@ -2416,6 +2416,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // scaled nor left alone but drawn with a different slant; neither rule is known
                 // yet, and the mode-1 tolerance gate that happened to skip them is not it either
                 // (mode 1 is worse than mode 0 for Consolas, and equal elsewhere).
+                else if (CompatibleWidthMode == 11 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    // GDI'S OWN MECHANISM (fs_NewGlyph): ctFactor = deviceAdvance/linearAdvance,
+                    // displacing every point by x*(ctFactor-1) propagated through the interpreter's
+                    // PLACEMENT TREE. Mode 7 approximates this with feature centres; this is the
+                    // thing itself.
+                    float wanted11 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target11 = (int) MathF.Round(wanted11 * 64f);
+                    if (target11 > 0 && target11 != fitted)
+                        interpreter.ApplyCompatPhase(glyph.X, glyph.PointCount, target11 / (float) fitted);
+                }
                 else if (CompatibleWidthMode == 7 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
                     int n7 = glyph.PointCount;
