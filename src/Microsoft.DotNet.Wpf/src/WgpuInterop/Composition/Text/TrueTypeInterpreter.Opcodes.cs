@@ -1363,6 +1363,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_SHPIXTOUCH=0 lets a vertical SHPIX move an untouched point.</summary>
         /// <summary>WPF_CT_PHASE_IUPY=1: let IUP[y] run the phase too, as we used to.</summary>
+        /// <summary>WPF_CT_IUP_REF=scaled interpolates along the SCALED original instead of
+        /// font units. itrp_IUP picks between the two -- its reference array is elem+0x10
+        /// (scaled) when gs[0x196] is set and elem+0x20 (FONT UNITS) when it is clear, where
+        /// gs[0x196] is 0 exactly when gs[0x171] == 0 and the grid fit was handed a non-null
+        /// child-scaling argument. Which branch our rendering takes is not derivable from the
+        /// code alone, so it was measured: font units 3,605,604, scaled 3,662,880. WE ALREADY
+        /// TAKE THE RIGHT ONE. Kept switchable because the answer is a fact about GDI's state,
+        /// not about the rule, and a different rendering path could flip it.</summary>
+        private static readonly bool s_iupRefScaled =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_REF") == "scaled";
+
         private static readonly bool s_phaseAtIupY =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
 
@@ -2428,9 +2439,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!haveScale)
                 {
                     haveScale = true;
-                    scale = DivFix((org2 + delta2) - (org1 + delta1), orus2 - orus1);
+                    // itrp_IUP brackets by the SCALED original and then interpolates along ONE
+                    // reference array, which is the scaled original too unless gs[0x196] is
+                    // clear (a child-scaling case). We always ran the ratio on FONT UNITS.
+                    // WPF_CT_IUP_REF=orus keeps that.
+                    scale = s_iupRefScaled
+                        ? DivFix((org2 + delta2) - (org1 + delta1), org2 - org1)
+                        : DivFix((org2 + delta2) - (org1 + delta1), orus2 - orus1);
                 }
-                cur[i] = org1 + delta1 + MulFix(orus[i] - orus1, scale);
+                cur[i] = org1 + delta1 + MulFix(s_iupRefScaled ? org[i] - org1 : orus[i] - orus1, scale);
             }
         }
 
