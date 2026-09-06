@@ -876,6 +876,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// WPF_CT_STEMFAT=0 to re-measure.</para></summary>
         /// <summary>WPF_CT_STEMSUBPX=1: take a black stem's ClearType width from the OUTLINE,
         /// floored to a whole subpixel. See the note at the use site.</summary>
+        private static readonly bool s_stemSubpxExact =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX_EXACT") != "0";
+
         private static readonly int s_stemSubpxRound =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX_ROUND"), out int sr) ? sr : 0;
 
@@ -1939,12 +1942,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && _gs.Zp0 == _gs.Zp1 && !phantomLink && linkType == 1
                 && (!s_stemSubpxAdj || PhaseAdjacent(_gs.Rp0, p, _realPoints)))
             {
-                int mag = original < 0 ? -original : original;
+                // Quantise the EXACT natural width. `original` comes from OrgX, which is the
+                // scaled outline already rounded into 26.6; the PoC measured GDI against the
+                // unrounded design width, and near a subpixel boundary that rounding decides
+                // which way floor() falls. MeasureOriginalExact keeps the font units.
+                int exact = s_stemSubpxExact ? MeasureOriginalExact(_gs.Zp1, p, _gs.Zp0, _gs.Rp0) : original;
+                int mag = exact < 0 ? -exact : exact;
                 int thirds = s_stemSubpxRound == 1 ? (int) (((long) mag * 3 + 32) / 64)
                            : s_stemSubpxRound == 2 ? (int) (((long) mag * 3 + 63) / 64)
                            : (int) ((long) mag * 3 / 64);         // 0 floor, 1 nearest, 2 ceil
                 int snapped = (int) ((long) thirds * 64 / 3);
-                if (snapped > 0) distance = original < 0 ? -snapped : snapped;
+                if (snapped > 0) distance = exact < 0 ? -snapped : snapped;
             }
 
             // THE PPEM GATE BELOW IS NOT ABOUT STROKE WEIGHT. Read every glyph in the lamp report
