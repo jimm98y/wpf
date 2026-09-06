@@ -459,6 +459,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     for (int i = 0; i < _realPoints; i++)
                         _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
                 if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting) ColorStems();
+                if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting) ValidateColoring();
                 if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
@@ -1643,6 +1644,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (z.CurX[hi] != newHi) { z.CurX[hi] = newHi; moved = true; }
             }
             if (moved) InterpolateUntouched(horizontal: true);
+        }
+
+        /// <summary>WPF_CT_COLOR_VALIDATE dumps the faithful coloring model's input and output for the
+        /// current glyph so it can be diffed against SolveGdisEdges by hand. Reads nothing back into
+        /// the render; a pure diagnostic for building the port. Prints each stem's original and
+        /// fitted edges and y-extent, the counters, and the model's coloured edges.</summary>
+        private static readonly bool s_ctColorValidate =
+            Environment.GetEnvironmentVariable("WPF_CT_COLOR_VALIDATE") == "1";
+
+        private void ValidateColoring()
+        {
+            Zone z = _glyphZone;
+            var stems = new System.Collections.Generic.List<GcStem>();
+            for (int k = 0; k < _linkCount; k++)
+            {
+                int r = _linkA[k], p = _linkB[k];
+                if ((uint) r >= (uint) _realPoints || (uint) p >= (uint) _realPoints) continue;
+                if ((z.Tags[r] & TagTouchX) == 0 || (z.Tags[p] & TagTouchX) == 0) continue;
+                int lo = r, hi = p;
+                if (z.CurX[hi] < z.CurX[lo]) (lo, hi) = (hi, lo);
+                var s = new GcStem
+                {
+                    KeyA = z.OrusX[lo], KeyB = z.OrusX[hi],
+                    Lo = z.OrgX[lo] << 10, Hi = z.OrgX[hi] << 10,   // 26.6 -> 16.16
+                    E0 = z.CurX[lo] << 10, E1 = z.CurX[hi] << 10,
+                    YLo = Math.Min(z.CurY[lo], z.CurY[hi]) << 10,
+                    YHi = Math.Max(z.CurY[lo], z.CurY[hi]) << 10,
+                    Width = (z.CurX[hi] - z.CurX[lo]) << 10,
+                    NCount = 1,
+                };
+                stems.Add(s);
+            }
+            stems.Sort((a, b) => a.E0.CompareTo(b.E0));
+            var sb = new System.Text.StringBuilder("=== COLOR VALIDATE: " + stems.Count + " stems\n");
+            foreach (var s in stems)
+                sb.Append($"  stem orig[{s.KeyA},{s.KeyB}] fitted[{s.E0 / 65536f:0.00},{s.E1 / 65536f:0.00}] y[{s.YLo / 65536f:0.0}..{s.YHi / 65536f:0.0}] w={s.Width / 65536f:0.00}\n");
+            // counters between y-overlapping neighbours
+            for (int i = 0; i + 1 < stems.Count; i++)
+                if (GdiColoringModel.CounterAdjacent(stems[i + 1], stems[i], out int gap))
+                    sb.Append($"  counter {i}<->{i + 1} gap={gap / 65536f:0.00}\n");
+            // run the whole set as one path (approximation for validation)
+            var path = new System.Collections.Generic.List<GcStem>(stems);
+            GdiColoringModel.FixOnePath(path);
+            sb.Append("  MODEL coloured E1 (px): ");
+            foreach (var s in path) sb.Append($"{s.E1 / 65536f:0.00} ");
+            Console.Error.WriteLine(sb.ToString());
         }
 
         private void StoreGlyph(GlyphProgram glyph)

@@ -21,30 +21,30 @@
 using System;
 using System.Collections.Generic;
 
-namespace WgpuInterop.Tests.Text
+namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
     /// <summary>One stem = one x-link the font program made (a MIRP/MDRP pair), plus the y-extent
     /// of the points it spans. All x in 16.16 fixed point.</summary>
     internal sealed class GcStem
     {
-        public int KeyA, KeyB;     // original edge coords (font units)
-        public int Lo, Hi;         // scaled original edges (16.16)
-        public int YLo, YHi;       // y-extent (16.16) -- for counter adjacency
-        public int E0, E1;         // fitted edges (16.16), the thing being coloured
-        public int Width;          // |E1-E0|
-        public int NCount;         // per-stem weight
-        public short Frac;         // frac group
-        public byte Clump;         // clump id
-        public bool Merged;        // ClumpCounters scratch
-        public int Acc;            // ClumpCounters position accumulator (+0x20 in GDI reused; kept apart)
-        public bool Done;          // flag bit1
+        internal int KeyA, KeyB;     // original edge coords (font units)
+        internal int Lo, Hi;         // scaled original edges (16.16)
+        internal int YLo, YHi;       // y-extent (16.16) -- for counter adjacency
+        internal int E0, E1;         // fitted edges (16.16), the thing being coloured
+        internal int Width;          // |E1-E0|
+        internal int NCount;         // per-stem weight
+        internal short Frac;         // frac group
+        internal byte Clump;         // clump id
+        internal bool Merged;        // ClumpCounters scratch
+        internal int Acc;            // ClumpCounters position accumulator (+0x20 in GDI reused; kept apart)
+        internal bool Done;          // flag bit1
     }
 
     /// <summary>A counter = the white space between two y-overlapping stems (adjacent strokes).</summary>
     internal sealed class GcCounter
     {
-        public GcStem A, B;        // A on the left, B on the right (A.Hi ~ B.Lo)
-        public int Gap;            // A.Lo - B.Hi at build time (the recorded x-gap), GDI's +0x08 on the node
+        internal GcStem A, B;        // A on the left, B on the right (A.Hi ~ B.Lo)
+        internal int Gap;            // A.Lo - B.Hi at build time (the recorded x-gap), GDI's +0x08 on the node
     }
 
     internal static class GdiColoringModel
@@ -156,12 +156,78 @@ namespace WgpuInterop.Tests.Text
             int span = loEnd - hiEnd;
 
             // Target whole-pixel adjustment.
+            // NOTE ON +0x28 (E1): from here to the placement, GCFixOnePath repurposes E1 as a
+            // per-stem PIXEL-COUNT accumulator (not the edge). It is floored/ceiled to hand out the
+            // fractional pixel, then the real edges are computed at the end from those counts.
             int u = (fracSum - (Round16(span) >> 16)) + nCount;
             while (u + n < 0) { foreach (var s in path) s.E1 += One; u += n; }
             while (n < u) { foreach (var s in path) s.E1 -= One; u -= n; }
+            int remain = u;                              // uVar8: leftover whole pixels, 0..n-1
 
-            // (The remaining clump-ordered distribution of the last `u` whole pixels is the tail of
-            // GCFixOnePath; it is transcribed next, once this much is validated against 'w'@12.)
+            // Clump-respecting split point: whole-pixel count implied by span*slope decides how many
+            // stems round DOWN vs UP, adjusted so a clump rounds together.
+            int whole = Round16(FixMul(span, slope)) >> 16;
+            if (whole > 0 && remain > 0)
+            {
+                int lastClump = path[remain - 1].Clump;
+                if (lastClump != remain - 1)
+                {
+                    int below = 0;
+                    while (below < n && path[below].Clump < lastClump) below++;
+                    int pick = below;
+                    if (whole < remain - below) pick = remain;
+                    remain = pick;
+                    if (whole < remain - below && (lastClump - pick) < whole) remain = lastClump + 1;
+                }
+            }
+
+            // Distribute: the first `remain` stems floor their fraction, the rest ceil -- so
+            // (n-remain) stems each gain a whole pixel. (E1's low-16 sentinel 0xffff -> exactly 1px.)
+            int fracAcc = 0;
+            for (int i = 0; i < n; i++)
+            {
+                GcStem s = path[i];
+                if ((s.E1 & 0xffff) == 0xffff) { s.E1 = One; remain++; }
+                else if (remain <= i) s.E1 = (s.E1 & unchecked((int)0xffff0000)) + One;   // ceil
+                else s.E1 &= unchecked((int)0xffff0000);                                   // floor
+                fracAcc += s.Frac;
+            }
+
+            // Place the anchor, then propagate along the path preserving each stem's width.
+            int spanLeft = span - fracAcc * One - nCount * One;
+            if (!first.Done)
+            {
+                int width = Math.Abs(first.E1 - first.E0);
+                int posHi;
+                if (!last.Done)
+                {
+                    int fSum = first.Lo + first.Hi, lSum = last.Lo + last.Hi;
+                    int candA = Round16((fSum - spanLeft + width) / 2);
+                    int lE0 = last.E0, lE1 = last.E1;
+                    int candCentre = Round16(((lE0 - lE1) + lSum + spanLeft) / 2);
+                    int candB = candCentre + (fracAcc + nCount) * One;
+                    // pick whichever candidate lands the path's two ends closer to their scaled span
+                    int errA = Math.Abs(((fracAcc * One - candA * 2 + nCount * One) * 2 - lE1) + lE0 + lSum + fSum + width);
+                    int errB = Math.Abs(((lE0 + (candCentre + candB) * -2) - lE1) + lSum + fSum + width);
+                    posHi = errB <= errA ? candB : candA;
+                }
+                else posHi = last.E0 + (fracAcc + nCount) * One;
+                first.E0 = posHi - Math.Abs(first.E1 - first.E0);
+                first.E1 = posHi;
+                first.Done = true;
+            }
+            // propagate: each subsequent stem sits a fixed distance from the prior, width preserved.
+            for (int i = 1; i < n; i++)
+            {
+                GcStem prev = path[i - 1], s = path[i];
+                if (s.Done) break;
+                int width = Math.Abs(s.E1 - s.E0);
+                int hi = prev.E0 - 0;      // GDI reads the counter node's accumulated gap here; with
+                                           // our ordered path the inter-stem gap is prev.E0 - counterGap
+                s.E1 = hi;
+                s.E0 = hi - width;
+                s.Done = true;
+            }
             return true;
         }
     }
