@@ -1474,7 +1474,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _phaseP0 = new int[np]; _phaseP1 = new int[np];
                 _phaseVal = new int[np]; _phaseDone = new bool[np];
             }
+            if (_phasePartner.Length < np) _phasePartner = new int[np];
             for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
+            for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
+            _phaseGlyphStamp++;
             _phaseAnyCycle = false;
             _phaseApplied = false;
         }
@@ -1522,7 +1525,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // and even when the reference is a PHANTOM (the advance/lsb). The phase ORIGINATES at
             // the phantoms and flows to whatever was placed from them, so filtering by link colour
             // (as the stem path below does) starves the tree and leaves most of the glyph unmoved.
-            PhaseDistance(r, p);
+            PhaseDistance(r, p, PhaseLinkColour(r, p, distanceType));
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -1838,6 +1841,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             // ExecutePhaseControl@18007fc60 walks EVERY node in index order, phantoms included,
             // and does not ask whether the point was touched.
+            if (s_phaseTrace)
+            {
+                int roots = 0, one = 0, two = 0, pair = 0, touched = 0;
+                for (int i = 0; i < _realPoints; i++)
+                {
+                    if ((_glyphZone.Tags[i] & TagTouchX) != 0) touched++;
+                    if (_phaseP0[i] < 0) roots++; else if (_phaseP1[i] < 0) one++; else two++;
+                    if (i < _phasePartner.Length && _phasePartner[i] >= 0) pair++;
+                }
+                Console.Error.WriteLine($"PHASETREE pts={_realPoints} touchedX={touched} "
+                    + $"roots={roots} oneParent={one} twoParents={two} pairs={pair} "
+                    + $"ctFrac={_ctFrac:0.0000} cycle={_phaseAnyCycle}");
+            }
             for (int i = 0; i < n && i < _glyphZone.CurX.Length; i++) PhaseShiftNode(i);
         }
 
@@ -1930,6 +1946,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The partner map used by both phase entry points.</summary>
         private void BuildPhasePartners(int pointCount)
         {
+            if (s_phaseGdiPairs) return;   // already filled, one-way, by PhasePair
+
             if (_phasePartner.Length < pointCount + 4) _phasePartner = new int[pointCount + 4];
             for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
             if (!s_phasePairs) return;
@@ -1943,7 +1961,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
-        private void PhaseDistance(int r, int p)
+        private void PhaseDistance(int r, int p, int colour)
         {
             // GDI records nothing unless the PROJECTION IS ON THE CLEARTYPE (x) AXIS. Every
             // AddDistance call site tests localGS+0xcc -- the flag itrp_SVTCA_1 sets when it puts
@@ -1955,11 +1973,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
-            if (_phaseP0[p] >= 0) return;                     // already parented; first wins
+            if (_phaseP0[p] >= 0) { PhasePair(r, p, colour); return; }   // parented; first wins
             if (PhaseDependsOn(r, p, 100))
-            { _phaseAnyCycle = true; return; }            // would close a cycle; GDI flags it
-            _phaseP0[p] = PhaseAncestor(r, p);
+            {
+                // GDI flags the node and falls THROUGH to the param_5 tail with its ancestor
+                // still the reference it came in with.
+                _phaseAnyCycle = true;
+                PhasePair(r, p, colour);
+                return;
+            }
+            int anc = PhaseAncestor(r, p);
+            _phaseP0[p] = anc;
             _phaseP1[p] = -1;
+            PhasePair(anc, p, colour);
+        }
+
+        /// <summary>AddDistance's param_5 == 1 tail. Note the write is ONE-WAY -- the ANCESTOR
+        /// gets the partner pointer and the placed point does not point back, so PhaseShift moves
+        /// the pair only when it reaches the ancestor. BuildPhasePartners had been making it
+        /// symmetric, which phases the same stem from both ends.</summary>
+        private void PhasePair(int anc, int p, int colour)
+        {
+            if (!s_phaseGdiPairs || colour != 1) return;
+            if ((uint) anc >= (uint) _phasePartner.Length) return;
+            if ((uint) p >= (uint) _phasePartner.Length) return;
+            if (_phasePartner[anc] >= 0 || _phasePartner[p] == anc) return;
+            int par = _phaseP0[p];
+            if (par >= 0 && (uint) par < (uint) _phasePartner.Length && _phasePartner[par] == anc)
+                _phaseAnyCycle = true;                  // GDI sets the node's flag bit 0
+            else
+                _phasePartner[anc] = p;
         }
 
         /// <summary>IndirectlyDependsOn@1801db288: is <paramref name="target"/> an ancestor of
@@ -2002,11 +2045,104 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int par = _phaseP0[cur];
                 if (par < 0 || par == placed) break;
-                if (_glyphZone.OrgX[par] != _glyphZone.OrgX[cur]) break;
+                // +0x20 in AddDistance's walk is OrusX -- FONT UNITS. Two points that differ
+                // in the design can round to one scaled OrgX, and then we walk past a join
+                // GDI stops at.
+                if (_glyphZone.OrusX[par] != _glyphZone.OrusX[cur]) break;
                 cur = par;
             }
             return cur;
         }
+
+        /// <summary>Which contour a point belongs to, or -1. ContNum@GDI.</summary>
+        private int PhaseContour(int p)
+        {
+            int start = 0;
+            for (int c = 0; c < _contourCount && c < _glyphZone.Contours.Length; c++)
+            {
+                int end = _glyphZone.Contours[c];
+                if (p >= start && p <= end) return c;
+                start = end + 1;
+            }
+            return -1;
+        }
+
+        /// <summary>DoubleCheckLinkColor@180123298, ported exactly. This is the function whose
+        /// RETURN VALUE is AddDistance's param_5 at the four call sites that can make a pair, so it
+        /// is the whole of GDI's pairing rule and not the adjacency guess we had.
+        /// <para>It answers 1 or 2 -- BLACK or WHITE -- for two points that are neighbours on one
+        /// contour, turn the same way, and are joined by a segment shallower than 2:1; anything
+        /// else is 0, or the caller's own colour when the points are not neighbours at all. Only
+        /// colour 1 makes a partner, and telling 1 from 2 needs the contour's WINDING, which is
+        /// exactly what our old adjacency test was missing: it kept both.</para></summary>
+        private int PhaseLinkColour(int p1, int p2, int colour)
+        {
+            int c1 = PhaseContour(p1);
+            if (c1 < 0) return 0;
+            int c2 = PhaseContour(p2);
+            if (c2 < 0) return 0;
+            if (c1 != c2) return colour;
+            int end = _glyphZone.Contours[c1];
+            int start = c1 == 0 ? 0 : _glyphZone.Contours[c1 - 1] + 1;
+            if (end <= start) return 0;
+            int next1 = p1 != end ? p1 + 1 : start;
+            int prev1 = p1 == start ? end : p1 - 1;
+            if (p2 != next1 && p2 != prev1) return colour;
+            int next2 = p2 != end ? p2 + 1 : start;
+            int prev2 = p2 == start ? end : p2 - 1;
+            int[] x = _glyphZone.OrusX, y = _glyphZone.OrusY;
+            if ((uint) prev1 >= (uint) x.Length || (uint) next1 >= (uint) x.Length) return 0;
+            if ((uint) prev2 >= (uint) x.Length || (uint) next2 >= (uint) x.Length) return 0;
+            bool t1 = (long) (x[p1] - x[prev1]) * (y[next1] - y[p1])
+                    < (long) (y[p1] - y[prev1]) * (x[next1] - x[p1]);
+            bool t2 = (long) (x[p2] - x[prev2]) * (y[next2] - y[p2])
+                    < (long) (y[p2] - y[prev2]) * (x[next2] - x[p2]);
+            if (t1 != t2) return 0;
+            int dx = Math.Abs(x[p2] - x[p1]), dy = Math.Abs(y[p2] - y[p1]);
+            if (dy > 2 * dx) return 0;
+            return ((~PhaseWinding(c1) & 1) ^ (t1 ? 1 : 0)) + 1;
+        }
+
+        /// <summary>The per-contour byte GDI keeps at element+0x58. We have no such array, so it is
+        /// recomputed from the signed area in font units; WPF_CT_PHASE_WIND=1 flips the sense.
+        /// </summary>
+        private int PhaseWinding(int c)
+        {
+            if (_contourWind == null || _contourWind.Length < _contourCount)
+                _contourWind = new sbyte[Math.Max(8, _contourCount)];
+            if (_contourWindGlyph == _phaseGlyphStamp && _contourWind[c] >= 0) return _contourWind[c];
+            if (_contourWindGlyph != _phaseGlyphStamp)
+            {
+                for (int i = 0; i < _contourWind.Length; i++) _contourWind[i] = -1;
+                _contourWindGlyph = _phaseGlyphStamp;
+            }
+            int end = _glyphZone.Contours[c];
+            int start = c == 0 ? 0 : _glyphZone.Contours[c - 1] + 1;
+            long area = 0;
+            for (int i = start; i <= end && i < _glyphZone.OrusX.Length; i++)
+            {
+                int j = i == end ? start : i + 1;
+                area += (long) _glyphZone.OrusX[i] * _glyphZone.OrusY[j]
+                      - (long) _glyphZone.OrusX[j] * _glyphZone.OrusY[i];
+            }
+            int w = (area < 0) == !s_phaseWindFlip ? 1 : 0;
+            _contourWind[c] = (sbyte) w;
+            return w;
+        }
+
+        private sbyte[] _contourWind;
+        private int _contourWindGlyph = -1, _phaseGlyphStamp;
+
+        private static readonly bool s_phaseTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
+
+        private static readonly bool s_phaseWindFlip =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_WIND") == "1";
+
+        /// <summary>WPF_CT_PHASE_GDIPAIR=0 goes back to guessing partners from our own link list
+        /// in BuildPhasePartners instead of taking them from AddDistance's param_5.</summary>
+        private static readonly bool s_phaseGdiPairs =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_GDIPAIR") != "0";
 
         private int[] _phasePartner = new int[128];
 
