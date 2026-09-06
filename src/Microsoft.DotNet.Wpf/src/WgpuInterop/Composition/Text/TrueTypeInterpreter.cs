@@ -1676,7 +1676,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the render; a pure diagnostic for building the port. Prints each stem's original and
         /// fitted edges and y-extent, the counters, and the model's coloured edges.</summary>
         private static readonly bool s_ctColorValidate =
-            Environment.GetEnvironmentVariable("WPF_CT_COLOR_VALIDATE") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_COLOR_VALIDATE") is "1" or "links";
 
         private void ValidateColoring()
         {
@@ -1699,6 +1699,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     NCount = 1,
                 };
                 stems.Add(s);
+            }
+            if (Environment.GetEnvironmentVariable("WPF_CT_COLOR_VALIDATE") == "links")
+            {
+                var lb = new System.Text.StringBuilder("=== RAW LINKS: " + _stemCount + "\n");
+                for (int k = 0; k < _stemCount; k++)
+                {
+                    int r = _stemA[k], p = _stemB[k];
+                    if ((uint) r >= (uint) _realPoints || (uint) p >= (uint) _realPoints) continue;
+                    lb.Append($"  link r{r}=({z.CurX[r] / 64f:0.00},{z.CurY[r] / 64f:0.00}) "
+                            + $"p{p}=({z.CurX[p] / 64f:0.00},{z.CurY[p] / 64f:0.00}) "
+                            + $"dx={(z.CurX[p] - z.CurX[r]) / 64f:0.00} dy={(z.CurY[p] - z.CurY[r]) / 64f:0.00}\n");
+                }
+                Console.Error.WriteLine(lb.ToString());
+                return;
             }
             stems.Sort((a, b) => a.E0.CompareTo(b.E0));
             var sb = new System.Text.StringBuilder("=== COLOR VALIDATE: " + stems.Count + " stems\n");
