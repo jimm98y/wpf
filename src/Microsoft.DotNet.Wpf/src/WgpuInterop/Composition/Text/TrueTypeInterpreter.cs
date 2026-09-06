@@ -460,6 +460,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
                 if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting) ColorStems();
                 if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting) ValidateColoring();
+                if (s_ctPhase && !BiLevelPass && TrueTypeFont.SubpixelFitting) ApplyPhaseControl();
                 if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
@@ -1462,6 +1463,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _linkCount = 0;
             if (_stemA.Length < _realPoints * 2) { _stemA = new int[_realPoints * 2]; _stemB = new int[_realPoints * 2]; }
             _stemCount = 0;
+            int np = _realPoints + 4;
+            if (_phaseP0.Length < np)
+            {
+                _phaseP0 = new int[np]; _phaseP1 = new int[np];
+                _phaseVal = new int[np]; _phaseDone = new bool[np];
+            }
+            for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
         }
 
         // ---- x features ------------------------------------------------------------------------
@@ -1504,6 +1512,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // strokes are placed by diagonal MIRPs (SDPVTL) that the horizontal-only path below
             // skips, yet each is one of GDI's stems. r and p are the stroke's two edges.
             if (_stemCount < _stemA.Length) { _stemA[_stemCount] = r; _stemB[_stemCount] = p; _stemCount++; }
+            // PHASE tree: record p's placement PARENT (the reference it was measured from), as GDI's
+            // AddDistance does. First parent wins; IP fills the second. Drives ExecutePhaseControl.
+            if ((uint) p < (uint) _phaseP0.Length && _phaseP0[p] < 0) _phaseP0[p] = r;
             if (!IsHorizontalFreedom) return;
             // The INDIVIDUAL link (r -> p), kept as its own pair. The union-find below merges the
             // whole glyph's links into features, but GDI's stem records are one link each -- an 'H'
@@ -1518,6 +1529,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _linkCount;
         private int[] _stemA = new int[128], _stemB = new int[128];   // all links incl. diagonal
         private int _stemCount;
+        private int[] _phaseP0 = new int[128], _phaseP1 = new int[128];  // per-point placement parents
+        private int[] _phaseVal = new int[128];                          // memoised phase, 26.6
+        private bool[] _phaseDone = new bool[128];
 
         /// <summary>The individual (reference, placed) x-links the program made -- one stem each.
         /// Returns the count; fills the caller's arrays.</summary>
@@ -1698,6 +1712,59 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             sb.Append("  MODEL coloured E1 (px): ");
             foreach (var s in path) sb.Append($"{s.E1 / 65536f:0.00} ");
             Console.Error.WriteLine(sb.ToString());
+        }
+
+        /// <summary>WPF_CT_PHASE=1: GDI's per-point ClearType x PHASE control, ported from dwrite's
+        /// ExecutePhaseControl/PhaseShift/CalcAvgXPhaseShift. Each point's sub-pixel x phase is
+        /// derived from the PLACEMENT TREE (the reference points it was measured from): a root gets
+        /// x*(ctFactor-1); a point with one parent inherits it; a point interpolated between two
+        /// (an IP) gets the linear interpolation of its parents' phases. The phase is added to x.
+        /// ctFactor is WPF_CT_PHASE_FACTOR in thousandths (default 0 -> off effect until tuned).</summary>
+        private static readonly bool s_ctPhase =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE") == "1";
+
+        private static readonly int s_ctPhaseFactor =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FACTOR"), out int pf) ? pf : 0;
+
+        // phase for a root point = x * ctFrac, ctFrac = (ctFactor-1) as a fraction of x.
+        private float CtFrac => s_ctPhaseFactor / 1000f;
+
+        private int PhaseOf(int p)
+        {
+            if ((uint) p >= (uint) _phaseDone.Length) return 0;
+            if (_phaseDone[p]) return _phaseVal[p];
+            _phaseDone[p] = true;                 // guard cycles
+            int phase;
+            int a = _phaseP0[p], b = _phaseP1[p];
+            if (a < 0)                            // root: placed from the phantom
+                phase = (int) MathF.Round(_glyphZone.CurX[p] * CtFrac);
+            else if (b < 0)                       // single parent: inherit
+                phase = PhaseOf(a);
+            else                                  // interpolated between two: CalcAvgXPhaseShift
+                phase = CalcAvgXPhase(a, p, b, PhaseOf(a), PhaseOf(b));
+            _phaseVal[p] = phase;
+            return phase;
+        }
+
+        // Linear interpolation of the phase at p between references a and b, by p's x position.
+        private int CalcAvgXPhase(int a, int p, int b, int phA, int phB)
+        {
+            int xa = _glyphZone.CurX[a], xb = _glyphZone.CurX[b], xp = _glyphZone.CurX[p];
+            int lo = Math.Min(xa, xb), hi = Math.Max(xa, xb);
+            if (xa >= xb) (phA, phB) = (phB, phA);   // GDI orders by x, swapping the phases
+            if (lo == hi) return (phA + phB) / 2;
+            return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
+        }
+
+        private void ApplyPhaseControl()
+        {
+            if (s_ctPhaseFactor == 0) return;
+            Array.Clear(_phaseDone, 0, _phaseDone.Length);
+            for (int p = 0; p < _realPoints; p++)
+            {
+                int ph = PhaseOf(p);
+                if (ph != 0) _glyphZone.CurX[p] += ph;
+            }
         }
 
         private void StoreGlyph(GlyphProgram glyph)
