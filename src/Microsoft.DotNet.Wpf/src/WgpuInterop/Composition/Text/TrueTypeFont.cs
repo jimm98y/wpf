@@ -1287,6 +1287,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_minFeatSqueezeOnly =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_SQUEEZE"), out int ms) ? ms : 0;
 
+        /// <summary>Which glyph WPF_OUTLINE_DUMP writes; -1 (the default) means the first one asked
+        /// for, which is what a single-glyph probe wants.</summary>
+        private static readonly int s_outlineDumpGid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_OUTLINE_DUMP_GID"), out int og) ? og : -1;
+
         internal static readonly int CompatibleWidthMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COMPATWIDTH"), out int cw) ? cw : 7;
 
@@ -3015,6 +3020,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         }
                     }
                 }
+            }
+            // WPF_OUTLINE_DUMP=<path>: write the FITTED outline (26.6, y up, contour ends) so an
+            // external renderer can be fed exactly what we produce. This is how we tell an outline
+            // bug from a rasterizer bug: render OUR outline with a renderer already proven to
+            // reproduce GDI, and see which side the difference is on.
+            if (Environment.GetEnvironmentVariable("WPF_OUTLINE_DUMP") is { Length: > 0 } odPath
+                && (s_outlineDumpGid < 0 || gid == s_outlineDumpGid))
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append("gid=").Append(gid).Append(" ppem=").Append((int) MathF.Round(pixelsPerEm))
+                  .Append(" bilevel=").Append(TrueTypeInterpreter.BiLevelPass ? 1 : 0)
+                  .Append(" subpixel=").Append(SubpixelFitting ? 1 : 0)
+                  .Append(" points=").Append(glyph.PointCount).Append(" ends=");
+                for (int i = 0; i < glyph.EndPoints.Length; i++)
+                { if (i > 0) sb.Append(','); sb.Append(glyph.EndPoints[i]); }
+                sb.Append('\n');
+                for (int i = 0; i < glyph.PointCount; i++)
+                    sb.Append(glyph.X[i]).Append(' ').Append(glyph.Y[i]).Append(' ')
+                      .Append(glyph.OnCurve[i] ? 1 : 0).Append('\n');
+                System.IO.File.AppendAllText(odPath, sb.ToString());
             }
             return glyph;
         }
