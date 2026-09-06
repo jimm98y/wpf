@@ -88,6 +88,7 @@ namespace WgpuInterop.GdiFitProbe
                 + string.Join(" ", Array.ConvertAll(edges, e => (e / 64.0).ToString("0.000", CultureInfo.InvariantCulture))));
 
             DumpPoints(fitted);
+            DumpOurLamps(fitted);
             DumpGdi(family, ch, ppem, bold, italic);
 
             if (expect is not null)
@@ -119,6 +120,38 @@ namespace WgpuInterop.GdiFitProbe
             var a = new int[keys.Count];
             keys.CopyTo(a);
             return a;
+        }
+
+        /// <summary>OUR lamps for the same glyph, and the set of distinct values in them.
+        /// <para>GDI's ClearType output holds exactly SEVEN levels -- 0, 58, 102, 144, 182, 219 and
+        /// paper -- because each lamp carries one of {0, 1/2, 1} and a three-tap box of three-valued
+        /// lamps can only produce seven.</para>
+        /// <para>DO NOT READ THE TWO LADDERS AGAINST EACH OTHER. What RasterizeSubpixel returns is
+        /// the RAW FILTERED COVERAGE; the contrast curve is applied afterwards by the renderer
+        /// (PathRasterizer.PreFilterLut is null here, so nothing has corrected these). GDI's seven
+        /// are FINAL pixels, curve included. The counts are comparable, the values are not, and a
+        /// difference between the two lists is not by itself evidence of anything.</para></summary>
+        private static void DumpOurLamps(List<PathFigure> figures)
+        {
+            var moved = new List<PathFigure>(figures);
+            PathRasterizer.SubpixelMask m =
+                PathRasterizer.RasterizeSubpixel(new PathGeometry(FillRule.NonZero, moved));
+            if (m.IsEmpty) { Console.WriteLine("   OUR LAMPS: (empty)"); return; }
+
+            var seen = new SortedSet<int>();
+            for (int i = 0; i < m.Rgba.Length; i++) seen.Add(m.Rgba[i]);
+            Console.WriteLine($"   OUR LAMPS: {m.Width}x{m.Height} at ({m.OriginX},{m.OriginY}), "
+                + $"{seen.Count} distinct lamp values");
+            var sb = new StringBuilder("     values: ");
+            int n = 0;
+            foreach (int v in seen)
+            {
+                if (n++ == 24) { sb.Append("... "); break; }
+                sb.Append(v).Append(' ');
+            }
+            Console.WriteLine(sb.ToString());
+            Console.WriteLine("     (raw coverage, pre-contrast-curve -- NOT the same space as"
+                + " GDI's final 0 58 102 144 182 219 255)");
         }
 
         private static void DumpPoints(List<PathFigure> figures)
