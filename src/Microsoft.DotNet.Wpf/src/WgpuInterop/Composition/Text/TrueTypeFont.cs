@@ -1254,6 +1254,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_SPREAD"), out int cws) ? cws : 1000;
         private static readonly int s_cwDamp =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_CW_DAMP"), out int cwd) ? cwd : 1000;
+        private static readonly int s_minFeatS =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_S"), out int mfS) ? mfS : 0;
         private static readonly int s_minFeatInk =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINFEAT_INK"), out int mfi) ? mfi : 256;
         private static readonly int s_minFeatShift =
@@ -2634,7 +2636,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // ...and only for a glyph WIDE enough that a slide of that size is a
                         // displacement of a letter rather than of a single stem: 'l' is one stem
                         // ~1.7px wide and still wants its slide (+19,192 without this), 'w' is 9px.
-                        if (s_minFeatShift > 0 && touchedCount > 0 && distinct7 == 1
+                        // The slide (s-1)*centre grows with ppem, so an ABSOLUTE threshold fires
+                        // at different relative magnitudes at different sizes -- which shows up as
+                        // a see-saw across adjacent rows (regular@19 -40,373 but regular@20
+                        // +50,009). WPF_CT_MINFEAT_S gates on |s-1| instead, which is
+                        // size-independent; 0 keeps the absolute test.
+                        bool bigEnough = s_minFeatS > 0
+                            ? MathF.Abs(s7 - 1f) * 1000f >= s_minFeatS
+                            : s_minFeatShift > 0;
+                        if (bigEnough && touchedCount > 0 && distinct7 == 1
                             && inkB - inkA >= s_minFeatInk)
                         {
                             int f1 = -1;
