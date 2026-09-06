@@ -449,6 +449,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (dumping) DumpFinal();
                 }
 
+                // ExecutePhaseControl is called from itrp_Execute as well as itrp_IUP, so a
+                // glyph whose program has no IUP -- or no instructions at all, which is most
+                // composites -- is STILL phased. Hooking only IUP left 169 accented glyphs
+                // with their advance never realized, and they were 169 of the 215 regressions.
+                if (s_phaseAtExecute) ApplyPhaseAtIup();
+
                 // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
                 // nothing GDI could recognise as a stroke or a position to scale -- and GDI leaves
                 // it alone. Segoe UI Italic's 'a' at 12ppem runs one SVTCA[x] and then hints only y;
@@ -2165,6 +2171,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_PHASE_INTERALIGN=0 drops MDRP/ALIGNRP's proportion branch.</summary>
         private static readonly bool s_phaseInterAlign =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_INTERALIGN") != "0";
+
+        /// <summary>WPF_CT_PHASE_ATEXEC=0 keeps the phase on IUP alone.</summary>
+        private static readonly bool s_phaseAtExecute =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATEXEC") != "0";
 
         private static readonly bool s_phaseTrace =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
