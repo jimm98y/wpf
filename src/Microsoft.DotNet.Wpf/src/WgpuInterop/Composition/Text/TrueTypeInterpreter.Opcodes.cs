@@ -147,6 +147,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // ---- the projection and freedom vectors ---------------------------------------
 
                     case 0x00: case 0x01:                                               // SVTCA[a]
+                        // itrp_SVTCA_1 ends with *(int *)(localGS + 0xce) = 0xffffffff -- a
+                        // FOUR-byte store, so it clears BOTH +0xce and +0xd0, the two points
+                        // SPVTL/SDPVTL leave behind for MDRP and ALIGNRP to interpolate
+                        // between. Putting the vector on an axis retires the line that was
+                        // defining it. We cleared them for SPVTCA and not for SVTCA, so a
+                        // proportion could still be recorded from a line the program had
+                        // already abandoned.
+                        SetVectorLine(-1, -1);
                         SetProjection(op == 0x01);
                         SetFreedom(op == 0x01);
                         LatchClearTypeAxis();
