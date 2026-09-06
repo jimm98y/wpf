@@ -169,6 +169,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>a*b/c, rounded to nearest, and sign-symmetric: the magnitudes are what is
         /// divided, so a negative c cannot turn the rounding round the other way.</summary>
+        private static readonly int s_engineComp =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_ENGINE"), out int ec) ? ec : 0;
+
         internal static int MulDiv(int a, int b, int c)
         {
             if (c == 0) return 0;
@@ -2722,16 +2725,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // "x is not hinted" actually means. (FreeType calls this its v40 mode.)
                 if (!XSuppress)
                 {
-                    zone.CurX[point] += MulDiv(distance, _gs.FreeX, _dotProduct);
+                    zone.CurX[point] += FreedomStep(distance, _gs.FreeX);
                     if (touch) zone.Tags[point] |= TagTouchX;
                 }
             }
             if (_gs.FreeY != 0)
             {
-                zone.CurY[point] += MulDiv(distance, _gs.FreeY, _dotProduct);
+                zone.CurY[point] += FreedomStep(distance, _gs.FreeY);
                 if (touch) zone.Tags[point] |= TagTouchY;
             }
         }
+
+        /// <summary>How far one component moves when the point travels <paramref name="distance"/>
+        /// along the freedom vector. itrp_MovePoint@180086260 does NOT use one formula:
+        /// <code>
+        ///   dot == 0x4000 :  ((f * d) >> 13) + 1 >> 1     // shifts: half toward +infinity
+        ///   otherwise     :  f == dot ? d : CompDiv(dot, f * d)   // half AWAY from zero
+        /// </code>
+        /// We used the second everywhere. The two agree except on an exact half with a negative
+        /// product -- f*d = -8192 gives 0 by the shifts and -1 by ours -- which is a diagonal
+        /// move, and diagonals are the worst glyphs left in the corpus.
+        /// <para>WPF_CT_FREESTEP=muldiv restores the single formula.</para></summary>
+        private int FreedomStep(int distance, int component)
+        {
+            if (!s_freeStepExact) return MulDiv(distance, component, _dotProduct);
+            if (_dotProduct == 0x4000)
+                return (int) (((((long) component * distance) >> 13) + 1) >> 1);
+            if (component == _dotProduct) return distance;
+            return MulDiv(distance, component, _dotProduct);
+        }
+
+        private static readonly bool s_freeStepExact =
+            Environment.GetEnvironmentVariable("WPF_CT_FREESTEP") != "muldiv";
 
         /// <summary>Move a point without regard to the freedom vector: SHPIX's job, and the one
         /// place a program says "this far, in x and y" rather than "this far, that way".</summary>
@@ -2762,8 +2787,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_superRoundScaled =
             Environment.GetEnvironmentVariable("WPF_CT_SROUND_SCALE") != "0";
 
-        private int RoundDistance(int distance, bool position = false, bool mdap = false)
+        /// <summary>ENGINE COMPENSATION. Every one of GDI's rounding functions takes it as its
+        /// third argument and folds it in before the grid:
+        /// <code>
+        ///   itrp_RoundToGrid    v >= 0 ?  (v + c + 0x20) &amp; ~0x3f : -((c - v) + 0x20 &amp; ~0x3f)
+        ///   itrp_RoundToGridSP  v >= 0 ?  (v + c/2 + 2)  &amp; ~3    : -((c/2 - v) + 2 &amp; ~3)
+        /// </code>
+        /// so the SUBPIXEL table halves it, exactly as it quarters the grid. The value comes
+        /// from an array indexed by the DISTANCE TYPE -- grey, black, white -- which is the
+        /// classic mechanism that makes a black distance round down and a white one round up.
+        /// We had none at all -- and MEASURED, GDI's array must be zeros on this path, because
+        /// any magnitude is monotonically worse: 0 gives 3,605,604, then 4 gives 6,957,809,
+        /// 8 gives 7,912,782, 16 gives 10,633,377 and 32 gives 18,834,045. That matches what a
+        /// modern antialiasing rasterizer does (FreeType zeroes its compensations too); the
+        /// nonzero values belong to the bi-level engine. WPF_CT_ENGINE sets the magnitude in
+        /// 64ths and defaults to 0, i.e. off.</summary>
+        private int RoundDistance(int distance, bool position = false, bool mdap = false,
+                                  int linkType = -1)
         {
+            int comp = s_engineComp == 0 || linkType < 0 ? 0
+                     : linkType == 1 ? -s_engineComp        // black: shrink
+                     : linkType == 2 ? s_engineComp         // white: expand
+                     : 0;                                   // grey
+            if (comp != 0 && InClearTypeDirection && !BiLevelPass) comp /= 2;
+            distance += distance < 0 ? -comp : comp;
             bool negative = distance < 0;
             int value = negative ? -distance : distance;
 

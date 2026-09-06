@@ -1229,7 +1229,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && Math.Abs(distance - _gs.SingleWidthValue) < _gs.SingleWidthCutIn)
                 distance = distance >= 0 ? _gs.SingleWidthValue : -_gs.SingleWidthValue;
 
-            if (round) distance = RoundDistance(distance);
+            if (round) distance = RoundDistance(distance, linkType: linkType);
 
             if (keepMinimum)
             {
@@ -2011,7 +2011,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // something per-stem that neither switch expresses. Kept so the third person to
             // look at VTT's picture does not spend the evening rediscovering it.
             if (round && !(s_noRoundX && tookControlValue && !BiLevelPass && InClearTypeDirection))
-                distance = RoundDistance(distance);
+                distance = RoundDistance(distance, linkType: linkType);
 
             // WPF_CT_STEMSUBPX=1: a stem's WIDTH in ClearType is the OUTLINE distance floored to a
             // whole SUBPIXEL. Measured off GDI's own pixels with the standalone PoC, which counts
