@@ -1856,6 +1856,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>TEST OF THE TRUETYPE MODEL: GDI's ClearType x for a TrueType glyph looks far
+        /// closer to the NATURAL (linearly scaled) outline stretched onto the device advance than
+        /// to our bytecode-fitted x -- on Verdana 'w'@12 GDI's edges sit within ~0.37px of
+        /// natural*deviceAdv/naturalAdv, while our fitted x is a third of a pixel further out at
+        /// every edge. Replaces x with that stretch entirely.</summary>
+        internal bool ApplyNaturalStretch(int[] x, int pointCount, int targetAdvance)
+        {
+            if (_realPoints != pointCount || _glyphZone.OrgX.Length <= pointCount + 1) return false;
+            int o0 = _glyphZone.OrgX[pointCount], o1 = _glyphZone.OrgX[pointCount + 1];
+            int natural = o1 - o0;
+            if (natural <= 0 || targetAdvance <= 0) return false;
+            float s = targetAdvance / (float) natural;
+            for (int i = 0; i < pointCount && i < x.Length; i++)
+                x[i] = o0 + (int) MathF.Round((_glyphZone.OrgX[i] - o0) * s);
+            return true;
+        }
+
         /// <summary>IUP's carry, but between the PRE-phase and POST-phase positions of the two
         /// reference points: an untouched point keeps its place in the span it sits in.</summary>
         private static void CarryPhase(int[] x, int[] pre, int lo, int hi, int a, int b)

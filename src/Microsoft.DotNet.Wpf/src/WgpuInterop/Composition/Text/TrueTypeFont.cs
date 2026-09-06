@@ -2416,6 +2416,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // scaled nor left alone but drawn with a different slant; neither rule is known
                 // yet, and the mode-1 tolerance gate that happened to skip them is not it either
                 // (mode 1 is worse than mode 0 for Consolas, and equal elsewhere).
+                else if (CompatibleWidthMode == 12 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
+                {
+                    float wanted12 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
+                    int target12 = (int) MathF.Round(wanted12 * 64f);
+                    if (target12 > 0) interpreter.ApplyNaturalStretch(glyph.X, glyph.PointCount, target12);
+                }
                 else if (CompatibleWidthMode == 11 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
                     // GDI'S OWN MECHANISM (fs_NewGlyph): ctFactor = deviceAdvance/linearAdvance,
