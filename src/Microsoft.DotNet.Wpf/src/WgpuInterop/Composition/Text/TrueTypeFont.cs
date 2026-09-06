@@ -2283,6 +2283,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
                 int fitted = p1 - p0;
+                if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1" && gid >= 0 && gid < _numGlyphs)
+                    Console.Error.WriteLine($"CWIN mode={CompatibleWidthMode} gid={gid}"
+                        + $" p0={p0} p1={p1} fitted={fitted}");
                 // MODE 2: put the glyph back on its ORIGINAL left side bearing instead of scaling it
                 // onto the advance. A run places each glyph at pen + advance and takes the ink from
                 // the outline, so what a run needs is the ink's offset from the origin preserved --
