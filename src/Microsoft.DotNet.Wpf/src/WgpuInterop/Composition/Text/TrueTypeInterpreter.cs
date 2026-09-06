@@ -1786,6 +1786,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int[] _phasePartner = new int[128];
 
+        /// <summary>DoubleCheckLinkColor's precondition: the two points are consecutive on one
+        /// contour and the segment between them is no steeper than 2:1.</summary>
+        private bool PhaseAdjacent(int u, int v, int pointCount)
+        {
+            int start = 0;
+            for (int c = 0; c < _contourCount; c++)
+            {
+                int end = Math.Min(_glyphZone.Contours[c], pointCount - 1);
+                if (u >= start && u <= end && v >= start && v <= end)
+                {
+                    int len = end - start + 1;
+                    if (len < 2) return false;
+                    int d = (u - start) - (v - start);
+                    if (d < 0) d = -d;
+                    if (d != 1 && d != len - 1) return false;
+                    int dx = _glyphZone.CurX[v] - _glyphZone.CurX[u];
+                    int dy = _glyphZone.CurY[v] - _glyphZone.CurY[u];
+                    if (dx < 0) dx = -dx;
+                    if (dy < 0) dy = -dy;
+                    return dy <= 2 * dx;
+                }
+                start = end + 1;
+            }
+            return false;
+        }
+
         private int PhaseOf(int p)
         {
             if ((uint) p >= (uint) _phaseDone.Length) return 0;
@@ -1839,6 +1865,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
         }
 
+        private static readonly bool s_phasePairAdjacent =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") != "0";
+
         private static readonly bool s_phasePairs =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PAIRS") != "0";
 
@@ -1885,6 +1914,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     {
                         int r = _linkA[k], q = _linkB[k];
                         if ((uint) r >= (uint) pointCount || (uint) q >= (uint) pointCount) continue;
+                        // GDI only records a PARTNER when DoubleCheckLinkColor gives it one, and
+                        // that happens only for points ADJACENT ON THE SAME CONTOUR whose segment
+                        // is no steeper than 2:1 -- i.e. the two sides of one stroke. Verdana 'w'
+                        // is the counter-example that matters: its three links are WIDE SPACING
+                        // links between strokes, and pairing them hands the whole letter a
+                        // centre_of_pair displacement (edge oracle 18,582).
+                        if (s_phasePairAdjacent && !PhaseAdjacent(r, q, pointCount)) continue;
                         if (_phasePartner[r] < 0 && _phasePartner[q] < 0)
                         { _phasePartner[r] = q; _phasePartner[q] = r; }
                     }
