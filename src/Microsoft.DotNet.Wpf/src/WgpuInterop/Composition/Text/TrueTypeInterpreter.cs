@@ -1120,7 +1120,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // advance is from the one the glyph is laid out at, so its run starts with the
             // advance phantom on the linear advance, unrounded. The phase pass measures the
             // same distance the same way and wants the same start.
-            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 2
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 5
             : TrueTypeFont.CompatibleWidthMode == 7 ? 2 : TrueTypeFont.CompatibleWidthMode is 8 or 9 ? 4 : 0;
 
         /// <summary>MODE 9: the pre-scale of mode 8, with BLACK distances measured on the outline
@@ -1463,6 +1463,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // has to squeeze -- which is what damages the stems.
                 3 or 4 when CompatibleAdvance64 > 0
                     => z.CurX[glyph.PointCount] + CompatibleAdvance64,
+                // 5: WHAT GDI ACTUALLY DOES. scl_RoundCurrentSideBearingPnt rounds the
+                // ADVANCE -- the gap between the two x phantoms, not either phantom on its own
+                // -- and rounds it two ways on the same gate the component offset uses:
+                //     (v + 0x20) & ~0x3f   to a whole pixel, off the ClearType axis
+                //     (v + 2)    & ~3      to a SIXTEENTH, on it
+                // (The y phantoms below it round to a whole pixel unconditionally.)
+                5 => z.CurX[glyph.PointCount]
+                     + (((z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount]) + 2) & ~3),
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
 
