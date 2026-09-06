@@ -458,6 +458,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (_preScaled && s_blackOnInk && !AnyTouchedX())
                     for (int i = 0; i < _realPoints; i++)
                         _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
+                if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting) ColorStems();
                 if (s_capturePoints) CapturePoints(glyph);
                 StoreGlyph(glyph);
                 return true;
@@ -1587,6 +1588,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 g.OnCurve[i] = (z.Tags[i] & TagOn) != 0;
             }
             LastPoints = g;
+        }
+
+        /// <summary>WPF_CT_COLOR=1: GDI's ClearType "coloring" of stems, ported from dwrite's GC*
+        /// chain, done INSIDE the interpreter so the outline follows via the real IUP rather than a
+        /// post-pass edge-snap. Each narrow black-link stem is snapped to cover whole ClearType
+        /// cells -- floor the left edge, ceil the right, centre kept -- then IUP in x re-flows the
+        /// untouched points, as AlignIsolatedStems' isolated path does (position kept, width fixed).
+        /// <para>MEASURED AND IT DOES NOT HELP, which is itself the finding. The score falls
+        /// monotonically as the cell shrinks -- 22.7M at a whole 64th pixel, 12.9M at a half, 10.1M
+        /// at a ClearType third (21), 8.4M at 16 -- toward the 5,485,079 baseline of doing nothing.
+        /// Snapping our already-fitted stems to ANY grid moves them AWAY from GDI, because our
+        /// interpreter's ClearType x ALREADY embodies GDI's coloring: the font program does the
+        /// stem control and our fit keeps it, landing within 6% of GDI's pixels. GDI's GC* pass is
+        /// its rasterizer computing that same result from originals; re-applying a coarse copy on
+        /// top double-processes. The residual 6% is in the exact per-stem arithmetic (CalcHW2 width
+        /// regularization, FixBands, Adjust's round-state), reachable only by fitting stems GDI's
+        /// way from the start -- a from-scratch replacement of our x-fitting, not a bolt-on -- and
+        /// with real doubt it would beat 6%. Kept default-off as the record of the port attempt;
+        /// see the reverse-engineering memory for the full decompiled algorithm.</para></summary>
+        private static readonly bool s_ctColor =
+            Environment.GetEnvironmentVariable("WPF_CT_COLOR") == "1";
+
+        private static readonly int s_ctColorStemMax =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COLOR_STEMMAX"), out int cm) ? cm : 192;
+
+        /// <summary>The ClearType grid unit in 64ths. ClearType oversamples x by 3, so a "pixel" to
+        /// the coloring pass is 64/3 in our space. WPF_CT_COLOR_UNIT overrides.</summary>
+        private static readonly int s_ctColorUnit =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_COLOR_UNIT"), out int cu) && cu > 0 ? cu : 21;
+
+        private void ColorStems()
+        {
+            Zone z = _glyphZone;
+            bool moved = false;
+            for (int k = 0; k < _linkCount; k++)
+            {
+                int r = _linkA[k], p = _linkB[k];
+                if ((uint) r >= (uint) _realPoints || (uint) p >= (uint) _realPoints) continue;
+                if ((z.Tags[r] & TagTouchX) == 0 || (z.Tags[p] & TagTouchX) == 0) continue;
+                int lo = r, hi = p;
+                if (z.CurX[hi] < z.CurX[lo]) (lo, hi) = (hi, lo);
+                int w = z.CurX[hi] - z.CurX[lo];
+                if (w <= 0 || w > s_ctColorStemMax) continue;         // narrow stems only
+                // Keep the stem where the program put it; snap it to cover whole CLEARTYPE cells.
+                // ClearType oversamples x by 3, so its grid unit is a THIRD of a real pixel, not a
+                // whole one -- snapping to 64ths fattened every stem 3x. Unit is WPF_CT_COLOR_UNIT
+                // (64/3 by default).
+                int u = s_ctColorUnit;
+                int newLo = (z.CurX[lo] / u) * u;                      // floor to a cell
+                int newHi = ((z.CurX[hi] + u - 1) / u) * u;           // ceil to a cell
+                if (newHi < newLo + u) newHi = newLo + u;
+                if (z.CurX[lo] != newLo) { z.CurX[lo] = newLo; moved = true; }
+                if (z.CurX[hi] != newHi) { z.CurX[hi] = newHi; moved = true; }
+            }
+            if (moved) InterpolateUntouched(horizontal: true);
         }
 
         private void StoreGlyph(GlyphProgram glyph)
