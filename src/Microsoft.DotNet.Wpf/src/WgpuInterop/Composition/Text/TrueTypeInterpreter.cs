@@ -1771,6 +1771,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// one x therefore collapse to a single node, which is what makes a stem move as one.
         /// <para>Guarded like IndirectlyDependsOn: if the reference already depends on the point
         /// being placed, the link would close a cycle, so the reference is kept as-is.</para></summary>
+        /// <summary>IndirectlyDependsOn@1801db288: is <paramref name="target"/> an ancestor of
+        /// <paramref name="node"/> in the phase tree? Depth-limited exactly as GDI's is (100,
+        /// decremented by two per level), so a malformed program cannot spin.</summary>
+        private bool PhaseDependsOn(int node, int target, int depth)
+        {
+            if (depth - 1 < 0) return true;
+            if ((uint) node >= (uint) _phaseP0.Length) return false;
+            int a = _phaseP0[node], b = _phaseP1[node];
+            if (a < 0) return false;
+            if (b < 0)
+                return a == target || PhaseDependsOn(a, target, depth - 2);
+            if (a == target || b == target) return true;
+            return PhaseDependsOn(a, target, depth - 2) || PhaseDependsOn(b, target, depth - 2);
+        }
+
+        /// <summary>AddProportion@1802946c0, which IP calls for a point it places BETWEEN two
+        /// references: that point takes BOTH of them as parents, and CalcAvgXPhaseShift later
+        /// interpolates their phases across it. Faithful to the original: every index checked and
+        /// distinct, a cycle marked rather than recorded, and the pair written ONLY when both
+        /// parent slots are still empty -- the first proportion a point is given wins.</summary>
+        private void PhaseProportion(int a, int placed, int b)
+        {
+            int n = _realPoints + 4;
+            if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
+            if (a == placed || b == placed || a == b) return;
+            if ((uint) placed >= (uint) _phaseP0.Length) return;
+            if (PhaseDependsOn(a, placed, 100) || PhaseDependsOn(b, placed, 100)) return;
+            if (_phaseP0[placed] < 0 && _phaseP1[placed] < 0)
+            { _phaseP0[placed] = a; _phaseP1[placed] = b; }
+        }
+
         private int PhaseAncestor(int r, int placed)
         {
             int cur = r;

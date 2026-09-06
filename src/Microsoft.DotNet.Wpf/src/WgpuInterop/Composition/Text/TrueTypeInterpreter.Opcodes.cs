@@ -2246,9 +2246,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     newDist = orgDist - oldRange + curRange;
 
                 MovePoint(z2, p, newDist - curDist);
-                // PHASE tree: IP places p BETWEEN two references -- its two parents.
-                if (_gs.Zp2 == 1 && (uint) p < (uint) _phaseP0.Length)
-                { _phaseP0[p] = _gs.Rp1; _phaseP1[p] = _gs.Rp2; }
+                // PHASE tree: IP places p BETWEEN two references, so it takes both as parents --
+                // GDI's AddProportion, which itrp_IP calls under ClearType. The guards are its
+                // own: indices distinct, no cycle, and only if BOTH slots are still empty.
+                if (_gs.Zp2 == 1) PhaseProportion(_gs.Rp1, p, _gs.Rp2);
             }
             _gs.Loop = 1;
         }
