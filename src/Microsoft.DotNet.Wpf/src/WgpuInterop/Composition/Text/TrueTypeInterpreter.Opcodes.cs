@@ -1372,7 +1372,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// on its roman, its 'W' at 13ppem going 373 -> 4,387. Segoe UI's 'V', 'Z' and 'y' lose
         /// a few pixels each. Serif diagonals and Arial's 'w' take an opposing pair that GDI
         /// plainly runs, and until something separates THOSE from Verdana's, this is a rule with a
-        /// hole in it rather than a rule.</para></summary>
+        /// hole in it rather than a rule.</para>
+        /// <para>RE-TESTED under the phase pass, because the mechanism underneath it changed
+        /// and a knob measured worse under the old one is not settled. It STILL LOSES, and the
+        /// aggregates still say otherwise: specimen 4,187,741 -> 4,082,699 and holdout
+        /// 15,074,881 -> 14,865,877, against 19 per-glyph ratchets regressed and NOT ONE
+        /// improved -- three of them by 400, 423 and 494 pixels, which is the fallback to the
+        /// unhinted fitter this note already predicted. Ratchets outrank the weight sum. Do not
+        /// ship it on the strength of the aggregate; the hole is still there.</para></summary>
         private static readonly bool s_shpixPair =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_PAIR") == "1";
 
