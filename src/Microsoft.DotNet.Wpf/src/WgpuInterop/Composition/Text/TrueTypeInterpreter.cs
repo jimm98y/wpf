@@ -1516,7 +1516,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the phantoms and flows to whatever was placed from them, so filtering by link colour
             // (as the stem path below does) starves the tree and leaves most of the glyph unmoved.
             if ((uint) p < (uint) _phaseP0.Length && (uint) r < (uint) _phaseP0.Length && _phaseP0[p] < 0)
-                _phaseP0[p] = r;
+                _phaseP0[p] = PhaseAncestor(r, p);
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -1763,6 +1763,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // computes ctFactor per GLYPH as |FixDiv(A,B)| of two advance-like quantities (default
         // 1.0), so mode 2/3 derive it from this glyph's advances; mode 1 keeps the swept constant.
         private float _ctFrac;
+
+        /// <summary>AddDistance's parent choice, read from its ARM64 (0x1db0c4-0x1db118): the
+        /// parent of a placed point is NOT the reference, it is the TOPMOST ancestor reachable
+        /// from the reference through links whose endpoints share the same ORIGINAL x (the loop
+        /// compares elem+0x20, the scaled original array, not the fitted one). Points stacked at
+        /// one x therefore collapse to a single node, which is what makes a stem move as one.
+        /// <para>Guarded like IndirectlyDependsOn: if the reference already depends on the point
+        /// being placed, the link would close a cycle, so the reference is kept as-is.</para></summary>
+        private int PhaseAncestor(int r, int placed)
+        {
+            int cur = r;
+            for (int guard = 0; guard < 50; guard++)
+            {
+                int par = _phaseP0[cur];
+                if (par < 0 || par == placed) break;
+                if (_glyphZone.OrgX[par] != _glyphZone.OrgX[cur]) break;
+                cur = par;
+            }
+            return cur;
+        }
 
         private int PhaseOf(int p)
         {

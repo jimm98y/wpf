@@ -2530,7 +2530,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     float wanted12 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target12 = (int) MathF.Round(wanted12 * 64f);
-                    if (target12 > 0) interpreter.ApplyNaturalStretch(glyph.X, glyph.PointCount, target12);
+                    if (target12 > 0 && interpreter.ApplyNaturalStretch(glyph.X, glyph.PointCount, target12)
+                        && glyph.X.Length > glyph.PointCount + 1)
+                        glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target12;
                 }
                 else if (CompatibleWidthMode == 11 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
@@ -2540,8 +2542,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // thing itself.
                     float wanted11 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target11 = (int) MathF.Round(wanted11 * 64f);
+                    if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+                        Console.Error.WriteLine($"CW11 gid={gid} fitted={fitted} target={target11} n={glyph.PointCount}");
                     if (target11 > 0 && target11 != fitted)
-                        interpreter.ApplyCompatPhase(glyph.X, glyph.PointCount, target11 / (float) fitted);
+                    {
+                        bool okPhase = interpreter.ApplyCompatPhase(glyph.X, glyph.PointCount, target11 / (float) fitted);
+                        if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+                            Console.Error.WriteLine($"CW11 applied={okPhase}");
+                        // ...and REALIZE THE ADVANCE. Omitting this crippled the measurement: for
+                        // Verdana 'H'@12 the displacement is ~0 (s = 0.9983) and the entire value
+                        // of the compatible-width pass is putting the advance on its hdmx value,
+                        // which took the edge oracle from 6,782 to 944 under mode 7 while mode 11
+                        // scored identically to doing nothing at all.
+                        if (glyph.X.Length > glyph.PointCount + 1)
+                            glyph.X[glyph.PointCount + 1] = glyph.X[glyph.PointCount] + target11;
+                    }
                 }
                 else if (CompatibleWidthMode == 7 && fitted > 0 && gid >= 0 && gid < _numGlyphs)
                 {
