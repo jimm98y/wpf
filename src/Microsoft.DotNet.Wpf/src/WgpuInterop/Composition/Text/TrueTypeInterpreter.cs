@@ -1460,6 +1460,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < _realPoints; i++) _xLink[i] = i;
             if (_linkA.Length < _realPoints * 2) { _linkA = new int[_realPoints * 2]; _linkB = new int[_realPoints * 2]; }
             _linkCount = 0;
+            if (_stemA.Length < _realPoints * 2) { _stemA = new int[_realPoints * 2]; _stemB = new int[_realPoints * 2]; }
+            _stemCount = 0;
         }
 
         // ---- x features ------------------------------------------------------------------------
@@ -1496,8 +1498,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1)
         {
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
-            if (_inPreProgram || zoneP != 1 || zoneR != 1 || !IsHorizontalFreedom) return;
+            if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
+            // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
+            // strokes are placed by diagonal MIRPs (SDPVTL) that the horizontal-only path below
+            // skips, yet each is one of GDI's stems. r and p are the stroke's two edges.
+            if (_stemCount < _stemA.Length) { _stemA[_stemCount] = r; _stemB[_stemCount] = p; _stemCount++; }
+            if (!IsHorizontalFreedom) return;
             // The INDIVIDUAL link (r -> p), kept as its own pair. The union-find below merges the
             // whole glyph's links into features, but GDI's stem records are one link each -- an 'H'
             // crossbar ties both stems into one feature yet they are two stems -- so the compatible
@@ -1509,6 +1516,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int[] _linkA = new int[64], _linkB = new int[64];
         private int _linkCount;
+        private int[] _stemA = new int[128], _stemB = new int[128];   // all links incl. diagonal
+        private int _stemCount;
 
         /// <summary>The individual (reference, placed) x-links the program made -- one stem each.
         /// Returns the count; fills the caller's arrays.</summary>
@@ -1657,11 +1666,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             Zone z = _glyphZone;
             var stems = new System.Collections.Generic.List<GcStem>();
-            for (int k = 0; k < _linkCount; k++)
+            for (int k = 0; k < _stemCount; k++)
             {
-                int r = _linkA[k], p = _linkB[k];
+                int r = _stemA[k], p = _stemB[k];
                 if ((uint) r >= (uint) _realPoints || (uint) p >= (uint) _realPoints) continue;
-                if ((z.Tags[r] & TagTouchX) == 0 || (z.Tags[p] & TagTouchX) == 0) continue;
                 int lo = r, hi = p;
                 if (z.CurX[hi] < z.CurX[lo]) (lo, hi) = (hi, lo);
                 var s = new GcStem
