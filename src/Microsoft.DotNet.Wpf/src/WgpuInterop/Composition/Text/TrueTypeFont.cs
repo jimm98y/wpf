@@ -1684,6 +1684,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// also what "GDI keeps natural widths" has said all along.</para></summary>
         internal static bool SubpixelFitting { get; set; }
 
+        /// <summary>WPF_CT_COMPOFF=1 rounds a component offset on the LAMP grid in x, as
+        /// scl_CalcComponentOffset does. It is GDI's rule and it measures net positive on its
+        /// own -- 78 ratchets improve against 34 that regress -- but 34 regressions is not
+        /// nothing, so it waits with the rest of the phase work rather than dirtying a default
+        /// that is currently clean.</summary>
+        private static readonly bool s_ctComponentOffset =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPOFF") == "1";
+
         /// <summary>Fit Y ONLY, whatever XHintMode says -- the stage tests' third measurement.
         /// <para>Not a rendering knob: nothing but GdiStageTests sets it, and it exists because
         /// the XHintMode gate on the plainX capture had silently retired that stage.</para>
@@ -3154,7 +3162,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // already on one, instead of half a pixel above it and grey on both rows.
                     if ((flags & ROUND_XY_TO_GRID) != 0)
                     {
-                        dx = TrueTypeInterpreter.RoundToPixel(dx);
+                        // ...but only to a WHOLE pixel off the ClearType axis.
+                        // scl_CalcComponentOffset@180293d18 rounds the offset two ways: the
+                        // ordinary (v + 0x20) & ~0x3f to a pixel, and, when ClearType is on and
+                        // this is its axis, (v + 2) & ~3 -- the LAMP grid, a sixteenth of a
+                        // pixel. Rounding x to a whole pixel put every accent up to half a
+                        // pixel from where GDI puts it.
+                        dx = s_ctComponentOffset && SubpixelFitting && !TrueTypeInterpreter.BiLevelPass
+                            ? (dx + 2) & ~3
+                            : TrueTypeInterpreter.RoundToPixel(dx);
                         dy = TrueTypeInterpreter.RoundToPixel(dy);
                     }
                 }
