@@ -41,6 +41,12 @@ namespace WgpuInterop.GdiFitProbe
                 ? args[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
+            // The interpreter's own per-instruction dump, for this glyph and no other. It is an
+            // internal switch because nothing outside the assembly has any business setting it --
+            // but that is exactly what this probe is, and one glyph's trace is readable where the
+            // suite's would be megabytes.
+            bool trace = Array.IndexOf(args, "--trace") >= 0;
+
             int[]? expect = null;
             for (int i = 3; i < args.Length - 1; i++)
                 if (args[i] == "--check")
@@ -66,12 +72,15 @@ namespace WgpuInterop.GdiFitProbe
             Console.WriteLine($"== {family}{(bold ? " Bold" : "")}{(italic ? " Italic" : "")} '{ch}' @{ppem}");
             Console.WriteLine($"   file  {Path.GetFileName(file)}  gid {gid}  unitsPerEm {font.PixelsPerEm}");
 
+            TrueTypeInterpreter.s_dumpGlyph = trace;
             if (!((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out List<PathFigure> fitted)
                 || fitted.Count == 0)
             {
                 Console.Error.WriteLine("   not fitted (blank glyph or unmeasurable face)");
                 return 5;
             }
+
+            TrueTypeInterpreter.s_dumpGlyph = false;
 
             int[] edges = Edges(fitted);
             Console.WriteLine("   OUR FITTED EDGES (64ths): " + string.Join(" ", edges));
