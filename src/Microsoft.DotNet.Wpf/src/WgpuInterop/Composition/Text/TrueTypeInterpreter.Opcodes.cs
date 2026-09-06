@@ -874,6 +874,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// which is how the half-pixel SHPIX cap was caught". So the weight sum can improve while
         /// pixel parity regresses, and where they disagree the ratchets win.
         /// WPF_CT_STEMFAT=0 to re-measure.</para></summary>
+        /// <summary>WPF_CT_STEMSUBPX=1: take a black stem's ClearType width from the OUTLINE,
+        /// floored to a whole subpixel. See the note at the use site.</summary>
+        private static readonly bool s_stemSubpx =
+            Environment.GetEnvironmentVariable("WPF_CT_STEMSUBPX") == "1";
+
         private static readonly int s_stemFat =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_STEMFAT"), out int sf) ? sf : 6;
         private static readonly int s_stemFatLo =
@@ -1906,6 +1911,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // look at VTT's picture does not spend the evening rediscovering it.
             if (round && !(s_noRoundX && tookControlValue && !BiLevelPass && InClearTypeDirection))
                 distance = RoundDistance(distance);
+
+            // WPF_CT_STEMSUBPX=1: a stem's WIDTH in ClearType is the OUTLINE distance floored to a
+            // whole SUBPIXEL. Measured off GDI's own pixels with the standalone PoC, which counts
+            // saturated subpixels in a stem row (a box of N subpixels filters to N-2 saturated).
+            // Verdana 'H', design stem 0.09766em, natural width in subpixels against what GDI draws:
+            //     ppem     11    12    13    14    16    18    24
+            //     natural 3.22  3.52  3.81  4.10  4.69  5.27  7.03
+            //     floor      3     3     3     4     4     5     7
+            //     GDI        3     3     3     4     4     5     7      <- exact
+            // So ClearType quantises stem width to a THIRD of a pixel, not to a whole one, and it
+            // measures the stroke rather than the control value. This is the surgical form of that:
+            // XHintMode 14 expresses the same idea but moves POSITIONS onto the third grid as well
+            // and fails 361 tests, so change only the width.
+            if (s_stemSubpx && !BiLevelPass && InClearTypeDirection && tookControlValue
+                && _gs.Zp0 == _gs.Zp1 && !phantomLink && linkType == 1)
+            {
+                int mag = original < 0 ? -original : original;
+                int thirds = (int) ((long) mag * 3 / 64);          // floor to whole subpixels
+                int snapped = (int) ((long) thirds * 64 / 3);
+                if (snapped > 0) distance = original < 0 ? -snapped : snapped;
+            }
 
             // THE PPEM GATE BELOW IS NOT ABOUT STROKE WEIGHT. Read every glyph in the lamp report
             // against GDI, per size, and 11-13 is where nearly everything goes wrong -- straight
