@@ -2462,10 +2462,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         int nl = interpreter.ReadXLinks(la, lb);
                         var disp = new int[n13];
                         var have = new bool[n13];
+                        // GDI only makes a PAIR when DoubleCheckLinkColor says so, and that
+                        // function returns a colour (rather than passing the instruction's own
+                        // through) ONLY when the two points are ADJACENT ON THE SAME CONTOUR and
+                        // the segment between them is no steeper than 2:1. Everything else keeps
+                        // its instruction colour, gets param_5 = 3, and so never becomes a pair.
+                        bool Adjacent(int u, int v)
+                        {
+                            int start = 0;
+                            for (int c = 0; c < glyph.EndPoints.Length; c++)
+                            {
+                                int end = glyph.EndPoints[c];
+                                if (u >= start && u <= end && v >= start && v <= end)
+                                {
+                                    int len = end - start + 1;
+                                    if (len < 2) return false;
+                                    int du = u - start, dv = v - start;
+                                    int diff = du - dv;
+                                    if (diff < 0) diff = -diff;
+                                    return diff == 1 || diff == len - 1;
+                                }
+                                start = end + 1;
+                            }
+                            return false;
+                        }
                         for (int k = 0; k < nl; k++)
                         {
                             int r = la[k], q = lb[k];
                             if ((uint) r >= (uint) n13 || (uint) q >= (uint) n13) continue;
+                            if (!Adjacent(r, q)) continue;
+                            int sdx = glyph.X[q] - glyph.X[r], sdy = glyph.Y[q] - glyph.Y[r];
+                            if (sdx < 0) sdx = -sdx;
+                            if (sdy < 0) sdy = -sdy;
+                            if (sdy > 2 * sdx) continue;              // steeper than 2:1
                             int d = (int) MathF.Round((glyph.X[r] + glyph.X[q]) * 0.5f * f13);
                             if (!have[r]) { disp[r] = d; have[r] = true; }
                             if (!have[q]) { disp[q] = d; have[q] = true; }
