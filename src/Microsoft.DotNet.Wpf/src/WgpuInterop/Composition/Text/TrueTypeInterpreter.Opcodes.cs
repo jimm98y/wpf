@@ -556,12 +556,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // byte at +0x171, which fsg_CompositeInnerGridFit sets.
                                 // NOTE the axis: we tested the FREEDOM vector, the scaler tests
                                 // PROJECTION. WPF_CT_SHPIX_CALL=0 turns this off.
+                                // ...AND THE THIRD CLAUSE, which was missing. Read again at
+                                // itrp_SHP_Common +0x3e978, the gate with x as the ClearType axis
+                                // (globals[0x1c0] bit 2 clear) is
+                                //
+                                //     apply  =  pv == (0, 0x4000)
+                                //               && ( globals[0x171] != 0                  // composite
+                                //                    || ( tags[pt] & 2                    // touched in y
+                                //                         && (globals[0x1c2] & 2) == 0 ) ) // IUP[y] NOT run
+                                //
+                                // and globals[0x1c2] bit 1 is "IUP[y] has run". So it is the same
+                                // THREE-part test itrp_DeltaEngine uses -- pure +y projection,
+                                // touched in y, and IUP[y] not yet run -- and we had implemented
+                                // only the first two. On the delta side the ablation showed the
+                                // IUP[y] clause was the whole of it; it is worth as much here.
+                                //
+                                // Arial 'K' at 20ppem is the case that found it. Five SHPIXes run
+                                // inside function 52 (which is byte-for-byte the recognised helper
+                                // at +0xa87d0), all after IUP[y]: three project on x and were
+                                // already skipped, and two project on pure +y -- pt3 by +32/64 and
+                                // pt9 by -32/64 -- which are exactly the two points where the arms
+                                // meet the stem. Those two tore the junction open by a whole pixel.
+                                // The design has the arms meeting at a POINT (natural y -462 and
+                                // -464); the program leaves them at 473 and 466; the SHPIXes push
+                                // them to 505 and 434. GDI's own ClearType puts them at 475 and
+                                // 454, i.e. it declines both -- and its BI-LEVEL pass applies them
+                                // (513), which is why our bi-level matches GDI's exactly and our
+                                // ClearType did not.
+                                //
+                                // The composite term moves inside the predicate here, because that
+                                // is where the binary has it: globals[0x171] is a BYPASS that makes
+                                // the move apply, not a condition on skipping at all.
+                                // WPF_CT_SHPIX_IUPY=0 restores the two-clause version.
+                                bool shpixApply =
+                                    _gs.ProjX == 0 && _gs.ProjY == 0x4000
+                                    && (_inComposite
+                                        || ((uint) sp < (uint) z.PointCount
+                                            && (z.Tags[sp] & TagTouchY) != 0
+                                            && !(s_shpixAfterIupY && _iupYDone)));
                                 if (s_shpixCallRule && ClearTypeInfo && !NativeClearTypeMode
                                     && !BiLevelPass && !_inPreProgram && _deltaFdefDepth > 0
-                                    && !_inComposite
-                                    && !(_gs.ProjX == 0 && _gs.ProjY == 0x4000
-                                         && (uint) sp < (uint) z.PointCount
-                                         && (z.Tags[sp] & TagTouchY) != 0))
+                                    && !shpixApply)
                                 {
                                     if (s_yTrace)
                                         Console.Error.WriteLine("SKIP-SHPIX pt=" + sp + " amt="
@@ -1869,6 +1904,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
         private static readonly bool s_shpixCallRule =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_CALL") != "0";
+
+        /// <summary>WPF_CT_SHPIX_IUPY=0: drop the "IUP[y] has not run" clause from the ClearType
+        /// SHPIX gate, which is how this was implemented before the third clause was read out of
+        /// itrp_SHP_Common. See the comment at the SHPIX opcode.</summary>
+        private static readonly bool s_shpixAfterIupY =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_IUPY") != "0";
 
         /// <summary>The two function bodies fontdrvhost recognises, read out of its own table at
         /// +0xa8770. Both are the VTT "delta at this size" helper -- a ppem test around a single
