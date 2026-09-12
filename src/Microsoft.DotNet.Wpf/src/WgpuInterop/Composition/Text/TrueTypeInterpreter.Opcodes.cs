@@ -447,6 +447,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 int p = Pop();
                                 Zone z = ZoneOf(_gs.Zp1);
                                 if (p >= z.PointCount) continue;
+                                // THE OTHER HALF OF THE POST-IUP QUESTION. Times' bowls flatten
+                                // their shoulders with an SCFS (see case 0x48) and then a LOOPCALL
+                                // that ALIGNRPs the neighbouring controls onto that point in both
+                                // axes -- both of them moves of UNTOUCHED points after IUP, which
+                                // is the shape Microsoft describes as denting the outline.
+                                // WPF_CT_ALIGNRP_TOUCHED=1 refuses those the same way.
+                                if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
+                                    && (IsHorizontalProjection
+                                        ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
+                                        : _iupYDone && (z.Tags[p] & TagTouchY) == 0)) continue;
                                 LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
                             }
@@ -726,22 +736,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // controls, which nothing has touched, turning an oval's side into a
                             // dead straight run of 7.6px out of 10 -- and our ink comes out 1.277x
                             // GDI's with the error exactly symmetric top and bottom.</para>
-                            // <para>MEASURED, AND NOT SHIPPED, AND THE SECOND HALF IS WHY. It is
-                            // worth specimen 558,663 -> 529,167 and holdout 8..24 1,861,622 ->
-                            // 1,761,773, with Times -27,395, Arial -2,101, and Verdana, Tahoma,
-                            // Segoe UI and Consolas moving by EXACTLY ZERO -- no face pays for it,
-                            // and the per-glyph ratchets do not move. But the BINARY SAYS NO:
-                            // `itrp_WC` is a plain project-and-move with no ClearType gate; the
-                            // indirect call it moves through is SVTCA's `itrp_YMovePoint` (two
-                            // lines, sets the touch bit, gates nothing) or `itrp_MovePoint` (the
-                            // fv.pv division, no gate); and `itrp_WC` does not appear among the
-                            // readers of globals+0x1c2, the "IUP has run" word, whereas
-                            // itrp_DeltaEngine, itrp_SHP_Common and itrp_MD all do. So GDI applies
-                            // this SCFS and still draws a curved shoulder, and something ELSE is
-                            // sparing it. Shipping a proxy for that mechanism would bake in the
-                            // wrong model and hide the right one, which is how this file acquired
-                            // its retractions. Left as a knob, and as a number any correct rule
-                            // has to match or beat.</para>
+                            // <para>THAT THE EFFECT IS CLEARTYPE-CONDITIONAL IS NOT AN INFERENCE
+                            // FROM THE SCORE -- GDI'S OWN TWO RENDERS SAY SO. WPF_GDI_QUALITY on
+                            // '0'@15 gives a BI-LEVEL raster of `..999..` over eight rows of
+                            // `.9...9.`, which is exactly what a straight side from y=1.2 to 8.8
+                            // produces when a pixel turns on at its centre -- the flattened
+                            // shoulder, and we match it. Its CLEARTYPE raster has the left edge
+                            // already moving right by two rows in from each end (col 6 reads 73
+                            // where the middle rows read 111). Same glyph, same program, two
+                            // different outlines: so a ClearType-conditional rule moves the
+                            // shoulder, and this is the one Microsoft states.</para>
+                            // <para>WHERE GDI IMPLEMENTS IT IS STILL UNKNOWN, and that is worth
+                            // saying plainly. `itrp_WC` is a plain project-and-move with no gate;
+                            // the move functions it reaches indirectly (`itrp_YMovePoint`,
+                            // `itrp_MovePoint`) gate nothing and `itrp_SVTCA_0` installs them
+                            // unconditionally; and `itrp_WC` is not among the readers of
+                            // globals+0x1c2 at all, where itrp_DeltaEngine, itrp_SHP_Common and
+                            // itrp_MD are. So the rule is right and its address is not yet found;
+                            // the interpreter's own dispatch loop and the three opcode tables at
+                            // ~0x14009a8f8 / ~0x14009b0c0 / ~0x1400bb800 are where to look next.
+                            // </para>
+                            // <para>MEASURED, with the ALIGNRP half below: specimen 556,716 ->
+                            // 458,613 and holdout 8..24 1,849,185 -> 1,572,278. Times -92,082 and
+                            // Arial -6,021, with Verdana, Tahoma, Segoe UI and Consolas moving by
+                            // EXACTLY ZERO. Per glyph at 15ppem '0' goes 2,752 -> 694, '6' 1,258
+                            // -> 456, '9' 913 -> 262, and 'A' -- which has no bowl and no SCFS --
+                            // does not move at all.</para>
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
                                 && !IsHorizontalProjection
                                 && (z.Tags[p] & TagTouchY) == 0) break;
@@ -1180,10 +1200,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_deltasFreeInPrep =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_PREP") == "1";
 
-        /// <summary>WPF_CT_SCFS_TOUCHED=1. OFF BY DEFAULT AND THE REASON IS THE POINT: it
-        /// MEASURES well and the binary CONTRADICTS it. See the SCFS call site.</summary>
+        /// <summary>WPF_CT_ALIGNRP_TOUCHED=0 restores the old behaviour. See the call site.</summary>
+        private static readonly bool s_alignrpTouchedOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_ALIGNRP_TOUCHED") != "0";
+
+        /// <summary>WPF_CT_SCFS_TOUCHED=0 restores the old behaviour. See the SCFS call site --
+        /// and note that WHERE GDI implements this is still unknown.</summary>
         private static readonly bool s_scfsTouchedOnly =
-            Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") != "0";
 
         /// <summary>WPF_CT_MD65=0 stops MD reporting an exact pixel as 65/64 after IUP.</summary>
         private static readonly bool s_md65 =
