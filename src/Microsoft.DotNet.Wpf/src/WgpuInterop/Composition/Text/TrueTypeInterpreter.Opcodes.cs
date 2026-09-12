@@ -120,6 +120,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         }
                     case 0x43:                                                          // RS
                         {
+                            // itrp_RS@14003d2b4 is where bit 10 turns into bit 3:
+                            //     if (globals[0x1c2] & 0x400) globals[0x1c2] |= 0x8;
+                            // Any RS at all does it -- the opcode's own work is unaffected. Bit 3
+                            // is the bit itrp_MD then asks for, so the whole chain is: this face's
+                            // function 0 is the recognised helper, the glyph program has read
+                            // storage at least once, and both IUPs have run.
+                            if (_fdefAddHelper) _mdBit3 = true;
                             int i = Pop();
                             Push((uint)i < _storage.Length ? _storage[i] : 0);
                             break;
@@ -773,15 +780,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // EXACTLY ONE PIXEL IS REPORTED AS 65/64, once both IUPs have run.
                             // itrp_MD@14003a1a0 does nothing else with the flags word:
                             //     if ((globals[0x1c2] & 0xB) == 0xB && dist == 0x40) dist = 0x41;
-                            // 0xB is bits 0, 1 and 3; bits 0 and 1 are "IUP[x] ran" and "IUP[y]
-                            // ran", and bit 3 is not yet identified -- so this asks for both IUPs
-                            // and takes bit 3 on trust. A hack that specific exists to flip ONE
-                            // comparison: a program that measures a stem and tests it against a
-                            // whole pixel takes the other branch after IUP. WPF_CT_MD65=0 turns it
-                            // off. No glyph in the current worst pools even calls MD (Times '0',
-                            // 'a', 'g' and '6' at 15ppem call it zero times), so this is here
-                            // because it was read, not because it was needed.
-                            if (s_md65 && md == 64 && _iupXDone && _iupYDone) md = 65;
+                            // 0xB is bits 0, 1 and 3: "IUP[x] ran", "IUP[y] ran", and -- traced
+                            // to its source this time -- the bit itrp_RS raises for a face whose
+                            // fpgm function 0 is the recognised helper (see the FDEF case). So the
+                            // rule is NOT global: it needs the signature, an RS, and both IUPs. A
+                            // hack that specific exists to flip ONE comparison, a program that
+                            // measures a stem and tests it against a whole pixel taking the other
+                            // branch after IUP. WPF_CT_MD65=0 turns it off. No glyph in the
+                            // current worst pools even calls MD (Times '0', 'a', 'g' and '6' at
+                            // 15ppem call it zero times), so this is here because it was read,
+                            // not because it was needed.
+                            if (s_md65 && md == 64 && _mdBit3 && _iupXDone && _iupYDone) md = 65;
                             Push(md);
                             break;
                         }
@@ -986,6 +995,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // s_shpixFdefA/B for the two sequences.
                                 if (MatchesSuppressedFdef(code, body, ip) && _suppressedFdefCount < 4)
                                 { _suppressedFdefs[_suppressedFdefCount++] = id; }
+                                // A SECOND, SEPARATE TABLE, at fontdrvhost+0xa8770. itrp_FDEF
+                                // memcmps function 0's body against `45 23 46 60 20 B0 26` --
+                                // RCVT SWAP GC[0] ADD DUP PUSHB[1] 38 -- and on a match sets bit
+                                // 10 of gs+0x1c2. Times' function 0 IS that sequence, at fpgm
+                                // offset 90, and its function 1 is the subtracting twin
+                                // (`45 23 46 23 61 20 B0 26`) that plants both bowl shoulders.
+                                // Arial and Consolas match too; Verdana, Tahoma and Segoe UI do
+                                // not. See _mdOnePixelIs65 for what bit 10 goes on to do.
+                                if (id == 0) _fdefAddHelper = StartsWith(code, body, ip, s_fdefAddHelper);
                             }
                             break;
                         }
@@ -1789,6 +1807,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private readonly int[] _suppressedFdefs = new int[4];
         private int _suppressedFdefCount;
+
+        /// <summary>`RCVT SWAP GC[0] ADD DUP PUSHB[1] 38`, the seven bytes itrp_FDEF looks for in
+        /// function 0 (fontdrvhost+0xa87b0).</summary>
+        private static readonly byte[] s_fdefAddHelper =
+            { 0x45, 0x23, 0x46, 0x60, 0x20, 0xB0, 0x26 };
+
+        /// <summary>Whether this face's function 0 matched -- gs+0x1c2 bit 10. Set once by the
+        /// font program, not cleared per glyph.</summary>
+        private bool _fdefAddHelper;
+
+        /// <summary>gs+0x1c2 bit 3, which itrp_RS raises from bit 10. Per glyph.</summary>
+        private bool _mdBit3;
+
+        private static bool StartsWith(byte[] code, int body, int end, byte[] want)
+        {
+            if (end - body < want.Length) return false;
+            for (int i = 0; i < want.Length; i++) if (code[body + i] != want[i]) return false;
+            return true;
+        }
         /// <summary>WPF_CT_DELTA_RE=0 restores the pre-2026-09-10 delta gate.</summary>
         /// <summary>SHIPPED 2026-09-10, the rule read out of itrp_DeltaEngine. 0 restores the old
         /// gate; 2/4/5 are the ablations that showed the axis change is neutral (1,079,668) and the

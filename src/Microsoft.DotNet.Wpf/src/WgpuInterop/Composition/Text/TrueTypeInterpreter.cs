@@ -453,6 +453,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _inComposite = glyph.Composite;
             _iupDone = false;
             _iupXDone = _iupYDone = false;
+            // itrp_Execute@140037148 clears bits 0, 1, 3 and 4 of gs+0x1c2 as a glyph starts
+            // (`and w8, w8, #0xffe4`) and leaves the FDEF-recognition bits 8..11 alone -- those
+            // were decided once, when the font program ran.
+            _mdBit3 = false;
             _nudgeCount = 0; _nudgeDx = 0;
             if (!IsUsable || pixelsPerEm <= 0f) return false;
 
