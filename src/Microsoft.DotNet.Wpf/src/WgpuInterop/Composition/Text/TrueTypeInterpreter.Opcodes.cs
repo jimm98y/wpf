@@ -1852,6 +1852,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_iupFlatLower =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_FLAT") != "0";
 
+        /// <summary>WPF_CT_IUP_UPPER=0: ask "below the lower reference" before "at or above the
+        /// upper" one, as we used to. See the comment at the bracket test.</summary>
+        private static readonly bool s_iupUpperFirst =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_UPPER") != "0";
+
         private static readonly bool s_phaseAtIupY =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
 
@@ -3163,9 +3168,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool haveScale = false;
             for (int i = from; i <= to; i++)
             {
+                // THE UPPER TEST COMES FIRST. itrp_IUP asks
+                //     if (org[lo] < org[i]) { if (org[i] < org[hi]) interpolate; else upper; }
+                //     else                  { if (org[hi] <= org[i]) upper; else lower; }
+                // which is "at or past the upper reference -> upper delta" checked BEFORE the
+                // lower test, not after it. The two orders differ only when org[lo] > org[hi] --
+                // the endpoints are ordered by the REFERENCE array, which is font units, and
+                // scaling rounds, so two coordinates a whisker apart in the design can land the
+                // other way round once scaled. A point between them then satisfies BOTH tests and
+                // the order decides which delta it takes. WPF_CT_IUP_UPPER=0 asks the lower first.
+                // <para>MEASURED EXACTLY NEUTRAL on the holdout -- 843,447 either way -- so the
+                // case does not arise in the specimen. Kept because it is what the binary does
+                // and it costs nothing; do not re-measure it looking for a win.</para>
                 int x = org[i];
-                if (x <= org1) { cur[i] = x + delta1; continue; }
-                if (x >= org2) { cur[i] = x + delta2; continue; }
+                if (s_iupUpperFirst)
+                {
+                    if (x >= org2) { cur[i] = x + delta2; continue; }
+                    if (x <= org1) { cur[i] = x + delta1; continue; }
+                }
+                else
+                {
+                    if (x <= org1) { cur[i] = x + delta1; continue; }
+                    if (x >= org2) { cur[i] = x + delta2; continue; }
+                }
 
                 // ONE DIVISION, ROUNDED HALF-UP -- not a fixed-point scale and then a multiply.
                 // itrp_IUP's inner loop is
