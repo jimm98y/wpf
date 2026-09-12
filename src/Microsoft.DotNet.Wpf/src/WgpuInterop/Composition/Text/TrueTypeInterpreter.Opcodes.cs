@@ -1821,6 +1821,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_iupRefScaled =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_REF") == "scaled";
 
+        /// <summary>WPF_CT_IUP_ONESTEP=0: build a 16.16 scale and multiply, as we used to, instead
+        /// of itrp_IUP's single rounded division. See the comment at the interpolation.</summary>
+        private static readonly bool s_iupOneStep =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_ONESTEP") != "0";
+
         private static readonly bool s_phaseAtIupY =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
 
@@ -3125,6 +3130,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (x <= org1) { cur[i] = x + delta1; continue; }
                 if (x >= org2) { cur[i] = x + delta2; continue; }
 
+                // ONE DIVISION, ROUNDED HALF-UP -- not a fixed-point scale and then a multiply.
+                // itrp_IUP's inner loop is
+                //     v = ((ref[i] - refLo) * (curHi - curLo) + (den >> 1)) / den;  v += curLo;
+                // with `den = refHi - refLo`, so it rounds ONCE, at the end, adding half the
+                // denominator before an integer divide. We built a 16.16 scale with DivFix and
+                // then applied it with MulFix, which rounds TWICE -- once into the scale and again
+                // out of the product -- and the two do not agree on a 26.6 coordinate.
+                // <para>It matters because IUP places most of the points in most glyphs: at 13ppem
+                // Times' 'z' has six of its twenty-five points explicitly placed and the rest
+                // interpolated, and the whole of that glyph's error is one interpolated point.
+                // WPF_CT_IUP_ONESTEP=0 restores the two-step form.</para>
+                if (s_iupOneStep)
+                {
+                    long den = s_iupRefScaled ? org2 - org1 : orus2 - orus1;
+                    long num = s_iupRefScaled ? org[i] - org1 : orus[i] - orus1;
+                    long span = (long) (org2 + delta2) - (org1 + delta1);
+                    cur[i] = den == 0 ? org1 + delta1
+                           : (int) ((num * span + (den >> 1)) / den) + org1 + delta1;
+                    continue;
+                }
                 if (!haveScale)
                 {
                     haveScale = true;
