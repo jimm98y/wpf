@@ -1826,6 +1826,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_iupOneStep =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_ONESTEP") != "0";
 
+        /// <summary>WPF_CT_IUP_FLAT=0: when the two interpolation references coincide, split the
+        /// run between their two deltas as we used to, instead of itrp_IUP's single lower
+        /// delta.</summary>
+        private static readonly bool s_iupFlatLower =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_FLAT") != "0";
+
         private static readonly bool s_phaseAtIupY =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
 
@@ -3115,10 +3121,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (orus1 == orus2)
             {
-                // Nothing to interpolate along: each point goes with whichever reference it was on
-                // the near side of.
+                // NOTHING TO INTERPOLATE ALONG, AND GDI SHIFTS THE WHOLE RUN BY THE LOWER
+                // ENDPOINT'S DELTA. itrp_IUP reaches this as its `den == 0` branch and does
+                // `cur[i] += iVar30` for every point of the run, where iVar30 is
+                // `cur[lower] - scaledOrg[lower]` -- one delta, applied to all of them, with no
+                // test of which side a point sits on. We split the run between the two deltas by
+                // comparing each point against the lower bound, which is a different rule and is
+                // not what the binary does. It arises on a FLAT edge, where two references that
+                // differ in the design land on the same reference coordinate -- so it is the serifs
+                // and bars, which is where the residual is.
+                // WPF_CT_IUP_FLAT=0 restores the split.
                 for (int i = from; i <= to; i++)
-                    cur[i] = org[i] + (org[i] <= org1 ? delta1 : delta2);
+                    cur[i] = org[i] + (s_iupFlatLower ? delta1
+                                                      : (org[i] <= org1 ? delta1 : delta2));
                 return;
             }
 
