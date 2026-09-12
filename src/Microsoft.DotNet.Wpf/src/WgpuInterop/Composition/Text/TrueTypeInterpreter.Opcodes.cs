@@ -797,6 +797,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // EXACTLY ZERO. Per glyph at 15ppem '0' goes 2,752 -> 694, '6' 1,258
                             // -> 456, '9' 913 -> 262, and 'A' -- which has no bowl and no SCFS --
                             // does not move at all.</para>
+                            // AND THE SAME ON THE CLEARTYPE AXIS -- WPF_CT_SCFS_X=1, under test.
+                            // The rule above is stated for the NON-ClearType axis, and GDI does
+                            // fit x, so an x SCFS is kept. But the per-point oracle says the x ones
+                            // are where the remaining bowl error is. Times '0'@12 solves EXACTLY
+                            // (1,393 -> 0) once three points move, and those three are precisely
+                            // the x-axis SCFS targets:
+                            //     SCFS pt 6  -> 275/64   ours 275, GDI 239   (d -36)
+                            //     SCFS pt 12 -> 275/64   ours 275, GDI 239   (d -36)
+                            //     SCFS pt 14 -> 109/64   ours 109, GDI 133   (d +24)
+                            // and the deltas are IDENTICAL IN 64THS at 12 and 14ppem, while '0' is
+                            // already pixel-exact at 16 and 20. Every X-TOUCHED point of the glyph
+                            // (0, 9, 17, 26) agrees with GDI exactly, and so does the whole
+                            // bi-level fit (37 of 37 points), so nothing before IUP is in question.
+                            if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
+                                && IsHorizontalProjection
+                                && (z.Tags[p] & TagTouchX) == 0) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
                                 && !IsHorizontalProjection
                                 && (z.Tags[p] & TagTouchY) == 0) break;
@@ -1242,6 +1258,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_SCFS_TOUCHED=0 restores the old behaviour. See the SCFS call site --
         /// and note that WHERE GDI implements this is still unknown.</summary>
+        /// <summary>WPF_CT_SCFS_X=1: drop an SCFS on the CLEARTYPE axis onto a point not
+        /// already touched there, the same way the non-ClearType axis is treated. SHIPPED; see
+        /// the comment at the SCFS opcode.</summary>
+        private static readonly bool s_scfsXToo =
+            Environment.GetEnvironmentVariable("WPF_CT_SCFS_X") != "0";
+
         private static readonly bool s_scfsTouchedOnly =
             Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") != "0";
 
