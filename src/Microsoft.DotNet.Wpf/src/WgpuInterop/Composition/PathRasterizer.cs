@@ -655,7 +655,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public static SubpixelMask RasterizeSubpixel(PathGeometry path,
                                                      float tolerance = 0f)
         {
-            List<List<Vector2>> contours = Flatten(path, tolerance);
+            var contourFigures = new List<int>();
+            List<List<Vector2>> contours = Flatten(path, tolerance, contourFigures);
             if (contours.Count == 0) return default;
 
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
@@ -722,8 +723,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // rounds once. Only then does the level become a pixel, through a seven-entry ramp.
                 int nSub = FilterBeforeVerticalAverage && SubpixelRowsForRun > 1 ? SubpixelRowsForRun : 1;
                 var lev = new byte[nSub][];
-                List<(int Col, int SubRow)>? fills = DropoutForRun > 0
-                    ? GdiDropoutFills(polysG, path.FillRule, originX, originY, width, height, nSub) : null;
+                // ONE GLYPH AT A TIME, because that is the only thing GDI ever does: ExtTextOutW
+                // rasterizes each glyph into its OWN bitmap and blits it, so the dropout pass sees
+                // one glyph's contours, one glyph's box, and no neighbours at all. Handing it a
+                // whole run instead changes two things that matter -- the xMin/xMax/yMin/yMax the
+                // fill row is clamped into becomes the RUN's box, and the stub test counts
+                // crossings that belong to the next letter.
+                // <para>Times New Roman is where it shows. Its baseline serifs ARE dropout fills:
+                // 'n' at 15ppem scores 0 against GDI on its own and 2,550 with the pass disabled.
+                // Put any descender in the run -- y, p, g, j, q -- and the run's box now reaches
+                // below the baseline, the serif's fill row is no longer clamped up into it, and
+                // the serif lands a row low: "yn" 4,088, "pn" 4,225, while "bn" (no descender)
+                // stays 0. Nothing else in the corpus does this; every other face measures
+                // identically for "n" and "yn".</para>
+                List<(int Col, int SubRow)>? fills = null;
+                if (DropoutForRun > 0)
+                {
+                    int[]? owners = FigureGlyphIdsForRun;
+                    fills = new List<(int Col, int SubRow)>();
+                    int first = 0;
+                    while (first < polysG.Count)
+                    {
+                        int gid = GlyphOf(owners, contourFigures, first);
+                        int last = first + 1;
+                        while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
+                        List<List<Vector2>> group = first == 0 && last == polysG.Count
+                            ? polysG : polysG.GetRange(first, last - first);
+                        fills.AddRange(GdiDropoutFills(group, path.FillRule, originX, originY,
+                                                       width, height, nSub));
+                        first = last;
+                    }
+                }
                 LastDropoutFills = fills?.Count ?? -1; LastDropoutRuns++;
                 for (int sI = 0; sI < nSub; sI++)
                     lev[sI] = GdiTableFilterRowset(polysG, path.FillRule, originX, originY,
@@ -1692,9 +1722,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>Which GLYPH each figure of the run belongs to, set by the glyph-run path for
+        /// the length of one coverage mask and null everywhere else. A single glyph needs none of
+        /// this: one group is the whole path, which is what a null array means.</summary>
+        internal static int[]? FigureGlyphIdsForRun;
+
+        private static int GlyphOf(int[]? owners, List<int> contourFigures, int contour)
+        {
+            if (owners is null || contour >= contourFigures.Count) return 0;
+            int fig = contourFigures[contour];
+            return (uint) fig < (uint) owners.Length ? owners[fig] : 0;
+        }
+
         private static List<List<Vector2>> Flatten(PathGeometry path, float tolerance)
+            => Flatten(path, tolerance, null);
+
+        /// <summary>As above, and when <paramref name="owners"/> is given it receives the index of
+        /// the FIGURE each contour came from. Degenerate figures are dropped, so the two lists are
+        /// not index-parallel and a caller that needs the correspondence has to ask for it.</summary>
+        private static List<List<Vector2>> Flatten(PathGeometry path, float tolerance,
+                                                   List<int>? owners)
         {
             var contours = new List<List<Vector2>>();
+            int figureIndex = 0;
             foreach (PathFigure figure in path.Figures)
             {
                 var pts = new List<Vector2> { figure.Start };
@@ -1704,7 +1754,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     current = AppendSegment(pts, current, seg, tolerance);
                 }
                 if (pts.Count >= 3)
+                {
                     contours.Add(pts);
+                    owners?.Add(figureIndex);
+                }
+                figureIndex++;
             }
             return contours;
         }

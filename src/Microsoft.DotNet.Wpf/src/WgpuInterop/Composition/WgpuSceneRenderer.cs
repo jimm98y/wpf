@@ -4689,6 +4689,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // rather than per glyph. Colour layers cannot join that batch -- they carry their own
                 // colours -- so the batch is flushed first and they are drawn in order on top.
                 var batch = new List<PathFigure>();
+                // Which glyph each batched figure came from, so the rasterizer's dropout pass can
+                // work one glyph at a time the way GDI does -- it rasterizes each glyph into its
+                // own bitmap, so the box a dropout fill is clamped into is that GLYPH's box and
+                // never the run's. See PathRasterizer.FigureGlyphIdsForRun.
+                var batchOwner = new List<int>();
+                int glyphOrdinal = 0;
                 // COLOUR EMOJI, EXCEPT WHERE GDI IS THE THING WE MUST MATCH.
                 //
                 // This is the string-run path, which is WinForms; WPF's own text arrives already
@@ -4714,15 +4720,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 void FlushBatch()
                 {
                     if (batch.Count == 0) return;
-                    EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, batch),
-                                              new SolidColorBrush(run.Color), isGlyph: true)
-                             { PixelAligned = hintPpem > 0f },
-                             world, opacity, clip, width, height, format, data);
+                    PathRasterizer.FigureGlyphIdsForRun = batchOwner.ToArray();
+                    try
+                    {
+                        EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, batch),
+                                                  new SolidColorBrush(run.Color), isGlyph: true)
+                                 { PixelAligned = hintPpem > 0f },
+                                 world, opacity, clip, width, height, format, data);
+                    }
+                    finally { PathRasterizer.FigureGlyphIdsForRun = null; }
                     batch = new List<PathFigure>();
+                    batchOwner = new List<int>();
                 }
 
                 foreach (Text.ShapedGlyph g in _shapeScratch)
                 {
+                    glyphOrdinal++;
                     float gx = pen + g.XOffset * scale;
                     float gy = originY + g.YOffset * scale;
 
@@ -4736,6 +4749,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         if (!gf.IsColorLayer)
                         {
                             batch.AddRange(gf.Figures);
+                            for (int i = 0; i < gf.Figures.Count; i++) batchOwner.Add(glyphOrdinal);
                             continue;
                         }
 
