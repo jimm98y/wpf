@@ -7486,6 +7486,115 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(report.ToString());
         }
 
+        /// <summary>ONE GLYPH, OUR SHIPPED CLEARTYPE PIXELS BESIDE GDI'S, AND THE DIFFERENCE.
+        /// WPF_GLYPHDIFF=family/char/ppem[/B|I].
+        /// <para>Every other one-glyph probe here shows something else. HowGdiDrawsOneGlyphAtEach-
+        /// Quality shows GDI against GDI and never us. OneGlyphAgainstClearTypeGeometry is labelled
+        /// "ours (y-only fit)" and really is y-only, so its widths are not our widths and reading x
+        /// out of it is a mistake that has been made. StemLamps_ReadAgainstGdis prints exact lamps
+        /// but only at ppem 10..14. The per-glyph scorer gives a number and no picture. So when the
+        /// score says Arial 'K' and 'z' carry half of a 20ppem row there is nothing that shows what
+        /// is actually different about them, and this closes that.</para>
+        /// <para>Three maps: ours, GDI's, and |difference| -- each cell a digit, ink/255*9, from the
+        /// GREEN lamp, which is the pixel centre. Then the per-channel numbers for the rows that
+        /// disagree most, because a fringe is a triple and the digit map averages the argument
+        /// away.</para></summary>
+        [Fact]
+        public void OneGlyphOursBesideGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_GLYPHDIFF");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GLYPHDIFF=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            string family = parts[0], ch = parts[1];
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, "this machine lacks the face");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            int baseline = ppem + 12;
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(ch, family, ppem, PenX, baseline, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+            byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+
+            // GDI's DIB is BGRA, ours RGBA. Channel c of pixel i: theirs at 2-c, ours at c.
+            int Theirs(int i, int c) => raw[i * 4 + (2 - c)];
+            int Ours(int i, int c) => ours[i * 4 + c];
+
+            int top = int.MaxValue, bottom = -1, left = int.MaxValue, right = -1;
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                {
+                    int i = y * Width + x;
+                    bool ink = false;
+                    for (int c = 0; c < 3; c++)
+                        if (Theirs(i, c) < 250 || Ours(i, c) < 250) ink = true;
+                    if (!ink) continue;
+                    top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+                    left = Math.Min(left, x); right = Math.Max(right, x);
+                }
+            Assert.True(bottom >= 0, "neither side drew anything");
+
+            var rep = new System.Text.StringBuilder();
+            long total = 0;
+            for (int y = top; y <= bottom; y++)
+                for (int x = left; x <= right; x++)
+                    for (int c = 0; c < 3; c++)
+                        total += Math.Abs(Theirs(y * Width + x, c) - Ours(y * Width + x, c));
+            rep.AppendLine($"== '{ch}' {family}@{ppem}{(style.Length > 0 ? "/" + style : "")}"
+                           + $"   rows {top}..{bottom}, cols {left}..{right}   sum|d| {total}");
+            int w = right - left + 1;
+            rep.AppendLine("   " + "ours".PadRight(w + 3) + "gdi".PadRight(w + 3) + "|difference|");
+            var rowSum = new long[bottom - top + 1];
+            for (int y = top; y <= bottom; y++)
+            {
+                var a = new System.Text.StringBuilder();
+                var b = new System.Text.StringBuilder();
+                var d = new System.Text.StringBuilder();
+                for (int x = left; x <= right; x++)
+                {
+                    int i = y * Width + x;
+                    int og = 255 - Ours(i, 1), tg = 255 - Theirs(i, 1);
+                    int md = 0;
+                    for (int c = 0; c < 3; c++)
+                        md = Math.Max(md, Math.Abs(Theirs(i, c) - Ours(i, c)));
+                    rowSum[y - top] += md;
+                    a.Append(og == 0 ? '.' : (char) ('0' + Math.Min(9, (og * 9 + 127) / 255)));
+                    b.Append(tg == 0 ? '.' : (char) ('0' + Math.Min(9, (tg * 9 + 127) / 255)));
+                    d.Append(md == 0 ? '.' : (char) ('0' + Math.Min(9, (md * 9 + 127) / 255)));
+                }
+                rep.AppendLine($"   {a}   {b}   {d}");
+            }
+
+            // The three worst rows, per channel, because a ClearType edge is a triple and the
+            // digit map above has already averaged the interesting part away.
+            var order = new List<int>();
+            for (int r = 0; r < rowSum.Length; r++) order.Add(r);
+            order.Sort((p, q) => rowSum[q].CompareTo(rowSum[p]));
+            for (int k = 0; k < Math.Min(3, order.Count) && rowSum[order[k]] > 0; k++)
+            {
+                int y = top + order[k];
+                rep.AppendLine($"   row {y} (|d| {rowSum[order[k]]}):   col  ours(r,g,b)   gdi(r,g,b)");
+                for (int x = left; x <= right; x++)
+                {
+                    int i = y * Width + x;
+                    if (Ours(i, 0) == Theirs(i, 0) && Ours(i, 1) == Theirs(i, 1)
+                        && Ours(i, 2) == Theirs(i, 2)) continue;
+                    rep.AppendLine($"      {x,4}   {Ours(i, 0),3},{Ours(i, 1),3},{Ours(i, 2),3}"
+                                   + $"     {Theirs(i, 0),3},{Theirs(i, 1),3},{Theirs(i, 2),3}");
+                }
+            }
+            Console.Error.Write(rep.ToString());
+        }
+
         private static readonly Dictionary<string, int> InkAllowed = new()
         {
             ["b@10"] = 7,

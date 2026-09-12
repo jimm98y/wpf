@@ -3029,17 +3029,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The LATCHED "not a pure +Y projection" answer -- gs+0xcc, kept the way GDI
         /// keeps it rather than recomputed from the current vector.
-        /// <para>THE NAME IS WRONG, and the correction matters to anyone reasoning from this field.
-        /// gs+0xcc does not mean "not a pure +Y projection"; it means "THE AXIS JUST SELECTED IS
-        /// THE ONE CLEARTYPE OVERSAMPLES". `itrp_SVTCA_1` -- which is SVTCA[x], it installs
-        /// itrp_XMovePoint -- writes `(globals[0x1c0] &amp; 1) &amp;&amp; !(globals[0x1c0] &amp; 4)`, and
-        /// `itrp_SVTCA_0` (SVTCA[y]) writes `(globals[0x1c0] &amp; 1) &amp;&amp; (globals[0x1c0] &amp; 4)`:
-        /// bit 0 of 0x1c0 is ClearType on, bit 2 says WHICH axis it oversamples. So the field
-        /// carries the ClearType flags, not a fact about the geometry, and it is zero on BOTH axes
-        /// when ClearType is off. Our predicate happens to agree wherever bit 2 is clear and the
-        /// vectors came from SVTCA, which is why nothing ever measured wrong -- but a reading that
-        /// starts from "pure +Y" will reach the wrong conclusion about a diagonal vector, and did.
-        /// gs+0xcc is also what selects the sixteenth: see the rounding-function note below.</para>
+        /// <para>THE NAME IS RIGHT, and here is the whole predicate, because two passes at the
+        /// binary reached different answers. `itrp_SDPVTL` computes it from the ACTUAL VECTOR:
+        /// with ClearType on (globals[0x1c0] bit 0) and x the oversampled axis (bit 2 clear) it
+        /// writes 0 only when the projection is pure +Y, and 1 otherwise -- which is this field's
+        /// name exactly. `itrp_SVTCA_1` (SVTCA[**x**]: it installs itrp_XMovePoint) and
+        /// `itrp_SVTCA_0` (SVTCA[y]) compute the same answer from the FLAGS instead, because there
+        /// the axis is known a priori: SVTCA[x] writes `bit0 &amp;&amp; !bit2`, SVTCA[y] writes
+        /// `bit0 &amp;&amp; bit2`. So bit 2 of 0x1c0 says which axis ClearType oversamples, the field is
+        /// zero on both axes when ClearType is off, and for every case that arises our recomputed
+        /// predicate and GDI's latched one agree. gs+0xcc is also what selects the sixteenth
+        /// rounding functions: see the rounding-function note below.</para>
         /// <para>`itrp_SDPVTL` writes gs+0xcc, and so do SVTCA_0/_1 and SPVTCA_0/_1 and SPVTL --
         /// five handlers, and that is ALL of them. **SPVFS and SFVFS are not among them.** A face
         /// that reads the projection vector with GPV, does arithmetic on it and sets the vectors
@@ -3286,8 +3286,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// modern antialiasing rasterizer does (FreeType zeroes its compensations too); the
         /// nonzero values belong to the bi-level engine. WPF_CT_ENGINE sets the magnitude in
         /// 64ths and defaults to 0, i.e. off.</summary>
+        /// <summary>WPF_CT_ROUND_GRID=1: the bare ROUND[ab] OPCODE rounds on the whole pixel in
+        /// the ClearType pass, while MIRP, MDRP, MDAP and MIAP stay on the sixteenth.
+        /// <para>Measured because of what Arial's own program does with the answer. 'z' at 20ppem
+        /// spends its whole 3,353 on the diagonal, and the diagonal's control value is computed by
+        /// a function the glyph program SELECTS BY ARITHMETIC ON A ROUNDED NUMBER:
+        /// <code>
+        ///     ROUND[black](114);  -64;  MAX(_, 0);  /4096;  +44;  CALL
+        /// </code>
+        /// Rounded to the whole pixel 114 becomes 128 and the call is to function 45, which returns
+        /// `MAX(|pv.x|,|pv.y|) * 64 / 8192 + 2` -- 128*cos + 2, a two-pixel diagonal weight, 93/64
+        /// here. Rounded on the sixteenth it becomes 116 and the call is to function 44, which
+        /// returns `MAX * 64 / 16384` -- 64*cos, ONE pixel, 47/64. A 12/64 difference in a rounding
+        /// is amplified into a different formula for how heavy every diagonal in the face is.</para>
+        /// <para>GDI draws the two-pixel one. Function 45 gives 1.45px perpendicular, which at this
+        /// diagonal's cosine is 2.04px measured across a scan line, and GDI's own pixels measure
+        /// 2.08px (6.24 lamps of coverage against our 8.70). Function 44 would be 1.0px, which is
+        /// plainly not what GDI draws. So GDI took the whole-pixel branch inside its ClearType
+        /// pass.</para>
+        /// <para>The binary does NOT license a ROUND-only rule: `itrp_ROUND` calls the same
+        /// `globals+0x90` pointer MIRP's general path calls, so in fontdrvhost the two cannot
+        /// disagree. What it licenses is the GATE -- `itrp_RTG` and SVTCA and SDPVTL all install
+        /// `itrp_RoundToGridSP` only when `localGS+0xcc != 0 && (globals[0x88] & 4 ||
+        /// globals[0x16b] != 0)` -- and Arial issues no INSTCTRL, so GDI's behaviour here says
+        /// `globals[0x16b]` was ZERO. This knob exists to measure whether that mechanism is real
+        /// before anyone goes looking for 0x16b's writer, and it is deliberately narrow: putting
+        /// EVERY rounding on the whole pixel is already known to be catastrophic (see
+        /// ClearTypeGrid).</para></summary>
+        private static readonly bool s_roundOpWholePixel =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUND_GRID") == "1";
+
         private int RoundDistance(int distance, bool position = false, bool mdap = false,
-                                  int linkType = -1)
+                                  int linkType = -1, bool bare = false)
         {
             int comp = s_engineComp == 0 || linkType < 0 ? 0
                      : linkType == 1 ? -s_engineComp        // black: shrink
@@ -3368,6 +3398,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (s_stemSnap > 0 && !position && InClearTypeDirection && Math.Abs(value) <= s_stemSnap)
                 distanceGrid = 1;
             int thirds = XWholePixelGrid ? 1
+                       : bare && s_roundOpWholePixel && !BiLevelPass ? 1
                        : distanceGrid > 0 ? distanceGrid
                        : physicalPosition ? 1
                        : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3

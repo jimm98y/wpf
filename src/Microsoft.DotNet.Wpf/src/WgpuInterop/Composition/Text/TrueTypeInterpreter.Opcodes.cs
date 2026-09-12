@@ -890,7 +890,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x67: Push(Ceil(Pop())); break;                                     // CEILING
                     case 0x8B: { int b = Pop(), a = Pop(); Push(Math.Max(a, b)); break; }     // MAX
                     case 0x8C: { int b = Pop(), a = Pop(); Push(Math.Min(a, b)); break; }     // MIN
-                    case >= 0x68 and <= 0x6B: Push(RoundDistance(Pop())); break;              // ROUND[ab]
+                    case >= 0x68 and <= 0x6B:                                                 // ROUND[ab]
+                        Push(RoundDistance(Pop(), linkType: op - 0x68, bare: true)); break;
                     case >= 0x6C and <= 0x6F: Push(Pop()); break;                             // NROUND[ab]
 
                     case 0x88:                                                               // GETINFO
