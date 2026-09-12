@@ -708,6 +708,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             int value = Pop(), p = Pop();
                             Zone z = ZoneOf(_gs.Zp2);
                             if (p >= z.PointCount) break;
+                            // In the ClearType pass, an SCFS along the
+                            // NON-ClearType axis onto a point not already touched there is dropped
+                            // -- the same rule this file already applies to DELTAP, and the same
+                            // sentence of Microsoft's own account: "we keep only deltas on touched
+                            // points in the non-ClearType direction", because on an untouched point
+                            // a direct coordinate write "creates a dent in the outline".
+                            // <para>Times' bowls are what asks the question. Its '0' flattens both
+                            // shoulders with `GC(counterPt); SUB cvt[98]; SCFS` onto the off-curve
+                            // controls, which nothing has touched, turning an oval's side into a
+                            // dead straight run of 7.6px out of 10 -- and our ink comes out 1.277x
+                            // GDI's with the error exactly symmetric top and bottom.</para>
+                            // <para>MEASURED, AND NOT SHIPPED, AND THE SECOND HALF IS WHY. It is
+                            // worth specimen 558,663 -> 529,167 and holdout 8..24 1,861,622 ->
+                            // 1,761,773, with Times -27,395, Arial -2,101, and Verdana, Tahoma,
+                            // Segoe UI and Consolas moving by EXACTLY ZERO -- no face pays for it,
+                            // and the per-glyph ratchets do not move. But the BINARY SAYS NO:
+                            // `itrp_WC` is a plain project-and-move with no ClearType gate; the
+                            // indirect call it moves through is SVTCA's `itrp_YMovePoint` (two
+                            // lines, sets the touch bit, gates nothing) or `itrp_MovePoint` (the
+                            // fv.pv division, no gate); and `itrp_WC` does not appear among the
+                            // readers of globals+0x1c2, the "IUP has run" word, whereas
+                            // itrp_DeltaEngine, itrp_SHP_Common and itrp_MD all do. So GDI applies
+                            // this SCFS and still draws a curved shoulder, and something ELSE is
+                            // sparing it. Shipping a proxy for that mechanism would bake in the
+                            // wrong model and hide the right one, which is how this file acquired
+                            // its retractions. Left as a knob, and as a number any correct rule
+                            // has to match or beat.</para>
+                            if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
+                                && !IsHorizontalProjection
+                                && (z.Tags[p] & TagTouchY) == 0) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
                             // A twilight point moved this way keeps the new place as its ORIGIN too:
@@ -737,9 +767,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // FreeType both say. WPF_MD_SPEC=0 restores the old pairing.
                             int top = Pop(), deep = Pop();
                             int a = s_mdOldOrder ? top : deep, b = s_mdOldOrder ? deep : top;
-                            Push(op == 0x49
+                            int md = op == 0x49
                                  ? MeasureCurrent(_gs.Zp0, a, _gs.Zp1, b)
-                                 : MeasureOriginalExact(_gs.Zp0, a, _gs.Zp1, b));
+                                 : MeasureOriginalExact(_gs.Zp0, a, _gs.Zp1, b);
+                            // EXACTLY ONE PIXEL IS REPORTED AS 65/64, once both IUPs have run.
+                            // itrp_MD@14003a1a0 does nothing else with the flags word:
+                            //     if ((globals[0x1c2] & 0xB) == 0xB && dist == 0x40) dist = 0x41;
+                            // 0xB is bits 0, 1 and 3; bits 0 and 1 are "IUP[x] ran" and "IUP[y]
+                            // ran", and bit 3 is not yet identified -- so this asks for both IUPs
+                            // and takes bit 3 on trust. A hack that specific exists to flip ONE
+                            // comparison: a program that measures a stem and tests it against a
+                            // whole pixel takes the other branch after IUP. WPF_CT_MD65=0 turns it
+                            // off. No glyph in the current worst pools even calls MD (Times '0',
+                            // 'a', 'g' and '6' at 15ppem call it zero times), so this is here
+                            // because it was read, not because it was needed.
+                            if (s_md65 && md == 64 && _iupXDone && _iupYDone) md = 65;
+                            Push(md);
                             break;
                         }
 
@@ -1067,6 +1110,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// as this code did before. See the call site for what it costs.</summary>
         private static readonly bool s_deltasFreeInPrep =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_PREP") == "1";
+
+        /// <summary>WPF_CT_SCFS_TOUCHED=1. OFF BY DEFAULT AND THE REASON IS THE POINT: it
+        /// MEASURES well and the binary CONTRADICTS it. See the SCFS call site.</summary>
+        private static readonly bool s_scfsTouchedOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") == "1";
+
+        /// <summary>WPF_CT_MD65=0 stops MD reporting an exact pixel as 65/64 after IUP.</summary>
+        private static readonly bool s_md65 =
+            Environment.GetEnvironmentVariable("WPF_CT_MD65") != "0";
 
         private static readonly bool s_mdrpTrace =
             Environment.GetEnvironmentVariable("WPF_MDRP_TRACE") == "1";
