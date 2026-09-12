@@ -2165,8 +2165,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// vanish between two sample points. ClearType samples x three times as finely, so the
         /// same floor is three times too coarse there -- and since GDI neither rounds x nor listens
         /// to the control values in that direction, this clamp is very nearly the ONLY thing left
-        /// that moves x at all. WPF_CT_MINDIST_DIV divides it; the shipped 2 was inherited rather
-        /// than measured.</para></summary>
+        /// that moves x at all. WPF_CT_MINDIST_DIV divides it; the shipped 2 is no longer
+        /// inherited -- `itrp_MIRP` halves it in all three of its shapes, `if (localGS+0xcc != 0)
+        /// v = v / 2`, and localGS+0xcc is the ClearType axis. The 2 is the binary's.</para>
+        /// </summary>
         private int EffectiveMinimumDistance()
             => InClearTypeDirection && !s_fullMinDistance && !BiLevelPass && s_minDistDiv > 1
                    ? _gs.MinimumDistance / s_minDistDiv
@@ -2540,6 +2542,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // WPF_CT_CUTIN_SCOPE goes back to the phantom-link guess.
             bool cutInApplies = round || (!BiLevelPass && InClearTypeDirection && !s_cutInRoundedOnly
                 && (s_cutInGdiScope ? !NativeClearTypeMode : unroundedScope));
+            // CONFIRMED by reading itrp_MIRP end to end (fontdrvhost+0x3ae90): both halves of
+            // this are the binary's. The scope test is `globals[0x88] & 4` -- clear, and the
+            // cut-in runs BEFORE the round branch, so on every MIRP; set, and it runs only inside
+            // it -- and globals+0x88 is itrp_INSTCTRL's word, so bit 2 is selector 3, native
+            // ClearType mode. And:
             // itrp_MIRP scales the DIFFERENCE, not the threshold, and compares STRICTLY:
             //     off the ClearType axis   cutIn <  (cvt - orig)        -> take the outline
             //     on it                    cutIn < ((cvt - orig) * 16)
@@ -2578,13 +2585,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // right for most stems and wrong for the cap stem, so the decision depends on
             // something per-stem that neither switch expresses. Kept so the third person to
             // look at VTT's picture does not spend the evening rediscovering it.
-            // WPF_MIRP_CENSUS=1: which ROUND STATE a MIRP rounds with, and on which axis. itrp_MIRP's
-            // x fast path -- taken whenever the vectors came from SVTCA, which is localGS+0xa4 == 1 --
-            // does the rounding INLINE: `(v+2)&~3` (the sixteenth) when the ClearType latch is set,
-            // `(v+0x20)&~0x3f` (the whole pixel) when it is not. It never consults the round function
-            // pointer at gs+0x90, so RTG, SROUND, RTHG, RDTG and ROFF alike are IGNORED there. We
-            // honour the state on a scaled grid instead, which agrees only where the state is ToGrid.
-            // This counts how often that difference can actually bite before anything is changed.
+            // WPF_MIRP_CENSUS=1: which ROUND STATE a MIRP rounds with, and on which axis.
+            // itrp_MIRP has three shapes chosen by localGS+0xa4: 0 calls the round function pointer
+            // at globals+0x90, while 1 and 2 do the rounding INLINE -- `(v+2)&~3` (the sixteenth)
+            // when localGS+0xcc is set, `(v+0x20)&~0x3f` (the whole pixel) when it is not -- and
+            // never consult gs+0x90 at all. That looked like a divergence worth porting, because it
+            // would mean RTG, SROUND, RTHG, RDTG and ROFF alike are IGNORED there while we honour
+            // the state. The census says it would touch 12% of rounded x ClearType MIRPs: 1,040
+            // ROFF, 290 ToHalfGrid and 4 UpToGrid against 9,947 ToGrid over five sizes.
+            //
+            // DO NOT PORT IT. Every writer of localGS+0xa4 stores ZERO -- RDTG, ROFF, RTDG, RTHG,
+            // RUTG, SROUND, S45ROUND, LSW, LSWCI, SFVTCA_0/_1, SPVTCA_0/_1, SPVTL, SFVTL, SDPVTL,
+            // SFVTPV, WFV, WPV and SetElementPtr -- and the only nonzero writers are SVTCA_0/_1,
+            // which rewrite it to 2 (y) or 1 (x) ONLY IF IT IS ALREADY NONZERO. itrp_RTG is the one
+            // round-state opcode that does not clear it. So the field means "the round state is
+            // plain RTG and the vectors are axis-aligned", and whenever an inline path can run the
+            // state is necessarily ToGrid -- exactly where inline rounding and honouring the state
+            // are the same thing. The census is kept because it is the measurement that proves the
+            // change would be a 1,334-MIRP no-op at best.
+            // (itrp_SetRoundValues and itrp_SROUND also write [x9/x10, #0xa4], but that is
+            // GLOBALS+0xa4, the SROUND phase -- a different struct at the same offset.)
             if (s_mirpCensus && round)
             {
                 string key = $"{_gs.Round}|{(IsHorizontalProjection ? "x" : "y")}|ct={InClearTypeDirection}";

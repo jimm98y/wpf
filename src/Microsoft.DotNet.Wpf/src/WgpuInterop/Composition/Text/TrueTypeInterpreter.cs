@@ -1136,6 +1136,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int[] s_gridHist = new int[20];
         private static int s_gridTotal;
 
+        /// <summary>The ClearType rounding grid, in parts of a pixel. 16 is the sixteenth.
+        /// <para>GDI SELECTS IT BY SWAPPING THE ROUNDING FUNCTION, and under a condition we do not
+        /// reproduce. `itrp_RTG` reads
+        /// <code>
+        ///     f = itrp_RoundToGridSP;                       // SP = the SUB-PIXEL variant
+        ///     if (localGS+0xcc == 0 || (!(globals[0x88] &amp; 4) &amp;&amp; globals[0x16b] == 0))
+        ///         f = itrp_RoundToGrid;                     // the ordinary WHOLE-PIXEL one
+        ///     globals[0x90] = f;
+        /// </code>
+        /// and SVTCA_0/_1 reinstall from the same 16-entry table at 0x14009b8c0 -- eight ordinary
+        /// functions followed by eight SP ones -- with `+8` under the identical condition. So the
+        /// sixteenth needs the ClearType axis AND EITHER native ClearType mode (INSTCTRL selector 3,
+        /// globals[0x88] bit 2) OR a nonzero mode byte globals[0x16b]. We apply it whenever
+        /// InClearTypeDirection, with no mode-byte term.</para>
+        /// <para>For the specimen this is a no-op -- 0x16b is 2, compatible widths, so the gate
+        /// passes -- and the prediction that follows from it is REFUTED. Arial Italic at 8/9/10/11,
+        /// baseline 43,752 for the four rows: grid 8 gives 186,564, grid 4 298,984, grid 2 468,106
+        /// and grid 1 (the whole pixel) 729,694, monotonic in the wrong direction; with
+        /// WPF_CT_PHASE=0 as well, which is the pairing the binary suggests since the phase is
+        /// gated on the same mode byte, 161,157 / 368,877 / 495,197 / 711,054. Recorded because a
+        /// face or size where 0x16b is 0 would get whole-pixel x, and that is the shape of every
+        /// "GDI's ClearType x equals its bi-level x" observation on record.</para></summary>
         internal static readonly int ClearTypeGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_GRID"), out int ctg) && ctg > 0 ? ctg : 16;
 
@@ -3007,6 +3029,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The LATCHED "not a pure +Y projection" answer -- gs+0xcc, kept the way GDI
         /// keeps it rather than recomputed from the current vector.
+        /// <para>THE NAME IS WRONG, and the correction matters to anyone reasoning from this field.
+        /// gs+0xcc does not mean "not a pure +Y projection"; it means "THE AXIS JUST SELECTED IS
+        /// THE ONE CLEARTYPE OVERSAMPLES". `itrp_SVTCA_1` -- which is SVTCA[x], it installs
+        /// itrp_XMovePoint -- writes `(globals[0x1c0] &amp; 1) &amp;&amp; !(globals[0x1c0] &amp; 4)`, and
+        /// `itrp_SVTCA_0` (SVTCA[y]) writes `(globals[0x1c0] &amp; 1) &amp;&amp; (globals[0x1c0] &amp; 4)`:
+        /// bit 0 of 0x1c0 is ClearType on, bit 2 says WHICH axis it oversamples. So the field
+        /// carries the ClearType flags, not a fact about the geometry, and it is zero on BOTH axes
+        /// when ClearType is off. Our predicate happens to agree wherever bit 2 is clear and the
+        /// vectors came from SVTCA, which is why nothing ever measured wrong -- but a reading that
+        /// starts from "pure +Y" will reach the wrong conclusion about a diagonal vector, and did.
+        /// gs+0xcc is also what selects the sixteenth: see the rounding-function note below.</para>
         /// <para>`itrp_SDPVTL` writes gs+0xcc, and so do SVTCA_0/_1 and SPVTCA_0/_1 and SPVTL --
         /// five handlers, and that is ALL of them. **SPVFS and SFVFS are not among them.** A face
         /// that reads the projection vector with GPV, does arithmetic on it and sets the vectors
