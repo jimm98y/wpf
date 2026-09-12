@@ -1862,7 +1862,7 @@ namespace WgpuInterop.Tests.Text
         private static int OracleSimulations => Gdi.s_useDrawText ? 0 : GlyphRunDraw.NoKerningSimulation;
 
         private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
-                                float dx = 0f)
+                                float dx = 0f, int widthOverride = 0)
         {
             // Paper and Ink, not hardcoded white and black. Gdi.Draw already fills its DIB with
             // Paper, so with these fixed here WPF_PARITY_BG changed ONE side of the comparison and
@@ -1881,7 +1881,7 @@ namespace WgpuInterop.Tests.Text
                                           (byte)(Ink & 0xFF), 255), OracleSimulations));
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = correction;
-            return renderer.RenderToRgba(root, Width, Height,
+            return renderer.RenderToRgba(root, widthOverride > 0 ? widthOverride : Width, Height,
                 RgbaColor.FromBytes((byte)((Paper >> 16) & 0xFF), (byte)((Paper >> 8) & 0xFF),
                                     (byte)(Paper & 0xFF), 255));
         }
@@ -5898,7 +5898,15 @@ namespace WgpuInterop.Tests.Text
             report.AppendLine("== ink against GDI's, by face, weight and size: \"" + Sample + "\"");
             report.AppendLine("   face              wt   ppem   our ink   gdi ink   ratio   differ"
                               + "    sum|d|   centroid dx   edge deltas");
-            var raw = new byte[Width * Height * 4];
+            // WIDE ENOUGH FOR THE WHOLE SAMPLE, which 460 is not. The specimen string is fifty
+            // glyphs; at 18ppem and up it runs off the end of the ordinary bitmap and the row was
+            // silently scoring a TRUNCATED run -- nothing lost at 17ppem, 2,646 at 18, 4,588 at 20,
+            // 4,390 at 24 for Arial's roman alone, which is how "Arial gets worse at large sizes"
+            // came to be written down from data that was measuring fewer glyphs than it thought.
+            // Proved by splitting the sample into its three groups and summing: the parts agree
+            // with the whole exactly up to 17ppem and exceed it above.
+            const int SpecimenWidth = 1400;
+            var raw = new byte[SpecimenWidth * Height * 4];
             long grandTotal = 0;
             int rowCount = 0;
 
@@ -5931,9 +5939,10 @@ namespace WgpuInterop.Tests.Text
                                                     italic && !fileItalic, sfnt);
 
                         Gdi.s_rawRgb = raw;
-                        Gdi.Draw(Sample, family, ppem, PenX, 28, Width, Height, bold, italic);
+                        Gdi.Draw(Sample, family, ppem, PenX, 28, SpecimenWidth, Height, bold, italic);
                         Gdi.s_rawRgb = null;
-                        byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
+                        byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true,
+                                               widthOverride: SpecimenWidth);
 
                         long theirs = 0, mine = 0;
                         int differ = 0;
@@ -5943,10 +5952,10 @@ namespace WgpuInterop.Tests.Text
                         // per side and it is what says whether a face sits where GDI puts it.
                         double sx = 0, tx = 0;
                         long sumd = 0;
-                        for (int i = 0; i < Width * Height; i++)
+                        for (int i = 0; i < SpecimenWidth * Height; i++)
                         {
                             bool any = false;
-                            int x = i % Width;
+                            int x = i % SpecimenWidth;
                             for (int ch = 0; ch < 3; ch++)
                             {
                                 int t = 255 - raw[i * 4 + ch], m = 255 - ours[i * 4 + ch];
@@ -5985,14 +5994,14 @@ namespace WgpuInterop.Tests.Text
                         var oRuns = new System.Text.StringBuilder("      ours runs:");
                         var gRuns = new System.Text.StringBuilder("      gdi  runs:");
                         bool oIn = false, gIn = false;
-                        for (int x = 0; x < Width; x++)
+                        for (int x = 0; x < SpecimenWidth; x++)
                         {
                             long o = 0, g = 0;
                             for (int y = 0; y < Height; y++)
                                 for (int ch = 0; ch < 3; ch++)
                                 {
-                                    o += 255 - ours[(y * Width + x) * 4 + ch];
-                                    g += 255 - raw[(y * Width + x) * 4 + ch];
+                                    o += 255 - ours[(y * SpecimenWidth + x) * 4 + ch];
+                                    g += 255 - raw[(y * SpecimenWidth + x) * 4 + ch];
                                 }
                             // A threshold, not "any ink": a single ClearType fringe lamp is not an
                             // edge, and reading one as an edge is a trap this suite has hit before.
@@ -6025,11 +6034,12 @@ namespace WgpuInterop.Tests.Text
                                 if (c == ' ') continue;
                                 string one = c.ToString();
                                 Gdi.s_rawRgb = raw;
-                                Gdi.Draw(one, family, ppem, PenX, 28, Width, Height, bold, italic);
+                                Gdi.Draw(one, family, ppem, PenX, 28, SpecimenWidth, Height, bold, italic);
                                 Gdi.s_rawRgb = null;
-                                byte[] oneOurs = OursRgba(font, one, ppem, 28, correction: true);
+                                byte[] oneOurs = OursRgba(font, one, ppem, 28, correction: true,
+                                                          widthOverride: SpecimenWidth);
                                 long d1 = 0;
-                                for (int i = 0; i < Width * Height; i++)
+                                for (int i = 0; i < SpecimenWidth * Height; i++)
                                     for (int ch = 0; ch < 3; ch++)
                                         d1 += Math.Abs(raw[i * 4 + (2 - ch)] - oneOurs[i * 4 + ch]);
                                 report.AppendLine($"      glyph {family}|{(bold ? "B" : italic ? "I" : "R")}|{ppem}|{c} {d1}");

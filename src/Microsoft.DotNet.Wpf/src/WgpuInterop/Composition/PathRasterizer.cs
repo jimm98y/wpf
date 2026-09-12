@@ -739,7 +739,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<(int Col, int SubRow)>? fills = null;
                 if (DropoutForRun > 0)
                 {
-                    int[]? owners = FigureGlyphIdsForRun;
+                    int[]? owners = s_dropoutPerGlyph ? FigureGlyphIdsForRun : null;
                     fills = new List<(int Col, int SubRow)>();
                     int first = 0;
                     while (first < polysG.Count)
@@ -1726,6 +1726,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// the length of one coverage mask and null everywhere else. A single glyph needs none of
         /// this: one group is the whole path, which is what a null array means.</summary>
         internal static int[]? FigureGlyphIdsForRun;
+
+        /// <summary>WPF_CT_DROPOUT_PERGLYPH=0 hands the dropout pass the whole run again, which is
+        /// what it used to get. A bisection handle, and the way the win stays reproducible: on the
+        /// corrected (untruncated) specimen, run-wide measures 503,498 and per-glyph 355,518.
+        /// <para>The -31.7% first reported for this change (458,613 -> 313,163) was measured before
+        /// the specimen's bitmap was widened, so both halves of it were understated; the honest
+        /// figure on one scale is -29.4%.</para></summary>
+        private static readonly bool s_dropoutPerGlyph =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_PERGLYPH") != "0";
 
         private static int GlyphOf(int[]? owners, List<int> contourFigures, int contour)
         {
