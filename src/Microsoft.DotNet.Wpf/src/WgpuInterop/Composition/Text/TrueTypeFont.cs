@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -73,6 +73,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// smoothing means two different things depending on the answer -- see
         /// WgpuSceneRenderer's SymmetricRows.</summary>
         bool WantsGridFit(float pixelsPerEm);
+
+        /// <summary>Whether the face's pre-program turns DROPOUT CONTROL on at this size
+        /// (SCANCTRL), and which SCANTYPE it asks for. See TrueTypeInterpreter.PrepScanControl.</summary>
+        bool WantsDropoutControl(float pixelsPerEm, out int scanType);
     }
 
     internal sealed class TrueTypeFont : IFont, IGlyphOutlineFont, IColorGlyphFont, IBitmapGlyphFont,
@@ -698,6 +702,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// total "improved" from 3,629,242 to 637,342 because most of the repertoire had stopped
         /// drawing (GDI's inked pixel count fell with it, 275,589 -> 29,609, which is the tell).</para>
         /// </summary>
+        private static int s_outlineCalls;
+        private static readonly bool s_outlineProbe =
+            Environment.GetEnvironmentVariable("WPF_TGHO_PROBE") == "1";
+        private static readonly int s_probeGid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_TGHO_GID"), out int pg) ? pg : -1;
+
+        private static readonly bool s_cacheByBiLevel =
+            Environment.GetEnvironmentVariable("WPF_HINTCACHE_BILEVEL") != "0";
+
+        /// <summary>WPF_CT_Y_BILEVEL=1: take the fitted Y from a bi-level pass. Diagnostic.</summary>
+        private static readonly bool s_yFromBiLevel =
+            Environment.GetEnvironmentVariable("WPF_CT_Y_BILEVEL") == "1";
+
+        private static readonly bool s_compatProbe =
+            Environment.GetEnvironmentVariable("WPF_COMPAT_PROBE") == "1";
+
         private bool TryGetHdmxAdvance(int glyphId, int ppem, out float advance)
         {
             advance = 0f;
@@ -904,10 +924,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs)
                 return false;
 
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f) * 2 + (SubpixelFitting ? 1 : 0));
-            if (_hintedCache.TryGetValue(key, out List<PathFigure>? cached))
+            // THE KEY HAS TO NAME EVERY MODE THAT CHANGES THE FIT. SubpixelFitting is a static on
+            // this class; BiLevelPass is a separate static on the INTERPRETER, and the compatible
+            // advance is measured by a bi-level pass that runs BEFORE CompatibleAdvance64 is set and
+            // with the phase disabled. Leaving BiLevelPass out lets that measurement's unphased
+            // outline answer the ClearType render for the same (glyph, size).
+            // WPF_HINTCACHE_BILEVEL=0 restores the old key.
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f) * 4 + (SubpixelFitting ? 1 : 0)
+                       + (s_cacheByBiLevel && TrueTypeInterpreter.BiLevelPass ? 2 : 0));
+            int callNo = 0;
+            bool probe = s_outlineProbe && glyphId == s_probeGid;
+            if (probe)
+            {
+                callNo = System.Threading.Interlocked.Increment(ref s_outlineCalls);
+                Console.Error.WriteLine($"TGHO#{callNo} gid={glyphId} ppem={pixelsPerEm} sub={SubpixelFitting}"
+                    + $" bilevel={TrueTypeInterpreter.BiLevelPass} ct={ClearTypeRendering}"
+                    + $" cached={_hintedCache.ContainsKey(key)}");
+            }
+            if (Environment.GetEnvironmentVariable("WPF_NO_HINTCACHE") != "1"
+                && _hintedCache.TryGetValue(key, out List<PathFigure>? cached))
             {
                 figures = cached;
+                if (probe) Console.Error.WriteLine($"TGHO#{callNo} -> CACHED x0={(cached.Count>0?(int)MathF.Round(cached[0].Start.X*64):-1)}");
                 return figures.Count > 0;
             }
 
@@ -967,6 +1005,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
                 _hintedCache[key] = scaled;
                 figures = scaled;
+                if (probe) Console.Error.WriteLine($"TGHO#{callNo} -> SCALED x0={(scaled.Count>0?(int)MathF.Round(scaled[0].Start.X*64):-1)}");
                 return scaled.Count > 0;
             }
 
@@ -982,6 +1021,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 _hintedCache[key] = hinted;
                 figures = hinted;
+                if (probe) Console.Error.WriteLine($"TGHO#{callNo} -> HINTED x0={(hinted.Count>0?(int)MathF.Round(hinted[0].Start.X*64):-1)}");
                 return hinted.Count > 0;
             }
 
@@ -989,6 +1029,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _hintedCache[key] = figures;
             return figures.Count > 0;
         }
+
+        private static readonly float s_fitSlack =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_FIT_SLACK"),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out float fs) && fs > 0 ? fs : 2f;
 
         private static int s_implausibleFits;
 
@@ -1073,6 +1118,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>A face with no 'gasp' is fitted at every size, which is what a rasterizer does with
         /// one and what we did with all of them.</para></summary>
         public bool WantsGridFit(float pixelsPerEm) => FaceWantsGridFit(pixelsPerEm);
+
+        public bool WantsDropoutControl(float pixelsPerEm, out int scanType)
+        {
+            scanType = 0;
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null || !interpreter.PrepareForSize(pixelsPerEm)) return false;
+            int ctrl = interpreter.PrepScanControl;
+            scanType = interpreter.PrepScanType;
+            // SCANCTRL: bits 0-7 threshold ppem (0xFF = every size), bit 8 = dropout control
+            // ON when ppem <= threshold, bit 11 = OFF when ppem > threshold. The rotation and
+            // stretch conditions (bits 9/10/12/13) do not arise here.
+            int threshold = ctrl & 0xFF;
+            int ppem = (int) MathF.Round(pixelsPerEm);
+            bool on = (ctrl & 0x100) != 0 && (threshold == 0xFF || ppem <= threshold);
+            if ((ctrl & 0x800) != 0 && threshold != 0xFF && ppem > threshold) on = false;
+            // SCANTYPE 2 and 3 mean no dropout control at all; 0/1 simple, 4/5 smart.
+            if (s_dropoutTrace)
+                Console.Error.WriteLine($"DROPOUT upem={_unitsPerEm} ppem={ppem} SCANCTRL=0x{ctrl:X} SCANTYPE={scanType} on={on}");
+            return on && scanType is 0 or 1 or 4 or 5;
+        }
+
+        private static readonly bool s_dropoutTrace = Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "1";
 
         /// <summary>WPF_GASP_FIT=always grid-fits whatever the face's gasp says.
         /// <para>For asking an empirical question the oracles cannot answer. Consolas' gasp clears
@@ -1345,7 +1412,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Two pixels on any edge. One is what fitting is allowed to move; two leaves room for a
             // stem rounded outwards at both ends and for the flattening tolerance, and is still far
             // inside the collapses this exists to catch.
-            const float Slack = 2f;
+            // TWO PIXELS PLUS WHATEVER THE COMPATIBLE WIDTH LEGITIMATELY MOVES THE GLYPH.
+            // The flat two was rejecting correct fits. Arial Italic 'w' at 16ppem has a linear
+            // advance of 11.555 against an hdmx of 9, so the compatible-width phase compresses its
+            // right edge by about 2.6px -- past the old limit -- and the WHOLE FIT was discarded,
+            // falling back to the unfitted outline. That is why the phase looked like a no-op on
+            // that glyph: with it on and off the fit was rejected either way and the same
+            // uncompressed outline rendered. Widening the allowance by the correction itself keeps
+            // the tight guard on every glyph that has no correction to justify the movement, and
+            // it is what the collapses this exists to catch still trip over: measured on the
+            // specimen, a FLAT slack of 3, 4, 8 and even 100 all give the identical 1,439,591, so
+            // nothing in the corpus is rejected between 3px and 100px -- the guard's only live
+            // rejections were these legitimate compressions.
+            //     specimen 1,539,711 -> 1,439,591      holdout 8..24 4,772,773 -> 4,615,390
+            // WPF_FIT_SLACK overrides the base allowance.
+            float Slack = s_fitSlack;
+            if (glyphId >= 0 && glyphId < _numGlyphs && !s_measuringAdvance)
+            {
+                float linAdv = Advance(glyphId) * pixelsPerEm / PixelsPerEm;
+                float compatAdv = CompatibleAdvance(glyphId, pixelsPerEm,
+                                                    (int) MathF.Round(pixelsPerEm));
+                if (linAdv > 0f && compatAdv > 0f) Slack += MathF.Abs(compatAdv - linAdv);
+            }
             return MathF.Abs(fx0 - rx0) <= Slack && MathF.Abs(fy0 - ry0) <= Slack
                 && MathF.Abs(fx1 - rx1) <= Slack && MathF.Abs(fy1 - ry1) <= Slack;
         }
@@ -1757,6 +1845,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly int SpanTolerance =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_SPANTOL"), out int st) ? st : 5;
+
+        private static readonly bool s_fitBiLevel =
+            Environment.GetEnvironmentVariable("WPF_CT_FIT_BILEVEL") == "1";
 
         private static readonly int LsbSnapMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_X_LSBSNAP"), out int ls) ? ls : 0;
@@ -2194,9 +2285,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
+            {
                 TrueTypeInterpreter.CompatibleAdvance64 =
                     (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
                                                         (int) MathF.Round(pixelsPerEm)) * 64f);
+                if (s_compatProbe)
+                    Console.Error.WriteLine($"COMPAT gid={gid} ppem={pixelsPerEm:0.####}"
+                        + $" ppemI={(int) MathF.Round(pixelsPerEm)}"
+                        + $" hdmx={(TryGetHdmxAdvance(gid, (int) MathF.Round(pixelsPerEm), out float _h) ? _h.ToString("0.##") : "MISS")}"
+                        + $" -> compat64={TrueTypeInterpreter.CompatibleAdvance64}");
+            }
+            // WPF_CT_FIT_BILEVEL=1: fit the glyph the BI-LEVEL way and render THAT through the
+            // ClearType filter. GDI's own ClearType-fitted points for Verdana 'x' at 12ppem are
+            // identical to its bi-level fit, and our bi-level fit is already exact against GDI's
+            // (62 of 62 glyphs, 0 points differ) -- so if the two really are the same outline this
+            // should render almost exactly. Set AFTER CompatibleAdvance64 is computed, because that
+            // number is itself measured by a bi-level pass and asking from inside one recurses.
+            if (s_fitBiLevel && !TrueTypeInterpreter.BiLevelPass) TrueTypeInterpreter.BiLevelPass = true;
             try { hinted = interpreter.Hint(glyph, pixelsPerEm); }
             finally
             {
@@ -2219,6 +2324,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // digits, which want no offset at all) and by its own probe it made 11ppem worse, 19
             // glyphs wanting zero falling to 6. The bi-level edge is not "a whole pixel", it is
             // where GDI puts that particular glyph, and for the digits it is where we already were.
+            // WPF_CT_Y_BILEVEL=1: keep the ClearType fit's x and take its Y from a second,
+            // BI-LEVEL pass. A DIAGNOSTIC, to answer one question -- Times 'n' at 16ppem renders a
+            // bottom serif row of 9.93 lamps against GDI's 18.94, and the mode-6 glyph program
+            // provably does not place those points in y at all (its y pass touches nine points and
+            // leaves the serifs to IUP). If GDI's y here is the grid-fitted one, this hybrid
+            // closes that row; if it is not, the row is telling us something else.
+            if (s_yFromBiLevel && !glyph.Composite)
+            {
+                GlyphProgram? plainY = ReadGlyphProgram(gid);
+                if (plainY is not null)
+                {
+                    bool fittedY;
+                    bool savedYbi = TrueTypeInterpreter.BiLevelPass;
+                    TrueTypeInterpreter.BiLevelPass = true;
+                    try { fittedY = interpreter.Hint(plainY, pixelsPerEm); }
+                    finally { TrueTypeInterpreter.BiLevelPass = savedYbi; }
+                    if (fittedY && plainY.PointCount == glyph.PointCount)
+                        for (int i = 0; i < glyph.PointCount && i < glyph.Y.Length
+                                        && i < plainY.Y.Length; i++)
+                            glyph.Y[i] = plainY.Y[i];
+                }
+            }
             if (LsbSnapMode == 4 && !glyph.Composite)
             {
                 GlyphProgram? plain = ReadGlyphProgram(gid);

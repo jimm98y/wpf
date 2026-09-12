@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -130,172 +130,163 @@ namespace WgpuInterop.Tests.Text
         /// up are the sizes we got worse at.</para></summary>
         private static readonly Dictionary<string, int> Allowed = new()
         {
-            ["#"] = 5,
-            ["%"] = 1,
-            ["&"] = 2,
-            ["("] = 2,
-            [")"] = 3,
-            ["*"] = 2,
-            [","] = 6,
+            ["%"] = 0,
+            ["&"] = 1,
+            ["("] = 0,
+            [")"] = 1,
+            ["*"] = 0,
             ["/"] = 1,
-            ["0123456789@11"] = 3,
-            ["0123456789@12"] = 5,
-            ["0123456789@12b"] = 1,
-            ["0123456789@12bi"] = 9,
-            ["0123456789@12i"] = 12,
-            ["0123456789@13"] = 11,
-            ["0123456789@16"] = 2,
+            ["0123456789@11"] = 0,
+            ["0123456789@12"] = 3,
+            ["0123456789@12bi"] = 6,
+            ["0123456789@12i"] = 4,
+            ["0123456789@13"] = 6,
+            ["0123456789@16"] = 1,
             ["0123456789@16b"] = 4,
-            ["0123456789@16bi"] = 8,
-            ["0123456789@16i"] = 14,
+            ["0123456789@16bi"] = 6,
+            ["0123456789@16i"] = 8,
             ["0123456789@19"] = 4,
-            ["1"] = 1,
-            ["3"] = 1,
+            ["1"] = 0,
+            ["3"] = 0,
             ["5"] = 1,
             ["6"] = 1,
             ["7"] = 1,
-            [";"] = 6,
-            ["<"] = 5,
-            [">"] = 5,
+            ["<"] = 0,
+            [">"] = 0,
             ["@"] = 1,
-            ["ABCDEFGHIJKLM@11"] = 8,
-            ["ABCDEFGHIJKLM@12"] = 8,
-            ["ABCDEFGHIJKLM@13"] = 6,
-            ["ABCDEFGHIJKLM@16"] = 17,
-            ["ABCDEFGHIJKLM@19"] = 6,
+            ["ABCDEFGHIJKLM@11"] = 1,
+            ["ABCDEFGHIJKLM@12"] = 4,
+            ["ABCDEFGHIJKLM@13"] = 0,
+            ["ABCDEFGHIJKLM@16"] = 0,
+            ["ABCDEFGHIJKLM@19"] = 4,
             ["B"] = 3,
-            ["C"] = 1,
-            ["Cancel Apply@12b"] = 18,
-            ["Cancel Apply@12bi"] = 7,
+            ["C"] = 0,
+            ["Cancel Apply@12b"] = 2,
+            ["Cancel Apply@12bi"] = 3,
             ["Cancel Apply@12i"] = 6,
-            ["Cancel Apply@16b"] = 14,
-            ["Cancel Apply@16bi"] = 2,
-            ["Cancel Apply@16i"] = 9,
+            ["Cancel Apply@16b"] = 3,
+            ["Cancel Apply@16bi"] = 3,
+            ["Cancel Apply@16i"] = 5,
             ["G"] = 1,
-            ["Handgloves@12b"] = 14,
-            ["Handgloves@12bi"] = 6,
-            ["Handgloves@12i"] = 9,
-            ["Handgloves@16b"] = 6,
-            ["Handgloves@16bi"] = 1,
-            ["Handgloves@16i"] = 6,
-            ["Illinois still@11"] = 2,
-            ["Illinois still@12"] = 3,
-            ["Illinois still@13"] = 1,
-            ["Illinois still@16"] = 11,
+            ["Handgloves@12b"] = 5,
+            ["Handgloves@12bi"] = 1,
+            ["Handgloves@12i"] = 3,
+            ["Handgloves@16b"] = 2,
+            ["Handgloves@16bi"] = 0,
+            ["Handgloves@16i"] = 4,
+            ["Illinois still@11"] = 1,
+            ["Illinois still@12"] = 0,
+            ["Illinois still@13"] = 0,
+            ["Illinois still@16"] = 1,
             ["Illinois still@19"] = 5,
-            ["K"] = 2,
-            ["M"] = 1,
-            ["NOPQRSTUVWXYZ@11"] = 19,
-            ["NOPQRSTUVWXYZ@12"] = 20,
-            ["NOPQRSTUVWXYZ@13"] = 14,
-            ["NOPQRSTUVWXYZ@16"] = 20,
-            ["NOPQRSTUVWXYZ@19"] = 18,
-            ["P"] = 1,
-            ["Příliš@12b"] = 11,
-            ["Příliš@12bi"] = 6,
-            ["Příliš@12i"] = 6,
-            ["Příliš@16b"] = 10,
-            ["Příliš@16bi"] = 7,
-            ["Příliš@16i"] = 5,
-            ["Q"] = 3,
-            ["R"] = 1,
+            ["K"] = 0,
+            ["NOPQRSTUVWXYZ@11"] = 5,
+            ["NOPQRSTUVWXYZ@12"] = 8,
+            ["NOPQRSTUVWXYZ@13"] = 8,
+            ["NOPQRSTUVWXYZ@16"] = 6,
+            ["NOPQRSTUVWXYZ@19"] = 9,
+            ["Příliš@12b"] = 9,
+            ["Příliš@12bi"] = 0,
+            ["Příliš@12i"] = 0,
+            ["Příliš@16b"] = 8,
+            ["Příliš@16bi"] = 2,
+            ["Příliš@16i"] = 1,
+            ["Q"] = 1,
+            ["R"] = 0,
             ["S"] = 1,
-            ["Shapes 2026@11"] = 5,
-            ["Shapes 2026@12"] = 8,
-            ["Shapes 2026@13"] = 6,
-            ["Shapes 2026@16"] = 20,
+            ["Shapes 2026@11"] = 0,
+            ["Shapes 2026@12"] = 3,
+            ["Shapes 2026@13"] = 4,
+            ["Shapes 2026@16"] = 4,
             ["Shapes 2026@19"] = 5,
-            ["U"] = 2,
-            ["V"] = 8,
-            ["X"] = 2,
-            ["Y"] = 2,
-            ["^"] = 1,
-            ["`"] = 4,
-            ["a"] = 1,
-            ["abcdefghijklm@11"] = 21,
-            ["abcdefghijklm@12"] = 16,
-            ["abcdefghijklm@13"] = 14,
-            ["abcdefghijklm@16"] = 22,
-            ["abcdefghijklm@19"] = 22,
-            ["b"] = 2,
-            ["d"] = 2,
+            ["X"] = 0,
+            ["^"] = 0,
+            ["`"] = 0,
+            ["a"] = 0,
+            ["abcdefghijklm@11"] = 5,
+            ["abcdefghijklm@12"] = 5,
+            ["abcdefghijklm@13"] = 2,
+            ["abcdefghijklm@16"] = 5,
+            ["abcdefghijklm@19"] = 6,
+            ["b"] = 0,
+            ["d"] = 0,
             ["e"] = 1,
-            ["g"] = 2,
-            ["h"] = 1,
-            ["k"] = 5,
-            ["m"] = 2,
-            ["n"] = 1,
-            ["nopqrstuvwxyz@11"] = 40,
-            ["nopqrstuvwxyz@12"] = 31,
-            ["nopqrstuvwxyz@13"] = 14,
-            ["nopqrstuvwxyz@16"] = 23,
-            ["nopqrstuvwxyz@19"] = 11,
-            ["p"] = 2,
+            ["g"] = 0,
+            ["h"] = 0,
+            ["k"] = 1,
+            ["m"] = 1,
+            ["n"] = 0,
+            ["nopqrstuvwxyz@11"] = 6,
+            ["nopqrstuvwxyz@12"] = 9,
+            ["nopqrstuvwxyz@13"] = 5,
+            ["nopqrstuvwxyz@16"] = 6,
+            ["nopqrstuvwxyz@19"] = 9,
+            ["p"] = 0,
             ["q"] = 2,
-            ["repertoire@10"] = 218,
-            ["repertoire@10b"] = 236,
-            ["repertoire@10bi"] = 141,
-            ["repertoire@10i"] = 192,
-            ["repertoire@11"] = 294,
-            ["repertoire@11b"] = 289,
-            ["repertoire@11bi"] = 128,
-            ["repertoire@11i"] = 147,
-            ["repertoire@12"] = 274,
-            ["repertoire@12b"] = 376,
-            ["repertoire@12bi"] = 128,
-            ["repertoire@12i"] = 163,
-            ["repertoire@13"] = 251,
-            ["repertoire@13b"] = 272,
-            ["repertoire@13bi"] = 102,
-            ["repertoire@13i"] = 162,
-            ["repertoire@14"] = 235,
-            ["repertoire@14b"] = 360,
-            ["repertoire@14bi"] = 111,
-            ["repertoire@14i"] = 169,
-            ["repertoire@15"] = 209,
-            ["repertoire@15b"] = 353,
-            ["repertoire@15bi"] = 122,
-            ["repertoire@15i"] = 164,
-            ["repertoire@16"] = 395,
-            ["repertoire@16b"] = 357,
-            ["repertoire@16bi"] = 115,
-            ["repertoire@16i"] = 141,
-            ["repertoire@17"] = 263,
-            ["repertoire@17b"] = 426,
-            ["repertoire@17bi"] = 110,
-            ["repertoire@17i"] = 132,
-            ["repertoire@18"] = 237,
-            ["repertoire@18b"] = 376,
-            ["repertoire@18bi"] = 109,
-            ["repertoire@18i"] = 115,
-            ["repertoire@19"] = 291,
-            ["repertoire@19b"] = 396,
-            ["repertoire@19bi"] = 125,
-            ["repertoire@19i"] = 141,
-            ["repertoire@20"] = 1439,
-            ["repertoire@20b"] = 1036,
-            ["repertoire@20bi"] = 739,
-            ["repertoire@20i"] = 682,
-            ["s"] = 1,
-            ["u"] = 2,
-            ["v"] = 3,
-            ["x"] = 12,
-            ["y"] = 4,
-            ["z"] = 4,
-            ["Á@11"] = 2,
-            ["Á@12"] = 2,
-            ["Á@13"] = 2,
-            ["Á@16"] = 4,
-            ["Á@19"] = 2,
+            ["repertoire@10"] = 100,
+            ["repertoire@10b"] = 119,
+            ["repertoire@10bi"] = 63,
+            ["repertoire@10i"] = 46,
+            ["repertoire@11"] = 114,
+            ["repertoire@11b"] = 159,
+            ["repertoire@11bi"] = 54,
+            ["repertoire@11i"] = 39,
+            ["repertoire@12"] = 113,
+            ["repertoire@12b"] = 197,
+            ["repertoire@12bi"] = 33,
+            ["repertoire@12i"] = 51,
+            ["repertoire@13"] = 108,
+            ["repertoire@13b"] = 124,
+            ["repertoire@13bi"] = 39,
+            ["repertoire@13i"] = 45,
+            ["repertoire@14"] = 110,
+            ["repertoire@14b"] = 198,
+            ["repertoire@14bi"] = 44,
+            ["repertoire@14i"] = 38,
+            ["repertoire@15"] = 111,
+            ["repertoire@15b"] = 191,
+            ["repertoire@15bi"] = 49,
+            ["repertoire@15i"] = 45,
+            ["repertoire@16"] = 154,
+            ["repertoire@16b"] = 206,
+            ["repertoire@16bi"] = 51,
+            ["repertoire@16i"] = 71,
+            ["repertoire@17"] = 147,
+            ["repertoire@17b"] = 226,
+            ["repertoire@17bi"] = 48,
+            ["repertoire@17i"] = 54,
+            ["repertoire@18"] = 116,
+            ["repertoire@18b"] = 201,
+            ["repertoire@18bi"] = 46,
+            ["repertoire@18i"] = 53,
+            ["repertoire@19"] = 172,
+            ["repertoire@19b"] = 241,
+            ["repertoire@19bi"] = 62,
+            ["repertoire@19i"] = 65,
+            ["repertoire@20"] = 135,
+            ["repertoire@20b"] = 232,
+            ["repertoire@20bi"] = 49,
+            ["repertoire@20i"] = 44,
+            ["s"] = 0,
+            ["u"] = 1,
+            ["v"] = 0,
+            ["x"] = 0,
+            ["y"] = 0,
+            ["z"] = 0,
+            ["Á@11"] = 0,
+            ["Á@12"] = 0,
+            ["Á@13"] = 0,
+            ["Á@16"] = 0,
+            ["Á@19"] = 0,
             ["Ä@11"] = 4,
             ["Ä@13"] = 1,
             ["Ä@16"] = 5,
             ["Ä@19"] = 1,
-            ["É@11"] = 2,
-            ["É@12"] = 2,
-            ["É@13"] = 5,
-            ["É@16"] = 3,
-            ["É@19"] = 2,
+            ["É@11"] = 0,
+            ["É@12"] = 0,
+            ["É@13"] = 1,
+            ["É@16"] = 1,
+            ["É@19"] = 0,
             ["Ñ@11"] = 6,
             ["Ñ@12"] = 1,
             ["Ñ@13"] = 6,
@@ -305,100 +296,99 @@ namespace WgpuInterop.Tests.Text
             ["Ö@13"] = 3,
             ["Ö@16"] = 7,
             ["Ö@19"] = 1,
-            ["Ü@11"] = 2,
-            ["Ü@12"] = 3,
+            ["Ü@12"] = 1,
             ["Ü@13"] = 1,
             ["Ü@16"] = 4,
             ["Ü@19"] = 3,
-            ["à@11"] = 3,
-            ["à@12"] = 3,
-            ["à@13"] = 3,
-            ["à@16"] = 7,
-            ["à@19"] = 3,
-            ["á@11"] = 2,
-            ["á@12"] = 4,
-            ["á@13"] = 4,
-            ["á@16"] = 8,
-            ["á@19"] = 2,
+            ["à@11"] = 0,
+            ["à@12"] = 0,
+            ["à@13"] = 1,
+            ["à@16"] = 1,
+            ["à@19"] = 0,
+            ["á@11"] = 0,
+            ["á@12"] = 1,
+            ["á@13"] = 0,
+            ["á@16"] = 1,
+            ["á@19"] = 0,
             ["â@11"] = 6,
-            ["â@12"] = 7,
-            ["â@13"] = 5,
-            ["â@16"] = 6,
-            ["â@19"] = 7,
-            ["ã@11"] = 2,
-            ["ã@12"] = 3,
-            ["ã@13"] = 6,
-            ["ã@16"] = 8,
-            ["ã@19"] = 7,
-            ["ä@11"] = 1,
-            ["ä@12"] = 1,
-            ["ä@13"] = 2,
-            ["ä@16"] = 7,
-            ["å@11"] = 5,
-            ["å@12"] = 4,
-            ["å@13"] = 3,
-            ["å@16"] = 9,
+            ["â@12"] = 5,
+            ["â@13"] = 2,
+            ["â@16"] = 3,
+            ["â@19"] = 5,
+            ["ã@11"] = 1,
+            ["ã@12"] = 2,
+            ["ã@13"] = 5,
+            ["ã@16"] = 5,
+            ["ã@19"] = 6,
+            ["ä@11"] = 0,
+            ["ä@12"] = 0,
+            ["ä@13"] = 1,
+            ["ä@16"] = 4,
+            ["å@11"] = 4,
+            ["å@12"] = 3,
+            ["å@13"] = 2,
+            ["å@16"] = 6,
             ["å@19"] = 9,
-            ["ç@11"] = 6,
-            ["ç@12"] = 7,
-            ["ç@13"] = 6,
-            ["ç@16"] = 6,
-            ["è@11"] = 2,
-            ["è@12"] = 5,
-            ["è@13"] = 2,
-            ["è@16"] = 6,
-            ["è@19"] = 5,
-            ["é@11"] = 2,
-            ["é@12"] = 3,
-            ["é@13"] = 2,
-            ["é@16"] = 6,
-            ["é@19"] = 4,
-            ["ê@11"] = 1,
-            ["ê@12"] = 5,
-            ["ê@13"] = 3,
-            ["ê@16"] = 7,
-            ["ê@19"] = 6,
+            ["ç@11"] = 5,
+            ["ç@12"] = 5,
+            ["ç@13"] = 4,
+            ["ç@16"] = 2,
+            ["è@11"] = 0,
+            ["è@12"] = 1,
+            ["è@13"] = 0,
+            ["è@16"] = 3,
+            ["è@19"] = 2,
+            ["é@11"] = 0,
+            ["é@12"] = 1,
+            ["é@13"] = 0,
+            ["é@16"] = 2,
+            ["é@19"] = 2,
+            ["ê@11"] = 3,
+            ["ê@12"] = 4,
+            ["ê@13"] = 1,
+            ["ê@16"] = 6,
+            ["ê@19"] = 4,
             ["ë@11"] = 2,
             ["ë@12"] = 1,
             ["ë@13"] = 2,
-            ["ë@16"] = 9,
+            ["ë@16"] = 8,
             ["ë@19"] = 2,
-            ["ì@11"] = 2,
-            ["ì@12"] = 2,
-            ["ì@13"] = 3,
-            ["ì@16"] = 4,
-            ["ì@19"] = 4,
-            ["í@11"] = 2,
-            ["í@12"] = 3,
-            ["í@13"] = 2,
-            ["í@16"] = 3,
-            ["í@19"] = 7,
-            ["î@11"] = 6,
+            ["ì@11"] = 0,
+            ["ì@12"] = 0,
+            ["ì@13"] = 0,
+            ["ì@16"] = 0,
+            ["ì@19"] = 1,
+            ["í@11"] = 0,
+            ["í@12"] = 1,
+            ["í@13"] = 0,
+            ["í@16"] = 0,
+            ["í@19"] = 1,
+            ["î@11"] = 5,
             ["î@12"] = 7,
-            ["î@13"] = 6,
-            ["î@16"] = 4,
-            ["î@19"] = 11,
+            ["î@13"] = 4,
+            ["î@16"] = 5,
+            ["î@19"] = 13,
             ["ï@19"] = 4,
-            ["ñ@11"] = 3,
-            ["ñ@12"] = 3,
-            ["ñ@13"] = 1,
-            ["ñ@16"] = 8,
+            ["ñ@11"] = 2,
+            ["ñ@12"] = 2,
+            ["ñ@13"] = 0,
+            ["ñ@16"] = 6,
             ["ñ@19"] = 6,
-            ["ò@11"] = 3,
-            ["ò@12"] = 2,
-            ["ò@13"] = 4,
-            ["ò@16"] = 4,
-            ["ò@19"] = 4,
-            ["ó@11"] = 3,
-            ["ó@12"] = 4,
-            ["ó@13"] = 2,
-            ["ó@16"] = 3,
-            ["ó@19"] = 4,
-            ["ô@11"] = 7,
-            ["ô@12"] = 5,
-            ["ô@13"] = 4,
+            ["ò@11"] = 1,
+            ["ò@12"] = 0,
+            ["ò@13"] = 1,
+            ["ò@16"] = 1,
+            ["ò@19"] = 1,
+            ["ó@11"] = 1,
+            ["ó@12"] = 0,
+            ["ó@13"] = 0,
+            ["ó@16"] = 1,
+            ["ó@19"] = 2,
+            ["ô@11"] = 5,
+            ["ô@12"] = 4,
+            ["ô@13"] = 2,
             ["ô@16"] = 7,
-            ["ô@19"] = 4,
+            ["ô@19"] = 2,
             ["õ@11"] = 2,
             ["õ@12"] = 1,
             ["õ@13"] = 7,
@@ -408,71 +398,74 @@ namespace WgpuInterop.Tests.Text
             ["ö@13"] = 2,
             ["ö@16"] = 9,
             ["ö@19"] = 4,
-            ["ù@11"] = 5,
-            ["ù@12"] = 6,
-            ["ù@13"] = 5,
-            ["ù@16"] = 4,
-            ["ù@19"] = 4,
-            ["ú@11"] = 4,
-            ["ú@12"] = 4,
-            ["ú@13"] = 3,
-            ["ú@16"] = 4,
-            ["ú@19"] = 3,
-            ["û@11"] = 8,
-            ["û@12"] = 8,
-            ["û@13"] = 7,
-            ["û@16"] = 4,
-            ["û@19"] = 7,
-            ["ü@11"] = 2,
-            ["ü@12"] = 2,
+            ["ù@11"] = 1,
+            ["ù@12"] = 1,
+            ["ù@13"] = 1,
+            ["ù@16"] = 1,
+            ["ù@19"] = 1,
+            ["ú@11"] = 1,
+            ["ú@12"] = 1,
+            ["ú@13"] = 1,
+            ["ú@16"] = 0,
+            ["ú@19"] = 1,
+            ["û@11"] = 5,
+            ["û@12"] = 6,
+            ["û@13"] = 5,
+            ["û@16"] = 1,
+            ["û@19"] = 5,
+            ["ü@11"] = 1,
+            ["ü@12"] = 1,
             ["ü@13"] = 1,
-            ["ü@16"] = 6,
+            ["ü@16"] = 5,
             ["ü@19"] = 5,
-            ["ý@11"] = 5,
-            ["ý@12"] = 6,
-            ["ý@13"] = 5,
-            ["ý@16"] = 11,
-            ["ý@19"] = 4,
-            ["ÿ@11"] = 6,
-            ["ÿ@12"] = 5,
-            ["ÿ@13"] = 4,
-            ["ÿ@16"] = 11,
-            ["ÿ@19"] = 1,
-            ["Č@11"] = 5,
-            ["Č@12"] = 6,
+            ["ý@11"] = 0,
+            ["ý@12"] = 0,
+            ["ý@13"] = 0,
+            ["ý@16"] = 0,
+            ["ý@19"] = 1,
+            ["ÿ@11"] = 3,
+            ["ÿ@12"] = 1,
+            ["ÿ@13"] = 1,
+            ["ÿ@16"] = 4,
+            ["Č@11"] = 2,
+            ["Č@12"] = 5,
             ["Č@13"] = 3,
-            ["Č@16"] = 4,
-            ["Č@19"] = 4,
-            ["Ř@11"] = 8,
-            ["Ř@12"] = 5,
-            ["Ř@13"] = 6,
-            ["Ř@16"] = 9,
-            ["Ř@19"] = 8,
-            ["Š@11"] = 4,
-            ["Š@12"] = 3,
+            ["Č@16"] = 0,
+            ["Č@19"] = 3,
+            ["Ř@11"] = 5,
+            ["Ř@12"] = 4,
+            ["Ř@13"] = 2,
+            ["Ř@16"] = 6,
+            ["Ř@19"] = 5,
+            ["Š@11"] = 3,
+            ["Š@12"] = 2,
             ["Š@13"] = 2,
-            ["Š@16"] = 9,
-            ["Š@19"] = 3,
-            ["š@11"] = 3,
-            ["š@12"] = 5,
-            ["š@13"] = 4,
-            ["š@16"] = 7,
+            ["Š@16"] = 3,
+            ["Š@19"] = 1,
+            ["š@11"] = 2,
+            ["š@12"] = 4,
+            ["š@13"] = 2,
+            ["š@16"] = 1,
             ["š@19"] = 3,
-            ["ů@11"] = 5,
-            ["ů@12"] = 7,
+            ["ů@11"] = 4,
+            ["ů@12"] = 6,
             ["ů@13"] = 8,
-            ["ů@16"] = 4,
+            ["ů@16"] = 3,
             ["ů@19"] = 7,
-            ["Ž@11"] = 1,
+            ["Ž@11"] = 2,
             ["Ž@12"] = 4,
-            ["Ž@13"] = 2,
+            ["Ž@13"] = 4,
             ["Ž@16"] = 2,
-            ["Ž@19"] = 5,
-            ["ž@11"] = 7,
-            ["ž@12"] = 6,
-            ["ž@13"] = 4,
-            ["ž@16"] = 2,
+            ["Ž@19"] = 4,
+            ["ž@11"] = 1,
+            ["ž@12"] = 0,
+            ["ž@13"] = 0,
+            ["ž@16"] = 3,
             ["ž@19"] = 6,
+            ["F"] = 0,
+            ["W"] = 0,
+            ["c"] = 0,
+            ["Ö@12"] = 0,
         };
 
         private static int AllowanceFor(string key)
@@ -2627,7 +2620,22 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the oracle");
 
             const string Fam = "WpfGetInfoOracle";
-            const int ProbePpem = 16;
+            int ProbePpem = int.TryParse(Environment.GetEnvironmentVariable("WPF_GETINFO_PPEM"), out int pp) ? pp : 16;
+            // WPF_GETINFO_GASP=times ships Times New Roman roman's gasp (v1: <=8 0xA, <=17 0x5,
+            // else 0xF), so the symmetric-rendering answer is read for a face that DECLARES
+            // its wishes; the original probe had no gasp and answered about itself.
+            string? giGasp = Environment.GetEnvironmentVariable("WPF_GETINFO_GASP");
+            // WPF_GETINFO_GASP=v0 ships Times New Roman ITALIC's own table instead: version 0,
+            // which has no symmetric bits to read at all. Five of the specimen faces ship one
+            // (Times italic/bold/bold-italic, Arial italic/bold) and we answer their symmetric
+            // query YES on the strength of oracle points alone -- this asks GDI itself.
+            SyntheticFont.GaspVersion = giGasp == "v0" ? 0 : 1;
+            SyntheticFont.GaspRanges = giGasp switch
+            {
+                "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
+                "v0" => new (int, int)[] { (8, 0x2), (20, 0x1), (0xFFFF, 0x3) },
+                _ => null,
+            };
             // 0 is the baseline: the same bar with no program at all, so the shift is measured
             // against the position the outline alone puts it in.
             // Negative entries ask the EXACT question the face asks (== the bit), not merely
@@ -2660,7 +2668,9 @@ namespace WgpuInterop.Tests.Text
             foreach (int sel in selectors)
                 bars.Add(new SyntheticFont.Bar(0, 400, 700, false, false,
                                                noProgram: sel == 0, probe: sel));
-            byte[] fontBytes = SyntheticFont.Build(Fam, bars);
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Fam, bars); }
+            finally { SyntheticFont.GaspRanges = null; SyntheticFont.GaspVersion = 1; }
             int count = 0;
             IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
             Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the probe font");
@@ -2721,28 +2731,48 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the oracle");
 
             const string Fam = "WpfPrepInfoOracle";
-            const int ProbePpem = 16;
-            int[] sel = { 32, 64, 128, 256, 512, 1024, 2048 };
+            int ProbePpem = int.TryParse(Environment.GetEnvironmentVariable("WPF_GETINFO_PREP_PPEM"),
+                out int pp) ? pp : 16;
+            // The same two real tables the glyph-side oracle ships, because the symmetric answer is
+            // a question about the FACE: "times" is Times New Roman roman's v1 gasp, "v0" is Times
+            // Italic's own version-0 table, which has no symmetric bits in it at all.
+            string? giGasp = Environment.GetEnvironmentVariable("WPF_GETINFO_PREP_GASP");
+            SyntheticFont.GaspVersion = giGasp == "v0" ? 0 : 1;
+            SyntheticFont.GaspRanges = giGasp switch
+            {
+                "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
+                "v0" => new (int, int)[] { (8, 0x2), (20, 0x1), (0xFFFF, 0x3) },
+                _ => null,
+            };
+            int[] sel = { 32, 64, 128, 256, 512, 1024, 2048, 4096 };
             string[] names = { "greyscale", "ClearType enabled", "compatible widths",
                                "horizontal LCD stripes", "BGR order", "sub-pixel positioned",
-                               "symmetric rendering" };
+                               "symmetric rendering", "greyscale ClearType" };
+            // What each answer is WORTH in the rendering-mode bitmask the MS core faces accumulate
+            // in storage[2], so the probe can report the mode itself and not just its bits.
+            int[] weight = { 1, 2, 4, 8, 16, 64, 128, 0 };
 
             // One baseline bar with no program, then one per selector reading cvt[100+i].
             var bars = new List<SyntheticFont.Bar> { new(0, 400, 700, false, false, noProgram: true) };
             for (int i = 0; i < sel.Length; i++)
                 bars.Add(new SyntheticFont.Bar(0, 400, 700, false, false, probe: -10000 - i));
-            byte[] fontBytes = SyntheticFont.Build(Fam, bars, sel);
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Fam, bars, sel); }
+            finally { SyntheticFont.GaspRanges = null; SyntheticFont.GaspVersion = 1; }
             int count = 0;
             IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
             Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the prep-probe font");
 
             var report = new System.Text.StringBuilder();
-            report.AppendLine($"== what GDI answers GETINFO IN PREP, at {ProbePpem}ppem");
-            report.AppendLine("   selector  meaning                    drawn(ClearType)");
+            report.AppendLine($"== what GDI answers GETINFO IN PREP, at {ProbePpem}ppem"
+                + (giGasp is null ? ", no gasp" : $", gasp={giGasp}"));
+            report.AppendLine("   selector  meaning                      GDI      ours");
+            int gdiMode = 0, ourMode = 0;
             try
             {
+                var font = new TrueTypeFont(fontBytes);
                 var raw = new byte[Width * Height * 4];
-                int base0 = -1;
+                int base0 = -1, ourBase0 = -1;
                 for (int i = 0; i <= sel.Length; i++)
                 {
                     string ch = ((char) (0x41 + i)).ToString();
@@ -2750,14 +2780,118 @@ namespace WgpuInterop.Tests.Text
                     Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, false);
                     Gdi.s_rawRgb = null;
                     int drawn = InkLeftColumn(raw);
-                    if (i == 0) { base0 = drawn; continue; }
-                    string d = drawn < 0 ? "no ink" : (drawn - base0).ToString();
-                    report.AppendLine($"   {sel[i - 1],8}  {names[i - 1],-25}  {d,14}");
+                    int ourDrawn = InkLeftColumn(OursRgba(font, ch, ProbePpem, ProbePpem + 12,
+                        correction: true));
+                    if (i == 0) { base0 = drawn; ourBase0 = ourDrawn; continue; }
+                    bool gdiSet = drawn >= 0 && drawn - base0 >= 5;
+                    bool ourSet = ourDrawn >= 0 && ourDrawn - ourBase0 >= 5;
+                    if (gdiSet) gdiMode |= weight[i - 1];
+                    if (ourSet) ourMode |= weight[i - 1];
+                    string g = drawn < 0 ? "no ink" : (drawn - base0).ToString();
+                    string o = ourDrawn < 0 ? "no ink" : (ourDrawn - ourBase0).ToString();
+                    report.AppendLine($"   {sel[i - 1],8}  {names[i - 1],-25} {g,6} {o,9}"
+                        + (gdiSet != ourSet ? "   <<< DIFFERS" : ""));
                 }
                 report.AppendLine("   (ten pixels means the bit came back EXACTLY set, as the face tests it)");
+                report.AppendLine($"   => storage[2] would be  GDI {gdiMode}   ours {ourMode}"
+                    + (gdiMode != ourMode ? "   <<< DIFFERENT PROGRAM" : "   (same program)"));
             }
             finally { RemoveFontMemResourceEx(handle); }
+            Console.Error.Write(report.ToString());
             File.AppendAllText(path!, report.ToString());
+        }
+
+        /// <summary>HOW GDI ROUNDS A CONTROL VALUE IN CLEARTYPE, read off its own pixels.
+        /// `WPF_CVTROUND=<ppem>`.
+        /// <para>The Times pools both come down to this. Those faces' ClearType branches read
+        /// control values back with RCVT and compute coordinates from them, so if GDI rounds a
+        /// control value on a different grid than we do, every coordinate downstream differs --
+        /// and no comparison of finished glyphs can tell the two apart. So the probe asks
+        /// directly: one bar per sixteenth of a pixel, each shifting itself right by
+        /// ROUND(RCVT(k)), and the ink CENTROID reports where it landed to a fraction of a pixel.
+        /// A staircase that is flat until the half pixel and then jumps a whole one means GDI
+        /// rounds control values to WHOLE PIXELS; a straight ramp of a sixteenth per step means it
+        /// rounds them on the sixteenth grid. Ours is printed beside it.</para></summary>
+        [Fact]
+        public void HowGdiRoundsAControlValue()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the oracle");
+            string? spec = Environment.GetEnvironmentVariable("WPF_CVTROUND");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_CVTROUND=<ppem>");
+            int ppem = int.Parse(spec!);
+            const string Fam = "WpfCvtRoundProbe";
+            double unitsPerPixel = SyntheticFont.UnitsPerEm / (double) ppem;
+
+            // Bar 0 is the baseline: the same rectangle with no program at all.
+            var bars = new List<SyntheticFont.Bar> { new(0, 400, 700, false, false, noProgram: true) };
+            var wanted = new List<double>();
+            int den = int.Parse(Environment.GetEnvironmentVariable("WPF_CVTROUND_DEN") ?? "16");
+            int steps = int.Parse(Environment.GetEnvironmentVariable("WPF_CVTROUND_STEPS") ?? "24");
+            // WPF_CVTROUND_PREP=1 moves the rounding into the PRE-PROGRAM: prep rounds control
+            // value i and stores it at 100+i, and the glyph shifts itself by that stored value
+            // without rounding anything itself. Whatever grid prep used is what gets drawn.
+            bool inPrep = Environment.GetEnvironmentVariable("WPF_CVTROUND_PREP") == "1";
+            var prepRound = new List<int>();
+            for (int k = 1; k <= steps; k++)
+            {
+                int units = (int) Math.Round(k / (double) den * unitsPerPixel);
+                int slot = bars.Count;
+                bars.Add(new SyntheticFont.Bar(units, 400, 700, false, false,
+                    probe: inPrep ? -30000 - (100 + slot) : -20000 - slot));
+                if (inPrep) prepRound.Add(slot);
+                wanted.Add(k / (double) den);
+            }
+            if (inPrep) Assert.True(100 + steps < 128, "cvt slots 100.. must fit the padded table");
+            // Times' own gasp, so the probe sits in the same symmetric-smoothing regime as the
+            // faces the question is about.
+            SyntheticFont.GaspRanges = new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) };
+            SyntheticFont.PrepRoundCvts = inPrep ? prepRound : null;
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Fam, bars); }
+            finally { SyntheticFont.GaspRanges = null; SyntheticFont.PrepRoundCvts = null; }
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the control-value probe");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== where a bar lands after shifting itself by ROUND(cvt) in "
+                + (inPrep ? "PREP" : "the GLYPH") + $", {Fam} at {ppem}ppem");
+            report.AppendLine("   cvt(px)   GDI shift   our shift");
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                var raw = new byte[Width * Height * 4];
+                double gdiBase = 0, ourBase = 0;
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Fam, ppem, PenX, ppem + 12, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    double g = InkCentroidX(raw, bgra: true);
+                    double o = InkCentroidX(OursRgba(font, ch, ppem, ppem + 12, correction: true), bgra: false);
+                    if (i == 0) { gdiBase = g; ourBase = o; continue; }
+                    report.AppendLine($"   {wanted[i - 1],7:0.0000} {g - gdiBase,11:0.000} {o - ourBase,11:0.000}"
+                        + ((Math.Abs((g - gdiBase) - (o - ourBase)) > 0.02) ? "   <<<" : ""));
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            Console.Error.Write(report.ToString());
+        }
+
+        /// <summary>The ink-weighted mean COLUMN, which moves with a fraction of a pixel where a
+        /// first-inked-column reading cannot.</summary>
+        private static double InkCentroidX(byte[] rgba, bool bgra)
+        {
+            double sum = 0, wsum = 0;
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                {
+                    int i = (y * Width + x) * 4;
+                    int ink = (255 - rgba[i]) + (255 - rgba[i + 1]) + (255 - rgba[i + 2]);
+                    sum += ink; wsum += ink * (double) x;
+                }
+            return sum == 0 ? 0 : wsum / sum;
         }
 
         /// <summary>The first column carrying any ink, or -1. The probe reads a POSITION, so this
@@ -3716,6 +3850,105 @@ namespace WgpuInterop.Tests.Text
         /// same way -- ours is RGBA and GDI's is BGRA -- it compared GDI's red against our
         /// blue and reported the UPRIGHT bars differing in 336 of 456 lamps at a mean of 124.
         /// A slant-only test would have called that a diagonal problem.</para></summary>
+        /// <summary>Is our lamp coverage GDI's where two strokes CROSS?
+        /// <para>CoverageOnADiagonal_AgainstGdis settled the lone slanted edge: ours agrees with
+        /// GDI's, so one vertical sample per row is right and diagonals per se are not the problem.
+        /// It never drew two edges close together, and that is where the residual actually lives.
+        /// Verdana 'v' -- two diagonals meeting at a vertex -- is pixel-exact at 16ppem with a blank
+        /// difference map; 'x' and 'X' are not, and their row profile says the centres agree to a
+        /// tenth of a lamp while every row is LIGHT. So nothing is misplaced and something is
+        /// missing, and it is missing next to the crossing.</para>
+        /// <para>These bars carry NO glyph program, so both renderers rasterize the same outline
+        /// and the interpreter is out of the question. The uncrossed pair is the control: the same
+        /// two strokes, same widths, same slants, drawn apart.</para>
+        /// <para>WPF_CROSS_REPORT=&lt;path&gt; to collect it.</para></summary>
+        [Fact]
+        public void CoverageAtACrossing_AgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? path = Environment.GetEnvironmentVariable("WPF_CROSS_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_CROSS_REPORT to collect this");
+
+            const string Family = "WpfCrossProbe";
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("== is our lamp coverage GDI's where two strokes CROSS?");
+            report.AppendLine("   taper  slant  ppem     lamps  differing   worst  mean|d|"
+                              + "    GDI ink   our ink   ours/GDI");
+
+            bool cross = false;
+            foreach (int taper in new[] { 0, 96, 192, 280 })
+            foreach (int slant in new[] { 0, 300, 900 })
+            {
+                var bars = new List<SyntheticFont.Bar>();
+                for (int units = 96; units <= 288; units += 48)
+                    bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false,
+                                                   noProgram: true, slant: slant, cross: cross,
+                                                   taper: Math.Min(taper, units - 16)));
+                byte[] fontBytes = SyntheticFont.Build(Family + "T" + taper + "S" + slant, bars);
+                int count = 0;
+                IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+                if (handle == IntPtr.Zero || count == 0)
+                {
+                    report.AppendLine($"   {taper,5}  {slant,5}   GDI refused the font");
+                    continue;
+                }
+                try
+                {
+                    var font = new TrueTypeFont(fontBytes);
+                    var raw = new byte[Width * Height * 4];
+                    foreach (int ppem in new[] { 12, 16, 20 })
+                    {
+                        long compared = 0, differing = 0, worst = 0, sum = 0, gInk = 0, oInk = 0;
+                        for (int i = 0; i < bars.Count; i++)
+                        {
+                            string ch = ((char) (0x41 + i)).ToString();
+                            int baseline = ppem + 12;
+                            Gdi.s_rawRgb = raw;
+                            Gdi.Draw(ch, Family + "T" + taper + "S" + slant, ppem, PenX, baseline,
+                                     Width, Height, false, false);
+                            Gdi.s_rawRgb = null;
+                            byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+                            // Rows only one side inks are the vertical-extent question, not this
+                            // one, and they carry a full-ink difference each -- see the note on
+                            // CoverageOnADiagonal_AgainstGdis. Ours is RGBA, GDI's is BGRA.
+                            for (int y = 0; y < Height; y++)
+                            {
+                                bool gRow = false, oRow = false;
+                                for (int x = 0; x < Width && !(gRow && oRow); x++)
+                                    for (int c = 0; c < 3; c++)
+                                    {
+                                        if (raw[(y * Width + x) * 4 + (2 - c)] != 255) gRow = true;
+                                        if (ours[(y * Width + x) * 4 + c] != 255) oRow = true;
+                                    }
+                                if (!gRow || !oRow) continue;
+                                for (int x = 0; x < Width; x++)
+                                for (int c = 0; c < 3; c++)
+                                {
+                                    int k = y * Width + x;
+                                    int g = 255 - raw[k * 4 + (2 - c)];
+                                    int o = 255 - ours[k * 4 + c];
+                                    if (g == 0 && o == 0) continue;
+                                    compared++; gInk += g; oInk += o;
+                                    int d = Math.Abs(g - o);
+                                    if (d == 0) continue;
+                                    differing++; sum += d;
+                                    if (d > worst) worst = d;
+                                }
+                            }
+                        }
+                        report.AppendLine($"   {taper,5}  {slant,5}  {ppem,4}  {compared,8}"
+                            + $"  {differing,9}  {worst,6}"
+                            + $"  {(differing == 0 ? 0 : sum / (double) differing),7:0.0}"
+                            + $"  {gInk,9}  {oInk,9}"
+                            + $"     {(gInk == 0 ? 0 : oInk / (double) gInk),6:0.0000}");
+                    }
+                }
+                finally { RemoveFontMemResourceEx(handle); }
+            }
+            File.AppendAllText(path!, report.ToString());
+            Console.Error.Write(report.ToString());
+        }
+
         [Fact]
         public void CoverageOnADiagonal_AgainstGdis()
         {
@@ -4224,6 +4457,112 @@ namespace WgpuInterop.Tests.Text
         /// printed and its middle is the reported answer, not whichever end the sweep met first.
         /// The bi-level fitting's edges are printed beside, since that outline keeps being the
         /// suspect.</para>
+        /// <summary>IS GDI'S GLYPH OURS, SHIFTED AND SHEARED? `WPF_SHEARSOLVE=family/chars/ppem[/B|I]`.
+        /// <para>The per-edge solver answers "where is each edge" and, when it does not converge,
+        /// leaves a table nobody can read. This asks a far smaller question with only two unknowns,
+        /// so it always converges and its answer means something: take OUR fitted outline, slide it
+        /// by dx and lean it by `shear` 64ths per pixel of height above the baseline, and find the
+        /// pair that best reproduces GDI's own pixels. A zero at some (dx, shear) says GDI's glyph
+        /// IS ours under that rigid motion -- and for an italic that is the whole question, because
+        /// a lean that does not match turns into a sideways error that grows with height and looks
+        /// like a placement error at every row.</para></summary>
+        [Fact]
+        public void SolveGdisShearAndShift()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_SHEARSOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SHEARSOLVE=family/chars/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            // Same rasterizer configuration the glyph-run path hands out; without it the search
+            // inverts a rasterizer GDI is not being compared against.
+            bool solveSym = font.WantsSymmetricSmoothing(ppem);
+            renderer.SubpixelRowsOverride = solveSym ? 5 : 0;
+            renderer.DropoutOverride = font.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
+            renderer.PpemOverride = ppem;
+            var raw = new byte[Width * Height * 4];
+
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = true;
+            try
+            {
+                foreach (char c in parts[1])
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0 || !((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
+                            out List<PathFigure> fitted) || fitted.Count == 0)
+                    { Console.Error.WriteLine($"== '{c}': not fitted"); continue; }
+
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.s_rawRgb = null;
+
+                    long Score(int dx, int shear)
+                    {
+                        // p.Y is measured DOWN from the baseline, so -p.Y is the height above it.
+                        Vector2 M(Vector2 p) => new(
+                            PenX + p.X + (dx + shear * -p.Y) / 64f, 28f + p.Y);
+                        var placed = new List<PathFigure>(fitted.Count);
+                        foreach (PathFigure f in fitted)
+                        {
+                            var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                            foreach (PathSegment sg in f.Segments)
+                                nf.Segments.Add(sg switch
+                                {
+                                    LineSegment l => new LineSegment(M(l.Point)),
+                                    QuadraticBezierSegment q =>
+                                        new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                                    CubicBezierSegment c3 =>
+                                        new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
+                                    _ => sg,
+                                });
+                            placed.Add(nf);
+                        }
+                        var root = new SceneVisual();
+                        root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                            new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
+                            { PixelAligned = true });
+                        byte[] ours = renderer.RenderToRgba(root, Width, Height,
+                            RgbaColor.FromBytes(255, 255, 255, 255));
+                        long sum = 0;
+                        for (int i = 0; i < Width * Height; i++)
+                            for (int ch = 0; ch < 3; ch++)
+                                sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                        return sum;
+                    }
+
+                    long best = Score(0, 0); int bdx = 0, bsh = 0;
+                    long atZero = best;
+                    for (int step = 4; step >= 1; step /= 2)
+                        for (int dx = bdx - 10 * step; dx <= bdx + 10 * step; dx += step)
+                            for (int sh = bsh - 10 * step; sh <= bsh + 10 * step; sh += step)
+                            {
+                                long v = Score(dx, sh);
+                                if (v < best) { best = v; bdx = dx; bsh = sh; }
+                            }
+                    // The shear is per PIXEL of height; report it as a slope so it can be read
+                    // against the face's own italic angle.
+                    Console.Error.WriteLine($"== '{c}' {parts[0]}@{ppem}{style}  as rendered {atZero}"
+                        + $"  ->  best {best} at dx {bdx}/64 ({bdx / 64f:+0.000;-0.000}px),"
+                        + $" shear {bsh}/64 per px (slope {bsh / 64f:+0.0000;-0.0000})"
+                        + (best == 0 ? "   EXACT -- GDI's glyph IS ours, shifted and sheared" : ""));
+                }
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+        }
+
         /// <para>WPF_EDGESOLVE=family/chars/ppem[/B|I|BI].</para></summary>
         [Fact]
         public void SolveGdisEdges()
@@ -4260,6 +4599,23 @@ namespace WgpuInterop.Tests.Text
             renderer.TextBlendCorrection = true;
             var raw = new byte[Width * Height * 4];
             byte[] lastOurs = Array.Empty<byte>();
+            // THE SOLVER MUST MODEL THE SAME RASTERIZER THE GLYPH PATH USES. It renders a
+            // GeometryFill, not a glyph run, and only the glyph-run block in WgpuSceneRenderer
+            // hands the rasterizer its per-run configuration -- so the search was inverting a
+            // rasterizer with NO vertical dropout control and, for a symmetric face, the wrong
+            // number of sub-rows. Every edge it reported for a face whose prep asks for dropout
+            // control (Times, Arial, Segoe UI, all of them) absorbed the ink of the rows GDI
+            // fills and we did not model. Mirrored from the hand-off at WgpuSceneRenderer's
+            // per-run block; the two row counts are both five and WPF_SYM_VERTICAL is off.
+            bool solveSym = font.WantsSymmetricSmoothing(ppem);
+            int solveRows = solveSym ? 5 : 0;
+            int solveDropout = font.WantsDropoutControl(ppem, out int solveScanType) ? solveScanType + 1 : 0;
+            if (Environment.GetEnvironmentVariable("WPF_EDGESOLVE_MAP") == "1")
+                Console.Error.WriteLine($"   [solver models] symmetricRows={solveRows}"
+                                        + $" dropout={(solveDropout > 0 ? $"scanType {solveScanType}" : "off")}");
+            renderer.SubpixelRowsOverride = solveRows;
+            renderer.DropoutOverride = solveDropout;
+            renderer.PpemOverride = ppem;
             long Score(List<PathFigure> placed)
             {
                 var root = new SceneVisual();
@@ -4330,6 +4686,17 @@ namespace WgpuInterop.Tests.Text
                 return keys;
             }
 
+            // SUBPIXELFITTING IS A STATIC AND IT DEFAULTS TO FALSE. Without setting it this solver
+            // asked for the BI-LEVEL fit and compared it against GDI's CLEARTYPE pixels -- so its
+            // per-edge numbers described a glyph the oracle never draws, the compatible-width phase
+            // never ran (it is gated on SubpixelFitting), and WPF_CT_PHASE=0/1 changed nothing here.
+            // That is the source of several wrong readings on Arial Italic 'w' and Times Italic 'l'.
+            // WPF_EDGESOLVE_BILEVEL=1 asks for the old behaviour deliberately.
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting =
+                Environment.GetEnvironmentVariable("WPF_EDGESOLVE_BILEVEL") != "1";
+            try
+            {
             foreach (char c in parts[1])
             {
                 int gid = font.GlyphIndex(c);
@@ -4566,7 +4933,59 @@ namespace WgpuInterop.Tests.Text
                               + $"  {(edge[k] + delta[k]) / 64f,7:0.000}   {delta[k],5}   [{runLo[k]},{runHi[k]}]\n");
                 sb.Append("   bi-level edges(64): " + string.Join(' ', Edges(bi)) + '\n');
                 sb.Append("   natural  edges(64): " + string.Join(' ', Edges(natural)) + '\n');
+                sb.AppendLine($"   ISECT executions so far: {TrueTypeInterpreter.s_isectCount}");
                 Console.Error.Write(sb.ToString());
+                // WPF_EDGESOLVE_MAP=1: the two coverage fields side by side, so a NOT EXACT result
+                // can be read as a picture -- WHERE the ink differs, not just how much. Green
+                // channel (the middle lamp), 0-9 per pixel, with a signed difference field.
+                if (Environment.GetEnvironmentVariable("WPF_EDGESOLVE_MAP") == "1")
+                {
+                    // Render the UNSOLVED outline: `Score` leaves its bitmap in lastOurs, and by this point
+                    // that is the SOLVED one, which is not what anybody wants to look at.
+                    var savedDelta = (int[]) delta.Clone();
+                    Array.Clear(delta, 0, delta.Length);
+                    Score(Placed());
+                    Array.Copy(savedDelta, delta, delta.Length);
+                    int x0 = Width, x1 = -1, y0 = Height, y1 = -1;
+                    for (int y = 0; y < Height; y++)
+                        for (int x = 0; x < Width; x++)
+                        {
+                            int gi = 255 - raw[(y * Width + x) * 4 + 1];
+                            int oi = 255 - lastOurs[(y * Width + x) * 4 + 1];
+                            if (gi > 8 || oi > 8)
+                            { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+                        }
+                    if (x1 >= x0)
+                    {
+                        var mp = new System.Text.StringBuilder();
+                        char Cell(byte[] img, int x, int y)
+                        {
+                            int v = 255 - img[(y * Width + x) * 4 + 1];
+                            return v == 0 ? '.' : (char) ('0' + Math.Min(9, v * 10 / 256));
+                        }
+                        mp.AppendLine("   GDI" + new string(' ', Math.Max(1, x1 - x0 - 1))
+                                      + "  ours" + new string(' ', Math.Max(1, x1 - x0 - 2)) + "  diff");
+                        for (int y = y0; y <= y1; y++)
+                        {
+                            var g = new System.Text.StringBuilder();
+                            var o = new System.Text.StringBuilder();
+                            var d = new System.Text.StringBuilder();
+                            for (int x = x0; x <= x1; x++)
+                            {
+                                g.Append(Cell(raw, x, y));
+                                o.Append(Cell(lastOurs, x, y));
+                                int gv = 255 - raw[(y * Width + x) * 4 + 1];
+                                int ov = 255 - lastOurs[(y * Width + x) * 4 + 1];
+                                int t = (ov - gv) * 10 / 256;
+                                d.Append(t == 0 ? '.' : t > 0 ? (char) ('0' + Math.Min(9, t))
+                                                              : (char) ('a' + Math.Min(9, -t) - 1));
+                            }
+                            mp.AppendLine("   " + g + "  " + o + "  " + d);
+                        }
+                        mp.AppendLine("   (diff: digits = we have MORE ink, a..i = we have LESS)");
+                        Console.Error.Write(mp.ToString());
+                    }
+                }
 
                 // WPF_EDGESOLVE_TSV: the same answer as one machine-readable line per glyph, so a
                 // few hundred solves become a TABLE of GDI's ClearType x rather than scrollback.
@@ -4594,6 +5013,29 @@ namespace WgpuInterop.Tests.Text
                         + "\n");
                 }
             }
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+        }
+
+        /// <summary>Sets <see cref="TrueTypeFont.SubpixelFitting"/> for the body of a diagnostic and
+        /// puts it back, exception or not.
+        /// <para>IT IS A STATIC WITH NO INITIALIZER, SO IT DEFAULTS TO FALSE. A per-glyph probe that
+        /// forgets it asks for the BI-LEVEL fit and then compares it against GDI's CLEARTYPE pixels
+        /// -- the compatible-width phase is gated on this flag, so it does not even run. That is not
+        /// hypothetical: it is why SolveGdisEdges reported Arial Italic 'w' identical with the phase
+        /// on and off, and why a long run of per-glyph conclusions disagreed with the oracle.
+        /// THIRTEEN of the seventeen probes in this file had the same omission; the ones that
+        /// deliberately compare against GGO (which really is the bi-level fit) must NOT be
+        /// changed.</para></summary>
+        private readonly struct ClearTypeFitScope : IDisposable
+        {
+            private readonly bool _saved;
+            public ClearTypeFitScope(bool on)
+            {
+                _saved = TrueTypeFont.SubpixelFitting;
+                TrueTypeFont.SubpixelFitting = on;
+            }
+            public void Dispose() => TrueTypeFont.SubpixelFitting = _saved;
         }
 
         /// <summary>IS THE PER-GLYPH ERROR A DISPLACEMENT OR A SHAPE?
@@ -4617,6 +5059,10 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
             string? spec = Environment.GetEnvironmentVariable("WPF_SHIFTSOLVE");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SHIFTSOLVE=family/chars/ppem[/style]");
+            // This probe scores our fit against GDI's CLEARTYPE bitmap, so it must ask for the
+            // ClearType fit. WPF_SHIFTSOLVE_BILEVEL=1 asks for the old (bi-level) behaviour.
+            using var ctFit = new ClearTypeFitScope(
+                Environment.GetEnvironmentVariable("WPF_SHIFTSOLVE_BILEVEL") != "1");
             string[] parts = spec!.Split('/');
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
@@ -5184,6 +5630,11 @@ namespace WgpuInterop.Tests.Text
             long grandTotal = 0;
             int rowCount = 0;
 
+            // WPF_WEIGHT_FACES=Times New Roman|I narrows the run to one face, optionally one
+            // style, so a single row can be re-scored in a second instead of a minute. Diagnosis
+            // only -- the number that counts is still the whole specimen.
+            string[] only = (Environment.GetEnvironmentVariable("WPF_WEIGHT_FACES") ?? "").Split('|');
+            string onlyFace = only[0], onlyStyle = only.Length > 1 ? only[1].ToUpperInvariant() : "";
             foreach (string family in new[]
                      { "Segoe UI", "Arial", "Times New Roman", "Verdana", "Tahoma", "Consolas" })
                 foreach ((bool bold, bool italic) in
@@ -5195,6 +5646,9 @@ namespace WgpuInterop.Tests.Text
                     // SHPIX cap was caught -- and this is so the question can be asked here first.
                     foreach (int ppem in WeightSizes)
                     {
+                        if (onlyFace.Length > 0 && family != onlyFace) continue;
+                        if (onlyStyle.Length > 0
+                            && onlyStyle != (bold ? "B" : italic ? "I" : "R")) continue;
                         string? file = FontFiles.Find(family, bold, italic);
                         if (file is null) continue;
                         byte[] bytes = File.ReadAllBytes(file);
@@ -5310,6 +5764,7 @@ namespace WgpuInterop.Tests.Text
                             }
                     }
 
+            TrueTypeInterpreter.DumpMirpCensus();
             report.AppendLine($"   TOTAL over {rowCount} rows: sum|d| {grandTotal}");
             Console.Error.WriteLine($"IN-PROCESS SPECIMEN: {grandTotal} over {rowCount} rows");
             File.AppendAllText(path!, report.ToString());
@@ -6526,52 +6981,274 @@ namespace WgpuInterop.Tests.Text
         /// are within a percent everywhere, which is what says the correction curve is right; the
         /// regular face is the one that misses, and its row is the open problem written down.</para>
         /// </summary>
+        /// <summary>WHAT GDI DOES WITH A FEATURE THINNER THAN A SCANLINE, measured instead of
+        /// argued about. WPF_VSLAB=&lt;ppem&gt;.
+        /// <para>Every synthetic probe before this drew a FULL-HEIGHT bar, so none of them could
+        /// ask anything about the y direction. This draws a horizontal slab sitting on the
+        /// baseline, sweeps its height from a sixteenth of a pixel to two pixels, and reads back
+        /// how much ink GDI puts on the page. Three outcomes are distinguishable and they mean
+        /// different things: ink PROPORTIONAL to the height means GDI integrates vertical coverage
+        /// like we do; a STEP at some height means it takes one sample per row; a FLOOR -- a thin
+        /// slab still drawing a full row -- means dropout control.</para>
+        /// <para>It exists because Times New Roman's serif rows are the largest single pool left
+        /// and the question underneath them is exactly this: our fitted serif slab is 0.219px tall
+        /// and GDI draws that row 2.5x a stem row at every size. There is no oracle for GDI's
+        /// ClearType Y -- GGO answers bi-level, SolveGdisEdges solves x only -- so this builds
+        /// one for the one case that matters.</para></summary>
+        [Fact]
+        public void HowGdiRendersASubPixelTallSlab()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? spec = Environment.GetEnvironmentVariable("WPF_VSLAB");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_VSLAB=<ppem>");
+            int ppem = int.Parse(spec!);
+            const string Family = "WpfSlabProbe";
+            double unitsPerPixel = SyntheticFont.UnitsPerEm / (double) ppem;
+
+            var bars = new List<SyntheticFont.Bar>();
+            var wanted = new List<double>();
+            for (int sixteenth = 1; sixteenth <= 32; sixteenth++)
+            {
+                double px = sixteenth / 16.0;
+                int units = (int) Math.Round(px * unitsPerPixel);
+                bars.Add(new SyntheticFont.Bar(0, 256, 256 + (int) Math.Round(6 * unitsPerPixel),
+                                               round: false, minDistance: false, noProgram: true,
+                                               slabHeight: units));
+                wanted.Add(px);
+            }
+
+            // WPF_VSLAB_GASP=times ships Times New Roman roman's own gasp, so at 16ppem BOTH
+            // sides have symmetric smoothing OFF. Without it the probe carries no gasp at all and
+            // GDI's no-table fallback turns symmetric ON for it while ours stays off -- the two
+            // rasterizers then answer different questions. Default: no table, as every probe
+            // before this one.
+            SyntheticFont.GaspRanges =
+                Environment.GetEnvironmentVariable("WPF_VSLAB_GASP") == "times"
+                    ? new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) } : null;
+            // WPF_VSLAB_SCAN=times adds Times' own SCANCTRL 303 / SCANTYPE 1 to the probe's prep.
+            SyntheticFont.ScanControl =
+                Environment.GetEnvironmentVariable("WPF_VSLAB_SCAN") == "times" ? (303, 1) : null;
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Family, bars); }
+            finally { SyntheticFont.GaspRanges = null; SyntheticFont.ScanControl = null; }
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI would not accept the slab font");
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== a horizontal slab on the baseline, {Family} at {ppem}ppem,"
+                              + " 6px wide, no glyph program");
+            report.AppendLine("   wanted(px)   GDI ink   our ink   GDI/height   ours/height");
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                var raw = new byte[Width * Height * 4];
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    int baseline = ppem + 12;
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Family, ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    double gdi = SlabInk(raw, bgra: true);
+                    byte[] oursRgba = OursRgba(font, ch, ppem, baseline, correction: true);
+                    double ours = SlabInk(oursRgba, bgra: false);
+                    // WPF_VSLAB_DUMP=<n> prints both rasters' inked rows for the n'th slab, as
+                    // coverage per channel. The totals above say a row disagrees; only this says
+                    // WHERE -- it is how the fringe at the ends of a dropout-filled row was read.
+                    if (Environment.GetEnvironmentVariable("WPF_VSLAB_DUMP") == (i + 1).ToString())
+                        for (int row = 0; row < Height; row++)
+                        {
+                            var g = new System.Text.StringBuilder();
+                            var o = new System.Text.StringBuilder();
+                            for (int col = 0; col < Width; col++)
+                            {
+                                int k = (row * Width + col) * 4;
+                                g.Append($" {255 - raw[k + 2]:000},{255 - raw[k + 1]:000},{255 - raw[k + 0]:000}");
+                                o.Append($" {255 - oursRgba[k + 0]:000},{255 - oursRgba[k + 1]:000},{255 - oursRgba[k + 2]:000}");
+                            }
+                            string gs = g.ToString(), os2 = o.ToString();
+                            if (gs.Replace(" 000,000,000", "").Trim().Length == 0
+                                && os2.Replace(" 000,000,000", "").Trim().Length == 0) continue;
+                            report.AppendLine($"   GDI  row {row}:{gs}");
+                            report.AppendLine($"   ours row {row}:{os2}");
+                        }
+                    report.AppendLine($"   {wanted[i],9:0.0000} {gdi,9:0.00} {ours,9:0.00}"
+                                      + $" {gdi / wanted[i],11:0.00} {ours / wanted[i],12:0.00}");
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            TrueTypeInterpreter.DumpMirpCensus();
+            Console.Error.Write(report.ToString());
+        }
+
+        /// <summary>OUR PIXELS BESIDE GDI'S, for any face -- `WPF_PICTURE=family/char/ppem[/B|I]`.
+        /// <para>Every picture in this file until now was Segoe UI, because the ratchets are: the
+        /// per-glyph tests all draw ProbeFamily. So Times and Arial were being read through totals
+        /// and edge lists alone, and "4.2% light over 12 pixels" does not say which row. This
+        /// prints the same three character maps the ratchets print -- windows, ours, difference --
+        /// for whatever face is asked for.</para></summary>
+        [Fact]
+        public void HowOneGlyphCompares()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the comparison");
+            string? spec = Environment.GetEnvironmentVariable("WPF_PICTURE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_PICTURE=family/char/ppem[/B|I]");
+            string[] parts = spec!.Split('/');
+            string family = parts[0], text = parts[1];
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            const int Base = 28;
+            byte[] windows = Gdi.Draw(text, family, ppem, PenX, Base, Width, Height, bold, italic);
+            byte[] rgba = OursRgba(font, text, ppem, Base, correction: true);
+            var ours = new byte[Width * Height];
+            for (int i = 0; i < ours.Length; i++) ours[i] = (byte) (255 - rgba[i * 4 + 1]);
+
+            Difference diff = Difference.Between(windows, ours, Width, Height);
+            long theirs = 0, mine = 0;
+            for (int i = 0; i < ours.Length; i++) { theirs += windows[i]; mine += ours[i]; }
+            Console.Error.WriteLine($"== '{text}' {family}@{ppem}{(style.Length > 0 ? "/" + style : "")}"
+                                    + $"  ink ours {mine} gdi {theirs} ratio {(theirs == 0 ? 0 : mine / (double) theirs):0.000}");
+            Console.Error.Write(diff.Describe(text, windows, ours, Width, Height));
+            // WPF_PICTURE_NUM=1 prints the coverage NUMBERS for every row that holds ink. The
+            // character map buckets a lamp into one of five glyphs, which is too coarse to read a
+            // stem's width off: 1.19px and 1.00px both print as '#'.
+            if (Environment.GetEnvironmentVariable("WPF_PICTURE_NUM") == "1")
+                for (int y = 0; y < Height; y++)
+                {
+                    bool any = false;
+                    for (int x = 0; x < Width && !any; x++)
+                        any = windows[y * Width + x] > 8 || ours[y * Width + x] > 8;
+                    if (!any) continue;
+                    var g = new System.Text.StringBuilder($"   row {y,2} gdi ");
+                    var o = new System.Text.StringBuilder($"   row {y,2} our ");
+                    for (int x = 0; x < Width; x++)
+                    {
+                        if (windows[y * Width + x] == 0 && ours[y * Width + x] == 0) continue;
+                        g.Append($" {x}:{windows[y * Width + x],3}");
+                        o.Append($" {x}:{ours[y * Width + x],3}");
+                    }
+                    Console.Error.WriteLine(g.ToString());
+                    Console.Error.WriteLine(o.ToString());
+                }
+        }
+
+        /// <summary>Total ink in the frame, in lamps (255 = one lamp fully covered).</summary>
+        private static double SlabInk(byte[] rgba, bool bgra)
+        {
+            long total = 0;
+            for (int i = 0; i + 3 < rgba.Length; i += 4)
+                for (int c = 0; c < 3; c++) total += 255 - rgba[i + c];
+            return total / 255.0;
+        }
+
+        /// <summary>GDI AGAINST ITSELF: the same glyph drawn bi-level, greyscale and ClearType,
+        /// side by side. WPF_GDI_QUALITY=family/char/ppem[/B|I].
+        /// <para>Built for one question. Times Bold's 'o' at 16ppem squeezes its counter to 1.4px
+        /// in the glyph program and re-opens it to 3.4px with four whole-pixel DELTAPs that come
+        /// AFTER IUP[y]; itrp_DeltaEngine, as read, drops those in ClearType, and so do we -- yet
+        /// GDI's ClearType counter is plainly open. Nothing we render can settle whether the
+        /// binary was misread or the deltas are not the mechanism; only GDI's own bi-level
+        /// bitmap next to its own ClearType one can.</para></summary>
+        [Fact]
+        public void HowGdiDrawsOneGlyphAtEachQuality()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? spec = Environment.GetEnvironmentVariable("WPF_GDI_QUALITY");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GDI_QUALITY=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            string family = parts[0], ch = parts[1];
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== GDI '{ch}' {family} @{ppem}{(style.Length > 0 ? "/" + style : "")}"
+                              + " at quality 3 (NONANTIALIASED), 4 (ANTIALIASED), 5 (CLEARTYPE)");
+            var maps = new List<string[]>();
+            int top = int.MaxValue, bottom = -1, left = int.MaxValue, right = -1;
+            var greys = new List<byte[]>();
+            foreach (int q in new[] { 3, 4, 5 })
+            {
+                byte[] grey = Gdi.Draw(ch, family, ppem, PenX, ppem + 12, Width, Height, bold, italic, quality: q);
+                greys.Add(grey);
+                for (int y = 0; y < Height; y++)
+                    for (int x = 0; x < Width; x++)
+                        if (grey[y * Width + x] > 0)
+                        { top = Math.Min(top, y); bottom = Math.Max(bottom, y); left = Math.Min(left, x); right = Math.Max(right, x); }
+            }
+            Assert.True(bottom >= 0, "GDI drew nothing");
+            report.AppendLine($"   rows {top}..{bottom}, cols {left}..{right}   (digit = ink/255*9, '.' = none)");
+            report.AppendLine($"   {"bi-level (3)".PadRight(right - left + 4)}{"grey (4)".PadRight(right - left + 4)}clearType (5)");
+            for (int y = top; y <= bottom; y++)
+            {
+                var line = new System.Text.StringBuilder("   ");
+                foreach (byte[] grey in greys)
+                {
+                    for (int x = left; x <= right; x++)
+                    {
+                        int v = grey[y * Width + x];
+                        line.Append(v == 0 ? '.' : (char) ('0' + Math.Min(9, (v * 9 + 127) / 255)));
+                    }
+                    line.Append("   ");
+                }
+                report.AppendLine(line.ToString());
+            }
+            Console.Error.Write(report.ToString());
+        }
+
         private static readonly Dictionary<string, int> InkAllowed = new()
         {
-            ["b@10"] = 50,
-            ["b@11"] = 92,
-            ["b@12"] = 70,
-            ["b@13"] = 41,
-            ["b@14"] = 50,
-            ["b@15"] = 38,
-            ["b@16"] = 30,
-            ["b@17"] = 14,
-            ["b@18"] = 22,
-            ["b@19"] = 21,
-            ["b@20"] = 45,
-            ["bi@10"] = 118,
-            ["bi@11"] = 76,
-            ["bi@12"] = 78,
-            ["bi@13"] = 46,
-            ["bi@14"] = 43,
-            ["bi@15"] = 43,
-            ["bi@16"] = 24,
-            ["bi@17"] = 26,
-            ["bi@18"] = 21,
-            ["bi@19"] = 26,
-            ["bi@20"] = 53,
-            ["i@10"] = 220,
-            ["i@11"] = 148,
-            ["i@12"] = 143,
-            ["i@13"] = 122,
-            ["i@14"] = 119,
-            ["i@15"] = 94,
-            ["i@16"] = 66,
-            ["i@17"] = 61,
-            ["i@18"] = 44,
-            ["i@19"] = 50,
-            ["i@20"] = 81,
-            ["regular@10"] = 159,
-            ["regular@11"] = 163,
-            ["regular@12"] = 150,
-            ["regular@13"] = 113,
-            ["regular@14"] = 79,
-            ["regular@15"] = 54,
-            ["regular@16"] = 113,
-            ["regular@17"] = 51,
-            ["regular@18"] = 27,
-            ["regular@19"] = 40,
-            ["regular@20"] = 74,
+            ["b@10"] = 15,
+            ["b@11"] = 11,
+            ["b@12"] = 19,
+            ["b@13"] = 3,
+            ["b@14"] = 12,
+            ["b@15"] = 3,
+            ["b@16"] = 7,
+            ["b@17"] = 6,
+            ["b@18"] = 0,
+            ["b@19"] = 8,
+            ["b@20"] = 3,
+            ["bi@10"] = 12,
+            ["bi@11"] = 3,
+            ["bi@12"] = 1,
+            ["bi@13"] = 1,
+            ["bi@14"] = 1,
+            ["bi@15"] = 4,
+            ["bi@16"] = 4,
+            ["bi@17"] = 2,
+            ["bi@18"] = 2,
+            ["bi@19"] = 3,
+            ["i@10"] = 3,
+            ["i@11"] = 1,
+            ["i@12"] = 21,
+            ["i@13"] = 3,
+            ["i@14"] = 1,
+            ["i@15"] = 3,
+            ["i@16"] = 9,
+            ["i@17"] = 9,
+            ["i@18"] = 1,
+            ["i@19"] = 10,
+            ["i@20"] = 2,
+            ["regular@10"] = 16,
+            ["regular@11"] = 13,
+            ["regular@12"] = 21,
+            ["regular@13"] = 14,
+            ["regular@14"] = 3,
+            ["regular@15"] = 11,
+            ["regular@16"] = 12,
+            ["regular@17"] = 21,
+            ["regular@18"] = 9,
+            ["regular@19"] = 11,
+            ["regular@20"] = 1,
         };
 
 

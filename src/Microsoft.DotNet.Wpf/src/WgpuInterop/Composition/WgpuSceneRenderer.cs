@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -66,13 +66,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Whether the run being drawn asked for symmetric smoothing (see the face's
         /// 'gasp'); it costs vertical samples, so it is per run and folded into the mask key.</summary>
         private bool _symmetricSmoothing;
+        /// <summary>WPF_CT_DROPOUT=0 disables the scan converter's vertical dropout control.</summary>
+        private static readonly bool s_dropoutControl =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT") != "0";
+
+        private static readonly bool s_symAlways =
+            Environment.GetEnvironmentVariable("WPF_SYM_ALWAYS") == "1";
+
+        /// <summary>Which of GDI's two ClearType filter palettes to use: 0 never the contrast one,
+        /// 1 always, 2 (auto) where the face's gasp declines symmetric smoothing. WPF_CT_CONTRAST.
+        /// </summary>
+        private static readonly int s_contrastFilter =
+            Environment.GetEnvironmentVariable("WPF_CT_CONTRAST") switch
+            {
+                "1" => 1, "auto" => 2, _ => 0,
+            };
 
         /// <summary>How many vertical samples this run's symmetric smoothing asks for, which
         /// depends on whether the face is grid-fitted at this size. Folded into the mask key.
         /// </summary>
         private int _symmetricRows;
+        private int _dropoutForRun;
+        private int _symPpemForRun;
 
         /// <summary>Whether symmetric smoothing also softens across ROWS. WPF_SYM_VERTICAL=1.</summary>
+        /// <summary>What a geometry fill that stands in for a glyph should be rasterized with.
+        /// Negative means "whatever the glyph run in hand says", which is the normal path; the edge
+        /// solver sets them so the rasterizer it inverts is the rasterizer that draws.</summary>
+        internal int SubpixelRowsOverride = -1;
+        internal int DropoutOverride = -1;
+        internal int PpemOverride = -1;
+
         private static readonly bool s_symVertical =
             Environment.GetEnvironmentVariable("WPF_SYM_VERTICAL") == "1";
 
@@ -98,12 +122,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// written down below, that it includes the scanline centre and GDI samples there.</para>
         /// </summary>
         private static readonly int SymmetricRows =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 3;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS"), out int sr) ? sr : 5;
 
         /// <summary>Vertical samples when the face asks for symmetric smoothing and IS
         /// grid-fitted -- WPF_SYM_ROWS_FIT, one. See SymmetricRows for why these are two.</summary>
         private static readonly int SymmetricRowsFitted =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS_FIT"), out int sf) ? sf : 1;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS_FIT"), out int sf) ? sf : 5;
+        // BOTH ARE FIVE, because GDI's vertical overscale is five and its combine is a genuine
+        // five-tap. The old 3-and-1 were compensating for a LINEAR box filter, for which extra
+        // vertical samples only blur; with the exact seven-level pipeline the count is not a
+        // tuning knob at all. Measured with the exact filter: rows 1/3/5/7 = 3,401,530 /
+        // 2,959,981 / 2,696,236 / 3,054,907, and then the fitted count 1/3/5 = 2,696,236 /
+        // 2,487,683 / 1,864,496.
 
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
         internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
@@ -3539,13 +3569,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // mask is three times as wide before it is filtered down, and the coverage
                         // shader has no notion of that. Glyph masks are cached by shape, so this is
                         // paid once per glyph per size, not once per frame.
-                        PathRasterizer.SubpixelRowsForRun = _symmetricSmoothing ? _symmetricRows : 0;
+                        // WPF_SYM_ALWAYS=1: use the vertical subrows even where the face's gasp does not ask
+                        // for symmetric smoothing. Our diagonal glyphs are wrong at EXACTLY the sizes where
+                        // that bit is clear (Verdana/Segoe/Consolas 'x' is pixel-exact at every size with it
+                        // and light at every size without), which is the signature of sampling a diagonal
+                        // with one scanline per pixel row.
+                        // A GEOMETRY FILL STANDING IN FOR A GLYPH gets the same configuration only
+                        // if it is told: these fields are filled in by the glyph-run block, and a
+                        // caller that hands us an outline directly (the edge solver, which inverts
+                        // this rasterizer to recover GDI's fitted x) never goes through it. Without
+                        // the override it was inverting a rasterizer with NO dropout control while
+                        // the glyph path had it on -- the search then moved EDGES to account for
+                        // ink that the dropout pass draws, which is a bias on every face whose prep
+                        // asks for it. -1 means "use the run's own".
+                        PathRasterizer.SubpixelRowsForRun = SubpixelRowsOverride >= 0
+                            ? SubpixelRowsOverride
+                            : (_symmetricSmoothing || s_symAlways) ? _symmetricRows : 0;
+                        PathRasterizer.PpemForRun = PpemOverride > 0 ? PpemOverride : _symPpemForRun;
+                        // Vertical dropout control, as the face's prep asks for it (SCANCTRL /
+                        // SCANTYPE). WPF_CT_DROPOUT=0 turns it off.
+                        PathRasterizer.DropoutForRun =
+                            DropoutOverride >= 0 ? DropoutOverride : _dropoutForRun;
                         PathRasterizer.SymmetricVerticalForRun =
                             _symmetricSmoothing && s_symVertical;
+                        // WHICH FILTER PALETTE. The sizes where our diagonals are light are exactly
+                        // the ones where the face's gasp does NOT ask for symmetric smoothing --
+                        // Verdana 'x' measures 3849/3213/666/0/0 at ppem 12/16/17/18/20 against a
+                        // gasp that changes at 17 -- and the contrast palette carries 1.5x the ink
+                        // where ours is short by 1.47x. WPF_CT_CONTRAST: auto (the gasp decides),
+                        // 1 always, 0 never.
+                        PathRasterizer.ContrastFilterForRun =
+                            s_contrastFilter == 1 || (s_contrastFilter == 2 && !_symmetricSmoothing);
                         PathRasterizer.SubpixelMask sm;
                         try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
                                                     CurveFlattener.GlyphTolerance); }
-                        finally { PathRasterizer.SubpixelRowsForRun = 0; }
+                        finally { PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0; }
                         if (sm.IsEmpty) return;
                         // Corrected AFTER the filter, and it was worth checking which way round:
                         // correcting the raw lamps first is the tidier story (a linear filter then
@@ -4570,8 +4628,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                   && hf.WantsSymmetricSmoothing(symPpem);
             // And WHICH symmetric regime this is: the face asks for the same smoothing above
             // 19ppem and below 9, but only the second one is unfitted.
+            _symPpemForRun = (int)MathF.Round(symPpem);
             _symmetricRows = _symmetricSmoothing && font is Text.IHintedGlyphFont gfit
                              && gfit.WantsGridFit(symPpem) ? SymmetricRowsFitted : SymmetricRows;
+            // Vertical dropout control as the face's prep asks for it (SCANCTRL / SCANTYPE).
+            _dropoutForRun = s_dropoutControl && font is Text.IHintedGlyphFont dof
+                             && dof.WantsDropoutControl(symPpem, out int scanType) ? scanType + 1 : 0;
 
             // Shape the run into positioned glyphs (glyph ids + advances/offsets),
             // then lay them out. Advances come from the shaper (so kerning etc.

@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -489,6 +489,130 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// through the generic shape path, which knows nothing about fonts.</para></summary>
         internal static int SubpixelRowsForRun;
 
+        /// <summary>SCANTYPE + 1 when the run's face asks for dropout control at this size, else 0.
+        /// Set by the renderer per run.</summary>
+        /// <summary>Whether a sample exactly on a span's right edge is inside it. GDI's rule; see
+        /// the note at the sampling test. WPF_CT_SPANEND=old for the half-open one.</summary>
+        private static readonly bool s_spanEndInclusive =
+            Environment.GetEnvironmentVariable("WPF_CT_SPANEND") != "old";
+
+        internal static int DropoutForRun;
+
+        /// <summary>How many bits the dropout pass set on the last rasterization, and how many
+        /// times it ran. A diagnostic: the edge solver renders a GeometryFill rather than a glyph
+        /// run, and this is how to tell whether the pass it is inverting is the one that draws.</summary>
+        internal static int LastDropoutFills;
+        internal static int LastDropoutRuns;
+        private static readonly bool s_dropoutTrace = Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "2";
+
+        /// <summary>WPF_CT_DROPOUT_STUBS=0 fills stubs too (rule 3 without rule 4).</summary>
+        private static readonly bool s_dropoutStubs =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_STUBS") != "0";
+
+        /// <summary>Which edge of a span a row sample that lands EXACTLY on it belongs to. The slab
+        /// probe says GDI excludes a sample on the span's bottom edge and includes one on its top
+        /// (a slab of exactly 0.5px draws nothing, one of exactly 1.5px draws ONE row); we had it
+        /// the other way. WPF_CT_ROWEDGE=old restores the old convention.</summary>
+        private static readonly bool s_rowEdgeGdi =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") != "old";
+
+        /// <summary>VERTICAL DROPOUT CONTROL, TrueType rule 3 on columns: where the outline crosses
+        /// a lamp column between two adjacent row samples -- entering and leaving without covering
+        /// either sample -- the row is turned on for that lamp. GDI's ClearType does exactly this
+        /// when the face's SCANCTRL says so (slab probe: any height down to 1/16px renders as a
+        /// full row with Times' prep, nothing below half a row without), and it is what keeps
+        /// Times New Roman's serifs: the face's ClearType branch leaves them 0.22px tall for IUP
+        /// and the scan converter fills the row. The row chosen is the one holding the span's
+        /// midpoint, which is where GDI's ink lands (the serif row itself, not the row below).
+        /// Stubs (rule 4) are not distinguished.</summary>
+        private static void ApplyVerticalDropout(List<List<Vector2>> contours, FillRule fillRule,
+                                                 int originX, int originY, int subWidth, int height,
+                                                 byte[] samples)
+        {
+            var edges = new List<Edge>();
+            foreach (List<Vector2> c in contours)
+                for (int i = 0; i < c.Count; i++)
+                {
+                    Vector2 a = c[i], b = c[(i + 1) % c.Count];
+                    if (a.X != b.X) edges.Add(new Edge(a, b));
+                }
+            if (edges.Count == 0) return;
+            var crossings = new List<(float Y, int Dir)>();
+            for (int lx = 0; lx < subWidth; lx++)
+            {
+                float cx = originX + (lx + 0.5f) * HalfLamps;
+                crossings.Clear();
+                foreach (Edge e in edges)
+                {
+                    float xmin = MathF.Min(e.X0, e.X1), xmax = MathF.Max(e.X0, e.X1);
+                    if (cx < xmin || cx >= xmax) continue;
+                    float t = (cx - e.X0) / (e.X1 - e.X0);
+                    crossings.Add((e.Y0 + t * (e.Y1 - e.Y0), e.X1 > e.X0 ? 1 : -1));
+                }
+                if (crossings.Count < 2) continue;
+                crossings.Sort((p, q) => p.Y.CompareTo(q.Y));
+                int winding = 0;
+                for (int i = 0; i < crossings.Count - 1; i++)
+                {
+                    winding += crossings[i].Dir;
+                    bool inside = fillRule == FillRule.NonZero ? winding != 0 : (winding & 1) != 0;
+                    if (!inside) continue;
+                    float ya = crossings[i].Y, yb = crossings[i + 1].Y;
+                    if (yb <= ya) continue;
+                    // Does the span contain a row sample (originY + py + 0.5)?
+                    float first = MathF.Ceiling(ya - originY - 0.5f) + 0.5f + originY;
+                    if (first < yb) continue;                    // a sample is inside: not a dropout
+                    int py = (int) MathF.Floor((ya + yb) * 0.5f - originY);
+                    if (py < 0 || py >= height) continue;
+                    samples[py * subWidth + lx] = 255;
+                }
+            }
+        }
+
+        /// <summary>Use the CONTRAST-ENHANCED filter palette for the run being drawn.
+        /// <para>Set by the renderer, ambient for the same reason <see cref="SubpixelRowsForRun"/>
+        /// is. The two palettes are `fontdrvhost+0xa7a60` (the plain three-lamp box sum) and
+        /// `+0xa7960`, and `ulClearTypeFilter_6x1` picks between them on its third argument.</para>
+        /// </summary>
+        internal static bool ContrastFilterForRun;
+
+        /// <summary>`fontdrvhost+0xa7960` decoded through the code table at `+0xa7420`: for each of
+        /// the 243 base-3 indices over five contiguous lamps (the first lamp most significant), the
+        /// three channel levels 0..6. Read out of the binary, not fitted -- and the SAME extraction
+        /// applied to `+0xa7a60` reproduces the box sum below exactly for all 243 entries, which is
+        /// what says the decode is right.</summary>
+        private static readonly byte[] GdiContrastLevels =
+        {
+            0,0,0,0,0,2,0,1,3,0,2,2,0,2,4,0,2,4,1,3,4,1,3,5,1,3,5,
+            2,2,2,2,2,4,2,3,5,2,4,4,2,4,6,2,4,6,2,4,5,2,4,6,2,4,6,
+            3,4,3,3,4,5,3,4,5,3,5,4,3,5,6,3,5,6,3,5,5,3,5,6,3,5,6,
+            2,2,0,2,2,2,2,3,3,2,4,2,2,4,4,2,4,4,3,5,4,3,5,5,3,5,5,
+            4,4,2,4,4,4,4,5,5,4,6,4,4,6,6,4,6,6,4,6,5,4,6,6,4,6,6,
+            4,5,3,4,5,5,4,5,5,4,6,4,4,6,6,4,6,6,4,6,5,4,6,6,4,6,6,
+            4,3,1,4,3,3,4,4,4,4,5,3,4,5,5,4,5,5,4,5,4,4,5,5,4,5,5,
+            5,4,2,5,4,4,5,5,5,5,6,4,5,6,6,5,6,6,5,6,5,5,6,6,5,6,6,
+            5,5,3,5,5,5,5,5,5,5,6,4,5,6,6,5,6,6,5,6,5,5,6,6,5,6,6,
+            2,0,0,2,0,2,2,1,3,2,2,2,2,2,4,2,2,4,3,3,4,3,3,5,3,3,5,
+            4,2,2,4,2,4,4,3,5,4,4,4,4,4,6,4,4,6,4,4,5,4,4,6,4,4,6,
+            5,4,3,5,4,5,5,4,5,5,5,4,5,5,6,5,5,6,5,5,5,5,5,6,5,5,6,
+            4,2,0,4,2,2,4,3,3,4,4,2,4,4,4,4,4,4,5,5,4,5,5,5,5,5,5,
+            6,4,2,6,4,4,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            6,5,3,6,5,5,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            5,3,1,5,3,3,5,4,4,5,5,3,5,5,5,5,5,5,5,5,4,5,5,5,5,5,5,
+            6,4,2,6,4,4,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            6,5,3,6,5,5,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            3,1,0,3,1,2,3,2,3,3,3,2,3,3,4,3,3,4,4,4,4,4,4,5,4,4,5,
+            5,3,2,5,3,4,5,4,5,5,5,4,5,5,6,5,5,6,5,5,5,5,5,6,5,5,6,
+            5,4,3,5,4,5,5,4,5,5,5,4,5,5,6,5,5,6,5,5,5,5,5,6,5,5,6,
+            4,2,0,4,2,2,4,3,3,4,4,2,4,4,4,4,4,4,5,5,4,5,5,5,5,5,5,
+            6,4,2,6,4,4,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            6,5,3,6,5,5,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            5,3,1,5,3,3,5,4,4,5,5,3,5,5,5,5,5,5,5,5,4,5,5,5,5,5,5,
+            6,4,2,6,4,4,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6,
+            6,5,3,6,5,5,6,5,5,6,6,4,6,6,6,6,6,6,6,6,5,6,6,6,6,6,6
+        };
+
+
         /// <summary>Whether the face asked for SYMMETRIC SMOOTHING at this size, set by the
         /// renderer from the gasp for the same reason SubpixelRowsForRun is.</summary>
         internal static bool SymmetricVerticalForRun;
@@ -565,14 +689,89 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int rows = SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows;
             byte[] samples = RowsThenThreshold(contours, path.FillRule, originX * scale, originY,
                                                subWidth, height, rows);
-            // Filtering the 6x samples STRAIGHT into lamps was tried, on the grounds that the paper
-            // calls this "a 6x1 filtering technique" -- one operation, six samples in and three
-            // lamps out -- where ours is two, thresholding each half-lamp at 128 and then running a
-            // three-lamp box over the result. The threshold in the middle is a binarization the
-            // documented pipeline does not have. Measured with the same curve and level cap in the
-            // same order it costs 759,520 -> 803,759, and 822,317 / 841,529 at other gammas. The
-            // threshold earns its place: it sharpens, and averaging the fine samples instead gives
-            // away the edge.
+            if (DropoutForRun > 0)
+                ApplyVerticalDropout(contours, path.FillRule, originX * scale, originY, subWidth, height, samples);
+            // ulClearTypeFilter_6x5 @ fontdrvhost+0x217d8 is NOT a 2D kernel: it multiplies
+            // the bitmap height by 5, runs the ORDINARY 6x1 horizontal filter over that
+            // 5x-tall bitmap, and only THEN combines each group of five filtered rows into
+            // one. So GDI filters horizontally FIRST, at 5x vertical resolution, and averages
+            // afterwards -- where we average the samples and filter once. The orders are not
+            // interchangeable: averaging first lets the horizontal filter mix neighbours whose
+            // vertical coverage differs, which is why our sub-pixel-tall features can never
+            // come out uniform the way GDI's do. WPF_VFILT_FIRST=1.
+            // GDI's structure, both halves together: the NONLINEAR table filter applied to each
+            // vertical subrow and the results averaged afterwards. Either half alone is a no-op
+            // (our box filter is linear so the orders commute; the table alone still averages the
+            // samples first), which is why they have to be measured as one change.
+            if (UseGdiFilter)
+            {
+                var polysG = new List<List<Vector2>>(contours.Count);
+                // The contours have already been stretched by `scale` for the lamp grid; this
+                // sampler works in PIXEL space, so undo it.
+                foreach (List<Vector2> c in contours)
+                {
+                    var cp = new List<Vector2>(c.Count);
+                    foreach (Vector2 pt in c) cp.Add(new Vector2(pt.X / scale, pt.Y));
+                    polysG.Add(cp);
+                }
+                // GDI KEEPS EVERYTHING IN SEVEN LEVELS UNTIL THE VERY END. ulClearTypeFilter_6x5 does
+                // NOT average the filtered subrows: interpolatePixel_6x5 decodes each of the five to
+                // three 0..6 channel levels, applies the kernel 4:9:10:9:4 (sum 36, the divisor table
+                // at 0xa75f0 is exactly round(s/36)), and re-encodes. A plain mean is both the wrong
+                // weights AND the wrong domain -- it averages coverages where GDI averages levels and
+                // rounds once. Only then does the level become a pixel, through a seven-entry ramp.
+                int nSub = FilterBeforeVerticalAverage && SubpixelRowsForRun > 1 ? SubpixelRowsForRun : 1;
+                var lev = new byte[nSub][];
+                List<(int Col, int SubRow)>? fills = DropoutForRun > 0
+                    ? GdiDropoutFills(polysG, path.FillRule, originX, originY, width, height, nSub) : null;
+                LastDropoutFills = fills?.Count ?? -1; LastDropoutRuns++;
+                for (int sI = 0; sI < nSub; sI++)
+                    lev[sI] = GdiTableFilterRowset(polysG, path.FillRule, originX, originY,
+                                                   width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills);
+                var outG = new byte[width * height * 4];
+                bool gdiKernel = nSub == GdiVerticalKernel.Length;
+                int weightSum = 0;
+                if (gdiKernel) foreach (int w in GdiVerticalKernel) weightSum += w;
+                for (int px = 0; px < width * height; px++)
+                {
+                    int sumC = 0;
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        int s = 0;
+                        if (gdiKernel)
+                            for (int sI = 0; sI < nSub; sI++) s += GdiVerticalKernel[sI] * lev[sI][px * 4 + ch];
+                        else
+                            for (int sI = 0; sI < nSub; sI++) s += lev[sI][px * 4 + ch];
+                        int div = gdiKernel ? weightSum : nSub;
+                        int outLvl = (s + div / 2) / div;
+                        if (outLvl > 6) outLvl = 6;
+                        byte cov = GdiLevelRamp[outLvl];
+                        outG[px * 4 + ch] = cov;
+                        sumC += cov;
+                    }
+                    outG[px * 4 + 3] = (byte) (sumC / 3);
+                }
+                return new SubpixelMask(outG, width, height, originX, originY);
+            }
+
+            if (FilterBeforeVerticalAverage && SubpixelRowsForRun > 1)
+            {
+                int n = SubpixelRowsForRun;
+                var acc = new int[width * height * 4];
+                for (int sIdx = 0; sIdx < n; sIdx++)
+                {
+                    byte[] one = RowsThenThresholdAt(contours, path.FillRule, originX * scale,
+                                                     originY, subWidth, height, (sIdx + 0.5f) / n);
+                    if (PreFilterLut is byte[] pre0)
+                        for (int i = 0; i < one.Length; i++) one[i] = pre0[one[i]];
+                    byte[] f = FilterSubpixels(one, width, height);
+                    for (int i = 0; i < acc.Length; i++) acc[i] += f[i];
+                }
+                var outp = new byte[width * height * 4];
+                for (int i = 0; i < outp.Length; i++) outp[i] = (byte)(acc[i] / n);
+                return new SubpixelMask(outp, width, height, originX, originY);
+            }
+
             // SYMMETRIC SMOOTHING, when the face's gasp asks for it at this size. It is a
             // filter and not more samples: sweeping the vertical SAMPLE count at 20ppem gives
             // 2,299,096 / 3,281,860 / 2,303,143 / 2,496,104 for one to four, worst at the even
@@ -850,6 +1049,419 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>Spread each lamp's coverage over its neighbours and pack the three into a pixel.
         /// </summary>
+        /// <summary>The run's ppem, so the vertical-coverage rule can be limited to the sizes
+        /// where features are genuinely sub-pixel tall. Set by the renderer per run.</summary>
+        internal static int PpemForRun;
+
+        /// <summary>Largest ppem at which post-filter vertical coverage applies. WPF_VCOV_MAXPPEM.</summary>
+        internal static readonly int PostVerticalMaxPpem =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_VCOV_MAXPPEM"), out int vm) ? vm : 8;
+
+        /// <summary>GDI's ClearType filter as a table: bi-level 6x, then for each lamp a base-3
+        /// index over the five lamps centred on it, into a 243-entry palette learned from GDI's
+        /// own pixels (429k lamps, six faces). Stored as COVERAGE (255 = ink) pre-curve, so the
+        /// renderer's existing correction reproduces GDI's pixel. WPF_GDI_FILTER=1.</summary>
+        private static readonly byte[] GdiFilterPalette = { 0,0,0,43,43,43,85,85,85,43,43,43,85,85,85,127,127,127,85,85,85,127,127,127,170,170,170,43,255,181,85,99,113,127,127,170,85,85,99,127,127,127,170,170,170,127,127,127,170,170,170,212,212,212,85,58,29,96,64,33,170,170,147,127,96,64,170,170,170,212,212,170,170,170,170,212,212,212,255,255,255,0,0,0,43,43,43,85,127,85,43,43,43,71,85,127,127,127,127,56,71,85,127,127,127,170,170,170,43,43,43,85,85,85,127,127,127,85,85,85,127,127,127,170,170,170,127,127,127,170,170,170,212,212,212,85,99,113,127,127,170,170,170,192,127,127,127,170,170,170,212,212,212,170,170,170,212,212,212,255,255,255,0,0,0,96,69,43,120,103,85,121,96,69,137,120,103,170,127,127,154,137,120,170,170,127,170,170,170,43,43,43,85,127,85,127,127,127,71,85,127,127,127,127,170,170,170,127,127,127,170,170,170,212,212,212,85,85,85,127,127,127,170,170,170,127,127,127,170,170,170,212,212,212,170,170,170,212,212,212,255,255,255 };
+
+        /// <summary>The seven coverages a ClearType channel can take, read off GDI's own
+        /// pixels: a level 0..6 is all a channel ever carries.</summary>
+        /// <summary>Where the six horizontal samples sit inside the pixel. WPF_HSUB_PHASE.</summary>
+        private static readonly float GdiSamplePhase =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_HSUB_PHASE"),
+                System.Globalization.CultureInfo.InvariantCulture, out float hp) ? hp : 0.5f;
+
+        /// <summary>Where the five vertical sub-scanlines sit inside the pixel. WPF_VSUB_PHASE.</summary>
+        private static readonly float GdiSubrowPhase =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_VSUB_PHASE"),
+                System.Globalization.CultureInfo.InvariantCulture, out float vp) ? vp : 0.5f;
+
+        private static readonly byte[] GdiLevelRamp = { 0, 43, 85, 127, 170, 212, 255 };
+
+        /// <summary>interpolatePixel_6x5's vertical weights, from the tables at
+        /// fontdrvhost+0xa7cb8 / +0xa7cd8 / +0xa7ed0 (4d, 9d, 10d per unit level).</summary>
+        private static readonly int[] GdiVerticalKernel = { 4, 9, 10, 9, 4 };
+
+        internal static readonly bool UseGdiFilter =
+            Environment.GetEnvironmentVariable("WPF_GDI_FILTER") != "0";
+
+        /// <summary>One vertical subrow through GDI's table filter: bi-level 6x lamp counts,
+        /// per-lamp 5-window index, palette. Nonlinear, so unlike our box filter the order
+        /// against the vertical average is load-bearing -- which is why this and
+        /// FilterBeforeVerticalAverage only mean anything together.</summary>
+        /// <summary>VERTICAL DROPOUT CONTROL on the GDI-filter path's own 6x sample grid: TrueType
+        /// rule 3 applied to columns. Each of the six sample columns per pixel is intersected with
+        /// the outline; an inside span that contains no row sample (originY + py + rowOffset) is a
+        /// dropout, and that half-lamp is turned on in the row holding the span's midpoint.
+        /// <para>Measured on GDI with the slab probe: once the probe's prep carries Times' own
+        /// `SCANCTRL 303 / SCANTYPE 1`, a slab of ANY height down to 1/16px renders as a full row;
+        /// without it nothing below half a row does. It is what keeps Times New Roman's serifs --
+        /// the face's ClearType branch leaves them 0.22px tall for IUP and relies on the scan
+        /// converter. GDI's ink lands in the serif row itself, hence the midpoint rule. Stubs
+        /// (rule 4) are not distinguished.</para></summary>
+        /// <summary>GDI's dropout control, read out of fontdrvhost's scan converter
+        /// (fsc_FillGlyph -> fsc_CalcLine -> fsc_FillBitMap -> LookForDropouts ->
+        /// DoVertDropout / DoHorizDropout, with the helpers VertCrossings 0x1400426c0,
+        /// HorizCrossings 0x140042270, GetBitAbs 0x140042180, SetBitAbs 0x140042580).
+        /// <para>It all happens in the scan converter's own frame: one bitmap column per
+        /// horizontal sample (six per pixel, two per lamp), one row per vertical sub-row, and
+        /// y UP -- SetBitAbs addresses row y at (yMax-1-y)*rowBytes, so the bitmap is stored
+        /// top-down but indexed bottom-up. Coordinates are 26.6 and a sample centre is 64j+32.</para>
+        /// <para>fsc_CalcLine files every crossing under an INTEGER scanline index, and
+        /// everything downstream -- the fill, the dropout test, the neighbour counts -- compares
+        /// those integers, never the positions. The index depends on the edge's DIRECTION:
+        /// a contour is clockwise in y-up, so the bottom edge runs leftwards and the left edge
+        /// upwards ("on" crossings, `((v-1+32)&~63)+32)>>6`, the first centre AT OR past the
+        /// crossing) while the top edge runs rightwards and the right edge downwards ("off",
+        /// `((v+32)&~63)+32)>>6`, the first centre STRICTLY past it). So a span fills
+        /// [on, off) and a dropout is on == off: the span holds no sample at all. The two
+        /// tie-breaks differ only when a crossing lands exactly on a centre, which is why this
+        /// matters at all -- with one sub-row per pixel the centres are the half-pixels, and
+        /// hinted outlines sit on those constantly.</para>
+        /// <para>For each dropout at column C between the centres R-1 and R:</para>
+        /// <list type="bullet">
+        /// <item>stubs (SCANTYPE bit 0): the feature must CONTINUE on both sides --
+        /// left = crossings of column C-1 filed under R, plus crossings of rows R and R-1 filed
+        /// under C; right = the same with C+1; each sum must be >= 2, counting both the on and
+        /// the off list;</item>
+        /// <item>nothing is drawn if (C, R) or (C, R-1) is already set;</item>
+        /// <item>simple fills R-1, smart fills floor(mid - 1/128) from the two exact crossing
+        /// positions; either way clamped into [yMin, yMax).</item>
+        /// </list>
+        /// <para>Rows go first (DoHorizDropout, the mirror image: last row first, crossings left
+        /// to right, filling column C-1 or the midpoint) and their bits are visible to the column
+        /// pass, which runs left to right taking each column's crossings from the LAST back.
+        /// Returns the bits set, as (sample column, sub-row from the top).</para></summary>
+        private static List<(int Col, int SubRow)> GdiDropoutFills(List<List<Vector2>> polys,
+            FillRule fillRule, int originX, int originY, int width, int height, int nSub)
+        {
+            int nCols = width * SubpixelsPerPixel * 2, nRows = height * nSub;
+            int scanType = DropoutForRun - 1;
+            bool stubs = s_dropoutStubs && (scanType & 1) != 0, smart = (scanType & 4) != 0;
+            // Into the scan converter's frame: sample q at x'=q+1/2, sub-row j (counted from the
+            // top of our bitmap) at y'=nRows-j-1/2.
+            var P = new List<Vector2[]>(polys.Count);
+            foreach (List<Vector2> poly in polys)
+            {
+                var a = new Vector2[poly.Count];
+                for (int i = 0; i < a.Length; i++)
+                    a[i] = new Vector2((poly[i].X - originX) * 6f + 0.5f - GdiSamplePhase,
+                                       nRows - ((poly[i].Y - originY) * nSub + 0.5f - GdiSubrowPhase));
+                P.Add(a);
+            }
+            static int OnIdx(float v) => (int) MathF.Ceiling(v - 0.5f);
+            static int OffIdx(float v) => (int) MathF.Floor(v - 0.5f) + 1;
+
+            // xMin/xMax/yMin/yMax are the GLYPH's box, not the target's: fs_FindBitMapSize sizes
+            // the bitmap to the outline, so the samples run from the first centre inside it to the
+            // first centre past it. Every bound below is one of those four, and the fill row is
+            // CLAMPED into them -- which is why a sliver sitting on the baseline is drawn in the
+            // bottom row of the glyph and not, as it was here, in the row underneath it (the 'X'
+            // feet each put a lamp below the baseline, where GDI's bitmap does not even reach).
+            float xLo = float.MaxValue, xHi = float.MinValue, yLo = float.MaxValue, yHi = float.MinValue;
+            foreach (Vector2[] a in P)
+                foreach (Vector2 pt in a)
+                {
+                    if (pt.X < xLo) xLo = pt.X;
+                    if (pt.X > xHi) xHi = pt.X;
+                    if (pt.Y < yLo) yLo = pt.Y;
+                    if (pt.Y > yHi) yHi = pt.Y;
+                }
+            // The box is rounded OUTWARD to whole samples, not to centres: a feature thinner
+            // than one sample still gets a row to live in, which is the whole point of dropout
+            // control. The slab probe says so outright -- GDI draws a FULL row for every slab
+            // from 1/16px up to half a sample (17.77 ink at 16ppem where we drew nothing),
+            // because rounding to centres collapses the box and takes the row away.
+            int xMin = Math.Max(0, (int) MathF.Floor(xLo)), xMax = Math.Min(nCols, (int) MathF.Ceiling(xHi));
+            int yMin = Math.Max(0, (int) MathF.Floor(yLo)), yMax = Math.Min(nRows, (int) MathF.Ceiling(yHi));
+            if (xMin >= xMax || yMin >= yMax) return new List<(int, int)>();
+
+            // Four crossing lists, exactly the four arrays the scan converter keeps: per column
+            // the y indices where ink starts and ends, per row the x indices. Each is sorted
+            // ascending (AddVertSimpleScan inserts in order), and each entry keeps its exact
+            // position too, for the smart fill's midpoint.
+            var colOn = new List<(int I, float V)>[nCols];
+            var colOff = new List<(int I, float V)>[nCols];
+            var rowOn = new List<(int I, float V)>[nRows];
+            var rowOff = new List<(int I, float V)>[nRows];
+            // Which list a crossing joins is decided by the edge's DIRECTION, not by which side
+            // of the ink it is on: fsc_CalcLine builds a quadrant number (ascending y = 1 or 2,
+            // descending = 3 or 4; x decreasing adds a turn) and picks the pair of adders from
+            // it -- ascending y feeds the row ON list, decreasing x the column ON list. On a
+            // clockwise contour, which is what a real face has, that IS the bottom and the left
+            // edge. On a contour wound the other way the two lists swap, GDI included: the slab
+            // probe is wound counter-clockwise, and GDI renders its half-sample-tall slab as a
+            // dropout over a row it would otherwise have sampled -- 16.70 ink, the stub-excluded
+            // fill, not the 17.77 of a sampled row. Deriving the roles from the winding instead
+            // (tried, and identical on every real face) loses exactly that.
+            for (int C = 0; C < nCols; C++)
+            {
+                var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                float sx = C + 0.5f;
+                foreach (Vector2[] a in P)
+                    for (int i = 0; i < a.Length; i++)
+                    {
+                        Vector2 p = a[i], q = a[(i + 1) % a.Length];
+                        if (p.X == q.X) continue;
+                        float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
+                        if (sx < lo || sx >= hi) continue;
+                        float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
+                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                    }
+                on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                colOn[C] = on; colOff[C] = off;
+            }
+            for (int R = 0; R < nRows; R++)
+            {
+                var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                float sy = R + 0.5f;
+                foreach (Vector2[] a in P)
+                    for (int i = 0; i < a.Length; i++)
+                    {
+                        Vector2 p = a[i], q = a[(i + 1) % a.Length];
+                        if (p.Y == q.Y) continue;
+                        float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
+                        if (sy < lo || sy >= hi) continue;
+                        float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
+                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                    }
+                on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                rowOn[R] = on; rowOff[R] = off;
+            }
+            // VertCrossings / HorizCrossings walk the on and off lists together and count both.
+            static int Count(List<(int I, float V)>[] on, List<(int I, float V)>[] off, int at, int idx)
+            {
+                if (at < 0 || at >= on.Length) return 0;
+                int n = 0;
+                foreach ((int I, float V) e in on[at]) if (e.I == idx) n++;
+                foreach ((int I, float V) e in off[at]) if (e.I == idx) n++;
+                return n;
+            }
+
+            // The bitmap as the ordinary fill leaves it (fsc_FillBitMap runs before
+            // LookForDropouts), then updated by every dropout fill so the "already on" tests see it.
+            var bits = new bool[nCols * nRows];
+            for (int R = 0; R < nRows; R++)
+            {
+                List<(int I, float V)> on = rowOn[R], off = rowOff[R];
+                for (int k = 0; k < on.Count && k < off.Count; k++)
+                    for (int C = Math.Max(0, on[k].I); C < Math.Min(nCols, off[k].I); C++)
+                        bits[R * nCols + C] = true;
+            }
+            bool Bit(int C, int R) => C >= 0 && C < nCols && R >= 0 && R < nRows && bits[R * nCols + C];
+            var fills = new List<(int, int)>();
+            void Set(int C, int R)
+            {
+                if (C < 0 || C >= nCols || R < 0 || R >= nRows) return;
+                if (bits[R * nCols + C]) return;
+                bits[R * nCols + C] = true;
+                fills.Add((C, nRows - 1 - R));
+            }
+            // Rows first, the last one first, each walked from its first crossing: DoHorizDropout.
+            for (int R = nRows - 1; R >= 0; R--)
+            {
+                List<(int I, float V)> on = rowOn[R], off = rowOff[R];
+                for (int k = 0; k < on.Count && k < off.Count; k++)
+                {
+                    int C = on[k].I;
+                    if (off[k].I != C || C < xMin || C > xMax) continue;
+                    string? why = null;
+                    if (stubs)
+                    {
+                        if (Count(rowOn, rowOff, R + 1, C)
+                            + Count(colOn, colOff, C - 1, R + 1)
+                            + Count(colOn, colOff, C, R + 1) < 2) why = "stub-above";
+                        else if (Count(rowOn, rowOff, R - 1, C)
+                            + Count(colOn, colOff, C - 1, R)
+                            + Count(colOn, colOff, C, R) < 2) why = "stub-below";
+                    }
+                    if (why is null && C > xMin && Bit(C - 1, R)) why = "on-left";
+                    if (why is null && C < xMax && Bit(C, R)) why = "on-right";
+                    int fc = smart ? (int) MathF.Floor((on[k].V + off[k].V) * 0.5f - 1f / 128f) : C - 1;
+                    if (fc < xMin) fc = xMin;
+                    if (fc >= xMax) why ??= "past-right";
+                    if (s_dropoutTrace)
+                        Console.Error.WriteLine($"DROP H row={R} C={C} x=({on[k].V:F3},{off[k].V:F3})"
+                            + $" -> {why ?? $"fill col {fc}"}");
+                    if (why != null) continue;
+                    Set(fc, R);
+                }
+            }
+            // Then the columns, left to right, each from its LAST crossing: DoVertDropout.
+            for (int C = 0; C < nCols; C++)
+            {
+                List<(int I, float V)> on = colOn[C], off = colOff[C];
+                for (int k = Math.Min(on.Count, off.Count) - 1; k >= 0; k--)
+                {
+                    int R = on[k].I;
+                    if (off[k].I != R || R < yMin || R > yMax) continue;
+                    string? why = null;
+                    if (stubs)
+                    {
+                        if (Count(colOn, colOff, C - 1, R)
+                            + Count(rowOn, rowOff, R, C)
+                            + Count(rowOn, rowOff, R - 1, C) < 2) why = "stub-left";
+                        else if (Count(colOn, colOff, C + 1, R)
+                            + Count(rowOn, rowOff, R, C + 1)
+                            + Count(rowOn, rowOff, R - 1, C + 1) < 2) why = "stub-right";
+                    }
+                    if (why is null && R > yMin && Bit(C, R - 1)) why = "on-below";
+                    if (why is null && R < yMax && Bit(C, R)) why = "on-above";
+                    int fr = smart ? (int) MathF.Floor((on[k].V + off[k].V) * 0.5f - 1f / 128f) : R - 1;
+                    if (fr < yMin) fr = yMin;
+                    if (fr >= yMax) why ??= "past-top";
+                    if (s_dropoutTrace)
+                        Console.Error.WriteLine($"DROP V col={C} R={R} y=({on[k].V:F3},{off[k].V:F3})"
+                            + $" -> {why ?? $"fill row {fr}"}");
+                    if (why != null) continue;
+                    Set(C, fr);
+                }
+            }
+            return fills;
+        }
+
+        private static byte[] GdiTableFilterRowset(List<List<Vector2>> polys, FillRule fillRule,
+                                                   int originX, int originY, int width, int height,
+                                                   float rowOffset, int nSub = 1, int sI = 0,
+                                                   List<(int Col, int SubRow)>? dropoutFills = null)
+        {
+            int subWidth = width * SubpixelsPerPixel;
+            var lamp = new byte[subWidth * height];
+            var spans = new List<(float A, float B)>();
+            var cross = new List<(float X, int Dir)>();
+            for (int py = 0; py < height; py++)
+            {
+                float sy = originY + py + rowOffset;
+                cross.Clear();
+                foreach (var poly in polys)
+                    for (int i2 = 0; i2 < poly.Count; i2++)
+                    {
+                        Vector2 a = poly[i2], b = poly[(i2 + 1) % poly.Count];
+                        if (a.Y == b.Y) continue;
+                        float lo = MathF.Min(a.Y, b.Y), hi = MathF.Max(a.Y, b.Y);
+                        if (s_rowEdgeGdi ? (sy <= lo || sy > hi) : (sy < lo || sy >= hi)) continue;
+                        float t = (sy - a.Y) / (b.Y - a.Y);
+                        cross.Add((a.X + t * (b.X - a.X), b.Y > a.Y ? 1 : -1));
+                    }
+                cross.Sort(static (u, v) => u.X.CompareTo(v.X));
+                spans.Clear();
+                if (fillRule == FillRule.NonZero)
+                {
+                    int w = 0;
+                    for (int i2 = 0; i2 < cross.Count - 1; i2++)
+                    { w += cross[i2].Dir; if (w != 0) spans.Add((cross[i2].X, cross[i2 + 1].X)); }
+                }
+                else
+                    for (int i2 = 0; i2 + 1 < cross.Count; i2 += 2)
+                        spans.Add((cross[i2].X, cross[i2 + 1].X));
+                int rowBase = py * subWidth;
+                for (int c = 0; c < subWidth; c++)
+                {
+                    int cnt = 0;
+                    for (int half = 0; half < 2; half++)
+                    {
+                        float sx = originX + (c * 2 + half + GdiSamplePhase) / 6f;
+                        foreach ((float A, float B) sp in spans)
+                            // INCLUSIVE AT BOTH ENDS, which is what fsc_FillBitMap does. A row's
+                            // span fills the indices [on, off) where `on` is the first sample centre
+                            // AT OR past the left boundary and `off` the first STRICTLY past the
+                            // right one -- so a sample landing exactly on the RIGHT edge is inside,
+                            // where we had it outside. It bites whenever a fitted edge lands on a
+                            // sample, i.e. at every quarter pixel, since the samples sit at odd
+                            // twelfths. WPF_CT_SPANEND=old restores the half-open test.
+                            if (sx >= sp.A && (s_spanEndInclusive ? sx <= sp.B : sx < sp.B))
+                            { cnt++; break; }
+                    }
+                    lamp[rowBase + c] = (byte)cnt;
+                }
+            }
+            if (dropoutFills != null)
+                foreach ((int Col, int SubRow) f in dropoutFills)
+                {
+                    if (f.SubRow % nSub != sI) continue;
+                    int idx = (f.SubRow / nSub) * subWidth + f.Col / 2;
+                    if (lamp[idx] < 2) lamp[idx]++;
+                }
+            var rgba = new byte[width * height * 4];
+            for (int py = 0; py < height; py++)
+            {
+                int rowBase = py * subWidth;
+                for (int x = 0; x < width; x++)
+                {
+                    int o = (py * width + x) * 4;
+                    int total = 0;
+                    // THE OTHER TABLE. ulClearTypeFilter_6x1 chooses between two 243-entry palettes on
+                    // its third argument -- `puVar4 = &UNK_1400a7a60; if (param_3 != 0) puVar4 =
+                    // &DAT_1400a7960;` -- and the 6x5 filter passes the same argument straight through,
+                    // loading it at the call site from a per-render field (`ldr w2,[x21,#0x40]`). The
+                    // plain table is the three-lamp box sum below; the OTHER one carries 1.5021x as much
+                    // ink over all 243 indices, and it saturates, so a fully covered stem is untouched
+                    // while an all-partial glyph gets half as much ink again. Diagonals are all partial
+                    // coverage, which is why they were the only thing short.
+                    if (ContrastFilterForRun)
+                    {
+                        int c0 = x * SubpixelsPerPixel;
+                        int i0 = c0 - 1 >= 0 ? lamp[rowBase + c0 - 1] : 0;
+                        int i4 = c0 + 3 < subWidth ? lamp[rowBase + c0 + 3] : 0;
+                        int idx = ((i0 * 3 + lamp[rowBase + c0]) * 3 + lamp[rowBase + c0 + 1]) * 3;
+                        idx = (idx + lamp[rowBase + c0 + 2]) * 3 + i4;
+                        for (int L = 0; L < SubpixelsPerPixel; L++)
+                            rgba[o + (LampsRunBlueFirst ? 2 - L : L)] = GdiContrastLevels[idx * 3 + L];
+                        continue;
+                    }
+                    for (int L = 0; L < SubpixelsPerPixel; L++)
+                    {
+                        int c = x * SubpixelsPerPixel + L;
+                        int w0 = c - 2 >= 0 ? lamp[rowBase + c - 2] : 0;
+                        int w1 = c - 1 >= 0 ? lamp[rowBase + c - 1] : 0;
+                        int w2 = lamp[rowBase + c];
+                        int w3 = c + 1 < subWidth ? lamp[rowBase + c + 1] : 0;
+                        // ulClearTypeFilter_6x1's table at fontdrvhost+0xa7a60 IS a per-channel three-lamp
+                        // BOX SUM -- verified against all 243 base-3 indices. GDI forms ONE index per pixel
+                        // (prev.c0, this.c2, this.c1, this.c0, next.c2, which are five CONTIGUOUS lamps) and
+                        // the entry decodes, through the table at 0xa7420, to three channel levels: 0..6 each,
+                        // where channel k is the sum of the three lamps centred on lamp k. The outer two of the
+                        // five only feed the OTHER two channels, so the window per lamp is three, not five.
+                        int lvl = w1 + w2 + w3;
+                        if (lvl > 6) lvl = 6;
+                        rgba[o + (LampsRunBlueFirst ? 2 - L : L)] = (byte) lvl;
+                    }
+                }
+            }
+            return rgba;
+        }
+
+        internal static readonly bool FilterBeforeVerticalAverage =
+            Environment.GetEnvironmentVariable("WPF_VFILT_FIRST") != "0";
+
+        internal static readonly bool PostVerticalCoverage =
+            Environment.GetEnvironmentVariable("WPF_VCOV_POST") == "1";
+
+        /// <summary>Scale each filtered lamp by its own column vertical coverage. GDI's lamps for
+        /// a sub-pixel-tall feature come out UNIFORM across a pixel (Tahoma I@8 serif: 58,58,58)
+        /// where ours cannot, because we fold vertical coverage into the samples BEFORE the
+        /// horizontal filter and the filter mixes neighbours of differing coverage. Filtering a
+        /// vertically FULL row and scaling after keeps a pixel's three lamps in one ratio.</summary>
+        private static void ScaleByVerticalCoverage(byte[] rgba, byte[] vFrac, int width, int height)
+        {
+            int subWidth = width * SubpixelsPerPixel;
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    int o = (y * width + x) * 4;
+                    int total = 0;
+                    for (int lamp = 0; lamp < SubpixelsPerPixel; lamp++)
+                    {
+                        int c = y * subWidth + x * SubpixelsPerPixel + lamp;
+                        int idx = o + (LampsRunBlueFirst ? 2 - lamp : lamp);
+                        rgba[idx] = (byte)(rgba[idx] * vFrac[c] / 255);
+                        total += rgba[idx];
+                    }
+                    rgba[o + 3] = (byte)(total / SubpixelsPerPixel);
+                }
+        }
+
         private static byte[] FilterSubpixels(byte[] samples, int width, int height)
         {
             var rgba = new byte[width * height * 4];
@@ -923,6 +1535,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// is the one face that over-inks at 10ppem.</para>
         /// <para>One row is the overwhelmingly common case and takes the same path it always did.
         /// </para></summary>
+        /// <summary>One vertical sample at a given offset within the row, thresholded and
+        /// collapsed exactly as RowsThenThreshold does for a single row.</summary>
+        private static byte[] RowsThenThresholdAt(List<List<Vector2>> contours, FillRule fillRule,
+                                                  int originX, int originY, int subWidth, int height,
+                                                  float offset)
+        {
+            byte[] one = FillCoverage(contours, fillRule, originX, originY,
+                                      subWidth * HalfLamps, height, 1,
+                                      MinStemSubpixels * HalfLamps, CentreSample, offset);
+            one = HalfLamps > 1 ? CollapseHalfLamps(one, subWidth, height) : one;
+            Quantize(one);
+            return one;
+        }
+
         private static byte[] RowsThenThreshold(List<List<Vector2>> contours, FillRule fillRule,
                                                 int originX, int originY, int subWidth, int height,
                                                 int rows)

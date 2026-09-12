@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -780,7 +780,12 @@ namespace WgpuInterop.Tests.Text
             FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
             var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
             bool saved = TrueTypeFont.SubpixelFitting;
-            TrueTypeFont.SubpixelFitting = false;               // the full fit, both axes
+            // WPF_GGOPTS_CT=1: fit the way the RENDERER does (SubpixelFitting on). The two
+            // settings below are a THIRD mode -- neither the bi-level oracle nor the ClearType
+            // path the pixels come from -- so a y difference seen here need not be one the
+            // renderer has. Ask for the render path explicitly before blaming it.
+            TrueTypeFont.SubpixelFitting =
+                Environment.GetEnvironmentVariable("WPF_GGOPTS_CT") == "1";
             // GGO ANSWERS AS A GREYSCALE RASTERIZER -- measured, not assumed: asked through
             // GGO, GDI reports the ClearType, compatible-width and symmetric bits all CLEAR
             // while reporting the same rasterizer version 42. Comparing our ClearType-mode
@@ -802,6 +807,37 @@ namespace WgpuInterop.Tests.Text
                     if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem, out _))
                     { Console.Error.WriteLine($"'{c}': we decline to fit it"); continue; }
                     TrueTypeInterpreter.GlyphPoints? pts = font.LastHintedPoints;
+                    // WPF_GGOPTS_RAW=1: print every captured point and skip the GDI pairing.
+                    // THE PAIRING DROPS EXACTLY THE GLYPHS THAT NEED LOOKING AT -- grid-fitting
+                    // changes how GGO segments a curve, so its two reports differ in length and
+                    // five of Times Bold's six bowls come back "unpairable". This side of the
+                    // comparison is still worth seeing on its own: it is where our fitted extremes
+                    // ended up, which is the question for a counter.
+                    // WPF_GGOPTS_RAW=2 also prints GDI's OWN fitted outline, unpaired -- every
+                    // on-curve point GGO reports, in order -- so a bowl can be read even when the
+                    // pairing cannot line it up with ours.
+                    if (Environment.GetEnvironmentVariable("WPF_GGOPTS_RAW") == "2")
+                    {
+                        foreach (bool unh in new[] { true, false })
+                        {
+                            List<Vector2> g = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: unh,
+                                                                        bold: bold, italic: italic));
+                            Console.Error.WriteLine($"GDI-{(unh ? "PLAIN " : "FITTED")} '{c}' @{ppem}: {g.Count} on-curve points (y up)");
+                            for (int i = 0; i < g.Count; i++)
+                                Console.Error.WriteLine($"   g{i,-3} ({g[i].X,8:0.000},{-g[i].Y,8:0.000})");
+                        }
+                    }
+                    if (pts is not null && Environment.GetEnvironmentVariable("WPF_GGOPTS_RAW") is "1" or "2")
+                    {
+                        Console.Error.WriteLine($"RAW '{c}' @{ppem}: {pts.PointCount} points");
+                        for (int i = 0; i < pts.PointCount; i++)
+                            Console.Error.WriteLine($"   pt{i,-3} {(pts.OnCurve[i] ? "on " : "off")}"
+                                + $" start({pts.StartX[i],8:0.000},{pts.StartY[i],8:0.000})"
+                                + $"  fit({pts.FitX[i],8:0.000},{pts.FitY[i],8:0.000})"
+                                + $"  d({(pts.FitX[i] - pts.StartX[i]) * 64,6:+0;-0;0},"
+                                + $"{(pts.FitY[i] - pts.StartY[i]) * 64,6:+0;-0;0})/64");
+                        continue;
+                    }
                     // NOT a silent skip. This said nothing, and a face whose interpreter never
                     // runs at a size reported "0 of 0 glyphs exact" -- which reads as "nothing to
                     // report" and means "we did not grid-fit this face at all". Consolas at 10ppem
@@ -1097,6 +1133,182 @@ namespace WgpuInterop.Tests.Text
             => Map(figures, v => new Vector2(v.X + dx, v.Y + dy));
 
         /// <summary>GDI's fitted outline, placed at a pen. For stage CR, which draws it with OUR
+
+        /// <summary>OUTLINE AREA AGAINST GDI'S, for the glyphs the point oracle cannot pair.
+        /// <para>FittedPoints_AgainstGdisOwn drops every glyph whose GGO point lists differ in
+        /// length between the fitted and unfitted reports -- the CURVED ones, which on Times New
+        /// Roman at 10-12ppem is half the face. Worse, the dropped glyphs are exactly the ones that
+        /// render badly, so its "exact" verdict is measured on the easy cases.</para>
+        /// <para>This compares the two fitted outlines by AREA, which needs no pairing: both are
+        /// rasterized non-zero at AreaSub samples per pixel over their common bounding box and the
+        /// cells covered by one and not the other are counted. Validate the coordinate frame on a
+        /// glyph known to render exactly (Times 'H' at 16) before trusting a curved result.</para>
+        /// <para>WPF_AREACMP=family/chars/ppem[/B|I].</para></summary>
+        [Fact]
+        public void OutlineAreaAgainstGdis()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_AREACMP");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_AREACMP=family/chars/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains("B"), italic = style.Contains("I");
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, "this machine lacks the face");
+            byte[] faceBytes = File.ReadAllBytes(file!);
+            FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
+
+            var sb = new System.Text.StringBuilder();
+            // GGO's "fitted" outline is GDI's BI-LEVEL fit (see the trap note in
+            // ggo-cleartype-points-are-bilevel), so ask ours for the same thing -- exactly as
+            // FittedPoints_AgainstGdisOwn does. Comparing our ClearType outline against GDI's bi-level
+            // one measures the difference between two different questions.
+            bool savedSub = TrueTypeFont.SubpixelFitting;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass;
+            TrueTypeFont.SubpixelFitting = false;
+            TrueTypeInterpreter.BiLevelPass = Environment.GetEnvironmentVariable("WPF_AREACMP_CT") != "1";
+            try {
+            sb.AppendLine("== " + parts[0] + " @" + ppem + " " + style + "  outline area vs GDI's");
+            sb.AppendLine("   ch   symDiff(px)   pct of GDI area    ourArea   gdiArea");
+            double totDiff = 0, totGdi = 0;
+            string chars = parts[1] == "*"
+                ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" : parts[1];
+            foreach (char c in chars)
+            {
+                if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
+                        out List<PathFigure>? ours) || ours is null) continue;
+                List<PathFigure> gdi = GdiOutline(c, parts[0], ppem, unhinted: false,
+                                                  bold: bold, italic: italic);
+                List<List<Vector2>> op = AreaPolys(ours, 1f), gp = AreaPolys(gdi, 1f);   // both already y-up-negative
+                if (op.Count == 0 || gp.Count == 0) continue;
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach (List<List<Vector2>> set in new[] { op, gp })
+                    foreach (List<Vector2> p in set)
+                        foreach (Vector2 v in p)
+                        {
+                            if (v.X < x0) x0 = v.X;
+                            if (v.Y < y0) y0 = v.Y;
+                            if (v.X > x1) x1 = v.X;
+                            if (v.Y > y1) y1 = v.Y;
+                        }
+                if (Environment.GetEnvironmentVariable("WPF_AREACMP_BBOX") == "1")
+                {
+                    static (float,float,float,float) BB(List<List<Vector2>> s) {
+                        float a=float.MaxValue,b=float.MaxValue,cc=float.MinValue,d=float.MinValue;
+                        foreach (var q in s) foreach (Vector2 v in q) { if(v.X<a)a=v.X; if(v.Y<b)b=v.Y; if(v.X>cc)cc=v.X; if(v.Y>d)d=v.Y; }
+                        return (a,b,cc,d); }
+                    var ob = BB(op); var gb = BB(gp);
+                    sb.AppendLine("   " + c + "  ours bbox x[" + ob.Item1.ToString("0.00") + "," + ob.Item3.ToString("0.00")
+                        + "] y[" + ob.Item2.ToString("0.00") + "," + ob.Item4.ToString("0.00") + "]   gdi x["
+                        + gb.Item1.ToString("0.00") + "," + gb.Item3.ToString("0.00") + "] y[" + gb.Item2.ToString("0.00")
+                        + "," + gb.Item4.ToString("0.00") + "]");
+                }
+                x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
+                int w = (int) MathF.Ceiling((x1 - x0) * AreaSub);
+                int h = (int) MathF.Ceiling((y1 - y0) * AreaSub);
+                if (w <= 0 || h <= 0 || (long) w * h > 40000000) continue;
+                bool[] a = AreaFill(op, x0, y0, w, h), b2 = AreaFill(gp, x0, y0, w, h);
+                long diff = 0, ourA = 0, gdiA = 0;
+                for (int i = 0; i < a.Length; i++)
+                {
+                    if (a[i]) ourA++;
+                    if (b2[i]) gdiA++;
+                    if (a[i] != b2[i]) diff++;
+                }
+                double cell = 1.0 / (AreaSub * AreaSub);
+                totDiff += diff * cell; totGdi += gdiA * cell;
+                sb.AppendLine("   " + c + "    " + (diff * cell).ToString("0.000").PadLeft(9)
+                    + "      " + (gdiA > 0 ? 100.0 * diff / gdiA : 0).ToString("0.00").PadLeft(7) + "%"
+                    + "    " + (ourA * cell).ToString("0.00").PadLeft(8)
+                    + "  " + (gdiA * cell).ToString("0.00").PadLeft(8));
+            }
+            sb.AppendLine("   TOTAL symmetric difference " + totDiff.ToString("0.00")
+                + " px against GDI area " + totGdi.ToString("0.00") + " px  ("
+                + (totGdi > 0 ? 100 * totDiff / totGdi : 0).ToString("0.00") + "%)");
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSub; TrueTypeInterpreter.BiLevelPass = savedBi; }
+            Console.Error.Write(sb.ToString());
+        }
+
+        private const int AreaSub = 8;
+
+        private static List<List<Vector2>> AreaPolys(List<PathFigure> figs, float ySign)
+        {
+            var outp = new List<List<Vector2>>();
+            foreach (PathFigure f in figs)
+            {
+                var pts = new List<Vector2>();
+                Vector2 cur = f.Start;
+                pts.Add(new Vector2(cur.X, ySign * cur.Y));
+                foreach (PathSegment sg in f.Segments)
+                {
+                    if (sg is LineSegment l)
+                    {
+                        cur = l.Point;
+                        pts.Add(new Vector2(cur.X, ySign * cur.Y));
+                    }
+                    else if (sg is QuadraticBezierSegment q)
+                    {
+                        for (int k = 1; k <= 8; k++)
+                        {
+                            float t = k / 8f, u = 1 - t;
+                            Vector2 p = u * u * cur + 2 * u * t * q.Control + t * t * q.Point;
+                            pts.Add(new Vector2(p.X, ySign * p.Y));
+                        }
+                        cur = q.Point;
+                    }
+                    else if (sg is CubicBezierSegment c3)
+                    {
+                        for (int k = 1; k <= 8; k++)
+                        {
+                            float t = k / 8f, u = 1 - t;
+                            Vector2 p = u * u * u * cur + 3 * u * u * t * c3.Control1
+                                      + 3 * u * t * t * c3.Control2 + t * t * t * c3.Point;
+                            pts.Add(new Vector2(p.X, ySign * p.Y));
+                        }
+                        cur = c3.Point;
+                    }
+                }
+                if (pts.Count >= 3) outp.Add(pts);
+            }
+            return outp;
+        }
+
+        private static bool[] AreaFill(List<List<Vector2>> polys, float x0, float y0, int w, int h)
+        {
+            var grid = new bool[w * h];
+            var xs = new List<(float X, int D)>();
+            for (int r = 0; r < h; r++)
+            {
+                float sy = y0 + (r + 0.5f) / AreaSub;
+                xs.Clear();
+                foreach (List<Vector2> p in polys)
+                    for (int i = 0; i < p.Count; i++)
+                    {
+                        Vector2 a = p[i], b = p[(i + 1) % p.Count];
+                        if (a.Y == b.Y) continue;
+                        if (sy < MathF.Min(a.Y, b.Y) || sy >= MathF.Max(a.Y, b.Y)) continue;
+                        float t = (sy - a.Y) / (b.Y - a.Y);
+                        xs.Add((a.X + t * (b.X - a.X), b.Y > a.Y ? 1 : -1));
+                    }
+                xs.Sort((u, v) => u.X.CompareTo(v.X));
+                int wind = 0;
+                for (int i = 0; i + 1 < xs.Count; i++)
+                {
+                    wind += xs[i].D;
+                    if (wind == 0) continue;
+                    int cA = (int) MathF.Ceiling((xs[i].X - x0) * AreaSub - 0.5f);
+                    int cB = (int) MathF.Ceiling((xs[i + 1].X - x0) * AreaSub - 0.5f);
+                    if (cA < 0) cA = 0;
+                    if (cB > w) cB = w;
+                    for (int cc = cA; cc < cB; cc++) grid[r * w + cc] = true;
+                }
+            }
+            return grid;
+        }
         /// ClearType pipeline and needs it in the same cell GDI drew into.</summary>
         internal static List<PathFigure> GdiOutlineAt(char c, string family, int ppem, float dx, float dy)
             => Map(GdiOutline(c, family, ppem, unhinted: false), v => new Vector2(v.X + dx, v.Y + dy));

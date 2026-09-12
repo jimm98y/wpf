@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
@@ -68,12 +68,42 @@ namespace WgpuInterop.Tests.Text
             /// all.</para></summary>
             public readonly int Slant;
 
+            /// <summary>Draw the bar TWICE, sheared both ways, so the two strokes CROSS.
+            /// <para>Every coverage probe so far has drawn one stroke at a time, and
+            /// CoverageOnADiagonal_AgainstGdis proved a lone slanted edge agrees with GDI. But the
+            /// glyphs that are still wrong are the ones where two strokes MEET -- Verdana 'v', two
+            /// diagonals joined at a vertex, is pixel-exact, while 'x' and 'X' are not, and their
+            /// error sits in the rows either side of the crossing where a thin white wedge opens
+            /// between the strokes. No probe has ever put two edges that close together.</para>
+            /// <para>With no glyph program, both renderers read the same outline, so anything that
+            /// differs here is the RASTERIZER and nothing else.</para></summary>
+            public readonly bool Cross;
+
+            /// <summary>How much NARROWER the bar is at the top than at the bottom, in font units,
+            /// so the run thins towards the tip the way a real stroke terminal does.
+            /// <para>Every synthetic probe so far has drawn bars of CONSTANT width, and those agree
+            /// with GDI. The measured deficit on real glyphs is at the extreme TIPS: Verdana 'X'@12
+            /// and Segoe UI 'x'@16 are short by exactly one lamp in the first and last row and are
+            /// byte-identical everywhere else. A constant-width bar can never produce a run thin
+            /// enough to be dropped, which is why nothing has caught it.</para></summary>
+            public readonly int Taper;
+
+            /// <summary>Draw a HORIZONTAL slab of this height in font units, sitting on the
+            /// baseline, instead of a full-height vertical bar. Zero for the usual bar.
+            /// <para>The one shape no probe has ever drawn, and the one the Times serif question
+            /// needs: a feature THINNER THAN A SCANLINE. Every bar above is full height, so it
+            /// can only ever ask about horizontal coverage; a slab asks what GDI does in y when
+            /// the feature falls between samples -- render the fraction, drop it, or fill the
+            /// row. See HowGdiRendersASubPixelTallSlab.</para></summary>
+            public readonly int SlabHeight;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
                        bool noProgram = false, int probe = 0, int lsb = int.MinValue,
-                       int slant = 0)
+                       int slant = 0, bool cross = false, int taper = 0, int slabHeight = 0)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
-                NoProgram = noProgram; Probe = probe; Slant = slant;
+                NoProgram = noProgram; Probe = probe; Slant = slant; Cross = cross; Taper = taper;
+                SlabHeight = slabHeight;
                 Lsb = lsb == int.MinValue ? left : lsb;
             }
         }
@@ -86,6 +116,32 @@ namespace WgpuInterop.Tests.Text
         /// THERE is what decides which hinting program every glyph then runs. Each selector's
         /// exact-bit answer is written to cvt[100+i] as ten pixels or none, and a bar whose probe
         /// is -10000-i shifts itself by that control value.</para></summary>
+        /// <summary>The 'gasp' ranges to ship, as (maxPpem, flags) pairs, or null for NO TABLE.
+        /// <para>NO PROBE FONT HAS EVER CARRIED ONE, and that is not neutral: fontdrvhost's
+        /// vSetClearTypeState falls back, for a face with no usable gasp, to "ppem &gt; 20, or these
+        /// three fields are clear" -- which at every size these probes use turns SYMMETRIC
+        /// SMOOTHING ON. Our reader answers FALSE for a face with no gasp. So a probe without one
+        /// measures GDI in symmetric mode against us in the other, and every reading that depends
+        /// on the vertical sampling is comparing two different rasterizers. It is the same trap
+        /// that made an earlier probe answer the symmetric-rendering question about ITSELF.</para>
+        /// <para>Times New Roman's roman is v1 {(8, 0xA), (17, 0x5), (0xFFFF, 0xF)}.</para>
+        /// </summary>
+        public static IReadOnlyList<(int MaxPpem, int Flags)>? GaspRanges;
+
+        /// <summary>Control values the PRE-PROGRAM should round (RTG, RCVT, ROUND[grey]) and write
+        /// back into slot 100+index, so a glyph can read the rounded value out and shift itself by
+        /// it. The question is which GRID prep rounds on: whole pixels, or the sixteenth of a pixel
+        /// GDI's ClearType transform installs. Nothing else in this font rounds anything, so the
+        /// shift IS prep's answer.</summary>
+        public static IReadOnlyList<int>? PrepRoundCvts;
+
+        /// <summary>SCANCTRL and SCANTYPE to execute at the top of the pre-program, or null for
+        /// none -- which is what every probe so far has had, and it matters for the same
+        /// reason gasp did: a real face's prep turns DROPOUT CONTROL on (Times: SCANCTRL 303,
+        /// SCANTYPE 1), and a probe without it measures a scan converter in a different mode.
+        /// </summary>
+        public static (int ScanCtrl, int ScanType)? ScanControl;
+
         public static byte[] Build(string family, IReadOnlyList<Bar> bars,
                                    IReadOnlyList<int>? prepSelectors = null)
         {
@@ -135,6 +191,7 @@ namespace WgpuInterop.Tests.Text
                 ["post"] = BuildPost(),
                 ["prep"] = BuildPrep(prepSelectors),
             };
+            if (GaspRanges is { Count: > 0 }) tables["gasp"] = BuildGasp(GaspRanges);
 
             return Assemble(tables);
         }
@@ -144,12 +201,33 @@ namespace WgpuInterop.Tests.Text
         /// to the grid, which is what a real face does and what Visual TrueType shows GDI doing;
         /// MIRP moves the right edge to the control value; IUP[x] carries the two top corners along
         /// with the corners below them.</para></summary>
+        /// <summary>Which 'gasp' version the probe ships. Version 0 defines GRIDFIT and DOGRAY
+        /// and NOTHING else -- no symmetric bits at all -- and five of the specimen faces ship
+        /// one (Times italic/bold/bold-italic, Arial italic/bold). What a rasterizer answers
+        /// GETINFO's symmetric-rendering query for such a face is a question only GDI settles.</summary>
+        public static int GaspVersion = 1;
+
+        private static byte[] BuildGasp(IReadOnlyList<(int MaxPpem, int Flags)> ranges)
+        {
+            var m = new MemoryStream();
+            WriteU16(m, GaspVersion);             // version 1 -- the symmetric bits exist
+            WriteU16(m, ranges.Count);
+            foreach ((int maxPpem, int flags) in ranges) { WriteU16(m, maxPpem); WriteU16(m, flags); }
+            return m.ToArray();
+        }
+
         private static void WriteBar(Stream s, Bar b, int cvtIndex, bool instructions)
         {
             const int Bottom = 0, Top = 1400;
 
-            // MIRP[abcde]: 0xE0 + a(set rp0) + b(min distance)<<1 + c(round)<<2 + distance-type<<3.
-            byte mirp = (byte)(0xE0 | (b.MinDistance ? 0x02 : 0) | (b.Round ? 0x04 : 0));
+            // MIRP[abcde]: the letters are written with a as the HIGH bit, which is the opposite
+            // of the obvious reading. itrp_MIRP tests bit 4 for set-rp0, bit 3 for keep-minimum-
+            // distance and bit 2 for round, and hands `flags & 3` to DoubleCheckLinkColor as the
+            // distance type -- so the type is bits 0-1, not bits 3-4. This builder had the minimum
+            // in bit 1, which is part of the TYPE: a bar asking for a minimum distance was really
+            // asking for a WHITE link with no minimum. Latent (no probe in the suite passes it)
+            // but it would have produced a confident wrong answer the first time one did.
+            byte mirp = (byte)(0xE0 | (b.MinDistance ? 0x08 : 0) | (b.Round ? 0x04 : 0));
             byte[] program = b.Probe != 0 ? ProbeProgram(b.Probe) : new byte[]
             {
                 0x01,                                    // SVTCA[1]  -- x axis
@@ -159,6 +237,48 @@ namespace WgpuInterop.Tests.Text
                 mirp,                                    // MIRP      -- move point 1 to it
                 0x31,                                    // IUP[1]    -- x
             };
+
+            if (b.Cross)
+            {
+                // TWO strokes, sheared opposite ways, crossing at mid height. Stroke A leans right
+                // (its top is Slant further along), stroke B starts Slant further along and leans
+                // back, so both occupy Left..Right+Slant and meet in the middle.
+                WriteI16(s, 2);                                          // numberOfContours
+                WriteI16(s, b.Left); WriteI16(s, Bottom);                // xMin yMin
+                WriteI16(s, b.Right + b.Slant); WriteI16(s, Top);        // xMax yMax
+                WriteU16(s, 3); WriteU16(s, 7);                          // endPtsOfContours
+                WriteU16(s, 0);                                          // no instructions
+                for (int i = 0; i < 8; i++) s.WriteByte(0x01);           // on-curve, 16-bit deltas
+                // x deltas, both contours in order
+                WriteI16(s, b.Left);                     // A bottom-left
+                WriteI16(s, b.Right - b.Left);           // A bottom-right
+                WriteI16(s, b.Slant);                    // A top-right
+                WriteI16(s, b.Left - b.Right);           // A top-left
+                WriteI16(s, 0);                          // B bottom-left  (= A top-left + Slant..)
+                WriteI16(s, b.Right - b.Left);           // B bottom-right
+                WriteI16(s, -b.Slant);                   // B top-right
+                WriteI16(s, b.Left - b.Right);           // B top-left
+                // y deltas
+                WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
+                WriteI16(s, Bottom - Top); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
+                return;
+            }
+
+            if (b.SlabHeight > 0)
+            {
+                // A horizontal slab on the baseline: Left..Right wide, SlabHeight tall, no
+                // program, so both rasterizers read exactly the same outline.
+                WriteI16(s, 1);
+                WriteI16(s, b.Left); WriteI16(s, Bottom);
+                WriteI16(s, b.Right); WriteI16(s, b.SlabHeight);
+                WriteU16(s, 3);
+                WriteU16(s, 0);                          // no instructions
+                for (int i = 0; i < 4; i++) s.WriteByte(0x01);
+                WriteI16(s, b.Left); WriteI16(s, b.Right - b.Left);
+                WriteI16(s, 0); WriteI16(s, b.Left - b.Right);
+                WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, b.SlabHeight); WriteI16(s, 0);
+                return;
+            }
 
             WriteI16(s, 1);                              // numberOfContours
             WriteI16(s, b.Left); WriteI16(s, Bottom);    // xMin yMin
@@ -174,9 +294,11 @@ namespace WgpuInterop.Tests.Text
             // Four points, all on-curve, x and y as signed 16-bit deltas.
             for (int i = 0; i < 4; i++) s.WriteByte(0x01);        // ON_CURVE, 16-bit deltas
             // Bottom-left, bottom-right, top-right, top-left. The slant displaces the two TOP
-            // points, so the bar keeps its horizontal width and leans.
+            // points, so the bar keeps its horizontal width and leans; the taper pulls the two top
+            // points TOWARDS each other, so the run narrows with height.
+            int half = b.Taper / 2;
             WriteI16(s, b.Left); WriteI16(s, b.Right - b.Left);
-            WriteI16(s, b.Slant); WriteI16(s, b.Left - b.Right);
+            WriteI16(s, b.Slant - half); WriteI16(s, b.Left - b.Right + b.Taper);
             WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
         }
 
@@ -199,6 +321,30 @@ namespace WgpuInterop.Tests.Text
             // and only then takes its symmetric branch, so a probe that settles for non-zero can
             // report a bit the face would reject. The value is built the way the face builds it,
             // 16384 * (bit/256) through MUL, because it does not fit a PUSHW.
+            // HOW DOES GDI ROUND A CONTROL VALUE IN CLEARTYPE? The question the Times pools keep
+            // returning to, and nothing we render can answer it: those faces' ClearType branches
+            // read control values back and compute coordinates from them, so if GDI rounds them
+            // on a different grid than we do, every coordinate downstream differs. This reports
+            // ROUND(RCVT(k)) as INK -- the glyph shifts itself right by the rounded control
+            // value -- so GDI's own answer can be read straight off the bitmap.
+            // -30000-k: read control value k and shift by it RAW, with no rounding of our own --
+            // for reading back what the PRE-PROGRAM's rounding produced.
+            if (selector <= -30000)
+            {
+                p.Add(0xB0); p.Add((byte) (-30000 - selector));            // PUSHB[1] cvt index
+                p.Add(0x45);                                              // RCVT
+                p.Add(0x38);                                              // SHPIX
+                return p.ToArray();
+            }
+            if (selector <= -20000)
+            {
+                p.Add(0x18);                                              // RTG
+                p.Add(0xB0); p.Add((byte) (-20000 - selector));            // PUSHB[1] cvt index
+                p.Add(0x45);                                              // RCVT
+                p.Add(0x68);                                              // ROUND[grey]
+                p.Add(0x38);                                              // SHPIX
+                return p.ToArray();
+            }
             if (selector <= -10000)
             {
                 // Shift by what the PRE-PROGRAM decided, read back out of the control value.
@@ -270,6 +416,13 @@ namespace WgpuInterop.Tests.Text
         private static byte[] BuildPrep(IReadOnlyList<int>? prepSelectors = null)
         {
             var extra = new List<byte>();
+            if (ScanControl is (int ctrl, int type))
+            {
+                extra.Add(0xB8); extra.Add((byte) (ctrl >> 8)); extra.Add((byte) ctrl);   // PUSHW ctrl
+                extra.Add(0x85);                                                        // SCANCTRL
+                extra.Add(0xB0); extra.Add((byte) type);                                // PUSHB type
+                extra.Add(0x8D);                                                        // SCANTYPE
+            }
             if (prepSelectors is not null)
                 for (int i = 0; i < prepSelectors.Count; i++)
                 {
@@ -291,6 +444,18 @@ namespace WgpuInterop.Tests.Text
                     extra.Add(0x59);                                        // EIF
                     extra.Add(0x44);                                        // WCVTP
                 }
+            if (PrepRoundCvts is { Count: > 0 })
+            {
+                extra.Add(0x18);                                            // RTG
+                foreach (int src in PrepRoundCvts)
+                {
+                    extra.Add(0xB0); extra.Add((byte) (100 + src));         // PUSHB[1] dst
+                    extra.Add(0xB0); extra.Add((byte) src);                 // PUSHB[1] src
+                    extra.Add(0x45);                                        // RCVT
+                    extra.Add(0x68);                                        // ROUND[grey]
+                    extra.Add(0x44);                                        // WCVTP
+                }
+            }
             var head = new List<byte>
             {
                 0xB0, 0x00, 0x85,        // PUSHB[1] 0, SCANCTRL  -- no dropout control

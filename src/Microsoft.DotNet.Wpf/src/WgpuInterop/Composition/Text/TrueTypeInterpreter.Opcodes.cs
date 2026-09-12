@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -20,6 +20,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             int ip = start;
             int callDepth = 0;
+            _callDepth = 0;
             var calls = new CallFrame[128];
 
             while (true)
@@ -29,9 +30,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // Falling off the end of a function body is how a call returns.
                     if (callDepth == 0) return true;
                     CallFrame frame = calls[--callDepth];
+                    _callDepth = callDepth;
                     if (--frame.Repeats > 0)
                     {
-                        calls[callDepth++] = frame;
+                        calls[callDepth++] = frame; _callDepth = callDepth;
                         code = frame.Code;
                         ip = frame.Start;
                         continue;
@@ -235,13 +237,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x15: _gs.Zp2 = Pop() & 1; break;                              // SZP2
                     case 0x16: _gs.Zp0 = _gs.Zp1 = _gs.Zp2 = Pop() & 1; break;          // SZPS
                     case 0x17: _gs.Loop = Math.Max(0, Pop()); break;                    // SLOOP
-                    case 0x18: _gs.Round = RoundMode.ToGrid; break;                     // RTG
-                    case 0x19: _gs.Round = RoundMode.ToHalfGrid; break;                 // RTHG
+                    // GDI PICKS THE ROUNDING FUNCTION WHEN THE ROUND-STATE INSTRUCTION RUNS, not when a
+                    // distance is rounded. itrp_RTG, RTHG, RTDG, RUTG, RDTG, ROFF, SROUND and S45ROUND each
+                    // read the gs+0xcc ClearType-axis latch and install either the plain rounding function or
+                    // its SP (sub-pixel) twin -- itrp_RoundToGrid against itrp_RoundToGridSP, and so on for
+                    // every mode. So a face that does SVTCA[y] then RTG gets WHOLE-PIXEL rounding for every
+                    // distance afterwards, even ones it later measures along x; and one that does SVTCA[x]
+                    // first gets the sixteenth grid, prep included. We had been deciding the grid at rounding
+                    // time from the projection in hand, which is a different rule wherever the two are set
+                    // apart. MEASURED AND WRONG: latching it this way costs 1,553,651 -> 11,070,238 (10,693,848
+                    // with WPF_CT_PREP=1 as well). itrp_MIRP branches on gs+0xcc ITSELF and calls
+                    // itrp_RoundOffSP directly, so the sub-pixel choice really is made at USE time,
+                    // the way we already had it; whatever these eight instructions read the latch
+                    // for, it is not this. WPF_CT_ROUNDLATCH=1 to re-run the experiment.
+                    case 0x18: LatchRoundGrid(); _gs.Round = RoundMode.ToGrid; break;                     // RTG
+                    case 0x19: LatchRoundGrid(); _gs.Round = RoundMode.ToHalfGrid; break;                 // RTHG
                     case 0x1A: _gs.MinimumDistance = Pop(); break;                      // SMD
                     case 0x1D: _gs.ControlValueCutIn = Pop(); break;                    // SCVTCI
                     case 0x1E: _gs.SingleWidthCutIn = Pop(); break;                     // SSWCI
                     case 0x1F: _gs.SingleWidthValue = Scale(Pop()); break;              // SSW
-                    case 0x3D: _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
+                    case 0x3D: LatchRoundGrid(); _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
                     case 0x4D: _gs.AutoFlip = true; break;                              // FLIPON
                     case 0x4E: _gs.AutoFlip = false; break;                             // FLIPOFF
                     case 0x5E:                                                        // SDB
@@ -252,11 +267,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         _gs.DeltaShift = Pop();
                         if (_dumpActive) Console.Error.WriteLine($"      SDS {_gs.DeltaShift}");
                         break;
-                    case 0x7A: _gs.Round = RoundMode.Off; break;                        // ROFF
-                    case 0x7C: _gs.Round = RoundMode.UpToGrid; break;                   // RUTG
-                    case 0x7D: _gs.Round = RoundMode.DownToGrid; break;                 // RDTG
-                    case 0x76: _gs.Round = RoundMode.Super; SetSuperRound(Pop(), 64); break;      // SROUND
-                    case 0x77: _gs.Round = RoundMode.Super45; SetSuperRound(Pop(), 46); break;    // S45ROUND
+                    case 0x7A: LatchRoundGrid(); _gs.Round = RoundMode.Off; break;                        // ROFF
+                    case 0x7C: LatchRoundGrid(); _gs.Round = RoundMode.UpToGrid; break;                   // RUTG
+                    case 0x7D: LatchRoundGrid(); _gs.Round = RoundMode.DownToGrid; break;                 // RDTG
+                    case 0x76: LatchRoundGrid(); _gs.Round = RoundMode.Super; SetSuperRound(Pop(), 64); break;      // SROUND
+                    case 0x77: LatchRoundGrid(); _gs.Round = RoundMode.Super45; SetSuperRound(Pop(), 46); break;    // S45ROUND
                     case 0x7E: Pop(); break;                                            // SANGW, obsolete
                     case 0x7F: break;                                                   // AA, obsolete
                     case 0x85: _gs.ScanControl = Pop(); break;                          // SCANCTRL
@@ -282,8 +297,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             {
                                 if (op == 0x2F)
                                 {
-                                    int here = Project(z.CurX[p], z.CurY[p]);
-                                    MovePoint(z, p, RoundDistance(here, position: true, mdap: true) - here);
+                                    // WPF_CT_MDAP_NOROUND=1: do not round a point onto the grid
+                                    // in the ClearType direction. MEASURED AND REJECTED: 4,545,568
+                                    // against 3,598,948 on HowOurWeightTracksGdis, and it barely
+                                    // moves the fit -- Segoe UI 'H'@12 goes 65 135 449 519 to
+                                    // 64 134 449 519 against GDI's own 78 140 435 497.
+                                    // The reasoning was that GDI's fitted outline leaves p1 at its
+                                    // natural 6.4336px where our MDAP[r] snaps it to 6.375, so a
+                                    // subpixel-positioned axis should not snap at all. That is true
+                                    // of the ONE point and false of the glyph: whatever puts our
+                                    // right stem 26/64 right of GDI's before the phase runs, it is
+                                    // not this rounding.
+                                    if (!(s_mdapNoRoundX && InClearTypeDirection && !BiLevelPass))
+                                    {
+                                        int here = Project(z.CurX[p], z.CurY[p]);
+                                        int snapped = RoundDistance(here, position: true, mdap: true);
+                                        if (s_mdrpTrace)
+                                            Console.Error.WriteLine($"   MDAP p={p} zp0={_gs.Zp0}"
+                                                + $" here={here / 64f:0.####} -> {snapped / 64f:0.####}"
+                                                + $" cur=({z.CurX[p] / 64f:0.####},{z.CurY[p] / 64f:0.####})"
+                                                + $" round={_gs.Round} pv=({_gs.ProjX},{_gs.ProjY})"
+                                                + $" ctDir={InClearTypeDirection} prep={_inPreProgram} ppem={_ppem}");
+                                        MovePoint(z, p, snapped - here);
+                                    }
                                 }
                                 else
                                 {
@@ -300,7 +336,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             Zone z = ZoneOf(_gs.Zp0);
                             if (p >= z.PointCount) { _gs.Rp0 = _gs.Rp1 = p; break; }
 
-                            int value = (uint)cvt < _scaledCvt.Length ? _scaledCvt[cvt] : 0;
+                            int value = CvtFor(cvt, distance: false);
                             if (XSpace3x && IsHorizontalProjection) value *= 3;
 
                             // In the twilight zone the point IS the control value: there is no
@@ -371,11 +407,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             {
                                 int org = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
                                 if (org != 0
-                                    && Math.Abs(distance - org) >= _gs.ControlValueCutIn / ClearTypeGrid)
+                                // GDI'S EXACT FORM, the same one itrp_MIRP uses and which we already fixed there but
+                                // never propagated here. itrp_MSIRP@14003be18:
+                                //     w9 = distance - original;  w8 = globals[0x78]      ; the cut-in
+                                //     if (w8 < w9 * 16) take original                    ; note *16 on the DIFFERENCE
+                                //     else if (-w8 > w9 * 16) take original
+                                // Dividing the cut-in by sixteen instead truncates -- 68/16 is 4, not 4.25 -- and `>=`
+                                // discards one more control value at the boundary. WPF_CT_CUTIN_EXACT=0 restores it.
+                                && (s_cutInExact
+                                    ? (long) Math.Abs(distance - org) * ClearTypeGrid > (long) _gs.ControlValueCutIn
+                                    : Math.Abs(distance - org) >= _gs.ControlValueCutIn / ClearTypeGrid))
                                     distance = org;
                             }
 
-                            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+                            // itrp_MSIRP@180085fd4 DOES double-check its colour, and seeds the check with 1 (BLACK):
+                            //     uVar12 = DoubleCheckLinkColor(elem, rp0, point, 1);
+                            //     AddDistance(gs, elem, rp0, point, uVar12);
+                            // So MSIRP can form a stem pair where MDRP, ALIGNRP and SHP -- which all pass a literal 3
+                            // -- never can. It is the only other opcode besides MIRP that pairs.
+                            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, doubleCheck: true, phaseType: 1);
                             MovePoint(z, p, distance - current);
                             _gs.Rp1 = _gs.Rp0;
                             _gs.Rp2 = p;
@@ -425,13 +475,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // WPF_CT_PHASE_IUPY=1 goes back to phasing at whichever comes first.
                     case 0x30:
                         if (s_phaseAtIupY) ApplyPhaseAtIup();
-                        InterpolateUntouched(false); _iupDone = true; break;                  // IUP[y]
+                        InterpolateUntouched(false); _iupDone = _iupYDone = true; break;      // IUP[y]
                     // IUP[x] belongs, and it was worth checking: under ClearType x is fitted only
                     // lightly, so a rasterizer might reasonably leave every point the program did
                     // not explicitly move where the scaling put it. Skipping it costs 759,520 ->
                     // 1,203,544, and the digits -- which nothing else here disturbs -- go 20,168 ->
                     // 44,940. The untouched points do get dragged along.
-                    case 0x31: ApplyPhaseAtIup(); InterpolateUntouched(true); _iupDone = true; break;   // IUP[x]
+                    case 0x31:                                                         // IUP[x]
+                        if (s_iupProbe)
+                            Console.Error.WriteLine($"IUPX pts={_realPoints} applied={_phaseApplied}"
+                                + $" compat64={CompatibleAdvance64} ct={ClearTypeInfo}"
+                                + $" bilevel={BiLevelPass} depth={HintDepth}");
+                        // ORDER. The phase writes CurX without setting TagTouchX, so running it
+                        // BEFORE IUP lets IUP reposition every untouched point from its ORIGINAL
+                        // coordinates and throw the compression away -- which is exactly what
+                        // Arial Italic 'w'@16 shows: the tree computes d=-41..-166 per node and the
+                        // rendered glyph is not compressed at all. GDI's ExecutePhaseControl runs
+                        // over the finished outline. WPF_CT_PHASE_AFTERIUP=1 puts it after.
+                        if (s_phaseAfterIup) { InterpolateUntouched(true); ApplyPhaseAtIup(); }
+                        else { ApplyPhaseAtIup(); InterpolateUntouched(true); }
+                        _iupDone = true; _iupXDone = true; break;
 
                     case 0x32: case 0x33: ShiftByPoint(op == 0x33); break;               // SHP[a]
                     case 0x34: case 0x35: ShiftContour(op == 0x35); break;               // SHC[a]
@@ -463,6 +526,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // solved edges include every nudge and none of the whole pixels:
                                 // 'E' at 16ppem carries a -64 on its middle arm, and executing it
                                 // puts that arm a pixel left of where GDI draws it.
+                                // THE RULE AS fontdrvhost WRITES IT -- itrp_SHP_Common @ +0x3e978,
+                                // read, not inferred. Its whole ClearType suppression is gated on
+                                // bit 4 of +0x1C2, which itrp_CALL sets on entry and clears on
+                                // return: a SHPIX written INLINE in a glyph program is never
+                                // filtered. Inside a call it keeps the move only when the
+                                // PROJECTION vector is exactly (0, 0x4000) -- pure positive y, the
+                                // non-ClearType axis -- and the point is already touched there;
+                                // everything else is skipped. (With ctflags bit 2, horizontal LCD
+                                // stripes, the same test is mirrored onto x. GDI leaves that bit
+                                // clear, so it is not implemented.) The composite bypass is the
+                                // byte at +0x171, which fsg_CompositeInnerGridFit sets.
+                                // NOTE the axis: we tested the FREEDOM vector, the scaler tests
+                                // PROJECTION. WPF_CT_SHPIX_CALL=0 turns this off.
+                                if (s_shpixCallRule && ClearTypeInfo && !NativeClearTypeMode
+                                    && !BiLevelPass && !_inPreProgram && _deltaFdefDepth > 0
+                                    && !_inComposite
+                                    && !(_gs.ProjX == 0 && _gs.ProjY == 0x4000
+                                         && (uint) sp < (uint) z.PointCount
+                                         && (z.Tags[sp] & TagTouchY) != 0))
+                                {
+                                    if (s_yTrace)
+                                        Console.Error.WriteLine("SKIP-SHPIX pt=" + sp + " amt="
+                                            + amount + " dx=" + dx + " dy=" + dy);
+                                    continue;
+                                }
                                 if (!s_runShpix
                                     && (!s_runShpixOutline || (uint) sp >= (uint) _realPoints || amount % 64 == 0
                                         // ...and only INLINE, before the interpolation.
@@ -476,7 +564,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                         || (s_shpixDiag
                                             && (amount > s_shpixDiagMax || amount < -s_shpixDiagMax)
                                             && OnDiagonalEdge(z, sp)))
-                                    && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true)) continue;
+                                    // NOT the RE delta rule: fontdrvhost keeps SHPIX and DELTAP in
+                                    // two different functions with two different tests, and the
+                                    // SHPIX one is above (MatchesSuppressedFdef). Sharing one
+                                    // predicate re-broke exactly the glyphs that rule fixes --
+                                    // Tahoma Bold 'W'@16 went 0 -> 4,370.
+                                    && SkipDeltaInClearTypeDirection(z, sp, compositeExempt: true,
+                                                                     forShpix: true)) continue;
                                 // AND IN THE NON-CLEARTYPE DIRECTION, ONLY ON TOUCHED POINTS. The
                                 // paper's sentence quoted below ends "we keep only deltas on touched
                                 // points in the non-ClearType direction", and we were applying the
@@ -497,6 +591,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // UI's, 28 of Times'; letting the pass run them plainly leaves 7, 0, 7.
                                 if (s_shpixNeedsTouch && ClearTypeInfo && !NativeClearTypeMode
                                     && !_inPreProgram && !IsHorizontalFreedom
+                                    && (uint) sp < (uint) z.PointCount
+                                    && (z.Tags[sp] & TagTouchY) == 0) continue;
+                                // AND THE OTHER HALF OF THE SAME SENTENCE. "We keep only deltas on
+                                // touched points in the NON-ClearType direction" says two things,
+                                // and only one of them was here: the test above drops a VERTICAL
+                                // shift on a point the program has not placed in y, but a shift
+                                // along the ClearType direction itself is not kept under any
+                                // condition. Tahoma Bold's function 55 is what that costs -- an
+                                // `SHPIX` of -30/64 on 'W's leftmost point and +30/64 on its
+                                // rightmost, both untouched in y, prising the letter 0.94px wider
+                                // than the outline it was scaled from. GDI draws neither shift:
+                                // its 'W' is the natural outline scaled by the compatible-width
+                                // ratio about its left edge (predicted 1009.6/64 for the right
+                                // edge against the solver's 1009), and ours came out 6% wide
+                                // before the phase then only 2.75% of that was taken back.
+                                // WPF_CT_SHPIX_X=keep restores it.
+                                if (s_shpixDropX && ClearTypeInfo && !NativeClearTypeMode
+                                    && !BiLevelPass && !_inPreProgram && IsHorizontalFreedom
                                     && (uint) sp < (uint) z.PointCount
                                     && (z.Tags[sp] & TagTouchY) == 0) continue;
                                 // ON A DIAGONAL, A PAIR THAT OPPOSE EACH OTHER IS A WIDTH.
@@ -523,10 +635,55 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                     && OnDiagonalEdge(z, sp))
                                 {
                                     if (RefusingDiagonalNudges) continue;
-                                    if (_nudgeCount > 0 && Math.Sign(dx) != Math.Sign(_nudgeDx))
-                                        SawOpposingDiagonalNudges = true;
-                                    else { _nudgeCount++; _nudgeDx = dx; }
+                                    // WHAT COUNTS AS "A PAIR", narrowed by the cases that go the
+                                    // other way -- and stated on the glyph's EXTREMES rather than
+                                    // on a count, because a crossing letter nudges twice a side:
+                                    // Tahoma Bold's 'X' at 12ppem moves its two left points -48/64
+                                    // and its two right points +48/64, which a "exactly two, veto
+                                    // on a third" test throws away.
+                                    //   * A POINT THE PROGRAM HAS PLACED IN Y keeps its delta --
+                                    //     the paper's own exception, and what separates Arial's
+                                    //     'w' (leftmost touched XY, GDI runs both nudges,
+                                    //     refusing them costs 480 -> 9,047) from Tahoma Bold's
+                                    //     'W' (both untouched, GDI runs neither).
+                                    //   * THE OUTERMOST TWO HAVE TO OPPOSE and be within a
+                                    //     quarter of each other in size. Tahoma's 'v' nudges
+                                    //     -34/64 then +4/64: the small one is not the other half
+                                    //     of a width, and letting it veto the -34 costs 6,573.
+                                    //   * AND THE WIDTH HAS TO MOVE HALF A PIXEL. Segoe UI
+                                    //     opposes its diagonals too ('V' 4+4, 'Z' 12+12) and GDI
+                                    //     runs every one; what it declines is the 60..66/64 class.
+                                    if ((z.Tags[sp] & TagTouchY) != 0) _nudgeVetoed = true;
+                                    else if (_nudgeN < _nudgeXs.Length)
+                                    {
+                                        _nudgeXs[_nudgeN] = z.CurX[sp];
+                                        _nudgeDxs[_nudgeN] = dx;
+                                        _nudgeN++;
+                                        int lo = 0, hi = 0;
+                                        for (int k = 1; k < _nudgeN; k++)
+                                        {
+                                            if (_nudgeXs[k] < _nudgeXs[lo]) lo = k;
+                                            if (_nudgeXs[k] > _nudgeXs[hi]) hi = k;
+                                        }
+                                        int a = _nudgeDxs[lo], b = _nudgeDxs[hi];
+                                        int ma = Math.Abs(a), mb = Math.Abs(b);
+                                        _nudgePair = lo != hi && Math.Sign(a) != Math.Sign(b)
+                                                     && ma + mb >= s_nudgePairMin
+                                                     && Math.Abs(ma - mb) * 4 <= Math.Max(ma, mb);
+                                    }
+                                    else _nudgeVetoed = true;
+                                    SawOpposingDiagonalNudges = _nudgePair && !_nudgeVetoed;
                                 }
+                                if (s_yTrace)
+                                    Console.Error.WriteLine("SHPIX pt=" + sp + " amt=" + amount
+                                        + " dx=" + dx + " dy=" + dy
+                                        + " tag=" + (((uint) sp < (uint) z.PointCount
+                                            && (z.Tags[sp] & TagTouchX) != 0) ? "X" : ".")
+                                        + (((uint) sp < (uint) z.PointCount
+                                            && (z.Tags[sp] & TagTouchY) != 0) ? "Y" : ".")
+                                        + " horizFv=" + (IsHorizontalFreedom ? 1 : 0)
+                                        + " diagEdge=" + (OnDiagonalEdge(z, sp) ? 1 : 0)
+                                        + " x=" + (((uint) sp < (uint) z.PointCount) ? z.CurX[sp] : 0));
                                 MoveDirect(z, sp, dx, dy, touch);
                             }
                             _gs.Loop = 1;
@@ -693,7 +850,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // if it has one -- which is how the previous attempt concluded
                                 // there was nothing here. Stage C is the only place it shows.
                                 if ((selector & 64) != 0) result |= 1 << 13;    // ClearType enabled
-                                if ((selector & 128) != 0) result |= 1 << 14;   // compatible widths
+                                // WPF_CT_COMPATINFO=0 answers NO. A DISCRETE PROBE, not a knob to
+                                // sweep: bSetXform can only ever build four flag words, so a GDI
+                                // ClearType draw can only present storage[2] as 2, 6, 130 or 134,
+                                // and each is a different program. Trying them is enumeration.
+                                if (s_compatWidthInfo && (selector & 128) != 0) result |= 1 << 14;
                                 // NOT horizontal stripes. MEASURED off GDI with the GETINFO
                                 // oracle (WhatGdiAnswersGetInfo): GDI leaves this bit CLEAR while
                                 // drawing ClearType. It reads like it ought to be set -- the
@@ -730,6 +891,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 Console.Error.WriteLine(
                                     $"      GETINFO selector={selector} -> {result}"
                                     + $"  (prep={_inPreProgram}, ct={ClearTypeInfo}, ppem={_ppem})");
+                            // One line per query, in the same stream as WPF_YTRACE's point moves, so the
+                            // ClearType and bi-level passes can be diffed against each other. That diff
+                            // is what showed the MS core faces accumulating a RENDERING-MODE BITMASK in
+                            // storage[2] out of these answers -- greyscale 1, ClearType 2, compatible
+                            // widths 4, stripes 8, BGR 16, subpixel-positioned 64, symmetric 128 -- and
+                            // branching their whole glyph program on `storage[2] == 2` and `== 6`.
+                            if (s_yTrace) Console.Error.WriteLine("GETINFO sel=" + selector + " -> " + result);
                             Push(result);
                             break;
                         }
@@ -763,7 +931,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             int id = Pop();
                             int body = ip;
                             ip = SkipToEndFunction(code, ip);
-                            if ((uint)id < _functions.Length) _functions[id] = new Function(code, body);
+                            if ((uint)id < _functions.Length)
+                            {
+                                _functions[id] = new Function(code, body);
+                                // THE SCALER READS THE FUNCTION'S BYTES. itrp_FDEF@+0x373b0
+                                // memcmps every body it defines against a table of literal
+                                // instruction sequences at fontdrvhost+0xa8770 and remembers the
+                                // numbers that match (at most four, count at gs+0x1C4, list at
+                                // +0x1C6) -- and itrp_SHP_Common applies its ClearType SHPIX
+                                // suppression ONLY while one of those is running. See
+                                // s_shpixFdefA/B for the two sequences.
+                                if (MatchesSuppressedFdef(code, body, ip) && _suppressedFdefCount < 4)
+                                { _suppressedFdefs[_suppressedFdefCount++] = id; }
+                            }
                             break;
                         }
                     case 0x89:                                                               // IDEF
@@ -779,13 +959,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         {
                             if (callDepth == 0) return true;
                             CallFrame frame = calls[--callDepth];
+                            _callDepth = callDepth;
                             if (--frame.Repeats > 0)
                             {
-                                calls[callDepth++] = frame;
+                                calls[callDepth++] = frame; _callDepth = callDepth;
                                 code = frame.Code;
                                 ip = frame.Start;
                                 break;
                             }
+                            if (callDepth < _callDelta.Length && _callDelta[callDepth])
+                            { _callDelta[callDepth] = false; if (_deltaFdefDepth > 0) _deltaFdefDepth--; }
                             code = frame.ReturnCode;
                             ip = frame.ReturnIp;
                             break;
@@ -796,7 +979,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if ((uint)id >= _functions.Length || !_functions[id].Defined) break;
                             if (callDepth >= calls.Length) return false;
                             calls[callDepth++] = new CallFrame(_functions[id].Code, _functions[id].Start,
-                                                               code, ip, 1);
+                                                               code, ip, 1); _callDepth = callDepth;
+                            _callDelta[callDepth - 1] = IsSuppressedFdef(id);
+                            if (_callDelta[callDepth - 1]) _deltaFdefDepth++;
                             code = _functions[id].Code;
                             ip = _functions[id].Start;
                             break;
@@ -808,7 +993,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if ((uint)id >= _functions.Length || !_functions[id].Defined) break;
                             if (callDepth >= calls.Length) return false;
                             calls[callDepth++] = new CallFrame(_functions[id].Code, _functions[id].Start,
-                                                               code, ip, count);
+                                                               code, ip, count); _callDepth = callDepth;
+                            _callDelta[callDepth - 1] = IsSuppressedFdef(id);
+                            if (_callDelta[callDepth - 1]) _deltaFdefDepth++;
                             code = _functions[id].Code;
                             ip = _functions[id].Start;
                             break;
@@ -822,7 +1009,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         {
                             if (callDepth >= calls.Length) return false;
                             calls[callDepth++] = new CallFrame(_instructionDefs[op].Code,
-                                                               _instructionDefs[op].Start, code, ip, 1);
+                                                               _instructionDefs[op].Start, code, ip, 1); _callDepth = callDepth;
                             code = _instructionDefs[op].Code;
                             ip = _instructionDefs[op].Start;
                             break;
@@ -875,6 +1062,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
+
+        /// <summary>WPF_CT_DELTA_PREP=1: exempt the PRE-PROGRAM from the ClearType delta gate,
+        /// as this code did before. See the call site for what it costs.</summary>
+        private static readonly bool s_deltasFreeInPrep =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_PREP") == "1";
+
+        private static readonly bool s_mdrpTrace =
+            Environment.GetEnvironmentVariable("WPF_MDRP_TRACE") == "1";
 
         /// <summary>Sixty-fourths to add to a control-value stroke weight on the x axis, and the ppem
         /// range to add them over. Diagnostic only -- see the note in MoveIndirectRelative.
@@ -1039,6 +1234,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// rejected against WPF_ALLOW_REPORT do not need revisiting.)</para></summary>
         /// <summary>WPF_CT_NOROUND_X: leave a control-value distance unrounded in the ClearType
         /// direction, which is what VTT shows Microsoft's rasterizer doing.</summary>
+        private static readonly bool s_mdapNoRoundX =
+            Environment.GetEnvironmentVariable("WPF_CT_MDAP_NOROUND") == "1";
+
         private static readonly bool s_noRoundX =
             Environment.GetEnvironmentVariable("WPF_CT_NOROUND_X") == "1";
 
@@ -1117,7 +1315,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// about to read, and where the points are afterwards. Turned on by WPF_HINT_DUMP=1 around
         /// a single Hint call, which is the only way to see WHICH instruction moves a point to the
         /// wrong place -- an outline that comes out wrong says only that one of them did.</summary>
-        internal static bool s_dumpGlyph;
+        private static readonly bool s_phaseAfterIup =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_AFTERIUP") == "1";
+
+        private static readonly bool s_iupProbe =
+            Environment.GetEnvironmentVariable("WPF_IUPX_PROBE") == "1";
+
+        internal static bool s_dumpGlyph =
+            Environment.GetEnvironmentVariable("WPF_HINT_DUMP") == "1";   // one glyph at a time
 
         private bool _dumpActive;
 
@@ -1253,6 +1458,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
+            // WPF_MDRP_TRACE=1: the whole decision in one line -- what the outline measured, what
+            // the rounding made of it, and which grid did the rounding. An MDRP on a SLANTED
+            // projection is how an italic places its stem tops, and nothing else in the dump says
+            // whether such a move rounded on the pixel or on the sixteenth.
+            if (s_mdrpTrace)
+                Console.Error.WriteLine($"   MDRP p={p} rp0={_gs.Rp0} link={linkType}"
+                    + $" round={round} min={keepMinimum} orig={original / 64f:0.####}"
+                    + $" -> dist={distance / 64f:0.####} cur={current / 64f:0.####}"
+                    + $" move={(distance - current) / 64f:0.####}"
+                    + $" pv=({_gs.ProjX},{_gs.ProjY}) fv=({_gs.FreeX},{_gs.FreeY})"
+                    + $" round={_gs.Round} swci={_gs.SingleWidthCutIn} sw={_gs.SingleWidthValue}"
+                    + $" ctDir={InClearTypeDirection} ppem={_ppem}");
             LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType, canProportion: true);
             MovePoint(z, p, distance - current);
 
@@ -1328,6 +1545,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // large finding because most of what the branch does, we still decline to run: see
         // s_symmetricInfo.
 
+        /// <summary>WPF_CT_COMPATINFO=0: answer GETINFO's compatible-widths query NO.</summary>
+        private static readonly bool s_compatWidthInfo =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPATINFO") != "0";
+
+        internal static readonly bool s_mirpCensus =
+            Environment.GetEnvironmentVariable("WPF_MIRP_CENSUS") == "1";
+
+        internal static readonly System.Collections.Generic.Dictionary<string, long> s_mirpSeen = new();
+
+        internal static void DumpMirpCensus()
+        {
+            if (!s_mirpCensus) return;
+            lock (s_mirpSeen)
+                foreach (var kv in s_mirpSeen) Console.Error.WriteLine($"MIRPCENSUS {kv.Key} x{kv.Value}");
+        }
+
         private static readonly bool s_traceGetInfo =
             Environment.GetEnvironmentVariable("WPF_GETINFO_TRACE") == "1";
 
@@ -1393,8 +1626,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_SHPIX=run executes SHPIX in the ClearType direction instead of refusing
         /// it. Measured worse -- see the note at the SHPIX site.</summary>
+        /// <summary>SHIPPED 2026-09-10: an INLINE SHPIX is never filtered, whatever its size.
+        /// <para>The heuristic gate below this flag -- "execute the fractional nudges on outline
+        /// points and refuse the rest" -- was the port's own invention, and it sat in FRONT of
+        /// the rule read out of fontdrvhost (MatchesSuppressedFdef: suppression only inside the
+        /// two recognised VTT delta helpers). Together they were double-filtering, and the
+        /// heuristic's `amount % 64 == 0` clause was dropping WHOLE-PIXEL inline shifts the
+        /// binary runs. Arial's 'c' is the case: ip 518 is `SHPIX pt1 -64`, the right terminal's
+        /// anchor, and pt0/pt14/pt15 are all MIRPed from it, so refusing it put the whole right
+        /// side 0.8px right of GDI at every even size (10,364 at 24ppem, 4,173 at 12).</para>
+        /// <para>Turning the heuristic off, with the binary's rule left standing: specimen
+        /// 975,462 -> 908,076, holdout 8..24 3,162,566 -> 2,908,191; 47 glyphs better against 2
+        /// worse (Arial Bold 'A', +137 in total), net better on every face; 14 ratchets moved and
+        /// every one was "now matches Windows in MORE pixels" (tightened). Arial 'c'@24
+        /// 10,364 -> 137, 'c'@12 -> 0, Arial Bold 'y'@24 3,753 -> 0, Tahoma 'N'@12 -> 0.</para>
+        /// <para>The gate's recorded justification -- Arial 'E'@16's -64 on its middle arm, said
+        /// to be one GDI does not run -- was an edge-solver reading from before the FDEF rule
+        /// existed, and it does not hold: 'E'@16 is exactly 0 with the gate on OR off.
+        /// WPF_CT_SHPIX=outline restores the heuristic.</para></summary>
         private static readonly bool s_runShpix =
-            Environment.GetEnvironmentVariable("WPF_CT_SHPIX") == "run";
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX") is null or "run";
 
         /// <summary>WPF_CT_SHPIX_PAIR=1: refuse a pair of fractional nudges that move two DIAGONAL
         /// points against each other. Measured, close, and not shipped.
@@ -1421,11 +1672,101 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 15,074,881 -> 14,865,877, against 19 per-glyph ratchets regressed and NOT ONE
         /// improved -- three of them by 400, 423 and 494 pixels, which is the fallback to the
         /// unhinted fitter this note already predicted. Ratchets outrank the weight sum. Do not
-        /// ship it on the strength of the aggregate; the hole is still there.</para></summary>
+        /// ship it on the strength of the aggregate; the hole is still there.</para>
+        /// <para>RE-TESTED AGAIN under the exact ClearType filter and the phase/delta ports, for
+        /// the same reason. Same verdict, and the aggregate is more tempting than ever: the weight
+        /// sum goes 1,628,346 -> 1,529,052 while the ratchets go 12,416 -> 12,720 with
+        /// ZERO improved and 18 regressed (repertoire@11 229 -> 295, regular@11 154 -> 211). The
+        /// hole is exactly where it was. Do not ship it.</para></summary>
+        /// <summary>Drop a SHPIX along the ClearType direction on a point the program has not
+        /// placed in the other one. WPF_CT_SHPIX_X=keep to restore the old behaviour.</summary>
+        private static readonly bool s_shpixDropX =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_X") == "1";
+        // MEASURED AND WRONG, kept only as a knob: taking the paper's sentence at face value for
+        // the ClearType direction too costs 1,439,591 -> 2,003,540 and fails 203 ratchets. GDI
+        // plainly DOES run most x-direction SHPIX; what it refuses is narrower than "all of them".
+
+        /// <summary>SUPERSEDED 2026-09-10, OFF by default; WPF_CT_SHPIX_PAIR=1 restores it.
+        /// <para>This heuristic reproduced, from the outside, what the scaler does by READING THE
+        /// FUNCTION'S BYTES -- see MatchesSuppressedFdef. The real rule is strictly better and
+        /// needs none of the three conditions below: with it, this adds nothing on the specimen
+        /// (1,081,158 either way) and costs 2,724 on the 8..24 holdout. Kept only as the record of
+        /// how far a heuristic got: 1,439,591 -> 1,269,646 against the real rule's 1,081,158.</para>
+        /// <para>The rule below was written, evidenced and left switched OFF, because a bare
+        /// "opposing signs" test regresses as much as it fixes: it cost 18 ratchets. Three
+        /// conditions were missing, each found from the case that contradicted it -- the point
+        /// must be untouched in y, the two must be the same size, and together they must move at
+        /// least half a pixel of width. With them:</para>
+        /// <para>specimen 1,439,591 -> 1,330,751; holdout 8..24 4,615,390 -> 4,308,980;
+        /// ALL 627 parity ratchets pass. Tahoma Bold 'W'@16 15,129 -> 0 and Verdana Bold
+        /// 'W'@13 10,579 -> 0, both pixel-exact.</para>
+        /// <para>The threshold is not a knife-edge: everything in play is either 8..24/64
+        /// (Segoe UI's 'V' and 'Z', which GDI runs) or 60..66/64 (Tahoma's and Verdana's, which it
+        /// does not), so 32 through 48 all measure identically and 16/24 cost 1,100 and a
+        /// ratchet.</para></summary>
         private static readonly bool s_shpixPair =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_PAIR") == "1";
 
-        private int _nudgeCount, _nudgeDx;
+        /// <summary>How much combined width an opposing diagonal pair has to move before it is
+        /// treated as a bi-level width grab rather than a sub-pixel nudge. WPF_CT_SHPIX_PAIR_MIN,
+        /// in 64ths.</summary>
+        private static readonly int s_nudgePairMin =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_SHPIX_PAIR_MIN"), out int npm)
+                ? npm : 32;
+
+        /// <summary>How deep inside CALLed functions the interpreter is. fontdrvhost keeps the
+        /// same thing as bit 4 of its +0x1C2 word -- itrp_CALL sets it on entry and clears it on
+        /// return -- and itrp_SHP_Common tests THAT bit before applying any of the ClearType
+        /// SHPIX suppression, so a nudge written inline in a glyph is not filtered at all.</summary>
+        private int _callDepth;
+
+        /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
+        private static readonly bool s_shpixCallRule =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_CALL") != "0";
+
+        /// <summary>The two function bodies fontdrvhost recognises, read out of its own table at
+        /// +0xa8770. Both are the VTT "delta at this size" helper -- a ppem test around a single
+        /// SHPIX -- which is bi-level pixel-flipping, and ClearType declines it.
+        /// <para>MPPEM GTEQ SWAP MPPEM LT AND IF SHPIX ELSE POP POP EIF ENDF, and the shorter
+        /// MPPEM EQ IF SHPIX ELSE POP POP EIF ENDF. Tahoma's function 55 is the first of them
+        /// exactly.</para></summary>
+        private static readonly byte[] s_shpixFdefA =
+            { 0x4B, 0x54, 0x58, 0x38, 0x1B, 0x21, 0x21, 0x59, 0x2D };
+        private static readonly byte[] s_shpixFdefB =
+            { 0x4B, 0x53, 0x23, 0x4B, 0x51, 0x5A, 0x58, 0x38, 0x1B, 0x21, 0x21, 0x59, 0x2D };
+
+        private readonly int[] _suppressedFdefs = new int[4];
+        private int _suppressedFdefCount;
+        /// <summary>WPF_CT_DELTA_RE=0 restores the pre-2026-09-10 delta gate.</summary>
+        /// <summary>SHIPPED 2026-09-10, the rule read out of itrp_DeltaEngine. 0 restores the old
+        /// gate; 2/4/5 are the ablations that showed the axis change is neutral (1,079,668) and the
+        /// "IUP[y] has not run" clause is the whole of it (975,462).</summary>
+        private static readonly int s_deltaReMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DELTA_RE"), out int drm) ? drm : 1;
+        private static readonly bool s_deltaReRule = s_deltaReMode != 0;
+
+        private readonly bool[] _callDelta = new bool[128];
+        private int _deltaFdefDepth;
+
+        private static bool MatchesSuppressedFdef(byte[] code, int body, int end)
+        {
+            int n = end - body;
+            byte[]? want = n == s_shpixFdefA.Length ? s_shpixFdefA
+                         : n == s_shpixFdefB.Length ? s_shpixFdefB : null;
+            if (want is null || body < 0 || end > code.Length) return false;
+            for (int i = 0; i < n; i++) if (code[body + i] != want[i]) return false;
+            return true;
+        }
+
+        private bool IsSuppressedFdef(int id)
+        {
+            for (int i = 0; i < _suppressedFdefCount; i++) if (_suppressedFdefs[i] == id) return true;
+            return false;
+        }
+
+        private int _nudgeCount, _nudgeDx, _nudgeN;
+        private readonly int[] _nudgeXs = new int[24], _nudgeDxs = new int[24];
+        private bool _nudgePair, _nudgeVetoed;
 
         /// <summary>Set when this glyph's program nudged two diagonal points against each other.
         /// Cleared by <see cref="ResetNudgeWatch"/>, not by each component's run, so a composite
@@ -1435,7 +1776,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The second pass: refuse every fractional nudge on a diagonal.</summary>
         internal bool RefusingDiagonalNudges;
 
-        internal void ResetNudgeWatch() => SawOpposingDiagonalNudges = false;
+        internal void ResetNudgeWatch()
+        {
+            SawOpposingDiagonalNudges = false;
+            _nudgePair = _nudgeVetoed = false;
+            _nudgeCount = 0; _nudgeDx = 0; _nudgeN = 0;
+        }
 
         /// <summary>WPF_CT_SHPIX_DIAG=1: refuse the exemption for a point that sits on a DIAGONAL
         /// -- neither of its outline neighbours is roughly above or below it. A nudge is for a stem
@@ -1719,6 +2065,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_cutInUnroundedOnly =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_UNROUNDED") == "1";
 
+        /// <summary>Whether a MIRP on a DIAGONAL projection vector may take its control value in
+        /// the ClearType pass. 1 (default) keeps today's behaviour; 0 makes it keep the outline
+        /// distance. WPF_CT_DIAG_CVT.</summary>
+        private static readonly int s_diagCvt =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DIAG_CVT"), out int dc) ? dc : 1;
+
         private static readonly bool s_cutInFull =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_FULL") == "1";
 
@@ -1764,7 +2116,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             int cvt = Pop(), p = Pop();
             Zone z = ZoneOf(_gs.Zp1);
-            int value = (uint)cvt < _scaledCvt.Length ? _scaledCvt[cvt] : 0;
+            int value = CvtFor(cvt);
             int linkType = EffectiveLinkType(op & 3, _gs.Zp1, p, _gs.Zp0, _gs.Rp0);
 
             // EVERY PIXEL DISTANCE belongs to the stretched space, not just the control value. The
@@ -1922,6 +2274,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (_dumpActive)
                 Console.Error.WriteLine($"      MIRP cvt[{cvt}]={value / 64f:0.0000}px"
+                    + $" rawCvt={((uint) cvt < (uint) _controlValues.Length ? _controlValues[cvt] : -9999)}"
+                    + $" scaledCvt={CvtFor(cvt)}"
                     + $" outline={original / 64f:0.0000}px round={round}"
                     + $" cutIn={_gs.ControlValueCutIn / 64f:0.0000}px"
                     + $" zp0={_gs.Zp0} zp1={_gs.Zp1} rp0={_gs.Rp0}"
@@ -2016,6 +2370,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 : Math.Abs(value - original) >= cutIn;
             if (cutInApplies && _gs.Zp0 == _gs.Zp1 && over)
             { distance = original; tookControlValue = false; }
+            // DIAGONAL STROKE-WEIGHT CONTROL, under test. Verdana's 'x' sets a projection vector
+            // along each arm with SDPVTL and then MIRPs the far side to cvt[26] = 1.0px, which
+            // snaps an arm whose natural weight is 1.0938 -- and the measured deficit is exactly
+            // that, our arms one 6x sample narrower than GDI's at every diagonal edge while the
+            // orthogonal glyphs are pixel-exact. This asks whether GDI leaves a control value
+            // alone when the vector is neither axis: WPF_CT_DIAG_CVT=0 keeps the outline distance.
+            // 0 = any non-axis projection; 2 = only the DIAGONAL-CONTROL IDIOM, a projection
+            // vector set along the stroke by SDPVTL while the freedom vector stays on x. Verdana's
+            // 'x' is that idiom exactly; a glyph that measures AND moves along the same diagonal is
+            // doing something else, and taking 0 to the whole oracle costs 382k.
+            if (s_diagCvt != 1 && !BiLevelPass && ClearTypeInfo && tookControlValue
+                && !(_gs.ProjX == 0 && _gs.ProjY == 0x4000)
+                && !(_gs.ProjX == 0x4000 && _gs.ProjY == 0)
+                && (s_diagCvt == 0 || (_gs.FreeX == 0x4000 && _gs.FreeY == 0)))
+            { distance = original; tookControlValue = false; }
             // WPF_CT_NOROUND_X=1: do not round a control-value distance in the ClearType
             // direction. Visual TrueType, driven to Arial 'H' at 9pt/12ppem with pixels shown,
             // puts the cap stem's left edge ON a pixel boundary and its right edge PAST the
@@ -2027,6 +2396,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // right for most stems and wrong for the cap stem, so the decision depends on
             // something per-stem that neither switch expresses. Kept so the third person to
             // look at VTT's picture does not spend the evening rediscovering it.
+            // WPF_MIRP_CENSUS=1: which ROUND STATE a MIRP rounds with, and on which axis. itrp_MIRP's
+            // x fast path -- taken whenever the vectors came from SVTCA, which is localGS+0xa4 == 1 --
+            // does the rounding INLINE: `(v+2)&~3` (the sixteenth) when the ClearType latch is set,
+            // `(v+0x20)&~0x3f` (the whole pixel) when it is not. It never consults the round function
+            // pointer at gs+0x90, so RTG, SROUND, RTHG, RDTG and ROFF alike are IGNORED there. We
+            // honour the state on a scaled grid instead, which agrees only where the state is ToGrid.
+            // This counts how often that difference can actually bite before anything is changed.
+            if (s_mirpCensus && round)
+            {
+                string key = $"{_gs.Round}|{(IsHorizontalProjection ? "x" : "y")}|ct={InClearTypeDirection}";
+                lock (s_mirpSeen) s_mirpSeen[key] = s_mirpSeen.TryGetValue(key, out long n) ? n + 1 : 1;
+            }
             if (round && !(s_noRoundX && tookControlValue && !BiLevelPass && InClearTypeDirection))
                 distance = RoundDistance(distance, linkType: linkType);
 
@@ -2167,7 +2548,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else { if (distance > -floor) distance = -floor; }
             }
 
-            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType);
+            // The colour handed to DoubleCheckLinkColor is the RAW opcode bits -- itrp_MIRP passes
+            // `local_6c & 3`, where local_6c is MIRP[abcde]'s flag byte -- not our EffectiveLinkType,
+            // which reinterprets a black link by probing the ink and is ours, not GDI's. The colour
+            // only survives the double check when the two points are not contour neighbours, but that
+            // is exactly the case that decides whether a stem pair forms.
+            LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType, doubleCheck: true, phaseType: op & 3);
             MovePoint(z, p, distance - current);
 
             _gs.Rp1 = _gs.Rp0;
@@ -2243,6 +2629,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int contour = Pop();
             if (!ReferenceShift(useRp1, out int dx, out int dy, out int refZone, out int refPoint)) return;
 
+            // itrp_SHC@180088890 RUNS THE PHASE PASS ITSELF, on the same gate IUP[x] uses, and then
+            // ADDS THE REFERENCE POINT'S STORED PHASE to the x it is about to shift the contour by:
+            //     ExecutePhaseControl(gs, elem);
+            //     iVar12 = nodes[refPoint].value + iVar12;
+            // SHC shifts a contour by how far its reference point moved, so if the phase is what just
+            // moved that reference point, the contour has to follow it. Only SHC and IUP[x] do this;
+            // every other opcode leaves the phase to the end of the program.
+            if (s_phaseAtShc && !_phaseApplied && _gs.Zp2 == 1 && refZone == 1)
+            {
+                ApplyPhaseAtIup();
+                if (_phaseApplied && (uint) refPoint < (uint) _phaseVal.Length) dx += _phaseVal[refPoint];
+            }
             Zone z = ZoneOf(_gs.Zp2);
             int first = contour == 0 ? 0 : _glyphZone.Contours[Math.Min(contour - 1, _contourCount - 1)] + 1;
             int last = _gs.Zp2 == 0 ? z.PointCount - 1
@@ -2471,29 +2869,99 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>ISECT: put a point where two lines cross. Used to build reference positions in
         /// the twilight zone out of directions the program has worked out for itself.</summary>
+        private static readonly bool s_isectProportion =
+            Environment.GetEnvironmentVariable("WPF_CT_ISECT_PROP") != "0";
+
+        internal static int s_isectCount;
+
+        /// <summary>CompDiv@140026480: the scaler's rounded divide. It adds half the denominator,
+        /// signed to match the numerator, and then divides truncating -- round to nearest, ties
+        /// away from zero -- and answers +-0x7fffffff for a zero denominator.</summary>
+        private static long CompDiv(long numerator, long denominator)
+        {
+            if (denominator == 0) return numerator < 0 ? -0x7fffffff : 0x7fffffff;
+            long half = denominator / 2;
+            return ((numerator < 0) == (denominator < 0) ? numerator + half : numerator - half)
+                   / denominator;
+        }
+
         private void Intersect()
         {
+            s_isectCount++;
             int b1 = Pop(), b0 = Pop(), a1 = Pop(), a0 = Pop(), p = Pop();
             Zone zp = ZoneOf(_gs.Zp2), za = ZoneOf(_gs.Zp1), zb = ZoneOf(_gs.Zp0);
             if (p >= zp.PointCount || a0 >= za.PointCount || a1 >= za.PointCount
                 || b0 >= zb.PointCount || b1 >= zb.PointCount) return;
 
-            int dax = za.CurX[a1] - za.CurX[a0], day = za.CurY[a1] - za.CurY[a0];
-            int dbx = zb.CurX[b1] - zb.CurX[b0], dby = zb.CurY[b1] - zb.CurY[b0];
-            int dx = zb.CurX[b0] - za.CurX[a0], dy = zb.CurY[b0] - za.CurY[a0];
-
-            long cross = (long)dax * dby - (long)day * dbx;
-            if (cross == 0)
+            // itrp_ISECT records the placed point as a PROPORTION between the FIRST line's two
+            // endpoints, under the same mode-2 / axis-latch / flags-bit-1 gate as every other
+            // recorder. Read from the ARM64 because Ghidra reuses the argument registers for
+            // Mul26Dot6 results and the decompiled names are not point indices:
+            //     140038c18  sub w14,w8,w23     ; dx = x[w5] - x[w7]   -> w7 is a0, w5 is a1
+            //     140038c3c  mov w26,w5 ; mov w27,w7
+            //     140038ecc  mov w4,w26 ; mov w2,w27 ; bl AddProportion   -> (a=w27, placed, b=w26)
+            // so it is AddProportion(a0, p, a1). We recorded nothing at all here, which left every
+            // ISECT-placed point out of the phase tree. Not rare: the opcode is in Arial (10 glyphs),
+            // Times New Roman (8), Consolas (2), Verdana (1) and in the fpgm of Arial, Times and
+            // Tahoma. WPF_CT_ISECT_PROP=0 goes back to recording nothing.
+            // WHICH line the proportion is recorded against is chosen, not fixed: itrp_ISECT
+            // compares the two cross terms and takes the b-line's endpoints unless the a-line's
+            // term is the larger (140038de8: `cmp w8,w5 ; csel w26,w6,w26,gt`).
+            if (s_isectProportion && _gs.Zp2 == 1 && _gs.Zp1 == 1 && ClearTypeInfo && !BiLevelPass)
             {
-                // Parallel: the specification says put it midway between the two line starts.
-                zp.CurX[p] = (za.CurX[a0] + zb.CurX[b0]) / 2;
-                zp.CurY[p] = (za.CurY[a0] + zb.CurY[b0]) / 2;
+                long ra = (long) (za.CurX[a1] - za.CurX[a0]) * (zb.CurY[b1] - zb.CurY[b0]);
+                long rb = (long) (za.CurY[a1] - za.CurY[a0]) * (zb.CurX[b1] - zb.CurX[b0]);
+                if (Math.Abs(rb) > Math.Abs(ra)) PhaseProportion(a0, p, a1, axisGate: false);
+                else PhaseProportion(b0, p, b1, axisGate: false);
             }
-            else
+            // itrp_ISECT@140038a60, ported as it is written rather than as the specification
+            // describes it. GDI does NOT evaluate a cross-product parameter: it ELIMINATES along
+            // whichever axis the FIRST line (the b-line, whose points are popped first) runs
+            // more along, with a rounded divide at every step, and then walks the SECOND line
+            // from its own origin. The two orders are not the same arithmetic -- our single
+            // 16.14 parameter accumulated error an intersection amplifies, and Arial 'X'@24 put
+            // its crossing 29/64 from where GDI's pixels say it is.
+            int dxb = zb.CurX[b1] - zb.CurX[b0], dyb = zb.CurY[b1] - zb.CurY[b0];
+            int dxa = za.CurX[a1] - za.CurX[a0], dya = za.CurY[a1] - za.CurY[a0];
+            int xb0 = zb.CurX[b0], yb0 = zb.CurY[b0];
+            int xa0 = za.CurX[a0], ya0 = za.CurY[a0];
+
+            long num, den;
+            bool placed = false;
+            if (dyb == 0)                                  // the b-line is horizontal
             {
-                long t = ((long)dx * dby - (long)dy * dbx) * 0x4000 / cross;
-                zp.CurX[p] = za.CurX[a0] + (int)(t * dax / 0x4000);
-                zp.CurY[p] = za.CurY[a0] + (int)(t * day / 0x4000);
+                if (dxa == 0) { zp.CurX[p] = xa0; zp.CurY[p] = yb0; placed = true; num = den = 0; }
+                else { num = ya0 - yb0; den = -dya; }
+            }
+            else if (dxb == 0)                             // ...or vertical
+            {
+                if (dya == 0) { zp.CurX[p] = xb0; zp.CurY[p] = ya0; placed = true; num = den = 0; }
+                else { num = xa0 - xb0; den = -dxa; }
+            }
+            else if (Math.Abs(dxb) >= Math.Abs(dyb))       // eliminate along x
+            {
+                num = (ya0 - yb0) - CompDiv((long) (xa0 - xb0) * dyb, dxb);
+                den = CompDiv((long) dxa * dyb, dxb) - dya;
+            }
+            else                                           // ...or along y
+            {
+                num = CompDiv((long) (ya0 - yb0) * dxb, dyb) + (xb0 - xa0);
+                den = dxa - CompDiv((long) dya * dxb, dyb);
+            }
+            if (!placed)
+            {
+                if (den == 0)
+                {
+                    // Parallel. NOT "midway between the two line starts" as the specification
+                    // says: GDI averages the two lines' MIDPOINTS, ((dA/2 + dB/2) + A0 + B0) / 2.
+                    zp.CurY[p] = ((dya >> 1) + (dyb >> 1) + yb0 + ya0) >> 1;
+                    zp.CurX[p] = ((dxa >> 1) + (dxb >> 1) + xb0 + xa0) >> 1;
+                }
+                else
+                {
+                    zp.CurY[p] = (int) CompDiv((long) dya * num, den) + ya0;
+                    zp.CurX[p] = (int) CompDiv((long) dxa * num, den) + xa0;
+                }
             }
             zp.Tags[p] |= TagTouchBoth;
         }
@@ -2522,7 +2990,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!fires) continue;
 
                 Zone z = ZoneOf(_gs.Zp0);
-                if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false))
+                // itrp_DeltaEngine@140036b98 gates the OTHER direction too, and we had been running those
+                // unconditionally. Under ClearType (0x1c0 bit0 set, bit2 clear) it applies a delta only
+                // when the projection is on the non-ClearType axis AND the point's flag bit 1 -- TOUCHED
+                // IN Y -- is already set:
+                //     if (pv.y == 0x4000 && pv.x == 0) { if (globals[0x171]) apply;
+                //         else if ((pointFlags[pt] >> 1 & 1) && !(globals[0x1c2] >> 1 & 1)) apply; else skip; }
+                //     else skip;
+                // which is the paper's 'it creates a dent in the outline' case: a post-IUP delta landing on
+                // a point the program never placed. WPF_CT_DELTA_UNTOUCHED=1 runs them again.
+                if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
+                    && (uint) p < (uint) z.PointCount && (z.Tags[p] & TagTouchY) == 0)
+                    continue;
+                if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)
+                    && (!s_yTrace || Skipped("DELTA", p, amount)))
                 {
                     // SCALED RATHER THAN DROPPED. Microsoft's own account of why ClearType
                     // discards these is not that they mean nothing but that they are too big:
@@ -2571,9 +3052,64 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// ... hence we also keep deltas in composites" -- there a point flagged untouched may have
         /// been touched while its component ran, so the delta moves the whole outline rather than
         /// denting it, which is how diacritics keep clear of their base.</para>
+        private static readonly bool s_deltaOnUntouchedY =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_UNTOUCHED") == "1";
+
         /// </summary>
-        private bool SkipDeltaInClearTypeDirection(Zone z, int point, bool compositeExempt)
+        private bool Skipped(string what, int p, int amount)
         {
+            Zone z = ZoneOf(_gs.Zp0);
+            bool tY = (uint) p < (uint) z.PointCount && (z.Tags[p] & TagTouchY) != 0;
+            Console.Error.WriteLine("SKIP-" + what + " pt=" + p + " amt=" + amount
+                + " pv=(" + _gs.ProjX + "," + _gs.ProjY + ") fv=(" + _gs.FreeX + "," + _gs.FreeY + ")"
+                + " touchedY=" + (tY ? 1 : 0) + " iupY=" + (_iupYDone ? 1 : 0)
+                + " inCall=" + _callDepth + " comp=" + (_inComposite ? 1 : 0));
+            return true;
+        }
+
+        private bool SkipDeltaInClearTypeDirection(Zone z, int point, bool compositeExempt,
+                                                   bool forShpix = false)
+        {
+            // THE SCALER'S OWN TEST, read from itrp_DeltaEngine@+0x36a18. Unlike SHPIX there is no
+            // recognised-FDEF gate here: the suppression is on for every delta once ClearType is
+            // on and INSTCTRL's native bit is not. What survives it is narrow -- the PROJECTION
+            // vector exactly (0, 0x4000), the point ALREADY TOUCHED in y, and IUP[y] not yet run
+            // -- or a composite (+0x171). WPF_CT_DELTA_RE=0 falls back to the older reading below,
+            // which tested the FREEDOM vector and asked neither of the last two.
+            if (s_deltaReRule && !forShpix)
+            {
+                if (!ClearTypeInfo || NativeClearTypeMode || BiLevelPass || s_keepAllDeltas) return false;
+                // THE PRE-PROGRAM IS NOT EXEMPT, and the exemption that used to be here was
+                // borrowed from a different rule. `InClearTypeDirection` excludes prep because
+                // prep ROUNDS on the whole-pixel grid -- which is measured, GDI's own prep rounds
+                // a control value to a whole pixel while a glyph rounds on the sixteenth (see
+                // HowGdiRoundsAControlValue). The DELTA ENGINE is a separate test with a separate
+                // origin: itrp_DeltaEngine is installed on the transform and asks only about the
+                // projection vector, the point's touched-y flag and IUP[y]. It has no notion of
+                // where it is being called from.
+                // <para>Times New Roman ITALIC is what this costs. Its prep builds the face's
+                // ITALIC VECTOR in the twilight zone -- two points, one aligned to the other along
+                // the design slant, its x rounded by MDAP[r], the direction read back out with
+                // SPVTL and stored in storage[6..7] -- and every stem in every glyph is then moved
+                // along that stored vector. Two DELTAPs sit on that point, at ppem 12 and 13, each
+                // -1 pixel, on a PURE X projection. Running them turns a rise of 3 pixels in 9
+                // into 2 in 9: the face's 16.33-degree slant becomes 12.5, every stem leans wrong
+                // above the baseline, and Times Italic scores 107,035 at 12ppem and 116,452 at 13
+                // against 3,871 at 11 and 5,976 at 14 -- where the same deltas do not fire.
+                // WPF_CT_DELTA_PREP=1 restores the exemption.
+                if (s_deltasFreeInPrep && _inPreProgram) return false;
+                if (compositeExempt && _inComposite) return false;
+                bool axis = s_deltaReMode == 3
+                            ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000)
+                            : !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+                if (axis) return true;
+                if (s_deltaReMode == 2) return false;          // axis test only
+                bool untouched = (uint) point >= (uint) z.PointCount
+                                 || (z.Tags[point] & TagTouchY) == 0;
+                if (s_deltaReMode == 4) return untouched;      // touched-y only
+                if (s_deltaReMode == 5) return _iupYDone;      // post-IUP[y] only
+                return _iupYDone || untouched;
+            }
             if (!DeltaInClearTypeDirection || NativeClearTypeMode || s_keepAllDeltas || BiLevelPass) return false;
             if (compositeExempt && _inComposite) return false;
             if ((uint) point >= (uint) z.PointCount) return false;

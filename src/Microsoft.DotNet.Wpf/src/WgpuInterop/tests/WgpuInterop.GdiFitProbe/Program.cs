@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
@@ -87,6 +87,17 @@ namespace WgpuInterop.GdiFitProbe
             Console.WriteLine("   OUR FITTED EDGES (px):    "
                 + string.Join(" ", Array.ConvertAll(edges, e => (e / 64.0).ToString("0.000", CultureInfo.InvariantCulture))));
 
+            s_fittedForLearn = fitted;
+            // The advance the phase pass divides by, and the hdmx the face ships.
+            try {
+                var mi = typeof(TrueTypeFont).GetMethod("CompatibleAdvance",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (mi is not null)
+                {
+                    object? r = mi.Invoke(font, new object[] { gid, (float)ppem, ppem });
+                    Console.WriteLine($"   COMPATIBLE ADVANCE: {r} px  (= {(float)(r ?? 0f) * 64f} in 64ths)");
+                }
+            } catch (Exception ex) { Console.WriteLine("   advance probe failed: " + ex.Message); }
             DumpPoints(fitted);
             DumpOurLamps(fitted);
             DumpGdi(family, ch, ppem, bold, italic);
@@ -105,6 +116,145 @@ namespace WgpuInterop.GdiFitProbe
 
         /// <summary>Every distinct x the fitted outline touches, in 64ths -- the same grouping the
         /// parity suite's edge solver reports, so the two can be compared directly.</summary>
+        // ---- GDI ClearType pipeline learner ---------------------------------------------
+        // The filter in fontdrvhost (ulClearTypeFilter_6x1 @ +0x215f8) is NOT a kernel. It
+        // rasterizes BI-LEVEL at 6x, packs each pixel's three lamp counts (0..2 lit samples)
+        // into a byte, and maps FIVE consecutive lamp counts -- neighbour's right lamp, own
+        // three, neighbour's left lamp -- through a 243-entry table into a PALETTE INDEX
+        // 0..114. The palette is the enumeration of reachable filtered triples. This learner
+        // recovers the palette empirically: compute each pixel's index from the outline,
+        // pair it with the triple GDI actually painted, and append the pairs to a file.
+        private static void LearnPairs(List<PathFigure> fitted, byte[] px, int W, int H,
+                                       string outFile, string tag)
+        {
+            const int PenX = 8, Baseline = 28;
+            var polys = FlattenAll(fitted);
+            if (polys.Count == 0) return;
+            // GDI hints x in the 6x overscaled space, so every fitted x lands on an exact
+            // 1/6-pixel lamp boundary. Our fitted outline is float pixel-space; snap x to the
+            // 1/6 grid so the bi-level scan crosses lamps exactly where GDI's does.
+            if (Environment.GetEnvironmentVariable("WPF_GDIPIPE_SNAP") == "1")
+                foreach (var poly in polys)
+                    for (int i = 0; i < poly.Count; i++)
+                        poly[i] = new Vector2(MathF.Round(poly[i].X * 6f) / 6f, poly[i].Y);
+            float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
+            foreach (var poly in polys) foreach (var pt in poly)
+            { minX = MathF.Min(minX, pt.X); maxX = MathF.Max(maxX, pt.X);
+              minY = MathF.Min(minY, pt.Y); maxY = MathF.Max(maxY, pt.Y); }
+            int gy0 = (int) MathF.Floor(minY) - 1, gy1 = (int) MathF.Ceiling(maxY) + 1;
+            int gx0 = (int) MathF.Floor(minX) - 2, gx1 = (int) MathF.Ceiling(maxX) + 2;
+
+            var sb = new StringBuilder();
+            var spans = new List<(float A, float B)>();
+            for (int gy = gy0; gy <= gy1; gy++)
+            {
+                int row = Baseline + gy;
+                if (row < 0 || row >= H) continue;
+                float sy = gy + 0.5f;
+                Spans(polys, sy, spans);
+
+                // lamp counts for gx0-1 .. gx1+1 so every pixel sees its neighbours
+                int n = gx1 - gx0 + 3;
+                var lamp = new int[n, 3];
+                for (int gx = gx0 - 1; gx <= gx1 + 1; gx++)
+                    for (int lampI = 0; lampI < 3; lampI++)
+                        for (int half = 0; half < 2; half++)
+                        {
+                            float sx = gx + (lampI * 2 + half + 0.5f) / 6f;
+                            foreach ((float A, float B) sp in spans)
+                                if (sx >= sp.A && sx < sp.B) { lamp[gx - gx0 + 1, lampI]++; break; }
+                        }
+
+                // Flatten this row's lamps into one linear array indexed by lamp number
+                // (3 per pixel), so a 5-lamp window can be taken across pixel boundaries.
+                for (int gx = gx0; gx <= gx1; gx++)
+                {
+                    int i = gx - gx0 + 1;
+                    int col = PenX + gx;
+                    if (col < 0 || col >= W) continue;
+                    int o = (row * W + col) * 4;
+                    // DIB is BGRA; leftmost lamp (RED) is byte 2, mid byte 1, right byte 0.
+                    int[] outByte = { px[o + 2], px[o + 1], px[o] };
+                    for (int L = 0; L < 3; L++)
+                    {
+                        // the five consecutive lamps centred on this one
+                        int[] w = new int[5];
+                        for (int t = -2; t <= 2; t++)
+                        {
+                            int lampPos = L + t;               // -2..4 within the pixel window
+                            int pi = i, li = lampPos;
+                            while (li < 0) { pi--; li += 3; }
+                            while (li > 2) { pi++; li -= 3; }
+                            w[t + 2] = (pi >= 0 && pi < lamp.GetLength(0)) ? lamp[pi, li] : 0;
+                        }
+                        int idx = 81 * w[0] + 27 * w[1] + 9 * w[2] + 3 * w[3] + w[4];
+                        sb.Append(tag).Append(' ').Append(idx).Append(' ').Append(outByte[L]).Append((char)10);
+                    }
+                }
+            }
+            File.AppendAllText(outFile, sb.ToString());
+        }
+
+        private static List<List<Vector2>> FlattenAll(List<PathFigure> figures)
+        {
+            var polys = new List<List<Vector2>>();
+            foreach (PathFigure f in figures)
+            {
+                var poly = new List<Vector2> { f.Start };
+                Vector2 cur = f.Start;
+                foreach (PathSegment sg in f.Segments)
+                {
+                    if (sg is LineSegment ls) { poly.Add(ls.Point); cur = ls.Point; }
+                    else if (sg is QuadraticBezierSegment qs)
+                    {
+                        for (int k = 1; k <= 16; k++)
+                        {
+                            float t = k / 16f, u = 1 - t;
+                            poly.Add(u * u * cur + 2 * u * t * qs.Control + t * t * qs.Point);
+                        }
+                        cur = qs.Point;
+                    }
+                    else if (sg is CubicBezierSegment cs)
+                    {
+                        for (int k = 1; k <= 16; k++)
+                        {
+                            float t = k / 16f, u = 1 - t;
+                            poly.Add(u * u * u * cur + 3 * u * u * t * cs.Control1
+                                     + 3 * u * t * t * cs.Control2 + t * t * t * cs.Point);
+                        }
+                        cur = cs.Point;
+                    }
+                }
+                if (poly.Count > 2) polys.Add(poly);
+            }
+            return polys;
+        }
+
+        private static void Spans(List<List<Vector2>> polys, float sy, List<(float, float)> spans)
+        {
+            spans.Clear();
+            var cross = new List<(float X, int Dir)>();
+            foreach (var poly in polys)
+                for (int i = 0; i < poly.Count; i++)
+                {
+                    Vector2 a = poly[i], b = poly[(i + 1) % poly.Count];
+                    if (a.Y == b.Y) continue;
+                    float lo = MathF.Min(a.Y, b.Y), hi = MathF.Max(a.Y, b.Y);
+                    if (sy < lo || sy >= hi) continue;
+                    float t = (sy - a.Y) / (b.Y - a.Y);
+                    cross.Add((a.X + t * (b.X - a.X), b.Y > a.Y ? 1 : -1));
+                }
+            cross.Sort(static (u, v) => u.X.CompareTo(v.X));
+            int w = 0;
+            for (int i = 0; i < cross.Count - 1; i++)
+            {
+                w += cross[i].Dir;
+                if (w != 0) spans.Add((cross[i].X, cross[i + 1].X));
+            }
+        }
+
+        private static List<PathFigure>? s_fittedForLearn;
+
         private static int[] Edges(List<PathFigure> figures)
         {
             var keys = new SortedSet<int>();
@@ -171,6 +321,28 @@ namespace WgpuInterop.GdiFitProbe
             Console.WriteLine("     through the curve (gamma " + g.ToString("0.00", CultureInfo.InvariantCulture)
                 + "), as pixels: " + string.Join(" ", mapped));
             Console.WriteLine("     GDI's final levels:                    0 58 102 144 182 219 255");
+
+            // OUR LAMP GRID, mapped into GDI's space and labelled with the SAME absolute pixel
+            // column as the GDI dump above (which puts the pen at 8), so the two line up and can
+            // be subtracted by eye. Without this the lamps could only be compared as a value SET,
+            // which hides where they differ.
+            Console.WriteLine("     per-column lamp triples (LEFT MID RIGHT), ours, ink rows only:");
+            for (int y = 0; y < m.Height; y++)
+            {
+                var row = new StringBuilder();
+                bool ink = false;
+                for (int x = 0; x < m.Width; x++)
+                {
+                    int i = (y * m.Width + x) * 4;
+                    if (i + 2 >= m.Rgba.Length) continue;
+                    int r = (int) MathF.Round(255f * MathF.Pow(1f - m.Rgba[i] / 255f, 1f / g));
+                    int gg2 = (int) MathF.Round(255f * MathF.Pow(1f - m.Rgba[i + 1] / 255f, 1f / g));
+                    int b = (int) MathF.Round(255f * MathF.Pow(1f - m.Rgba[i + 2] / 255f, 1f / g));
+                    if (r != 255 || gg2 != 255 || b != 255) ink = true;
+                    row.Append($" x{8 + m.OriginX + x,2}:{r,3},{gg2,3},{b,3}");
+                }
+                if (ink) Console.WriteLine($"     row{y,3}{row}");
+            }
         }
 
         private static void DumpPoints(List<PathFigure> figures)
@@ -239,6 +411,11 @@ namespace WgpuInterop.GdiFitProbe
 
             var px = new byte[W * H * 4];
             Marshal.Copy(bits, px, 0, px.Length);
+
+            if (Environment.GetEnvironmentVariable("WPF_GDIPIPE_LEARN") is { Length: > 0 } learnFile
+                && s_fittedForLearn is not null)
+                LearnPairs(s_fittedForLearn, px, W, H, learnFile,
+                           $"{family.Replace(' ', '_')}{(bold ? "B" : "")}{(italic ? "I" : "")}_{ch}_{ppem}");
 
             // The three lamps of each pixel, as GDI laid them down. A DIB is BGRA, and on an
             // RGB-striped display ClearType's LEFTMOST lamp is RED -- so the left lamp is byte 2

@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -379,10 +379,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// "inhibit grid-fitting": no glyph program runs, and the glyph is drawn and spaced as
         /// scaled. Valid after <see cref="PrepareForSize"/>.</summary>
         internal bool GridFitInhibited => (_prepState.InstructControl & 1) != 0;
+
+        /// <summary>SCANCTRL and SCANTYPE as the pre-program left them. Dropout control is a
+        /// property of the SCAN CONVERTER, decided by the face's prep, and GDI honours it under
+        /// ClearType: measured with the slab probe, a 1/16px-tall feature renders as a FULL ROW
+        /// once the probe's prep carries Times' `SCANCTRL 303 / SCANTYPE 1`, and as nothing
+        /// without. Times New Roman's mode-6 branch deliberately leaves its serifs to IUP
+        /// (0.22px tall at 16ppem) and relies on this to keep them.</summary>
+        internal int PrepScanControl => _prepState.ScanControl;
+        internal int PrepScanType => _prepState.ScanType;
         private bool _prepRun;
         private bool _inPreProgram;
         private bool _inComposite;
         private bool _iupDone;
+        private bool _iupXDone, _iupYDone;
         private bool _prepClearType;
         private bool _prepBiLevel;
 
@@ -442,6 +452,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // of denting it -- which is how diacritics keep their distance from the base glyph.
             _inComposite = glyph.Composite;
             _iupDone = false;
+            _iupXDone = _iupYDone = false;
             _nudgeCount = 0; _nudgeDx = 0;
             if (!IsUsable || pixelsPerEm <= 0f) return false;
 
@@ -522,6 +533,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting) ValidateColoring();
                 if (s_ctPhase != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting) ApplyPhaseControl();
                 if (s_capturePoints) CapturePoints(glyph);
+                if (s_storeProbe && _realPoints == 27 && CompatibleAdvance64 == 576)
+                    Console.Error.WriteLine($"STORE pts={_realPoints} compat64={CompatibleAdvance64}"
+                        + $" cur0={_glyphZone.CurX[0]} cur1={_glyphZone.CurX[1]}"
+                        + $" cur10={_glyphZone.CurX[10]} cur18={_glyphZone.CurX[18]}"
+                        + $" pp2={_glyphZone.CurX[_realPoints + 1]}");
                 StoreGlyph(glyph);
                 return true;
             }
@@ -1021,8 +1037,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// diagonal, move along Y -- and the projection being more x than y makes this test call a
         /// VERTICAL movement the ClearType direction. Plausible, and measured worse: 10,355,224 ->
         /// 10,362,490 on the six-face specimen, fixing no glyph's fitted y.</para></summary>
+        /// <summary>Whether GDI is doing SUB-PIXEL x fitting at this size at all.
+        /// <para>Measured, not guessed. GDI's own ClearType-fitted x for Verdana 'x' at 12ppem is
+        /// IDENTICAL to its bi-level fit -- 32/105/192/222/227/255/342/424, every value -- so at that
+        /// size GDI grid-fits x the ordinary way and does no sixteenth-of-a-pixel work. Verdana's gasp
+        /// gives 0x05 up to 16ppem and 0x0f above; the sizes where our 'x' is wrong (10, 12, 16) are
+        /// exactly the ones WITHOUT the SYMMETRIC_SMOOTHING bit, and the ones where it is right (8 and
+        /// 24) are exactly the ones with it. Segoe UI splits the same way at its own thresholds.</para>
+        /// <para>WPF_CT_SUBPIX_GASP=1 asks the face before using the sixteenth grid.</para></summary>
+        private bool SubpixelGridHere => !s_subpixNeedsGasp || SymmetricRenderingAnswer;
+        
+        private static readonly bool s_subpixNeedsGasp =
+            Environment.GetEnvironmentVariable("WPF_CT_SUBPIX_GASP") == "1";
+        
+        /// <summary>PREP IS EXCLUDED HERE AND GDI DOES NOT EXCLUDE IT -- a known, measured
+        /// divergence, left in deliberately.
+        /// <para>`!_inPreProgram` means every control value the pre-program rounds gets the BI-LEVEL
+        /// grid. GDI has no such exclusion: `itrp_RoundToGridSP` and the rest of the SP set are
+        /// installed on the TRANSFORM, so its prep rounds on the sixteenth grid like everything else.
+        /// Verdana shows it plainly -- our cvt[26], the one value that places all four diagonal edges
+        /// of 'x', comes out of prep as exactly 1.0000px at 10, 12 AND 16ppem against pure scales of
+        /// 0.9180 / 1.1016 / 1.4688 (raw 188 units, upem 2048). Three inputs, one output.</para>
+        /// <para>WPF_CT_PREP=1 removes the exclusion and the mechanism is confirmed: cvt[26] at 12ppem
+        /// becomes 1.1875px and Verdana 'x'@12 goes 0.679 -> 0.732 of GDI's ink, the case it was
+        /// diagnosed from. It is NOT SHIPPED because the corpus gets worse -- 1,628,346 -> 2,650,808,
+        /// or 1,901,124 with WPF_CT_PREP=auto (only at sizes whose gasp omits SYMMETRIC_SMOOTHING).
+        /// Exactly 18 of Verdana's 334 control values move, every one of them a stem width and every
+        /// one by +3/16px, so it widens every control-value stem by 19% at a stroke; WPF_CT_STEMFAT=12
+        /// does the same thing by another route and measures 1,827,907. The ink BALANCE improves
+        /// (mean ratio 0.9936 -> 0.9956, light rows 35 -> 30) while the PLACEMENT worsens (heavy rows
+        /// 4 -> 11). So the rounding is right and something downstream misplaces the ink it buys;
+        /// fixing this needs that second half found first.</para></summary>
         internal bool InClearTypeDirection =>
-            ClearTypeInfo && IsHorizontalProjection && (s_ctInPrep || !_inPreProgram);
+            ClearTypeInfo && (s_ctAxisNotPureY ? (s_ctDirLatched ? _ctDirFlag : NotPureYProjection) : IsHorizontalProjection) && (CtRoundingInPrep || !_inPreProgram) && SubpixelGridHere;
 
         /// <summary>WPF_CT_PREP=1: let 'prep' round on the ClearType grid too.
         /// <para>'prep' is where a face rounds its stem CONTROL VALUES, and excluding it means those
@@ -1035,6 +1082,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// against GDI's 3.49 either way -- which says that control value is not being rounded by
         /// 'prep' at all, so where 'prep' rounds was never the question. Fourteenth parameter
         /// measured, current setting kept.</para></summary>
+        /// <summary>Whether PREP rounds control values on the ClearType grid. GDI has no
+        /// pre-program exclusion at all -- the SP rounding functions are installed on the
+        /// TRANSFORM -- but taking that literally costs 1,628,346 -> 2,650,808, and the cost is
+        /// concentrated at 24ppem (+98k) while 12ppem is where it helps. 24 is where Verdana's gasp
+        /// DOES ask for symmetric smoothing and 12 is where it does not, so WPF_CT_PREP=auto rounds
+        /// prep the ClearType way only at the sizes without it.</summary>
+        /// <summary>GDI's own test for "the vectors are on the ClearType axis", read out of
+        /// itrp_SDPVTL@14003d918 rather than guessed:
+        ///     if (!(globals[0x1c0] &amp; 1))            latch = 0        // ClearType off
+        ///     else if (bit2 clear)  latch = (pv.y == 0x4000 &amp;&amp; pv.x == 0) ? 0 : 1
+        /// i.e. **anything that is not a pure +Y projection counts as ON the axis**, diagonals
+        /// included. Our `IsHorizontalProjection` asks |px| &gt; |py| instead, so a STEEP diagonal --
+        /// more vertical than horizontal but not vertical -- takes the bi-level rules here and the
+        /// ClearType ones in GDI. SVTCA[x] (itrp_SVTCA_1@14003f6f0) sets the same latch as
+        /// (bit0 set &amp;&amp; bit2 clear), and SPVTL/SDPVTL RECOMPUTE it, which we never did.
+        /// WPF_CT_AXIS_NOTPUREY=1.</summary>
+        private bool NotPureYProjection => !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+
+        /// <summary>The grid the CURRENT round state was installed under: GDI binds it when the
+        /// round-state instruction runs. Null until one has run.</summary>
+        private bool? _roundGridSubpixel;
+        
+        private void LatchRoundGrid() => _roundGridSubpixel = InClearTypeDirection;
+        
+        private static readonly bool s_roundLatch =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUNDLATCH") == "1";
+        
+        private static readonly bool s_ctAxisNotPureY =
+            Environment.GetEnvironmentVariable("WPF_CT_AXIS_NOTPUREY") != "0";
+        
+        private bool CtRoundingInPrep =>
+            s_ctInPrepAuto ? !SymmetricRenderingAnswer : s_ctInPrep;
+        
+        private static readonly bool s_ctInPrepAuto =
+            Environment.GetEnvironmentVariable("WPF_CT_PREP") == "auto";
+        
         private static readonly bool s_ctInPrep =
             Environment.GetEnvironmentVariable("WPF_CT_PREP") == "1";
 
@@ -1049,7 +1132,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int[] s_gridHist = new int[20];
         private static int s_gridTotal;
 
-        internal const int ClearTypeGrid = 16;
+        internal static readonly int ClearTypeGrid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_GRID"), out int ctg) && ctg > 0 ? ctg : 16;
 
         /// <summary>Whether a POSITION rounds on the physical grid instead of the virtual one. OFF.
         /// <para>And the measurement behind it is the most decisive one in this file. Rounding
@@ -1167,6 +1251,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// directly, 1+ for a component of a composite. WPF_CT_PHASE_DEPTH selects which of them
         /// the phase runs for.</summary>
         internal static int HintDepth;
+
+        /// <summary>WPF_CT_PP1_SIXTEENTH=0 rounds the left phantom to a whole pixel again.</summary>
+        private static readonly int s_pp1Round =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PP1_SIXTEENTH"), out int p1) ? p1 : 1;
 
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
@@ -1352,6 +1440,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (_fontProgram.Length > 0)
                 {
                     Array.Clear(_functions);
+                    _suppressedFdefCount = 0;
                     Array.Clear(_instructionDefs);
                     if (!Execute(_fontProgram, 0)) { _faulted = true; return false; }
                 }
@@ -1384,12 +1473,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int[] _scaledCvt = Array.Empty<int>();
 
+        /// <summary>The control values as SCALED AND NOTHING ELSE -- a snapshot taken before the
+        /// pre-program runs, so no WCVTP or DELTAC has touched them.
+        /// <para>GDI KEEPS BOTH. Read out of its glyph space (two arrays, at +0x004ec and
+        /// +0x02004) the prep-processed one matches ours entry for entry, and the second one is
+        /// exactly this: cvt[125] measures 41/51/62/82/103/123 at ppem 8/10/12/16/20/24, which is
+        /// round(164 * ppem / 2048 * 64) at every size, while the processed array holds 64 or 128
+        /// -- whole pixels. GDI uses the processed values on y and these on the ClearType x axis,
+        /// which is what "ClearType does not round stem widths in x" actually means.</para>
+        /// <para>CONFIRMED at four sizes: GDI's fitted stem IS this value. ppem 12/16/20/24
+        /// gives B[125] 62/82/103/123 and a fitted stem of 62/82/103/123, while the processed
+        /// array holds 64/64/128/128 -- at 20ppem it says two pixels and the stem is 1.61, so it
+        /// is unambiguously this array and not that one.</para>
+        /// <para>AND YET IT MEASURES WORSE, so it is OFF: 5,131,048 against 3,598,948 on
+        /// HowOurWeightTracksGdis, and 5,534,687 / 5,162,771 / 5,168,373 when combined with
+        /// WPF_CT_MINDIST_DIV 1 / 4 / 6 (the minimum distance becomes binding once the control
+        /// value drops below a pixel, which is why MINDIST_DIV alone had never done anything).
+        /// The mechanism is not in doubt; what it means is that something downstream was tuned
+        /// around its absence -- most likely the filter and contrast curve, which were fitted
+        /// against stems this rule makes narrower. Do not re-enable this on its own.</para>
+        /// <para>WPF_CT_LINEAR_CVT=1.</para></summary>
+        private int[] _linearCvt = Array.Empty<int>();
+
+        /// <summary>0 off, 1 = every control-value read on the ClearType axis, 2 = MIRP only
+        /// (a measured DISTANCE), leaving MIAP's absolute positioning on the processed array.</summary>
+        internal static readonly int s_linearCvtX =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_LINEAR_CVT"), out int lc) ? lc : 0;
+
+        /// <summary>The control value a distance should be measured against: the unprocessed one
+        /// in the ClearType direction, the pre-program's one everywhere else.</summary>
+        private int CvtFor(int i, bool distance = true)
+        {
+            if (s_linearCvtX != 0 && (s_linearCvtX == 1 || distance)
+                && InClearTypeDirection && !BiLevelPass
+                && (uint) i < (uint) _linearCvt.Length)
+                return _linearCvt[i];
+            return (uint) i < (uint) _scaledCvt.Length ? _scaledCvt[i] : 0;
+        }
+
         private void ScaleControlValues()
         {
             if (_scaledCvt.Length != _controlValues.Length)
                 _scaledCvt = new int[_controlValues.Length];
+            if (_linearCvt.Length != _controlValues.Length)
+                _linearCvt = new int[_controlValues.Length];
             for (int i = 0; i < _controlValues.Length; i++)
-                _scaledCvt[i] = ScaleControlValue(_controlValues[i], _scale);
+                _linearCvt[i] = _scaledCvt[i] = ScaleControlValue(_controlValues[i], _scale);
         }
 
         private void ResetGraphicsState()
@@ -1496,7 +1625,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                 }
             }
-            z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
+            // ROUNDING THE CURRENT LEFT PHANTOM TO A WHOLE PIXEL IS NOT IN THE BINARY, and it
+            // still measures best, so it stays. Recorded so it is not re-derived:
+            // fsg_SimpleInnerGridFit@+0x30a40 rounds the phantom TWICE around +0x131220 and
+            // +0x131260 -- once for the real points, once for the phantoms -- on the familiar
+            // two-way gate ((v+0x20)&~0x3f off the ClearType axis, (v+2)&~3 on it, the second
+            // reached via +0x131514). BOTH read the SAME array, `[x20+0x10]`, and a memcpy at
+            // +0x131298 copies +0x10 over +0x00 afterwards, so those are the ORIGINAL coordinates
+            // -- which is the rounding s_lsbRound below already does -- and the CURRENT left
+            // phantom is never rounded on its own account at all.
+            // Measured all three ways, ratchets green in each: whole pixel (this)
+            // 975,462 / holdout 3,162,566; a sixteenth 985,522 / 3,206,554; not rounded at all
+            // 981,440 / 3,189,494. WPF_CT_PP1_SIXTEENTH=2 or 3 to re-measure.
+            if (s_pp1Round == 1 || !SubpixelFittingHere)
+                z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
+            else if (s_pp1Round == 2)
+                z.CurX[glyph.PointCount] = (z.CurX[glyph.PointCount] + 2) & ~3;
+            // s_pp1Round == 3: leave it, which is what the binary's SEQUENCE implies -- it rounds
+            // the ORIGINAL phantom (twice, real points then phantoms) and only then memcpys the
+            // original array over the current one, so the current left phantom is never rounded
+            // on its own account.
             z.CurX[glyph.PointCount + 1] = s_advancePhantom switch
             {
                 // THE BI-LEVEL PASS IS THE MEASUREMENT OF THE ADVANCE, and a bi-level rasterizer
@@ -1549,6 +1697,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (delta != 0)
                     for (int i = 0; i < glyph.PointCount; i++)
                     { z.OrgX[i] += delta; z.CurX[i] += delta; z.InkX[i] += delta; }
+                // AND THE PHANTOMS. fsg_SimpleInnerGridFit inlines BOTH halves of this: the first loop
+                // moves the real points (scl_AdjustOldCharSideBearing) and a second one moves EIGHT more
+                // entries starting at pp1 (scl_AdjustOldPhantomSideBearing, scl_ShiftOldPoints(.., 8)),
+                // by the same delta re-derived from the same unshifted ox[pp1]. So the whole glyph and
+                // its advance box translate together. Moving only the real points slides the outline
+                // INSIDE the box, which changes every distance the program later measures from a phantom
+                // -- and the phase tree is rooted at exactly those phantoms.
+                if (s_lsbPhantoms)
+                    for (int i = glyph.PointCount; i < n && i < glyph.PointCount + 4; i++)
+                    { z.OrgX[i] += delta; z.CurX[i] += delta; z.InkX[i] += delta; }
             }
 
             for (int i = 0; i < glyph.EndPoints.Length; i++)
@@ -1565,6 +1723,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_phaseP0.Length < np)
             {
                 _phaseP0 = new int[np]; _phaseP1 = new int[np];
+                _phaseColour = new int[np];
                 _phaseVal = new int[np]; _phaseDone = new bool[np];
             }
             if (_phasePartner.Length < np) _phasePartner = new int[np];
@@ -1630,7 +1789,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1,
-            bool canProportion = false)
+            bool canProportion = false, bool doubleCheck = false, int phaseType = -1,
+            [System.Runtime.CompilerServices.CallerMemberName] string site = "")
         {
             if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
             // PHASE tree: record p's parent for EVERY link -- any colour, horizontal or diagonal,
@@ -1647,7 +1807,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && InterAlign(_pvPtA, p, _pvPtB))
                 PhaseProportion(_pvPtA, p, _pvPtB);
             else
-                PhaseDistance(r, p, PhaseLinkColour(r, p, distanceType));
+                // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP@1801dcxxx is the one site that calls
+                // DoubleCheckLinkColor and hands its answer to AddDistance; itrp_MDRP, itrp_ALIGNRP and
+                // itrp_SHP_Common all pass a literal 3. Since AddDistance's pairing tail is gated on
+                // param_5 == 1, that means NO OPCODE BUT MIRP CAN EVER FORM A STEM PAIR -- and a pair is
+                // what makes the phase translate a stem rigidly instead of scaling it. Computing the
+                // colour everywhere invented pairs GDI does not have.
+                _phaseSite = site; PhaseDistance(r, p, doubleCheck ? PhaseLinkColour(r, p, phaseType >= 0 ? phaseType : distanceType) : 3);
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -1680,6 +1846,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int[] _stemA = new int[128], _stemB = new int[128];   // all links incl. diagonal
         private int _stemCount;
         private int[] _phaseP0 = new int[128], _phaseP1 = new int[128];  // per-point placement parents
+        private int[] _phaseColour = new int[128];                       // 1 black, 2 white, 0 neither
+        private string _phaseSite = "";
         private int[] _phaseVal = new int[128];                          // memoised phase, 26.6
         private bool[] _phaseDone = new bool[128];
 
@@ -1920,6 +2088,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // (185 accented ratchets fail that way against 145 this way, 159 doing both).
             : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 1 : 0;
 
+        private static readonly bool s_phaseTruncFactor =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRUNC") == "1";
+
         private static readonly bool s_phaseAtIup =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATIUP") is { } ai ? ai == "1"
             : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0";
@@ -1944,12 +2115,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int adv = _realPoints + 1;
             if (adv >= _glyphZone.CurX.Length) return;
             int linear = _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
+            if (s_phaseEntryProbe)
+                Console.Error.WriteLine($"PHASEENTRY pts={_realPoints} orgPP1={_glyphZone.OrgX[_realPoints]}"
+                    + $" orgPP2={_glyphZone.OrgX[adv]} linear={linear} compat64={CompatibleAdvance64}"
+                    + $" curPP1={_glyphZone.CurX[_realPoints]} curPP2={_glyphZone.CurX[adv]}");
             if (linear <= 0 || CompatibleAdvance64 <= 0) return;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
             // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
             // integer arithmetic. Carrying it as a float rounded differently from GDI at the last
             // bit, which on a 26.6 coordinate is a third of a pixel.
-            _ctFactor16 = (int) (((long) CompatibleAdvance64 << 16) / linear);
+            // GDI ROUNDS THIS, half away from zero, where we truncated. fs__Contour builds it as
+            //     x9 = (int64) span << 16;  w8 = w0/2 with the sign fixup
+            //     x9 = (signs agree) ? x9 + w8 : x9 - w8;   factor = x9 / w0
+            // which is round-half-away-from-zero on (span << 16) / linear. Worth a fraction of a
+            // sixty-fourth on any one point, but it is free and it is what the binary does.
+            // WPF_CT_PHASE_TRUNC=1 goes back to truncating.
+            long ctNum = (long) CompatibleAdvance64 << 16;
+            _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / linear)
+                         : (int) ((ctNum + (ctNum < 0 ? -(linear / 2) : linear / 2)) / linear);
+            // THE PHASE ONLY EVER EXPANDS CORRECTLY. Where 'hdmx' forces an advance SMALLER
+            // than the natural one the fraction goes negative, and the tree -- 24 of 32 points
+            // roots that are never moved, 8 touched points carrying the shift, IUP spreading it
+            // between them -- turns the contraction into an EXPANSION: Times New Roman Bold
+            // 'I'@12 has ctFrac -0.1438 and comes out 17% WIDER (span 215 -> 252) instead of
+            // 15% narrower. GDI's own fitted outline for that glyph is the UNPHASED one.
+            // WPF_CT_PHASE_NEG=1 puts the old behaviour back.
+            // PURE SCALE ABOUT THE ORIGIN. Measured against GDI's own fitted outline: our
+            // UNPHASED Times New Roman Bold 'I'@12 spans 16..268, and 16 * 0.856 = 13.7 and
+            // 268 * 0.856 = 229.4 -- GDI's outline is 14..229. So GDI scales every x by the
+            // compatible/linear ratio about x=0, where our tree walk distributes the shift
+            // over touched points and lets IUP spread it, giving -4..248. WPF_CT_PHASE_SCALE=1.
+            if (s_phaseScale)
+            {
+                for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+                    _glyphZone.CurX[i] = (int) (((long) _glyphZone.CurX[i] * _ctFactor16 + 0x8000) >> 16);
+                _phaseApplied = true;
+                return;
+            }
+            if (s_phaseSkipShrinking && _ctFactor16 < 0x10000) return;
             if (_ctFactor16 == 0x10000) return;
             BuildPhasePartners(_realPoints);
             int n = _realPoints + 4;
@@ -1981,8 +2184,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $"roots={roots} oneParent={one} twoParents={two} pairs={pair} "
                     + $"ctFrac={_ctFrac:0.0000} cycle={_phaseAnyCycle}");
             }
-            for (int i = 0; i < n && i < _glyphZone.CurX.Length; i++) PhaseShiftNode(i);
+            if (s_phaseDump)
+            {
+                int[] before = (int[]) _glyphZone.CurX.Clone();
+                for (int k = 0; k < n && k < _glyphZone.CurX.Length; k++) PhaseShiftNode(k);
+                Console.Error.WriteLine($"PHASEDUMP pts={_realPoints} ctFrac={_ctFrac:0.0000} ctFactor={_ctFactor16 / 65536.0:0.0000} cycle={_phaseAnyCycle} rootDirect={PhaseRootDirect}"
+                    + $" compat64={CompatibleAdvance64} linear64={_glyphZone.OrgX[_realPoints + 1] - _glyphZone.OrgX[_realPoints]}");
+                for (int k = 0; k < n && k < _glyphZone.CurX.Length; k++)
+                {
+                    int pr = k < _phasePartner.Length ? _phasePartner[k] : -1;
+                    int co = k < _phaseColour.Length ? _phaseColour[k] : 0;
+                    Console.Error.WriteLine($"  p{k,3} p0={_phaseP0[k],4} p1={_phaseP1[k],4} col={co} partner={pr,4} org={_glyphZone.OrgX[k],6} x={before[k],6} -> {_glyphZone.CurX[k],6} d={_glyphZone.CurX[k] - before[k],5}");
+                }
+                return;
+            }
+            // WHEN THE TREE FINDS NOTHING, FALL BACK TO A SCALE. Measured on Arial Italic 'w' at
+            // 16ppem, whose hdmx advance is 9 against a linear 11.555: the tree yields no shift at
+            // all (phase on and off are bit-identical, 31,059 either way) because every one of its
+            // points is placed from a control value, so nothing is left for the partners to carry.
+            // GDI compresses that glyph anyway -- its rendered ink is NARROWER than ours by 3-5
+            // lamps a row and reaches a row higher. A blanket scale (WPF_CT_PHASE_SCALE) is far
+            // worse at 4,458,490 because it overrides the tree everywhere; this only speaks up
+            // where the tree had nothing to say. WPF_CT_PHASE_FALLBACK=0 turns it off.
+            int before0 = _glyphZone.CurX.Length > 0 ? _glyphZone.CurX[0] : 0;
+            bool moved = false;
+            for (int i = 0; i < n && i < _glyphZone.CurX.Length; i++)
+            {
+                int was = _glyphZone.CurX[i];
+                PhaseShiftNode(i);
+                if (_glyphZone.CurX[i] != was) moved = true;
+            }
+            if (!moved && s_phaseFallbackScale && _ctFactor16 != 0x10000)
+                for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+                    _glyphZone.CurX[i] =
+                        (int) (((long) _glyphZone.CurX[i] * _ctFactor16 + 0x8000) >> 16);
         }
+
+        /// <summary>Scale the glyph when the phase tree produced no shift at all. See the note at
+        /// the call site. WPF_CT_PHASE_FALLBACK.</summary>
+        private static readonly bool s_phaseFallbackScale =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_FALLBACK") == "1";
 
         /// <summary>PhaseShift@18007fd10, ported statement for statement. Unlike the earlier
         /// PhaseOf this is not a pure function: GDI's version MOVES points as it walks, and which
@@ -2032,6 +2273,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     {
                         // Only a node with FEWER THAN TWO parents may be re-derived directly, and
                         // only once its own x has come away from its parent's.
+                        // A BLACK link is a STROKE, and GDI's compatible-width correction keeps stroke
+                        // weight and takes the whole change out of the WHITE. Measured on Times New
+                        // Roman Bold 'I'@12, where hdmx forces 4.0px against a natural 4.67: GDI's
+                        // fitted stem stays 108/64 while its serifs shrink 72 -> 53.5 a side. Re-deriving
+                        // a black-linked point from its own x breaks that, because the two ends of one
+                        // stem then move by different amounts. WPF_CT_PHASE_KEEPBLACK=0 restores the old
+                        // unconditional re-derivation.
                         if (PhaseRootDirect && b < 0 && (a < 0 || _glyphZone.OrgX[p] != _glyphZone.OrgX[a]))
                             v = PhaseDiv(2L * _glyphZone.CurX[p] * (_ctFactor16 - 0x10000));
                         // A ROOT IS NEVER MOVED. It still publishes its phase for its children to
@@ -2100,18 +2348,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
-            if (_phaseP0[p] >= 0) { PhasePair(r, p, colour); return; }   // parented; first wins
+            if (s_phaseDump) Console.Error.WriteLine($"  ADDDIST r={r,3} p={p,3} col={colour} via={_phaseSite,-22} "
+                + $"p0={_phaseP0[p],3} dep={PhaseDependsOn(r, p, 100)}");
+            // ORDER MATTERS, and GDI's is the reverse of the obvious one: AddDistance asks
+            // IndirectlyDependsOn(r, p) FIRST and only then looks at whether p already has a parent.
+            // A re-link onto an already-placed point therefore still RAISES THE CYCLE FLAG when the
+            // reference depends on it -- and that flag is ExecutePhaseControl's param_3, which decides
+            // for the whole glyph whether a one-parent node re-derives its phase from its own x or
+            // inherits its parent's. Testing 'already parented' first swallowed those flags.
             if (PhaseDependsOn(r, p, 100))
             {
-                // GDI flags the node and falls THROUGH to the param_5 tail with its ancestor
-                // still the reference it came in with.
-                _phaseAnyCycle = true;
+                _phaseAnyCycle = true;                  // GDI: nodes[p].flags |= 1
                 PhasePair(r, p, colour);
                 return;
             }
+            if (_phaseP0[p] >= 0) { PhasePair(r, p, colour); return; }   // parented; first wins
             int anc = PhaseAncestor(r, p);
             _phaseP0[p] = anc;
             _phaseP1[p] = -1;
+            if (p < _phaseColour.Length) _phaseColour[p] = colour;
             PhasePair(anc, p, colour);
         }
 
@@ -2125,7 +2380,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) anc >= (uint) _phasePartner.Length) return;
             if ((uint) p >= (uint) _phasePartner.Length) return;
             if (_phasePartner[anc] >= 0 || _phasePartner[p] == anc) return;
-            int par = _phaseP0[p];
+            // THE ANCHOR'S PARENT, NOT THE PLACED POINT'S. AddDistance@1801db148 reads [x7], and x7
+            // is &nodes[anchor] -- the same base whose partner slot was just tested at [x7,#4]:
+            //     ldrsh w8,[x7]          ; nodes[anchor].p0
+            //     smaddl x8,w8,w5,x6     ; &nodes[that]
+            //     ldrsh w8,[x8, #0x4]    ; .partner
+            //     cmp w8,w11 ; b.ne set  ; == anchor ? cycle : make the pair
+            // Reading the PLACED point's parent instead swallowed the flag. Times New Roman Bold 'I'
+            // is the case that shows it: the right serif is MIRP'd black off the stem's right edge,
+            // whose own parent is the left edge, whose partner IS that right edge -- a closed loop.
+            // GDI flags it, so ExecutePhaseControl's param_3 goes to 1 for the whole glyph, and every
+            // one-parent node then re-derives its phase from its own x instead of inheriting the
+            // stem's. That is the difference between serif tips at -4..248 and GDI's 11..224.
+            int par = _phaseP0[anc];
             if (par >= 0 && (uint) par < (uint) _phasePartner.Length && _phasePartner[par] == anc)
                 _phaseAnyCycle = true;                  // GDI sets the node's flag bit 0
             else
@@ -2152,13 +2419,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// interpolates their phases across it. Faithful to the original: every index checked and
         /// distinct, a cycle marked rather than recorded, and the pair written ONLY when both
         /// parent slots are still empty -- the first proportion a point is given wins.</summary>
-        private void PhaseProportion(int a, int placed, int b)
+        private void PhaseProportion(int a, int placed, int b, bool axisGate = true)
         {
-            if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;   // same gate as AddDistance
+            // ISECT DOES NOT TAKE THE AXIS GATE. Every AddDistance call site tests the ClearType
+            // axis latch first, but itrp_ISECT's AddProportion is guarded only by `mode == 2 &&
+            // ClearType-flags bit 1` -- the compatible-widths bit -- with no axis condition at
+            // all. It matters because ISECT runs with the projection on Y (Arial 'X' sets it with
+            // SFVTCA[y] before building its crossing), so the axis gate threw the record away and
+            // the intersection point was left out of the phase tree entirely: 'X'@24's crossing
+            // kept its unphased x while everything around it was compressed onto the advance.
+            if (axisGate && s_phaseXAxisOnly
+                && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;
             int n = _realPoints + 4;
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
             if ((uint) placed >= (uint) _phaseP0.Length) return;
+            if (s_phaseDump) Console.Error.WriteLine($"  ADDPROP a={a,3} p={placed,3} b={b,3} "
+                + $"depA={PhaseDependsOn(a, placed, 100)} depB={PhaseDependsOn(b, placed, 100)}");
             if (PhaseDependsOn(a, placed, 100) || PhaseDependsOn(b, placed, 100))
             { _phaseAnyCycle = true; return; }          // GDI sets node[P].flags |= 1 here
             if (_phaseP0[placed] < 0 && _phaseP1[placed] < 0)
@@ -2269,12 +2546,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATEXEC") != "0";
 
         /// <summary>WPF_CT_LSBROUND=1: round the LSB phantom and translate, as GDI does.</summary>
+        private static readonly bool s_lsbPhantoms =
+            Environment.GetEnvironmentVariable("WPF_CT_LSB_PHANTOM") != "0";
+
         private static readonly bool s_lsbRound =
             Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") == "1";
 
         /// <summary>Is the ClearType x grid in force for THIS run?</summary>
         private static bool SubpixelFittingHere =>
             TrueTypeFont.SubpixelFitting && !BiLevelPass;
+
+        /// <summary>Whether the phase also runs when the compatible advance is SMALLER than the
+        /// linear one. WPF_CT_PHASE_NEG=1.</summary>
+        /// <summary>Apply the compatible-width correction as a plain multiplicative scale about
+        /// x=0 instead of the phase tree. WPF_CT_PHASE_SCALE=1.</summary>
+        private static readonly bool s_phaseScale =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_SCALE") == "1";
+
+        private static readonly bool s_phaseSkipShrinking =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_NOSHRINK") == "1";
+
+        private static readonly bool s_storeProbe =
+            Environment.GetEnvironmentVariable("WPF_STORE_PROBE") == "1";
+
+        private static readonly bool s_phaseEntryProbe =
+            Environment.GetEnvironmentVariable("WPF_PHASE_ENTRY") == "1";
+
+        private static readonly bool s_phaseDump =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_DUMP") == "1";
+
+        private static readonly bool s_phaseAtShc =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_SHC") != "0";
 
         private static readonly bool s_phaseTrace =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRACE") == "1";
@@ -2662,7 +2964,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </para></summary>
         internal bool OnClearTypeAxis =>
             ClearTypeInfo && (s_ctInPrep || !_inPreProgram)
-            && (s_ctAxisLatched ? _ctAxisFlag : _gs.ProjX == 0x4000 && _gs.ProjY == 0);
+            && (s_ctAxisLatched ? _ctAxisFlag : _gs.ProjX == 0x4000 && _gs.ProjY == 0) && SubpixelGridHere;
 
         /// <summary>localGS+0xcc is LATCHED, not recomputed. Only five handlers write it --
         /// itrp_SVTCA_0/_1, itrp_SPVTCA_0/_1, itrp_SPVTL and itrp_SDPVTL -- and SPVFS is NOT
@@ -2672,7 +2974,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _ctAxisFlag;
 
         internal void LatchClearTypeAxis()
-            => _ctAxisFlag = ClearTypeInfo && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+        {
+            _ctAxisFlag = ClearTypeInfo && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+            _ctDirFlag = NotPureYProjection;
+        }
+
+        /// <summary>The LATCHED "not a pure +Y projection" answer -- gs+0xcc, kept the way GDI
+        /// keeps it rather than recomputed from the current vector.
+        /// <para>`itrp_SDPVTL` writes gs+0xcc, and so do SVTCA_0/_1 and SPVTCA_0/_1 and SPVTL --
+        /// five handlers, and that is ALL of them. **SPVFS and SFVFS are not among them.** A face
+        /// that reads the projection vector with GPV, does arithmetic on it and sets the vectors
+        /// back from the stack therefore leaves the latch saying whatever the last of those five
+        /// said, while we recomputed it from the diagonal vector and switched into the ClearType
+        /// rules GDI was not using.</para>
+        /// <para>This is exactly the split between the italic faces that work and the one that does
+        /// not. Times New Roman Italic sets its stem-perpendicular vector through GPV/SPVFS with the
+        /// FREEDOM vector equal to it, and the glyphs that do so are precisely the ones that are
+        /// wrong -- 'l' 51 such instructions, 'd' 51, 'n' 58, all needing a quarter to half a pixel
+        /// of shift, against 'o', 'e' and 's' with NONE and already exact. Verdana, Arial and Segoe
+        /// UI italic use SDPVTL/SPVTL, which do latch, and their 'l' at 12ppem is pixel-exact.</para>
+        /// <para>WPF_CT_DIR_LATCH=0 goes back to recomputing.</para></summary>
+        private bool _ctDirFlag;
+
+        /// <para>MEASURED AND WORSE, and kept because the divergence is real. Latching costs
+        /// 1,539,711 -> 2,248,675 on the specimen. All six handlers GDI writes gs+0xcc from are
+        /// covered (SVTCA, SPVTCA, SPVTL, SDPVTL) and the predicate matches `itrp_SDPVTL`, so this
+        /// is not an incomplete port: every other rule keyed off InClearTypeDirection was tuned
+        /// against the RECOMPUTED predicate, and swapping it moves all of them at once. Times
+        /// Italic's own 'l' does not even change (5,483 either way) because the last latching
+        /// instruction before its GPV/SPVFS block is SVTCA[x], which sets the latch to the same 1
+        /// we compute. So the latch is NOT the italic shear either.</para>
+        private static readonly bool s_ctDirLatched =
+            Environment.GetEnvironmentVariable("WPF_CT_DIR_LATCH") == "1";
 
         private static readonly bool s_ctAxisLatched =
             Environment.GetEnvironmentVariable("WPF_CT_AXIS_LATCH") != "0";
@@ -2795,10 +3128,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             if (_gs.FreeY != 0)
             {
-                zone.CurY[point] += FreedomStep(distance, _gs.FreeY);
-                if (touch) zone.Tags[point] |= TagTouchY;
+                // A DIAGONAL FREEDOM VECTOR PERTURBS Y, WHICH CLEARTYPE HAS ALREADY GRID-FIT.
+                // Times New Roman Italic is the only specimen face that moves points ALONG a
+                // diagonal (pv == fv, set through GPV/SPVFS), and it is the only italic face whose
+                // 'l' is not pixel-exact -- 51 such instructions in 'l', 51 in 'd', 58 in 'n',
+                // against NONE in 'o', 'e' and 's', which are already right. WPF_CT_DIAG_YMOVE=0
+                // asks whether GDI refuses the y half of such a move in the ClearType pass.
+                // 0 refuses the y half outright; 2 refuses it only for a point the program has
+                // ALREADY placed in y, on the reading that a diagonal move should not un-fit a
+                // grid-fitted y. 0 measures 2,053,855 and is MIXED per glyph (Times Italic 'l'
+                // 5,483 -> 4,698 and 'o' better, but 'n' 3,925 -> 4,456), which is what a rule that
+                // is right but wrongly scoped looks like.
+                bool refuse = s_diagYMove != 1 && !BiLevelPass && ClearTypeInfo && _gs.FreeX != 0
+                              && (s_diagYMove == 0 || (zone.Tags[point] & TagTouchY) != 0);
+                if (!refuse)
+                {
+                    zone.CurY[point] += FreedomStep(distance, _gs.FreeY);
+                    if (touch) zone.Tags[point] |= TagTouchY;
+                }
+                if (s_yTrace)
+                    Console.Error.WriteLine("YMOVE pt=" + point + " d=" + distance
+                        + " fx=" + _gs.FreeX + " fy=" + _gs.FreeY
+                        + (refuse ? " REFUSED" : " y=" + zone.CurY[point]));
             }
         }
+
+        /// <summary>WPF_YTRACE=1: every y move the program makes, so the ClearType pass and the
+        /// bi-level pass can be diffed instruction for instruction.</summary>
+        private static readonly bool s_yTrace =
+            Environment.GetEnvironmentVariable("WPF_YTRACE") == "1";
+
+        private static readonly int s_diagYMove =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DIAG_YMOVE"), out int dy) ? dy : 1;
 
         /// <summary>How far one component moves when the point travels <paramref name="distance"/>
         /// along the freedom vector. itrp_MovePoint@180086260 does NOT use one formula:
@@ -2952,7 +3313,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        : physicalPosition ? 1
                        : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
-                       : (s_gridAxisExact ? OnClearTypeAxis : InClearTypeDirection) ? ClearTypeGrid
+                       : (s_roundLatch && _roundGridSubpixel is bool rg ? rg
+                         : s_gridAxisExact ? OnClearTypeAxis : InClearTypeDirection) ? ClearTypeGrid
                        : 1;
             // A SNAP ZONE was tried here -- pull a value onto a whole pixel when it lands within a
             // few 64ths of one, leave it alone otherwise. It is the one mechanism that would explain
