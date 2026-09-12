@@ -897,9 +897,19 @@ namespace WgpuInterop.Tests.Text
                     // fitted, and 37 is the glyph's own point count. So when the fitted count
                     // matches ours, index i pairs with index i and the detour is unnecessary.
                     // <para>GUARDED, because a wrong pairing would invent differences rather than
-                    // fail: every GDI fitted point must land within 3px of OUR scaled unfitted
-                    // point at the same index. A fitted point never travels that far, so a
-                    // misalignment fails the check instead of reporting nonsense.</para>
+                    // fail: every GDI fitted point must land within 1.5px of OUR scaled unfitted
+                    // point at the same index. A fitted point does not travel that far at these
+                    // sizes -- the largest legitimate move seen across the Times repertoire is
+                    // about 0.7px -- so a misalignment fails the check instead of reporting
+                    // nonsense.</para>
+                    // <para>THE GUARD STARTED AT 3px AND THAT WAS TOO LOOSE. Times 'P' at 13 and
+                    // 14ppem came back with four points differing, by up to 58/64 in x and 48/64
+                    // in y, and all four were OFF-CURVE CONTROLS with GDI's values suspiciously
+                    // snapped (2.000, 2.203, 2.797). That is what a drift of one index across a
+                    // run of implied on-curve midpoints looks like, not a fitting difference, and
+                    // at 1.6px it slipped under a 3px bound. Off-curve points are exactly where
+                    // GGO's segmentation and ours disagree, so they are where a by-index pairing
+                    // fails first.</para>
                     // <para>This is what makes the bi-level oracle reach CURVED glyphs at all. It
                     // was blind to every one of them -- and those are the Times bowls, which is
                     // the largest remaining pool -- so "our bi-level fit is GDI's" had only ever
@@ -916,8 +926,8 @@ namespace WgpuInterop.Tests.Text
                         for (int i = 0; i < pts.PointCount && near; i++)
                         {
                             float wantX = pts.StartX[i] + shearForPair * pts.StartY[i];
-                            if (Math.Abs(fittedFull[i].X - wantX) > 3f
-                                || Math.Abs(-fittedFull[i].Y - pts.StartY[i]) > 3f) near = false;
+                            if (Math.Abs(fittedFull[i].X - wantX) > 1.5f
+                                || Math.Abs(-fittedFull[i].Y - pts.StartY[i]) > 1.5f) near = false;
                         }
                         if (near) { byIndex = true; onCurveOnly = false; fitted = fittedFull; }
                     }
