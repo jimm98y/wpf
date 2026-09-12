@@ -857,9 +857,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // text asks for the same handful of glyphs over and over.
         private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
 
+        /// <summary>The same measurement UNROUNDED, in sixty-fourths. The advance GDI lays a glyph
+        /// out at is a whole number of pixels, but the PHASE SCALE is not built from that number:
+        /// fs__Contour reads the bi-level pass's phantom points directly --
+        /// <code>uVar43 = curX[last + 2] - curX[last + 1]</code> -- and divides by what the client
+        /// answers for the same advance in font units. So the numerator keeps its sixty-fourths.
+        /// </summary>
+        private readonly Dictionary<(int Glyph, int Size), int> _hintedSpans = new();
+
         /// <summary>The distance the face's own program leaves between the two horizontal phantom
         /// points -- the advance the glyph is actually drawn with. False when there is no program to
         /// run, or the glyph has no outline for one to run on.</summary>
+        /// <summary>The bi-level pass's phantom span in sixty-fourths, unrounded -- the numerator
+        /// of fs__Contour's phase scale. Measured by the same run as <see cref="TryGetHintedAdvance"/>
+        /// and cached beside it, so asking for one costs the other nothing.</summary>
+        internal bool TryGetHintedSpan64(int glyphId, float pixelsPerEm, out int span64)
+        {
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            if (!_hintedSpans.TryGetValue(key, out span64))
+            {
+                TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
+                if (!_hintedSpans.TryGetValue(key, out span64)) { span64 = 0; return false; }
+            }
+            return span64 > 0;
+        }
+
         private bool TryGetHintedAdvance(int glyphId, float pixelsPerEm, out float advance)
         {
             // THE FACE'S 'gasp' DOES NOT GOVERN THIS. It did for a while: TryGetHintedOutline
@@ -903,6 +925,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     {
                         int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
                         if (span > 0) advance = MathF.Round(span / 64f, MidpointRounding.AwayFromZero);
+                        if (_hintedSpans.Count > HintedCacheLimit) _hintedSpans.Clear();
+                        _hintedSpans[key] = span;
                     }
                 }
                 finally
@@ -2284,11 +2308,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int savedDepth = TrueTypeInterpreter.HintDepth;
             TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
+            int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
             if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
             {
                 TrueTypeInterpreter.CompatibleAdvance64 =
                     (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
                                                         (int) MathF.Round(pixelsPerEm)) * 64f);
+                // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS. See TryGetHintedSpan64.
+                TrueTypeInterpreter.BiLevelSpan64 =
+                    TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
                 if (s_compatProbe)
                     Console.Error.WriteLine($"COMPAT gid={gid} ppem={pixelsPerEm:0.####}"
                         + $" ppemI={(int) MathF.Round(pixelsPerEm)}"
@@ -2307,6 +2335,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 TrueTypeInterpreter.BiLevelPass = savedBi;
                 TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
+                TrueTypeInterpreter.BiLevelSpan64 = savedSpan;
                 TrueTypeInterpreter.HintDepth = savedDepth;
             }
             if (!hinted) return null;

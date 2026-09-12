@@ -1273,6 +1273,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static int CompatibleAdvance64;
 
+        /// <summary>The bi-level pass's phantom advance span in sixty-fourths, UNROUNDED -- the
+        /// numerator fs__Contour actually uses for the phase scale. See the note at the scale.
+        /// </summary>
+        internal static int BiLevelSpan64;
+
         /// <summary>Composite recursion depth of the glyph being hinted: 0 for a glyph asked for
         /// directly, 1+ for a component of a composite. WPF_CT_PHASE_DEPTH selects which of them
         /// the phase runs for.</summary>
@@ -2123,6 +2128,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private bool _phaseApplied;
 
+        /// <summary>WPF_CT_PHASE_NUM=compat: build the phase scale from the LAID-OUT advance, as
+        /// we used to, instead of fs__Contour's unrounded bi-level phantom span.</summary>
+        private static readonly bool s_phaseNumSpan =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_NUM") != "compat";
+
         private static readonly bool s_phaseRecip =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_RECIP") == "1";
 
@@ -2147,7 +2157,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (s_phaseEntryProbe)
                 Console.Error.WriteLine($"PHASEENTRY pts={_realPoints} orgPP1={_glyphZone.OrgX[_realPoints]}"
                     + $" orgPP2={_glyphZone.OrgX[adv]} linear={linear} compat64={CompatibleAdvance64}"
-                    + $" curPP1={_glyphZone.CurX[_realPoints]} curPP2={_glyphZone.CurX[adv]}");
+                    + $" curPP1={_glyphZone.CurX[_realPoints]} curPP2={_glyphZone.CurX[adv]}"
+                    + $" span64={BiLevelSpan64}");
             if (linear <= 0 || CompatibleAdvance64 <= 0) return;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
             // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
@@ -2176,8 +2187,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // fs__Contour@1400249a0 sets the factor to exactly 1.0 whenever `globals[0x1ac]` is
             // zero (or the advance span is), and 0x1ac is copied from `elem[0x46]` as it walks the
             // element list. That gate is the open question, not this.</para>
-            long ctNum = (long) (s_phaseRecip ? linear : CompatibleAdvance64) << 16;
-            int ctDen = s_phaseRecip ? CompatibleAdvance64 : linear;
+            // THE NUMERATOR IS THE BI-LEVEL PASS'S PHANTOM SPAN, NOT THE LAID-OUT ADVANCE.
+            // fs__Contour runs the glyph TWICE -- once against one globals block (pfVar51) and
+            // once against another (pfVar50, which is the one the phase reads) -- and between the
+            // two it computes the scale from the FIRST pass's own phantom points:
+            //     iVar19  = last contour end;
+            //     uVar43  = curX[iVar19 + 2] - curX[iVar19 + 1];      // 26.6, unrounded
+            //     denom   = (*globals[0x130])(globals[0x1ac]);        // the advance in font units
+            //     globals[0x1d0] = (uVar43 << 16 +/- denom/2) / denom;
+            // We used CompatibleAdvance64, which is that same measurement ROUNDED TO A WHOLE
+            // PIXEL (or read out of 'hdmx', which caches the rounded numbers). Rounding is right
+            // for laying a glyph out -- GDI advances by whole pixels -- and wrong here, because
+            // the binary never rounds before dividing. WPF_CT_PHASE_NUM=compat restores it.
+            // <para>AND UNCONDITIONALLY, which is worth saying because the obvious hedge measures
+            // WORSE. 'hdmx' is a cache of pass one's phantom advance, so where our measurement
+            // rounds to a different pixel from the table's it is tempting to distrust our run and
+            // fall back -- and that costs 12,778 (869,355 against 856,577). It buys back the one
+            // row it was written for and loses about twice as much elsewhere, so the span is the
+            // better numerator even where our own bi-level advance is doubtful.</para>
+            // <para>A NARROWER GUARD -- fall back only when the span pulls the OPPOSITE way from
+            // the advance box, which is the case that can visibly damage a glyph -- is worse
+            // still, at 873,726. Neither hedge is worth having.</para>
+            // <para>Both were written for one row, Segoe UI at 12ppem, and that row turned out to
+            // be a DIFFERENT BUG, now fixed: our bi-level pass claimed greyscale in GETINFO and
+            // put Segoe UI and Consolas on a prep branch GDI never takes, which made 'x' measure a
+            // 6-pixel advance against its own 'hdmx' entry of 5. See the GETINFO handler. With
+            // that right the span needs no guard at all and the holdout is 843,447.</para>
+            int numerator = s_phaseNumSpan && BiLevelSpan64 > 0 ? BiLevelSpan64 : CompatibleAdvance64;
+            long ctNum = (long) (s_phaseRecip ? linear : numerator) << 16;
+            int ctDen = s_phaseRecip ? numerator : linear;
             _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / ctDen)
                          : (int) ((ctNum + (ctNum < 0 ? -(ctDen / 2) : ctDen / 2)) / ctDen);
             if (s_phaseRecip) _ctFrac = linear / (float) CompatibleAdvance64 - 1f;

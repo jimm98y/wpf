@@ -958,13 +958,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // black-and-white rasterization and might have been expected to hint as
                             // one: saying no turns twenty-three disagreements with Windows into a
                             // hundred and five. It reports greyscale.
-                            // WPF_CT_GREY=0 answers NO, which is what GetGlyphOutline measurably answers --
-            // the GETINFO oracle reads the greyscale bit CLEAR through GGO. It matters
-            // because a face branches on it: Consolas's prep writes an extra half pixel into
-            // its stem control value on the greyscale branch, so claiming greyscale while
-            // comparing against GGO makes every stem in the face half a pixel too fat.
-            if (!s_greyNever && (s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0)
-                result |= 1 << 12;
+                            // AND WE NO LONGER CLAIM IT. The paragraph above is kept because it
+                            // records a real measurement, but it was made against the greyscale
+                            // RENDER, and the bit is only ever reachable on a pass that is not
+                            // drawing ClearType -- which in this port is the BI-LEVEL MEASUREMENT
+                            // pass, the one that stands in for GDI's own first pass over a glyph.
+                            // Answering greyscale there put two faces on a branch GDI never takes:
+                            //
+                            //     bi-level fit against GDI's own, 62 glyphs at 12ppem
+                            //       Segoe UI   11 of 62 exact, 640 of 1504 points differ in x
+                            //       Consolas   11 of 62 exact, 1053 of 1751 points differ in x
+                            //     answering NO
+                            //       Segoe UI   62 of 62 exact, 0 points differ
+                            //       Consolas   62 of 62 exact, 0 points differ
+                            //
+                            // Arial, Times, Verdana and Tahoma were already exact and are unmoved:
+                            // they are pre-ClearType faces and do not ask. Segoe UI 'T' at 11ppem
+                            // is the clearest case -- GDI fits it to x = 5 3 3 2 2 0 0 5, a stem
+                            // exactly one pixel wide, and the greyscale branch of its prep writes
+                            // 1.25px into that stem's control value, giving 7.25 4.25 4.25 3 3 0 0
+                            // 7.25: a glyph two and a quarter pixels too wide inside a five-pixel
+                            // advance. That is also why its measured advance disagreed with its own
+                            // 'hdmx' (6 against 5), which is what first pointed here.
+                            // WPF_CT_GREY=1 answers it again on the non-ClearType pass, which is
+                            // what shipped; WPF_CT_GREY=always answers it on every pass.
+                            if (!s_greyNever && (s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0)
+                                result |= 1 << 12;
                             if (ClearTypeInfo)
                             {
                                 // WHAT GDI ANSWERS WHEN IT IS ACTUALLY DRAWING CLEARTYPE, which is
@@ -1702,8 +1721,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// four answers below them are unexercised by every face this port is measured against.
         /// Keep them, they cost nothing and another face may ask -- but do not tune against
         /// them.</para></summary>
+        /// <summary>WPF_CT_GREY=always: report greyscale even while drawing ClearType.</summary>
         private static readonly bool s_greyAlways =
-            Environment.GetEnvironmentVariable("WPF_CT_GREY") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_GREY") == "always";
 
         /// <summary>Whether GETINFO reports HORIZONTAL LCD stripes. Measured: GDI does not.</summary>
         private static readonly bool s_stripeInfo =
@@ -2229,8 +2249,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_signCvPhantom =
             Environment.GetEnvironmentVariable("WPF_CT_SIGNCV") == "phantom";
 
+        /// <summary>Never report greyscale -- the default. WPF_CT_GREY=1 restores the old
+        /// answer, which was yes on any pass not drawing ClearType. See GETINFO.</summary>
         private static readonly bool s_greyNever =
-            Environment.GetEnvironmentVariable("WPF_CT_GREY") == "0";
+            Environment.GetEnvironmentVariable("WPF_CT_GREY") is not ("1" or "always");
 
         private static readonly bool s_keepAllDeltas =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA") == "all";
