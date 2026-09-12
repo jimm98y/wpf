@@ -916,20 +916,63 @@ namespace WgpuInterop.Tests.Text
                     // been established on glyphs GGO happens to segment identically both ways,
                     // which is to say the straight and diagonal ones. WPF_GGOPTS_BYINDEX=0 goes
                     // back to requiring the round trip.</para>
+                    // <para>AND THE COUNTS DO NOT HAVE TO MATCH EXACTLY, because the way they
+                    // differ is known: GGO MATERIALISES THE IMPLIED ON-CURVE MIDPOINTS. TrueType
+                    // lets two off-curve control points sit next to each other and leaves the
+                    // on-curve point between them implied at their midpoint; GGO's report writes
+                    // it out. So GGO's fitted list is our point list with one extra entry wherever
+                    // a contour has two consecutive off-curve points -- Times New Roman's 'b' at
+                    // 14ppem is 37 of ours against 40 of GGO's, 'd' 46 against 54, 'm' 88 against
+                    // 101 -- and reconstructing those insertions gives an exact index map.
+                    // <para>This is what finally lets the oracle see a Times BOWL. Before it, 29 of
+                    // the 62 glyphs at 14ppem were unpairable and they were precisely the round
+                    // ones, which is to say the pool the whole Times investigation is about. When
+                    // no contour has consecutive off-curve points the map is the identity and this
+                    // is exactly the rule it replaces.</para>
+                    // <para>The 1.5px proximity guard below still applies to every mapped point, so
+                    // a wrong reconstruction is REFUSED rather than reported as a difference -- and
+                    // it has to be, because off-curve points are where GGO's segmentation and ours
+                    // disagree, which is where a by-index pairing fails first.</para>
                     float shearForPair = font.ObliqueShearApplied;
                     bool byIndex = false;
+                    int[] gdiIdx = Array.Empty<int>();
                     if (plain.Count != fitted.Count
                         && Environment.GetEnvironmentVariable("WPF_GGOPTS_BYINDEX") != "0"
-                        && fittedFull.Count == pts.PointCount && pts.PointCount > 0)
+                        && pts.PointCount > 0 && pts.EndPoints.Length > 0)
                     {
-                        bool near = true;
-                        for (int i = 0; i < pts.PointCount && near; i++)
+                        var map = new List<int>(fittedFull.Count);   // GGO index -> ours, -1 implied
+                        int first = 0;
+                        foreach (int end in pts.EndPoints)
                         {
-                            float wantX = pts.StartX[i] + shearForPair * pts.StartY[i];
-                            if (Math.Abs(fittedFull[i].X - wantX) > 1.5f
-                                || Math.Abs(-fittedFull[i].Y - pts.StartY[i]) > 1.5f) near = false;
+                            if (end < first || end >= pts.PointCount) { map.Clear(); break; }
+                            for (int k = first; k <= end; k++)
+                            {
+                                map.Add(k);
+                                int nxt = k == end ? first : k + 1;
+                                if (!pts.OnCurve[k] && !pts.OnCurve[nxt]) map.Add(-1);
+                            }
+                            first = end + 1;
                         }
-                        if (near) { byIndex = true; onCurveOnly = false; fitted = fittedFull; }
+                        if (map.Count > 0 && map.Count == fittedFull.Count)
+                        {
+                            var idx = new int[pts.PointCount];
+                            for (int k = 0; k < idx.Length; k++) idx[k] = -1;
+                            bool near = true;
+                            for (int k = 0; k < map.Count && near; k++)
+                            {
+                                if (map[k] < 0) continue;
+                                idx[map[k]] = k;
+                                float wantX = pts.StartX[map[k]] + shearForPair * pts.StartY[map[k]];
+                                if (Math.Abs(fittedFull[k].X - wantX) > 1.5f
+                                    || Math.Abs(-fittedFull[k].Y - pts.StartY[map[k]]) > 1.5f)
+                                    near = false;
+                            }
+                            if (near)
+                            {
+                                byIndex = true; onCurveOnly = false;
+                                fitted = fittedFull; gdiIdx = idx;
+                            }
+                        }
                     }
                     if (!byIndex && (plain.Count != fitted.Count || plain.Count == 0))
                     {
@@ -937,9 +980,8 @@ namespace WgpuInterop.Tests.Text
                         if (!quiet)
                             Console.Error.WriteLine($"'{c}': unpairable, GGO segments it"
                                 + $" {plain.Count} points unfitted against {fitted.Count} fitted"
-                                + (fittedFull.Count == pts.PointCount ? " (by-index REFUSED:"
-                                   + " a fitted point sits more than 3px from its scaled place)"
-                                   : $" and {fittedFull.Count} against our {pts.PointCount}"));
+                                + $", and {fittedFull.Count} fitted against our {pts.PointCount}"
+                                + " points plus their implied midpoints");
                         continue;
                     }
 
@@ -957,7 +999,7 @@ namespace WgpuInterop.Tests.Text
                     for (int i = 0; i < pts.PointCount; i++)
                     {
                         if (onCurveOnly && !pts.OnCurve[i]) continue;
-                        int j = byIndex ? i
+                        int j = byIndex ? gdiIdx[i]
                               : Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
                         if (j < 0 || j >= fitted.Count) continue;
                         paired++;
