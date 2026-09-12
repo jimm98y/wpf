@@ -4471,8 +4471,24 @@ namespace WgpuInterop.Tests.Text
         /// measurement to hint against. A residual that stalls well above zero means our
         /// rasterizer cannot produce GDI's pixels from ANY outline, which moves the problem out
         /// of the interpreter entirely -- so either answer is worth having.</para>
-        /// <para>WPF_XYSOLVE_PASSES (default 4), WPF_XYSOLVE_SPAN (default 24, the half-width of
-        /// each point's search in 64ths).</para></summary>
+        /// <para>IT CONVERGES, AND THE EARLIER VERDICT THAT IT DOES NOT WAS A SPAN ARTEFACT. This
+        /// was written off as "963 from 8,396, saturating bounds" with the span at 24, which is
+        /// simply too narrow: the points that carry a diagonal glyph's error want half to
+        /// three-quarters of a pixel, so they pinned themselves to the boundary and the descent
+        /// stopped. At 36 the same glyphs solve essentially exactly -- Arial 'K'@20 3,397 -> 154,
+        /// Times 'A'@24 1,978 -> 100, Times 'W'@24 2,504 -> 118, Arial 'z'@20 3,353 -> 373 -- so
+        /// the default is 36 now. A saturated delta (one equal to the span) always means widen it
+        /// and run again; never read one as an answer.</para>
+        /// <para>WHICH MAKES THIS THE ORACLE FOR GDI'S CLEARTYPE **Y**, the instrument whose
+        /// absence has been the named blocker for the serif and diagonal rows. SolveGdisEdges
+        /// moves x only and therefore lies in a knowable way: on Arial 'K'@20 it stalls at 1,546
+        /// and reports GDI pulling apart four points our fit leaves collinear on the stem's right
+        /// edge, which is nonsense -- with both axes the same glyph solves to 154 and the answer is
+        /// that two points are wrong in Y by 30/64 and 20/64 and x is right to within 8/64. Prefer
+        /// this whenever an x-only solve stalls.</para>
+        /// <para>WPF_XYSOLVE_PASSES (default 4), WPF_XYSOLVE_SPAN (default 36, the half-width of
+        /// each point's search in 64ths). Cost is roughly points x 2 x (2*span/step) x passes
+        /// renders -- a 64-point 'W' at span 36 is 16,129 of them, about a minute.</para></summary>
         [Fact]
         public void SolveGdisOutlineXy()
         {
@@ -4484,7 +4500,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
             int passes = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_PASSES"), out int pz) ? pz : 4;
-            int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 24;
+            int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 36;
 
             string? file = FontFiles.Find(parts[0], bold, italic);
             Assert.SkipWhen(file is null, "this machine lacks the face");
