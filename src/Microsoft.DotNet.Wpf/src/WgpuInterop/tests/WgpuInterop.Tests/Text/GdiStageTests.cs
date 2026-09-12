@@ -878,6 +878,7 @@ namespace WgpuInterop.Tests.Text
                     // are the curved ones, which is to say the ones this investigation cares
                     // about. The count of them is reported, so the sample is never silently
                     // biased; do not read a face's total without it.
+                    List<Vector2> fittedFull = fitted;
                     bool onCurveOnly = plain.Count != fitted.Count;
                     if (onCurveOnly)
                     {
@@ -886,12 +887,49 @@ namespace WgpuInterop.Tests.Text
                         fitted = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: false,
                                                            bold: bold, italic: italic));
                     }
-                    if (plain.Count != fitted.Count || plain.Count == 0)
+                    // PAIR BY INDEX WHEN GGO'S FITTED REPORT IS ALREADY OUR POINT LIST. The
+                    // correspondence above goes the long way round -- find our unfitted point in
+                    // GGO's unfitted list, then read the fitted list at that index -- which needs
+                    // GGO's two reports to be the same length, and on a curved glyph they are not.
+                    // But the FITTED report frequently has exactly as many points as the font's
+                    // glyph does, which is exactly as many as the interpreter captured, and in the
+                    // same order; Times New Roman's '0' at 14ppem reports 23 unfitted against 37
+                    // fitted, and 37 is the glyph's own point count. So when the fitted count
+                    // matches ours, index i pairs with index i and the detour is unnecessary.
+                    // <para>GUARDED, because a wrong pairing would invent differences rather than
+                    // fail: every GDI fitted point must land within 3px of OUR scaled unfitted
+                    // point at the same index. A fitted point never travels that far, so a
+                    // misalignment fails the check instead of reporting nonsense.</para>
+                    // <para>This is what makes the bi-level oracle reach CURVED glyphs at all. It
+                    // was blind to every one of them -- and those are the Times bowls, which is
+                    // the largest remaining pool -- so "our bi-level fit is GDI's" had only ever
+                    // been established on glyphs GGO happens to segment identically both ways,
+                    // which is to say the straight and diagonal ones. WPF_GGOPTS_BYINDEX=0 goes
+                    // back to requiring the round trip.</para>
+                    float shearForPair = font.ObliqueShearApplied;
+                    bool byIndex = false;
+                    if (plain.Count != fitted.Count
+                        && Environment.GetEnvironmentVariable("WPF_GGOPTS_BYINDEX") != "0"
+                        && fittedFull.Count == pts.PointCount && pts.PointCount > 0)
+                    {
+                        bool near = true;
+                        for (int i = 0; i < pts.PointCount && near; i++)
+                        {
+                            float wantX = pts.StartX[i] + shearForPair * pts.StartY[i];
+                            if (Math.Abs(fittedFull[i].X - wantX) > 3f
+                                || Math.Abs(-fittedFull[i].Y - pts.StartY[i]) > 3f) near = false;
+                        }
+                        if (near) { byIndex = true; onCurveOnly = false; fitted = fittedFull; }
+                    }
+                    if (!byIndex && (plain.Count != fitted.Count || plain.Count == 0))
                     {
                         unpairable++;
                         if (!quiet)
                             Console.Error.WriteLine($"'{c}': unpairable, GGO segments it"
-                                + $" {plain.Count} points unfitted against {fitted.Count} fitted");
+                                + $" {plain.Count} points unfitted against {fitted.Count} fitted"
+                                + (fittedFull.Count == pts.PointCount ? " (by-index REFUSED:"
+                                   + " a fitted point sits more than 3px from its scaled place)"
+                                   : $" and {fittedFull.Count} against our {pts.PointCount}"));
                         continue;
                     }
 
@@ -909,8 +947,9 @@ namespace WgpuInterop.Tests.Text
                     for (int i = 0; i < pts.PointCount; i++)
                     {
                         if (onCurveOnly && !pts.OnCurve[i]) continue;
-                        int j = Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
-                        if (j < 0) continue;
+                        int j = byIndex ? i
+                              : Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
+                        if (j < 0 || j >= fitted.Count) continue;
                         paired++;
                         float gdiY = -fitted[j].Y, gdiX = fitted[j].X;
                         double dy = pts.FitY[i] - gdiY, dx = pts.FitX[i] + shear * pts.FitY[i] - gdiX;
