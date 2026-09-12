@@ -2101,6 +2101,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private bool _phaseApplied;
 
+        private static readonly bool s_phaseRecip =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_RECIP") == "1";
+
         /// <summary>Apply the phase to the live glyph zone, once per glyph. ctFactor is the
         /// compatible advance over the linear one, as fs_NewGlyph computes it.</summary>
         internal void ApplyPhaseAtIup()
@@ -2134,9 +2137,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // which is round-half-away-from-zero on (span << 16) / linear. Worth a fraction of a
             // sixty-fourth on any one point, but it is free and it is what the binary does.
             // WPF_CT_PHASE_TRUNC=1 goes back to truncating.
-            long ctNum = (long) CompatibleAdvance64 << 16;
-            _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / linear)
-                         : (int) ((ctNum + (ctNum < 0 ? -(linear / 2) : linear / 2)) / linear);
+            // WPF_CT_PHASE_RECIP=1 divides the OTHER way round. fs__Contour@140025010 builds the
+            // factor as `(w22 << 16 +/- w0/2) / w0`, where w22 is `phantom2.x - phantom1.x` read
+            // out of a coordinate array and w0 comes from a call through elem+0xd8. An earlier
+            // reading took w22 for the device advance and w0 for the linear one, which is what
+            // ships; read the other way it is linear/compatible, the reciprocal. Arial Italic 'N'
+            // at 9ppem is the case that asks: linear is exactly 6.500 and the compatible advance
+            // 6, the largest compression of its neighbourhood, and it is the only size where that
+            // glyph does not already solve EXACTLY (8 and 10ppem both do). GDI's span there is
+            // 445/64 against our 396, the natural 408 and the bi-level 452 -- and 408 * 6.5/6 is
+            // 442, which looked like the reciprocal's prediction almost exactly.
+            // <para>REFUTED, and the coincidence was just that: Arial Italic goes 3,525/28,914/
+            // 6,235 at 8/9/10ppem to 142,090/100,678/195,711. So the earlier reading is the right
+            // one -- w22 is the DEVICE advance and w0 the linear -- and compat/linear ships. What
+            // is wrong at 9ppem is not the ratio's direction but whether the phase runs at all:
+            // fs__Contour@1400249a0 sets the factor to exactly 1.0 whenever `globals[0x1ac]` is
+            // zero (or the advance span is), and 0x1ac is copied from `elem[0x46]` as it walks the
+            // element list. That gate is the open question, not this.</para>
+            long ctNum = (long) (s_phaseRecip ? linear : CompatibleAdvance64) << 16;
+            int ctDen = s_phaseRecip ? CompatibleAdvance64 : linear;
+            _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / ctDen)
+                         : (int) ((ctNum + (ctNum < 0 ? -(ctDen / 2) : ctDen / 2)) / ctDen);
+            if (s_phaseRecip) _ctFrac = linear / (float) CompatibleAdvance64 - 1f;
             // THE PHASE ONLY EVER EXPANDS CORRECTLY. Where 'hdmx' forces an advance SMALLER
             // than the natural one the fraction goes negative, and the tree -- 24 of 32 points
             // roots that are never moved, 8 touched points carrying the shift, IUP spreading it
