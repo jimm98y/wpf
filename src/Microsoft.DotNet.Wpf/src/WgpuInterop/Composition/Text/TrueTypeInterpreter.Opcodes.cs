@@ -2735,6 +2735,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // which reinterprets a black link by probing the ink and is ours, not GDI's. The colour
             // only survives the double check when the two points are not contour neighbours, but that
             // is exactly the case that decides whether a stem pair forms.
+            // WPF_MDRP_TRACE=1 covers MIRP too: it is what places a stem, so a stem that comes out
+            // the wrong width or in the wrong column is almost always one of these lines.
+            if (s_mdrpTrace)
+                Console.Error.WriteLine($"   MIRP p={p} rp0={_gs.Rp0} cvt={cvt} link={linkType}"
+                    + $" round={round} min={keepMinimum} cvtval={value / 64f:0.####}"
+                    + $" orig={original / 64f:0.####} -> dist={distance / 64f:0.####}"
+                    + $" cur={current / 64f:0.####} move={(distance - current) / 64f:0.####}"
+                    + $" pv=({_gs.ProjX},{_gs.ProjY}) ctDir={InClearTypeDirection} ppem={_ppem}");
             LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType, doubleCheck: true, phaseType: op & 3);
             MovePoint(z, p, distance - current);
 
