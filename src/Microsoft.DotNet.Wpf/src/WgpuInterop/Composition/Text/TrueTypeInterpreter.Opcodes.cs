@@ -1004,6 +1004,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // Arial and Consolas match too; Verdana, Tahoma and Segoe UI do
                                 // not. See _mdOnePixelIs65 for what bit 10 goes on to do.
                                 if (id == 0) _fdefAddHelper = StartsWith(code, body, ip, s_fdefAddHelper);
+                                // The same table's other two sequences, checked for functions
+                                // 0, 1, 2, 4, 7 and 8, set bit 9 instead. Verdana Bold and Tahoma
+                                // define 0/1/2/4/8 all starting `01 B0 18 43 58` (SVTCA[x];
+                                // PUSHB 24; RS; IF) and Segoe UI defines 0/1/2/4/7/8 starting
+                                // `01 18 B0 18 43 58` (the same with an RTG) -- every one of them
+                                // a mode dispatcher keyed on storage[24]. Times and Arial match
+                                // neither.
+                                if (id < 3 || id == 4 || id == 7 || id == 8)
+                                    _fdefModeDispatch |= StartsWith(code, body, ip, s_fdefDispatchA)
+                                                      || StartsWith(code, body, ip, s_fdefDispatchB);
+                                // WPF_FDEF_DUMP=1: every function this face defines, with the
+                                // first bytes of its body -- the only way to tell WHICH function
+                                // number carries a recognised sequence, since the numbers come off
+                                // the stack and cannot be read out of the fpgm statically.
+                                if (s_fdefDump)
+                                {
+                                    var sb = new System.Text.StringBuilder($"FDEF fn{id,-4} len{ip - body,-5}");
+                                    for (int k = body; k < ip && k < body + 10; k++)
+                                        sb.Append($" {code[k]:X2}");
+                                    Console.Error.WriteLine(sb.ToString());
+                                }
                             }
                             break;
                         }
@@ -1030,6 +1051,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             }
                             if (callDepth < _callDelta.Length && _callDelta[callDepth])
                             { _callDelta[callDepth] = false; if (_deltaFdefDepth > 0) _deltaFdefDepth--; }
+                            if (callDepth < _callRearm.Length && _callRearm[callDepth])
+                            { _callRearm[callDepth] = false; _phaseApplied = _callPhaseWas[callDepth]; }
                             code = frame.ReturnCode;
                             ip = frame.ReturnIp;
                             break;
@@ -1043,6 +1066,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                                                code, ip, 1); _callDepth = callDepth;
                             _callDelta[callDepth - 1] = IsSuppressedFdef(id);
                             if (_callDelta[callDepth - 1]) _deltaFdefDepth++;
+                            // THE PHASE PASS IS RE-ARMED AROUND A CALL TO FUNCTIONS 0, 1, 2, 4,
+                            // 7 AND 8 -- the same set itrp_FDEF signature-checks. The dispatch
+                            // reads `cmp #0x40 b.ge / cmp #2 b.gt / cmp #4 b.eq / cmp #7 b.ge /
+                            // cmp #8 b.gt`, so 0..2, 4, 7 and 8 all reach the guard at
+                            // itrp_CALL@140036450:
+                            //     if ((globals[0x1c0] & 1) && !(globals[0x88] & 4)
+                            //         && (globals[0x1c2] & 0x200))
+                            //     { saved = elem[0x60]; elem[0x60] = 0; restoreAfter = 1; }
+                            // elem[0x60] is the phase-DONE flag -- InitPhaseControl zeroes it,
+                            // ExecutePhaseControl sets it, and itrp_IUP will not run the pass
+                            // while it is set. So inside a recognised mode dispatcher the
+                            // compatible-width phase runs AGAIN at the next IUP, and the flag goes
+                            // back to what it was on return. WPF_CT_PHASE_REARM=0 turns it off.
+                            // <para>NOT EXERCISED BY THE SIX SPECIMEN FACES, and measured at
+                            // exactly zero because of it. The three faces that set bit 9 -- Verdana
+                            // Bold, Tahoma and Segoe UI, whose functions 0/1/2/4/7/8 are all mode
+                            // dispatchers keyed on storage[24] -- never CALL any of those numbers
+                            // from a glyph program (checked over 17 glyphs each at 16ppem; Tahoma
+                            // reaches for 59 and 133, Segoe UI for 73, 77 and 89). Times and Arial
+                            // do call 0 and 1 constantly but match the fn-0 signature instead, so
+                            // they never set bit 9. Kept because it is what the binary does and
+                            // fonts outside this corpus will hit it -- but it has never been
+                            // checked against a pixel, so treat it as a reading, not a result.</para>
+                            _callRearm[callDepth - 1] = s_phaseRearm
+                                && (id < 3 || id == 4 || id == 7 || id == 8) && _fdefModeDispatch
+                                && ClearTypeInfo && !NativeClearTypeMode && !BiLevelPass;
+                            if (_callRearm[callDepth - 1])
+                            { _callPhaseWas[callDepth - 1] = _phaseApplied; _phaseApplied = false; }
                             code = _functions[id].Code;
                             ip = _functions[id].Start;
                             break;
@@ -1810,6 +1861,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>`RCVT SWAP GC[0] ADD DUP PUSHB[1] 38`, the seven bytes itrp_FDEF looks for in
         /// function 0 (fontdrvhost+0xa87b0).</summary>
+        private static readonly bool s_fdefDump =
+            Environment.GetEnvironmentVariable("WPF_FDEF_DUMP") == "1";
+
         private static readonly byte[] s_fdefAddHelper =
             { 0x45, 0x23, 0x46, 0x60, 0x20, 0xB0, 0x26 };
 
@@ -1836,6 +1890,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private readonly bool[] _callDelta = new bool[128];
         private int _deltaFdefDepth;
+
+        /// <summary>`SVTCA[x] PUSHB[1] 24 RS IF` and the same with an RTG in front -- the two
+        /// sequences itrp_FDEF looks for in functions 0, 1, 2, 4, 7 and 8
+        /// (fontdrvhost+0xa8790 and +0xa87a0).</summary>
+        private static readonly byte[] s_fdefDispatchA = { 0x01, 0xB0, 0x18, 0x43, 0x58 };
+        private static readonly byte[] s_fdefDispatchB = { 0x01, 0x18, 0xB0, 0x18, 0x43, 0x58 };
+
+        /// <summary>gs+0x1c2 bit 9. Decided once by the font program.</summary>
+        private bool _fdefModeDispatch;
+
+        private readonly bool[] _callRearm = new bool[128];
+        private readonly bool[] _callPhaseWas = new bool[128];
+
+        private static readonly bool s_phaseRearm =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_REARM") != "0";
 
         private static bool MatchesSuppressedFdef(byte[] code, int body, int end)
         {
