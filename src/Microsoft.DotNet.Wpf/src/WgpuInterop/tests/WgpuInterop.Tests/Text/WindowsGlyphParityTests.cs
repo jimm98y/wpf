@@ -4457,6 +4457,278 @@ namespace WgpuInterop.Tests.Text
         /// printed and its middle is the reported answer, not whichever end the sweep met first.
         /// The bi-level fitting's edges are printed beside, since that outline keeps being the
         /// suspect.</para>
+        /// <summary>GDI'S CLEARTYPE OUTLINE IN BOTH AXES, recovered by inverting our own
+        /// rasterizer. WPF_XYSOLVE=family/chars/ppem[/B|I].
+        /// <para>This is the instrument the Y side has never had. SolveGdisEdges moves each EDGE
+        /// in x only, so it cannot see a point GDI placed at a different HEIGHT -- and on a curve
+        /// it slides x to fake the ink a wrong y produced, which is how it reported a bowl's
+        /// control point 39/64 to the right when the real difference was the shape. The shear
+        /// solver has two unknowns and cannot bend anything. This one walks every emitted point
+        /// and tries it at a range of offsets in x and then in y, keeping whatever lowers GDI's
+        /// own score, for a few passes.</para>
+        /// <para>Read the RESIDUAL first. Zero means the returned coordinates ARE GDI's, to the
+        /// resolution the rasterizer can distinguish, and the per-point table is then a direct
+        /// measurement to hint against. A residual that stalls well above zero means our
+        /// rasterizer cannot produce GDI's pixels from ANY outline, which moves the problem out
+        /// of the interpreter entirely -- so either answer is worth having.</para>
+        /// <para>WPF_XYSOLVE_PASSES (default 4), WPF_XYSOLVE_SPAN (default 24, the half-width of
+        /// each point's search in 64ths).</para></summary>
+        [Fact]
+        public void SolveGdisOutlineXy()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_XYSOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_XYSOLVE=family/chars/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            int passes = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_PASSES"), out int pz) ? pz : 4;
+            int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 24;
+
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, "this machine lacks the face");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            renderer.SubpixelRowsOverride = font.WantsSymmetricSmoothing(ppem) ? 5 : 0;
+            renderer.DropoutOverride = font.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
+            renderer.PpemOverride = ppem;
+            var raw = new byte[Width * Height * 4];
+
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = true;
+            try
+            {
+                foreach (char c in parts[1])
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0 || !((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
+                            out List<PathFigure> fitted) || fitted.Count == 0)
+                    { Console.Error.WriteLine("== not fitted"); continue; }
+
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.s_rawRgb = null;
+
+                    // The fit, flattened to one array per axis in EMISSION order, which is the
+                    // order M() below walks -- so a point's identity is its index here.
+                    var pxl = new List<int>();
+                    var pyl = new List<int>();
+                    void See(Vector2 p)
+                    { pxl.Add((int) MathF.Round(p.X * 64f)); pyl.Add((int) MathF.Round(p.Y * 64f)); }
+                    foreach (PathFigure f in fitted)
+                    {
+                        See(f.Start);
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment l) See(l.Point);
+                            else if (sg is QuadraticBezierSegment q) { See(q.Control); See(q.Point); }
+                            else if (sg is CubicBezierSegment c3)
+                            { See(c3.Control1); See(c3.Control2); See(c3.Point); }
+                    }
+                    int[] sx = pxl.ToArray(), sy = pyl.ToArray();
+                    int[] ox = (int[]) sx.Clone(), oy = (int[]) sy.Clone();
+
+                    int idx = 0;
+                    long Score()
+                    {
+                        idx = 0;
+                        Vector2 M(Vector2 ignored)
+                        { int i = idx++; return new(PenX + sx[i] / 64f, 28f + sy[i] / 64f); }
+                        var placed = new List<PathFigure>(fitted.Count);
+                        foreach (PathFigure f in fitted)
+                        {
+                            var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                            foreach (PathSegment sg in f.Segments)
+                                nf.Segments.Add(sg switch
+                                {
+                                    LineSegment l => new LineSegment(M(l.Point)),
+                                    QuadraticBezierSegment q =>
+                                        new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                                    CubicBezierSegment c3 =>
+                                        new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
+                                    _ => sg,
+                                });
+                            placed.Add(nf);
+                        }
+                        var root = new SceneVisual();
+                        root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                            new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
+                            { PixelAligned = true });
+                        byte[] ours = renderer.RenderToRgba(root, Width, Height,
+                            RgbaColor.FromBytes(255, 255, 255, 255));
+                        long sum = 0;
+                        for (int i = 0; i < Width * Height; i++)
+                            for (int ch = 0; ch < 3; ch++)
+                                sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                        return sum;
+                    }
+
+                    long start = Score(), cur = start;
+                    int renders = 1;
+                    for (int pass = 0; pass < passes && cur > 0; pass++)
+                    {
+                        int step = pass == 0 ? 4 : pass == 1 ? 2 : 1;
+                        for (int i = 0; i < sx.Length && cur > 0; i++)
+                            for (int axis = 0; axis < 2; axis++)
+                            {
+                                int[] arr = axis == 0 ? sx : sy;
+                                int keep = arr[i], bestV = keep;
+                                for (int d = -span; d <= span; d += step)
+                                {
+                                    if (d == 0) continue;
+                                    arr[i] = keep + d;
+                                    long v = Score();
+                                    renders++;
+                                    if (v < cur) { cur = v; bestV = arr[i]; }
+                                }
+                                arr[i] = bestV;
+                            }
+                        Console.Error.WriteLine("   pass " + pass + " (step " + step + "): " + cur);
+                    }
+                    Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}  {sx.Length} points,"
+                        + $" {renders} renders;  as fitted {start}  ->  residual {cur}"
+                        + (cur == 0 ? "   EXACT -- these ARE GDI own coordinates" : ""));
+                    for (int i = 0; i < sx.Length; i++)
+                        if (sx[i] != ox[i] || sy[i] != oy[i])
+                            Console.Error.WriteLine($"   pt {i,3}  ours ({ox[i],5},{oy[i],5})"
+                                + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})");
+                }
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+        }
+
+        /// <summary>WHERE DOES GDI PUT ONE POINT? `WPF_KNOTSOLVE=family/chars/ppem[/B|I]` with
+        /// `WPF_KNOTSOLVE_AT=<x>,<y>` in 64ths naming a point of OUR fitted outline by its
+        /// coordinates.
+        /// <para>The per-edge solver has as many unknowns as the glyph has edges and stops
+        /// converging on a curve; the shear solver has two but cannot bend anything. This has ONE:
+        /// slide every emitted point that sits at (x, y) along x, and report GDI's own score at
+        /// each position. It exists because reasoning had narrowed Times' bowls to a single
+        /// coordinate -- the knot an ALIGNRP loop collapses three points onto -- and the only thing
+        /// left to do with a claim that specific is to put the point there and look.</para>
+        /// <para>A zero says the claim is exactly right. A minimum that is NOT near zero says the
+        /// point is not the whole difference, which is worth just as much: it is the difference
+        /// between one wrong coordinate and a wrong SHAPE.</para></summary>
+        [Fact]
+        public void SolveGdisKnot()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_KNOTSOLVE");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_KNOTSOLVE=family/chars/ppem[/style]");
+            string? at = Environment.GetEnvironmentVariable("WPF_KNOTSOLVE_AT");
+            Assert.SkipWhen(string.IsNullOrEmpty(at), "set WPF_KNOTSOLVE_AT=<x64>,<y64>");
+            string[] atp = at!.Split(',');
+            int atX = int.Parse(atp[0]), atY = int.Parse(atp[1]);
+
+            string[] parts = spec!.Split('/');
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            string? file = FontFiles.Find(parts[0], bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            var renderer = NewRenderer(font);
+            renderer.TextBlendCorrection = true;
+            renderer.SubpixelRowsOverride = font.WantsSymmetricSmoothing(ppem) ? 5 : 0;
+            renderer.DropoutOverride = font.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
+            renderer.PpemOverride = ppem;
+            var raw = new byte[Width * Height * 4];
+
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = true;
+            try
+            {
+                foreach (char c in parts[1])
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0 || !((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
+                            out List<PathFigure> fitted) || fitted.Count == 0)
+                    { Console.Error.WriteLine($"== '{c}': not fitted"); continue; }
+
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.s_rawRgb = null;
+
+                    // WPF_KNOTSOLVE_MODE=y sweeps the point's Y instead, and then matches on Y
+                    // ALONE -- so both ends of a symmetric feature move together, which is what a
+                    // bowl's shoulder is. The straight side of a Times bowl runs between two such
+                    // rows, and its LENGTH is what decides how many rows the glyph is full width
+                    // for.
+                    bool yMode = Environment.GetEnvironmentVariable("WPF_KNOTSOLVE_MODE") == "y";
+                    int moved = 0;
+                    long Score(int newV)
+                    {
+                        moved = 0;
+                        Vector2 M(Vector2 p)
+                        {
+                            float x = p.X, y = p.Y;
+                            if (yMode)
+                            {
+                                if ((int) MathF.Round(p.Y * 64f) == atY) { y = newV / 64f; moved++; }
+                            }
+                            else if ((int) MathF.Round(p.X * 64f) == atX
+                                     && (int) MathF.Round(p.Y * 64f) == atY)
+                            { x = newV / 64f; moved++; }
+                            return new(PenX + x, 28f + y);
+                        }
+                        var placed = new List<PathFigure>(fitted.Count);
+                        foreach (PathFigure f in fitted)
+                        {
+                            var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                            foreach (PathSegment sg in f.Segments)
+                                nf.Segments.Add(sg switch
+                                {
+                                    LineSegment l => new LineSegment(M(l.Point)),
+                                    QuadraticBezierSegment q =>
+                                        new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                                    CubicBezierSegment c3 =>
+                                        new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
+                                    _ => sg,
+                                });
+                            placed.Add(nf);
+                        }
+                        var root = new SceneVisual();
+                        root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                            new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
+                            { PixelAligned = true });
+                        byte[] ours = renderer.RenderToRgba(root, Width, Height,
+                            RgbaColor.FromBytes(255, 255, 255, 255));
+                        long sum = 0;
+                        for (int i = 0; i < Width * Height; i++)
+                            for (int ch = 0; ch < 3; ch++)
+                                sum += Math.Abs(raw[i * 4 + (2 - ch)] - ours[i * 4 + ch]);
+                        return sum;
+                    }
+
+                    int from = yMode ? atY : atX;
+                    long baseline = Score(from);
+                    var sb = new System.Text.StringBuilder();
+                    long best = long.MaxValue; int bestX = from;
+                    for (int x = from - 16; x <= from + 112; x += 2)
+                    {
+                        long v = Score(x);
+                        if (v < best) { best = v; bestX = x; }
+                        if (x % 8 == 0 || v == best) sb.Append($"  {x}:{v}");
+                    }
+                    Console.Error.WriteLine($"== '{c}' {parts[0]}@{ppem}{style}"
+                        + $" {(yMode ? "y" : "x")}-sweep of ({atX},{atY}),"
+                        + $" {moved} emitted point(s) moved;  as fitted {baseline}"
+                        + $"  ->  best {best} at x={bestX}/64 ({bestX / 64f:0.000}px)");
+                    Console.Error.WriteLine("   sweep:" + sb);
+                }
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+        }
+
         /// <summary>IS GDI'S GLYPH OURS, SHIFTED AND SHEARED? `WPF_SHEARSOLVE=family/chars/ppem[/B|I]`.
         /// <para>The per-edge solver answers "where is each edge" and, when it does not converge,
         /// leaves a table nobody can read. This asks a far smaller question with only two unknowns,
