@@ -2149,6 +2149,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // and the assembly would apply it a second time), 1 = only components, 2 = both.
             if (s_phaseDepth == 0 && HintDepth > 0) return;
             if (s_phaseDepth == 1 && HintDepth == 0 && _inComposite) return;
+            // 3: STRICTLY components -- REFUTED, and the reading behind it with it. itrp_IUP's
+            // phase block is guarded by `elem != localGS[0x38]`, which read as "not the GLYPH
+            // element", and for a simple glyph those would be the same -- so GDI would never phase
+            // one. It measures 46,983,682 against 611,135. localGS[0x38] is therefore the TWILIGHT
+            // element, and `elem != twilight` is true for any real glyph, so the guard says only
+            // "do not phase the twilight zone". Kept as a knob because the number is the proof.
+            if (s_phaseDepth == 3 && HintDepth == 0) return;
             if (!ClearTypeInfo) return;
             _phaseApplied = true;
             int adv = _realPoints + 1;
