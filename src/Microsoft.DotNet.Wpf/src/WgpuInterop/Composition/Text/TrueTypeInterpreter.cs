@@ -2274,8 +2274,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // So one value crosses from design space to 26.6, once. We took the difference of
             // OrgX[pp2] and OrgX[pp1], and those are two independently scaled and rounded
             // coordinates: round(a*s) - round(b*s) is not round((a-b)*s), and the two disagree by
-            // a sixty-fourth whenever the two roundings fall opposite ways -- which is about half
-            // the time.
+            // a sixty-fourth whenever the two roundings fall opposite ways.
+            // <para>AND IT ONLY BITES WHERE THE LEFT PHANTOM IS OFF ZERO, which is why the fix
+            // moved exactly six rows and every one of them is Times New Roman ITALIC. pp1.x is
+            // xMin - lsb, so it is ZERO for every glyph whose left side bearing matches its
+            // bounding box -- all seventeen Times Regular letters sampled -- and there
+            // `OrgX[pp2] - OrgX[pp1]` IS `Scale(advance)` and the two forms agree exactly. Times
+            // Italic puts three of the same seventeen at pp1.x = 2, and one of those reads
+            // orgPP1 = 2, orgPP2 = 342 against a font-unit advance that scales to 341: the old
+            // divisor was 340, one sixty-fourth short, on a glyph where the phase then places
+            // every anchor.</para>
             // <para>That is exactly the size of the error the anchor search measures. Over 340
             // glyph/size pairs across six faces, sixty of the ninety-four imperfect ones are
             // reproduced EXACTLY by moving anchors alone, fifty-three of those need just ONE
