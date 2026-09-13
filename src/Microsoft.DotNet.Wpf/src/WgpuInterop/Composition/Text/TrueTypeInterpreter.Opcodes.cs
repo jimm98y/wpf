@@ -1565,8 +1565,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Console.Error.WriteLine(sb.ToString());
         }
 
+        private int[]? _dumpPrevX;
+        private string _dumpPrevOp = "";
+
+        /// <summary>WPF_HINT_MOVES=1: after each instruction, ATTRIBUTE the points it moved in x to
+        /// it, as `MOVED by <instruction>: pt N a -> b`.
+        /// <para>Without this the dump prints the whole coordinate array before every instruction
+        /// and leaves the reader to diff consecutive lines -- which is fine until the font runs its
+        /// work inside a FUNCTION called several times, at which point every line carries the same
+        /// instruction index and the changes cannot be attributed at all. Arial Bold 'X' at 20ppem
+        /// does exactly that: its second control-value pass is a loop at index 453, and hand-diffing
+        /// it attributed one instruction's move to another. The diff is taken against the previous
+        /// call, so the line is printed under the instruction that caused it.</para></summary>
+        private static readonly bool s_dumpMoves =
+            Environment.GetEnvironmentVariable("WPF_HINT_MOVES") == "1";
+
         private void DumpStep(byte op, int at)
         {
+            if (s_dumpMoves)
+            {
+                int n = _glyphZone.CurX.Length;
+                if (_dumpPrevX is null || _dumpPrevX.Length != n) _dumpPrevX = new int[n];
+                else
+                {
+                    var moved = new System.Text.StringBuilder();
+                    for (int i = 0; i < n; i++)
+                        if (_dumpPrevX[i] != _glyphZone.CurX[i])
+                            moved.Append($" pt{i} {_dumpPrevX[i]}->{_glyphZone.CurX[i]}");
+                    if (moved.Length > 0)
+                        Console.Error.WriteLine($"   MOVED by {_dumpPrevOp}:{moved}");
+                }
+                System.Array.Copy(_glyphZone.CurX, _dumpPrevX, n);
+                _dumpPrevOp = $"{at,5}: {OpName(op)}";
+            }
             var sb = new System.Text.StringBuilder();
             sb.Append($"{at,5}: {OpName(op)} (0x{op:X2})  stack[");
             for (int i = System.Math.Max(0, _top - 4); i < _top; i++)
