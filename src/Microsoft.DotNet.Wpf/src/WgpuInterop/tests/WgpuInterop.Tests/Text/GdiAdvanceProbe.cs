@@ -39,6 +39,8 @@ namespace WgpuInterop.Tests.Text
         [StructLayout(LayoutKind.Sequential)]
         private struct SIZE { public int cx, cy; }
 
+        [DllImport("gdi32.dll", EntryPoint = "GetCharWidthFloatW")]
+        private static extern bool GetCharWidthFloatW(IntPtr dc, uint first, uint last, float[] buf);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateFontIndirectW(ref LOGFONTW lf);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
         [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
@@ -89,8 +91,26 @@ namespace WgpuInterop.Tests.Text
                     var abc = new ABC[1];
                     bool okAbc = GetCharABCWidthsI(dc, 0, 1, gi, abc);
                     GetTextExtentPoint32W(dc, new string(c, 10), 10, out SIZE sz);
+                    // FRACTIONAL, which is the only GDI call here that does not round the
+                    // advance away. GetCharWidthI, the ABC widths and the run extent all report
+                    // whole pixels, so none can say whether GDI's fitted advance is 13.000 or
+                    // 13.047 -- and that difference is exactly what the compatible-width phase
+                    // divides by. Arial Bold 'X'@20 wants a numerator of 834 or 835 sixty-fourths
+                    // to reproduce GDI's phase at its one pinned node, against the 832 our own
+                    // bi-level pass measures: a sixteenth of a pixel.
+                    // <para>AND IT HAS NO EXTRA PRECISION, which is the finding. Despite the name
+                    // it returns exactly charWidth/16: Arial Bold 'X' reads 0.75000 / 0.81250 /
+                    // 0.87500 / 0.93750 at 18/20/21/22ppem against whole-pixel advances of
+                    // 12/13/14/15. So GDI exposes no fractional advance anywhere -- not here, not
+                    // through the ABC widths, not through the run extent -- and the phase
+                    // numerator cannot be measured this way. Kept so the column is on the record
+                    // and nobody spends the afternoon on it twice.</para>
+                    var wf = new float[1];
+                    bool okF = GetCharWidthFloatW(dc, c, c, wf);
                     sb.AppendLine("   '" + c + "' gid=" + gi[0]
                         + "   charWidth " + w[0]
+                        + "   float " + (okF ? wf[0].ToString("0.00000")
+                                             + " (" + (wf[0] * 64f).ToString("0.0") + "/64)" : "n/a")
                         + "   abc " + (okAbc ? abc[0].abcA + "," + abc[0].abcB + "," + abc[0].abcC : "n/a")
                         + "   run10 " + sz.cx + " -> per glyph " + (sz.cx / 10.0).ToString("0.00"));
                 }
