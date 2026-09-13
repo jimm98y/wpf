@@ -1864,6 +1864,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static readonly bool s_iupTrace =
             Environment.GetEnvironmentVariable("WPF_IUP_TRACE") == "1";
 
+        /// <summary>WPF_CT_IUP_GRID=1: round IUP's result onto the ClearType sixteenth of a pixel.
+        /// See the comment at the interpolation.</summary>
+        private static readonly bool s_iupGrid =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_GRID") == "1";
+
         private static readonly bool s_iupUpperFirst =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_UPPER") != "0";
 
@@ -3240,6 +3245,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     long span = (long) (org2 + delta2) - (org1 + delta1);
                     cur[i] = den == 0 ? org1 + delta1
                            : (int) ((num * span + (den >> 1)) / den) + org1 + delta1;
+                    // WPF_CT_IUP_GRID=1: round the result onto the CLEARTYPE SIXTEENTH. GDI's
+                    // glyph programs round on the sixteenth of a pixel, not the sixty-fourth we
+                    // carry -- measured off its own pixels for prep (whole pixels) against the
+                    // glyph programs (sixteenths). If its coordinates live on that grid then every
+                    // interpolated point does too, which would leave the TOUCHED points right (they
+                    // are placed by rounding anyway) and put the untouched ones a few sixty-fourths
+                    // out, which is exactly the Times signature. REFUTED: 2,240,792 against
+                    // 611,135 on the holdout. Whatever grid GDI's programs round on, the
+                    // INTERPOLATION does not land on it -- consistent with itrp_IUP, whose inner
+                    // loop is one rounded division by the reference span and nothing else.
+                    if (s_iupGrid) cur[i] = ((cur[i] < 0 ? cur[i] - 2 : cur[i] + 2) / 4) * 4;
                     continue;
                 }
                 if (!haveScale)
