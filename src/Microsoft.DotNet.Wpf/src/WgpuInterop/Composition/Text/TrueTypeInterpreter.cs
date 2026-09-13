@@ -2696,6 +2696,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int n = _realPoints + 4;
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
+            // WPF_CT_PHASE_PROPPHANTOM=0: refuse a proportion whose REFERENCE is a phantom. A
+            // probe. AddProportion's own bounds test is `index < lastContourEnd + 5`, which
+            // INCLUDES the four phantoms, so the binary permits it -- but permitting is not the
+            // same as GDI's rp1/rp2 ever being a phantom there, and a phantom parent is how the
+            // advance's own shift gets mixed into a real point. Segoe UI 'o'@12 is the case:
+            // `ADDPROP a=3 p=21 b=25` is an IP between a real point and the RIGHT PHANTOM, the
+            // phantom carries -2, and P21 interpolates to -1.52 -> -1 where GDI's pixels want -2.
+            // <para>REFUTED. Refusing them is worse wherever it acts and neutral elsewhere: Segoe
+            // UI 'o'@12 137 -> 236, 's'@13 118 -> 647, Tahoma 'b'@12 118 -> 3,051, with Tahoma
+            // 'q'@16, Arial 'e'@13 and Times 'a'@13 unmoved. GDI records proportions onto
+            // phantoms, which is what its bounds test already said.</para>
+            if (!s_phasePropPhantom && (a >= _realPoints || b >= _realPoints)) return;
             if ((uint) placed >= (uint) _phaseP0.Length) return;
             // WHICH OPCODE MADE THE LINK. Without it the six ADDPROP lines a glyph emits cannot
             // be matched to the instructions that caused them, and the references they carry do
@@ -2998,6 +3010,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_PHASE_AVGROUND=1 -- diagnostic only; see CalcAvgXPhase.</summary>
         private static readonly bool s_phaseAvgRound =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_AVGROUND") == "1";
+
+        /// <summary>WPF_CT_PHASE_PROPPHANTOM=0 -- probe; see PhaseProportion.</summary>
+        private static readonly bool s_phasePropPhantom =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROPPHANTOM") != "0";
 
         private static readonly bool s_phasePairAdjacent =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") == "1";
