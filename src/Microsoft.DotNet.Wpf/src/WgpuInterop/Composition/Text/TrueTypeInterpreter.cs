@@ -2142,6 +2142,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Apply the phase to the live glyph zone, once per glyph. ctFactor is the
         /// compatible advance over the linear one, as fs_NewGlyph computes it.</summary>
+        /// <remarks>WHAT THE ARIAL DIAGONAL POOL LOOKS LIKE FROM HERE, and the caveat that goes
+        /// with it. Arial Bold 'X' at 20ppem has every point touched, so IUP moves nothing and the
+        /// phase is the LAST thing that touches the glyph (WPF_HINT_MOVES=1 shows it moving all
+        /// twelve points at the IUP[x]). Comparing our final x with GDI's solved outline, which
+        /// reaches residual zero and so IS GDI's:
+        /// <code>
+        ///          pt0  pt1 pt2 pt3 pt4  pt5  pt6  pt7  pt8  pt9 pt10 pt11
+        ///   ours    -3  -11  -4  -4 -13  -18  -18  -10  -19  -19   -8   -3   (our phase deltas)
+        ///   GDI     +5   -7   0  -4  -9  -18  -16   -2  -19  -11   -4   +1   (GDI final - our pre-phase)
+        /// </code>
+        /// <para>Three nodes agree exactly and every difference is 0, +2, +4 or +8. THE CAVEAT:
+        /// the second row is GDI's final minus OUR pre-phase, so it is only GDI's phase delta if
+        /// GDI's pre-phase outline equals ours -- which is not observable, since GGO answers
+        /// bi-level and the solver only ever sees the finished thing. The difference could be
+        /// split between the fitting and the phase in any proportion. What IS established is that
+        /// the compression factor is right (0.9742 = 832/854, and pt5 and pt8 land on it exactly)
+        /// and that something after the control-value passes is wrong.</para>
+        /// <para>None of the tree knobs moves this row (baseline 10,327): PAIRS and ROOT exactly
+        /// neutral, INTERALIGN 12,411, ROOTCYCLE 17,404, PHANTOM 23,365, GDIPAIR 43,935.</para>
+        /// <para>And one rule of PhaseShift confirmed while reading it: a node with NO parent
+        /// computes its direct scale but does NOT apply it to itself -- the `*psVar17 == -1` test
+        /// jumps past the `cur[i] += iVar8` -- it only returns the value for its children. The
+        /// advance phantom sitting still with d=0 in WPF_CT_PHASE_DUMP is that rule, not a
+        /// bug.</para></remarks>
         internal void ApplyPhaseAtIup()
         {
             // NOT ON A COMPOSITE. Our composites are assembled from components that were each
