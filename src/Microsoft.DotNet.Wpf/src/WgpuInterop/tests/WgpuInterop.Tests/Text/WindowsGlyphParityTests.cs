@@ -4725,6 +4725,29 @@ namespace WgpuInterop.Tests.Text
                         bool off = ipts is not null && p < ipts.OnCurve.Length && !ipts.OnCurve[p];
                         return $"P{p}{(t ? "*" : "")}{(off ? "^" : "")}".PadRight(6);
                     }
+                    // AND WHETHER THE POINT SITS IN A STRAIGHT VERTICAL RUN OF OUR OWN FIT.
+                    // Times' bowls reach their extremes through THREE points at one design x -- a
+                    // flat vertical edge -- and IUP cannot do anything but stack them, because a
+                    // point sharing its reference coordinate with the run's anchor interpolates to
+                    // num == 0 and lands exactly on it. So our '9'@14 has P9 = P10 = P11 = 36 and
+                    // P17 = P18 = P19 = 408, dead straight, while GDI's pixels force P9 to 39, P11
+                    // to 38 and P17 to 398. If that is systematic -- if what must move is
+                    // overwhelmingly the flanks of our straight runs -- then GDI is bowing an edge
+                    // that our interpolation cannot bow, and the question is what does it.
+                    bool Flat(int i)
+                    {
+                        bool same = false;
+                        if (i > 0 && ox[i - 1] == ox[i]) same = true;
+                        if (i + 1 < ox.Length && ox[i + 1] == ox[i]) same = true;
+                        return same;
+                    }
+                    int dFlat = 0, nFlat = 0;
+                    for (int i = 0; i < sx.Length; i++)
+                    {
+                        if (!Flat(i)) continue;
+                        nFlat++;
+                        if (sx[i] != ox[i] || sy[i] != oy[i]) dFlat++;
+                    }
                     int dOff = 0, dOn = 0, dTouch = 0, nOff = 0, nOn = 0;
                     for (int i = 0; i < sx.Length; i++)
                     {
@@ -4738,7 +4761,8 @@ namespace WgpuInterop.Tests.Text
                     }
                     if (ipts is not null && pathToPoint.Count == sx.Length)
                         Console.Error.WriteLine($"   SPLIT {c}@{ppem}: differing  off-curve"
-                            + $" {dOff}/{nOff}  on-curve {dOn}/{nOn}  x-touched {dTouch}");
+                            + $" {dOff}/{nOff}  on-curve {dOn}/{nOn}  x-touched {dTouch}"
+                            + $"  in-flat-run {dFlat}/{nFlat} of {sx.Length}");
                     if (pathToPoint.Count != sx.Length)
                         Console.Error.WriteLine($"   (no interpreter index: the path emits"
                             + $" {sx.Length} points and the reconstruction makes"

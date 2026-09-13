@@ -781,8 +781,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // where the middle rows read 111). Same glyph, same program, two
                             // different outlines: so a ClearType-conditional rule moves the
                             // shoulder, and this is the one Microsoft states.</para>
-                            // <para>WHERE GDI IMPLEMENTS IT IS STILL UNKNOWN, and that is worth
-                            // saying plainly. `itrp_WC` is a plain project-and-move with no gate;
+                            // <para>AND IT IS NOT IN itrp_WC, now read in full @14003fb70. The
+                            // whole function is: bounds-check, pop the value, pop the point, call
+                            // the INSTALLED projection function on (cur x, cur y), call the
+                            // INSTALLED move function with `value - projected`, and -- in the
+                            // twilight zone only -- copy cur into org. There is no test of the
+                            // ClearType flags, no read of globals+0x1c2, no touched-point
+                            // condition, nothing. Since that is the entire implementation of the
+                            // opcode, GDI APPLIES EVERY SCFS, on both axes, in the ClearType pass.
+                            // <para>So the suppression below is not GDI's mechanism. It is
+                            // compensating for a wrong VALUE -- the target this program computes
+                            // as `RCVT 98; GC; ADD` -- and it compensates well (it was worth about
+                            // a hundred thousand when it shipped, and applying the SCFSes instead
+                            // costs Times '9'@14 1001 -> 3315). It stays until the value is right,
+                            // but it should be understood as a patch over an upstream error and
+                            // not as a rule. The two candidates feeding that value are the control
+                            // value (see _linearCvt and itrp_GetCVTScale) and GC.</para></para>
+                            // <para>The older reading, kept because the addresses are useful:</para>
+                            // `itrp_WC` is a plain project-and-move with no gate;
                             // the move functions it reaches indirectly (`itrp_YMovePoint`,
                             // `itrp_MovePoint`) gate nothing and `itrp_SVTCA_0` installs them
                             // unconditionally; and `itrp_WC` is not among the readers of

@@ -1527,6 +1527,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// The mechanism is not in doubt; what it means is that something downstream was tuned
         /// around its absence -- most likely the filter and contrast curve, which were fitted
         /// against stems this rule makes narrower. Do not re-enable this on its own.</para>
+        /// <para>2026-09-13, AND THE SHAPE OF IT IS NOT TWO ARRAYS BUT TWO SCALES.
+        /// `itrp_GetCVTScale@140037cd0` is four lines and it chooses by the PROJECTION VECTOR:
+        /// <code>
+        ///     if (localGS[0x1a] == 0) return globals[0x160];   // projection pure x
+        ///     if (localGS[0x18] == 0) return globals[0x164];   // projection pure y
+        ///     return cached ??= sqrt(x-scale^2 + y-scale^2);   // diagonal, kept at localGS+0xa0
+        /// </code>
+        /// so a control value is scaled AT READ TIME by whichever axis the program is working on,
+        /// and a diagonal link gets a third scale again, combined through DWRITE_FracSqrt. Our
+        /// RCVT returns `_scaledCvt[i]` -- one array, one scale, no axis -- so every control value
+        /// read on one of the two axes is scaled by the other one's factor whenever the two
+        /// differ, which in compatible-width mode is exactly when x is compressed.</para>
+        /// <para>This is why the two-array reading above could be right about the VALUES and still
+        /// measure worse: it substituted a whole second array where GDI substitutes a factor, and
+        /// it had no diagonal case at all. What is still missing is the writer of globals[0x160]
+        /// and [0x164] -- the only accesses in the binary are these two reads and a zeroing
+        /// `stp q16,q16,[x26,#0x160]` in RenderBitmap, so the real store is a wider one covering
+        /// the offset or a struct copy, the same shape as the elem[0x46] hunt. Find it before
+        /// re-enabling anything here.</para>
         /// <para>WPF_CT_LINEAR_CVT=1.</para></summary>
         private int[] _linearCvt = Array.Empty<int>();
 
