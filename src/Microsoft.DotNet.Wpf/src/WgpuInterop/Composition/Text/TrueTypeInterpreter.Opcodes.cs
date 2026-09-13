@@ -453,6 +453,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // axes -- both of them moves of UNTOUCHED points after IUP, which
                                 // is the shape Microsoft describes as denting the outline.
                                 // WPF_CT_ALIGNRP_TOUCHED=1 refuses those the same way.
+                                // <para>AND THIS HALF IS GDI'S ACTUAL RULE, which the SCFS half is
+                                // not. Times Bold '0' at 16ppem is the cleanest case in the
+                                // specimen: bi-level EXACT at 44 of 44 points, the phase inert
+                                // (WPF_CT_PHASE_ATIUP=0 changes nothing), only FOUR x-touched
+                                // points in the whole glyph and all four agreeing with GDI, and
+                                // fourteen untouched on-curve points that GDI's own pixels force to
+                                // move. Ten of the fourteen are targets of the post-IUP
+                                // instructions this file suppresses -- so "GDI runs them" was the
+                                // obvious reading. Taking the suppressions off and asking which way
+                                // each point then goes settles it, and the two halves answer
+                                // OPPOSITELY:</para>
+                                // <code>
+                                //   pt  kind      IUP  +instr  GDI   want   got
+                                //    4  ALIGNRP   372     476  371     -1   +104   WRONG WAY
+                                //    8  ALIGNRP   127      36  128     +1    -91   WRONG WAY
+                                //   16  ALIGNRP    93      36   97     +4    -57   WRONG WAY
+                                //   20  ALIGNRP   418     476  414     -4    +58   WRONG WAY
+                                //   26  ALIGNRP   324     332  318     -6     +8   WRONG WAY
+                                //   31  ALIGNRP   216     180  222     +6    -36   WRONG WAY
+                                //   41  ALIGNRP   302     330  290    -12    +28   WRONG WAY
+                                //    7  SCFS      206     257  208     +2    +51   right way
+                                //   17  SCFS      197     257  206     +9    +60   right way
+                                //   19  SCFS      315     255  306     -9    -60   right way
+                                // </code>
+                                // <para>SEVEN of seven ALIGNRP targets move the wrong way, and by
+                                // an order of magnitude -- the alignment flattens a shoulder onto
+                                // the extreme where GDI's pixels want it to come OFF the extreme.
+                                // So GDI does not run a post-IUP ALIGNRP on an untouched point in
+                                // the ClearType pass, and this gate is the rule rather than a
+                                // patch. The SCFS half is the opposite: all three move the right
+                                // way, and pt17 and pt19 -- symmetric points on the two sides of
+                                // the bowl -- are both exactly 6.7x too far. That is a magnitude
+                                // problem in the target, not a decision about whether to apply it,
+                                // and the two should stop being treated as one phenomenon.</para>
                                 if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
                                     && (IsHorizontalProjection
                                         ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
@@ -826,6 +860,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // already pixel-exact at 16 and 20. Every X-TOUCHED point of the glyph
                             // (0, 9, 17, 26) agrees with GDI exactly, and so does the whole
                             // bi-level fit (37 of 37 points), so nothing before IUP is in question.
+                            // <para>AND WHAT THE WRONG TARGET LOOKS LIKE. On Times Bold '0'@16
+                            // the two x calls set their pairs to 257 and 255 -- against a glyph
+                            // centre of 256 -- while GDI's pixels want them near 207 and 306, i.e.
+                            // about fifty sixty-fourths out on either side. Our helper collapses
+                            // both shoulders onto the middle of the glyph; GDI's keeps them apart.
+                            // Whatever is wrong is in the value, and it is wrong SYMMETRICALLY,
+                            // which is the shape of a reference coordinate rather than of a
+                            // rounding.</para>
                             // <para>THE BLOCK, DECODED. Two mirrored FDEFs, each called with
                             // (farPoint, nearPoint, referencePoint, cvtIndex) and each setting the
                             // pair at a fixed distance from the reference:
