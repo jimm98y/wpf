@@ -4681,6 +4681,10 @@ namespace WgpuInterop.Tests.Text
                         var touchedList = new List<int>();
                         for (int i = 0; i < n; i++) if (ipts.TouchedX[i]) touchedList.Add(i);
                         int[] anchorOf = touchedList.ToArray();
+                        var extraOf = new List<int>();
+                        int wantExtra = int.TryParse(
+                            Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_EXTRA"),
+                            out int we) ? we : 0;
 
                         void CarryRun(int[] c, int from, int to, int r1, int r2)
                         {
@@ -4707,12 +4711,15 @@ namespace WgpuInterop.Tests.Text
                             var c = new int[n];
                             for (int i = 0; i < n; i++) c[i] = org[i];
                             for (int k = 0; k < anchorOf.Length; k++) c[anchorOf[k]] = anchorVals[k];
+                            for (int k = 0; k < extraOf.Count; k++)
+                                c[extraOf[k]] = anchorVals[anchorOf.Length + k];
                             int first = 0;
                             foreach (int end in ipts.EndPoints)
                             {
                                 if (end < first || end >= n) break;
                                 var t = new List<int>();
-                                for (int i = first; i <= end; i++) if (ipts.TouchedX[i]) t.Add(i);
+                                for (int i = first; i <= end; i++)
+                                    if (ipts.TouchedX[i] || extraOf.Contains(i)) t.Add(i);
                                 if (t.Count == 1)
                                 {
                                     int d = c[t[0]] - org[t[0]];
@@ -4731,6 +4738,34 @@ namespace WgpuInterop.Tests.Text
                             return c;
                         }
 
+                        // WPF_XYSOLVE_ANCHORS_EXTRA=n: let the search ADD anchors, chosen from the
+                        // points the program left to IUP.
+                        // <para>The plain search says Times Bold's bowls are off the manifold our
+                        // interpreter can reach -- no placement of the program's own anchors
+                        // reproduces GDI, over ten random restarts -- which means GDI is touching
+                        // points our program never touches. That is a conclusion with a hole in it:
+                        // it names no point. Adding candidate anchors closes the hole. Try each
+                        // untouched point in turn as an extra anchor, run the descent in one more
+                        // dimension, and keep the best; if a glyph that could not reach zero reaches
+                        // it with ONE extra anchor, the search has just named the point GDI touches
+                        // and the value it puts there, which is a target rather than a deduction.
+                        // </para>
+                        // <para>THE ANSWER ON TIMES BOLD '0'@16 IS THAT NO SMALL SET DOES IT, and
+                        // that is worth more than the target would have been. Four anchors reach
+                        // 860; the greedy addition finds P2 and P31 and stalls at 714; FORCING the
+                        // two points the residual is concentrated in -- P17 and P19, the top of the
+                        // bowl, which the best reachable outline misses by 8 each while everything
+                        // else is within 4 -- gives 758, four forced anchors 656, and EIGHT forced
+                        // anchors still only 436. The trend is smooth and never reaches zero, so
+                        // GDI's outline does not differ from ours by a couple of extra touched
+                        // points; it differs in a DISTRIBUTED way, which is the signature of the
+                        // interpolation's INPUTS rather than of its anchor set. Note also that a
+                        // PAIR matters where a single point does not -- P17 alone measures 895,
+                        // WORSE than not adding it, and P17 with P19 measures 758 -- so the greedy
+                        // addition could never have found this on its own.</para>
+                        // <para>The reference array is not it either: WPF_CT_IUP_REF=scaled, the
+                        // other half of itrp_IUP's gs[0x196] branch, is exactly neutral on four of
+                        // five of these glyphs and worth 2,034 -> 1,953 on the fifth.</para>
                         var anchors = new int[anchorOf.Length];
                         for (int k = 0; k < anchorOf.Length; k++) anchors[k] = fit[anchorOf[k]];
                         int[] check = RunIup(anchors);
@@ -4750,6 +4785,26 @@ namespace WgpuInterop.Tests.Text
                         }
                         else
                         {
+                            // WPF_XYSOLVE_ANCHORS_ADD=p,q,...: force specific points into the anchor
+                            // set, AFTER the self-check -- adding an anchor changes the
+                            // interpolation of its neighbours, so a check run with the extras in
+                            // would (correctly) refuse every glyph. The greedy addition below takes
+                            // one point at a time, so a PAIR that only works together is invisible
+                            // to it, and a pair is exactly what a bowl needs: narrowing its top
+                            // without narrowing its sides takes two anchors, one each side.
+                            if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_ADD")
+                                is { Length: > 0 } forceAnchorSpec)
+                            {
+                                foreach (string tok in forceAnchorSpec.Split(','))
+                                    if (int.TryParse(tok, out int ap) && ap >= 0 && ap < n
+                                        && !ipts.TouchedX[ap] && !extraOf.Contains(ap))
+                                        extraOf.Add(ap);
+                                var grown0 = new int[anchorOf.Length + extraOf.Count];
+                                Array.Copy(anchors, grown0, anchorOf.Length);
+                                for (int k = 0; k < extraOf.Count; k++)
+                                    grown0[anchorOf.Length + k] = fit[extraOf[k]];
+                                anchors = grown0;
+                            }
                             // WRITE THE DIFFERENCE, NOT THE VALUE, so that the anchors at our own
                             // positions reproduce our own outline EXACTLY. Writing the recomputed
                             // coordinate straight into the path is not the same thing: the implied
@@ -4799,7 +4854,7 @@ namespace WgpuInterop.Tests.Text
                             // our own value for as long as it stays zero. What comes out is the
                             // SMALLEST anchor movement that reproduces GDI.
                             for (int pass = 0; pass < 3; pass++)
-                                for (int k = 0; k < anchorOf.Length; k++)
+                                for (int k = 0; k < anchors.Length; k++)
                                 {
                                     int keep = anchors[k], bestV = keep;
                                     for (int d = -span; d <= span; d++)
@@ -4809,13 +4864,67 @@ namespace WgpuInterop.Tests.Text
                                         Write(RunIup(anchors));
                                         arenders++;
                                         long v = Score();
-                                        if (v < best || (v == best && Math.Abs(keep + d - fit[anchorOf[k]])
-                                                                      < Math.Abs(bestV - fit[anchorOf[k]])))
+                                        int home0 = k < anchorOf.Length ? fit[anchorOf[k]]
+                                                                        : fit[extraOf[k - anchorOf.Length]];
+                                        if (v < best || (v == best && Math.Abs(keep + d - home0)
+                                                                      < Math.Abs(bestV - home0)))
                                         { best = v; bestV = anchors[k]; }
                                     }
                                     anchors[k] = bestV;
                                     Write(RunIup(anchors));
                                 }
+                            // ADD ANCHORS, greedily, one at a time.
+                            for (int e = 0; e < wantExtra && best > 0; e++)
+                            {
+                                int bestPt = -1, bestVal = 0;
+                                long bestHere = best;
+                                var work = new int[anchors.Length + 1];
+                                Array.Copy(anchors, work, anchors.Length);
+                                for (int cand = 0; cand < n; cand++)
+                                {
+                                    if (ipts.TouchedX[cand] || extraOf.Contains(cand)) continue;
+                                    extraOf.Add(cand);
+                                    work[anchors.Length] = fit[cand];
+                                    long local = long.MaxValue; int localV = fit[cand];
+                                    for (int d = -span; d <= span; d++)
+                                    {
+                                        work[anchors.Length] = fit[cand] + d;
+                                        Write(RunIup(work));
+                                        arenders++;
+                                        long v = Score();
+                                        if (v < local) { local = v; localV = work[anchors.Length]; }
+                                    }
+                                    extraOf.RemoveAt(extraOf.Count - 1);
+                                    if (local < bestHere) { bestHere = local; bestPt = cand; bestVal = localV; }
+                                }
+                                if (bestPt < 0) break;
+                                extraOf.Add(bestPt);
+                                var grown = new int[anchors.Length + 1];
+                                Array.Copy(anchors, grown, anchors.Length);
+                                grown[anchors.Length] = bestVal;
+                                anchors = grown;
+                                best = bestHere;
+                                Console.Error.WriteLine($"   + extra anchor P{bestPt} at {bestVal}"
+                                    + $" (ours {fit[bestPt]}, d {bestVal - fit[bestPt]}) -> {best}");
+                                // re-descend on everything now that the set has grown
+                                for (int pass = 0; pass < 2; pass++)
+                                    for (int k = 0; k < anchors.Length; k++)
+                                    {
+                                        int home = k < anchorOf.Length ? fit[anchorOf[k]]
+                                                                       : fit[extraOf[k - anchorOf.Length]];
+                                        int keep = anchors[k], bestV = keep;
+                                        for (int d = -span; d <= span; d++)
+                                        {
+                                            anchors[k] = home + d;
+                                            Write(RunIup(anchors));
+                                            arenders++;
+                                            long v = Score();
+                                            if (v < best) { best = v; bestV = anchors[k]; }
+                                        }
+                                        anchors[k] = bestV;
+                                    }
+                                Write(RunIup(anchors));
+                            }
                             for (int r = 0; r < restarts && best > 0; r++)
                             {
                                 var trial = new int[anchorOf.Length];
@@ -4841,27 +4950,45 @@ namespace WgpuInterop.Tests.Text
                             }
                             Write(RunIup(anchors));
                             if (best == 0)
-                                for (int k = 0; k < anchorOf.Length; k++)
-                                    while (anchors[k] != fit[anchorOf[k]])
+                                for (int k = 0; k < anchors.Length; k++)
+                                {
+                                    int home = k < anchorOf.Length ? fit[anchorOf[k]]
+                                                                   : fit[extraOf[k - anchorOf.Length]];
+                                    while (anchors[k] != home)
                                     {
                                         int keep = anchors[k];
-                                        anchors[k] += anchors[k] < fit[anchorOf[k]] ? 1 : -1;
+                                        anchors[k] += anchors[k] < home ? 1 : -1;
                                         Write(RunIup(anchors));
                                         arenders++;
                                         if (Score() != 0) { anchors[k] = keep; break; }
                                     }
+                                }
                             Write(RunIup(anchors));
                             Write(RunIup(anchors));
                             Console.Error.WriteLine($"   ANCHOR SEARCH: best {best} in {arenders}"
                                 + " renders" + (best == 0
                                     ? "   REACHED GDI -- our anchors are wrong and these are GDI's"
                                     : "   CANNOT reach GDI from ANY anchor placement"));
-                            for (int k = 0; k < anchorOf.Length; k++)
-                                if (anchors[k] != fit[anchorOf[k]] || best == 0)
+                            // The resulting outline, so a residual the anchors cannot reach can
+                            // be compared point for point against what the free solver says GDI
+                            // wants -- which says WHERE the unreachable part of the glyph is.
+                            if (best > 0 && Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_DUMP") == "1")
+                            {
+                                int[] fin = RunIup(anchors);
+                                for (int i = 0; i < n; i++)
+                                    if (fin[i] != fit[i])
+                                        Console.Error.WriteLine($"     best P{i,-3} ours {fit[i],5}"
+                                            + $" -> {fin[i],5}  d {fin[i] - fit[i],4}");
+                            }
+                            for (int k = 0; k < anchors.Length; k++)
+                            {
+                                bool ext = k >= anchorOf.Length;
+                                int pt = ext ? extraOf[k - anchorOf.Length] : anchorOf[k];
+                                if (anchors[k] != fit[pt] || best == 0)
                                     Console.Error.WriteLine($"     {c}@{ppem}{style} anchor"
-                                        + $" P{anchorOf[k],-3} ours {fit[anchorOf[k]],5}"
-                                        + $"  best {anchors[k],5}"
-                                        + $"  d {anchors[k] - fit[anchorOf[k]],4}");
+                                        + $" P{pt,-3}{(ext ? "+" : " ")} ours {fit[pt],5}"
+                                        + $"  best {anchors[k],5}  d {anchors[k] - fit[pt],4}");
+                            }
                             continue;
                         }
                     }
