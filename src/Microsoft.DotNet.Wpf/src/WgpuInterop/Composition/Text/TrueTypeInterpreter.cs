@@ -1838,7 +1838,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // interpolates between them. Every other opcode (MIRP, MSIRP, SHP) only ever records a
             // distance. This is where the density the phase walk needs comes from: a one-parent
             // chain that bottoms out in a root cannot move at all, but a two-parent node can.
-            if (canProportion && s_phaseInterAlign && _pvPtA >= 0 && _pvPtB >= 0
+            // COMPONENTS ONLY -- WPF_CT_PHASE_PROPCOMP=1, under test. itrp_MDRP's AddProportion
+            // call sits behind four gates and the first is `elem != glyphElem`:
+            //     if (elem == glyphElem || globals[0x16b] != 2 || localGS[0xcc] == 0
+            //         || (globals[0x1c0] >> 1 & 1) == 0) skip;
+            //     if (localGS[0xce] != -1 && localGS[0xd0] != -1
+            //         && InterAlign(elem, localGS[0xce], p, localGS[0xd0]))
+            //         AddProportion(1, elem, localGS[0xce], p, localGS[0xd0]);
+            // so GDI records no proportion link at all for a SIMPLE glyph, and every glyph in the
+            // weight specimen is simple.
+            // <para>AND YET OURS HELP: the gate costs 931,315 against 611,135 on the holdout, and
+            // 12,411 against 10,327 on Arial Bold at 20ppem -- where it measures identically to
+            // WPF_CT_PHASE_INTERALIGN=0, as it must, since every glyph there is simple. That is a
+            // contradiction worth keeping in front of whoever reads this next. GDI does not build
+            // these links, we do, and removing them makes us WORSE -- so they are compensating for
+            // something else missing from the tree, and the fault is upstream of them. Do not ship
+            // this gate on its own; it is a correct reading of one call site and the wrong change
+            // until the thing it is patching is found.</para>
+            if (canProportion && s_phaseInterAlign
+                && (!s_phasePropComponent || _inComposite || HintDepth > 0)
+                && _pvPtA >= 0 && _pvPtB >= 0
                 && InterAlign(_pvPtA, p, _pvPtB))
                 PhaseProportion(_pvPtA, p, _pvPtB);
             else
@@ -2727,6 +2746,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_PHASE_GDIPAIR=0 goes back to guessing partners from our own link list
         /// in BuildPhasePartners instead of taking them from AddDistance's param_5.</summary>
+        /// <summary>WPF_CT_PHASE_PROPCOMP=1: record a proportion link only inside a COMPONENT, as
+        /// itrp_MDRP's first gate does. See the comment at the call.</summary>
+        private static readonly bool s_phasePropComponent =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROPCOMP") == "1";
+
         private static readonly bool s_phaseGdiPairs =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_GDIPAIR") != "0";
 
