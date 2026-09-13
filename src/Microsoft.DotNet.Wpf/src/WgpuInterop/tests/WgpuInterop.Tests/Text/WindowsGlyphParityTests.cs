@@ -4678,8 +4678,19 @@ namespace WgpuInterop.Tests.Text
                             orus[i] = ipts.OrusX[i];
                             fit[i] = (int) MathF.Round(ipts.FitX[i] * 64f);
                         }
+                        // WPF_XYSOLVE_ANCHORS_DROP=p,q,...: pretend the program did NOT touch these
+                        // points, so IUP places them instead. The search had only ever been able to
+                        // ADD anchors, which assumes GDI's touch set is ours plus extras -- and
+                        // "GDI touches a DIFFERENT set" is just as good an explanation of an
+                        // unreachable outline, and not expressible without this.
+                        var dropped = new HashSet<int>();
+                        if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_DROP")
+                            is { Length: > 0 } dropSpec)
+                            foreach (string tok in dropSpec.Split(','))
+                                if (int.TryParse(tok, out int dp)) dropped.Add(dp);
                         var touchedList = new List<int>();
-                        for (int i = 0; i < n; i++) if (ipts.TouchedX[i]) touchedList.Add(i);
+                        for (int i = 0; i < n; i++)
+                            if (ipts.TouchedX[i] && !dropped.Contains(i)) touchedList.Add(i);
                         int[] anchorOf = touchedList.ToArray();
                         var extraOf = new List<int>();
                         int wantExtra = int.TryParse(
@@ -4719,12 +4730,14 @@ namespace WgpuInterop.Tests.Text
                                 if (end < first || end >= n) break;
                                 var t = new List<int>();
                                 for (int i = first; i <= end; i++)
-                                    if (ipts.TouchedX[i] || extraOf.Contains(i)) t.Add(i);
+                                    if ((ipts.TouchedX[i] && !dropped.Contains(i))
+                                        || extraOf.Contains(i)) t.Add(i);
                                 if (t.Count == 1)
                                 {
                                     int d = c[t[0]] - org[t[0]];
                                     for (int i = first; i <= end; i++)
-                                        if (!ipts.TouchedX[i]) c[i] = org[i] + d;
+                                        if (!(ipts.TouchedX[i] && !dropped.Contains(i))
+                                            && !extraOf.Contains(i)) c[i] = org[i] + d;
                                 }
                                 else if (t.Count > 1)
                                 {
@@ -4750,19 +4763,23 @@ namespace WgpuInterop.Tests.Text
                         // it with ONE extra anchor, the search has just named the point GDI touches
                         // and the value it puts there, which is a target rather than a deduction.
                         // </para>
-                        // <para>THE ANSWER ON TIMES BOLD '0'@16 IS THAT NO SMALL SET DOES IT, and
-                        // that is worth more than the target would have been. Four anchors reach
-                        // 860; the greedy addition finds P2 and P31 and stalls at 714; FORCING the
-                        // two points the residual is concentrated in -- P17 and P19, the top of the
-                        // bowl, which the best reachable outline misses by 8 each while everything
-                        // else is within 4 -- gives 758, four forced anchors 656, and EIGHT forced
-                        // anchors still only 436. The trend is smooth and never reaches zero, so
-                        // GDI's outline does not differ from ours by a couple of extra touched
-                        // points; it differs in a DISTRIBUTED way, which is the signature of the
-                        // interpolation's INPUTS rather than of its anchor set. Note also that a
-                        // PAIR matters where a single point does not -- P17 alone measures 895,
-                        // WORSE than not adding it, and P17 with P19 measures 758 -- so the greedy
-                        // addition could never have found this on its own.</para>
+                        // <para>WHAT IT SAYS ON TIMES BOLD '0'@16, AND HOW FAR TO TRUST IT. Four
+                        // anchors reach 860; the greedy addition finds P2 and P31 and stalls at
+                        // 714; forcing P17 and P19 -- the top of the bowl, where the best reachable
+                        // outline misses by 8 while everything else is within 4 -- gives 758, four
+                        // forced 656, eight forced 436. A pair matters where a single point does
+                        // not (P17 alone is 895, WORSE than not adding it), which is why the greedy
+                        // form alone could not have found it.</para>
+                        // <para>BUT THE HIGH-DIMENSIONAL NUMBERS ARE NOT BOUNDS, and there is a
+                        // clean proof of it rather than a suspicion. An eighteen-anchor manifold
+                        // strictly CONTAINS a twelve-anchor one -- set the six extra anchors to
+                        // whatever the smaller configuration produced -- so its minimum cannot be
+                        // higher. Forcing all fourteen points the free solver moves gives 510
+                        // against the eight-point set's 436. That is impossible for a true minimum,
+                        // so the descent is failing as the dimension grows, and 436 is a property
+                        // of the search. Only the low-dimensional results are evidence: the
+                        // program's own four anchors reach 860 under ten random restarts and at
+                        // spans of 36, 72 and 128, and one or two added anchors reach 714.</para>
                         // <para>The reference array is not it either: WPF_CT_IUP_REF=scaled, the
                         // other half of itrp_IUP's gs[0x196] branch, is exactly neutral on four of
                         // five of these glyphs and worth 2,034 -> 1,953 on the fifth.</para>
@@ -4770,7 +4787,8 @@ namespace WgpuInterop.Tests.Text
                         for (int k = 0; k < anchorOf.Length; k++) anchors[k] = fit[anchorOf[k]];
                         int[] check = RunIup(anchors);
                         int bad = -1;
-                        for (int i = 0; i < n && bad < 0; i++) if (check[i] != fit[i]) bad = i;
+                        if (dropped.Count == 0)
+                            for (int i = 0; i < n && bad < 0; i++) if (check[i] != fit[i]) bad = i;
                         if (bad >= 0)
                         {
                             Console.Error.WriteLine("   ANCHOR MODE OFF: the reimplemented IUP[x]"
@@ -4797,7 +4815,8 @@ namespace WgpuInterop.Tests.Text
                             {
                                 foreach (string tok in forceAnchorSpec.Split(','))
                                     if (int.TryParse(tok, out int ap) && ap >= 0 && ap < n
-                                        && !ipts.TouchedX[ap] && !extraOf.Contains(ap))
+                                        && !(ipts.TouchedX[ap] && !dropped.Contains(ap))
+                                        && !extraOf.Contains(ap))
                                         extraOf.Add(ap);
                                 var grown0 = new int[anchorOf.Length + extraOf.Count];
                                 Array.Copy(anchors, grown0, anchorOf.Length);
@@ -4882,7 +4901,8 @@ namespace WgpuInterop.Tests.Text
                                 Array.Copy(anchors, work, anchors.Length);
                                 for (int cand = 0; cand < n; cand++)
                                 {
-                                    if (ipts.TouchedX[cand] || extraOf.Contains(cand)) continue;
+                                    if ((ipts.TouchedX[cand] && !dropped.Contains(cand))
+                                        || extraOf.Contains(cand)) continue;
                                     extraOf.Add(cand);
                                     work[anchors.Length] = fit[cand];
                                     long local = long.MaxValue; int localV = fit[cand];
@@ -4927,9 +4947,11 @@ namespace WgpuInterop.Tests.Text
                             }
                             for (int r = 0; r < restarts && best > 0; r++)
                             {
-                                var trial = new int[anchorOf.Length];
+                                var trial = new int[anchors.Length];
+                                int Home(int k) => k < anchorOf.Length ? fit[anchorOf[k]]
+                                                                      : fit[extraOf[k - anchorOf.Length]];
                                 for (int k = 0; k < trial.Length; k++)
-                                    trial[k] = fit[anchorOf[k]] + rng.Next(-span, span + 1);
+                                    trial[k] = Home(k) + rng.Next(-span, span + 1);
                                 long cur2 = long.MaxValue;
                                 for (int pass = 0; pass < 3; pass++)
                                     for (int k = 0; k < trial.Length; k++)
@@ -4937,7 +4959,7 @@ namespace WgpuInterop.Tests.Text
                                         int keep = trial[k], bestV = keep;
                                         for (int d = -span; d <= span; d++)
                                         {
-                                            trial[k] = fit[anchorOf[k]] + d;
+                                            trial[k] = Home(k) + d;
                                             Write(RunIup(trial));
                                             arenders++;
                                             long v = Score();
