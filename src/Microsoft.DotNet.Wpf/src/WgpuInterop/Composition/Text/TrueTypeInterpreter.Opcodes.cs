@@ -1869,6 +1869,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// code alone, so it was measured: font units 3,605,604, scaled 3,662,880. WE ALREADY
         /// TAKE THE RIGHT ONE. Kept switchable because the answer is a fact about GDI's state,
         /// not about the rule, and a different rendering path could flip it.</summary>
+        /// <summary>WPF_CT_IUP_FLATTIE=0: on a flat run anchor on the FIRST touched point, as we
+        /// used to, instead of itrp_IUP's non-strict tie to the second.</summary>
+        private static readonly bool s_iupFlatTie =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_FLATTIE") != "0";
+
         private static readonly bool s_iupRefScaled =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_REF") == "scaled";
 
@@ -3199,6 +3204,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// scaled coordinate, at which point a proportion computed from the scaled pair divides by
         /// nothing and every point between them piles onto one spot. It is the glyphs with the most
         /// interpolation in them that show it.</para></summary>
+        /// <summary>Place a run of untouched points between two touched ones.
+        /// <para>READ OUT OF itrp_IUP@140039020 AND CONFIRMED CLAUSE BY CLAUSE, so the shape below
+        /// is not a reconstruction from behaviour. The binary's inner loop is
+        /// <code>
+        ///     lo = a; hi = b;  if (ref[b] &lt;= ref[a]) { lo = b; hi = a; }
+        ///     den  = |ref[a] - ref[b]|;   span = cur[hi] - cur[lo];
+        ///     for each untouched i:
+        ///         if (org[lo] &lt; org[i]) {
+        ///             if (org[i] &lt; org[hi]) cur[i] = ((ref[i]-ref[lo])*span + den/2)/den + cur[lo];
+        ///             else                  cur[i] = org[i] + (cur[hi] - org[hi]);
+        ///         } else if (org[hi] &lt;= org[i]) cur[i] = org[i] + (cur[hi] - org[hi]);
+        ///         else                          cur[i] = org[i] + (cur[lo] - org[lo]);
+        /// </code>
+        /// and the two arrays really are different ones. The disassembly at 1400390c0 loads
+        /// <c>ldr x13,[x7,#0x10]</c> -- elem+0x10, the SCALED original -- as the array every
+        /// bracket test and every outside-the-bracket shift is written in, and
+        /// <c>ldr x2,[x7,#0x20]</c> -- elem+0x20, ORUS, the design units -- as the array the ratio
+        /// is taken in, the second being overwritten by the first when gs[0x196] is set. So IUP
+        /// brackets on the grid and interpolates in the design, which is what this does.</para>
+        /// <para>WORTH KNOWING BECAUSE IT RETIRES A SUSPECT. Times New Roman is the largest
+        /// remaining pool and it is an interpolation problem -- at 14ppem '9' every one of the
+        /// eight x-touched points agrees with GDI EXACTLY and all seven differences are on points
+        /// IUP placed -- so "our interpolation is subtly wrong" was the obvious reading. It is not:
+        /// the formula, the two arrays, the rounding, the bracket order and the tie are now all
+        /// the binary's. Whatever Times needs is in WHICH POINTS ARE TOUCHED, not in what happens
+        /// to the ones that are not. See SolveGdisOutlineXy, which reports the interpreter's own
+        /// point index, its touch flag and its on/off-curve flag for exactly this question.</para>
+        /// </summary>
         private static void Carry(int[] cur, int[] org, int[] orus, int from, int to, int ref1, int ref2)
         {
             if (from > to) return;
@@ -3207,8 +3240,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $"  org({org[ref1]},{org[ref2]}) cur({cur[ref1]},{cur[ref2]})"
                     + $" orus({orus[ref1]},{orus[ref2]})");
 
+            // A TIE GOES TO THE SECOND REFERENCE, NOT THE FIRST. itrp_IUP picks its lower
+            // endpoint with
+            //     lo = a; hi = b;  if (ref[b] <= ref[a]) { lo = b; hi = a; }
+            // -- a NON-STRICT comparison, so when the two references share a reference coordinate
+            // the run is anchored on `b`, the touched point that ENDS it. We swapped on `>` only,
+            // which leaves `a` as the anchor and takes `a`'s delta.
+            // <para>It is visible only on a FLAT run, because equal references are exactly the
+            // den == 0 case, and there the whole run is shifted rigidly by the anchor's delta --
+            // so the choice of anchor is the entire result, not a rounding of it. Flat runs are
+            // serifs and bars: two touched points that differ in the design but land on the same
+            // reference coordinate. WPF_CT_IUP_FLATTIE=0 restores the old tie.</para>
             int orus1 = orus[ref1], orus2 = orus[ref2];
-            if (orus1 > orus2)
+            if (s_iupFlatTie ? orus1 >= orus2 : orus1 > orus2)
             {
                 (orus1, orus2) = (orus2, orus1);
                 (ref1, ref2) = (ref2, ref1);

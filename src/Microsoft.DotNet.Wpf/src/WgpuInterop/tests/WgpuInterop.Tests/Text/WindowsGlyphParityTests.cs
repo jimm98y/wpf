@@ -4527,12 +4527,46 @@ namespace WgpuInterop.Tests.Text
             TrueTypeFont.SubpixelFitting = true;
             try
             {
+                TrueTypeInterpreter.s_capturePoints = true;
                 foreach (char c in parts[1])
                 {
                     int gid = font.GlyphIndex(c);
                     if (gid <= 0 || !((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
                             out List<PathFigure> fitted) || fitted.Count == 0)
                     { Console.Error.WriteLine("== not fitted"); continue; }
+                    // THE INTERPRETER'S OWN INDEX FOR EACH EMITTED POINT, because a path index is
+                    // not a point index and matching them by coordinate is ambiguous exactly where
+                    // it matters. Times New Roman '9' at 14ppem has THREE interpreter points at
+                    // cur x = 408 -- P17, P18 and P19, one of them a touched anchor -- so "the
+                    // solver moved pt19" can mean the anchor agrees with GDI or that it does not,
+                    // and nothing in the output says which. On Arial it never bit: 'X' has
+                    // thirteen distinct points and its fitted path is 1:1 with them.
+                    // <para>The map is the same reconstruction GdiStageTests uses for GGO: walk
+                    // each contour, emit the point, and emit a placeholder wherever two
+                    // consecutive points are both off-curve, because the outline builder
+                    // materialises the implied on-curve midpoint there. A closing duplicate of the
+                    // first point ends each figure. Where the counts do not line up the column is
+                    // printed as -1 rather than guessed at.</para>
+                    var ipts = font.LastHintedPoints;
+                    var pathToPoint = new List<int>();
+                    if (ipts is not null && ipts.EndPoints.Length > 0)
+                    {
+                        int firstPt = 0;
+                        foreach (int end in ipts.EndPoints)
+                        {
+                            if (end < firstPt || end >= ipts.PointCount) { pathToPoint.Clear(); break; }
+                            int startOfFigure = pathToPoint.Count;
+                            for (int k = firstPt; k <= end; k++)
+                            {
+                                pathToPoint.Add(k);
+                                int nxt = k == end ? firstPt : k + 1;
+                                if (!ipts.OnCurve[k] && !ipts.OnCurve[nxt]) pathToPoint.Add(-1);
+                            }
+                            pathToPoint.Add(firstPt);          // the closing duplicate
+                            firstPt = end + 1;
+                            if (startOfFigure > pathToPoint.Count) break;
+                        }
+                    }
 
                     Gdi.s_rawRgb = raw;
                     Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
@@ -4616,9 +4650,45 @@ namespace WgpuInterop.Tests.Text
                     Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}  {sx.Length} points,"
                         + $" {renders} renders;  as fitted {start}  ->  residual {cur}"
                         + (cur == 0 ? "   EXACT -- these ARE GDI own coordinates" : ""));
+                    // AND WHETHER THE GLYPH'S OWN PROGRAM PUT IT THERE. A point the program
+                    // touched in x carries a `*`; an untouched one was placed by IUP from its
+                    // neighbours. The distinction decides which half of the pipeline a difference
+                    // belongs to, and it cannot be had from the coordinates: an interpolated point
+                    // can sit anywhere its anchors put it, including exactly on a grid line.
+                    string Pt(int i)
+                    {
+                        if (i >= pathToPoint.Count || pathToPoint[i] < 0)
+                            return pathToPoint.Count == sx.Length ? "mid   " : "?     ";
+                        int p = pathToPoint[i];
+                        bool t = ipts is not null && p < ipts.TouchedX.Length && ipts.TouchedX[p];
+                        // AND WHETHER IT IS ON THE CURVE. An off-curve control point is not a place
+                        // the outline goes through, so a difference there is a difference in the
+                        // SHAPE of a curve rather than in where a point was put -- and the two have
+                        // different causes and different fixes. `^` marks off-curve.
+                        bool off = ipts is not null && p < ipts.OnCurve.Length && !ipts.OnCurve[p];
+                        return $"P{p}{(t ? "*" : "")}{(off ? "^" : "")}".PadRight(6);
+                    }
+                    int dOff = 0, dOn = 0, dTouch = 0, nOff = 0, nOn = 0;
+                    for (int i = 0; i < sx.Length; i++)
+                    {
+                        if (i >= pathToPoint.Count || pathToPoint[i] < 0 || ipts is null) continue;
+                        int p = pathToPoint[i];
+                        if (p >= ipts.OnCurve.Length) continue;
+                        bool diff = sx[i] != ox[i] || sy[i] != oy[i];
+                        if (ipts.OnCurve[p]) { nOn++; if (diff) dOn++; }
+                        else { nOff++; if (diff) dOff++; }
+                        if (diff && p < ipts.TouchedX.Length && ipts.TouchedX[p]) dTouch++;
+                    }
+                    if (ipts is not null && pathToPoint.Count == sx.Length)
+                        Console.Error.WriteLine($"   SPLIT {c}@{ppem}: differing  off-curve"
+                            + $" {dOff}/{nOff}  on-curve {dOn}/{nOn}  x-touched {dTouch}");
+                    if (pathToPoint.Count != sx.Length)
+                        Console.Error.WriteLine($"   (no interpreter index: the path emits"
+                            + $" {sx.Length} points and the reconstruction makes"
+                            + $" {pathToPoint.Count})");
                     for (int i = 0; i < sx.Length; i++)
                         if (sx[i] != ox[i] || sy[i] != oy[i])
-                            Console.Error.WriteLine($"   pt {i,3}  ours ({ox[i],5},{oy[i],5})"
+                            Console.Error.WriteLine($"   pt {i,3} {Pt(i)} ours ({ox[i],5},{oy[i],5})"
                                 + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})");
                     // WPF_XYSOLVE_INTERVAL=1: how much SLACK each x has, once the residual is zero.
                     // <para>The solve is a coordinate descent that moves a point only when the move
@@ -4645,13 +4715,17 @@ namespace WgpuInterop.Tests.Text
                             while (hi < span)
                             { sx[i] = keep + hi + 1; if (Score() != 0) break; hi++; }
                             sx[i] = keep;
-                            Console.Error.WriteLine($"   pt {i,3}  ours {ox[i],5}  gdi {keep,5}"
+                            Console.Error.WriteLine($"   pt {i,3} {Pt(i)} ours {ox[i],5}  gdi {keep,5}"
                                 + $"  slack [{lo,3},{hi,3}]{(lo == 0 && hi == 0 ? "  PINNED" : "")}");
                         }
                     }
                 }
             }
-            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+            finally
+            {
+                TrueTypeFont.SubpixelFitting = savedSubpix;
+                TrueTypeInterpreter.s_capturePoints = false;
+            }
         }
 
         /// <summary>WHERE DOES GDI PUT ONE POINT? `WPF_KNOTSOLVE=family/chars/ppem[/B|I]` with
