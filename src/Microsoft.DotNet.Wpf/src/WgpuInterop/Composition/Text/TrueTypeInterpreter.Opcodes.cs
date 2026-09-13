@@ -826,6 +826,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // already pixel-exact at 16 and 20. Every X-TOUCHED point of the glyph
                             // (0, 9, 17, 26) agrees with GDI exactly, and so does the whole
                             // bi-level fit (37 of 37 points), so nothing before IUP is in question.
+                            // <para>THE BLOCK, DECODED. Two mirrored FDEFs, each called with
+                            // (farPoint, nearPoint, referencePoint, cvtIndex) and each setting the
+                            // pair at a fixed distance from the reference:
+                            //     fn A:  near = GC(ref) + cvt[98];   far = near + 38
+                            //     fn B:  near = GC(ref) - cvt[98];   far = near - 38
+                            // called four times on Times' '9' -- twice on y for (34, 9, ref 37) and
+                            // (27, 17, ref 30), twice on x for (36, 8, ref 33) and (29, 15, ref 26)
+                            // -- with cvt[98] = 13/64 at 14ppem in BOTH passes. It is a serif or a
+                            // shoulder being planted at a control distance from a stem.
+                            // <para>The inputs are not in doubt. Every reference point is one the
+                            // program touched, and the touched points agree with GDI. In the
+                            // BI-LEVEL pass GC(pt26) = 320 and the helper produces 307 and 269 --
+                            // and GGO says GDI's own bi-level fit has exactly 307 and 269, as it
+                            // has every other number this block writes (see
+                            // FittedPoints_AgainstGdisOwn, now 431 of 432 glyph/size pairs exact
+                            // across six faces). In the CLEARTYPE pass GC(pt26) = 332 and the same
+                            // formula gives 319 and 281, while GDI's own pixels want that shoulder
+                            // near 284 and leave the other point where IUP put it. So the formula
+                            // is right, the control value is right, the reference is right, and
+                            // the result is wrong: whatever ClearType does to this block, it is
+                            // not a different arithmetic on the same inputs.</para></para>
                             // <para>WHAT THE BLOCK IS, AND WHY NEITHER ANSWER IS RIGHT YET.
                             // The SCFSes that matter live in a ppem-gated block of the glyph
                             // program, not in the font program: Times' '9' reaches instruction 207
