@@ -2207,6 +2207,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_phaseDenFontUnits =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEN") != "span";
 
+        /// <summary>WPF_CT_PHASE_FADJ=&lt;n&gt;: nudge the 16.16 phase factor by n. Probe only.
+        /// </summary>
+        private static readonly int s_phaseFactorAdj =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FADJ"), out int fa) ? fa : 0;
+
         private static readonly bool s_phaseNumSpan =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_NUM") != "compat";
 
@@ -2359,6 +2364,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / ctDen)
                          : (int) ((ctNum + (ctNum < 0 ? -(ctDen / 2) : ctDen / 2)) / ctDen);
             if (s_phaseRecip) _ctFrac = linear / (float) CompatibleAdvance64 - 1f;
+            // WPF_CT_PHASE_FADJ=<n>: add n to the 16.16 factor. A probe, not a rule. The anchor
+            // search says three quarters of what is left is one anchor out by one sixty-fourth,
+            // and one factor is shared by every anchor of a glyph -- so if the factor is the
+            // source, ONE value of n should take a whole glyph to zero, and if it is not, no value
+            // will. That is a question the oracle can answer in a sweep and the binary cannot,
+            // because the factor's numerator is pass one's unrounded phantom span and GDI exposes
+            // no fractional advance anywhere.
+            // <para>ANSWERED, AND IT IS NOT THE FACTOR. Of four anchor-solvable glyphs swept,
+            // three (Segoe UI 'o'@12 and 's'@13, Tahoma 'b'@12) do not move for ANY nudge in
+            // +/-100, and the one that does -- Tahoma 'q'@16, 292 -> 0 -- reaches zero over the
+            // window -80..-10 and nowhere else. Its inputs are span 576 over denominator 566,
+            // giving 66,694, and the three neighbouring integer possibilities all land OUTSIDE
+            // that window: span-1 is 66,578 (nudge -116, scores 529), denominator+1 is 66,576
+            // (-118), denominator-1 is 66,812 (+118). The factor GDI would need is strictly
+            // between anything its own formula can produce from integer inputs, so the nudge is
+            // only flipping one node's PhaseDiv rounding and the cause lies elsewhere. Worth
+            // knowing, because "the numerator is the one input never measured against GDI" was the
+            // standing next step and this closes it.</para>
+            _ctFactor16 += s_phaseFactorAdj;
             // THE PHASE ONLY EVER EXPANDS CORRECTLY. Where 'hdmx' forces an advance SMALLER
             // than the natural one the fraction goes negative, and the tree -- 24 of 32 points
             // roots that are never moved, 8 touched points carrying the shift, IUP spreading it
