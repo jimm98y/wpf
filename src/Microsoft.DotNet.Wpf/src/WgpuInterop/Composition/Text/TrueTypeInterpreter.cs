@@ -3491,6 +3491,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // 611,135 on the holdout. So "halved" means the phase ends at half the NEW period
                 // -- ordinary round-to-nearest on the sixteenth, which is what ships. Worth
                 // keeping because it disambiguates that note, which reads both ways.
+                // <para>IT ALSO SETTLES ROUND-HALF-DOWN, which looks like a separate and much
+                // narrower question and is not. On the finer grid `value` has already been
+                // multiplied by sixteen and the original is in sixty-fourths, so value mod 64 is
+                // always 0, 16, 32 or 48 -- and `+31` and `+16` send every one of those to the
+                // same place. Rounding the tie down IS the quarter phase here, measures the same
+                // 8,397,970, and needs no knob of its own.</para>
                 case RoundMode.ToGrid:
                     value = s_roundPhaseQuarter && thirds > 1 ? (value + 16) & ~63 : Pix(value);
                     break;
