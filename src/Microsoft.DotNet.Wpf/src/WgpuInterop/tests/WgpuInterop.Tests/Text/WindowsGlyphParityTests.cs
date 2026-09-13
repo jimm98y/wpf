@@ -4620,6 +4620,35 @@ namespace WgpuInterop.Tests.Text
                         if (sx[i] != ox[i] || sy[i] != oy[i])
                             Console.Error.WriteLine($"   pt {i,3}  ours ({ox[i],5},{oy[i],5})"
                                 + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})");
+                    // WPF_XYSOLVE_INTERVAL=1: how much SLACK each x has, once the residual is zero.
+                    // <para>The solve is a coordinate descent that moves a point only when the move
+                    // reduces the residual and stops at zero, so what it reports is the FIRST
+                    // configuration on its path that renders GDI's pixels exactly -- not the only
+                    // one. A point the pixels do not pin down lands anywhere in its slack, and the
+                    // per-point column then says "this value works", not "this is GDI's". Reading
+                    // it as the latter is how one ends up trying to reproduce a coordinate that was
+                    // never determined.</para>
+                    // <para>This walks each x out in both directions from the solved value and
+                    // reports the widest run that keeps the residual at zero. A point printed
+                    // `[0,0]` is PINNED and its value is GDI's; a wide interval is a point the
+                    // pixels do not constrain, and any rule that reproduces something inside it is
+                    // as good as any other. Every point is listed, not just the moved ones,
+                    // because an unmoved point with a wide interval is equally uninformative.</para>
+                    if (cur == 0 && Environment.GetEnvironmentVariable("WPF_XYSOLVE_INTERVAL") == "1")
+                    {
+                        Console.Error.WriteLine("   slack in x that still renders GDI exactly:");
+                        for (int i = 0; i < sx.Length; i++)
+                        {
+                            int keep = sx[i], lo = 0, hi = 0;
+                            while (lo > -span)
+                            { sx[i] = keep + lo - 1; if (Score() != 0) break; lo--; }
+                            while (hi < span)
+                            { sx[i] = keep + hi + 1; if (Score() != 0) break; hi++; }
+                            sx[i] = keep;
+                            Console.Error.WriteLine($"   pt {i,3}  ours {ox[i],5}  gdi {keep,5}"
+                                + $"  slack [{lo,3},{hi,3}]{(lo == 0 && hi == 0 ? "  PINNED" : "")}");
+                        }
+                    }
                 }
             }
             finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
