@@ -2948,6 +2948,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         // Linear interpolation of the phase at p between references a and b, by p's x position.
+        /// <summary>The two-parent rule, inlined in PhaseShift rather than a function of its own.
+        /// <para>IT TRUNCATES, and that is read off the instructions, not the decompiler: the
+        /// sequence at 140035d88 is `sub / mul / sub / sub / madd` and then a bare
+        /// `sdiv w0,w9,w8` at 140035da4 with NO rounding term added first. Worth pinning because
+        /// it became load-bearing. Segoe UI's 'o' at 12ppem is one anchor out by one sixty-fourth
+        /// -- GDI wants P9 at 408 where we give 409 -- and the whole of its chain is this rule:
+        /// P25 is the right phantom and takes -2; P3 is a root paired with P15 and takes 0; P21
+        /// interpolates between them by org position, `((351-36)*-2 + (450-351)*0) / (450-36)`
+        /// = -630/414 = -1.52, which truncates to -1; and P9 inherits that through the pair. A
+        /// rule that ROUNDED would give -2 and the glyph would be exact -- which is exactly the
+        /// shape of a wrong answer one is tempted to ship. It is not what the binary does.</para>
+        /// <para>So the divergence on that glyph is in an INPUT to the rule, not the rule: one of
+        /// the two parent shifts, or one of the three org positions. At -1.52 it is a single
+        /// truncation away, and many small input changes would cross it, so the glyph on its own
+        /// does not pin which.</para></summary>
         private int CalcAvgXPhase(int a, int p, int b, int phA, int phB)
         {
             // +0x10 in CalcAvgXPhaseShift's element struct is OrgX. The phase MAGNITUDES come
