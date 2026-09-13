@@ -266,6 +266,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_projMode =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PROJ_MODE"), out int m) ? m : 1;
 
+        /// <summary>WPF_CT_ROUND_PHASE=quarter: see RoundMode.ToGrid.</summary>
+        private static readonly bool s_roundPhaseQuarter =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUND_PHASE") == "quarter";
+
         private static int Pix(int value) => (value + 32) & ~63;          // to the nearest whole pixel
         private static int Floor(int value) => value & ~63;
         private static int Ceil(int value) => (value + 63) & ~63;
@@ -3477,7 +3481,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             switch (_gs.Round)
             {
-                case RoundMode.ToGrid: value = Pix(value); break;
+                // WPF_CT_ROUND_PHASE=quarter: on the finer ClearType grid, add a QUARTER of the
+                // grid step before truncating rather than a half. The note under RoundMode.Super
+                // below records what the binary does -- GDI keeps the value and divides the GRID,
+                // its ClearType rounding table being "the same code with the period divided by 16
+                // and the phase HALVED" -- and it is ambiguous whether "halved" means the phase
+                // ends up at half the new period (ordinary rounding, what we do) or at a quarter
+                // of it. This is the second reading, and it is REFUTED: 8,397,970 against
+                // 611,135 on the holdout. So "halved" means the phase ends at half the NEW period
+                // -- ordinary round-to-nearest on the sixteenth, which is what ships. Worth
+                // keeping because it disambiguates that note, which reads both ways.
+                case RoundMode.ToGrid:
+                    value = s_roundPhaseQuarter && thirds > 1 ? (value + 16) & ~63 : Pix(value);
+                    break;
                 case RoundMode.ToHalfGrid: value = Floor(value) + 32; break;
                 case RoundMode.ToDoubleGrid: value = (value + 16) & ~31; break;
                 case RoundMode.DownToGrid: value = Floor(value); break;
