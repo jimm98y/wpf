@@ -4774,6 +4774,18 @@ namespace WgpuInterop.Tests.Text
                             }
                             long best = Score();
                             int arenders = 1;
+                            // RESTARTS, because "no anchor placement reaches GDI" is a claim about
+                            // a SEARCH, and this one is coordinate descent in four dimensions. A
+                            // local minimum would read as a proof that GDI is off our manifold --
+                            // and a search reporting its own limits as a property of the world is
+                            // the failure mode this file has already hit twice. WPF_XYSOLVE_
+                            // ANCHORS_RESTARTS=n re-runs the descent from n random starts and keeps
+                            // the best; only if none of them reaches zero is the negative worth
+                            // anything.
+                            int restarts = int.TryParse(
+                                Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_RESTARTS"),
+                                out int rs) ? rs : 0;
+                            var rng = new Random(12345);
                             Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}"
                                 + $"  anchor mode: {anchorOf.Length} x-touched"
                                 + $" points place {n - anchorOf.Length} others; start {best}");
@@ -4804,6 +4816,30 @@ namespace WgpuInterop.Tests.Text
                                     anchors[k] = bestV;
                                     Write(RunIup(anchors));
                                 }
+                            for (int r = 0; r < restarts && best > 0; r++)
+                            {
+                                var trial = new int[anchorOf.Length];
+                                for (int k = 0; k < trial.Length; k++)
+                                    trial[k] = fit[anchorOf[k]] + rng.Next(-span, span + 1);
+                                long cur2 = long.MaxValue;
+                                for (int pass = 0; pass < 3; pass++)
+                                    for (int k = 0; k < trial.Length; k++)
+                                    {
+                                        int keep = trial[k], bestV = keep;
+                                        for (int d = -span; d <= span; d++)
+                                        {
+                                            trial[k] = fit[anchorOf[k]] + d;
+                                            Write(RunIup(trial));
+                                            arenders++;
+                                            long v = Score();
+                                            if (v < cur2) { cur2 = v; bestV = trial[k]; }
+                                        }
+                                        trial[k] = bestV;
+                                    }
+                                if (cur2 < best)
+                                { best = cur2; Array.Copy(trial, anchors, trial.Length); }
+                            }
+                            Write(RunIup(anchors));
                             if (best == 0)
                                 for (int k = 0; k < anchorOf.Length; k++)
                                     while (anchors[k] != fit[anchorOf[k]])
