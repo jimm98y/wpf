@@ -2262,10 +2262,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int adv = _realPoints + 1;
             if (adv >= _glyphZone.CurX.Length) return;
             // THE DENOMINATOR IS THE ADVANCE IN FONT UNITS, SCALED ONCE -- not the difference
-            // of two separately scaled phantom points. fs__Contour builds the factor as
-            //     denom = (*globals[0x130])(globals[0x1ac]);        // 0x1ac is elem[0x46],
-            //     globals[0x1d0] = (span << 16 +/- denom/2) / denom; // the advance in FONT UNITS
-            // so one value crosses from design space to 26.6, once. We took the difference of
+            // of two separately scaled phantom points. fs__Contour@140024964 builds it as
+            //     span  = curX[lastEnd + 2] - curX[lastEnd + 1];       // 26.6, unrounded
+            //     if (ctx[0x1ac] == 0 || span == 0) factor = 0x10000;  // the nonzero GUARD only
+            //     denom = (*(ctx + 0xd8))(&ctx[0x130]);                // one call, one result
+            //     factor = (span << 16 +/- denom/2) / denom;           // signs agree -> plus
+            // where `denom` has to be the LINEARLY SCALED ADVANCE in 26.6, that being the only
+            // thing a span in 26.6 can be divided by to give a ratio near one. `ctx[0x1ac]` is
+            // the advance in FONT UNITS -- read as a halfword at 140024998 -- and it is only
+            // tested against zero; it is NOT the divisor, whatever an earlier note here said.
+            // So one value crosses from design space to 26.6, once. We took the difference of
             // OrgX[pp2] and OrgX[pp1], and those are two independently scaled and rounded
             // coordinates: round(a*s) - round(b*s) is not round((a-b)*s), and the two disagree by
             // a sixty-fourth whenever the two roundings fall opposite ways -- which is about half
