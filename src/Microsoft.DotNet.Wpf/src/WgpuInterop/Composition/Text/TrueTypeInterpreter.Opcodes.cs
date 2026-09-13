@@ -149,7 +149,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x45:                                                          // RCVT
                         {
                             int i = Pop();
-                            Push((uint)i < _scaledCvt.Length ? _scaledCvt[i] : 0);
+                            int v = (uint) i < _scaledCvt.Length ? _scaledCvt[i] : 0;
+                            // WPF_CVT_OVERRIDE=idx:val[,idx:val...] forces a control value, in
+                            // 64ths, on the CLEARTYPE pass only. A debugging facility: when a
+                            // glyph's error reduces to one control value -- which is where Times'
+                            // bowls have ended up -- this answers "is that really all of it?" in
+                            // one run instead of a rebuild per guess.
+                            if (s_cvtOverride is not null && !BiLevelPass && ClearTypeInfo
+                                && s_cvtOverride.TryGetValue(i, out int forced)) v = forced;
+                            Push(v);
                             break;
                         }
 
@@ -482,11 +490,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // the extreme where GDI's pixels want it to come OFF the extreme.
                                 // So GDI does not run a post-IUP ALIGNRP on an untouched point in
                                 // the ClearType pass, and this gate is the rule rather than a
-                                // patch. The SCFS half is the opposite: all three move the right
-                                // way, and pt17 and pt19 -- symmetric points on the two sides of
-                                // the bowl -- are both exactly 6.7x too far. That is a magnitude
-                                // problem in the target, not a decision about whether to apply it,
-                                // and the two should stop being treated as one phenomenon.</para>
+                                // patch.</para>
+                                // <para>THE SCFS HALF LOOKS LIKE THE OPPOSITE AND IS NOT. All
+                                // three of its targets above move the RIGHT way, and pt17 and pt19
+                                // -- symmetric points either side of the bowl -- are both exactly
+                                // 6.7x too far, which reads as a magnitude problem in the target
+                                // rather than a decision about whether to apply it. Chasing that
+                                // gives a specific number: the helper's base is
+                                // `GC(anchor) +/- cvt[98]`, both anchors agree with GDI exactly
+                                // (180 and 332), the +/-38 spacing is right in both passes, and
+                                // solving for the control value that would land pt7, pt17 and pt19
+                                // where GDI's pixels want them gives 28 sixty-fourths from THREE
+                                // points through TWO different anchors, against the 77 we read.
+                                // <para>It is still wrong. WPF_CVT_OVERRIDE forces a control value
+                                // on the ClearType pass, and no value rescues it -- 77 gives 3,587,
+                                // 40 gives 3,371, 28 gives 3,802, 13 gives 4,628, against 2,034
+                                // for suppressing the instruction. The reason is in the same table
+                                // the derivation came from: this SCFS has EIGHT targets and only
+                                // three of them may move. pt5, pt28, pt30, pt38 and pt40 sit
+                                // EXACTLY where IUP puts them in GDI's own rendering (299, 288,
+                                // 231, 232, 288, all agreeing), so an instruction that writes all
+                                // eight cannot be what GDI runs, whatever value it writes. The
+                                // three that agreed in direction are the bowl's shoulders, which
+                                // any shoulder-flattening rule moves the same way -- direction
+                                // agreement over three points was not evidence.</para>
+                                // <para>So BOTH gates are GDI's behaviour, and the Times bowl
+                                // residual is none of this: fourteen untouched on-curve points
+                                // needing moves of at most 12/64, with no instruction in the
+                                // program touching them.</para>
                                 if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
                                     && (IsHorizontalProjection
                                         ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
@@ -860,14 +891,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // already pixel-exact at 16 and 20. Every X-TOUCHED point of the glyph
                             // (0, 9, 17, 26) agrees with GDI exactly, and so does the whole
                             // bi-level fit (37 of 37 points), so nothing before IUP is in question.
-                            // <para>AND WHAT THE WRONG TARGET LOOKS LIKE. On Times Bold '0'@16
-                            // the two x calls set their pairs to 257 and 255 -- against a glyph
-                            // centre of 256 -- while GDI's pixels want them near 207 and 306, i.e.
-                            // about fifty sixty-fourths out on either side. Our helper collapses
-                            // both shoulders onto the middle of the glyph; GDI's keeps them apart.
-                            // Whatever is wrong is in the value, and it is wrong SYMMETRICALLY,
-                            // which is the shape of a reference coordinate rather than of a
-                            // rounding.</para>
                             // <para>THE BLOCK, DECODED. Two mirrored FDEFs, each called with
                             // (farPoint, nearPoint, referencePoint, cvtIndex) and each setting the
                             // pair at a fixed distance from the reference:
@@ -1359,6 +1382,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// what GDI measurably draws, instead of a rounded control value plus s_stemFat.</summary>
         private static readonly bool s_stemNatural =
             Environment.GetEnvironmentVariable("WPF_STEM_NATURAL") == "1";
+
+        /// <summary>WPF_CVT_OVERRIDE=idx:val[,...] -- force control values (in 64ths) on the
+        /// ClearType pass. Debugging only; see the RCVT case.</summary>
+        private static readonly System.Collections.Generic.Dictionary<int, int>? s_cvtOverride = ParseCvtOverride();
+
+        private static System.Collections.Generic.Dictionary<int, int>? ParseCvtOverride()
+        {
+            if (Environment.GetEnvironmentVariable("WPF_CVT_OVERRIDE") is not { Length: > 0 } spec)
+                return null;
+            var map = new System.Collections.Generic.Dictionary<int, int>();
+            foreach (string part in spec.Split(','))
+            {
+                string[] kv = part.Split(':');
+                if (kv.Length == 2 && int.TryParse(kv[0], out int k) && int.TryParse(kv[1], out int v))
+                    map[k] = v;
+            }
+            return map.Count > 0 ? map : null;
+        }
 
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
