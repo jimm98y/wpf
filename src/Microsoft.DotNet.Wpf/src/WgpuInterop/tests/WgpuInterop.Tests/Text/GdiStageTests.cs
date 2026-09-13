@@ -879,6 +879,23 @@ namespace WgpuInterop.Tests.Text
                     // about. The count of them is reported, so the sample is never silently
                     // biased; do not read a face's total without it.
                     List<Vector2> fittedFull = fitted;
+                    // WPF_GGOPTS_DUMP=1: GGO's fitted list beside our captured points, so the
+                    // correspondence can be established by eye on a glyph the automatic pairing
+                    // refuses. Curved glyphs are where it refuses, and curved glyphs -- the Times
+                    // bowls -- are the largest remaining pool, so "our bi-level fit is GDI's" has
+                    // never actually been checked on one.
+                    if (Environment.GetEnvironmentVariable("WPF_GGOPTS_DUMP") == "1")
+                    {
+                        Console.Error.WriteLine($"-- '{c}' GGO fitted {fittedFull.Count},"
+                            + $" GGO unfitted {plain.Count}, ours {pts.PointCount}");
+                        for (int i = 0; i < fittedFull.Count; i++)
+                            Console.Error.WriteLine($"   ggo[{i,3}] ({fittedFull[i].X,8:0.###},"
+                                + $"{-fittedFull[i].Y,8:0.###})");
+                        for (int i = 0; i < pts.PointCount; i++)
+                            Console.Error.WriteLine($"   our[{i,3}] ({pts.FitX[i],8:0.###},"
+                                + $"{pts.FitY[i],8:0.###})  {(pts.OnCurve[i] ? "on " : "off")}"
+                                + $" {(pts.TouchedX[i] ? "X" : ".")}");
+                    }
                     bool onCurveOnly = plain.Count != fitted.Count;
                     if (onCurveOnly)
                     {
@@ -934,13 +951,36 @@ namespace WgpuInterop.Tests.Text
                     // it has to be, because off-curve points are where GGO's segmentation and ours
                     // disagree, which is where a by-index pairing fails first.</para>
                     float shearForPair = font.ObliqueShearApplied;
+                    int reconCount = -1; bool reconGuard = false;
                     bool byIndex = false;
                     int[] gdiIdx = Array.Empty<int>();
                     if (plain.Count != fitted.Count
                         && Environment.GetEnvironmentVariable("WPF_GGOPTS_BYINDEX") != "0"
                         && pts.PointCount > 0 && pts.EndPoints.Length > 0)
                     {
+                        // AND SOME CONTOURS CARRY A CLOSING REPEAT OF THEIR FIRST POINT.
+                        // Times' '9' at 14ppem is 45 GGO points against 40 of ours: its first
+                        // contour is 24 points + 3 materialised midpoints, and its second is 16 + 1
+                        // + the first point AGAIN at the end. Only a contour whose last point is
+                        // OFF the curve can carry one -- the closing curve needs an on-curve end to
+                        // land on -- but not every such contour does, and assuming they all do
+                        // breaks glyphs that were pairing before ('0' is 37 against 37 and a blanket
+                        // repeat makes it 38). So enumerate: the candidates are the contours ending
+                        // off-curve, and each is either repeated or not. With eight or fewer of them
+                        // that is at most 256 reconstructions, and the count test plus the 1.5px
+                        // proximity guard below decide which one GGO actually produced.
+                        var tails = new List<int>();
+                        int scan = 0;
+                        foreach (int e in pts.EndPoints)
+                        {
+                            if (e >= scan && e < pts.PointCount && !pts.OnCurve[e]) tails.Add(e);
+                            scan = e + 1;
+                        }
+                        int combos = tails.Count is > 0 and <= 8 ? 1 << tails.Count : 1;
                         var map = new List<int>(fittedFull.Count);   // GGO index -> ours, -1 implied
+                        for (int combo = 0; combo < combos; combo++)
+                        {
+                        map.Clear();
                         int first = 0;
                         foreach (int end in pts.EndPoints)
                         {
@@ -951,27 +991,78 @@ namespace WgpuInterop.Tests.Text
                                 int nxt = k == end ? first : k + 1;
                                 if (!pts.OnCurve[k] && !pts.OnCurve[nxt]) map.Add(-1);
                             }
+                            int slot = tails.IndexOf(end);
+                            if (slot >= 0 && slot < 8 && (combo >> slot & 1) != 0) map.Add(first);
                             first = end + 1;
                         }
+                        reconCount = map.Count;
                         if (map.Count > 0 && map.Count == fittedFull.Count)
                         {
+                            // CHECK THE RECONSTRUCTION AGAINST ITSELF, not against a distance.
+                            // The guard used to demand every GDI fitted point sit within 1.5px of
+                            // OUR scaled unfitted point at the same index, which confuses two
+                            // different things: a misaligned map, and a point the fit genuinely
+                            // moved a long way. Times' '9' at 14ppem is the second -- its map is
+                            // exact, every x agrees to the 64th, and it was refused because GGO's
+                            // fitted y for P27 is 1.55px from its unfitted y, which is simply how
+                            // far that counter's top gets snapped at 14ppem. Nine of the fifteen
+                            // Times glyphs at 14ppem were being thrown away like that.
+                            // <para>The insertions are exactly checkable instead. Every entry the
+                            // reconstruction marks as an implied midpoint must BE the midpoint of
+                            // its neighbours in GGO's own list, and every closing repeat must equal
+                            // the contour's first entry exactly -- both in GDI's coordinates, with
+                            // no reference to ours. A map that is off by one fails these at once,
+                            // because a real point is not the average of its neighbours.</para>
                             var idx = new int[pts.PointCount];
                             for (int k = 0; k < idx.Length; k++) idx[k] = -1;
                             bool near = true;
                             for (int k = 0; k < map.Count && near; k++)
                             {
-                                if (map[k] < 0) continue;
+                                if (map[k] < 0)
+                                {
+                                    if (k == 0 || k + 1 >= map.Count) { near = false; break; }
+                                    float mx = (fittedFull[k - 1].X + fittedFull[k + 1].X) / 2f;
+                                    float my = (fittedFull[k - 1].Y + fittedFull[k + 1].Y) / 2f;
+                                    if (Math.Abs(fittedFull[k].X - mx) > 0.02f
+                                        || Math.Abs(fittedFull[k].Y - my) > 0.02f) near = false;
+                                    continue;
+                                }
+                                if (idx[map[k]] >= 0)
+                                {
+                                    // a closing repeat: must match the entry it repeats, exactly
+                                    int at = idx[map[k]];
+                                    if (Math.Abs(fittedFull[k].X - fittedFull[at].X) > 0.02f
+                                        || Math.Abs(fittedFull[k].Y - fittedFull[at].Y) > 0.02f)
+                                        near = false;
+                                    continue;
+                                }
                                 idx[map[k]] = k;
-                                float wantX = pts.StartX[map[k]] + shearForPair * pts.StartY[map[k]];
-                                if (Math.Abs(fittedFull[k].X - wantX) > 1.5f
-                                    || Math.Abs(-fittedFull[k].Y - pts.StartY[map[k]]) > 1.5f)
-                                    near = false;
                             }
+                            // and a loose sanity bound, so a map that passes the structural tests
+                            // by coincidence on a glyph with few insertions is still refused
+                            for (int k = 0; k < map.Count && near; k++)
+                            {
+                                if (map[k] < 0 || idx[map[k]] != k) continue;
+                                float wantX = pts.StartX[map[k]] + shearForPair * pts.StartY[map[k]];
+                                if (Math.Abs(fittedFull[k].X - wantX) > 3f
+                                    || Math.Abs(-fittedFull[k].Y - pts.StartY[map[k]]) > 3f)
+                                {
+                                    near = false;
+                                    if (Environment.GetEnvironmentVariable("WPF_GGOPTS_DUMP") == "1")
+                                        Console.Error.WriteLine($"   guard fails at ggo[{k}]"
+                                            + $" -> our P{map[k]}: ggo ({fittedFull[k].X:0.###},"
+                                            + $"{-fittedFull[k].Y:0.###}) unfitted ({wantX:0.###},"
+                                            + $"{pts.StartY[map[k]]:0.###})");
+                                }
+                            }
+                            reconGuard = near;
                             if (near)
                             {
                                 byIndex = true; onCurveOnly = false;
                                 fitted = fittedFull; gdiIdx = idx;
+                                break;
                             }
+                        }
                         }
                     }
                     if (!byIndex && (plain.Count != fitted.Count || plain.Count == 0))
@@ -981,7 +1072,8 @@ namespace WgpuInterop.Tests.Text
                             Console.Error.WriteLine($"'{c}': unpairable, GGO segments it"
                                 + $" {plain.Count} points unfitted against {fitted.Count} fitted"
                                 + $", and {fittedFull.Count} fitted against our {pts.PointCount}"
-                                + " points plus their implied midpoints");
+                                + " points plus their implied midpoints"
+                                + $" (reconstruction made {reconCount}, guard {(reconGuard ? "passed" : "FAILED")})");
                         continue;
                     }
 
