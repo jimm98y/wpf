@@ -4662,6 +4662,48 @@ namespace WgpuInterop.Tests.Text
                             }
                         Console.Error.WriteLine("   pass " + pass + " (step " + step + "): " + cur);
                     }
+
+                    // NOW WALK IT BACK. The descent above stops the moment the residual reaches
+                    // zero, and pass 0 moves in steps of FOUR sixty-fourths, so on a glyph that
+                    // solves in the first pass every coordinate it reports is necessarily ours
+                    // plus a multiple of 4/64. That is an artefact of the step, and a convincing
+                    // one: swept over Times at four sizes it made 147 of 148 differences exact
+                    // multiples of a SIXTEENTH OF A PIXEL, which reads as a law about GDI and is
+                    // nothing of the kind. Any conclusion drawn from the arithmetic of these
+                    // numbers -- a quantised correction, a delta-shaped shift -- was drawing on
+                    // the search grid.
+                    // <para>So once the residual is zero, minimise the DISPLACEMENT instead: move
+                    // every point back toward our own fit one sixty-fourth at a time for as long
+                    // as the residual stays zero. What comes out is the outline CLOSEST TO OURS
+                    // that still reproduces GDI's pixels exactly, which is the honest form of the
+                    // question -- "how far must we move, at least?" -- and it is free of the
+                    // grid. Points the image does not constrain collapse onto our own values and
+                    // stop being reported as differences at all.</para>
+                    if (cur == 0)
+                    {
+                        bool moved = true;
+                        int backRenders = 0;
+                        for (int sweep = 0; sweep < 8 && moved; sweep++)
+                        {
+                            moved = false;
+                            for (int i = 0; i < sx.Length; i++)
+                                for (int axis = 0; axis < 2; axis++)
+                                {
+                                    int[] arr = axis == 0 ? sx : sy, ours = axis == 0 ? ox : oy;
+                                    while (arr[i] != ours[i])
+                                    {
+                                        int keep = arr[i];
+                                        arr[i] += arr[i] < ours[i] ? 1 : -1;
+                                        backRenders++;
+                                        if (Score() != 0) { arr[i] = keep; break; }
+                                        moved = true;
+                                    }
+                                }
+                        }
+                        renders += backRenders;
+                        Console.Error.WriteLine($"   walked back in {backRenders} renders;"
+                            + " these are the SMALLEST moves that still render GDI exactly");
+                    }
                     Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}  {sx.Length} points,"
                         + $" {renders} renders;  as fitted {start}  ->  residual {cur}"
                         + (cur == 0 ? "   EXACT -- these ARE GDI own coordinates" : ""));
