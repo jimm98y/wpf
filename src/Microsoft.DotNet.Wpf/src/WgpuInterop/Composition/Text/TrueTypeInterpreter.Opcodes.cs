@@ -1854,6 +1854,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_IUP_UPPER=0: ask "below the lower reference" before "at or above the
         /// upper" one, as we used to. See the comment at the bracket test.</summary>
+        /// <summary>WPF_IUP_TRACE=1: every contour's touched run and every interpolated span, so a
+        /// point GDI places differently can be traced to the anchors it was carried between.
+        /// </summary>
+        /// <summary>Set while the trace should speak: Carry is static and cannot see BiLevelPass,
+        /// and without this the measurement pass's runs are printed beside the real ones.</summary>
+        private static bool s_iupTraceOn;
+
+        internal static readonly bool s_iupTrace =
+            Environment.GetEnvironmentVariable("WPF_IUP_TRACE") == "1";
+
         private static readonly bool s_iupUpperFirst =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_UPPER") != "0";
 
@@ -3084,6 +3094,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int[] org = horizontal ? z.OrgX : z.OrgY;
             int[] orus = horizontal ? z.OrusX : z.OrusY;
 
+            s_iupTraceOn = s_iupTrace && !BiLevelPass;
+            if (s_iupTraceOn)
+                Console.Error.WriteLine($"=== IUP[{(horizontal ? 'x' : 'y')}]");
             int point = 0;
             for (int contour = 0; contour < _contourCount; contour++)
             {
@@ -3092,6 +3105,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (endPoint < firstPoint) continue;
 
                 while (point <= endPoint && (z.Tags[point] & mask) == 0) point++;
+                if (s_iupTraceOn && contour == 0)
+                    for (int k = 0; k < _realPoints; k++)
+                        Console.Error.WriteLine($"  P{k,3} org({z.OrgX[k],5},{z.OrgY[k],5})"
+                            + $" orus({z.OrusX[k],6},{z.OrusY[k],6})"
+                            + $" cur({z.CurX[k],5},{z.CurY[k],5})"
+                            + $" {((z.Tags[k] & TagTouchX) != 0 ? "X" : ".")}"
+                            + $"{((z.Tags[k] & TagTouchY) != 0 ? "Y" : ".")}"
+                            + $"{((z.Tags[k] & TagOn) != 0 ? "o" : "-")}");
+                if (s_iupTraceOn)
+                    Console.Error.WriteLine($"IUP[{(horizontal ? 'x' : 'y')}] contour {contour}"
+                        + $" {firstPoint}..{endPoint}"
+                        + (point > endPoint ? "  NO TOUCHED POINT, left alone"
+                           : $"  first touched {point}"));
                 if (point > endPoint) continue;
 
                 int firstTouched = point, lastTouched = point;
@@ -3135,6 +3161,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static void Carry(int[] cur, int[] org, int[] orus, int from, int to, int ref1, int ref2)
         {
             if (from > to) return;
+            if (s_iupTrace && s_iupTraceOn)
+                Console.Error.WriteLine($"   run {from}..{to} between {ref1} and {ref2}"
+                    + $"  org({org[ref1]},{org[ref2]}) cur({cur[ref1]},{cur[ref2]})"
+                    + $" orus({orus[ref1]},{orus[ref2]})");
 
             int orus1 = orus[ref1], orus2 = orus[ref2];
             if (orus1 > orus2)

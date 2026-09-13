@@ -56,7 +56,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         ///   0.004  1,612,629 2,338,570 1,965,325 2,860,019 2,299,096  11,075,639
         ///   0.001  1,611,687 2,338,583 1,965,321 2,857,435 2,296,048  11,069,074
         /// </code>
-        /// <para>0.001 buys a further 0.06 per cent for two and a half times the segments, so
+        /// <para>0.004 WAS WHERE THAT SETTLED AND IT IS NOW 0.0001, because GDI DOES NOT FLATTEN
+        /// CURVES AT ALL. fontdrvhost's scan converter solves the spline against each scanline --
+        /// fsc_CalcSpline takes the span's endpoints in 26.6 and walks scanline indices
+        /// (`(hi - 0x21 >> 6) + 1` and the mirror for the descending case), evaluating the curve
+        /// there rather than walking a polyline. So a flattening chord is not an approximation of
+        /// what GDI draws, it is pure one-sided error against it, and the only question is how
+        /// much of it we are prepared to pay to remove.</para>
+        /// <para>Re-measured on the holdout (6 faces x 4 styles x 8..24ppem) it is worth a great
+        /// deal more than the note below claimed. That note was written under a coverage model
+        /// several fixes ago and is left standing only as a record of the method:</para>
+        /// <code>
+        ///   tolerance   0.004    0.001   0.0005   0.0002   0.0001  0.00005  0.000005
+        ///   holdout   843,447  657,099  627,945  614,202  611,135  609,651   608,571
+        ///   seconds        21       34       34       40       53      103       261
+        /// </code>
+        /// <para>0.0001 is 99.6 per cent of everything available and a fifth of the cost of
+        /// chasing the last 0.4. The mechanism is why the number is so large for so small a sag:
+        /// 0.004px against a lamp of a third of a pixel is 1.2 per cent of a lamp, it is ONE-SIDED
+        /// (a chord on a convex curve can only ever under-cover), and it applies to every curved
+        /// edge in every glyph. At 0.0001 the same sag is 0.03 per cent of a lamp.</para>
+        /// <para>The superseded 2026 measurement, kept for the method:
+        /// 0.001 buys a further 0.06 per cent for two and a half times the segments, so
         /// 0.004 is where it settles. The ink ratio against Windows moves 0.9855 to 0.9863 at
         /// 16ppem, in the direction the mechanism predicts, which is what makes this a fix
         /// rather than a fitted constant.</para>
@@ -78,7 +99,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_TOL"),
                            System.Globalization.NumberStyles.Float,
                            System.Globalization.CultureInfo.InvariantCulture, out float gt)
-                && gt > 0 ? gt : 0.004f;
+                && gt > 0 ? gt : 0.0001f;
 
         /// <summary>The tolerance a caller gets when it does not name one. WPF_CURVE_TOL.
         /// <para>Worth a knob because 0.025px is not obviously below the floor for TEXT. A
