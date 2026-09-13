@@ -1847,14 +1847,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //         AddProportion(1, elem, localGS[0xce], p, localGS[0xd0]);
             // so GDI records no proportion link at all for a SIMPLE glyph, and every glyph in the
             // weight specimen is simple.
-            // <para>AND YET OURS HELP: the gate costs 931,315 against 611,135 on the holdout, and
-            // 12,411 against 10,327 on Arial Bold at 20ppem -- where it measures identically to
-            // WPF_CT_PHASE_INTERALIGN=0, as it must, since every glyph there is simple. That is a
-            // contradiction worth keeping in front of whoever reads this next. GDI does not build
-            // these links, we do, and removing them makes us WORSE -- so they are compensating for
-            // something else missing from the tree, and the fault is upstream of them. Do not ship
-            // this gate on its own; it is a correct reading of one call site and the wrong change
-            // until the thing it is patching is found.</para>
+            // <para>REFUTED, AND THE READING WITH IT -- `elem != glyphElem` DOES NOT MEAN "is a
+            // component". The gate costs 931,315 against 611,135 on the holdout and 12,411 against
+            // 10,327 on Arial Bold at 20ppem. The same condition guards itrp_MIRP's inlined
+            // AddDistance, itrp_ALIGNRP's pair of calls, and itrp_IUP's phase block itself -- and
+            // forcing THAT one to mean "components only" measures 46,983,682 (WPF_CT_PHASE_DEPTH=3).
+            // A condition that would switch the entire phase off for every simple glyph, on a
+            // specimen made entirely of simple glyphs, cannot mean what it looks like. It means
+            // "not the TWILIGHT element": localGS+0x38 is zone 0, every link is recorded in the
+            // glyph zone, so the test is true in the ordinary case and these gates all read "do not
+            // build a phase tree out of the twilight zone".</para>
+            // <para>So there is no contradiction and nothing upstream to find here: recording a
+            // proportion link for a simple glyph is correct, and WPF_CT_PHASE_PROPCOMP only exists
+            // to keep the measurement that says so.</para>
             if (canProportion && s_phaseInterAlign
                 && (!s_phasePropComponent || _inComposite || HintDepth > 0)
                 && _pvPtA >= 0 && _pvPtB >= 0
