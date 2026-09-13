@@ -4750,46 +4750,82 @@ namespace WgpuInterop.Tests.Text
                         }
                         else
                         {
+                            // WRITE THE DIFFERENCE, NOT THE VALUE, so that the anchors at our own
+                            // positions reproduce our own outline EXACTLY. Writing the recomputed
+                            // coordinate straight into the path is not the same thing: the implied
+                            // midpoints are averages, and recomputing them here with integer
+                            // division lands a sixty-fourth away from what the outline builder
+                            // produced in floating point. That is enough to move a lamp -- Segoe
+                            // UI's 'o' at 12ppem scored 137 as fitted and ZERO once the midpoints
+                            // had been through this function, which made our own outline look like
+                            // GDI's and would have reported every anchor as already correct.
+                            // Applying deltas leaves the baseline untouched by construction.
                             void Write(int[] c)
                             {
                                 for (int i = 0; i < sx.Length; i++)
-                                    if (pathToPoint[i] >= 0) sx[i] = c[pathToPoint[i]];
+                                {
+                                    int p = pathToPoint[i];
+                                    if (p >= 0) sx[i] = ox[i] + (c[p] - fit[p]);
+                                }
                                 for (int i = 0; i < sx.Length; i++)
                                     if (pathToPoint[i] < 0 && i > 0 && i + 1 < sx.Length)
-                                        sx[i] = (sx[i - 1] + sx[i + 1]) / 2;
+                                        sx[i] = ox[i] + ((sx[i - 1] - ox[i - 1])
+                                                         + (sx[i + 1] - ox[i + 1])) / 2;
                             }
                             long best = Score();
                             int arenders = 1;
-                            Console.Error.WriteLine($"   anchor mode: {anchorOf.Length} x-touched"
+                            Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}"
+                                + $"  anchor mode: {anchorOf.Length} x-touched"
                                 + $" points place {n - anchorOf.Length} others; start {best}");
-                            for (int pass = 0; pass < 3 && best > 0; pass++)
-                            {
-                                int step = pass == 0 ? 4 : pass == 1 ? 2 : 1;
-                                for (int k = 0; k < anchorOf.Length && best > 0; k++)
+                            // EVERY STEP IS ONE SIXTY-FOURTH, and the search does not stop at the
+                            // first value that reaches zero. A coarse first pass would make the
+                            // reported deltas multiples of its own step -- the coordinate solver
+                            // did exactly that and produced a "law" that was nothing but its step
+                            // size -- and a descent that halts on the first exact hit reports the
+                            // first value on its path rather than the smallest move. So: unit
+                            // steps, and once the residual is zero, walk every anchor back toward
+                            // our own value for as long as it stays zero. What comes out is the
+                            // SMALLEST anchor movement that reproduces GDI.
+                            for (int pass = 0; pass < 3; pass++)
+                                for (int k = 0; k < anchorOf.Length; k++)
                                 {
                                     int keep = anchors[k], bestV = keep;
-                                    for (int d = -span; d <= span; d += step)
+                                    for (int d = -span; d <= span; d++)
                                     {
                                         if (d == 0) continue;
                                         anchors[k] = keep + d;
                                         Write(RunIup(anchors));
                                         arenders++;
                                         long v = Score();
-                                        if (v < best) { best = v; bestV = anchors[k]; }
+                                        if (v < best || (v == best && Math.Abs(keep + d - fit[anchorOf[k]])
+                                                                      < Math.Abs(bestV - fit[anchorOf[k]])))
+                                        { best = v; bestV = anchors[k]; }
                                     }
                                     anchors[k] = bestV;
                                     Write(RunIup(anchors));
                                 }
-                            }
+                            if (best == 0)
+                                for (int k = 0; k < anchorOf.Length; k++)
+                                    while (anchors[k] != fit[anchorOf[k]])
+                                    {
+                                        int keep = anchors[k];
+                                        anchors[k] += anchors[k] < fit[anchorOf[k]] ? 1 : -1;
+                                        Write(RunIup(anchors));
+                                        arenders++;
+                                        if (Score() != 0) { anchors[k] = keep; break; }
+                                    }
+                            Write(RunIup(anchors));
                             Write(RunIup(anchors));
                             Console.Error.WriteLine($"   ANCHOR SEARCH: best {best} in {arenders}"
                                 + " renders" + (best == 0
                                     ? "   REACHED GDI -- our anchors are wrong and these are GDI's"
                                     : "   CANNOT reach GDI from ANY anchor placement"));
                             for (int k = 0; k < anchorOf.Length; k++)
-                                Console.Error.WriteLine($"     anchor P{anchorOf[k],-3}"
-                                    + $" ours {fit[anchorOf[k]],5}  best {anchors[k],5}"
-                                    + $"  d {anchors[k] - fit[anchorOf[k]],4}");
+                                if (anchors[k] != fit[anchorOf[k]] || best == 0)
+                                    Console.Error.WriteLine($"     {c}@{ppem}{style} anchor"
+                                        + $" P{anchorOf[k],-3} ours {fit[anchorOf[k]],5}"
+                                        + $"  best {anchors[k],5}"
+                                        + $"  d {anchors[k] - fit[anchorOf[k]],4}");
                             continue;
                         }
                     }
