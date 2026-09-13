@@ -1095,6 +1095,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>The seven coverages a ClearType channel can take, read off GDI's own
         /// pixels: a level 0..6 is all a channel ever carries.</summary>
+        /// <summary>WPF_CT_SPANSTART=in: a sample exactly ON the left boundary of a span counts as
+        /// inside, as it used to. See the comment at the span test.</summary>
+        private static readonly bool s_spanStartExclusive =
+            Environment.GetEnvironmentVariable("WPF_CT_SPANSTART") == "out";
+
         /// <summary>Where the six horizontal samples sit inside the pixel. WPF_HSUB_PHASE.</summary>
         private static readonly float GdiSamplePhase =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_HSUB_PHASE"),
@@ -1400,7 +1405,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             // where we had it outside. It bites whenever a fitted edge lands on a
                             // sample, i.e. at every quarter pixel, since the samples sit at odd
                             // twelfths. WPF_CT_SPANEND=old restores the half-open test.
-                            if (sx >= sp.A && (s_spanEndInclusive ? sx <= sp.B : sx < sp.B))
+                            // A SAMPLE EXACTLY ON THE LEFT BOUNDARY: we count it in, GDI counts it
+                            // out, and the difference is REAL but must not be "fixed" here yet.
+                            // <para>Measured with HowGdiWeighsAQuadraticArc, a program-free
+                            // synthetic arc walked across a pixel in sixty-fourths. At every
+                            // offset but one our 24-shape raster is BYTE-IDENTICAL to GDI's. The
+                            // exception is the offset where the straight chord lands at exactly
+                            // 7.75px, which is exactly sample 4 of six, and there GDI reads 292.11
+                            // lamps against our 360.65. One sixty-fourth either side and the two
+                            // agree exactly again (345.71 and 298.38, both ways), so it is a TIE
+                            // and not a placement difference -- and our curve rasterization is
+                            // otherwise exact, which is the thing that probe was built to
+                            // settle.</para>
+                            // <para>Ties are not rare: the samples sit at odd twelfths of a pixel,
+                            // of which two per pixel (4/16 and 12/16) fall on the ClearType
+                            // sixteenth grid that a fitted edge is quantised to -- one position in
+                            // eight. But WPF_CT_SPANSTART=out, which makes the span (A, B] and
+                            // matches GDI on the probe, costs 290,465 on the real holdout
+                            // (901,600 against 611,135). It can only do that if our FITTED x at
+                            // those positions is not GDI's, so that the inclusive test has been
+                            // compensating. Flipping it is right only after that is fixed; until
+                            // then this is a known, measured, deliberate difference.</para>
+                            if ((s_spanStartExclusive ? sx > sp.A : sx >= sp.A)
+                                && (s_spanEndInclusive ? sx <= sp.B : sx < sp.B))
                             { cnt++; break; }
                     }
                     lamp[rowBase + c] = (byte)cnt;

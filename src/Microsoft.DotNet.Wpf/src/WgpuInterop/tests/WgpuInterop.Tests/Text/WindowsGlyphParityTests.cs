@@ -7386,6 +7386,153 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(report.ToString());
         }
 
+        /// <summary>WHAT A QUADRATIC ARC WEIGHS, in GDI, in ours, and in closed form.
+        /// WPF_ARC=&lt;ppem&gt;.
+        /// <para>Every synthetic probe before this one is made of STRAIGHT edges -- bars, slabs,
+        /// crossed diagonals -- so "the coverage chain is exact" has only ever been established
+        /// for straight edges, and text is nothing but small curves. This draws the one shape
+        /// nobody has drawn: a flat base capped by a single quadratic, three points, the middle
+        /// one off-curve, and NO glyph program, so both renderers read exactly the same
+        /// outline.</para>
+        /// <para>It is an ORACLE and not another comparison, because the answer is known: the
+        /// region between a quadratic Bezier and its chord is exactly two thirds of the triangle
+        /// P0 P1 P2, so with the base flat the area is (Right - Left) * ctrlY / 3 font units
+        /// squared, whatever the control's x. Three columns -- GDI, ours, exact -- say which of
+        /// the two is wrong rather than merely that they differ.</para>
+        /// <para>The question it was built for: the Times Regular 12-16ppem band survived the
+        /// flattening fix almost untouched, and every point GDI disagrees with there is an
+        /// UNTOUCHED OFF-CURVE CONTROL, never an on-curve one. That is either an outline
+        /// difference our interpreter is making, or a curve the two rasterizers weigh
+        /// differently, and nothing measured on a real glyph can separate them.</para>
+        /// <para>WPF_ARC_GASP=times ships Times New Roman roman's own gasp, for the same reason
+        /// the slab probe needs it: with NO table GDI's fallback turns symmetric smoothing on for
+        /// the probe while ours stays off, and the two sides then answer different questions.
+        /// WPF_ARC_SCAN=times adds Times' SCANCTRL 303 / SCANTYPE 1.</para></summary>
+        [Fact]
+        public void HowGdiWeighsAQuadraticArc()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? spec = Environment.GetEnvironmentVariable("WPF_ARC");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_ARC=<ppem>");
+            int ppem = int.Parse(spec!);
+            const string Family = "WpfArcProbe";
+            double unitsPerPixel = SyntheticFont.UnitsPerEm / (double) ppem;
+
+            // A base six pixels wide, and controls sweeping from a quarter of a pixel of height to
+            // six pixels -- and at three x positions, so a symmetric cap, a skewed one, and the
+            // degenerate case where the control sits directly over an end.
+            // WPF_ARC_LEFT=<n> offsets the chord by n SIXTY-FOURTHS of a pixel, so the same shape can
+            // be walked across a pixel. That is how a tie at a sample is told from a placement
+            // difference: a tie shows up at two offsets out of sixteen, a misplacement at all of
+            // them.
+            int left = 256 + (int) Math.Round(
+                int.TryParse(Environment.GetEnvironmentVariable("WPF_ARC_LEFT"), out int lo16)
+                    ? lo16 * unitsPerPixel / 64.0 : 0.0);
+            int width = (int) Math.Round(6 * unitsPerPixel);
+            // WPF_ARC_AXIS=x stands the figure on its side: the CHORD is vertical and the curve
+            // bulges sideways, so its extremum is in x. Default y, the cap on a flat base.
+            bool axisX = Environment.GetEnvironmentVariable("WPF_ARC_AXIS") == "x";
+            var bars = new List<SyntheticFont.Bar>();
+            var wanted = new List<(double H, double Skew)>();
+            foreach (double skew in new[] { 0.5, 0.25, 0.0 })
+                foreach (double h in new[] { 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.5, 6.0 })
+                {
+                    int bulge = (int) Math.Round(h * unitsPerPixel);
+                    int along = (int) Math.Round(skew * width);
+                    if (axisX)
+                        // Chord from (left, 0) up to (left, width); control out to the right.
+                        bars.Add(new SyntheticFont.Bar(0, left, left + bulge, round: false,
+                                                       minDistance: false, noProgram: true,
+                                                       arcCtrlX: left + bulge, arcCtrlY: along,
+                                                       arcEndX: left, arcEndY: width, arc: true));
+                    else
+                        bars.Add(new SyntheticFont.Bar(0, left, left + width, round: false,
+                                                       minDistance: false, noProgram: true,
+                                                       arcCtrlX: left + along, arcCtrlY: bulge,
+                                                       arc: true));
+                    wanted.Add((h, skew));
+                }
+
+            // WPF_ARC_GASP=all ships ONE range asking for everything, so symmetric smoothing is on
+            // at every size -- which is how the band this probe found is isolated: Times' own gasp
+            // leaves it OFF below 18ppem, and that is exactly where the two rasterizers part.
+            SyntheticFont.GaspRanges =
+                Environment.GetEnvironmentVariable("WPF_ARC_GASP") switch
+                {
+                    "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
+                    "all" => new (int, int)[] { (0xFFFF, 0xF) },
+                    "nosym" => new (int, int)[] { (0xFFFF, 0x7) },
+                    _ => null,
+                };
+            SyntheticFont.ScanControl =
+                Environment.GetEnvironmentVariable("WPF_ARC_SCAN") == "times" ? (303, 1) : null;
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Family, bars); }
+            finally { SyntheticFont.GaspRanges = null; SyntheticFont.ScanControl = null; }
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI would not accept the arc font");
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== a quadratic arc on a {width / unitsPerPixel:0.##}px chord,"
+                              + $" bulging in {(axisX ? "X" : "Y")},"
+                              + $" {Family} at {ppem}ppem, no glyph program");
+            report.AppendLine("   bulge   along    exact   GDI ink   our ink    GDI/exact  ours/exact");
+            double sumG = 0, sumO = 0, sumE = 0;
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                var raw = new byte[Width * Height * 4];
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    int baseline = ppem + 12;
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Family, ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    double gdi = SlabInk(raw, bgra: true);
+                    byte[] oursRgba = OursRgba(font, ch, ppem, baseline, correction: true);
+                    double ours = SlabInk(oursRgba, bgra: false);
+                    // Two thirds of the control triangle, in pixels squared, then three lamps to
+                    // the pixel.
+                    // Two thirds of the control triangle |(P1-P0) x (P2-P0)| / 2, in pixels
+                    // squared, then three lamps to the pixel.
+                    double ax = bars[i].ArcCtrlX - bars[i].Left, ay = bars[i].ArcCtrlY - 0;
+                    double bx = bars[i].ArcEndX - bars[i].Left, by = bars[i].ArcEndY - 0;
+                    double exact = 3.0 * (Math.Abs(ax * by - ay * bx) / 3.0)
+                                   / (unitsPerPixel * unitsPerPixel);
+                    sumG += gdi; sumO += ours; sumE += exact;
+                    // WPF_ARC_DUMP=<n> prints both rasters for the n'th arc, one line per inked
+                    // row, as coverage per lamp. The totals say a row disagrees; only this says
+                    // which rows and by how much.
+                    if (Environment.GetEnvironmentVariable("WPF_ARC_DUMP") == (i + 1).ToString())
+                        for (int row = 0; row < Height; row++)
+                        {
+                            var g = new System.Text.StringBuilder();
+                            var o = new System.Text.StringBuilder();
+                            for (int col = 0; col < Width; col++)
+                            {
+                                int k = (row * Width + col) * 4;
+                                g.Append($" {255 - raw[k + 2]:000},{255 - raw[k + 1]:000},{255 - raw[k + 0]:000}");
+                                o.Append($" {255 - oursRgba[k + 0]:000},{255 - oursRgba[k + 1]:000},{255 - oursRgba[k + 2]:000}");
+                            }
+                            string gs = g.ToString(), os2 = o.ToString();
+                            if (gs.Replace(" 000,000,000", "").Trim().Length == 0
+                                && os2.Replace(" 000,000,000", "").Trim().Length == 0) continue;
+                            report.AppendLine($"   GDI  row {row}:{gs.Substring(60, Math.Min(216, gs.Length - 60))}");
+                            report.AppendLine($"   ours row {row}:{os2.Substring(60, Math.Min(216, os2.Length - 60))}");
+                        }
+                    report.AppendLine($"   {wanted[i].H,6:0.00} {wanted[i].Skew,5:0.00}"
+                                      + $" {exact,9:0.00} {gdi,9:0.00} {ours,9:0.00}"
+                                      + $" {gdi / exact,12:0.0000} {ours / exact,11:0.0000}");
+                }
+                report.AppendLine($"   TOTAL             {sumE,9:0.00} {sumG,9:0.00} {sumO,9:0.00}"
+                                  + $" {sumG / sumE,12:0.0000} {sumO / sumE,11:0.0000}");
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            Console.Error.Write(report.ToString());
+        }
+
         /// <summary>OUR PIXELS BESIDE GDI'S, for any face -- `WPF_PICTURE=family/char/ppem[/B|I]`.
         /// <para>Every picture in this file until now was Segoe UI, because the ratchets are: the
         /// per-glyph tests all draw ProbeFamily. So Times and Arial were being read through totals

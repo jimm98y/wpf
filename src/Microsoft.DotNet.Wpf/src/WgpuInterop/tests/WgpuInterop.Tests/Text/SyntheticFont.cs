@@ -97,13 +97,47 @@ namespace WgpuInterop.Tests.Text
             /// row. See HowGdiRendersASubPixelTallSlab.</para></summary>
             public readonly int SlabHeight;
 
+            /// <summary>Draw a QUADRATIC ARC instead of a bar: the straight base Left..Right on the
+            /// baseline, capped by one quadratic Bezier whose OFF-CURVE control sits at
+            /// (ArcCtrlX, ArcCtrlY) in font units. Zero height means no arc.
+            /// <para>The one shape no probe has ever drawn, and the whole coverage chain was
+            /// declared exact without it: every synthetic glyph until now has been made of
+            /// STRAIGHT edges, so "the rasterizer is exact" has only ever been established for
+            /// straight edges. Text is nothing but small curves, and the Times Regular band's
+            /// signature is that every point GDI disagrees with is an OFF-CURVE CONTROL.</para>
+            /// <para>Its area is known in closed form, which is what makes it an oracle rather
+            /// than another comparison: the region between a quadratic and its chord is exactly
+            /// two thirds of the triangle P0 P1 P2. So the probe can say which of the two
+            /// rasterizers is wrong, not merely that they differ.</para></summary>
+            public readonly int ArcCtrlX;
+            public readonly int ArcCtrlY;
+
+            /// <summary>The arc's far endpoint. Defaults to (Right, Bottom), which caps a base
+            /// lying on the baseline; giving it the SAME x as Left instead stands the whole figure
+            /// on its side, so the curve's extremum is in X. That orientation is the one that
+            /// matters for text: GDI's scan converter walks SCANLINES and solves each spline for
+            /// its x there, so x and y are not symmetric in it, and the disagreements on real
+            /// glyphs are all in x.</summary>
+            public readonly int ArcEndX;
+            public readonly int ArcEndY;
+
+            /// <summary>Draw the arc at all. An explicit flag and not "is the control non-zero",
+            /// because a control LEVEL with the chord's first point is a perfectly good arc and
+            /// the implicit test silently drew a full-height BAR for it instead -- which read as
+            /// the rasterizers disagreeing by a factor of five.</summary>
+            public readonly bool Arc;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
                        bool noProgram = false, int probe = 0, int lsb = int.MinValue,
-                       int slant = 0, bool cross = false, int taper = 0, int slabHeight = 0)
+                       int slant = 0, bool cross = false, int taper = 0, int slabHeight = 0,
+                       int arcCtrlX = 0, int arcCtrlY = 0,
+                       int arcEndX = int.MinValue, int arcEndY = int.MinValue, bool arc = false)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
                 NoProgram = noProgram; Probe = probe; Slant = slant; Cross = cross; Taper = taper;
-                SlabHeight = slabHeight;
+                SlabHeight = slabHeight; ArcCtrlX = arcCtrlX; ArcCtrlY = arcCtrlY; Arc = arc;
+                ArcEndX = arcEndX == int.MinValue ? right : arcEndX;
+                ArcEndY = arcEndY == int.MinValue ? 0 : arcEndY;   // Bottom
                 Lsb = lsb == int.MinValue ? left : lsb;
             }
         }
@@ -261,6 +295,32 @@ namespace WgpuInterop.Tests.Text
                 // y deltas
                 WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
                 WriteI16(s, Bottom - Top); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
+                return;
+            }
+
+            if (b.Arc)
+            {
+                // Base Left..Right on the baseline, capped by ONE quadratic. Three points: the two
+                // ends on-curve, the control off-curve. Closing the contour draws the straight
+                // base, so the ink is exactly the region between the curve and its chord.
+                int yLo = Math.Min(Bottom, Math.Min(b.ArcEndY, b.ArcCtrlY));
+                int yHi = Math.Max(Bottom, Math.Max(b.ArcEndY, b.ArcCtrlY));
+                int xLo = Math.Min(b.Left, Math.Min(b.ArcEndX, b.ArcCtrlX));
+                int xHi = Math.Max(b.Left, Math.Max(b.ArcEndX, b.ArcCtrlX));
+                WriteI16(s, 1);                              // numberOfContours
+                WriteI16(s, xLo); WriteI16(s, yLo);          // xMin yMin
+                WriteI16(s, xHi); WriteI16(s, yHi);          // xMax yMax
+                WriteU16(s, 2);                              // endPtsOfContours[0]
+                WriteU16(s, 0);                              // no instructions
+                s.WriteByte(0x01);                           // P0 ON-curve, 16-bit deltas
+                s.WriteByte(0x00);                           // P1 OFF-curve, 16-bit deltas
+                s.WriteByte(0x01);                           // P2 ON-curve, 16-bit deltas
+                WriteI16(s, b.Left);
+                WriteI16(s, b.ArcCtrlX - b.Left);
+                WriteI16(s, b.ArcEndX - b.ArcCtrlX);
+                WriteI16(s, Bottom);
+                WriteI16(s, b.ArcCtrlY - Bottom);
+                WriteI16(s, b.ArcEndY - b.ArcCtrlY);
                 return;
             }
 
