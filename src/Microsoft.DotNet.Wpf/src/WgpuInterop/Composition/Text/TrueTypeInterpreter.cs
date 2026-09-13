@@ -2957,12 +2957,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// P25 is the right phantom and takes -2; P3 is a root paired with P15 and takes 0; P21
         /// interpolates between them by org position, `((351-36)*-2 + (450-351)*0) / (450-36)`
         /// = -630/414 = -1.52, which truncates to -1; and P9 inherits that through the pair. A
-        /// rule that ROUNDED would give -2 and the glyph would be exact -- which is exactly the
-        /// shape of a wrong answer one is tempted to ship. It is not what the binary does.</para>
+        /// rule that ROUNDED would give -2 for that node -- which is exactly the shape of a wrong
+        /// answer one is tempted to ship, so it was measured as well as read.</para>
+        /// <para>AND IT IS WRONG TWICE OVER. Rounding does not even fix the glyph that suggested
+        /// it: Segoe UI 'o'@12 goes 137 -> 236, because the rule runs on every two-parent node in
+        /// the glyph and the other nodes move the wrong way. Across the holdout it is
+        /// catastrophic, 605,280 -> 1,220,769. WPF_CT_PHASE_AVGROUND=1 keeps the diagnostic. The
+        /// lesson is the general one: a per-node inference about a rule that runs on EVERY node
+        /// is not a prediction about the glyph until it has been rendered.</para>
         /// <para>So the divergence on that glyph is in an INPUT to the rule, not the rule: one of
-        /// the two parent shifts, or one of the three org positions. At -1.52 it is a single
-        /// truncation away, and many small input changes would cross it, so the glyph on its own
-        /// does not pin which.</para></summary>
+        /// the two parent shifts, or one of the three org positions. Neither parent explains it on
+        /// its own arithmetic -- P25 would have to be -3, which needs its cur at 675 against the
+        /// 452 it has, and P3 would have to be -2, which needs its pair sum at 900 against 170 --
+        /// and no value of the phase factor fixes this glyph either. Its program placement is
+        /// exact: P9 is MIRP'd to 404 and then SHPIXed by 6 under a literal `MPPEM == 12` guard,
+        /// a hand-tuned delta with no rounding in it. What is left is the TREE.</para></summary>
         private int CalcAvgXPhase(int a, int p, int b, int phA, int phB)
         {
             // +0x10 in CalcAvgXPhaseShift's element struct is OrgX. The phase MAGNITUDES come
@@ -2971,7 +2980,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int lo = Math.Min(xa, xb), hi = Math.Max(xa, xb);
             if (xa >= xb) (phA, phB) = (phB, phA);   // GDI orders by x, swapping the phases
             if (lo == hi) return (phA + phB) / 2;
-            return (int) (((long) (xp - lo) * phB + (long) (hi - xp) * phA) / (hi - lo));
+            long num = (long) (xp - lo) * phB + (long) (hi - xp) * phA, den = hi - lo;
+            // WPF_CT_PHASE_AVGROUND=1: round instead of truncating. A DIAGNOSTIC, not a candidate
+            // -- the binary plainly truncates (bare sdiv, see the summary above) -- kept because it
+            // measures whether "one truncation away from GDI" is systematic across the pool or a
+            // property of the one glyph that suggested it.
+            if (s_phaseAvgRound)
+                return (int) ((num + (num < 0 ? -den / 2 : den / 2)) / den);
+            return (int) (num / den);
         }
 
         /// <summary>Whether the PAIR rule is restricted to links GDI would call a stem (adjacent on
@@ -2979,6 +2995,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// GDI's predicate, but it is applied to OUR link set, which is not GDI's, and it measures
         /// worse for that reason: with the faithful tree, 6,654,259 filtered against 5,841,656
         /// unfiltered. OFF until the links themselves are GDI's.</summary>
+        /// <summary>WPF_CT_PHASE_AVGROUND=1 -- diagnostic only; see CalcAvgXPhase.</summary>
+        private static readonly bool s_phaseAvgRound =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_AVGROUND") == "1";
+
         private static readonly bool s_phasePairAdjacent =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") == "1";
 
