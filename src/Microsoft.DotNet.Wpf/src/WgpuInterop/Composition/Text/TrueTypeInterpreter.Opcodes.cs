@@ -521,7 +521,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
                                     && (IsHorizontalProjection
                                         ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
-                                        : _iupYDone && (z.Tags[p] & TagTouchY) == 0)) continue;
+                                        : s_alignrpBothAxes
+                                          && _iupYDone && (z.Tags[p] & TagTouchY) == 0)
+                                    && !PostIupExempt()) continue;
                                 LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
                             }
@@ -932,10 +934,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
                                 && IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchX) == 0) break;
+                                && (z.Tags[p] & TagTouchX) == 0 && !PostIupExempt()) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
                                 && !IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchY) == 0) break;
+                                && (z.Tags[p] & TagTouchY) == 0 && !PostIupExempt()) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
                             // A twilight point moved this way keeps the new place as its ORIGIN too:
@@ -1401,6 +1403,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return map.Count > 0 ? map : null;
         }
 
+        /// <summary>WPF_CT_POSTIUP=&lt;i,j,...&gt;: EXEMPT individual post-IUP suppressions, by the
+        /// order in which they occur, so a search can ask whether GDI applies a SUBSET of the block
+        /// rather than all of it or none.
+        /// <para>The question is forced by Times Bold. Regular and italic faces are three-quarters
+        /// anchor placement, but Times Bold at 12..17 has twenty-seven of its thirty-three
+        /// imperfect glyphs OFF the manifold our interpreter can reach -- GDI touching points our
+        /// program never touches -- and after IUP the only instructions left are the ALIGNRPs and
+        /// SCFSes this file suppresses (the two DELTAPs do not fire at these sizes). Applying them
+        /// all is much worse and applying none is wrong, so the interesting question is which.</para>
+        /// <para>Counted per glyph program, in execution order, so index i names the same
+        /// suppression on every run of the same glyph at the same size.</para></summary>
+        private static readonly System.Collections.Generic.HashSet<int>? s_postIupMask =
+            Environment.GetEnvironmentVariable("WPF_CT_POSTIUP") is { Length: > 0 } pm
+                ? new System.Collections.Generic.HashSet<int>(
+                    System.Linq.Enumerable.Select(
+                        System.Linq.Enumerable.Where(pm.Split(','), t => int.TryParse(t, out _)),
+                        t => int.Parse(t)))
+                : null;
+
+        private int _postIupSeen;
+
+        private bool PostIupExempt()
+        {
+            int i = _postIupSeen++;
+            return s_postIupMask is not null && s_postIupMask.Contains(i);
+        }
+
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
 
@@ -1408,6 +1437,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// as this code did before. See the call site for what it costs.</summary>
         private static readonly bool s_deltasFreeInPrep =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_PREP") == "1";
+
+        /// <summary>WPF_CT_ALIGNRP_AXES=x: suppress a post-IUP ALIGNRP onto an untouched point on
+        /// the CLEARTYPE axis only, leaving the y axis to run as the program wrote it. Microsoft's
+        /// own account of the rule is about the ClearType direction, and y is fitted normally
+        /// there; suppressing on both axes is the wider reading and is what ships.</summary>
+        private static readonly bool s_alignrpBothAxes =
+            Environment.GetEnvironmentVariable("WPF_CT_ALIGNRP_AXES") != "x";
 
         /// <summary>WPF_CT_ALIGNRP_TOUCHED=0 restores the old behaviour. See the call site.</summary>
         private static readonly bool s_alignrpTouchedOnly =

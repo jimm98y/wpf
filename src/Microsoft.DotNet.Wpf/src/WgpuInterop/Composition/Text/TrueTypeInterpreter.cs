@@ -512,6 +512,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     // The dump covers the GLYPH's own program only: the font program and prep run
                     // hundreds of instructions that are the same for every glyph and drown it.
+                    _postIupSeen = 0;          // see PostIupExempt
                     bool dumping = TrueTypeInterpreter.s_dumpGlyph;
                     _dumpActive = dumping;
                     try { if (!Execute(glyph.Instructions, 0)) return false; }
