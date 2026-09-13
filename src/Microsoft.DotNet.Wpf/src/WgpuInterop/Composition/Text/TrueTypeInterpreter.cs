@@ -1842,7 +1842,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && InterAlign(_pvPtA, p, _pvPtB))
                 PhaseProportion(_pvPtA, p, _pvPtB);
             else
-                // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP@1801dcxxx is the one site that calls
+                // CONFIRMED IN FONTDRVHOST, not just in DWrite's copy. The addresses in these
+                // notes are 0x1801..., which is DWrite; GDI runs fontdrvhost, and the two are
+                // separate builds of the same Agfa scaler that need not agree. itrp_MIRP
+                // @14003b330 has AddDistance INLINED into it and calls
+                // DoubleCheckLinkColor(gs, r, p, distanceType & 3) first, exactly as written here,
+                // then the same body -- IndirectlyDependsOn, the ancestor walk on elem+0x20, the
+                // param_5 == 1 pairing tail.
+                // <para>THE TRAP, worth writing down because it nearly produced a confident wrong
+                // answer: searching fontdrvhost for callers of AddDistance@1400354c8 finds only
+                // itrp_ALIGNRP and itrp_MSIRP. That reads as "GDI builds its phase tree from those
+                // two opcodes alone", which would make the tree EMPTY for a glyph fitted purely by
+                // MIRPs -- Arial Bold 'X' at 20ppem is exactly that -- and so make the phase a
+                // no-op for it. It is wrong: the compiler inlined AddDistance into MIRP and MDRP,
+                // so they never appear as callers. Search instead for the callee it could NOT
+                // inline, IndirectlyDependsOn@140035a10, which shows itrp_MIRP, itrp_MDRP, itrp_IP,
+                // itrp_SHP_Common and AddProportion all taking part.</para>
+                // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP is the one site that calls
                 // DoubleCheckLinkColor and hands its answer to AddDistance; itrp_MDRP, itrp_ALIGNRP and
                 // itrp_SHP_Common all pass a literal 3. Since AddDistance's pairing tail is gated on
                 // param_5 == 1, that means NO OPCODE BUT MIRP CAN EVER FORM A STEM PAIR -- and a pair is
