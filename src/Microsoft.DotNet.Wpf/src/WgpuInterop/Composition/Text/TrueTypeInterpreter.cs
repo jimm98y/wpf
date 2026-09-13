@@ -1539,13 +1539,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// RCVT returns `_scaledCvt[i]` -- one array, one scale, no axis -- so every control value
         /// read on one of the two axes is scaled by the other one's factor whenever the two
         /// differ, which in compatible-width mode is exactly when x is compressed.</para>
-        /// <para>This is why the two-array reading above could be right about the VALUES and still
-        /// measure worse: it substituted a whole second array where GDI substitutes a factor, and
-        /// it had no diagonal case at all. What is still missing is the writer of globals[0x160]
-        /// and [0x164] -- the only accesses in the binary are these two reads and a zeroing
-        /// `stp q16,q16,[x26,#0x160]` in RenderBitmap, so the real store is a wider one covering
-        /// the offset or a struct copy, the same shape as the elem[0x46] hunt. Find it before
-        /// re-enabling anything here.</para>
+        /// <para>The writer is `GetInstRecord`, and it settles what the two fields are:
+        /// `ldr q16,[x23,#0x20]; str q16,[x26,#0x160]` copies a sixteen-byte block out of the
+        /// transform record, and the code straight after reciprocates each into instance+0x60 and
+        /// +0x64 and multiplies each by the head table's unitsPerEm into globals+0x10 and +0x14.
+        /// They are the X SCALE and the Y SCALE, 16.16, nothing more exotic.</para>
+        /// <para>AND THAT MAKES THIS ARCHITECTURE RATHER THAN A BUG WE HAVE. For an unrotated,
+        /// unstretched text transform at an integer ppem the two scales are EQUAL, and with
+        /// px^2 + py^2 == 1 the diagonal branch's sqrt((px*xs)^2 + (py*ys)^2) collapses to the same
+        /// number again -- so on this specimen `itrp_GetCVTScale` returns one value on every axis
+        /// and our single `_scale` is equivalent to all three branches. It would only diverge under
+        /// an ANISOTROPIC transform, which nothing here produces: the italic faces are sheared, and
+        /// a shear lives in the off-diagonal terms, not in xs and ys. Do not go looking for Times'
+        /// missing pixels down this path; it is recorded so the next reader does not have to
+        /// re-derive it, and because it does say the two-array reading above had the wrong SHAPE --
+        /// GDI substitutes a factor at read time, not a second array.</para>
         /// <para>WPF_CT_LINEAR_CVT=1.</para></summary>
         private int[] _linearCvt = Array.Empty<int>();
 
