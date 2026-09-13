@@ -4640,6 +4640,160 @@ namespace WgpuInterop.Tests.Text
                         return sum;
                     }
 
+                    // WPF_XYSOLVE_ANCHORS=1: SEARCH THE OUTLINES OUR INTERPRETER CAN ACTUALLY
+                    // PRODUCE, rather than every arrangement of independent coordinates.
+                    // <para>The descent below moves one coordinate at a time and stops at residual
+                    // zero, so what it answers is "is there SOME outline that renders GDI's pixels"
+                    // -- and the answer is nearly always yes, because forty-odd free coordinates
+                    // against a ten-pixel square is wildly underdetermined. The question that
+                    // matters is narrower. Our glyph programs place a handful of ANCHORS and IUP
+                    // derives every other point from them, so the outlines we can reach form a
+                    // manifold of a few dimensions: Times Bold '0' at 16ppem has FOUR x-touched
+                    // points and forty-two derived ones. Asking whether any anchor assignment
+                    // reproduces GDI splits the remaining question cleanly in two. If one does,
+                    // our ClearType placement of the touched points is wrong and the search hands
+                    // over GDI's values. If none does, GDI's outline is off our manifold
+                    // altogether, and it must be touching points our program never touches.</para>
+                    // <para>The coordinate-wise walk-back cannot answer this, and that is the
+                    // point: moving an anchor alone drags nothing with it and breaks the render,
+                    // so an anchor that ought to move together with its dependents is reported as
+                    // a pinned anchor plus a dozen mysteriously displaced points -- which is
+                    // exactly the shape the Times bowls have been showing all along.</para>
+                    // <para>IUP[x] is reimplemented here over the captured arrays rather than
+                    // re-run through the interpreter, and it is CHECKED: with the anchors at our
+                    // own values it must reproduce our own fitted x exactly, or the glyph is
+                    // skipped and says so. That check is what makes a negative result mean
+                    // anything.</para>
+                    bool anchorMode = Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS") == "1"
+                                      && ipts is not null && pathToPoint.Count == sx.Length;
+                    if (anchorMode)
+                    {
+                        int n = ipts!.PointCount;
+                        var org = new int[n];
+                        var orus = new int[n];
+                        var fit = new int[n];
+                        for (int i = 0; i < n; i++)
+                        {
+                            org[i] = (int) MathF.Round(ipts.StartX[i] * 64f);
+                            orus[i] = ipts.OrusX[i];
+                            fit[i] = (int) MathF.Round(ipts.FitX[i] * 64f);
+                        }
+                        var touchedList = new List<int>();
+                        for (int i = 0; i < n; i++) if (ipts.TouchedX[i]) touchedList.Add(i);
+                        int[] anchorOf = touchedList.ToArray();
+
+                        void CarryRun(int[] c, int from, int to, int r1, int r2)
+                        {
+                            if (from > to) return;
+                            int o1 = orus[r1], o2 = orus[r2];
+                            if (o1 >= o2) { (o1, o2) = (o2, o1); (r1, r2) = (r2, r1); }
+                            int g1 = org[r1], g2 = org[r2];
+                            int d1 = c[r1] - g1, d2 = c[r2] - g2;
+                            if (o1 == o2)
+                            { for (int i = from; i <= to; i++) c[i] = org[i] + d1; return; }
+                            for (int i = from; i <= to; i++)
+                            {
+                                int x = org[i];
+                                if (x >= g2) { c[i] = x + d2; continue; }
+                                if (x <= g1) { c[i] = x + d1; continue; }
+                                long den = o2 - o1, num = orus[i] - o1;
+                                long sp = (long) (g2 + d2) - (g1 + d1);
+                                c[i] = (int) ((num * sp + (den >> 1)) / den) + g1 + d1;
+                            }
+                        }
+
+                        int[] RunIup(int[] anchorVals)
+                        {
+                            var c = new int[n];
+                            for (int i = 0; i < n; i++) c[i] = org[i];
+                            for (int k = 0; k < anchorOf.Length; k++) c[anchorOf[k]] = anchorVals[k];
+                            int first = 0;
+                            foreach (int end in ipts.EndPoints)
+                            {
+                                if (end < first || end >= n) break;
+                                var t = new List<int>();
+                                for (int i = first; i <= end; i++) if (ipts.TouchedX[i]) t.Add(i);
+                                if (t.Count == 1)
+                                {
+                                    int d = c[t[0]] - org[t[0]];
+                                    for (int i = first; i <= end; i++)
+                                        if (!ipts.TouchedX[i]) c[i] = org[i] + d;
+                                }
+                                else if (t.Count > 1)
+                                {
+                                    for (int k = 0; k + 1 < t.Count; k++)
+                                        CarryRun(c, t[k] + 1, t[k + 1] - 1, t[k], t[k + 1]);
+                                    CarryRun(c, t[t.Count - 1] + 1, end, t[t.Count - 1], t[0]);
+                                    CarryRun(c, first, t[0] - 1, t[t.Count - 1], t[0]);
+                                }
+                                first = end + 1;
+                            }
+                            return c;
+                        }
+
+                        var anchors = new int[anchorOf.Length];
+                        for (int k = 0; k < anchorOf.Length; k++) anchors[k] = fit[anchorOf[k]];
+                        int[] check = RunIup(anchors);
+                        int bad = -1;
+                        for (int i = 0; i < n && bad < 0; i++) if (check[i] != fit[i]) bad = i;
+                        if (bad >= 0)
+                        {
+                            Console.Error.WriteLine("   ANCHOR MODE OFF: the reimplemented IUP[x]"
+                                + $" disagrees with the interpreter at P{bad} ({check[bad]} against"
+                                + $" {fit[bad]}), so something other than interpolation places"
+                                + " points here and an anchor search would search the wrong"
+                                + " manifold. The usual cause is an instruction AFTER IUP -- Times'"
+                                + " 'c' at 16ppem SHPIXes pt17 by half a pixel once IUP has run --"
+                                + " which leaves the captured touch set different from the one IUP"
+                                + " actually saw. Two of fifteen Times glyphs per size are refused"
+                                + " this way; the other thirteen are the result.");
+                        }
+                        else
+                        {
+                            void Write(int[] c)
+                            {
+                                for (int i = 0; i < sx.Length; i++)
+                                    if (pathToPoint[i] >= 0) sx[i] = c[pathToPoint[i]];
+                                for (int i = 0; i < sx.Length; i++)
+                                    if (pathToPoint[i] < 0 && i > 0 && i + 1 < sx.Length)
+                                        sx[i] = (sx[i - 1] + sx[i + 1]) / 2;
+                            }
+                            long best = Score();
+                            int arenders = 1;
+                            Console.Error.WriteLine($"   anchor mode: {anchorOf.Length} x-touched"
+                                + $" points place {n - anchorOf.Length} others; start {best}");
+                            for (int pass = 0; pass < 3 && best > 0; pass++)
+                            {
+                                int step = pass == 0 ? 4 : pass == 1 ? 2 : 1;
+                                for (int k = 0; k < anchorOf.Length && best > 0; k++)
+                                {
+                                    int keep = anchors[k], bestV = keep;
+                                    for (int d = -span; d <= span; d += step)
+                                    {
+                                        if (d == 0) continue;
+                                        anchors[k] = keep + d;
+                                        Write(RunIup(anchors));
+                                        arenders++;
+                                        long v = Score();
+                                        if (v < best) { best = v; bestV = anchors[k]; }
+                                    }
+                                    anchors[k] = bestV;
+                                    Write(RunIup(anchors));
+                                }
+                            }
+                            Write(RunIup(anchors));
+                            Console.Error.WriteLine($"   ANCHOR SEARCH: best {best} in {arenders}"
+                                + " renders" + (best == 0
+                                    ? "   REACHED GDI -- our anchors are wrong and these are GDI's"
+                                    : "   CANNOT reach GDI from ANY anchor placement"));
+                            for (int k = 0; k < anchorOf.Length; k++)
+                                Console.Error.WriteLine($"     anchor P{anchorOf[k],-3}"
+                                    + $" ours {fit[anchorOf[k]],5}  best {anchors[k],5}"
+                                    + $"  d {anchors[k] - fit[anchorOf[k]],4}");
+                            continue;
+                        }
+                    }
+
                     long start = Score(), cur = start;
                     int renders = 1;
                     for (int pass = 0; pass < passes && cur > 0; pass++)
