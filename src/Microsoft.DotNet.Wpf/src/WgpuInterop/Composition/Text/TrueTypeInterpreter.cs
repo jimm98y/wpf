@@ -2580,7 +2580,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// interpolates their phases across it. Faithful to the original: every index checked and
         /// distinct, a cycle marked rather than recorded, and the pair written ONLY when both
         /// parent slots are still empty -- the first proportion a point is given wins.</summary>
-        private void PhaseProportion(int a, int placed, int b, bool axisGate = true)
+        private void PhaseProportion(int a, int placed, int b, bool axisGate = true,
+            [System.Runtime.CompilerServices.CallerMemberName] string site = "")
         {
             // ISECT DOES NOT TAKE THE AXIS GATE. Every AddDistance call site tests the ClearType
             // axis latch first, but itrp_ISECT's AddProportion is guarded only by `mode == 2 &&
@@ -2595,8 +2596,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) placed >= (uint) n || (uint) a >= (uint) n || (uint) b >= (uint) n) return;
             if (a == placed || b == placed || a == b) return;
             if ((uint) placed >= (uint) _phaseP0.Length) return;
-            if (s_phaseDump) Console.Error.WriteLine($"  ADDPROP a={a,3} p={placed,3} b={b,3} "
-                + $"depA={PhaseDependsOn(a, placed, 100)} depB={PhaseDependsOn(b, placed, 100)}");
+            // WHICH OPCODE MADE THE LINK. Without it the six ADDPROP lines a glyph emits cannot
+            // be matched to the instructions that caused them, and the references they carry do
+            // not obviously come from where they should: Arial Bold 'X'@20 moves points 1, 4, 7
+            // and 10 with IP (0x0F), whose site passes (rp1, rp2) = (2, 9) for all four, yet the
+            // recorded parents are (2,9), (5,0), (6,11) and (6,11).
+            if (s_phaseDump) Console.Error.WriteLine($"  ADDPROP a={a,3} p={placed,3} b={b,3}"
+                + $" via={site,-22} depA={PhaseDependsOn(a, placed, 100)}"
+                + $" depB={PhaseDependsOn(b, placed, 100)}");
             if (PhaseDependsOn(a, placed, 100) || PhaseDependsOn(b, placed, 100))
             { _phaseAnyCycle = true; return; }          // GDI sets node[P].flags |= 1 here
             if (_phaseP0[placed] < 0 && _phaseP1[placed] < 0)
