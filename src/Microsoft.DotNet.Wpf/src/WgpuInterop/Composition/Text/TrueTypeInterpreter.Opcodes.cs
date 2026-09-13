@@ -1900,6 +1900,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_iupGrid =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_GRID") == "1";
 
+        /// <summary>WPF_CT_ISECT_MUL=0: compare ISECT's two cross terms as raw products instead of
+        /// through Mul26Dot6. See the comment at the comparison.</summary>
+        private static readonly bool s_isectMul26 =
+            Environment.GetEnvironmentVariable("WPF_CT_ISECT_MUL") != "0";
+
         private static readonly bool s_iupUpperFirst =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_UPPER") != "0";
 
@@ -3347,8 +3352,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // term is the larger (140038de8: `cmp w8,w5 ; csel w26,w6,w26,gt`).
             if (s_isectProportion && _gs.Zp2 == 1 && _gs.Zp1 == 1 && ClearTypeInfo && !BiLevelPass)
             {
+                // THROUGH Mul26Dot6, which is what itrp_ISECT does to both terms before
+                // comparing them -- a 26.6 multiply, so the product is divided by 64 and ROUNDED.
+                // Scaling both sides cannot change which is larger, but the rounding can, exactly
+                // where the two terms are within a 64th of each other; and this opcode decides
+                // which line a crossing point is phased against, so a tie going the other way
+                // moves the point. MEASURED EXACTLY NEUTRAL -- 611,135 on the holdout and 10,327
+                // on Arial Bold at 20ppem either way -- so no tie in this specimen is close enough
+                // to turn. Kept because it is what the binary does and it is free; do not
+                // re-measure it looking for a win. WPF_CT_ISECT_MUL=0 compares the raw products.
                 long ra = (long) (za.CurX[a1] - za.CurX[a0]) * (zb.CurY[b1] - zb.CurY[b0]);
                 long rb = (long) (za.CurY[a1] - za.CurY[a0]) * (zb.CurX[b1] - zb.CurX[b0]);
+                if (s_isectMul26)
+                {
+                    ra = (ra + (ra < 0 ? -32 : 32)) / 64;
+                    rb = (rb + (rb < 0 ? -32 : 32)) / 64;
+                }
                 if (Math.Abs(rb) > Math.Abs(ra)) PhaseProportion(a0, p, a1, axisGate: false);
                 else PhaseProportion(b0, p, b1, axisGate: false);
             }
