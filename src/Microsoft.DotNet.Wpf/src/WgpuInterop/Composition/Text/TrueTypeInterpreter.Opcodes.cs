@@ -810,6 +810,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // already pixel-exact at 16 and 20. Every X-TOUCHED point of the glyph
                             // (0, 9, 17, 26) agrees with GDI exactly, and so does the whole
                             // bi-level fit (37 of 37 points), so nothing before IUP is in question.
+                            // <para>WHAT THE BLOCK IS, AND WHY NEITHER ANSWER IS RIGHT YET.
+                            // The SCFSes that matter live in a ppem-gated block of the glyph
+                            // program, not in the font program: Times' '9' reaches instruction 207
+                            // `RS 8` and 208 `JROF`, and storage[8] is 1 at 14ppem and 0 at 16, so
+                            // at 16 the whole block from 209 to 261 is jumped over. That is exactly
+                            // the size split the oracle shows -- Times' curved glyphs are almost
+                            // all pixel-exact at 16ppem and wrong at 12 and 14 -- so the entire
+                            // remaining Times pool is inside this block.</para>
+                            // <para>The block is a helper called twice, `RCVT 98; GC; ADD; ...;
+                            // SCFS; SCFS`, which sets a PAIR of points to a pair of coordinates:
+                            // (36, 8) and then (31, 13). Dropping it is what we do and it is not
+                            // right -- at 14ppem '9' scores 1001 with seven points wrong. APPLYING
+                            // it is worse, and not marginally: 1001 -> 3315, thirteen points wrong.
+                            // And the solved outline rules out the values themselves, because the
+                            // helper sets pt8 and pt13 to the SAME coordinate (125 in the ClearType
+                            // pass, 141 in the bi-level one) while GDI's own pixels want them far
+                            // apart -- pt8 near 131 and pt13 near 150. Whatever GDI does here, it
+                            // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
                                 && IsHorizontalProjection
                                 && (z.Tags[p] & TagTouchX) == 0) break;

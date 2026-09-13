@@ -4466,6 +4466,21 @@ namespace WgpuInterop.Tests.Text
         /// suspect.</para>
         /// <summary>GDI'S CLEARTYPE OUTLINE IN BOTH AXES, recovered by inverting our own
         /// rasterizer. WPF_XYSOLVE=family/chars/ppem[/B|I].
+        /// <para>HOW FAR TO TRUST A SINGLE COORDINATE. Residual zero means this outline reproduces
+        /// GDI's pixels exactly; it does NOT mean it is the only outline that does, and the two
+        /// have been confused here before. Forty-odd coordinates against a ten-pixel-square image
+        /// is an underdetermined system, and the search is coordinate descent, so what comes back
+        /// is one point of a solution SET reached from our fit. Started from a genuinely different
+        /// outline -- Times '9'@14 with WPF_CT_SCFS_X=0, which moves its bowl -- the same glyph
+        /// solves to P8 149 where the default start says 131, and P13 133 where it says 150. That
+        /// run stops at residual 118 rather than 0, so it is not a rival solution and does not
+        /// refute the converged one; but it does show the descent is start-dependent, and no
+        /// second start has yet been found that also reaches zero.</para>
+        /// <para>So: the SHAPE of the answer -- which points must move, in which direction, by
+        /// roughly how much -- is evidence. An individual coordinate is a hypothesis. The slack
+        /// column (WPF_XYSOLVE_INTERVAL=1) is a one-dimensional slice through the solution at the
+        /// point the descent landed on, not a joint region, so a point sitting outside its
+        /// neighbour's interval is not proof of anything on its own.</para>
         /// <para>This is the instrument the Y side has never had. SolveGdisEdges moves each EDGE
         /// in x only, so it cannot see a point GDI placed at a different HEIGHT -- and on a curve
         /// it slides x to fake the ink a wrong y produced, which is how it reported a bowl's
