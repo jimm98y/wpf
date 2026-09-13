@@ -91,6 +91,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// flagged as settled under an older coverage model and re-testable, and it measures
         /// 2,772,488 and 3,444,957 the other way at 12 and 16ppem. So this correction is
         /// orthogonal to all of them.</para>
+        /// <para>RE-SWEPT AGAIN in 2026-09 after the move to 0.0001, on 10/12/14/16/20ppem against
+        /// a baseline of 176,245. All still hold and none was absorbing the sag: gamma 1.20
+        /// (1.17 and 1.23 give 859,943 and 658,567), cut-in divisor 16 (8 and 32 give 2,819,125
+        /// and 1,452,103), x-hint mode 5 (1, 4, 6, 7 give 26.1M, 4.4M, 9.0M, 4.2M; mode 2 measures
+        /// identically to 5), contrast filter off (on 16,433,937, auto 8,804,877). The gamma
+        /// minimum is far SHARPER than it was, which is what removing a one-signed ink deficit
+        /// should do. One correction to the paragraph above: "stem fat still 6" is stale -- the
+        /// shipped default is 0, and 6 now costs 282,442 against 176,245.</para>
         /// <para>Kept separate from the default so that ordinary geometry -- a large rounded
         /// rectangle, a circle -- does not pay two and a half times the segments for an
         /// accuracy only text at a few pixels an em can use. WPF_CURVE_TOL overrides
