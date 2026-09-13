@@ -8542,7 +8542,18 @@ namespace WgpuInterop.Tests.Text
             // ClearType, because ClearType is what we draw. Asking GDI for grey and comparing it with
             // subpixel output measures the difference between two rendering modes, which is not a
             // fault anyone can fix.
+            // WPF_GDI_LFQUALITY overrides it, and 6 -- CLEARTYPE_NATURAL_QUALITY -- is the reason
+            // it exists. Natural widths mean GDI does NOT run the compatible-width phase
+            // (itrp_IUP's phase block is gated on globals[0x16b] == 2), so quality 6 is the only
+            // way to see GDI's ClearType outline BEFORE the phase. Every claim about which part of
+            // the pipeline a difference belongs to has until now had to assume GDI's pre-phase
+            // outline equals ours, because GGO answers bi-level and the solver only ever sees the
+            // finished glyph. This is the missing half.
             private const int ClearTypeQuality = 5;
+
+            private static readonly int LfQuality =
+                int.TryParse(Environment.GetEnvironmentVariable("WPF_GDI_LFQUALITY"), out int q)
+                    ? q : ClearTypeQuality;
             private const int TaBaseline = 24, TaLeft = 0;
             private const int Transparent = 1;
             private const int BiRgb = 0;
@@ -8590,7 +8601,7 @@ namespace WgpuInterop.Tests.Text
                     lfWeight = bold ? 700 : 400,
                     lfItalic = (byte) (italic ? 1 : 0),
                     lfCharSet = 1,
-                    lfQuality = ClearTypeQuality,
+                    lfQuality = (byte) LfQuality,
                     lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);
@@ -8666,7 +8677,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     lfHeight = -ppem, lfWeight = bold ? 700 : 400,
                     lfItalic = (byte)(italic ? 1 : 0), lfCharSet = 1,
-                    lfQuality = ClearTypeQuality, lfFaceName = family,
+                    lfQuality = (byte) LfQuality, lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);
                 IntPtr oldFont = SelectObject(dc, font);
@@ -8723,7 +8734,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     lfHeight = -ppem, lfWeight = bold ? 700 : 400,
                     lfItalic = (byte)(italic ? 1 : 0), lfCharSet = 1,
-                    lfQuality = ClearTypeQuality, lfFaceName = family,
+                    lfQuality = (byte) LfQuality, lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);
                 IntPtr oldFont = SelectObject(dc, font);
@@ -8746,7 +8757,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     lfHeight = -ppem, lfWeight = bold ? 700 : 400,
                     lfItalic = (byte)(italic ? 1 : 0), lfCharSet = 1,
-                    lfQuality = ClearTypeQuality, lfFaceName = family,
+                    lfQuality = (byte) LfQuality, lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);
                 IntPtr oldFont = SelectObject(dc, font);
@@ -8779,7 +8790,7 @@ namespace WgpuInterop.Tests.Text
 
             public static byte[] Draw(string text, string family, int ppem, int penX, int baseline,
                                       int w, int h, bool bold = false, bool italic = false,
-                                      int quality = ClearTypeQuality)
+                                      int quality = -1)
             {
                 IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
                 var header = new BITMAPINFOHEADER
@@ -8816,7 +8827,7 @@ namespace WgpuInterop.Tests.Text
                     lfWeight = bold ? 700 : 400,
                     lfItalic = (byte)(italic ? 1 : 0),
                     lfCharSet = 1,          // DEFAULT_CHARSET
-                    lfQuality = (byte) quality,
+                    lfQuality = (byte) (quality < 0 ? LfQuality : quality),
                     lfFaceName = family,
                 };
                 IntPtr font = CreateFontIndirectW(ref lf);
