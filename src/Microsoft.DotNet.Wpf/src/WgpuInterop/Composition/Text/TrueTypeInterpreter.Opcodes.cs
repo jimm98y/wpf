@@ -523,7 +523,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                         ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
                                         : s_alignrpBothAxes
                                           && _iupYDone && (z.Tags[p] & TagTouchY) == 0)
-                                    && !PostIupExempt()) continue;
+                                    && !PostIupExempt("ALIGNRP", p)) continue;
                                 LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
                             }
@@ -934,10 +934,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
                                 && IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchX) == 0 && !PostIupExempt()) break;
+                                && (z.Tags[p] & TagTouchX) == 0 && !PostIupExempt("SCFS", p)) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
                                 && !IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchY) == 0 && !PostIupExempt()) break;
+                                && (z.Tags[p] & TagTouchY) == 0 && !PostIupExempt("SCFS", p)) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
                             // A twilight point moved this way keeps the new place as its ORIGIN too:
@@ -1424,11 +1424,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int _postIupSeen;
 
-        private bool PostIupExempt()
+        private bool PostIupExempt(string op, int pt)
         {
             int i = _postIupSeen++;
-            return s_postIupMask is not null && s_postIupMask.Contains(i);
+            bool exempt = s_postIupMask is not null && s_postIupMask.Contains(i);
+            if (s_postIupDump)
+                Console.Error.WriteLine($"   postiup idx={i,3} {op,-8} pt={pt,3}"
+                    + $" axis={(IsHorizontalProjection ? "x" : "y")}"
+                    + (exempt ? "  APPLIED" : "  suppressed"));
+            return exempt;
         }
+
+        /// <summary>AND WHAT THE MASK SAYS, ON TIMES BOLD '0'@16. The suppressions are, in order:
+        /// eight SCFSes on the Y axis (idx 0..7), eight on the X axis (idx 8..15, points 40, 5, 28,
+        /// 19, 38, 7, 30, 17), then the ALIGNRPs in x/y pairs from idx 16. Separating the two axes
+        /// matters -- applying the X ones while leaving the Y ones suppressed behaves quite
+        /// differently from applying both, which is what WPF_CT_SCFS_X=0 does:
+        /// <code>
+        ///   all suppressed (shipped)                     2034
+        ///   x-SCFS applied, cvt[98] = 77 (our value)     2268     worse
+        ///   x-SCFS applied, cvt[98] = 29                 1718     better
+        /// </code>
+        /// which reads as "GDI applies these and our control value is wrong". IT IS NOT. prep's
+        /// cvt[98] is arrived at by a plain ppem ladder with no ClearType term in it: RCVT gives the
+        /// scaled raw 146, a WCVTP writes 205, then `146 <= 346` takes a pixel off and `146 <= 237`
+        /// takes another, giving 77. Three writes, two LTEQ thresholds, no GETINFO -- so GDI's
+        /// cvt[98] is 77 as well, and with 77 the helper puts pt17 at 257 where GDI's own pixels
+        /// want 206. GDI does not apply this SCFS. The 29 that measures better is a fitted number
+        /// with nothing behind it.</summary>
+        /// <summary>WPF_CT_POSTIUP_DUMP=1: name each suppression, so a mask means something.</summary>
+        private static readonly bool s_postIupDump =
+            Environment.GetEnvironmentVariable("WPF_CT_POSTIUP_DUMP") == "1";
 
         private static readonly bool s_traceHint =
             Environment.GetEnvironmentVariable("WPF_HINT_TRACE") == "1";
