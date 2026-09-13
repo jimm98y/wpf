@@ -2201,6 +2201,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_CT_PHASE_NUM=compat: build the phase scale from the LAID-OUT advance, as
         /// we used to, instead of fs__Contour's unrounded bi-level phantom span.</summary>
+        /// <summary>WPF_CT_PHASE_DEN=span: divide by the difference of the two scaled phantom
+        /// points, as we used to, instead of scaling the font-unit advance once. See the
+        /// comment at the factor.</summary>
+        private static readonly bool s_phaseDenFontUnits =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEN") != "span";
+
         private static readonly bool s_phaseNumSpan =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_NUM") != "compat";
 
@@ -2255,7 +2261,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _phaseApplied = true;
             int adv = _realPoints + 1;
             if (adv >= _glyphZone.CurX.Length) return;
-            int linear = _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
+            // THE DENOMINATOR IS THE ADVANCE IN FONT UNITS, SCALED ONCE -- not the difference
+            // of two separately scaled phantom points. fs__Contour builds the factor as
+            //     denom = (*globals[0x130])(globals[0x1ac]);        // 0x1ac is elem[0x46],
+            //     globals[0x1d0] = (span << 16 +/- denom/2) / denom; // the advance in FONT UNITS
+            // so one value crosses from design space to 26.6, once. We took the difference of
+            // OrgX[pp2] and OrgX[pp1], and those are two independently scaled and rounded
+            // coordinates: round(a*s) - round(b*s) is not round((a-b)*s), and the two disagree by
+            // a sixty-fourth whenever the two roundings fall opposite ways -- which is about half
+            // the time.
+            // <para>That is exactly the size of the error the anchor search measures. Over 340
+            // glyph/size pairs across six faces, sixty of the ninety-four imperfect ones are
+            // reproduced EXACTLY by moving anchors alone, fifty-three of those need just ONE
+            // anchor moved, and fifty-two of the seventy-two moves are one or two sixty-fourths.
+            // The phase is what places those anchors -- turning it off costs ten to thirty times
+            // the error on every one of them -- so a last sixty-fourth in the factor is the shape
+            // of what is left. WPF_CT_PHASE_DEN=span restores the phantom difference.</para>
+            int linear = s_phaseDenFontUnits
+                       ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints])
+                       : _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
             if (s_phaseEntryProbe)
                 Console.Error.WriteLine($"PHASEENTRY pts={_realPoints} orgPP1={_glyphZone.OrgX[_realPoints]}"
                     + $" orgPP2={_glyphZone.OrgX[adv]} linear={linear} compat64={CompatibleAdvance64}"
