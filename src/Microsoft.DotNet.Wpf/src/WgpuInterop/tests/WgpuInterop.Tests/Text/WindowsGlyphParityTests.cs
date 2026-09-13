@@ -4700,8 +4700,73 @@ namespace WgpuInterop.Tests.Text
                                     }
                                 }
                         }
-                        renders += backRenders;
-                        Console.Error.WriteLine($"   walked back in {backRenders} renders;"
+                        // AND WALK THE FLAT RUNS BACK TOGETHER. The loop above moves ONE
+                        // coordinate at a time, which cannot undo a move that only works jointly --
+                        // and that is exactly the case this instrument keeps being pointed at.
+                        // Times' bowls reach their extremes through three points at one design x,
+                        // IUP can only stack them, and our '9'@14 has P9 = P10 = P11 = 36 dead
+                        // straight. If GDI's edge is straight too but sits somewhere else, every
+                        // single-point step off that edge breaks the render and the walk-back stops
+                        // with all three reported as forced -- an edge that "must bow" when what it
+                        // must do is MOVE. So: group the points our own fit puts at the same x, and
+                        // walk each group back as one.
+                        int groupRenders = 0;
+                        var byX = new Dictionary<int, List<int>>();
+                        for (int i = 0; i < ox.Length; i++)
+                        {
+                            if (!byX.TryGetValue(ox[i], out List<int>? g)) byX[ox[i]] = g = new();
+                            g.Add(i);
+                        }
+                        foreach (KeyValuePair<int, List<int>> kv in byX)
+                        {
+                            List<int> g = kv.Value;
+                            if (g.Count < 2) continue;
+                            bool bent = false;
+                            foreach (int i in g) if (sx[i] != kv.Key) bent = true;
+                            if (!bent) continue;
+                            // CAN THE EDGE BE STRAIGHT SOMEWHERE ELSE? Try putting the whole group
+                            // back onto ONE x -- ours first, then outward -- and keep the nearest
+                            // value that still renders GDI exactly. A bow that survives this is a
+                            // bow the pixels actually require; one that does not was the descent
+                            // bending an edge it could have translated.
+                            var keep = new int[g.Count];
+                            int was = 0, wasN = 0;
+                            for (int k = 0; k < g.Count; k++)
+                            {
+                                keep[k] = sx[g[k]];
+                                was += Math.Abs(keep[k] - ox[g[k]]);
+                                if (keep[k] != ox[g[k]]) wasN++;
+                            }
+                            bool fixedIt = false;
+                            for (int d = 0; d <= span && !fixedIt; d++)
+                                for (int sgn = 0; sgn < 2 && !fixedIt; sgn++)
+                                {
+                                    int v = kv.Key + (sgn == 0 ? d : -d);
+                                    // ONLY IF IT COSTS LESS. Straightening onto ANY value that
+                                    // renders exactly is not an improvement -- it can put a point
+                                    // that already agreed with us somewhere it does not, and the
+                                    // first version of this pass turned 136 reported differences
+                                    // into 166 by doing exactly that. The pass exists to find a
+                                    // SMALLER explanation, so it must reduce the displacement.
+                                    // ... and must not spread the difference over MORE points
+                                    // than it removes it from. Trading "two points out by 3 and 2"
+                                    // for "three points out by 1" is a smaller total move and a
+                                    // worse description of what happened.
+                                    int now = 0, nowN = 0;
+                                    foreach (int i in g)
+                                    { now += Math.Abs(v - ox[i]); if (v != ox[i]) nowN++; }
+                                    if (now >= was || nowN > wasN) { if (d == 0) break; continue; }
+                                    foreach (int i in g) sx[i] = v;
+                                    groupRenders++;
+                                    if (Score() == 0) fixedIt = true;
+                                    if (d == 0) break;
+                                }
+                            if (!fixedIt)
+                                for (int k = 0; k < g.Count; k++) sx[g[k]] = keep[k];
+                        }
+                        renders += backRenders + groupRenders;
+                        Console.Error.WriteLine($"   walked back in {backRenders} renders"
+                            + $" (+{groupRenders} straightening flat runs);"
                             + " these are the SMALLEST moves that still render GDI exactly");
                     }
                     Console.Error.WriteLine($"== {c} {parts[0]}@{ppem}{style}  {sx.Length} points,"
