@@ -2371,17 +2371,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // will. That is a question the oracle can answer in a sweep and the binary cannot,
             // because the factor's numerator is pass one's unrounded phantom span and GDI exposes
             // no fractional advance anywhere.
-            // <para>ANSWERED, AND IT IS NOT THE FACTOR. Of four anchor-solvable glyphs swept,
-            // three (Segoe UI 'o'@12 and 's'@13, Tahoma 'b'@12) do not move for ANY nudge in
-            // +/-100, and the one that does -- Tahoma 'q'@16, 292 -> 0 -- reaches zero over the
-            // window -80..-10 and nowhere else. Its inputs are span 576 over denominator 566,
-            // giving 66,694, and the three neighbouring integer possibilities all land OUTSIDE
-            // that window: span-1 is 66,578 (nudge -116, scores 529), denominator+1 is 66,576
-            // (-118), denominator-1 is 66,812 (+118). The factor GDI would need is strictly
-            // between anything its own formula can produce from integer inputs, so the nudge is
-            // only flipping one node's PhaseDiv rounding and the cause lies elsewhere. Worth
-            // knowing, because "the numerator is the one input never measured against GDI" was the
-            // standing next step and this closes it.</para>
+            // <para>ANSWERED, PARTLY. The factor cannot be the whole story and is not excluded
+            // either, and the window has to be wide enough to see it: a node's shift is about
+            // `cur * (factor - 1) / 65536`, so moving a shift by one sixty-fourth on a six-pixel
+            // glyph needs a nudge around 160, and a first sweep of +/-100 saw three glyphs "not
+            // move for any nudge" that simply had not been reached yet. Four anchor-solvable
+            // glyphs, swept to +/-600:
+            // <code>
+            //   Tahoma 'q'@16   292 -> 0   window  -80..-10   span 576 / den 566 -> 66,694
+            //   Tahoma 'b'@12   118 -> 0   window  100..220   span 448 / den 425 -> 69,083
+            //   Segoe UI 'o'@12    no nudge reaches zero (best 236)
+            //   Segoe UI 's'@13    no nudge reaches zero (best 118, the baseline)
+            // </code>
+            // For 'b' the factor IS a plausible cause: span+1 gives +154 and denominator-1 gives
+            // +163, both inside its window. For 'q' it is not: span-1 is -116, denominator+1 is
+            // -118, denominator-1 is +118, and its window is -80..-10, so the factor GDI would
+            // need lies strictly between anything the formula can produce from integer inputs.
+            // And for two of the four NO factor works at all. So a single wrong factor does not
+            // explain the pool, though it may explain individual glyphs.</para>
+            // <para>One thing the probe did settle: `BiLevelSpan64` equals `CompatibleAdvance64`
+            // on all four -- 448, 448, 384, 576, every one a whole number of pixels -- because the
+            // bi-level pass rounds its advance. So "the numerator is the UNROUNDED span, not the
+            // rounded advance" is a distinction without a difference on these glyphs, and whatever
+            // that change was worth came from glyphs where the two disagree.</para>
             _ctFactor16 += s_phaseFactorAdj;
             // THE PHASE ONLY EVER EXPANDS CORRECTLY. Where 'hdmx' forces an advance SMALLER
             // than the natural one the fraction goes negative, and the tree -- 24 of 32 points
