@@ -715,6 +715,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_yFromBiLevel =
             Environment.GetEnvironmentVariable("WPF_CT_Y_BILEVEL") == "1";
 
+        /// <summary>WPF_CT_TWOPASS=1: run the glyph program twice, as fs__Contour does under
+        /// compatible widths. See the call site.</summary>
+        private static readonly bool s_twoPassGlyph =
+            Environment.GetEnvironmentVariable("WPF_CT_TWOPASS") == "1";
+
         private static readonly bool s_compatProbe =
             Environment.GetEnvironmentVariable("WPF_COMPAT_PROBE") == "1";
 
@@ -2330,7 +2335,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // should render almost exactly. Set AFTER CompatibleAdvance64 is computed, because that
             // number is itself measured by a bi-level pass and asking from inside one recurses.
             if (s_fitBiLevel && !TrueTypeInterpreter.BiLevelPass) TrueTypeInterpreter.BiLevelPass = true;
-            try { hinted = interpreter.Hint(glyph, pixelsPerEm); }
+            // WPF_CT_TWOPASS=1: run the glyph program TWICE and keep the second, which is what
+            // fs__Contour does under compatible widths -- fsg_ExecuteGlyph at its line 429, then
+            // the phase scale computed from the resulting phantoms, then fsg_ExecuteGlyph again.
+            // It matters only if the program leaves state behind, and Arial Bold 'X' at 20ppem
+            // does: its FDEFs call WS (0x42) and WCVTP (0x44), so a second run reads back what the
+            // first wrote. At CLEARTYPE_NATURAL_QUALITY GDI runs it ONCE, which is the
+            // configuration our unphased outline was shown to match exactly -- so this is the one
+            // remaining way that comparison can be true and the compatible-width fits still
+            // differ. REFUTED: 791,238 against 10,327 on Arial Bold at 20ppem. And the size of
+            // that says something useful -- it is catastrophic rather than neutral, so OUR
+            // interpreter plainly does carry CVT and storage across Hint calls, which means GDI's
+            // two passes must NOT share theirs. They take different globals blocks (pfVar51 then
+            // pfVar50 in fs__Contour), and this is the measurement that says those blocks carry
+            // separate control values. So pass two starts clean, is equivalent to a single pass,
+            // and GDI's compatible-width pre-phase fit really is its natural-width fit.
+            try
+            {
+                if (s_twoPassGlyph && !TrueTypeInterpreter.BiLevelPass && SubpixelFitting)
+                    interpreter.Hint(glyph, pixelsPerEm);
+                hinted = interpreter.Hint(glyph, pixelsPerEm);
+            }
             finally
             {
                 TrueTypeInterpreter.BiLevelPass = savedBi;
