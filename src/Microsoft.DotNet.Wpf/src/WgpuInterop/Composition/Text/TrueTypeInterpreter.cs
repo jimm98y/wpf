@@ -2672,6 +2672,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     ldrh w8,[x19,#0xcc] ; cbz w8, skip ; ldrh w8,[x22,#0x1c0] ; tbz w8,#1, skip
             // We had been recording every link, diagonal ones included, which fed the tree
             // relationships GDI never puts in it.
+            // THIS GATE IS WHERE ARIAL BOLD 'K' LOSES ITS ONE POINT, and the gate GDI uses is not
+            // the one modelled here.
+            // <para>K at 20ppem is a single wrong point, p6, and the shift it wants (-14) is
+            // produced by exactly one rule in the pass: a two-parent proportion between a point at
+            // org 281 and p5 at org 903. The program offers precisely that -- SDPVTL at
+            // instruction 175 sets the line from (10, 5) and the MDRP at 180 is what moves p6 --
+            // and this gate throws the link away, because after SDPVTL the projection is DIAGONAL
+            // and our latch says "not on the ClearType axis". Turn the gate off
+            // (WPF_CT_PHASE_XONLY=0) and K goes 922 -> ZERO, and 'A' 6,767 -> 6,567.</para>
+            // <para>Turning it off wholesale is not the answer -- holdout 598,774 -> 6,983,952
+            // with 162 ratchets failing, because then every y-axis link is recorded too. The gate
+            // is real; ours is simply computing the wrong predicate.</para>
+            // <para>GDI's is localGS+0xcc, tested by the inlined AddDistance in itrp_MIRP at
+            // 14003b298 (with globals[0x16b]==2 and globals[0x1c0] bit 1 either side of it), and
+            // it is written by exactly the opcodes we latch on: SVTCA_0/1, SPVTCA_0/1, SPVTL,
+            // SDPVTL and WPV. But the SENSE is not "is the projection on x". itrp_SVTCA_1 stores
+            // 1 and itrp_SVTCA_0 stores 0, as expected -- while itrp_SDPVTL@14003d940 decodes as
+            //     pure x (pv == (0x4000, 0))  ->  store 0
+            //     anything else               ->  store 1
+            // which is the opposite sense, and cannot both be right on the reading that 0xcc means
+            // "on the axis". Either the register compared there is not the projection vector, or
+            // the flag means something else entirely. Settling that is what stands between here
+            // and K's zero.</para>
             if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
