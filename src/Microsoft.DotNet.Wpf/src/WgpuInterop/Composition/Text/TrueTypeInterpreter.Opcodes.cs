@@ -202,6 +202,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             int y = (short)Pop(), x = (short)Pop();
                             Normalize(x, y, out _gs.ProjX, out _gs.ProjY);
                             _gs.DualX = _gs.ProjX; _gs.DualY = _gs.ProjY;
+                            // AND IT RETIRES THE LINE, like the other ways of setting the
+                            // projection. itrp_WPV@14003feb0 -- WPV is this opcode, the write to
+                            // the projection vector -- stores -1 as a FOUR-byte value at localGS
+                            // +0xce, clearing both of the points SPVTL and SDPVTL leave behind for
+                            // MDRP and ALIGNRP to interpolate a phase link between. The full set
+                            // of writers is SVTCA_0, SVTCA_1, SPVTCA_0, SPVTCA_1, SPVTL, SDPVTL
+                            // and WPV; itrp_WFV (SFVFS) is NOT among them, which is the same
+                            // asymmetry as SFVTCA not clearing them. We cleared on four of the
+                            // five clearers and left this one, so a proportion could be recorded
+                            // from a line the program had put down by hand and then abandoned.
+                            SetVectorLine(-1, -1);
                             ResetProjection();
                             break;
                         }
