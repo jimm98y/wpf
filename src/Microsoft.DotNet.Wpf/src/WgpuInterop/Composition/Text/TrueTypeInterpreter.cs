@@ -2684,18 +2684,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // <para>Turning it off wholesale is not the answer -- holdout 598,774 -> 6,983,952
             // with 162 ratchets failing, because then every y-axis link is recorded too. The gate
             // is real; ours is simply computing the wrong predicate.</para>
-            // <para>GDI's is localGS+0xcc, tested by the inlined AddDistance in itrp_MIRP at
-            // 14003b298 (with globals[0x16b]==2 and globals[0x1c0] bit 1 either side of it), and
-            // it is written by exactly the opcodes we latch on: SVTCA_0/1, SPVTCA_0/1, SPVTL,
-            // SDPVTL and WPV. But the SENSE is not "is the projection on x". itrp_SVTCA_1 stores
-            // 1 and itrp_SVTCA_0 stores 0, as expected -- while itrp_SDPVTL@14003d940 decodes as
-            //     pure x (pv == (0x4000, 0))  ->  store 0
-            //     anything else               ->  store 1
-            // which is the opposite sense, and cannot both be right on the reading that 0xcc means
-            // "on the axis". Either the register compared there is not the projection vector, or
-            // the flag means something else entirely. Settling that is what stands between here
-            // and K's zero.</para>
-            if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection)) return;
+            // <para>SETTLED, AND THIS GATE IS RIGHT -- the paragraph above is why K is NOT a gate
+            // bug, kept because two earlier passes each reached a wrong answer from a partial read.
+            // <list type="number">
+            // <item>The apparent contradiction (SVTCA_1 stores 1 / SDPVTL "stores 0 for pure x")
+            // was a ONE-BRANCH decode. itrp_SDPVTL's write is gated on globals[0x1c0] bit 2 -- the
+            // bit that says WHICH axis ClearType oversamples -- and I had only followed the bit-2-set
+            // arm. The whole thing at 14003d918..14003d96c is
+            //     store 1  iff  component != 0x4000 || other != 0
+            // with (component, other) = (pv.y, pv.x) when bit 2 is clear, i.e. STORE 0 ONLY FOR A
+            // PURE-AXIS VECTOR. SVTCA[y] -> 0 and SVTCA[x] -> 1 fit that exactly. There is no
+            // contradiction; 0xcc is "the projection is NOT purely off the ClearType axis", which
+            // is NotPureYProjection, which is what InClearTypeDirection already computes.</item>
+            // <item>And this gate already used it: s_phaseAxisExact defaults to FALSE, so the
+            // shipped predicate has always been InClearTypeDirection, not OnClearTypeAxis. The
+            // note's claim that "our latch says not on the ClearType axis" was never true of the
+            // shipped path. Implementing GDI's predicate a second time (WPF_CT_PHASE_GATE) moved
+            // Arial K/A/X and Times 'o' by exactly ZERO and was reverted.</item>
+            // <item>K's link is NOT dropped here. The GATE-DROP trace below shows every drop in the
+            // ClearType pass is pv=(0,0x4000) pure Y; the ctInfo=False rows are the BI-LEVEL pass,
+            // whose tree is discarded. K's diagonal MIRP link (r=10 p=6, pv=(12042,-11110), the very
+            // point that is wrong) is RECORDED. What WPF_CT_PHASE_XONLY=0 gives K is the pure-Y
+            // links, and those are gated in the binary: itrp_ALIGNRP's AddDistance at 140036258 sits
+            // inside the region every failing test branches past (mode!=2, 0xcc==0, 0x1c0 bit 1
+            // clear all jump to 14003625c), and itrp_MDRP's AddProportion at 14003aa1c likewise.
+            // itrp_ISECT remains the ONLY ungated call site, which we already model. So K@20's 922
+            // is a phase VALUE, not a missing link, and XONLY=0 merely compensates -- at the cost of
+            // 598,774 -> 6,983,952 and 162 ratchets.</item></list></para>
+            if (s_phaseXAxisOnly && !(s_phaseAxisExact ? OnClearTypeAxis : InClearTypeDirection))
+            { if (s_phaseDump) Console.Error.WriteLine($"  GATE-DROP r={r,3} p={p,3} via={_phaseSite} {GateWhy()}"); return; }
             int n = _realPoints + 4;
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
@@ -2934,7 +2951,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_phaseInterAlign =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_INTERALIGN") != "0";
 
-        /// <summary>WPF_CT_PHASE_ATEXEC=0 keeps the phase on IUP alone.</summary>
+        /// <summary>WPF_CT_PHASE_ATEXEC=0 keeps the phase on IUP alone.
+        /// <para>KEEP IT ON: =0 measures 598,774 -> 784,675 on the 8..24 holdout. The binary has
+        /// EXACTLY TWO appliers -- the only external callers of PhaseShift@140035b80 are
+        /// itrp_IUP@14003925c and ExecutePhaseControl@1400359e8 -- and ExecutePhaseControl is in
+        /// turn called from just itrp_Execute@140037314 and itrp_SHC@14003e138. So the three sites
+        /// we have (this one, ApplyPhaseControl, and s_phaseAtShc) are the three GDI has, and a
+        /// glyph that never runs IUP[x] is phased by the Execute call, not left unphased. The
+        /// 186k is what that call is worth.</para></summary>
         private static readonly bool s_phaseAtExecute =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATEXEC") != "0";
 
@@ -3192,6 +3216,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// on any horizontal-ish projection. Recording the DIAGONAL links GDI leaves out is
         /// worth 462k to us, so something upstream of the tree differs. See the census note on
         /// OnClearTypeAxis.</summary>
+        /// <summary>Why the phase axis gate said no, for the GATE-DROP trace.</summary>
+        private string GateWhy() =>
+            $"ctInfo={ClearTypeInfo} notPureY={NotPureYProjection} pv=({_gs.ProjX},{_gs.ProjY}) "
+            + $"prepOk={CtRoundingInPrep || !_inPreProgram} subpixel={SubpixelGridHere}";
+
         private static readonly bool s_phaseAxisExact =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_AXIS") == "exact";
 
