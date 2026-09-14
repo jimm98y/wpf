@@ -3877,7 +3877,42 @@ namespace WgpuInterop.Tests.Text
         /// and the interpreter is out of the question. The uncrossed pair is the control: the same
         /// two strokes, same widths, same slants, drawn apart.</para>
         /// <para>WPF_CROSS_REPORT=&lt;path&gt; to collect it.</para></summary>
-        [Fact]
+         /// <summary>GDI's raster beside ours as character maps, for a synthetic probe. Both are
+        /// cropped to the union of their ink and printed a green channel at a time, which is what
+        /// the lamp tables in this file are read in.</summary>
+        private static void DumpTwo(string title, byte[] gdiBgra, byte[] oursRgba)
+        {
+            int top = int.MaxValue, bot = -1, left = int.MaxValue, right = -1;
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                {
+                    int k = (y * Width + x) * 4;
+                    if (gdiBgra[k + 1] >= 250 && oursRgba[k + 1] >= 250) continue;
+                    if (y < top) top = y;
+                    if (y > bot) bot = y;
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                }
+            if (bot < 0) { Console.Error.WriteLine($"   {title}: nothing drawn"); return; }
+            Console.Error.WriteLine($"   {title}   rows {top}..{bot} cols {left}..{right}"
+                                    + "   GDI | ours");
+            for (int y = top; y <= bot; y++)
+            {
+                var line = new System.Text.StringBuilder("   ");
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    for (int x = left; x <= right; x++)
+                    {
+                        int v = 255 - (pass == 0 ? gdiBgra : oursRgba)[(y * Width + x) * 4 + 1];
+                        line.Append(v <= 0 ? '.' : (char) ('0' + Math.Min(9, (v * 9 + 127) / 255)));
+                    }
+                    line.Append("  |  ");
+                }
+                Console.Error.WriteLine(line.ToString());
+            }
+        }
+
+       [Fact]
         public void CoverageAtACrossing_AgainstGdis()
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
@@ -3923,6 +3958,14 @@ namespace WgpuInterop.Tests.Text
                                      Width, Height, false, false);
                             Gdi.s_rawRgb = null;
                             byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+                            // WPF_CROSS_DUMP=taper,slant,ppem: the two rasters side by side for one
+                            // case. The table says the crossing disagrees and by how much; it
+                            // cannot say WHERE, and where is the whole question -- ink spread over
+                            // the wedge between two converging strokes is a different fault from
+                            // ink at their outer edges.
+                            if (Environment.GetEnvironmentVariable("WPF_CROSS_DUMP")
+                                    == $"{taper},{slant},{ppem}" && i == 0)
+                                DumpTwo($"cross taper={taper} slant={slant} @{ppem}", raw, ours);
                             // Rows only one side inks are the vertical-extent question, not this
                             // one, and they carry a full-ink difference each -- see the note on
                             // CoverageOnADiagonal_AgainstGdis. Ours is RGBA, GDI's is BGRA.
