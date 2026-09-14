@@ -3221,6 +3221,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" orig={original / 64f:0.####} -> dist={distance / 64f:0.####}"
                     + $" cur={current / 64f:0.####} move={(distance - current) / 64f:0.####}"
                     + $" pv=({_gs.ProjX},{_gs.ProjY}) ctDir={InClearTypeDirection} ppem={_ppem}");
+            // MIRP DOES NOT RECORD A PROPORTION, only a distance -- checked rather than
+            // assumed, because MDRP's site does and the arithmetic looked like it wanted one.
+            // InterAlign@140035b40 is the gate GDI puts in front of every AddProportion, and its
+            // only callers are itrp_ALIGNRP@140036224 and itrp_MDRP@14003aa00. Inlining cannot
+            // hide that one: AddDistance is inlined into MIRP, but the gate it would need is a
+            // real call and MIRP does not make it. Adding canProportion here measured exactly
+            // neutral on every glyph tried, for the good reason that the branch cannot fire --
+            // MIRP in x runs with the vectors on the axis, so the two points SPVTL/SDPVTL leave
+            // behind are -1.
             LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, linkType, doubleCheck: true, phaseType: op & 3);
             MovePoint(z, p, distance - current);
 
