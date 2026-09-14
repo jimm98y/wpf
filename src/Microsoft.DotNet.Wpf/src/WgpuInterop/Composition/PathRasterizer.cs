@@ -518,15 +518,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_dropoutAllSpans =
             Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "3";
 
-        /// <summary>WPF_CT_SPANIDX=rows|both: end a run of samples with fsc_CalcLine's
-        /// ceil(v-0.5) instead of floor(v-0.5)+1, for the row crossing lists or for both. Off by
-        /// default -- see the comment at OnIdx.</summary>
-        private static readonly bool s_spanIdxRows =
-            Environment.GetEnvironmentVariable("WPF_CT_SPANIDX") is "rows" or "both";
-
-        private static readonly bool s_spanIdxCols =
-            Environment.GetEnvironmentVariable("WPF_CT_SPANIDX") == "both";
-
         /// <summary>WPF_CT_DROPOUT_EDGE=old: ask whether a span holds a row sample with the
         /// convention this pass used to use, which is not the fill's. See the test itself.</summary>
         private static readonly bool s_dropoutEdgeFill =
@@ -540,6 +531,72 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// probe says GDI excludes a sample on the span's bottom edge and includes one on its top
         /// (a slab of exactly 0.5px draws nothing, one of exactly 1.5px draws ONE row); we had it
         /// the other way. WPF_CT_ROWEDGE=old restores the old convention.</summary>
+        /// <summary>WPF_CT_ROWEDGE=extremum: a row sample lying exactly on a local MAXIMUM in y
+        /// (horizontal runs collapsed) is not a crossing, so the two edges meeting there
+        /// contribute nothing instead of two.
+        /// <para>This is fsc_CalcLine@1400435a0's rule, put in terms a crossing-based fill can
+        /// use. Its run over the perpendicular axis is first = (((v+32) &amp; ~63) + 32) >> 6 and
+        /// last = (v'-33) >> 6, which evaluated over every v are the smallest sample STRICTLY
+        /// GREATER than v and the largest STRICTLY LESS than v': an edge ENDING on a sample takes
+        /// no crossing from it. Applied to every edge that is catastrophic here -- 135,267,701
+        /// and 228 failures -- and the fault is ours, not the reading's. GDI never flattens a
+        /// curve (fsc_CalcSpline solves them per scanline), so its edges end where the FONT has
+        /// points; ours end wherever the flattener put a vertex, and a crossing lost at one of
+        /// those unbalances the winding. Restricting it to genuine extrema keeps every monotone
+        /// vertex counted exactly once, which is all the winding needs.</para>
+        /// <para>Times' bars are what ask for it. 'z' at 13ppem has its bottom bar between y=0
+        /// and y=0.500, so the row sample lies exactly on the bar's top edge -- and that edge is
+        /// a horizontal run whose two neighbours both arrive from above: a local maximum in
+        /// device y. Counting them gives four crossings whose middle pair cancels and leaves a
+        /// hole (`54.55` against GDI's `59995`); dropping them leaves the outer pair and one span
+        /// across the whole bar. The TOP bar is the mirror image, a local minimum, which the
+        /// existing (lo, hi] test already handles -- which is exactly why WPF_CT_ROWEDGE=old
+        /// fixes the bottom bar and breaks the top one, and why no plain convention does
+        /// both.</para>
+        /// <para>NOT dropout control. DoVertDropout@140041ea8 and LookForDropouts@140042328 are
+        /// read in full: the condition is on[k] == off[k] and the stub test is the three-way
+        /// crossing count, both of which this file already implements exactly. The bar's on and
+        /// off land on different rows, so GDI does not call it a dropout either -- the ink was
+        /// never missing from its bitmap.</para></summary>
+        /// <para>SHIPPED: holdout 8..24 605,280 -> 598,774, no ratchet worse and two better
+        /// (i@14 2 -> 1, repertoire@14i 17 -> 16), Times 'z'@13 exact through the FILL.
+        /// WPF_CT_ROWEDGE=gdi restores the plain (lo, hi] test.</para>
+        private static readonly bool s_rowEdgeExtremum =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") is null or "extremum";
+
+        /// <summary>WPF_CT_ROWEDGE=strict: an edge crosses a row sample only STRICTLY between its
+        /// ends, so an edge that BEGINS or ENDS exactly on the sample contributes no crossing.
+        /// <para>fsc_CalcLine@1400435a0 says this outright. Its run over the perpendicular axis is
+        /// set up as first = (((v+32) &amp; ~63) + 32) >> 6 and last = (v'-33) >> 6, and evaluated
+        /// over every v those are the smallest sample STRICTLY GREATER than v and the largest
+        /// STRICTLY LESS than v'. An edge whose endpoint lands on a sample is walked from the next
+        /// one along.</para>
+        /// <para>Times' 'z' at 13ppem is what it is for. Its bottom bar sits between y=0 and
+        /// y=0.500, so the row sample lies exactly on the bar's top edge. The edges that bound the
+        /// bar's flat stretch -- the diagonal arriving at pt15 and the serif leaving pt17 -- both
+        /// END on that sample, so GDI takes no crossing from either and the row's only crossings
+        /// are the outer two: one span, the whole bar, `59995`. Counting them gives four
+        /// crossings whose middle pair cancels, which is a hole exactly where we drew one
+        /// (`54.55`). No dropout rule is involved; the bar was never missing from GDI's
+        /// bitmap.</para></summary>
+        private static readonly bool s_rowEdgeStrict =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") == "strict";
+
+        /// <summary>WPF_CT_ROWEDGE=both: count an edge for a row sample lying exactly on either
+        /// of its ends, so the vertical test matches the horizontal one.
+        /// <para>Across a row this function tests a span [A, B] -- inclusive at both ends -- and
+        /// 306 measured rows say that is right: Verdana Regular at 19ppem scores 74 out of
+        /// 34,283,819 ink with it and 9,139 with the start made exclusive, and a row that exact
+        /// cannot be using the wrong rule. Down a column the test was (lo, hi], inclusive at one
+        /// end only. Both axes are the same question about the same tie and there is no reason for
+        /// them to answer it differently.</para>
+        /// <para>It is Times' bottom bars that ask. 'z' at 13ppem has its bar between y=0 and
+        /// y=0.500, so the bar's top edge lands exactly on the row sample for its whole flat
+        /// stretch; (lo, hi] throws that sample away and the row comes out with a hole in it
+        /// (`54.55` against GDI's `59995`).</para></summary>
+        private static readonly bool s_rowEdgeBoth =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") == "both";
+
         private static readonly bool s_rowEdgeGdi =
             Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") != "old";
 
@@ -1235,67 +1292,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                        nRows - ((poly[i].Y - originY) * nSub + 0.5f - GdiSubrowPhase));
                 P.Add(a);
             }
-            // WHICH SAMPLES AN EDGE COVERS, READ OFF fsc_CalcLine@1400435a0 RATHER THAN GUESSED.
-            // In 26.6 a sample sits at i*64+32, and the function sets up its run two ways round:
-            //     ascending  (y0 <= y1):  first = (((y0+32) & ~63) + 32) >> 6     last = (y1-33) >> 6
-            //     descending (y1 <  y0):  first = (((y1+32) & ~63) + 32) >> 6     last = (y0-33) >> 6
-            // The first index is the smallest sample AT OR AFTER the run's lower end; the last is
-            // the largest sample at or before (upper end - 1/64), which is the largest STRICTLY
-            // BELOW it. So a run covers [min, max) -- closed where it starts, open where it ends,
-            // which is what keeps a shared vertex counted exactly once. In sample indices both
-            // ends are then the SAME function, ceil(v-0.5), and the run is
-            // [OnIdx(min), OnIdx(max)).
-            // <para>We ended a run with floor(v-0.5)+1, which differs in exactly one case -- a run
-            // ending ON a sample -- and there it claims a sample GDI does not give it. That case
-            // is not rare in this face: Times' ClearType branch puts 'z''s bottom bar at y=0.500
-            // exactly at 13ppem, a DELTAP having taken it half a pixel down from the bi-level
-            // 1.000, so the bar's whole flat stretch ends on a sample. The extra sample makes the
-            // run's on and off indices differ, the dropout test is `off == on`, so the bar stops
-            // looking like a dropout -- and the fill will not draw it either. GDI draws that row
-            // 59995; we drew 54.55, a gap through the middle of the bar, and that one row was the
-            // glyph's whole 1,470.</para>
-            // <para>APPLIED TO THE ROW LISTS ONLY, and the measurement is what says so rather than
-            // an argument about frames. Rows alone: Times New Roman Regular 109,834 -> 103,444 on
-            // the holdout and 'z'@13 exact, every other face EXACTLY unchanged except Segoe UI
-            // Italic at +137. Both lists: Segoe UI Italic loses 24 pixels of coverage at 12ppem
-            // and five more repertoire ratchets fail with it. The row lists are what the COLUMN
-            // pass's stub test counts (`Count(rowOn, rowOff, ...)` below), which is how a change to
-            // the x crossings decides whether a horizontal bar is a stub.</para>
-            // <para>CONFIRMED FROM THE LIST MACHINERY, not just from fsc_CalcLine's setup.
-            // AddVertSimpleScan@140041d20 inserts ONE value into ONE sorted list -- the caller
-            // having pointed scan+0x98/0xa0/0xa8 at the on or the off array according to the
-            // edge's quadrant -- so a list entry is a single crossing's index in the
-            // perpendicular axis, which is our model exactly. VertCrossings@1400426c0 then walks
-            // the on and off arrays in lockstep to the end pointer and counts entries equal to the
-            // index in BOTH, which is our Count to the line. For the inked range to be
-            // [on, off) an off entry has to be the first UNINKED sample -- ceil(v-0.5). So the end
-            // index is not a choice; floor(v-0.5)+1 was wrong.</para>
-            // <para>NOT SHIPPED ANYWAY, and what stops it is worth writing down because it is not
-            // this rule. Rows alone moves exactly three ratchet rows out of 442, each by ONE
-            // pixel: repertoire@12b 165 -> 166, repertoire@19bi 23 -> 24, bi@19 1 -> 2. The 12b
-            // pixel is Segoe UI Bold '*' at 12ppem, whose bottom-right arm reads 19.73 in GDI and
-            // in us, and 19.71 with the rule on. One decision flips to make it: a column dropout
-            // at a span of (1.618, 1.953) -- wholly between two samples, so a dropout beyond
-            // argument -- which the stub test then rejects as stub-left because the row crossings
-            // it counts have moved.
-            // <para>The stub test is not what is wrong either. The fill it has to agree with tests
-            // an x span CLOSED AT BOTH ENDS (s_spanStartExclusive, s_spanEndInclusive), and the
-            // note there already says why: GDI's left edge is exclusive, ours is not, and flipping
-            // it costs 290,465 because our fitted x at those positions is not GDI's, so the
-            // inclusive test has been compensating. floor(v-0.5)+1 is closed at the top in the
-            // same way and for the same reason. Measured here: WPF_CT_SPANEND=old, which makes the
-            // fill half-open at the right to match, takes the holdout to 873,477 and fails 114
-            // tests. So these three pixels are that compensation showing through, and the rule
-            // should go in when the fitted x it compensates for is right -- not before.</para>
-            // <para>WPF_CT_SPANIDX=rows turns it on (holdout 605,280 -> 599,027, all of it Times
-            // New Roman Regular at -6,390 against Segoe UI Italic at +137, every other face
-            // unchanged to the digit); =both adds the column lists and costs nine
-            // ratchets.</para></para>
+            // WHICH SAMPLE INDEX A CROSSING IS RECORDED AT. floor(v-0.5)+1 -- the first sample
+            // strictly after it -- so a run covers [on, off) and a span reads { s : A < s <= B }.
+            // fsc_CalcLine@1400435a0 sets its runs up as first = (((v+32) & ~63) + 32) >> 6 and
+            // last = (v'-33) >> 6, which over every v are the smallest sample STRICTLY GREATER
+            // than v and the largest STRICTLY LESS than v'; the horizontal-edge case makes the
+            // same point in one line, biasing y by -1 for a right-to-left edge so that the two
+            // directions land either side of a tie.
+            // <para>OnIdx keeps ceil(v-0.5), which differs only for a crossing exactly on a
+            // sample, and 306 measured rows say to leave it: the fill it has to agree with tests
+            // a span [A, B] and Verdana Regular at 19ppem scores 74 out of 34,283,819 ink that
+            // way against 9,139 with the start made exclusive. A row that exact is not using the
+            // wrong rule. Making OnIdx floor(v-0.5)+1 to match the reading measures 607,089 and
+            // ten failures; making the fill match it measures 895,745 and 121. So the tie is
+            // decided somewhere this arithmetic does not reach -- the DDA's per-step rounding in
+            // the loop at 140043900, still unread -- and the pair we have is self-consistent.</para>
+            // <para>Changing OffIdx to ceil(v-0.5) was tried as well, on the strength of a first
+            // and wrong reading of the setup above. It measured -6,390 on Times New Roman
+            // Regular, which looked like a result and was a symptom: it reached the bar through
+            // the column pass's stub crossing counts. s_rowEdgeExtremum fixes the same bar in the
+            // fill where it belongs, for the same -6,390 and with no ratchet worse, after which
+            // the OffIdx change measures EXACTLY ZERO further and still costs three. Removed.</para>
             static int OnIdx(float v) => (int) MathF.Ceiling(v - 0.5f);
-            static int OffIdxCol(float v) => s_spanIdxCols ? (int) MathF.Ceiling(v - 0.5f)
-                                                           : (int) MathF.Floor(v - 0.5f) + 1;
-            static int OffIdxRow(float v) => s_spanIdxRows ? (int) MathF.Ceiling(v - 0.5f)
-                                                           : (int) MathF.Floor(v - 0.5f) + 1;
+            static int OffIdx(float v) => (int) MathF.Floor(v - 0.5f) + 1;
 
             // xMin/xMax/yMin/yMax are the GLYPH's box, not the target's: fs_FindBitMapSize sizes
             // the bitmap to the outline, so the samples run from the first centre inside it to the
@@ -1351,7 +1370,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
                         if (sx < lo || sx >= hi) continue;
                         float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
-                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdxCol(v), v));
+                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
                     }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
@@ -1369,7 +1388,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
                         if (sy < lo || sy >= hi) continue;
                         float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
-                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdxRow(v), v));
+                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
                     }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
@@ -1476,20 +1495,67 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var lamp = new byte[subWidth * height];
             var spans = new List<(float A, float B)>();
             var cross = new List<(float X, int Dir)>();
+
+            // WHICH VERTICES ARE LOCAL MAXIMA IN Y, horizontal runs collapsed: the nearest
+            // differing y before and after are both smaller. See s_rowEdgeExtremum.
+            bool[][]? maxY = null;
+            if (s_rowEdgeExtremum)
+            {
+                maxY = new bool[polys.Count][];
+                for (int p = 0; p < polys.Count; p++)
+                {
+                    List<Vector2> poly = polys[p];
+                    int m = poly.Count;
+                    var flags = new bool[m];
+                    for (int v = 0; v < m; v++)
+                    {
+                        float y = poly[v].Y, py = y, ny = y;
+                        int k = v;
+                        for (int step = 0; step < m; step++)
+                        {
+                            k = (k - 1 + m) % m;
+                            if (poly[k].Y != y) { py = poly[k].Y; break; }
+                        }
+                        k = v;
+                        for (int step = 0; step < m; step++)
+                        {
+                            k = (k + 1) % m;
+                            if (poly[k].Y != y) { ny = poly[k].Y; break; }
+                        }
+                        flags[v] = py < y && ny < y;
+                    }
+                    maxY[p] = flags;
+                }
+            }
             for (int py = 0; py < height; py++)
             {
                 float sy = originY + py + rowOffset;
                 cross.Clear();
-                foreach (var poly in polys)
+                for (int pi = 0; pi < polys.Count; pi++)
+                {
+                    List<Vector2> poly = polys[pi];
                     for (int i2 = 0; i2 < poly.Count; i2++)
                     {
                         Vector2 a = poly[i2], b = poly[(i2 + 1) % poly.Count];
                         if (a.Y == b.Y) continue;
                         float lo = MathF.Min(a.Y, b.Y), hi = MathF.Max(a.Y, b.Y);
-                        if (s_rowEdgeGdi ? (sy <= lo || sy > hi) : (sy < lo || sy >= hi)) continue;
+                        // WPF_CT_ROWEDGE=both: a row sample lying exactly on EITHER end of an
+                        // edge belongs to it, which is the rule this same function already uses
+                        // across a row -- a span is tested [A, B], inclusive at both ends. The
+                        // vertical test was (lo, hi], inclusive at one end only, so the two axes
+                        // disagreed about a tie. See the note at s_rowEdgeBoth.
+                        if (s_rowEdgeStrict ? (sy <= lo || sy >= hi)
+                           : s_rowEdgeBoth ? (sy < lo || sy > hi)
+                           : s_rowEdgeGdi ? (sy <= lo || sy > hi)
+                                          : (sy < lo || sy >= hi)) continue;
+                        // A SAMPLE ON A LOCAL MAXIMUM IN Y IS NOT A CROSSING. See
+                        // the note at s_rowEdgeExtremum.
+                        if (maxY is not null && sy == hi
+                            && maxY[pi][b.Y > a.Y ? (i2 + 1) % poly.Count : i2]) continue;
                         float t = (sy - a.Y) / (b.Y - a.Y);
                         cross.Add((a.X + t * (b.X - a.X), b.Y > a.Y ? 1 : -1));
                     }
+                }
                 cross.Sort(static (u, v) => u.X.CompareTo(v.X));
                 spans.Clear();
                 if (fillRule == FillRule.NonZero)
