@@ -5033,6 +5033,48 @@ namespace WgpuInterop.Tests.Text
                                     }
                                 Write(RunIup(anchors));
                             }
+                            // PAIRWISE REFINEMENT, because coordinate descent cannot walk a
+                            // ridge and IUP is nothing but ridges.
+                            // <para>Moving one anchor moves every point the interpolation carries
+                            // between it and its neighbours, so the score's valleys run DIAGONALLY
+                            // in anchor space: two anchors a stem apart want to move together, and
+                            // either one alone makes the glyph worse. One-at-a-time descent stops
+                            // at the first such ridge and reports "cannot reach GDI from any
+                            // anchor placement", which is a statement about the optimiser and
+                            // reads as one about GDI. It is why every note in this file says the
+                            // search fails above about eight dimensions.</para>
+                            // <para>So after the descent converges, sweep PAIRS: for every pair of
+                            // anchors try moving both by +d and by opposite d, which is the whole
+                            // of the two-dimensional ridge directions. Repeat until a sweep finds
+                            // nothing. WPF_XYSOLVE_PAIRS=0 turns it off.</para>
+                            if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_PAIRS") != "0"
+                                && anchors.Length > 1)
+                                for (int sweep = 0; sweep < 6 && best > 0; sweep++)
+                                {
+                                    long before = best;
+                                    for (int j = 0; j < anchors.Length && best > 0; j++)
+                                    for (int k = j + 1; k < anchors.Length && best > 0; k++)
+                                    {
+                                        int kj = anchors[j], kk = anchors[k];
+                                        int bj = kj, bk = kk;
+                                        for (int d = -span; d <= span; d++)
+                                        {
+                                            if (d == 0) continue;
+                                            for (int sgn = -1; sgn <= 1; sgn += 2)
+                                            {
+                                                anchors[j] = kj + d;
+                                                anchors[k] = kk + sgn * d;
+                                                Write(RunIup(anchors));
+                                                arenders++;
+                                                long v = Score();
+                                                if (v < best) { best = v; bj = anchors[j]; bk = anchors[k]; }
+                                            }
+                                        }
+                                        anchors[j] = bj; anchors[k] = bk;
+                                    }
+                                    if (best >= before) break;
+                                }
+                            Write(RunIup(anchors));
                             for (int r = 0; r < restarts && best > 0; r++)
                             {
                                 var trial = new int[anchors.Length];
