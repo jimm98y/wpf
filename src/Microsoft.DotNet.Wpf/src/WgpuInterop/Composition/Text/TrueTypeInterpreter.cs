@@ -543,6 +543,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // glyph whose program has no IUP -- or no instructions at all, which is most
                 // composites -- is STILL phased. Hooking only IUP left 169 accented glyphs
                 // with their advance never realized, and they were 169 of the 215 regressions.
+                // WPF_CT_PHASE_TWICE=1: run the phase AGAIN here even though IUP[x] already
+                // ran it. ExecutePhaseControl@140035970 is a byte-for-byte copy of itrp_IUP's
+                // phase block -- same lastContourEnd+5 scan, same "any node flagged" boolean, same
+                // PhaseShift over every point -- and it neither reads nor writes elem[0x60], the
+                // latch that stops IUP's own copy running twice. itrp_Execute@140037314 calls it.
+                if (s_phaseTwice) _phaseApplied = false;
                 if (s_phaseAtExecute) ApplyPhaseAtIup();
 
                 // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
@@ -2976,6 +2982,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_PHASE_INTERALIGN=0 drops MDRP/ALIGNRP's proportion branch.</summary>
         private static readonly bool s_phaseInterAlign =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_INTERALIGN") != "0";
+
+        /// <summary>WPF_CT_PHASE_TWICE=1: let the Execute-end phase run even after IUP's.
+        /// <para>MEASURED AND CATASTROPHIC -- Times 'A'@14 1,282 -> 9,448, Arial Bold 'K'@20
+        /// 922 -> 4,785 -- and the useful part is WHY, because GDI really does make the second
+        /// call. ExecutePhaseControl@140035970 is a byte-for-byte copy of itrp_IUP's phase block
+        /// (the same lastContourEnd+5 scan for a node with flags bit 0, the same glyph-wide
+        /// boolean, the same PhaseShift over every point) and it neither reads nor writes
+        /// elem[0x60] -- that latch stops only IUP's own copy running twice. itrp_Execute calls it
+        /// at 140037314, after IUP has run. So on a glyph with IUP[x] the phase IS applied twice.
+        /// <para>Since applying OURS twice doubles every shift, GDI's PhaseShift must be
+        /// IDEMPOTENT: it assigns the node's value onto a stored base rather than accumulating a
+        /// delta onto whatever cur happens to hold. That is a property to check at PhaseShift's
+        /// coordinate store, and it matters beyond tidiness -- an idempotent second pass would
+        /// re-apply the phase to points IUP had just MOVED, which is the one mechanism that can
+        /// give an interpolated point a shift its interpolation did not produce.</para></summary>
+        private static readonly bool s_phaseTwice =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_TWICE") == "1";
 
         /// <summary>WPF_CT_PHASE_ATEXEC=0 keeps the phase on IUP alone.
         /// <para>KEEP IT ON: =0 measures 598,774 -> 784,675 on the 8..24 holdout. The binary has
