@@ -5015,6 +5015,31 @@ namespace WgpuInterop.Tests.Text
                         }
                     }
 
+                    // WPF_XYSOLVE_MIDS=tied: an implied on-curve midpoint is NOT a free
+                    // coordinate. TrueType lets two off-curve control points sit next to each other
+                    // and leaves the on-curve point between them implied at their midpoint; the
+                    // outline builder materialises it, and this solver has been perturbing it as
+                    // though it were a point of the glyph. No interpreter can move it on its own --
+                    // it is the average of its neighbours by construction -- so a residual reached
+                    // by moving one is a residual reached by an outline that cannot exist.
+                    // <para>It is not hypothetical. Of twenty-seven imperfect glyphs that solve to
+                    // zero, NINE do it without moving a single real point: the free search found its
+                    // answer entirely in the midpoints. Those nine were then reported as "the touch
+                    // set is right and only the values are wrong, and no value differs", which is
+                    // nonsense on its face and is what exposed this.</para>
+                    // <para>Tied, a midpoint follows its neighbours and is never perturbed.</para>
+                    bool tieMids = Environment.GetEnvironmentVariable("WPF_XYSOLVE_MIDS") == "tied"
+                                   && pathToPoint.Count == sx.Length;
+                    void TieMids()
+                    {
+                        if (!tieMids) return;
+                        for (int i = 0; i < sx.Length; i++)
+                            if (pathToPoint[i] < 0 && i > 0 && i + 1 < sx.Length)
+                            {
+                                sx[i] = (sx[i - 1] + sx[i + 1]) / 2;
+                                sy[i] = (sy[i - 1] + sy[i + 1]) / 2;
+                            }
+                    }
                     long start = Score(), cur = start;
                     int renders = 1;
                     for (int pass = 0; pass < passes && cur > 0; pass++)
@@ -5023,17 +5048,20 @@ namespace WgpuInterop.Tests.Text
                         for (int i = 0; i < sx.Length && cur > 0; i++)
                             for (int axis = 0; axis < 2; axis++)
                             {
+                                if (tieMids && pathToPoint[i] < 0) continue;
                                 int[] arr = axis == 0 ? sx : sy;
                                 int keep = arr[i], bestV = keep;
                                 for (int d = -span; d <= span; d += step)
                                 {
                                     if (d == 0) continue;
                                     arr[i] = keep + d;
+                                    TieMids();
                                     long v = Score();
                                     renders++;
                                     if (v < cur) { cur = v; bestV = arr[i]; }
                                 }
                                 arr[i] = bestV;
+                                TieMids();
                             }
                         Console.Error.WriteLine("   pass " + pass + " (step " + step + "): " + cur);
                     }
@@ -5187,6 +5215,144 @@ namespace WgpuInterop.Tests.Text
                         if (!Flat(i)) continue;
                         nFlat++;
                         if (sx[i] != ox[i] || sy[i] != oy[i]) dFlat++;
+                    }
+                    // WPF_XYSOLVE_TARGETFIT=1: HOW MANY POINTS MUST GDI HAVE TOUCHED? Answered by
+                    // arithmetic rather than by a search.
+                    // <para>The anchor-space search asks whether some anchor placement renders GDI's
+                    // pixels, and it answers by coordinate descent -- which works in four dimensions
+                    // and demonstrably fails above about eight, since an eighteen-anchor manifold
+                    // contains a twelve-anchor one and yet scored WORSE. No amount of restarting
+                    // fixes a descent in that many dimensions.</para>
+                    // <para>It does not need a search. IUP is DETERMINED by its anchors: given an
+                    // outline, set the anchors to that outline's own values, run the interpolation,
+                    // and every other point lands where it must. So take the outline the free solver
+                    // just found -- which reproduces GDI's pixels exactly -- as the target, seed the
+                    // anchor set with the points the program actually touches, and read off the
+                    // point that lands furthest from the target. Make THAT an anchor and repeat.
+                    // Each step is one interpolation, the deviation falls monotonically, and the
+                    // sequence ends when the target is exactly reproduced. The number of anchors it
+                    // took is the number of points GDI must have touched to draw that outline, and
+                    // the order names them.</para>
+                    // <para>The target is one of several outlines that render the same pixels, so
+                    // the COUNT is an upper bound on what GDI needs rather than GDI's own touch set.
+                    // An upper bound is still worth having: "four anchors and IUP cannot do it" plus
+                    // "six can" is a different problem from "six cannot, nor twenty".</para>
+                    // <para>THIS IS AN X-ONLY ANALYSIS, which matters when reading it. The solver
+                    // moves both axes; the target here is built from sx alone, so a glyph whose
+                    // residual is in Y comes out "IUP-consistent with no anchor moved" -- true, and
+                    // not the whole story. Over thirty-one imperfect glyphs the split is 109 points
+                    // differing in x against 28 in y (7 in both), seventeen glyphs fixed by x alone
+                    // against three by y alone and eleven mixed, and |dy| is a single sixty-fourth
+                    // in twenty of the twenty-eight. So x is the bulk and y is not nothing.</para>
+                    // <para>Counts on those thirty-one, midpoints tied: nine need no extra touched
+                    // point (the y-driven ones), and the rest need 2, 3, 4, 5, 8, 11, 12, 13, 15 --
+                    // and one needs 29, which is Times Bold '0'@16. So the outlier that has taken
+                    // three rounds IS an outlier: most glyphs are a handful of touched points away,
+                    // not a rewrite.</para>
+                    if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_TARGETFIT") == "1"
+                        && cur == 0 && ipts is not null && pathToPoint.Count == sx.Length)
+                    {
+                        int np = ipts.PointCount;
+                        var org2 = new int[np];
+                        var orus2 = new int[np];
+                        var fit2 = new int[np];
+                        var target = new int[np];
+                        for (int i = 0; i < np; i++)
+                        {
+                            org2[i] = (int) MathF.Round(ipts.StartX[i] * 64f);
+                            orus2[i] = ipts.OrusX[i];
+                            fit2[i] = (int) MathF.Round(ipts.FitX[i] * 64f);
+                            target[i] = fit2[i];
+                        }
+                        for (int i = 0; i < sx.Length; i++)
+                            if (pathToPoint[i] >= 0) target[pathToPoint[i]] = sx[i];
+
+                        var anchorSet = new HashSet<int>();
+                        for (int i = 0; i < np; i++) if (ipts.TouchedX[i]) anchorSet.Add(i);
+                        int seeded = anchorSet.Count;
+
+                        void Carry2(int[] cc, int from, int to, int r1, int r2)
+                        {
+                            if (from > to) return;
+                            int o1 = orus2[r1], o2 = orus2[r2];
+                            if (o1 >= o2) { (o1, o2) = (o2, o1); (r1, r2) = (r2, r1); }
+                            int g1 = org2[r1], g2 = org2[r2];
+                            int d1 = cc[r1] - g1, d2 = cc[r2] - g2;
+                            if (o1 == o2)
+                            { for (int i = from; i <= to; i++) cc[i] = org2[i] + d1; return; }
+                            for (int i = from; i <= to; i++)
+                            {
+                                int x = org2[i];
+                                if (x >= g2) { cc[i] = x + d2; continue; }
+                                if (x <= g1) { cc[i] = x + d1; continue; }
+                                long den = o2 - o1, num = orus2[i] - o1;
+                                long sp = (long) (g2 + d2) - (g1 + d1);
+                                cc[i] = (int) ((num * sp + (den >> 1)) / den) + g1 + d1;
+                            }
+                        }
+
+                        int[] Iup2()
+                        {
+                            var cc = new int[np];
+                            for (int i = 0; i < np; i++)
+                                cc[i] = anchorSet.Contains(i) ? target[i] : org2[i];
+                            int first = 0;
+                            foreach (int end in ipts.EndPoints)
+                            {
+                                if (end < first || end >= np) break;
+                                var t = new List<int>();
+                                for (int i = first; i <= end; i++) if (anchorSet.Contains(i)) t.Add(i);
+                                if (t.Count == 1)
+                                {
+                                    int d = cc[t[0]] - org2[t[0]];
+                                    for (int i = first; i <= end; i++)
+                                        if (!anchorSet.Contains(i)) cc[i] = org2[i] + d;
+                                }
+                                else if (t.Count > 1)
+                                {
+                                    for (int k = 0; k + 1 < t.Count; k++)
+                                        Carry2(cc, t[k] + 1, t[k + 1] - 1, t[k], t[k + 1]);
+                                    Carry2(cc, t[t.Count - 1] + 1, end, t[t.Count - 1], t[0]);
+                                    Carry2(cc, first, t[0] - 1, t[t.Count - 1], t[0]);
+                                }
+                                first = end + 1;
+                            }
+                            return cc;
+                        }
+
+                        var added = new List<int>();
+                        int worst = 0, worstPt = -1;
+                        for (int step = 0; step <= np; step++)
+                        {
+                            int[] cc = Iup2();
+                            worst = 0; worstPt = -1;
+                            for (int i = 0; i < np; i++)
+                            {
+                                if (anchorSet.Contains(i)) continue;
+                                int e = Math.Abs(cc[i] - target[i]);
+                                if (e > worst) { worst = e; worstPt = i; }
+                            }
+                            if (worst == 0 || worstPt < 0) break;
+                            anchorSet.Add(worstPt);
+                            added.Add(worstPt);
+                        }
+                        Console.Error.WriteLine($"   TARGETFIT {c}@{ppem}{style}: the solved outline"
+                            + $" needs {anchorSet.Count} touched points ({seeded} from the program"
+                            + $" + {added.Count} more) -- "
+                            + (added.Count == 0 ? "IT IS ALREADY IUP-CONSISTENT"
+                               : "added " + string.Join(",", added)));
+                        // AND WHEN IT IS CONSISTENT, GDI'S OWN ANCHOR VALUES FALL OUT. No search:
+                        // if the target is reproduced by interpolating from the program's own
+                        // touched points, then the target's value AT each of those points is the
+                        // value GDI put there. That turns "three quarters of the residual is anchor
+                        // placement" from a characterisation into a table of targets.
+                        if (added.Count == 0)
+                            for (int i = 0; i < np; i++)
+                                if (ipts.TouchedX[i] && target[i] != fit2[i])
+                                    Console.Error.WriteLine($"     ANCHOR {c}@{ppem}{style} P{i,-3}"
+                                        + $" ours {fit2[i],5}  gdi {target[i],5}"
+                                        + $"  d {target[i] - fit2[i],4}"
+                                        + $"  org {org2[i],5}  orus {orus2[i],6}");
                     }
                     int dOff = 0, dOn = 0, dTouch = 0, nOff = 0, nOn = 0;
                     for (int i = 0; i < sx.Length; i++)
