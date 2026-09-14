@@ -505,6 +505,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int LastDropoutRuns;
         private static readonly bool s_dropoutTrace = Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "2";
 
+        /// <summary>WPF_DROPOUT_TRACE=3: every INSIDE span ApplyVerticalDropout looks at, before
+        /// its sample test rejects it. Level 2 traces GdiDropoutFills, which is the pass that
+        /// actually draws; this one answers "why was this span never considered" for the other.
+        /// <para>ApplyVerticalDropout IS DEAD ON THE SHIPPED PATH. RasterizeSubpixel fills its
+        /// `samples` array and calls it, and then `if (UseGdiFilter)` -- true unless
+        /// WPF_GDI_FILTER=0 -- rebuilds the raster from the contours through GdiTableFilterRowset
+        /// and returns without ever reading `samples`. Its dropout fills come from
+        /// GdiDropoutFills instead. Two hours went into a fix to this function that could not
+        /// possibly have measured; if a dropout question is being asked, ask it of
+        /// GdiDropoutFills.</para></summary>
+        private static readonly bool s_dropoutAllSpans =
+            Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "3";
+
+        /// <summary>WPF_CT_SPANIDX=rows|both: end a run of samples with fsc_CalcLine's
+        /// ceil(v-0.5) instead of floor(v-0.5)+1, for the row crossing lists or for both. Off by
+        /// default -- see the comment at OnIdx.</summary>
+        private static readonly bool s_spanIdxRows =
+            Environment.GetEnvironmentVariable("WPF_CT_SPANIDX") is "rows" or "both";
+
+        private static readonly bool s_spanIdxCols =
+            Environment.GetEnvironmentVariable("WPF_CT_SPANIDX") == "both";
+
         /// <summary>WPF_CT_DROPOUT_EDGE=old: ask whether a span holds a row sample with the
         /// convention this pass used to use, which is not the fill's. See the test itself.</summary>
         private static readonly bool s_dropoutEdgeFill =
@@ -585,6 +607,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // which equals the old ceiling form whenever ya-0.5 is not an integer, so the
                     // change is confined to the exact-hit case -- and it counts while <= yb.
                     // WPF_CT_DROPOUT_EDGE=old restores the mismatched test.</para>
+                    if (s_dropoutAllSpans)
+                        Console.Error.WriteLine($"      span col={lx} y=({ya - originY:0.0000},"
+                            + $"{yb - originY:0.0000}) originY={originY}");
                     float first = s_dropoutEdgeFill
                                 ? MathF.Floor(ya - originY - 0.5f) + 1.5f + originY
                                 : MathF.Ceiling(ya - originY - 0.5f) + 0.5f + originY;
@@ -1210,8 +1235,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                        nRows - ((poly[i].Y - originY) * nSub + 0.5f - GdiSubrowPhase));
                 P.Add(a);
             }
+            // WHICH SAMPLES AN EDGE COVERS, READ OFF fsc_CalcLine@1400435a0 RATHER THAN GUESSED.
+            // In 26.6 a sample sits at i*64+32, and the function sets up its run two ways round:
+            //     ascending  (y0 <= y1):  first = (((y0+32) & ~63) + 32) >> 6     last = (y1-33) >> 6
+            //     descending (y1 <  y0):  first = (((y1+32) & ~63) + 32) >> 6     last = (y0-33) >> 6
+            // The first index is the smallest sample AT OR AFTER the run's lower end; the last is
+            // the largest sample at or before (upper end - 1/64), which is the largest STRICTLY
+            // BELOW it. So a run covers [min, max) -- closed where it starts, open where it ends,
+            // which is what keeps a shared vertex counted exactly once. In sample indices both
+            // ends are then the SAME function, ceil(v-0.5), and the run is
+            // [OnIdx(min), OnIdx(max)).
+            // <para>We ended a run with floor(v-0.5)+1, which differs in exactly one case -- a run
+            // ending ON a sample -- and there it claims a sample GDI does not give it. That case
+            // is not rare in this face: Times' ClearType branch puts 'z''s bottom bar at y=0.500
+            // exactly at 13ppem, a DELTAP having taken it half a pixel down from the bi-level
+            // 1.000, so the bar's whole flat stretch ends on a sample. The extra sample makes the
+            // run's on and off indices differ, the dropout test is `off == on`, so the bar stops
+            // looking like a dropout -- and the fill will not draw it either. GDI draws that row
+            // 59995; we drew 54.55, a gap through the middle of the bar, and that one row was the
+            // glyph's whole 1,470.</para>
+            // <para>APPLIED TO THE ROW LISTS ONLY, and the measurement is what says so rather than
+            // an argument about frames. Rows alone: Times New Roman Regular 109,834 -> 103,444 on
+            // the holdout and 'z'@13 exact, every other face EXACTLY unchanged except Segoe UI
+            // Italic at +137. Both lists: Segoe UI Italic loses 24 pixels of coverage at 12ppem
+            // and five more repertoire ratchets fail with it. The row lists are what the COLUMN
+            // pass's stub test counts (`Count(rowOn, rowOff, ...)` below), which is how a change to
+            // the x crossings decides whether a horizontal bar is a stub.</para>
+            // <para>NOT SHIPPED. Rows alone still fails three ratchets -- Segoe UI Bold at 12ppem
+            // by 166 pixels and Bold Italic at 19 by 24 -- while those faces' holdout rows do not
+            // move at all, so the damage is in repertoire the holdout's specimen does not carry.
+            // The ratchets come first. WPF_CT_SPANIDX=rows turns it on, =both applies it to the
+            // column lists as well.</para>
             static int OnIdx(float v) => (int) MathF.Ceiling(v - 0.5f);
-            static int OffIdx(float v) => (int) MathF.Floor(v - 0.5f) + 1;
+            static int OffIdxCol(float v) => s_spanIdxCols ? (int) MathF.Ceiling(v - 0.5f)
+                                                           : (int) MathF.Floor(v - 0.5f) + 1;
+            static int OffIdxRow(float v) => s_spanIdxRows ? (int) MathF.Ceiling(v - 0.5f)
+                                                           : (int) MathF.Floor(v - 0.5f) + 1;
 
             // xMin/xMax/yMin/yMax are the GLYPH's box, not the target's: fs_FindBitMapSize sizes
             // the bitmap to the outline, so the samples run from the first centre inside it to the
@@ -1267,7 +1326,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
                         if (sx < lo || sx >= hi) continue;
                         float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
-                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdxCol(v), v));
                     }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
@@ -1285,7 +1344,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
                         if (sy < lo || sy >= hi) continue;
                         float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
-                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdxRow(v), v));
                     }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
