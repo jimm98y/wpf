@@ -4466,6 +4466,19 @@ namespace WgpuInterop.Tests.Text
         /// suspect.</para>
         /// <summary>GDI'S CLEARTYPE OUTLINE IN BOTH AXES, recovered by inverting our own
         /// rasterizer. WPF_XYSOLVE=family/chars/ppem[/B|I].
+        /// <para>DO NOT USE IT AT 8PPEM. This solver renders our glyph as a plain GeometryFill
+        /// built from TryGetHintedOutline; the weight report -- which IS the holdout, and therefore
+        /// the goal -- renders it through GlyphRunDraw, the shipped glyph-run path. At 10, 12 and
+        /// 16ppem the two agree exactly, glyph for glyph. At 8 they do not, and in BOTH directions:
+        /// Times 'p' scores 477 through the run path and 0 here, 'b' 228 against 0, while Verdana
+        /// 'o' scores 0 through the run path and 36 here and Arial 'o' 0 against 86. Both harnesses
+        /// ask GDI for the same bitmap at the same pen, so it is our two paths that differ, not the
+        /// reference.</para>
+        /// <para>8ppem is also exactly where these faces' gasp declines grid-fitting (all six clear
+        /// both bits at &lt;= 8), which is the one size at which TryGetHintedOutline returns the
+        /// plain outline scaled rather than a fitted one. Whatever the difference is, it lives
+        /// downstream of the outline and only in that regime -- so a conclusion drawn here about
+        /// 8ppem is a conclusion about a path the holdout does not measure.</para>
         /// <para>HOW FAR TO TRUST A SINGLE COORDINATE. Residual zero means this outline reproduces
         /// GDI's pixels exactly; it does NOT mean it is the only outline that does, and the two
         /// have been confused here before. Forty-odd coordinates against a ten-pixel-square image
