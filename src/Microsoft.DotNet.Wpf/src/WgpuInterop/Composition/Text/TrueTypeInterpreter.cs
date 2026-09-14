@@ -2247,6 +2247,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Apply the phase to the live glyph zone, once per glyph. ctFactor is the
         /// compatible advance over the linear one, as fs_NewGlyph computes it.</summary>
+        /// <remarks>GDI'S OWN PHASE OUTPUT, MEASURED. Arial Bold 'A' at 20ppem is the one glyph
+        /// where both ends are pinned: its pre-phase outline is byte-exact against GDI
+        /// (WPF_CT_PHASE_ATIUP=0 with GDI at quality 6 scores ZERO), and the anchor search now
+        /// reaches GDI exactly once pairwise moves are allowed, so the anchors it returns ARE
+        /// GDI's coordinates. Every point of the glyph is touched, so IUP places nothing and the
+        /// phase is the only thing between the two columns.
+        /// <code>
+        ///   pt   pre-phase   ours   GDI     our shift   GDI's   node
+        ///    0       904      824    835       -80       -69    p0=1,  col=1
+        ///    1       705      625    635       -80       -70    p0=9,  partner=0
+        ///    2       640      571    571       -69       -69    p0=9, p1=1
+        ///    4       195      185    200       -10        +5    p0=11, col=1
+        ///    5         0      -10     -5       -10        -5    p0=11, partner=4
+        ///    9       442      398    411       -44       -31    p0=4,  col=2
+        /// </code>
+        /// Those six have no instruction after the phase. The other five (3, 6, 7, 8, 10) are
+        /// followed by SHPIXes of -2, +4, -4, +4, -2, so their finals -- 238, 315, 505, 528, 297
+        /// against ours 235, 303, 493, 516, 289 -- are not the phase alone.
+        /// <para>Two facts fall straight out. p2 is IDENTICAL, and it is the only two-parent node
+        /// in the list: CalcAvgXPhase fed OUR parent shifts returns -69, which is what GDI has,
+        /// while fed GDI's own parent shifts (-31 and -70) it returns -58. And p4 and p5 move
+        /// APART, +5 against -5, which no pair rule can produce -- a pair moves both ends by one
+        /// shift. We pair them (ADDDIST r=5 p=4, colour 1, and colour 1 IS the pairing condition),
+        /// and the colour there does not come from the contour flag: it is the input colour passed
+        /// through because the two points are not adjacent, and WPF_CT_PHASE_WIND=1 leaves every
+        /// colour in the glyph unchanged. So the divergence is in the pairing, and not in the one
+        /// input to the colour we do not read from the font.</para></remarks>
         /// <remarks>WHAT THE ARIAL DIAGONAL POOL LOOKS LIKE FROM HERE, and the caveat that goes
         /// with it. Arial Bold 'X' at 20ppem has every point touched, so IUP moves nothing and the
         /// phase is the LAST thing that touches the glyph (WPF_HINT_MOVES=1 shows it moving all
@@ -2790,8 +2817,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int PhaseLinkColour(int p1, int p2, int colour)
         {
             int c1 = PhaseContour(p1);
-            if (c1 < 0) return 0;
             int c2 = PhaseContour(p2);
+            if (s_phaseDump)
+                Console.Error.WriteLine($"  LINKCOL p1={p1,3} p2={p2,3} in={colour}"
+                    + $" contour {c1}/{c2} of {_contourCount}"
+                    + $" ends=[{string.Join(",", System.Linq.Enumerable.Take(_glyphZone.Contours, Math.Max(0, _contourCount)))}]");
+            if (c1 < 0) return 0;
             if (c2 < 0) return 0;
             if (c1 != c2) return colour;
             int end = _glyphZone.Contours[c1];
@@ -2809,15 +2840,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     < (long) (y[p1] - y[prev1]) * (x[next1] - x[p1]);
             bool t2 = (long) (x[p2] - x[prev2]) * (y[next2] - y[p2])
                     < (long) (y[p2] - y[prev2]) * (x[next2] - x[p2]);
+            int dx0 = Math.Abs(x[p2] - x[p1]), dy0 = Math.Abs(y[p2] - y[p1]);
+            if (s_phaseDump)
+                Console.Error.WriteLine($"    adjacent: t1={t1} t2={t2} dx={dx0} dy={dy0}"
+                    + $" wind={PhaseWinding(c1)}"
+                    + $" -> {(t1 != t2 ? 0 : dy0 > 2 * dx0 ? 0 : ((~PhaseWinding(c1) & 1) ^ (t1 ? 1 : 0)) + 1)}");
             if (t1 != t2) return 0;
-            int dx = Math.Abs(x[p2] - x[p1]), dy = Math.Abs(y[p2] - y[p1]);
+            int dx = dx0, dy = dy0;
             if (dy > 2 * dx) return 0;
             return ((~PhaseWinding(c1) & 1) ^ (t1 ? 1 : 0)) + 1;
         }
 
         /// <summary>The per-contour byte GDI keeps at element+0x58. We have no such array, so it is
-        /// recomputed from the signed area in font units; WPF_CT_PHASE_WIND=1 flips the sense.
-        /// </summary>
+        /// recomputed from the signed area in font units.
+        /// <para>WPF_CT_PHASE_WIND=1 IS THE DEFAULT, NOT THE FLIP -- the fallback below is
+        /// `WPF_CT_PHASE != "0"`, which is true whenever the phase is on, so setting the knob to 1
+        /// changes nothing at all. It is =0 that takes the other sense. The note here used to say
+        /// the opposite and cost an afternoon: "WPF_CT_PHASE_WIND=1 moves A, X and K by exactly
+        /// nothing" was recorded as evidence that the winding is not involved, and it was evidence
+        /// that the knob was a no-op.</para>
+        /// <para>AND THE SIGNED AREA IS NOT WHAT GDI'S BYTE HOLDS. The colour is
+        /// ((~flag &amp; 1) ^ turn) + 1 and colour 1 is the whole pairing condition, so the two
+        /// senses of this flag EXACTLY SWAP which links pair. GDI's own outline for Arial Bold 'A'
+        /// at 20ppem -- recovered exactly, see the remark at ApplyPhase -- has p0/p1 shifted -69
+        /// and -70 and p4/p5 +5 and -5, so neither of those is a pair, while we pair both; that
+        /// wants flag=1 on its outer contour. Setting it measures 6,767 -> 7,041 on that glyph and
+        /// 922 -> 5,242 on 'K', whose single contour is the outer contour of a capital in the same
+        /// face at the same size and ought to answer the same way. So whatever element+0x58 is, it
+        /// is not the contour's winding as a signed area computes it.</para></summary>
         private int PhaseWinding(int c)
         {
             if (_contourWind == null || _contourWind.Length < _contourCount)
