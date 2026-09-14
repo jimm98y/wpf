@@ -505,6 +505,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static int LastDropoutRuns;
         private static readonly bool s_dropoutTrace = Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "2";
 
+        /// <summary>WPF_CT_DROPOUT_EDGE=old: ask whether a span holds a row sample with the
+        /// convention this pass used to use, which is not the fill's. See the test itself.</summary>
+        private static readonly bool s_dropoutEdgeFill =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EDGE") != "old";
+
         /// <summary>WPF_CT_DROPOUT_STUBS=0 fills stubs too (rule 3 without rule 4).</summary>
         private static readonly bool s_dropoutStubs =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_STUBS") != "0";
@@ -559,9 +564,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (!inside) continue;
                     float ya = crossings[i].Y, yb = crossings[i + 1].Y;
                     if (yb <= ya) continue;
-                    // Does the span contain a row sample (originY + py + 0.5)?
-                    float first = MathF.Ceiling(ya - originY - 0.5f) + 0.5f + originY;
-                    if (first < yb) continue;                    // a sample is inside: not a dropout
+                    // DOES THE SPAN CONTAIN A ROW SAMPLE? ASK IT THE WAY THE FILL ASKS IT.
+                    // The fill counts an edge for row sample `sy` when `sy > lo && sy <= hi` (see
+                    // s_rowEdgeGdi), so a sample lying EXACTLY on a span's smaller y belongs to the
+                    // span above and one exactly on its larger y belongs to this one. This test
+                    // used the opposite convention at both ends -- smallest sample >= ya, counted
+                    // while < yb -- and the two disagreements do not cancel. A span whose top edge
+                    // lands exactly on a sample is then invisible twice over: the fill rejects the
+                    // sample as belonging to the span above, and this pass declines to call it a
+                    // dropout because it believes the fill took it. The row comes out EMPTY, which
+                    // is a hole no rule of GDI's produces.
+                    // <para>It is not a corner case in this face. Times' ClearType branch leaves
+                    // 'z' at 13ppem with its bottom bar between y=0 and y=0.5 -- pt15 and pt16 at
+                    // 0.500 exactly, a DELTAP having taken them down half a pixel from the bi-level
+                    // 1.000 -- so the bar's top edge sits ON the row sample for its whole flat
+                    // stretch. GDI draws that row `59995`; we drew `54.55`, a gap straight through
+                    // the middle of the bar, and that one row IS the glyph's entire 1,470. Bars and
+                    // serifs landing on a half pixel is what this face does at these sizes.</para>
+                    // <para>The smallest sample STRICTLY GREATER than ya is floor(ya-0.5)+1.5 --
+                    // which equals the old ceiling form whenever ya-0.5 is not an integer, so the
+                    // change is confined to the exact-hit case -- and it counts while <= yb.
+                    // WPF_CT_DROPOUT_EDGE=old restores the mismatched test.</para>
+                    float first = s_dropoutEdgeFill
+                                ? MathF.Floor(ya - originY - 0.5f) + 1.5f + originY
+                                : MathF.Ceiling(ya - originY - 0.5f) + 0.5f + originY;
+                    if (s_dropoutEdgeFill ? first <= yb : first < yb) continue;   // fill took it
                     int py = (int) MathF.Floor((ya + yb) * 0.5f - originY);
                     if (py < 0 || py >= height) continue;
                     samples[py * subWidth + lx] = 255;
