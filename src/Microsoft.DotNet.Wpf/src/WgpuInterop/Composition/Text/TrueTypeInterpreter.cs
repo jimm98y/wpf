@@ -1909,30 +1909,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && _pvPtA >= 0 && _pvPtB >= 0
                 && InterAlign(_pvPtA, p, _pvPtB))
                 PhaseProportion(_pvPtA, p, _pvPtB);
-            else
-                // CONFIRMED IN FONTDRVHOST, not just in DWrite's copy. The addresses in these
-                // notes are 0x1801..., which is DWrite; GDI runs fontdrvhost, and the two are
-                // separate builds of the same Agfa scaler that need not agree. itrp_MIRP
-                // @14003b330 has AddDistance INLINED into it and calls
-                // DoubleCheckLinkColor(gs, r, p, distanceType & 3) first, exactly as written here,
-                // then the same body -- IndirectlyDependsOn, the ancestor walk on elem+0x20, the
-                // param_5 == 1 pairing tail.
-                // <para>THE TRAP, worth writing down because it nearly produced a confident wrong
-                // answer: searching fontdrvhost for callers of AddDistance@1400354c8 finds only
-                // itrp_ALIGNRP and itrp_MSIRP. That reads as "GDI builds its phase tree from those
-                // two opcodes alone", which would make the tree EMPTY for a glyph fitted purely by
-                // MIRPs -- Arial Bold 'X' at 20ppem is exactly that -- and so make the phase a
-                // no-op for it. It is wrong: the compiler inlined AddDistance into MIRP and MDRP,
-                // so they never appear as callers. Search instead for the callee it could NOT
-                // inline, IndirectlyDependsOn@140035a10, which shows itrp_MIRP, itrp_MDRP, itrp_IP,
-                // itrp_SHP_Common and AddProportion all taking part.</para>
-                // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP is the one site that calls
-                // DoubleCheckLinkColor and hands its answer to AddDistance; itrp_MDRP, itrp_ALIGNRP and
-                // itrp_SHP_Common all pass a literal 3. Since AddDistance's pairing tail is gated on
-                // param_5 == 1, that means NO OPCODE BUT MIRP CAN EVER FORM A STEM PAIR -- and a pair is
-                // what makes the phase translate a stem rigidly instead of scaling it. Computing the
-                // colour everywhere invented pairs GDI does not have.
-                _phaseSite = site; PhaseDistance(r, p, doubleCheck ? PhaseLinkColour(r, p, phaseType >= 0 ? phaseType : distanceType) : 3);
+            // A PROPORTION DOES NOT REPLACE THE DISTANCE -- GDI RECORDS BOTH, and the distance
+            // below is deliberately NOT in an `else`. This read as an obvious brace bug (the line
+            // used to be `else _phaseSite = site; PhaseDistance(...)`, where the `else` binds to
+            // the assignment alone), and "fixing" it costs 598,774 -> 690,178 on the 8..24 holdout.
+            // The binary agrees with the measurement: in itrp_MDRP the inlined AddDistance body
+            // starts at 14003a638, and EVERY path reaches it -- each gate failure branches there
+            // (14003a7c8, 14003a7d0, 14003a7d8), the bounds block at 14003a7e8 falls into it, and
+            // the AddProportion success path at 14003aa1c jumps straight there at 14003aa20. So a
+            // point placed by MDRP with the projection taken from a line gets TWO records: the
+            // proportion between the line's endpoints and the distance from rp0.
+            // CONFIRMED IN FONTDRVHOST, not just in DWrite's copy. The addresses in these
+            // notes are 0x1801..., which is DWrite; GDI runs fontdrvhost, and the two are
+            // separate builds of the same Agfa scaler that need not agree. itrp_MIRP
+            // @14003b330 has AddDistance INLINED into it and calls
+            // DoubleCheckLinkColor(gs, r, p, distanceType & 3) first, exactly as written here,
+            // then the same body -- IndirectlyDependsOn, the ancestor walk on elem+0x20, the
+            // param_5 == 1 pairing tail.
+            // <para>THE TRAP, worth writing down because it nearly produced a confident wrong
+            // answer: searching fontdrvhost for callers of AddDistance@1400354c8 finds only
+            // itrp_ALIGNRP and itrp_MSIRP. That reads as "GDI builds its phase tree from those
+            // two opcodes alone", which would make the tree EMPTY for a glyph fitted purely by
+            // MIRPs -- Arial Bold 'X' at 20ppem is exactly that -- and so make the phase a
+            // no-op for it. It is wrong: the compiler inlined AddDistance into MIRP and MDRP,
+            // so they never appear as callers. Search instead for the callee it could NOT
+            // inline, IndirectlyDependsOn@140035a10, which shows itrp_MIRP, itrp_MDRP, itrp_IP,
+            // itrp_SHP_Common and AddProportion all taking part.</para>
+            // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP is the one site that calls
+            // DoubleCheckLinkColor and hands its answer to AddDistance; itrp_MDRP, itrp_ALIGNRP and
+            // itrp_SHP_Common all pass a literal 3. Since AddDistance's pairing tail is gated on
+            // param_5 == 1, that means NO OPCODE BUT MIRP CAN EVER FORM A STEM PAIR -- and a pair is
+            // what makes the phase translate a stem rigidly instead of scaling it. Computing the
+            // colour everywhere invented pairs GDI does not have.
+            _phaseSite = site;
+            PhaseDistance(r, p, doubleCheck
+                ? PhaseLinkColour(r, p, phaseType >= 0 ? phaseType : distanceType) : 3);
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -2522,7 +2533,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     int pr = k < _phasePartner.Length ? _phasePartner[k] : -1;
                     int co = k < _phaseColour.Length ? _phaseColour[k] : 0;
-                    Console.Error.WriteLine($"  p{k,3} p0={_phaseP0[k],4} p1={_phaseP1[k],4} col={co} partner={pr,4} org={_glyphZone.OrgX[k],6} x={before[k],6} -> {_glyphZone.CurX[k],6} d={_glyphZone.CurX[k] - before[k],5}");
+                    Console.Error.WriteLine($"  p{k,3} p0={_phaseP0[k],4} p1={_phaseP1[k],4} col={co} partner={pr,4} org={_glyphZone.OrgX[k],6} x={before[k],6} -> {_glyphZone.CurX[k],6} d={_glyphZone.CurX[k] - before[k],5} tx={TouchMark(k)}");
                 }
                 return;
             }
@@ -2681,6 +2692,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // and this gate throws the link away, because after SDPVTL the projection is DIAGONAL
             // and our latch says "not on the ClearType axis". Turn the gate off
             // (WPF_CT_PHASE_XONLY=0) and K goes 922 -> ZERO, and 'A' 6,767 -> 6,567.</para>
+            // <para>AND K MAY NOT BE A PHASE VALUE AT ALL -- the "p6 shifts -6 where GDI shifts
+            // -14" reading assumes our PRE-PHASE x for p6 is GDI's, and nothing establishes that.
+            // "62/62 bi-level exact" is about the BI-LEVEL fit; the ClearType fit is free to
+            // differ, and GDI's 547 is equally consistent with a pre-phase 553 shifted -6. Three
+            // things were checked and none of them is the cause: all twelve points are x-touched
+            // (tx=T in the PHASEDUMP trace), so IUP[x] interpolates nothing and cannot be blamed;
+            // p6's MDRP runs with the SDPVTL line = (6,7), so the proportion branch is rejected by
+            // `a == placed` in GDI exactly as in ours, and the tempting arithmetic that made -14
+            // fall out of a proportion between p10 and p5 was a coincidence -- several pairs
+            // spanning the glyph give -14, and (10,5) is not this instruction's line. Do not spend
+            // another round on K without an independent measurement of its pre-phase x.</para>
             // <para>Turning it off wholesale is not the answer -- holdout 598,774 -> 6,983,952
             // with 162 ratchets failing, because then every y-axis link is recorded too. The gate
             // is real; ours is simply computing the wrong predicate.</para>
@@ -2717,7 +2739,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) p >= (uint) n || (uint) r >= (uint) n || p == r) return;
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
             if (s_phaseDump) Console.Error.WriteLine($"  ADDDIST r={r,3} p={p,3} col={colour} via={_phaseSite,-22} "
-                + $"p0={_phaseP0[p],3} dep={PhaseDependsOn(r, p, 100)}");
+                + $"p0={_phaseP0[p],3} dep={PhaseDependsOn(r, p, 100)} line=({_pvPtA},{_pvPtB})");
             // ORDER MATTERS, and GDI's is the reverse of the obvious one: AddDistance asks
             // IndirectlyDependsOn(r, p) FIRST and only then looks at whether p already has a parent.
             // A re-link onto an already-placed point therefore still RAISES THE CYCLE FLAG when the
@@ -2943,6 +2965,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _contourWind[c] = (sbyte) w;
             return w;
         }
+
+        /// <summary>T when the point is x-touched, for the PHASEDUMP trace.</summary>
+        private string TouchMark(int k) =>
+            k < _realPoints && (_glyphZone.Tags[k] & TagTouchX) != 0 ? "T" : ".";
 
         private sbyte[] _contourWind;
         private int _contourWindGlyph = -1, _phaseGlyphStamp;
