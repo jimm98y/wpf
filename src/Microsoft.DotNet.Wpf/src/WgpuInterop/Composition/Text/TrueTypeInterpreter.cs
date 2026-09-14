@@ -3053,9 +3053,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// FONT-UNIT arrays (elem+0x20 and +0x28) as
         ///     (orusX[p] - orusX[prev]) * (orusY[next] - orusY[p])   vs
         ///     (orusY[p] - orusY[prev]) * (orusX[next] - orusX[p])
-        /// keeps only the sign of the comparison, and returns false if the two signs differ -- the
-        /// two ends of a stem must turn the same way. Nothing in it is a 2:1 slope test; that part
-        /// of the note below was wrong.</para> That IS
+        /// keeps only the sign of the comparison, and returns 0 if the two signs differ -- the two
+        /// ends of a stem must turn the same way. Then a 2:1 test: |dy| > 2*|dx| in font units
+        /// also returns 0. (An earlier note here said the 2:1 test was NOT in the binary; it is,
+        /// at 140035938, and that claim was made off a dump that stopped sixteen instructions
+        /// short of it.)</para>
+        /// <para>AND IT IS NOT A PREDICATE -- it returns the COLOUR. itrp_MIRP calls it as
+        /// DoubleCheckLinkColor(elem, r, p, distanceType &amp; 3) and puts the result straight into
+        /// the register the inlined AddDistance pairs on (`cmp w5,#1`). Three outcomes: the input
+        /// colour unchanged when the two points are on different contours or are not adjacent;
+        /// ZERO when they are adjacent but turn opposite ways, are steeper than 2:1, or sit on an
+        /// invalid contour; otherwise a colour recomputed from the geometry as
+        ///     ((~contourFlag[c] &amp; 1) ^ turnSign) + 1        -- so 1 (black) or 2 (white)
+        /// where contourFlag is the per-contour byte at element+0x58. PhaseLinkColour below is
+        /// that, case for case.</para> That IS
         /// GDI's predicate, but it is applied to OUR link set, which is not GDI's, and it measures
         /// worse for that reason: with the faithful tree, 6,654,259 filtered against 5,841,656
         /// unfiltered.
