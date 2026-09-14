@@ -1081,6 +1081,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _winAscent, _winDescent;
         private int _vdmx = -1;         // 'VDMX' table offset, or -1 when the face ships none
 
+        /// <summary>WPF_CT_GASP_NOSYM=1: answer NO to symmetric smoothing for a face with no
+        /// 'gasp', as we used to. See the fallback in GaspFlags.</summary>
+        private static readonly bool s_gaspNoSymDefault =
+            Environment.GetEnvironmentVariable("WPF_CT_GASP_NOSYM") == "1";
+
         private const int GaspGridfit = 0x0001;
         private const int GaspSymmetricGridfit = 0x0004;
         private const int GaspSymmetricSmoothing = 0x0008;
@@ -1118,7 +1123,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private bool GaspFlags(float pixelsPerEm, int want)
         {
-            if (_gasp < 0) return false;
+            // A FACE WITH NO 'gasp' SMOOTHS SYMMETRICALLY. fontdrvhost's vSetClearTypeState
+            // falls back, for a face with no usable table, to "ppem > 20, or these three fields
+            // are clear", and for a face that ships nothing the fields ARE clear -- so the answer
+            // is yes at every size. We answered no, which is the harder kind of wrong: it only
+            // shows on a face without the table, and the faces this suite measures all ship one.
+            // <para>What it did show on was the PROBES, every one of which builds a font with no
+            // gasp. CoverageAtACrossing compares GDI's raster with ours over 11,690 lamps of
+            // upright, slanted and tapered bars, and 473 of them differed with our ink 1.0147x
+            // GDI's -- all of it at the top row of each stroke, which is exactly what averaging a
+            // run's first row against the empty one above it does. Forcing smoothing on
+            // (WPF_SYM_ALWAYS=1) takes that to 112, and with the span-end rule corrected as well
+            // the probe reaches ZERO differing lamps and an ink ratio of 1.0000. So a probe
+            // without the table was measuring GDI in symmetric mode against us in the other, and
+            // every reading it ever gave about vertical sampling was comparing two different
+            // rasterizers.</para>
+            // <para>Measured on the real specimen: EXACTLY NEUTRAL, holdout and every ratchet,
+            // because all six faces ship a gasp. WPF_CT_GASP_NOSYM=1 restores the old
+            // answer.</para>
+            if (_gasp < 0)
+                return want == GaspSymmetricSmoothing && !s_gaspNoSymDefault;
             // A VERSION 0 TABLE DOES NOT HAVE THE SYMMETRIC BITS. It defines GRIDFIT and
             // DOGRAY and nothing else, so reading bit 2 or 3 out of it reads a bit the face
             // never wrote and answers NO to a question it was never asked. The rasterizer has

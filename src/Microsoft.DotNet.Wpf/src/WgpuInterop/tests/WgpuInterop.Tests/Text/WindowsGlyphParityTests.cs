@@ -3964,8 +3964,11 @@ namespace WgpuInterop.Tests.Text
                             // the wedge between two converging strokes is a different fault from
                             // ink at their outer edges.
                             if (Environment.GetEnvironmentVariable("WPF_CROSS_DUMP")
-                                    == $"{taper},{slant},{ppem}" && i == 0)
-                                DumpTwo($"cross taper={taper} slant={slant} @{ppem}", raw, ours);
+                                    is { Length: > 0 } cdump
+                                && (cdump == $"{taper},{slant},{ppem}"
+                                    || cdump == $"{taper},{slant},{ppem},{i}"))
+                                DumpTwo($"taper={taper} slant={slant} @{ppem} bar {i}"
+                                        + $" (width {96 + 48 * i}u)", raw, ours);
                             // Rows only one side inks are the vertical-extent question, not this
                             // one, and they carry a full-ink difference each -- see the note on
                             // CoverageOnADiagonal_AgainstGdis. Ours is RGBA, GDI's is BGRA.
