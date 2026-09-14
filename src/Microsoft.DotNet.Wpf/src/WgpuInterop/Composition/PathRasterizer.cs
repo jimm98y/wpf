@@ -1261,11 +1261,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // and five more repertoire ratchets fail with it. The row lists are what the COLUMN
             // pass's stub test counts (`Count(rowOn, rowOff, ...)` below), which is how a change to
             // the x crossings decides whether a horizontal bar is a stub.</para>
-            // <para>NOT SHIPPED. Rows alone still fails three ratchets -- Segoe UI Bold at 12ppem
-            // by 166 pixels and Bold Italic at 19 by 24 -- while those faces' holdout rows do not
-            // move at all, so the damage is in repertoire the holdout's specimen does not carry.
-            // The ratchets come first. WPF_CT_SPANIDX=rows turns it on, =both applies it to the
-            // column lists as well.</para>
+            // <para>CONFIRMED FROM THE LIST MACHINERY, not just from fsc_CalcLine's setup.
+            // AddVertSimpleScan@140041d20 inserts ONE value into ONE sorted list -- the caller
+            // having pointed scan+0x98/0xa0/0xa8 at the on or the off array according to the
+            // edge's quadrant -- so a list entry is a single crossing's index in the
+            // perpendicular axis, which is our model exactly. VertCrossings@1400426c0 then walks
+            // the on and off arrays in lockstep to the end pointer and counts entries equal to the
+            // index in BOTH, which is our Count to the line. For the inked range to be
+            // [on, off) an off entry has to be the first UNINKED sample -- ceil(v-0.5). So the end
+            // index is not a choice; floor(v-0.5)+1 was wrong.</para>
+            // <para>NOT SHIPPED ANYWAY, and what stops it is worth writing down because it is not
+            // this rule. Rows alone moves exactly three ratchet rows out of 442, each by ONE
+            // pixel: repertoire@12b 165 -> 166, repertoire@19bi 23 -> 24, bi@19 1 -> 2. The 12b
+            // pixel is Segoe UI Bold '*' at 12ppem, whose bottom-right arm reads 19.73 in GDI and
+            // in us, and 19.71 with the rule on. One decision flips to make it: a column dropout
+            // at a span of (1.618, 1.953) -- wholly between two samples, so a dropout beyond
+            // argument -- which the stub test then rejects as stub-left because the row crossings
+            // it counts have moved.
+            // <para>The stub test is not what is wrong either. The fill it has to agree with tests
+            // an x span CLOSED AT BOTH ENDS (s_spanStartExclusive, s_spanEndInclusive), and the
+            // note there already says why: GDI's left edge is exclusive, ours is not, and flipping
+            // it costs 290,465 because our fitted x at those positions is not GDI's, so the
+            // inclusive test has been compensating. floor(v-0.5)+1 is closed at the top in the
+            // same way and for the same reason. Measured here: WPF_CT_SPANEND=old, which makes the
+            // fill half-open at the right to match, takes the holdout to 873,477 and fails 114
+            // tests. So these three pixels are that compensation showing through, and the rule
+            // should go in when the fitted x it compensates for is right -- not before.</para>
+            // <para>WPF_CT_SPANIDX=rows turns it on (holdout 605,280 -> 599,027, all of it Times
+            // New Roman Regular at -6,390 against Segoe UI Italic at +137, every other face
+            // unchanged to the digit); =both adds the column lists and costs nine
+            // ratchets.</para></para>
             static int OnIdx(float v) => (int) MathF.Ceiling(v - 0.5f);
             static int OffIdxCol(float v) => s_spanIdxCols ? (int) MathF.Ceiling(v - 0.5f)
                                                            : (int) MathF.Floor(v - 0.5f) + 1;

@@ -777,6 +777,14 @@ namespace WgpuInterop.Tests.Text
                 if (diff.Pixels == 0) continue;
 
                 report.AppendLine(diff.Describe(text, windows, ours, Width, Height));
+                // WPF_ALLOW_REPORT_GROUPS=1: one line per repertoire GROUP, not just the total.
+                // The totals answer "did this get worse" and nothing else; when a change moves a
+                // ratchet by ONE pixel the only useful next question is which group, and that was
+                // unanswerable because the per-group report is printed only on failure -- so the
+                // run you want to compare against is exactly the one that does not print it.
+                if (Environment.GetEnvironmentVariable("WPF_ALLOW_REPORT_GROUPS") == "1")
+                    RecordActual($"grp@{ppem}{style}[{Repertoire.AsSpan().IndexOf(text)}]",
+                                 diff.Pixels);
             }
 
             string? rep = Environment.GetEnvironmentVariable("WPF_STRUCT_REPORT");
