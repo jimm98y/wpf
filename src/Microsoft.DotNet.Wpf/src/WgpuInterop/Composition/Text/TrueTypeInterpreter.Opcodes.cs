@@ -1479,7 +1479,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>The moves GDI does make are +16, +24, -36, -36 in sixty-fourths -- four, six,
         /// nine and nine SIXTEENTHS. The same -36, -36, +24 was recorded for Times Regular '0' at
         /// 12ppem, a different glyph at a different size, which is what says these are a constant
-        /// of the mechanism and not a property of one outline.</para></summary>
+        /// of the mechanism and not a property of one outline. Read those four numbers as
+        /// directions and magnitudes, not as GDI's coordinates: the x-only solve for this glyph
+        /// stops at residual 302, so the per-point values are a best effort.</para>
+        /// <para>THE BLOCK ITSELF, DECODED ON THIS GLYPH. It is four calls of one helper, each
+        /// setting a PAIR of points exactly 38/64 apart:
+        ///     near = GC(ref) - cvt[n];   far = near - 38
+        /// with (24, 7) off point 29, then (22, 9), (33, 1) and (15, 13). 38/64 is 0.59px, which
+        /// at 16ppem is the THIN part of a bold bowl -- these calls are what thins the top and
+        /// bottom of the 'o'. Three of the four pairs sit about 80/64 apart in our outline against
+        /// the 38 the program wants; the fourth, (33, 1), is already 37 apart and its two targets
+        /// land within 3/64 of where our points already are.</para>
+        /// <para>AND GDI DOES NOT APPLY IT, which is worth knowing because "the values are wrong"
+        /// invites a search for the right ones. The helper can only ever place its pair to the
+        /// LEFT of the reference -- it subtracts -- and for the (24, 7) pair the reference is
+        /// point 29 at 332/64, while GDI's own pixels want point 7 at about 350. A point to the
+        /// RIGHT of the reference cannot have come from this formula at any cvt value. So the
+        /// suppression is right, the 1,574 is not the block's values, and whatever moves those
+        /// points is somewhere else.</para>
+        /// <para>The anchor search cannot settle it either: eleven dimensions (four x-touched
+        /// points plus all eight the block names) with the span widened to +-120 gets 1,574 ->
+        /// 582 and no further, which is the coordinate descent failing, not a statement about
+        /// GDI. TARGETFIT, which would say how many points GDI must have touched, runs only on
+        /// glyphs that solve exactly and so is unavailable here.</para></summary>
         /// <summary>AND WHAT THE MASK SAYS, ON TIMES BOLD '0'@16. The suppressions are, in order:
         /// eight SCFSes on the Y axis (idx 0..7), eight on the X axis (idx 8..15, points 40, 5, 28,
         /// 19, 38, 7, 30, 17), then the ALIGNRPs in x/y pairs from idx 16. Separating the two axes
