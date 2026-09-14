@@ -5116,7 +5116,35 @@ namespace WgpuInterop.Tests.Text
                                     }
                                 }
                             Write(RunIup(anchors));
-                            Write(RunIup(anchors));
+                            // WHAT THE TWO VERDICTS MEAN, NOW THAT THE SEARCH CONVERGES. Run
+                            // across the pools with pairwise moves on, they split cleanly, and the
+                            // split is the first solid statement of what separates the two big
+                            // ones:
+                            //   REACHES -- our touch set is GDI's and only the values are wrong
+                            //     Arial Bold 'A'@20  6,767 -> 0   (11 anchors)
+                            //     Arial Bold 'X'@20  2,021 -> 0   (11)
+                            //     Arial Bold 'K'@20    922 -> 0   (12, and ELEVEN already right)
+                            //     Arial Bold 'a'@20    118 -> 0
+                            //     Tahoma 'b'@12        118 -> 0
+                            //   CANNOT -- GDI touches points the program leaves to IUP
+                            //     Times Bold 'o'@16  1,574 -> 944   (only FOUR anchors)
+                            //     Times Bold '0'@15  1,165 -> 1,012
+                            //     Times Bold '6'@15    620 -> 504
+                            //     Times 'g'@15       1,256 -> 236
+                            //     Times 'W'@24       2,504 -> 1,605
+                            //     Times 'v'@24         742 -> 429
+                            //     Arial Bold 'c'@20    118 -> 118
+                            // <para>The Times verdict is the strong one and the reason is easy to
+                            // miss: those glyphs have FOUR x-touched points, not eleven. A four
+                            // dimensional search with pairwise moves is thorough and still cannot
+                            // get 'o' below 944 of 1,574, while Arial's eleven dimensional ones
+                            // reach zero. That is not the optimiser; it is the touch set.</para>
+                            // <para>So Arial's residual is the compatible-width phase's output on
+                            // points the program already touches, and Times' is that GDI moves
+                            // points it does not -- and the only instructions that could are the
+                            // post-IUP SCFSes and ALIGNRPs this interpreter suppresses wholesale.
+                            // Applying all of them is worse (1,574 -> 5,098 on 'o'), so it is a
+                            // subset or different values, and WPF_CT_POSTIUP asks which.</para>
                             Console.Error.WriteLine($"   ANCHOR SEARCH: best {best} in {arenders}"
                                 + " renders" + (best == 0
                                     ? "   REACHED GDI -- our anchors are wrong and these are GDI's"
