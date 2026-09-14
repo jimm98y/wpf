@@ -298,6 +298,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             double length = Math.Sqrt((double)x * x + (double)y * y);
             if (length <= 0.0) { nx = 0x4000; ny = 0; return; }
 
+            // itrp_Normalize@14003c3a8 READ TO ITS END, which corrects what the note above says
+            // about it. It does NOT form the vector in one rounded division. It divides to a 2.30
+            // quotient with the halves away from zero,
+            //     q = (x << 30 +/- len/2) / len          (sdiv, the sign-matched half added first)
+            // and only then makes it 2.14,
+            //     nx = (q + 0x8000) >> 16                (ASR, so half UP rather than to even)
+            // -- two roundings, just not the pair `twostep` had (16.16 rounded, then truncated by
+            // four). So the shape of the argument for `direct` was wrong.
+            // <para>The conclusion survives anyway, and provably: over all 13,225 vectors with
+            // x and y from -400 to 400 in steps of 7, GDI's two-step form and Math.Round(x *
+            // 16384 / len) give the SAME 2.14 pair every time. The tie it would take to separate
+            // them needs x * 2^30 / len within half an LSB of a half, which a real vector does not
+            // land on. Implemented as WPF_CT_NORM=gdi and measured: Times 'v' and 'W' at 24ppem
+            // and Arial Bold 'A' and 'X' at 20 -- four diagonal glyphs chosen because a projection
+            // vector's last bit is what would tilt them -- moved by EXACTLY ZERO. Removed as dead
+            // weight; the diagonals are not this.</para>
             if (s_normDirect)
             {
                 // itrp_Normalize@180086738 forms the component as x * 0x40000000 / len, with
@@ -2209,7 +2225,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEN") != "span";
 
         /// <summary>WPF_CT_PHASE_FADJ=&lt;n&gt;: nudge the 16.16 phase factor by n. Probe only.
-        /// </summary>
+        /// <para>AND IT CANNOT BE READ ON THE HOLDOUT, because the factor sets the ADVANCE as well
+        /// as the shape. A single glyph improves under it -- Arial Bold 'A' at 20ppem goes 6,767
+        /// to 3,232 around +1200 -- while the same nudge takes the holdout from 598,774 to
+        /// 10,564,419 at +400 and 30,112,636 at +1200, because every glyph after the first in a
+        /// 53-character specimen is then laid out in the wrong place (Arial Bold at 20ppem:
+        /// centroid dx +0.025 becomes -0.341, sum|d| 10,327 becomes 62,470). Symmetrically at
+        /// -400, 10,307,229.</para>
+        /// <para>So the factor is NOT a free parameter that happens to be near-optimal; it is
+        /// PINNED by the advance, which is already exact against GDI at 6-24ppem. A per-glyph
+        /// probe that likes a different factor is telling you about the shape and lying about the
+        /// spacing. Arial's diagonal pool is not the factor.</para></summary>
         private static readonly int s_phaseFactorAdj =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FADJ"), out int fa) ? fa : 0;
 
