@@ -8444,6 +8444,145 @@ namespace WgpuInterop.Tests.Text
             return total / 255.0;
         }
 
+        /// <summary>OUR TWO RENDERING PATHS, SIDE BY SIDE, against GDI.
+        /// WPF_TWOPATHS=family/char/ppem[/B|I].
+        /// <para>They are supposed to be the same picture and at 8ppem they are not. The weight
+        /// report -- which IS the holdout -- draws through GlyphRunDraw, the shipped glyph-run
+        /// path; SolveGdisOutlineXy draws the SAME outline as a plain GeometryFill. At 10, 12 and
+        /// 16ppem the two agree glyph for glyph. At 8 they disagree in both directions: Times 'p'
+        /// scores 477 through the run path and 0 through the geometry one, while Arial 'o' scores
+        /// 0 and 86 the other way round. Both ask GDI for the same bitmap at the same pen, so the
+        /// difference is ours.</para>
+        /// <para>Every candidate checked from the code came back clean -- hintPpem is 8 at that
+        /// size, so PixelAligned is set and the painter takes the hinted branch; hintScale is 1;
+        /// ScaleFigures is an affine map with no rounding; the pen is the same integer. So the
+        /// difference had to be looked at rather than reasoned about.</para>
+        /// <para>AND LOOKING AT IT REVERSED THE CONCLUSION. Drawn here, Times 'p'@8 scores 477
+        /// through the run path and 1,026 through the plain-geometry one -- the SHIPPED path is the
+        /// better of the two, and the solver's 0 is what cannot be reproduced. So "the glyph-run
+        /// path adds error" was wrong; the solver's 8ppem numbers are simply not measuring what the
+        /// holdout measures, which is what its own caveat now says. 'b' is 228 against 719, 'n' 74
+        /// against 575, 'o' 38 against 810: the same way round every time.</para>
+        /// <para>What the rasters DO show is a real and consistent signature at 8ppem: one stem
+        /// column is a single digit lighter than GDI's, in glyph after glyph. 'N' reads 3/3/3/7/4
+        /// down its right stem where GDI reads 4/4/4/9/5; 'b' reads 1 where GDI reads 3. We are
+        /// uniformly a shade light -- the ink ratio is 0.994 at 8ppem against 1.000 at 16 -- which
+        /// is a coverage question rather than a placement one, since the L and R edge deltas and
+        /// the width deltas are all exactly zero.</para>
+        /// <para>NOT the contrast palette, which was the obvious suspect because all six faces SET
+        /// SYMMETRIC_SMOOTHING at &lt;= 8 and clear it from 9 up, so the auto rule switches exactly
+        /// where the error jumps. It does not: WPF_CT_CONTRAST 0 and 2 measure identically
+        /// (109,380 over ppem 8-10) and 1 is catastrophic (6,055,865), so the contrast palette is
+        /// never selected on this specimen and cannot be what changes at 8.</para></summary>
+        [Fact]
+        public void HowOurTwoPathsDiffer()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? spec = Environment.GetEnvironmentVariable("WPF_TWOPATHS");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_TWOPATHS=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            string family = parts[0], ch = parts[1];
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, "this machine lacks the face");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            int baseline = 28;
+
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(ch, family, ppem, PenX, baseline, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+
+            // (1) the shipped glyph-run path, exactly as the weight report draws it
+            byte[] runPath = OursRgba(font, ch, ppem, baseline, correction: true);
+
+            // (2) the plain-geometry path, exactly as SolveGdisOutlineXy draws it
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            byte[] geomPath;
+            try
+            {
+                TrueTypeFont.SubpixelFitting = true;
+                int gid = font.GlyphIndex(ch[0]);
+                Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
+                                out List<PathFigure> fitted) && fitted.Count > 0, "no outline");
+                var placed = new List<PathFigure>(fitted.Count);
+                Vector2 M(Vector2 p) => new(PenX + p.X, baseline + p.Y);
+                foreach (PathFigure f in fitted)
+                {
+                    var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                    foreach (PathSegment sg in f.Segments)
+                        nf.Segments.Add(sg switch
+                        {
+                            LineSegment l => new LineSegment(M(l.Point)),
+                            QuadraticBezierSegment q =>
+                                new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                            CubicBezierSegment c3 =>
+                                new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
+                            _ => sg,
+                        });
+                    placed.Add(nf);
+                }
+                var root = new SceneVisual();
+                root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                    new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
+                    { PixelAligned = true });
+                var renderer = NewRenderer(font);
+                renderer.TextBlendCorrection = true;
+                geomPath = renderer.RenderToRgba(root, Width, Height,
+                    RgbaColor.FromBytes(255, 255, 255, 255));
+            }
+            finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
+
+            long Score(byte[] ours)
+            {
+                long sum = 0;
+                for (int i = 0; i < Width * Height; i++)
+                    for (int ch2 = 0; ch2 < 3; ch2++)
+                        sum += Math.Abs(raw[i * 4 + (2 - ch2)] - ours[i * 4 + ch2]);
+                return sum;
+            }
+
+            int top = int.MaxValue, bottom = -1, left = int.MaxValue, right = -1;
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                {
+                    bool ink = raw[(y * Width + x) * 4] < 250 || raw[(y * Width + x) * 4 + 1] < 250
+                               || runPath[(y * Width + x) * 4] < 250
+                               || geomPath[(y * Width + x) * 4] < 250;
+                    if (!ink) continue;
+                    top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+                    left = Math.Min(left, x); right = Math.Max(right, x);
+                }
+            Assert.True(bottom >= 0, "nothing drawn");
+
+            var rep = new System.Text.StringBuilder();
+            rep.AppendLine($"== '{ch}' {family}@{ppem}{style}   glyph-run path {Score(runPath)},"
+                           + $"  plain-geometry path {Score(geomPath)}");
+            rep.AppendLine($"   rows {top}..{bottom} cols {left}..{right}"
+                           + "   GDI | run path | geometry path   (green channel, digit = ink/255*9)");
+            for (int y = top; y <= bottom; y++)
+            {
+                var line = new System.Text.StringBuilder("   ");
+                foreach (byte[] img in new[] { (byte[]) null!, runPath, geomPath })
+                {
+                    for (int x = left; x <= right; x++)
+                    {
+                        int i = (y * Width + x) * 4;
+                        int v = img is null ? 255 - raw[i + 1] : 255 - img[i + 1];
+                        line.Append(v <= 0 ? '.' : (char) ('0' + Math.Min(9, (v * 9 + 127) / 255)));
+                    }
+                    line.Append("  |  ");
+                }
+                rep.AppendLine(line.ToString());
+            }
+            Console.Error.Write(rep.ToString());
+        }
+
         /// <summary>GDI AGAINST ITSELF: the same glyph drawn bi-level, greyscale and ClearType,
         /// side by side. WPF_GDI_QUALITY=family/char/ppem[/B|I].
         /// <para>Built for one question. Times Bold's 'o' at 16ppem squeezes its counter to 1.4px
