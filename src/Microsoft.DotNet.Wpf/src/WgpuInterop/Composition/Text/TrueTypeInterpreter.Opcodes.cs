@@ -945,10 +945,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
                                 && IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchX) == 0 && !PostIupExempt("SCFS", p)) break;
+                                && (z.Tags[p] & TagTouchX) == 0
+                                && !PostIupExempt("SCFS", p, value)) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
                                 && !IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchY) == 0 && !PostIupExempt("SCFS", p)) break;
+                                && (z.Tags[p] & TagTouchY) == 0
+                                && !PostIupExempt("SCFS", p, value)) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
                             // A twilight point moved this way keeps the new place as its ORIGIN too:
@@ -1435,17 +1437,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private int _postIupSeen;
 
-        private bool PostIupExempt(string op, int pt)
+        private bool PostIupExempt(string op, int pt, int value = int.MinValue)
         {
             int i = _postIupSeen++;
             bool exempt = s_postIupMask is not null && s_postIupMask.Contains(i);
             if (s_postIupDump)
+            {
+                // AND THE TARGET, which is the only thing that makes the list answerable. Knowing
+                // that GDI touches pt7 says nothing; knowing that the program wants pt7 at 255/64
+                // while GDI's own pixels want it at 328 says the VALUE is what is wrong, which is
+                // a different search from "which of these should run".
+                Zone zz = ZoneOf(_gs.Zp2);
+                int at = (uint) pt < (uint) zz.PointCount
+                       ? (IsHorizontalProjection ? zz.CurX[pt] : zz.CurY[pt]) : int.MinValue;
                 Console.Error.WriteLine($"   postiup idx={i,3} {op,-8} pt={pt,3}"
                     + $" axis={(IsHorizontalProjection ? "x" : "y")}"
+                    + (value == int.MinValue ? "  target     -" : $"  target {value,5}")
+                    + (at == int.MinValue ? "  at     -" : $"  at {at,5}")
                     + (exempt ? "  APPLIED" : "  suppressed"));
+            }
             return exempt;
         }
 
+        /// <summary>WHAT THE TARGETS SAY, ON TIMES BOLD 'o'@16 -- and they say the suppression is
+        /// covering for a value that is wrong in a CONSISTENT DIRECTION.
+        /// <para>That glyph is 1,574 and every bit of it is the fit: with the phase pass off and
+        /// GDI asked for quality 6 it still scores 1,574, so nothing downstream is involved. Ten
+        /// points differ, NONE of them x-touched, and six of the ten are the very points these
+        /// suppressions drop -- pt7, pt9, pt13 and pt24 are suppressed SCFSes, pt2 and pt6
+        /// suppressed ALIGNRPs. The other four interpolate between them.</para>
+        /// <para>With the target printed beside the point's position, the pattern is plain:
+        ///     pt  9   target 193   ours 150   GDI 166
+        ///     pt 13   target 257   ours 153   GDI 177
+        ///     pt 24   target 217   ours 279   GDI 243
+        ///     pt  7   target 255   ours 364   GDI 328
+        /// GDI sits BETWEEN our suppressed position and the program's target, every time and on
+        /// both sides. Not at the target, so "run the block" is wrong -- and applying them
+        /// measures it: SCFS x alone 1,574 -> 2,542, the ALIGNRPs alone -> 2,553, both -> 5,098,
+        /// everything -> 6,532. Not at our position either, so "drop the block" is wrong too,
+        /// which is the 1,574.</para>
+        /// <para>The moves GDI does make are +16, +24, -36, -36 in sixty-fourths -- four, six,
+        /// nine and nine SIXTEENTHS. The same -36, -36, +24 was recorded for Times Regular '0' at
+        /// 12ppem, a different glyph at a different size, which is what says these are a constant
+        /// of the mechanism and not a property of one outline.</para></summary>
         /// <summary>AND WHAT THE MASK SAYS, ON TIMES BOLD '0'@16. The suppressions are, in order:
         /// eight SCFSes on the Y axis (idx 0..7), eight on the X axis (idx 8..15, points 40, 5, 28,
         /// 19, 38, 7, 30, 17), then the ALIGNRPs in x/y pairs from idx 16. Separating the two axes
