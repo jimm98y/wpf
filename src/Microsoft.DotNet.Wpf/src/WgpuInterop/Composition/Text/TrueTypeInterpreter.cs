@@ -3007,7 +3007,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// one contour, segment no steeper than 2:1 -- DoubleCheckLinkColor's own test). That IS
         /// GDI's predicate, but it is applied to OUR link set, which is not GDI's, and it measures
         /// worse for that reason: with the faithful tree, 6,654,259 filtered against 5,841,656
-        /// unfiltered. OFF until the links themselves are GDI's.</summary>
+        /// unfiltered.
+        /// <para>SHIPPED 2026-09-14, now that it is EXACTLY NEUTRAL: 605,280 either way on the
+        /// 8..24 holdout, where it used to cost 800,000. The note said "off until the links
+        /// themselves are GDI's", and enough has been fixed upstream since that the predicate no
+        /// longer rejects anything this specimen produces. Neutral and GDI's beats neutral and
+        /// invented, so it goes on -- but do NOT re-measure it looking for a win, and do not read
+        /// the neutrality as confirmation: it means the case does not arise here.</para>
+        /// <para>WPF_CT_PHASE_ADJ=0 turns it off.</para></summary>
         /// <summary>WPF_CT_PHASE_AVGROUND=1 -- diagnostic only; see CalcAvgXPhase.</summary>
         private static readonly bool s_phaseAvgRound =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_AVGROUND") == "1";
@@ -3017,7 +3024,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROPPHANTOM") != "0";
 
         private static readonly bool s_phasePairAdjacent =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ADJ") != "0";
 
         private static readonly bool s_phasePairs =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PAIRS") != "0";

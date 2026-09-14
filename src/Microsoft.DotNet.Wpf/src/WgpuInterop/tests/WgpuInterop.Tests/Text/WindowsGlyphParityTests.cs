@@ -5321,6 +5321,9 @@ namespace WgpuInterop.Tests.Text
                         }
 
                         var added = new List<int>();
+                        int targetTol = int.TryParse(
+                            Environment.GetEnvironmentVariable("WPF_XYSOLVE_TARGETFIT_TOL"),
+                            out int ttol) ? ttol : 0;
                         int worst = 0, worstPt = -1;
                         for (int step = 0; step <= np; step++)
                         {
@@ -5332,7 +5335,42 @@ namespace WgpuInterop.Tests.Text
                                 int e = Math.Abs(cc[i] - target[i]);
                                 if (e > worst) { worst = e; worstPt = i; }
                             }
-                            if (worst == 0 || worstPt < 0) break;
+                            // A TOLERANCE, because the count is otherwise inflated by noise. The
+                            // walk stops when the worst-placed point is within it, so the answer
+                            // becomes "how many points must GDI have touched to get the outline
+                            // within n sixty-fourths" rather than "to reproduce one particular
+                            // solved outline exactly". Thirty-five of the hundred-odd points this
+                            // adds at tolerance zero are off by a SINGLE sixty-fourth, and a point
+                            // a 64th out is not evidence that an instruction placed it.
+                            if (worst <= targetTol || worstPt < 0) break;
+                            // WHAT KIND OF POINT IS IT? Three attributes, because a rule for "which
+                            // points GDI touches that our program does not" has to be stated in
+                            // terms the interpreter can see. `pinned` is the sharp one: a point
+                            // whose ORUS equals that of a run endpoint can never be moved off that
+                            // endpoint's value by interpolation -- num comes out zero -- so if GDI
+                            // has it somewhere else, GDI touched it, and that is a deduction rather
+                            // than a fit.
+                            bool onCurve = ipts.OnCurve[worstPt];
+                            bool pinned = false;
+                            {
+                                int f2 = 0;
+                                foreach (int e2 in ipts.EndPoints)
+                                {
+                                    if (worstPt >= f2 && worstPt <= e2)
+                                    {
+                                        foreach (int a2 in anchorSet)
+                                            if (a2 >= f2 && a2 <= e2 && orus2[a2] == orus2[worstPt])
+                                                pinned = true;
+                                        break;
+                                    }
+                                    f2 = e2 + 1;
+                                }
+                            }
+                            if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_TARGETFIT_DUMP") == "1")
+                                Console.Error.WriteLine($"     +anchor {c}@{ppem}{style} P{worstPt,-3}"
+                                    + $" off {worst,4}  {(onCurve ? "on " : "off")}"
+                                    + $" {(pinned ? "PINNED" : "free  ")}"
+                                    + $" ours {fit2[worstPt],5} gdi {target[worstPt],5}");
                             anchorSet.Add(worstPt);
                             added.Add(worstPt);
                         }
@@ -5340,7 +5378,8 @@ namespace WgpuInterop.Tests.Text
                             + $" needs {anchorSet.Count} touched points ({seeded} from the program"
                             + $" + {added.Count} more) -- "
                             + (added.Count == 0 ? "IT IS ALREADY IUP-CONSISTENT"
-                               : "added " + string.Join(",", added)));
+                               : "added " + string.Join(",", added))
+                            + (targetTol > 0 ? $"   [tolerance {targetTol}/64]" : ""));
                         // AND WHEN IT IS CONSISTENT, GDI'S OWN ANCHOR VALUES FALL OUT. No search:
                         // if the target is reproduced by interpolating from the program's own
                         // touched points, then the target's value AT each of those points is the
