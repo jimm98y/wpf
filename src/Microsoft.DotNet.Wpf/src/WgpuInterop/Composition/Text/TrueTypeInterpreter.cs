@@ -2272,8 +2272,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// shift. We pair them (ADDDIST r=5 p=4, colour 1, and colour 1 IS the pairing condition),
         /// and the colour there does not come from the contour flag: it is the input colour passed
         /// through because the two points are not adjacent, and WPF_CT_PHASE_WIND=1 leaves every
-        /// colour in the glyph unchanged. So the divergence is in the pairing, and not in the one
-        /// input to the colour we do not read from the font.</para></remarks>
+        /// colour in the glyph unchanged -- WHICH WAS THE NO-OP KNOB; see PhaseWinding. With the
+        /// knob working, the flag DOES decide it: both links are adjacent on contour 0 with
+        /// t1=t2=True and dy=0, so the colour is ((~flag &amp; 1) ^ turn) + 1 and our flag is 0.
+        /// fs__Contour fills that array with a constant 1 at 140024740 (w26, set once at
+        /// 140024464), which would make both colours 2 and pair neither -- exactly what GDI's
+        /// numbers want -- but taking it costs 6,767 -> 7,041 here and 922 -> 5,242 on 'K'.</para>
+        /// <para>ARIAL BOLD 'K' AT 20ppem IS SHARPER STILL. It also reaches GDI exactly, and
+        /// ELEVEN OF ITS TWELVE ANCHORS ARE ALREADY RIGHT -- the whole 922 is point 6, ours at
+        /// 555 and GDI's at 547. Our shift there is -6, inherited from its only parent (point 11;
+        /// orgs 558 against 281, so the re-derivation does not fire because K raises no cycle
+        /// flag) and GDI's is -14. Neither the single-point rule on cur (-17) nor on org (-17),
+        /// nor a two-parent mix with point 8 (-18), nor pairing it with 11 (-13) gives -14. And
+        /// K's PRE-phase outline scores 58 rather than 0, so part of its 922 may be upstream:
+        /// 'A' is still the only glyph where both ends are pinned.</para></remarks>
         /// <remarks>WHAT THE ARIAL DIAGONAL POOL LOOKS LIKE FROM HERE, and the caveat that goes
         /// with it. Arial Bold 'X' at 20ppem has every point touched, so IUP moves nothing and the
         /// phase is the LAST thing that touches the glyph (WPF_HINT_MOVES=1 shows it moving all
