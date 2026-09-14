@@ -1575,7 +1575,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     {
                         float sx = originX + (c * 2 + half + GdiSamplePhase) / 6f;
                         foreach ((float A, float B) sp in spans)
-                            // INCLUSIVE AT BOTH ENDS, which is what fsc_FillBitMap does. A row's
+                            // THE RIGHT END IS INCLUSIVE AND A REAL GLYPH SAYS SO OUTRIGHT.
+                            // Verdana 'd' at 19ppem scores ZERO against GDI with this test; its
+                            // right stem reads `493` in GDI's raster and in ours, and `491` the
+                            // moment the end is made exclusive (2,055 for the glyph). 'g', 'q',
+                            // 'W' and 'Z' at the same size are the same story, and over the whole
+                            // holdout the flip costs 598,774 -> 866,561 with 233 of 306 rows
+                            // worse. That is not a compensation; a row cannot be 74 out of
+                            // 34,283,819 ink (Verdana Regular at 19) on the wrong rule.
+                            // <para>THE SYNTHETIC PROBE DISAGREES, AND IT IS NOT THE RULE.
+                            // CoverageAtACrossing reaches zero differing lamps of 11,675 only with
+                            // the end made exclusive, and exactly one of its bars is responsible:
+                            // the one 240 font units wide, whose right edge lands on 6.25px --
+                            // 400/64, a quarter pixel, and quarter pixels are the ONLY positions
+                            // where a 26.6 coordinate can sit on a lamp sample (16 and 48 mod 64;
+                            // the samples are at odd twelfths). The other four bars end at 310,
+                            // 340, 370 and 430 sixty-fourths, none of them a tie, and all four
+                            // agree with GDI under this test. So the probe's residual is ONE
+                            // coordinate, in the UNHINTED path those bars use (they carry no glyph
+                            // program), where GDI's edge sits a sixty-fourth left of ours -- not a
+                            // rule the hinted path shares.</para>
+                            // <para>Which retires "our fitted x is wrong and it is worth 275,000",
+                            // written one commit earlier off the synthetic result alone. It is
+                            // worth nothing; the rule was already right.</para>
+                            // Originally: INCLUSIVE AT BOTH ENDS, which is what fsc_FillBitMap does. A row's
                             // span fills the indices [on, off) where `on` is the first sample centre
                             // AT OR past the left boundary and `off` the first STRICTLY past the
                             // right one -- so a sample landing exactly on the RIGHT edge is inside,

@@ -3934,7 +3934,20 @@ namespace WgpuInterop.Tests.Text
                     bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false,
                                                    noProgram: true, slant: slant, cross: cross,
                                                    taper: Math.Min(taper, units - 16)));
-                byte[] fontBytes = SyntheticFont.Build(Family + "T" + taper + "S" + slant, bars);
+                // WPF_CROSS_GASP=nosym: ship a 'gasp' that asks for gridfit and grey but NOT
+                // symmetric smoothing, so GDI renders these bars the way it renders a real face
+                // that declines it. Without a table GDI's fallback turns smoothing ON (see the
+                // note in SyntheticFont.GaspRanges), and the tie question this probe is being
+                // asked -- whether a lamp sample exactly on a span's right edge is inside it --
+                // gets a different answer on a real glyph than on these bars. The only thing that
+                // differs between the two cases is the smoothing mode, so the probe has to be able
+                // to turn it off before the difference can be blamed on anything else.
+                SyntheticFont.GaspRanges =
+                    Environment.GetEnvironmentVariable("WPF_CROSS_GASP") == "nosym"
+                        ? new[] { (0xFFFF, 0x0003) } : null;
+                byte[] fontBytes = SyntheticFont.Build(Family + "T" + taper + "S" + slant
+                                                       + (SyntheticFont.GaspRanges is null ? "" : "G"),
+                                                       bars);
                 int count = 0;
                 IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
                 if (handle == IntPtr.Zero || count == 0)
@@ -3954,7 +3967,9 @@ namespace WgpuInterop.Tests.Text
                             string ch = ((char) (0x41 + i)).ToString();
                             int baseline = ppem + 12;
                             Gdi.s_rawRgb = raw;
-                            Gdi.Draw(ch, Family + "T" + taper + "S" + slant, ppem, PenX, baseline,
+                            Gdi.Draw(ch, Family + "T" + taper + "S" + slant
+                                         + (SyntheticFont.GaspRanges is null ? "" : "G"),
+                                     ppem, PenX, baseline,
                                      Width, Height, false, false);
                             Gdi.s_rawRgb = null;
                             byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
