@@ -4593,6 +4593,12 @@ namespace WgpuInterop.Tests.Text
         /// <para>WPF_XYSOLVE_PASSES (default 4), WPF_XYSOLVE_SPAN (default 36, the half-width of
         /// each point's search in 64ths). Cost is roughly points x 2 x (2*span/step) x passes
         /// renders -- a 64-point 'W' at span 36 is 16,129 of them, about a minute.</para></summary>
+        /// <summary>WPF_XYSOLVE_X=1: solve x alone, leaving y at our own fitted values, so the
+        /// residual reads as "how much of this glyph can x explain". See the note at the
+        /// descent.</summary>
+        private static readonly bool s_solveXOnly =
+            Environment.GetEnvironmentVariable("WPF_XYSOLVE_X") == "1";
+
         [Fact]
         public void SolveGdisOutlineXy()
         {
@@ -5110,6 +5116,23 @@ namespace WgpuInterop.Tests.Text
                     // set is right and only the values are wrong, and no value differs", which is
                     // nonsense on its face and is what exposed this.</para>
                     // <para>Tied, a midpoint follows its neighbours and is never perturbed.</para>
+                    // WPF_XYSOLVE_X=1: SOLVE X ALONE, and read the residual as "how much of this
+                    // glyph can x explain".
+                    // <para>The free search moves both axes and takes whichever displacement is
+                    // cheaper in its own metric, which on a diagonal is a coin toss: a y move and
+                    // an x move are the same displacement seen two ways. Times 'v' at 24ppem
+                    // solves to residual ZERO by moving two points 28/64 and 19/64 in Y and
+                    // nothing in x, which reads as "our y is a third of a pixel out" -- and our
+                    // BI-LEVEL y for that glyph is 33 of 33 exact against GGO's own points, so
+                    // that reading cannot be taken at face value. Pinning y says what x alone can
+                    // do: 742 -> 547, so x explains about a quarter of it.</para>
+                    // <para>What it does NOT establish is that y is right. GGO returns the
+                    // BI-LEVEL fit whatever the DC (see the note on WPF_GGOPTS), so the oracle
+                    // pins our bi-level y and says nothing about the CLEARTYPE pass's y -- and the
+                    // ClearType branch of a glyph program is a different block of instructions
+                    // that does its own y work (Times' 'z' at 13ppem takes a DELTAP there that the
+                    // bi-level branch never runs). A residual that x cannot reach is evidence the
+                    // error is not purely x, not evidence about which axis carries it.</para>
                     bool tieMids = Environment.GetEnvironmentVariable("WPF_XYSOLVE_MIDS") == "tied"
                                    && pathToPoint.Count == sx.Length;
                     void TieMids()
@@ -5128,7 +5151,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         int step = pass == 0 ? 4 : pass == 1 ? 2 : 1;
                         for (int i = 0; i < sx.Length && cur > 0; i++)
-                            for (int axis = 0; axis < 2; axis++)
+                            for (int axis = 0; axis < (s_solveXOnly ? 1 : 2); axis++)
                             {
                                 if (tieMids && pathToPoint[i] < 0) continue;
                                 int[] arr = axis == 0 ? sx : sy;
@@ -5172,7 +5195,7 @@ namespace WgpuInterop.Tests.Text
                         {
                             moved = false;
                             for (int i = 0; i < sx.Length; i++)
-                                for (int axis = 0; axis < 2; axis++)
+                                for (int axis = 0; axis < (s_solveXOnly ? 1 : 2); axis++)
                                 {
                                     int[] arr = axis == 0 ? sx : sy, ours = axis == 0 ? ox : oy;
                                     while (arr[i] != ours[i])

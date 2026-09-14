@@ -3015,6 +3015,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             // +0x10 in CalcAvgXPhaseShift's element struct is OrgX. The phase MAGNITUDES come
             // from CurX, but the ratio that mixes them is taken on the unfitted outline.
+            // <para>VERIFIED AT INSTRUCTION LEVEL @140035d60, which is the whole rule in twelve
+            // instructions: load org[parentA], org[parentB] and org[p] from elem+0x10; if
+            // org[parentA] < org[parentB] take A as the low end and B as the high, else the
+            // mirrored branch; then
+            //     w9 = (orgHi - org[p]) * shiftLo + (org[p] - orgLo) * shiftHi
+            //     w0 = w9 / (orgHi - orgLo)                     -- bare sdiv, TRUNCATING
+            // and nothing else. A zero denominator brk's there rather than averaging.</para>
+            // <para>Checked numerically as well as structurally, on Arial Bold 'X' at 20ppem.
+            // Its p10 has parents 6 and 11 with org 824 and 222 against its own 426, and our
+            // phases -18 and -3: ((426-222)*-18 + (824-426)*-3) / 602 = -8.08 -> -8, which is
+            // exactly what the phase dump shows. Feed the SAME formula the shifts GDI's own
+            // outline implies for those two parents (-16 and +1) and it returns -4, which is
+            // exactly what GDI's outline implies for p10. So the rule is right and the error it
+            // carries is inherited: what differs is the parents' shifts, not the mixing.</para>
             int xa = _glyphZone.OrgX[a], xb = _glyphZone.OrgX[b], xp = _glyphZone.OrgX[p];
             int lo = Math.Min(xa, xb), hi = Math.Max(xa, xb);
             if (xa >= xb) (phA, phB) = (phB, phA);   // GDI orders by x, swapping the phases
