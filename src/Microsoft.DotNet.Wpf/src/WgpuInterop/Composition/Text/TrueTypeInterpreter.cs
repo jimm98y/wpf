@@ -3043,8 +3043,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) (num / den);
         }
 
-        /// <summary>Whether the PAIR rule is restricted to links GDI would call a stem (adjacent on
-        /// one contour, segment no steeper than 2:1 -- DoubleCheckLinkColor's own test). That IS
+        /// <summary>Whether the PAIR rule is restricted to links GDI would call a stem.
+        /// <para>DoubleCheckLinkColor@1400357e8 READ IN FULL, and it is two tests, not one. Given
+        /// (elem, p1, p2) it walks the contour-end array for the contour holding each point and
+        /// returns false if they differ; then it finds p1's neighbours on that contour (with the
+        /// wrap handled off elem+0x38/0x40) and returns false unless p2 IS one of them. So the
+        /// first test is ADJACENCY ON ONE CONTOUR. The second is a TURN: for each of the two
+        /// points it forms the cross product of the incoming and outgoing segments out of the
+        /// FONT-UNIT arrays (elem+0x20 and +0x28) as
+        ///     (orusX[p] - orusX[prev]) * (orusY[next] - orusY[p])   vs
+        ///     (orusY[p] - orusY[prev]) * (orusX[next] - orusX[p])
+        /// keeps only the sign of the comparison, and returns false if the two signs differ -- the
+        /// two ends of a stem must turn the same way. Nothing in it is a 2:1 slope test; that part
+        /// of the note below was wrong.</para> That IS
         /// GDI's predicate, but it is applied to OUR link set, which is not GDI's, and it measures
         /// worse for that reason: with the faithful tree, 6,654,259 filtered against 5,841,656
         /// unfiltered.

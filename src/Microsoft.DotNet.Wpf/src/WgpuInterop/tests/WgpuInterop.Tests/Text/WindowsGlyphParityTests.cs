@@ -9624,6 +9624,19 @@ namespace WgpuInterop.Tests.Text
             // finished glyph. This is the missing half.
             private const int ClearTypeQuality = 5;
 
+            // AND IT DOES NOT ISOLATE THE PHASE, which is what it was reached for. Quality 6
+            // turns compatible widths off in GDI's INTERPRETER, not just its phase block, so the
+            // program runs against different phantom points and produces a different fit -- the
+            // comparison is our pre-phase outline against a glyph GDI fitted differently, and the
+            // two are not the same experiment.
+            // <para>Measured over Arial Bold's 44 specimen glyphs at 20ppem: shipped against
+            // quality 5 scores 10,269 with 35 of 44 exact, while our phase-off outline against
+            // quality 6 scores 96,911 with 14 of 44. 'Z', '0', '2', '3', '6' and '8' are all
+            // pixel-exact shipped and 2,000-2,500 apiece pre-phase. A configuration that is nine
+            // times worse and exact on a third as many glyphs is not the cleaner instrument.</para>
+            // <para>It is still worth having for the glyphs where it DOES land -- Arial Bold 'A' at
+            // 20ppem scores 6,767 shipped and ZERO pre-phase, which says its whole error is the
+            // phase and nothing upstream -- but a score here is only evidence when it is zero.</para>
             private static readonly int LfQuality =
                 int.TryParse(Environment.GetEnvironmentVariable("WPF_GDI_LFQUALITY"), out int q)
                     ? q : ClearTypeQuality;
