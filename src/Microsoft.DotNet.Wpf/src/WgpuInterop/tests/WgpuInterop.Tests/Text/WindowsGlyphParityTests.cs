@@ -5377,6 +5377,33 @@ namespace WgpuInterop.Tests.Text
                     // to 38 and P17 to 398. If that is systematic -- if what must move is
                     // overwhelmingly the flanks of our straight runs -- then GDI is bowing an edge
                     // that our interpolation cannot bow, and the question is what does it.
+                    // <para>ANSWERED, AND IT IS NOT SYSTEMATIC. Solved thirteen Times glyph/size
+                    // cells (o c e 9 q 0 b at 12/14/16 Regular and 16/17 Bold) and pooled the two
+                    // rates this counter exists to compare: points in a flat run differ in 25 per
+                    // cent of cases (46 of 186), all on-curve points in 22 per cent (105 of 475).
+                    // That is the base rate, not an excess. Only three of the thirteen cells are
+                    // over-represented at all (o@17B 58 vs 33, 9@14R 29 vs 19, q@14R 21 vs 13) and
+                    // e@16B runs the other way (12 vs 30). So GDI is NOT preferentially bowing the
+                    // edges our interpolation stacks; the differing points are spread across
+                    // on-curve points generally, and "what bows the edge" is the wrong question to
+                    // be asking of this pool.</para>
+                    // <para>AND THEY ARE ON-CURVE POINTS, NOT OFF-CURVE CONTROLS. Worth stating
+                    // because the opposite was asserted in a commit message and sent a whole round
+                    // after the curve rasterizer: the SPLIT line reports `off-curve 0/10 on-curve
+                    // 6/32` for '9'@14 and the same shape everywhere else. The mistake was reading
+                    // the IUP trace's point numbering onto this solver's P indices, which are the
+                    // materialised outline's, not the interpreter's. Off-curve controls are a
+                    // MINORITY of what differs (typically 0 or 1 per glyph).</para>
+                    // <para>THE WEIGHTS BEHAVE DIFFERENTLY, and this is the live lead. Times
+                    // REGULAR's round glyphs reach residual ZERO -- o, c, e and b at 12, 14 and 16
+                    // are already 0 as fitted, and 9@14 solves 1,001 -> 0. Times BOLD at 16 and 17,
+                    // which are the two worst rows of the whole holdout, do NOT: o@16B 1,574 -> 177,
+                    // e@16B 803 -> 74, 9@16B 806 -> 116, q@16B 792 -> 82, o@17B 2,148 -> 156,
+                    // e@17B 554 -> 352, 9@17B 1,168 -> 248. Around 90 per cent of each is recovered
+                    // and then the descent stops. Coordinate descent is start-dependent and this is
+                    // one start, so "cannot reach" is not proved -- but Regular reaches zero from
+                    // the same kind of start, and that contrast says Bold's remainder may not live
+                    // in the fitted outline at all.</para>
                     bool Flat(int i)
                     {
                         bool same = false;
