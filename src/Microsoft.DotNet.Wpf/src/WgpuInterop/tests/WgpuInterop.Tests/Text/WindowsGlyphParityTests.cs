@@ -8412,33 +8412,40 @@ namespace WgpuInterop.Tests.Text
         /// the slab probe needs it: with NO table GDI's fallback turns symmetric smoothing on for
         /// the probe while ours stays off, and the two sides then answer different questions.
         /// WPF_ARC_SCAN=times adds Times' SCANCTRL 303 / SCANTYPE 1.</para></summary>
-        /// <para>ANSWERED, AND THE ANSWER IS A CLEAN DEFECT OF OURS AT ppem = 2 (mod 4). Sweeping
-        /// 8..24 with the chord vertical (WPF_ARC_AXIS=x), ours/GDI by size:</para>
-        /// <code>
-        ///    8  1.0030    13  1.0000    18  1.2273    23  1.0000
-        ///    9  1.0000    14  1.2448    19  1.0000    24  1.0030
-        ///   10  1.2273    15  1.0000    20  1.0031
-        ///   11  1.0000    16  1.0030    21  1.0000
-        ///   12  1.0031    17  1.0000    22  1.2448
-        /// </code>
-        /// <para>At every odd size we match GDI EXACTLY -- 296.09/296.09, 331.34/331.34, to the
-        /// digit -- and at ppem = 0 (mod 4) to 0.3%. At 10, 14, 18 and 22 we lay down 23-25% MORE
-        /// ink than GDI. It is not the gasp (identical with and without Times'), not SCANCTRL, not
-        /// any of the three dropout knobs, and not the row-edge extremum rule: every one of those
-        /// leaves both columns unchanged.</para>
-        /// <para>WPF_ARC_DUMP shows exactly what differs, and it is not the curve's SHAPE. For the
-        /// h=0.5px arc GDI inks four rows at lamp 36 -- the SAME four rows at 13ppem and at 14ppem,
-        /// so GDI is stable across the boundary. At 13 we render those same four rows at 36 and
-        /// agree. At 14 we render SIX rows, the middle four at 73 and the outer two at 36: two rows
-        /// GDI does not ink at all, and twice GDI's coverage in the ones it does.</para>
-        /// <para>WHY IT MATTERS. Times is 38% of the 8..24 holdout and its worst glyphs are the
-        /// round ones, and the Times Regular signature is that every point GDI disagrees with is an
-        /// untouched OFF-CURVE CONTROL -- six for six on '9'@14, every one of them moving INWARD in
-        /// x, which is what a solver does to thin a curve that renders too fat. 10 is the second
-        /// worst ppem in the holdout at 152,636. But the correlation is not clean: 12 and 16 are the
-        /// two worst sizes overall and this probe says we are exact there, and Times R@15 is nearly
-        /// as bad as R@14. So this is a real defect worth fixing on its own evidence, not yet
-        /// established as the Times mechanism.</para>
+        /// <para>ANSWERED, AND IT IS A TIE AT A SAMPLE -- NOT A CURVE ERROR AND NOT A SIZE RULE.
+        /// Read this before the sweep below, because the first pass at it was wrong.</para>
+        /// <para>Sweeping 8..24 at the default chord position with WPF_ARC_AXIS=x, ours/GDI is
+        /// 1.0000 at every ODD ppem -- 296.09/296.09, 331.34/331.34, equal to the digit -- 1.003 at
+        /// ppem = 0 (mod 4), and 1.23 to 1.25 at 10, 14, 18 and 22. That looked like a defect keyed
+        /// to size. It is not. WPF_ARC_LEFT walks the same shape across a pixel in sixty-fourths,
+        /// and the divergence appears at exactly TWO of the sixteen offsets at EVERY ppem, always
+        /// half a pixel apart: 0 and 32 at 14ppem, 8 and 40 at 13, 16 and 48 at 12. This test's own
+        /// note says how to read that -- "a tie shows up at two offsets out of sixteen, a
+        /// misplacement at all of them" -- so the "ppem = 2 (mod 4)" pattern was only where the
+        /// default chord (left = 256 font units) happens to land at each size.</para>
+        /// <para>And it lands in the same PLACE all three times. Converted to pixels the divergent
+        /// chord positions are 1.7520, 1.7520 and 1.7500 px (and their +0.5 partners) at 12, 13 and
+        /// 14ppem -- x mod 0.5 = 0.25, a quarter of a pixel, which on the 3x subpixel grid is a
+        /// quarter of a subpixel.</para>
+        /// <para>The extra ink is roughly CONSTANT per arc -- 2.59, 2.62, 2.78, 2.91, 3.04, 3.12,
+        /// 3.23 across bulges of 0.25 to 6.0 px -- so it does not scale with the curve and is not
+        /// the curve's body. It comes from the figure's straight chord or its two cusps, where the
+        /// arc meets the chord. WPF_ARC_DUMP on the h=0.5 arc: GDI inks four rows at lamp 36, the
+        /// SAME four rows at 13ppem and at 14ppem; at 13 we render those same four rows at 36 and
+        /// agree exactly, at 14 we render SIX rows, the middle four at 73 and the outer two at 36.
+        /// </para>
+        /// <para>Ruled out, each leaving both columns byte-identical: the gasp (with and without
+        /// Times' own), SCANCTRL/SCANTYPE, all three WPF_CT_DROPOUT knobs, the row-edge extremum
+        /// rule, and the flattening tolerance (WPF_CURVE_TOL from 0.01 down to 1e-6 -- every value
+        /// gives 346.73, so the flattener is not what puts the ink there).</para>
+        /// <para>WHY IT IS WORTH FIXING EVEN THOUGH IT IS A TIE. A tie is measure-zero on an
+        /// arbitrary outline, but hinting SNAPS coordinates onto the grid, so tied positions are
+        /// exactly what a hinted glyph produces -- which is why this can matter far more on real
+        /// text than two-in-sixteen suggests. Times is 38% of the 8..24 holdout, its worst glyphs
+        /// are the round ones, and on '9'@14 all six points GDI disagrees with are untouched
+        /// OFF-CURVE CONTROLS moving INWARD in x, which is what a solver does to thin a curve
+        /// carrying too much ink. Not yet established as the Times mechanism: 12 and 16 are the two
+        /// worst sizes in the holdout and the default-offset sweep says we are exact there.</para>
         [Fact]
         public void HowGdiWeighsAQuadraticArc()
         {
