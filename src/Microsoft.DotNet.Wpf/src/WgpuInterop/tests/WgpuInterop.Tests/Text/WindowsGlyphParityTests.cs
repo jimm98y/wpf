@@ -5412,8 +5412,26 @@ namespace WgpuInterop.Tests.Text
                     // Eighty-six per cent of Times Bold sits below 18ppem, and 17 -> 18 falls 7.4x
                     // in one step. 'o' Bold is PIXEL-EXACT at 18 (0) and 58 at 19, against 1,376 /
                     // 1,574 / 2,148 at 15 / 16 / 17. Times Regular has no such cliff (16 3490,
-                    // 17 1828, 18 5017) and Italic only a one-size dip, so this is Bold's alone.
-                    // Times' gasp turns SYMMETRIC_SMOOTHING on at exactly 18.</para>
+                    // 17 1828, 18 5017) and Italic only a one-size dip, so this is Bold's alone.</para>
+                    // <para>IT IS NOT THE GASP -- that claim shipped once and was wrong, from
+                    // reading times.ttf's table and assuming timesbd.ttf's. They are different
+                    // tables and different VERSIONS:
+                    //   times.ttf    v1   &lt;=8 0xA DOGRAY|SYM_SMOOTH, &lt;=17 0x5 GRIDFIT|SYM_GRIDFIT,
+                    //                     else 0xF all four
+                    //   timesbd.ttf  v0   &lt;=8 0x2 DOGRAY, &lt;=13 0x1 GRIDFIT, else 0x3 GRIDFIT|DOGRAY
+                    // Times Bold's gasp is version 0, so it has no symmetric bits at all, and its
+                    // only breakpoints are 8 and 13. Nothing whatever happens in it at 17/18. Read
+                    // the face's OWN table before attributing a boundary to it.</para>
+                    // <para>WHAT THE CLIFF ACTUALLY IS: the ROUND glyphs, and only them. Splitting
+                    // Times Bold's per-glyph error into bowls (abcdegopq0689) and the rest:
+                    //   ppem      13    14    15    16    17    18    19    20    21
+                    //   bowls   4802  5286  6176  7980  8714     0   227    73   186
+                    //   rest     866  1326   839  2228  1401  1363  2045   712  1072
+                    // Every round Times Bold glyph is PIXEL-EXACT from 18ppem up -- a=0 b=0 c=0 d=0
+                    // and the whole 1,363 at 18 is x, y, W, 3, i and s -- while below 18 the bowls
+                    // carry the entire cliff and the non-round glyphs stay flat throughout. So
+                    // whatever this is, it is a rule about bowls that switches between 17 and 18,
+                    // not a rendering regime and not a face-wide flag.</para>
                     // <para>But it is NOT the rendering and NOT the GETINFO branch. WPF_CT_CONTRAST
                     // (auto and 1), WPF_SYM_ALWAYS, WPF_SYM_VERTICAL and WPF_CT_SYMINFO (1 and 0)
                     // every one leaves 'o' Bold at 15/16/17 byte-identical. The solve recovers 93%
