@@ -8412,40 +8412,35 @@ namespace WgpuInterop.Tests.Text
         /// the slab probe needs it: with NO table GDI's fallback turns symmetric smoothing on for
         /// the probe while ours stays off, and the two sides then answer different questions.
         /// WPF_ARC_SCAN=times adds Times' SCANCTRL 303 / SCANTYPE 1.</para></summary>
-        /// <para>ANSWERED, AND IT IS A TIE AT A SAMPLE -- NOT A CURVE ERROR AND NOT A SIZE RULE.
-        /// Read this before the sweep below, because the first pass at it was wrong.</para>
-        /// <para>Sweeping 8..24 at the default chord position with WPF_ARC_AXIS=x, ours/GDI is
-        /// 1.0000 at every ODD ppem -- 296.09/296.09, 331.34/331.34, equal to the digit -- 1.003 at
-        /// ppem = 0 (mod 4), and 1.23 to 1.25 at 10, 14, 18 and 22. That looked like a defect keyed
-        /// to size. It is not. WPF_ARC_LEFT walks the same shape across a pixel in sixty-fourths,
-        /// and the divergence appears at exactly TWO of the sixteen offsets at EVERY ppem, always
-        /// half a pixel apart: 0 and 32 at 14ppem, 8 and 40 at 13, 16 and 48 at 12. This test's own
-        /// note says how to read that -- "a tie shows up at two offsets out of sixteen, a
-        /// misplacement at all of them" -- so the "ppem = 2 (mod 4)" pattern was only where the
-        /// default chord (left = 256 font units) happens to land at each size.</para>
-        /// <para>And it lands in the same PLACE all three times. Converted to pixels the divergent
-        /// chord positions are 1.7520, 1.7520 and 1.7500 px (and their +0.5 partners) at 12, 13 and
-        /// 14ppem -- x mod 0.5 = 0.25, a quarter of a pixel, which on the 3x subpixel grid is a
-        /// quarter of a subpixel.</para>
-        /// <para>The extra ink is roughly CONSTANT per arc -- 2.59, 2.62, 2.78, 2.91, 3.04, 3.12,
-        /// 3.23 across bulges of 0.25 to 6.0 px -- so it does not scale with the curve and is not
-        /// the curve's body. It comes from the figure's straight chord or its two cusps, where the
-        /// arc meets the chord. WPF_ARC_DUMP on the h=0.5 arc: GDI inks four rows at lamp 36, the
-        /// SAME four rows at 13ppem and at 14ppem; at 13 we render those same four rows at 36 and
-        /// agree exactly, at 14 we render SIX rows, the middle four at 73 and the outer two at 36.
-        /// </para>
-        /// <para>Ruled out, each leaving both columns byte-identical: the gasp (with and without
-        /// Times' own), SCANCTRL/SCANTYPE, all three WPF_CT_DROPOUT knobs, the row-edge extremum
-        /// rule, and the flattening tolerance (WPF_CURVE_TOL from 0.01 down to 1e-6 -- every value
-        /// gives 346.73, so the flattener is not what puts the ink there).</para>
-        /// <para>WHY IT IS WORTH FIXING EVEN THOUGH IT IS A TIE. A tie is measure-zero on an
-        /// arbitrary outline, but hinting SNAPS coordinates onto the grid, so tied positions are
-        /// exactly what a hinted glyph produces -- which is why this can matter far more on real
-        /// text than two-in-sixteen suggests. Times is 38% of the 8..24 holdout, its worst glyphs
-        /// are the round ones, and on '9'@14 all six points GDI disagrees with are untouched
-        /// OFF-CURVE CONTROLS moving INWARD in x, which is what a solver does to thin a curve
-        /// carrying too much ink. Not yet established as the Times mechanism: 12 and 16 are the two
-        /// worst sizes in the holdout and the default-offset sweep says we are exact there.</para>
+        /// <para>ANSWERED -- AND THE ANSWER WAS ALREADY WRITTEN DOWN, at the span test in
+        /// PathRasterizer.GdiTableFilterRowset. Read that note first; this one only adds the sweep
+        /// and the eliminations. It is a TIE AT A SAMPLE: we count a sample exactly on a span's
+        /// LEFT boundary in, GDI counts it out. Our curve rasterization is otherwise exact.
+        /// WPF_CT_SPANSTART=out matches GDI on this probe and costs ~290k on the holdout, so it is
+        /// a known, measured, deliberate difference and NOT something to "fix" here.</para>
+        /// <para>What this pass adds. First, the sweep, which shows the tie is size-independent:
+        /// at the default chord position ours/GDI is 1.0000 at every ODD ppem (296.09/296.09,
+        /// 331.34/331.34, equal to the digit), 1.003 at ppem = 0 (mod 4), and 1.23-1.25 at 10, 14,
+        /// 18 and 22. That looks like a rule keyed to size and is not: WPF_ARC_LEFT walking the
+        /// shape across a pixel finds the divergence at exactly TWO of sixteen offsets at EVERY
+        /// ppem, always half a pixel apart -- 0 and 32 at 14ppem, 8 and 40 at 13, 16 and 48 at 12 --
+        /// which is the "two per pixel, one position in eight" the rasterizer note predicts. The
+        /// mod-4 pattern was only where the default chord (left = 256 font units) lands at each
+        /// size. Converted to pixels the divergent positions are 1.7520, 1.7520 and 1.7500 px at
+        /// 12, 13 and 14ppem: x mod 0.5 = 0.25, a quarter pixel, which is where a 26.6 coordinate
+        /// can sit on a lamp sample.</para>
+        /// <para>Second, the eliminations, none of which move either column by a byte: the gasp
+        /// (none, Times', all, nosym -- so symmetric smoothing is NOT what parts them here),
+        /// SCANCTRL/SCANTYPE, all three WPF_CT_DROPOUT knobs, the row-edge extremum rule, and the
+        /// flattening tolerance (WPF_CURVE_TOL 0.01 down to 1e-6 gives 346.73 at every value, so
+        /// the flattener is not what puts the ink there). The extra ink is also roughly CONSTANT
+        /// per arc -- 2.59 to 3.23 across bulges of 0.25 to 6.0 px -- so it is the straight chord
+        /// or the cusps, not the curve's body.</para>
+        /// <para>Third, and this is the useful negative: THE TIE IS NOT THE TIMES MECHANISM.
+        /// Times '9'@14 solves exactly, and of the six points GDI disagrees with, five sit nowhere
+        /// near a tie -- our x values mod 32 (in 26.6) are 4, 4, 6, 5 and 24, where a tie needs 16.
+        /// Only P34 is one, at exactly 1.7500px. So the off-curve-control signature that led here
+        /// is NOT explained by this tie, and the Times pool needs a different cause.</para>
         [Fact]
         public void HowGdiWeighsAQuadraticArc()
         {
