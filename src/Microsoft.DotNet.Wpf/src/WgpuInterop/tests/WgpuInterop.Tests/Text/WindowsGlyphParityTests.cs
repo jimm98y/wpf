@@ -5404,6 +5404,33 @@ namespace WgpuInterop.Tests.Text
                     // one start, so "cannot reach" is not proved -- but Regular reaches zero from
                     // the same kind of start, and that contrast says Bold's remainder may not live
                     // in the fitted outline at all.</para>
+                    // <para>AND IT DOES LIVE IN THE OUTLINE -- THE PARAGRAPH ABOVE GUESSED WRONG.
+                    // Times BOLD's error is a CLIFF at the gasp boundary. Per-ppem over the 8..24
+                    // holdout:
+                    //   8..17   2550 3438 4098 4562 5033 5668 6612 7015 10208 10115
+                    //   18..24  1363 2272  785 1258 1131  769 2230
+                    // Eighty-six per cent of Times Bold sits below 18ppem, and 17 -> 18 falls 7.4x
+                    // in one step. 'o' Bold is PIXEL-EXACT at 18 (0) and 58 at 19, against 1,376 /
+                    // 1,574 / 2,148 at 15 / 16 / 17. Times Regular has no such cliff (16 3490,
+                    // 17 1828, 18 5017) and Italic only a one-size dip, so this is Bold's alone.
+                    // Times' gasp turns SYMMETRIC_SMOOTHING on at exactly 18.</para>
+                    // <para>But it is NOT the rendering and NOT the GETINFO branch. WPF_CT_CONTRAST
+                    // (auto and 1), WPF_SYM_ALWAYS, WPF_SYM_VERTICAL and WPF_CT_SYMINFO (1 and 0)
+                    // every one leaves 'o' Bold at 15/16/17 byte-identical. The solve recovers 93%
+                    // of 17ppem by moving coordinates (2,148 -> 156), so it is the FIT.</para>
+                    // <para>The fit error is the bowl's OUTER WIDTH, on two TOUCHED points. o@17B
+                    // has P4 (right extreme) at 529 against GDI's 521 and P11 (left) at 47 against
+                    // 51: our outer contour spans 482/64 = 7.531px where GDI's spans 470/64 =
+                    // 7.344px, 12/64 too wide, and the raster shows it as a leading lamp 3 in the
+                    // column GDI leaves at 1, mirrored on the right. Both points are placed by MIRP
+                    // from a phantom with the cut-in REJECTING the control value (cvt 25/26 say
+                    // 1.0px, the original distance is 0.6094) and the original then rounded onto the
+                    // ClearType sixteenth: ours lands on 10/16, GDI's implies 11/16.</para>
+                    // <para>No single grid fixes it -- WPF_CT_GRID=32 takes o@17B 2,148 -> 2,104 and
+                    // o@16B 1,574 -> 1,321 but sends 9@16B 748 -> 2,190, and grid 8 and
+                    // WPF_CT_DISTGRID=physical are far worse on all three. So the sixteenth is right
+                    // and what differs is WHICH multiple of it a rejected-cut-in MIRP lands on, in
+                    // the regime where the face's gasp declines symmetric smoothing.</para>
                     bool Flat(int i)
                     {
                         bool same = false;
