@@ -8412,6 +8412,33 @@ namespace WgpuInterop.Tests.Text
         /// the slab probe needs it: with NO table GDI's fallback turns symmetric smoothing on for
         /// the probe while ours stays off, and the two sides then answer different questions.
         /// WPF_ARC_SCAN=times adds Times' SCANCTRL 303 / SCANTYPE 1.</para></summary>
+        /// <para>ANSWERED, AND THE ANSWER IS A CLEAN DEFECT OF OURS AT ppem = 2 (mod 4). Sweeping
+        /// 8..24 with the chord vertical (WPF_ARC_AXIS=x), ours/GDI by size:</para>
+        /// <code>
+        ///    8  1.0030    13  1.0000    18  1.2273    23  1.0000
+        ///    9  1.0000    14  1.2448    19  1.0000    24  1.0030
+        ///   10  1.2273    15  1.0000    20  1.0031
+        ///   11  1.0000    16  1.0030    21  1.0000
+        ///   12  1.0031    17  1.0000    22  1.2448
+        /// </code>
+        /// <para>At every odd size we match GDI EXACTLY -- 296.09/296.09, 331.34/331.34, to the
+        /// digit -- and at ppem = 0 (mod 4) to 0.3%. At 10, 14, 18 and 22 we lay down 23-25% MORE
+        /// ink than GDI. It is not the gasp (identical with and without Times'), not SCANCTRL, not
+        /// any of the three dropout knobs, and not the row-edge extremum rule: every one of those
+        /// leaves both columns unchanged.</para>
+        /// <para>WPF_ARC_DUMP shows exactly what differs, and it is not the curve's SHAPE. For the
+        /// h=0.5px arc GDI inks four rows at lamp 36 -- the SAME four rows at 13ppem and at 14ppem,
+        /// so GDI is stable across the boundary. At 13 we render those same four rows at 36 and
+        /// agree. At 14 we render SIX rows, the middle four at 73 and the outer two at 36: two rows
+        /// GDI does not ink at all, and twice GDI's coverage in the ones it does.</para>
+        /// <para>WHY IT MATTERS. Times is 38% of the 8..24 holdout and its worst glyphs are the
+        /// round ones, and the Times Regular signature is that every point GDI disagrees with is an
+        /// untouched OFF-CURVE CONTROL -- six for six on '9'@14, every one of them moving INWARD in
+        /// x, which is what a solver does to thin a curve that renders too fat. 10 is the second
+        /// worst ppem in the holdout at 152,636. But the correlation is not clean: 12 and 16 are the
+        /// two worst sizes overall and this probe says we are exact there, and Times R@15 is nearly
+        /// as bad as R@14. So this is a real defect worth fixing on its own evidence, not yet
+        /// established as the Times mechanism.</para>
         [Fact]
         public void HowGdiWeighsAQuadraticArc()
         {
