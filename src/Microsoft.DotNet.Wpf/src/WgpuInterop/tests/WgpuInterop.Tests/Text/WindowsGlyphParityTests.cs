@@ -5504,6 +5504,31 @@ namespace WgpuInterop.Tests.Text
                     // are untouched entirely, which is worth checking first -- a move whose freedom
                     // vector we take as pure Y where GDI's has an x component would both place them
                     // and hand IUP the anchors it is missing.</para>
+                    // <para>NO -- AND THE TOUCH SET IS NOT AVAILABLE AS AN EXPLANATION HERE. 'o'
+                    // Bold's whole program is SIX fitting instructions: four x-MIRPs (p11 from the
+                    // left phantom, p18 from p11, p4 from the right phantom, p29 from p4) and two
+                    // y-MIRPs (p23 from p8, p14 from p0). GDI runs the same program, so its
+                    // x-touch set is ours -- {4, 11, 18, 29} -- and "GDI touches points we do not"
+                    // cannot be what happens on this glyph. The coordinates that suggested it came
+                    // from a descent that stopped at residual 177 of 1,574, so they are even less
+                    // trustworthy than the file's usual warning allows.</para>
+                    // <para>THE PIXELS DO CONFIRM THE SHAPE, which is what this file says to trust.
+                    // At 16ppem GDI reads `..5995..` / `.791197.` / `397..793` down to
+                    // `..79951.`, and ours `..99951.` / `.791197.` / `497..794` down to
+                    // `.199991.`. The middle rows differ only in the outermost lamp (4 against 3);
+                    // the TOP and BOTTOM rows are where ours spills into columns GDI leaves blank.
+                    // So our bowl bulges at top and bottom and is nearly right at its waist.</para>
+                    // <para>AND THE TWO PASSES DISAGREE ENORMOUSLY, which is the new thread. The
+                    // same four MIRPs, same control values, same originals:
+                    //   p11  orig +0.5781   bi-level +1.0000 (+27/64)   ClearType +0.5625 (-1/64)
+                    //   p4   orig -0.5625   bi-level -1.0000 (-28/64)   ClearType -0.5625 ( 0/64)
+                    // The bi-level pass pulls the bowl in by 55/64 in total; the ClearType pass
+                    // moves it by one sixty-fourth. GDI's ClearType bowl is NARROWER than ours,
+                    // i.e. nearer the bi-level answer. So the question is not which points are
+                    // touched but how far a ClearType MIRP is allowed to move one -- and that is
+                    // the rounding grid, where WPF_CT_GRID=32 already showed it helps 'o' (2,148 ->
+                    // 2,104 at 17, 1,574 -> 1,321 at 16) and hurts '9' (748 -> 2,190). Whatever the
+                    // rule is, it is not one grid for every link.</para>
                     // <para>But it is NOT the rendering and NOT the GETINFO branch. WPF_CT_CONTRAST
                     // (auto and 1), WPF_SYM_ALWAYS, WPF_SYM_VERTICAL and WPF_CT_SYMINFO (1 and 0)
                     // every one leaves 'o' Bold at 15/16/17 byte-identical. The solve recovers 93%
