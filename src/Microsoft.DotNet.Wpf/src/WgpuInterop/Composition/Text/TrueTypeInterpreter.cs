@@ -1184,7 +1184,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// WPF_CT_PHASE=0 as well, which is the pairing the binary suggests since the phase is
         /// gated on the same mode byte, 161,157 / 368,877 / 495,197 / 711,054. Recorded because a
         /// face or size where 0x16b is 0 would get whole-pixel x, and that is the shape of every
-        /// "GDI's ClearType x equals its bi-level x" observation on record.</para></summary>
+        /// "GDI's ClearType x equals its bi-level x" observation on record.</para>
+        /// <para>THE WRITER HAS NOW BEEN FOUND, AND THE BYTE IS NOT PER-FACE OR PER-SIZE. No
+        /// instruction stores a byte at 0x16b; it is the HIGH byte of the little-endian halfword
+        /// at globals+0x16a, and that halfword has five writers:
+        /// <code>
+        ///   fs__NewTransformation@140026064   mov w8,#0x101   -> mode 1   (per-size default)
+        ///   fsg_RunPreProgram@1400309b4       strh w21        -> mode 0   (w21 also goes to elem+0x50, the
+        ///                                                                  contour count; high byte 0)
+        ///   fs__Contour@140024838             strh w26        -> mode 0   (same pattern)
+        ///   itrp_ExecuteGlyphPgm@14003733c    mov w9,#0x200   -> mode 2   UNCONDITIONALLY, first thing
+        ///   fsg_SimpleInnerGridFit@140031488  mov w8,#0x200   -> mode 2   (behind `cbz w21`)
+        /// </code>
+        /// So the byte is 0 while 'prep' runs and 2 while every glyph program runs. That is WHY
+        /// prep rounds on the whole pixel and the glyph program on the sixteenth -- the model we
+        /// already ship -- and it means no face and no size ever runs its glyph program with
+        /// whole-pixel x. The Arial 'z'@20 reading above must therefore be a ROUND executed in
+        /// prep or an fpgm function called from it, not a mode-0 glyph program.</para>
+        /// <para>The measurement agrees. Forcing whole-pixel x on the Times Bold bowls, where GDI's
+        /// ClearType outline sits nearer the bi-level one and this was the obvious suspect, is far
+        /// worse -- o@16B 1,574 -> 4,270, 0@16B 2,034 -> 15,182, o@18B 0 -> 11,156 -- with or
+        /// without the phase. The sixteenth is right; whatever narrows GDI's bowls, it is not the
+        /// grid and not this byte.</para></summary>
         internal static readonly int ClearTypeGrid =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_GRID"), out int ctg) && ctg > 0 ? ctg : 16;
 
