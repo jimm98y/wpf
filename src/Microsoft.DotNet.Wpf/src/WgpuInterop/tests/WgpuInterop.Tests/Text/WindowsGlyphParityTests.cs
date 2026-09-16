@@ -5432,6 +5432,32 @@ namespace WgpuInterop.Tests.Text
                     // carry the entire cliff and the non-round glyphs stay flat throughout. So
                     // whatever this is, it is a rule about bowls that switches between 17 and 18,
                     // not a rendering regime and not a face-wide flag.</para>
+                    // <para>AND IT IS THE PHASE, NOT THE MIRP CUT-IN -- the previous reading here
+                    // blamed the rounding of a rejected control value, and that was the wrong
+                    // stage. MIRP places 'o' Bold's two outer extremes INWARD FROM THE PHANTOMS,
+                    // p11 at pp1 + 0.625px and p4 at pp2 - 0.625px, so at 17ppem they start at 40
+                    // and 504 with the phantom span 544 (8.5px) against a compatible advance of
+                    // 576 (9px). Our final coordinates are 47 and 529, so the whole 12/64 arrives
+                    // in the PHASE. Pre-phase the bowl is 464 wide; GDI's pixels put it at 470
+                    // (+6) and ours at 482 (+18), three times the stretch.</para>
+                    // <para>The rule itself is right and is the binary's. Our tree pairs (p11,p18)
+                    // and (p4,p29) -- the two stems -- and shifts each pair by
+                    // round(avg(x_a, x_b) * (factor - 1)), which is exactly PhaseShift: the
+                    // no-parent block at 140035dac doubles the single coordinate and the two-parent
+                    // block at 140035e08 ADDS the two, both then multiplied by
+                    // globals[0x1d0] - 0x10000 and arithmetic-shifted right by 17 -- i.e. the
+                    // average, scaled. At 17 that gives +7 and +25 (avg 116 and 428, frac 0.0588);
+                    // at 18 it gives +14 and +50 (avg 126 and 454, frac 0.1111) and the glyph is
+                    // PIXEL-EXACT. Same rule, same code path, exact at one size and 2,148 out at
+                    // the one below, so what is wrong is an INPUT, not the formula.</para>
+                    // <para>Two inputs to look at, in this order. The FACTOR: 17ppem has linear 544
+                    // and compatible 576, a half-pixel advance rounded up; 18 has 576 and 640.
+                    // And the PAIRING: GDI's pixels want roughly +11 and +17, which is far flatter
+                    // than any proportional-to-x rule gives, so either the pair members or the
+                    // reference the average is taken against differ. Note also that our right
+                    // phantom p35 has no parent and d = 0, so it does not itself carry the advance
+                    // stretch -- worth checking against GDI, since every shift in the glyph is
+                    // measured from those phantoms.</para>
                     // <para>But it is NOT the rendering and NOT the GETINFO branch. WPF_CT_CONTRAST
                     // (auto and 1), WPF_SYM_ALWAYS, WPF_SYM_VERTICAL and WPF_CT_SYMINFO (1 and 0)
                     // every one leaves 'o' Bold at 15/16/17 byte-identical. The solve recovers 93%
