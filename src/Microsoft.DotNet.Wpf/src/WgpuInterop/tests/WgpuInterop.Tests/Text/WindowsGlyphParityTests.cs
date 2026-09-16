@@ -5458,6 +5458,52 @@ namespace WgpuInterop.Tests.Text
                     // phantom p35 has no parent and d = 0, so it does not itself carry the advance
                     // stretch -- worth checking against GDI, since every shift in the glyph is
                     // measured from those phantoms.</para>
+                    // <para>AND THE PHASE IS NOT THE GENERAL MECHANISM EITHER -- the paragraph
+                    // above generalised from 17ppem alone and the neighbouring sizes refute it.
+                    // 'o' Bold's phase inputs and its error, by size:
+                    //   ppem  linear   compat  factor   diff
+                    //    13   6.500     6.00   0.9231   1163
+                    //    14   7.000     7.00   1.0000   1410
+                    //    15   7.500     8.00   1.0667   1376
+                    //    16   8.000     8.00   1.0000   1574
+                    //    17   8.500     9.00   1.0588   2148
+                    //    18   9.000    10.00   1.1111      0
+                    //    19   9.500    10.00   1.0526     58
+                    //    20  10.000    10.00   1.0000      0
+                    // At 14, 16 and 20 the compatible advance EQUALS the linear one, so the factor
+                    // is exactly 1.0 and every phase shift is zero -- the phase is a no-op. Two of
+                    // those three are 1,410 and 1,574 out. So the phase cannot be what breaks the
+                    // bowls; at 17 it is merely the stage the error happens to arrive in.</para>
+                    // <para>The two sizes do not even have the same signature. At 16 the solve
+                    // reports x-touched 0 -- every point the program places agrees with GDI and the
+                    // whole 1,574 is in IUP-placed points -- while at 17 it reports x-touched 2,
+                    // the two outer extremes. So "the Times Bold bowl cliff" is not one mechanism,
+                    // and a fix derived from 17 alone would not touch 14 or 16. Treat the
+                    // phase-free sizes (14, 16) as the cleaner experiment: with the factor at 1.0
+                    // the phase, the compatible advance and the pairing are all out of the picture,
+                    // and what is left is the fit and IUP.</para>
+                    // <para>DONE, AND IT IS THE TOUCH SET AGAIN -- the same answer Times Regular
+                    // gave, but far starker. 'o' Bold at 16ppem has FOURTEEN points in its outer
+                    // contour and exactly TWO of them x-touched: P4 (476,234), the right extreme,
+                    // and P11 (37,232), the left. Both barely move -- 476 -> 476 and 37 -> 36 --
+                    // so our IUP has nothing to interpolate between and leaves the whole bowl
+                    // sitting at its scaled original. GDI does not: it pulls the right flank LEFT
+                    // (P2 -12, P3 -4, P5 -16, P6 -8, P7 -50) and the left flank RIGHT (P9 +16,
+                    // P10 +4, P12 +4, P13 +24), taking the bowl's BOTTOM from 213 wide to 148
+                    // while leaving both extremes where they are. No interpolation between two
+                    // stationary anchors can do that, so GDI is moving points our program run
+                    // never touches.</para>
+                    // <para>NOT THE DELTAS. WPF_CT_DELTA=all -- keeping the x-deltas we skip in the
+                    // ClearType direction -- is much worse: o@16B 1,574 -> 2,959, o@17B 2,148 ->
+                    // 3,659, and o@18B 0 -> 12,186, while o@14B, 0@16B and 9@16B do not move at
+                    // all, so no delta even fires on those. Skipping them is right and they are not
+                    // the missing motion.</para>
+                    // <para>So the live question for the largest pool in the holdout is the same
+                    // one Times Regular posed: WHICH INSTRUCTION TOUCHES THOSE POINTS IN GDI. Three
+                    // of the ten that differ (P7, P9, P13) are y-touched in our run and the rest
+                    // are untouched entirely, which is worth checking first -- a move whose freedom
+                    // vector we take as pure Y where GDI's has an x component would both place them
+                    // and hand IUP the anchors it is missing.</para>
                     // <para>But it is NOT the rendering and NOT the GETINFO branch. WPF_CT_CONTRAST
                     // (auto and 1), WPF_SYM_ALWAYS, WPF_SYM_VERTICAL and WPF_CT_SYMINFO (1 and 0)
                     // every one leaves 'o' Bold at 15/16/17 byte-identical. The solve recovers 93%
