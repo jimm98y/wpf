@@ -1882,7 +1882,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// +0xcc and MDRP/ALIGNRP consult them before recording anything.</summary>
         private int _pvPtA = -1, _pvPtB = -1;
 
-        private void SetVectorLine(int a, int b) { _pvPtA = a; _pvPtB = b; }
+        private void SetVectorLine(int a, int b)
+        {
+            if (s_phaseDump && (a != _pvPtA || b != _pvPtB))
+                Console.Error.WriteLine($"  VLINE ({a},{b}) was ({_pvPtA},{_pvPtB}) zp1={_gs.Zp1} zp2={_gs.Zp2} prep={_inPreProgram}");
+            _pvPtA = a; _pvPtB = b;
+        }
 
         /// <summary>InterAlign@180294a80: does p sit between a and b in FONT UNITS?</summary>
         private bool InterAlign(int a, int p, int b)
@@ -1941,43 +1946,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && _pvPtA >= 0 && _pvPtB >= 0
                 && InterAlign(_pvPtA, p, _pvPtB))
             { PhaseProportion(_pvPtA, p, _pvPtB); tookProportion = true; }
-            // BOTH, BY MEASUREMENT, TWICE. The jump topology of itrp_MDRP reads as either/or:
-            // its inlined AddDistance begins at 14003a7e8 (own bounds checks, IndirectlyDependsOn
-            // at 14003a844) and is reached when the vector line is unset (14003a7dc) or InterAlign
-            // fails (14003aa08 `cbz w8, 14003a7e8`), while a successful AddProportion at 14003aa1c
-            // jumps to 14003a638 at 14003aa20 -- and 14003a638 begins with the twilight test
-            // `elem != gs[0x38]` whose usual outcome branches to 14003a884, which is not yet read.
-            // Recording only the proportion in that case (WPF_CT_PHASE_PROP_ONLY=1) measured
-            // 598,774 -> 690,178 before the RS-of-8 and SHPIX corrections and 451,449 -> 579,468
-            // after them, with Arial Bold 'K'@20 922 -> 1,491. Two readings of the same jumps
-            // have now lost to the same measurement, so until 14003a884 is read the distance is
-            // recorded as well. The knob stays for the next reader.
-            // <para>And it is not the surrounding machinery either, each read against the binary
-            // the same day: AddProportion@140035630 raises the cycle bit when a or b depends on p
-            // and links only an unparented point (ours does both); IndirectlyDependsOn@140035a10
-            // is PhaseDependsOn to the letter -- depth minus one at entry, TRUE at exhaustion,
-            // minus two per recursion, single-parent chain or two-parent fan-out; 14003a884 is
-            // the original-distance measurement (orus or scaled by globals[0x196]/[0x170]) and
-            // rejoins the single-width test at 14003a67c. So the 128k lives either in a part of
-            // itrp_MDRP's control flow not yet walked end to end, or in an input the extra
-            // AddDistance's IndirectlyDependsOn(rp0, p) happens to supply. Walk MDRP whole
-            // before touching this again.</para>
-            // <para>NARROWED TO ONE CASE. The links that either/or loses are those where the point
-            // being placed is one of the vector line's OWN ENDPOINTS -- Verdana Italic 'u'@23
-            // `r=2 p=3 line=(3,5)` (0 -> 1,905 without it), Times Bold 'a'@19 `r=9 p=8
-            // line=(8,7)` (0 -> 1,738). AddProportion refuses a == p on both sides (its ccmp chain
-            // at 140035660..80 returns on a==p, b==p or a==b, as PhaseProportion does), so in the
-            // binary's topology that MDRP records NOTHING, yet the distance to rp0 is what makes
-            // these glyphs pixel-exact. So GDI reaches that link another way, and the likeliest is
-            // that its vector line is already -1 at that MDRP where ours still holds the pair --
-            // which would send it down InterAlign's failure path to AddDistance. The writers of
-            // gs+0xce are SVTCA_0/1, SPVTCA_0/1, SPVTL, SDPVTL and WPV, the same five sites we
-            // clear at; a 32-bit store at 0xcc would also cover it and none was found. And the
-            // store itself is unconditional for in-range points: itrp_SDPVTL@14003d870 and
-            // itrp_SPVTL@14003f208 write both halves after a bounds check whose `cmp w9,w14` uses
-            // x9 = (0|4) + lastContourEnd (+1) from 14003d844/858, not the contour count, and
-            // whose failure is the error exit 0x1112 at 14003d760. So the line is not cleared
-            // early either. Unresolved; recording both reproduces the pixels and stays.</para>
+            // EITHER A PROPORTION OR A DISTANCE, as itrp_MDRP and itrp_ALIGNRP do: the inlined
+            // AddDistance at 14003a7e8 is reached only when the vector line is unset (14003a7dc)
+            // or InterAlign fails (14003aa08), and a successful AddProportion at 14003aa1c jumps
+            // straight to the move (14003aa20 -> 14003a638 -> 14003a884). RESOLVED 2026-09-17
+            // after two failed attempts: recording both had measured 128k better because our
+            // SFVTL was also setting the vector line (LineVector was shared with SPVTL), so an
+            // ALIGNRP after SFVTL(3,5) asked InterAlign(3, 3, 5), which passes, and the
+            // proportion was refused for a == p -- and only the extra distance rescued it. GDI's
+            // line there is still the last PROJECTION line, its InterAlign fails, and it records
+            // the distance. With SFVTL leaving the line alone, both and either/or measure
+            // IDENTICALLY (380,873) and either/or ships. WPF_CT_PHASE_PROP_ONLY=0 records both.
             // WPF_CT_PHASE_PROP_ONLY=2: after a proportion, run only the dependency check the
             // extra AddDistance would have run -- raise the cycle flag, record nothing.
             if (s_propCycleOnly && tookProportion)
@@ -2029,7 +2008,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TWILIGHT_REF") == "1";
 
         private static readonly bool s_propExcludesDistance =
-            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROP_ONLY") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROP_ONLY") is null or "1";
 
         private string _phaseSite = "";
         private int[] _phaseVal = new int[128];                          // memoised phase, 26.6

@@ -204,7 +204,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                     case 0x06: case 0x07:                                               // SPVTL[a]
                         {
-                            (int vx, int vy) = LineVector(op == 0x07);
+                            (int vx, int vy) = LineVector(op == 0x07, setLine: true);
                             _gs.ProjX = _gs.DualX = vx;
                             _gs.ProjY = _gs.DualY = vy;
                             ResetProjection();
@@ -213,7 +213,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         }
                     case 0x08: case 0x09:                                               // SFVTL[a]
                         {
-                            (int vx, int vy) = LineVector(op == 0x09);
+                            (int vx, int vy) = LineVector(op == 0x09, setLine: false);
                             _gs.FreeX = vx;
                             _gs.FreeY = vy;
                             ResetProjection();
@@ -3390,6 +3390,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_shcLinks =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_SHC_LINK") == "1";
 
+        /// <summary>WPF_CT_LINE_SFVTL=1: SFVTL sets the vector line as SPVTL does, as it did before
+        /// 2026-09-17. The scaler's writers of gs+0xce/0xd0 are SVTCA_0/1, SPVTCA_0/1, SPVTL,
+        /// SDPVTL and WPV only; itrp_SFVTL and itrp_SFVTCA leave the line alone, so an ALIGNRP or
+        /// MDRP after an SFVTL still sees the last PROJECTION line. Verdana Italic 'u'@23 is the
+        /// case: SDPVTL(2,25) ... SFVTL(3,5) ... ALIGNRP p=3 -- GDI asks InterAlign(2, 3, 25),
+        /// which fails, and records the distance to rp0; we asked InterAlign(3, 3, 5), which
+        /// passes, and the proportion is then refused for a == p.</summary>
+        private static readonly bool s_lineFromSfvtl =
+            Environment.GetEnvironmentVariable("WPF_CT_LINE_SFVTL") == "1";
+
         private static readonly bool s_shpMovesRefPoint =
             Environment.GetEnvironmentVariable("WPF_CT_SHP_REF") == "move";
 
@@ -4165,12 +4175,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// TOP of the stack is read from zp2, the one under it from zp1, and the line runs from the
         /// second to the first. Getting the pair the wrong way round leaves the vector pointing
         /// backwards, which only shows on glyphs with diagonals in them.</para></summary>
-        private (int X, int Y) LineVector(bool perpendicular)
+        private (int X, int Y) LineVector(bool perpendicular, bool setLine)
         {
             int p1 = Pop(), p2 = Pop();
             Zone z1 = ZoneOf(_gs.Zp1), z2 = ZoneOf(_gs.Zp2);
             if (p1 >= z2.PointCount || p2 >= z1.PointCount) return (0x4000, 0);
-            SetVectorLine(p2, p1);
+            // Only the PROJECTION line writes gs+0xce/0xd0: the scaler's writers are SVTCA_0/1,
+            // SPVTCA_0/1, SPVTL, SDPVTL and WPV. itrp_SFVTL leaves it alone, so an ALIGNRP or
+            // MDRP after an SFVTL still sees the last projection line. See s_lineFromSfvtl.
+            if (setLine || s_lineFromSfvtl) SetVectorLine(p2, p1);
 
             int dx = z1.CurX[p2] - z2.CurX[p1];
             int dy = z1.CurY[p2] - z2.CurY[p1];
