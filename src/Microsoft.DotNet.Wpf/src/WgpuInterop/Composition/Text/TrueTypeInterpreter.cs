@@ -1898,7 +1898,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool canProportion = false, bool doubleCheck = false, int phaseType = -1,
             [System.Runtime.CompilerServices.CallerMemberName] string site = "")
         {
-            if (_inPreProgram || zoneP != 1 || zoneR != 1) return;
+            // itrp_MDRP enters its record block on `zp1 elem != twilight` alone (14003a630) and
+            // the inlined AddDistance indexes the reference into THAT zone's node array, so a
+            // link from a twilight reference is recorded as p -> (rp0 index in the glyph zone).
+            // WPF_CT_PHASE_TWILIGHT_REF=1 does the same; the default refuses those links.
+            if (_inPreProgram || zoneP != 1 || (zoneR != 1 && !s_phaseTwilightRef)) return;
             // PHASE tree: record p's parent for EVERY link -- any colour, horizontal or diagonal,
             // and even when the reference is a PHANTOM (the advance/lsb). The phase ORIGINATES at
             // the phantoms and flows to whatever was placed from them, so filtering by link colour
@@ -1958,7 +1962,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // itrp_MDRP's control flow not yet walked end to end, or in an input the extra
             // AddDistance's IndirectlyDependsOn(rp0, p) happens to supply. Walk MDRP whole
             // before touching this again.</para>
-            if (!(s_propExcludesDistance && tookProportion))
+            // <para>NARROWED TO ONE CASE. The links that either/or loses are those where the point
+            // being placed is one of the vector line's OWN ENDPOINTS -- Verdana Italic 'u'@23
+            // `r=2 p=3 line=(3,5)` (0 -> 1,905 without it), Times Bold 'a'@19 `r=9 p=8
+            // line=(8,7)` (0 -> 1,738). AddProportion refuses a == p on both sides (its ccmp chain
+            // at 140035660..80 returns on a==p, b==p or a==b, as PhaseProportion does), so in the
+            // binary's topology that MDRP records NOTHING, yet the distance to rp0 is what makes
+            // these glyphs pixel-exact. So GDI reaches that link another way, and the likeliest is
+            // that its vector line is already -1 at that MDRP where ours still holds the pair --
+            // which would send it down InterAlign's failure path to AddDistance. The writers of
+            // gs+0xce are SVTCA_0/1, SPVTCA_0/1, SPVTL, SDPVTL and WPV, the same five sites we
+            // clear at; a 32-bit store at 0xcc would also cover it and none was found. Unresolved;
+            // recording both reproduces the pixels and stays.</para>
+            // WPF_CT_PHASE_PROP_ONLY=2: after a proportion, run only the dependency check the
+            // extra AddDistance would have run -- raise the cycle flag, record nothing.
+            if (s_propCycleOnly && tookProportion)
+            { if (PhaseDependsOn(r, p, 100)) _phaseAnyCycle = true; }
+            else if (!(s_propExcludesDistance && tookProportion))
             {
                 _phaseSite = site;
                 PhaseDistance(r, p, doubleCheck
@@ -1999,6 +2019,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int[] _phaseColour = new int[128];                       // 1 black, 2 white, 0 neither
         /// <summary>WPF_CT_PHASE_PROP_ONLY=1: an MDRP/ALIGNRP that recorded a proportion records no
         /// distance, which is what itrp_MDRP does (see LinkX).</summary>
+        private static readonly bool s_propCycleOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROP_ONLY") == "2";
+        private static readonly bool s_phaseTwilightRef =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_TWILIGHT_REF") == "1";
+
         private static readonly bool s_propExcludesDistance =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROP_ONLY") == "1";
 
