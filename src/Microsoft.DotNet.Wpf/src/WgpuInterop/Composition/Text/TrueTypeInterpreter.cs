@@ -1948,6 +1948,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // after them, with Arial Bold 'K'@20 922 -> 1,491. Two readings of the same jumps
             // have now lost to the same measurement, so until 14003a884 is read the distance is
             // recorded as well. The knob stays for the next reader.
+            // <para>And it is not the surrounding machinery either, each read against the binary
+            // the same day: AddProportion@140035630 raises the cycle bit when a or b depends on p
+            // and links only an unparented point (ours does both); IndirectlyDependsOn@140035a10
+            // is PhaseDependsOn to the letter -- depth minus one at entry, TRUE at exhaustion,
+            // minus two per recursion, single-parent chain or two-parent fan-out; 14003a884 is
+            // the original-distance measurement (orus or scaled by globals[0x196]/[0x170]) and
+            // rejoins the single-width test at 14003a67c. So the 128k lives either in a part of
+            // itrp_MDRP's control flow not yet walked end to end, or in an input the extra
+            // AddDistance's IndirectlyDependsOn(rp0, p) happens to supply. Walk MDRP whole
+            // before touching this again.</para>
             if (!(s_propExcludesDistance && tookProportion))
             {
                 _phaseSite = site;
