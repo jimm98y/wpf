@@ -2265,6 +2265,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_PHASE_DEN=span: divide by the difference of the two scaled phantom
         /// points, as we used to, instead of scaling the font-unit advance once. See the
         /// comment at the factor.</summary>
+        private static readonly bool s_phaseDenRound =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEN") == "round";
         private static readonly bool s_phaseDenFontUnits =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEN") != "span";
 
@@ -2283,6 +2285,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_phaseFactorAdj =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_FADJ"), out int fa) ? fa : 0;
 
+        private static readonly bool s_phaseNumCt =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_NUM") == "ct";
         private static readonly bool s_phaseNumSpan =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_NUM") != "compat";
 
@@ -2354,6 +2358,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// jumps past the `cur[i] += iVar8` -- it only returns the value for its children. The
         /// advance phantom sitting still with d=0 in WPF_CT_PHASE_DUMP is that rule, not a
         /// bug.</para></remarks>
+        private static readonly bool s_phaseAnchorPp1 =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_ANCHOR") == "1";
+
         internal void ApplyPhaseAtIup()
         {
             // NOT ON A COMPOSITE. Our composites are assembled from components that were each
@@ -2409,6 +2416,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int linear = s_phaseDenFontUnits
                        ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints])
                        : _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
+            // WPF_CT_PHASE_DEN=round: REFUTED (holdout 376,284 -> 37,012,697, 355 ratchets) though
+            // 'A'@20B alone went 6,767 -> 4,095. The denominator is the linear advance ROUNDED to a whole
+            // pixel, as the realized advance is. Arial Bold 'A'@20 compresses 832/924 = 0.9004
+            // with the unrounded one and its raster shows GDI compressing visibly less; 832/896
+            // would be 0.9286.
+            if (s_phaseDenRound && linear > 0) linear = (linear + 32) & ~63;
             if (s_phaseEntryProbe)
                 Console.Error.WriteLine($"PHASEENTRY pts={_realPoints} orgPP1={_glyphZone.OrgX[_realPoints]}"
                     + $" orgPP2={_glyphZone.OrgX[adv]} linear={linear} compat64={CompatibleAdvance64}"
@@ -2469,6 +2482,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // 6-pixel advance against its own 'hdmx' entry of 5. See the GETINFO handler. With
             // that right the span needs no guard at all and the holdout is 843,447.</para>
             int numerator = s_phaseNumSpan && BiLevelSpan64 > 0 ? BiLevelSpan64 : CompatibleAdvance64;
+            // WPF_CT_PHASE_NUM=ct: REFUTED (holdout 46,789,700; 'A'@20B 6,767 -> 13,653; the ClearType
+            // pass leaves 'A's advance phantom at 908/64 against a linear 924, so this span is nearly
+            // the linear one). The numerator is THIS pass's phantom span as the program left it
+            // -- sixteenth-rounded, since the ClearType pass MIRPs the advance phantom on the
+            // sixteenth -- rather than the bi-level pass's whole-pixel one. fs__Contour runs the
+            // glyph twice against two globals blocks and takes the span from the first; whether
+            // that first run is the bi-level one or the other ClearType one decides this.
+            if (s_phaseNumCt)
+            {
+                int ctSpan = _glyphZone.CurX[adv] - _glyphZone.CurX[_realPoints];
+                if (ctSpan > 0) numerator = ctSpan;
+            }
             long ctNum = (long) (s_phaseRecip ? linear : numerator) << 16;
             int ctDen = s_phaseRecip ? numerator : linear;
             _ctFactor16 = s_phaseTruncFactor ? (int) (ctNum / ctDen)
@@ -2584,6 +2609,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int was = _glyphZone.CurX[i];
                 PhaseShiftNode(i);
+            // WPF_CT_PHASE_ANCHOR=1: REFUTED -- 'A'@20B 6,767 -> 71,350, holdout 376,284 ->
+            // 24,669,374, 129 ratchets. Kept only so nobody tries it again. The idea was to
+            // re-anchor on the hinted left phantom after the phase. If GDI
+            // positions the glyph from the PHASED pp1 (as the scan-converter setup reads the
+            // phantoms after hinting), a phantom that the pair rule moved -- Arial Bold 'A'@20's
+            // pp1 goes -10/64 as the mate of p4 -- shifts the whole raster; ours stayed put and
+            // the raster shows a uniform ~third-of-a-lamp shift to the left.
+            if (s_phaseAnchorPp1 && _realPoints < _phaseVal.Length && _realPoints < _glyphZone.CurX.Length)
+            {
+                int dx = -_phaseVal[_realPoints];
+                if (dx != 0) for (int q = 0; q < n && q < _glyphZone.CurX.Length; q++) _glyphZone.CurX[q] += dx;
+            }
                 if (_glyphZone.CurX[i] != was) moved = true;
             }
             if (!moved && s_phaseFallbackScale && _ctFactor16 != 0x10000)
