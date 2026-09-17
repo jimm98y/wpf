@@ -1625,11 +1625,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SCFS_X=1: drop an SCFS on the CLEARTYPE axis onto a point not
         /// already touched there, the same way the non-ClearType axis is treated. SHIPPED; see
         /// the comment at the SCFS opcode.</summary>
+        /// <summary>OFF BY DEFAULT since 2026-09-17. SCFS is itrp_WC@14003fb70 in the scaler,
+        /// and it reads none of the ClearType state -- not globals[0x1c0], [0x1c2], [0x16b],
+        /// [0x88] nor gs[0xcc]: it bounds-checks, projects and moves, in every pass alike. This
+        /// rule was a hand approximation and it is now inert on the corpus (holdout 451,449 with
+        /// it either way) because the post-IUP SCFS it governed are skipped by the RS-of-8 rule.
+        /// WPF_CT_SCFS_X=1 restores it.</summary>
         private static readonly bool s_scfsXToo =
-            Environment.GetEnvironmentVariable("WPF_CT_SCFS_X") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_SCFS_X") == "1";
 
+        /// <summary>OFF BY DEFAULT since 2026-09-17. SCFS is itrp_WC@14003fb70 in the scaler,
+        /// and it reads none of the ClearType state -- not globals[0x1c0], [0x1c2], [0x16b],
+        /// [0x88] nor gs[0xcc]: it bounds-checks, projects and moves, in every pass alike. This
+        /// rule was a hand approximation and it is now inert on the corpus (holdout 451,449 with
+        /// it either way) because the post-IUP SCFS it governed are skipped by the RS-of-8 rule.
+        /// WPF_CT_SCFS_TOUCHED=1 restores it.</summary>
         private static readonly bool s_scfsTouchedOnly =
-            Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_SCFS_TOUCHED") == "1";
 
         /// <summary>WPF_CT_MD65=0 stops MD reporting an exact pixel as 65/64 after IUP.</summary>
         private static readonly bool s_md65 =
