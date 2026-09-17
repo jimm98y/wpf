@@ -1931,46 +1931,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // <para>So there is no contradiction and nothing upstream to find here: recording a
             // proportion link for a simple glyph is correct, and WPF_CT_PHASE_PROPCOMP only exists
             // to keep the measurement that says so.</para>
+            bool tookProportion = false;
             if (canProportion && s_phaseInterAlign
                 && (!s_phasePropComponent || _inComposite || HintDepth > 0)
                 && _pvPtA >= 0 && _pvPtB >= 0
                 && InterAlign(_pvPtA, p, _pvPtB))
-                PhaseProportion(_pvPtA, p, _pvPtB);
-            // A PROPORTION DOES NOT REPLACE THE DISTANCE -- GDI RECORDS BOTH, and the distance
-            // below is deliberately NOT in an `else`. This read as an obvious brace bug (the line
-            // used to be `else _phaseSite = site; PhaseDistance(...)`, where the `else` binds to
-            // the assignment alone), and "fixing" it costs 598,774 -> 690,178 on the 8..24 holdout.
-            // The binary agrees with the measurement: in itrp_MDRP the inlined AddDistance body
-            // starts at 14003a638, and EVERY path reaches it -- each gate failure branches there
-            // (14003a7c8, 14003a7d0, 14003a7d8), the bounds block at 14003a7e8 falls into it, and
-            // the AddProportion success path at 14003aa1c jumps straight there at 14003aa20. So a
-            // point placed by MDRP with the projection taken from a line gets TWO records: the
-            // proportion between the line's endpoints and the distance from rp0.
-            // CONFIRMED IN FONTDRVHOST, not just in DWrite's copy. The addresses in these
-            // notes are 0x1801..., which is DWrite; GDI runs fontdrvhost, and the two are
-            // separate builds of the same Agfa scaler that need not agree. itrp_MIRP
-            // @14003b330 has AddDistance INLINED into it and calls
-            // DoubleCheckLinkColor(gs, r, p, distanceType & 3) first, exactly as written here,
-            // then the same body -- IndirectlyDependsOn, the ancestor walk on elem+0x20, the
-            // param_5 == 1 pairing tail.
-            // <para>THE TRAP, worth writing down because it nearly produced a confident wrong
-            // answer: searching fontdrvhost for callers of AddDistance@1400354c8 finds only
-            // itrp_ALIGNRP and itrp_MSIRP. That reads as "GDI builds its phase tree from those
-            // two opcodes alone", which would make the tree EMPTY for a glyph fitted purely by
-            // MIRPs -- Arial Bold 'X' at 20ppem is exactly that -- and so make the phase a
-            // no-op for it. It is wrong: the compiler inlined AddDistance into MIRP and MDRP,
-            // so they never appear as callers. Search instead for the callee it could NOT
-            // inline, IndirectlyDependsOn@140035a10, which shows itrp_MIRP, itrp_MDRP, itrp_IP,
-            // itrp_SHP_Common and AddProportion all taking part.</para>
-            // ONLY MIRP DOUBLE-CHECKS THE COLOUR. itrp_MIRP is the one site that calls
-            // DoubleCheckLinkColor and hands its answer to AddDistance; itrp_MDRP, itrp_ALIGNRP and
-            // itrp_SHP_Common all pass a literal 3. Since AddDistance's pairing tail is gated on
-            // param_5 == 1, that means NO OPCODE BUT MIRP CAN EVER FORM A STEM PAIR -- and a pair is
-            // what makes the phase translate a stem rigidly instead of scaling it. Computing the
-            // colour everywhere invented pairs GDI does not have.
-            _phaseSite = site;
-            PhaseDistance(r, p, doubleCheck
-                ? PhaseLinkColour(r, p, phaseType >= 0 ? phaseType : distanceType) : 3);
+            { PhaseProportion(_pvPtA, p, _pvPtB); tookProportion = true; }
+            // BOTH, BY MEASUREMENT, TWICE. The jump topology of itrp_MDRP reads as either/or:
+            // its inlined AddDistance begins at 14003a7e8 (own bounds checks, IndirectlyDependsOn
+            // at 14003a844) and is reached when the vector line is unset (14003a7dc) or InterAlign
+            // fails (14003aa08 `cbz w8, 14003a7e8`), while a successful AddProportion at 14003aa1c
+            // jumps to 14003a638 at 14003aa20 -- and 14003a638 begins with the twilight test
+            // `elem != gs[0x38]` whose usual outcome branches to 14003a884, which is not yet read.
+            // Recording only the proportion in that case (WPF_CT_PHASE_PROP_ONLY=1) measured
+            // 598,774 -> 690,178 before the RS-of-8 and SHPIX corrections and 451,449 -> 579,468
+            // after them, with Arial Bold 'K'@20 922 -> 1,491. Two readings of the same jumps
+            // have now lost to the same measurement, so until 14003a884 is read the distance is
+            // recorded as well. The knob stays for the next reader.
+            if (!(s_propExcludesDistance && tookProportion))
+            {
+                _phaseSite = site;
+                PhaseDistance(r, p, doubleCheck
+                    ? PhaseLinkColour(r, p, phaseType >= 0 ? phaseType : distanceType) : 3);
+            }
             if (distanceType >= 0 && (s_linkTypes & (1 << distanceType)) == 0) return;
             if ((uint) p >= (uint) _realPoints || (uint) r >= (uint) _realPoints) return;
             // ALL links, horizontal or DIAGONAL, kept for the coloring model: a 'w's diagonal
@@ -2004,6 +1987,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _stemCount;
         private int[] _phaseP0 = new int[128], _phaseP1 = new int[128];  // per-point placement parents
         private int[] _phaseColour = new int[128];                       // 1 black, 2 white, 0 neither
+        /// <summary>WPF_CT_PHASE_PROP_ONLY=1: an MDRP/ALIGNRP that recorded a proportion records no
+        /// distance, which is what itrp_MDRP does (see LinkX).</summary>
+        private static readonly bool s_propExcludesDistance =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PROP_ONLY") == "1";
+
         private string _phaseSite = "";
         private int[] _phaseVal = new int[128];                          // memoised phase, 26.6
         private bool[] _phaseDone = new bool[128];
