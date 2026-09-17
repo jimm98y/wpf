@@ -2294,8 +2294,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_phaseAtIupY =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_IUPY") == "1";
 
+        /// <summary>OFF BY DEFAULT since 2026-09-17, because itrp_SHP_Common has no such rule.
+        /// SHPIX calls SHP_Common@14003e978 with w3 = 1 (SHP passes 0), and at 14003eb1c that
+        /// flag routes to 14003eb58, which tests gs+0x1c2 bit 4 -- "inside a recognised
+        /// inline-delta function". Bit CLEAR goes straight to the plain move at 14003eb20; only
+        /// bit SET applies the projection-pure-Y / y-touched / IUP[y]-not-run test that
+        /// shpixApply already implements. So OUTSIDE those functions a ClearType-pass SHPIX
+        /// moves its point exactly as the bi-level one does, and this rule was suppressing
+        /// moves GDI makes. Measured: holdout 509,222 -> 451,449, 452 parity tests green.
+        /// WPF_CT_SHPIXTOUCH=1 restores it.</summary>
         private static readonly bool s_shpixNeedsTouch =
-            Environment.GetEnvironmentVariable("WPF_CT_SHPIXTOUCH") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIXTOUCH") == "1";
 
         /// <summary>WPF_CT_SHPIX=run executes SHPIX in the ClearType direction instead of refusing
         /// it. Measured worse -- see the note at the SHPIX site.</summary>
