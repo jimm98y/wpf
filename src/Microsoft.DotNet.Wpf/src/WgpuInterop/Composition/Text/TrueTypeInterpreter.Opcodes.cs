@@ -1252,6 +1252,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // Arial and Consolas match too; Verdana, Tahoma and Segoe UI do
                                 // not. See _mdOnePixelIs65 for what bit 10 goes on to do.
                                 if (id == 0) _fdefAddHelper = StartsWith(code, body, ip, s_fdefAddHelper);
+                                // TWO MORE ENTRIES OF THE SAME TABLE, read from itrp_FDEF's dispatch on
+                                // the function number. fontdrvhost+0xa8770+0x10 is `B0 16 43 58` --
+                                // PUSHB 22; RS; IF -- checked for functions 0x40..0x42 only
+                                // (140037428 `cmp w21,#0x40; b.ge`, 1400377cc `cmp w21,#0x42; b.gt`)
+                                // and setting bit 8 (0x100) of gs+0x1c2; +0x50 is the ten-byte
+                                // `20 20 B0 01 60 46 B0 40 23 42` -- DUP DUP PUSHB 1 ADD GC[0] PUSHB 64
+                                // SWAP WS -- checked for function 58 only (1400374b4 `cmp w21,#0x3a`)
+                                // and setting bit 11 (0x800). Consolas defines 64/65/66 as the first;
+                                // Verdana Italic and Bold Italic define 58 as the second. What the bits
+                                // then do is in itrp_CALL: see the CALL handler.
+                                if (id >= 0x40 && id <= 0x42 && StartsWith(code, body, ip, s_fdefStorage22))
+                                    _fdefStorage22 = true;
+                                if (id == 58 && StartsWith(code, body, ip, s_fdefFn58Diag)) _fdefFn58Diag = true;
                                 // The same table's other two sequences, checked for functions
                                 // 0, 1, 2, 4, 7 and 8, set bit 9 instead. Verdana Bold and Tahoma
                                 // define 0/1/2/4/8 all starting `01 B0 18 43 58` (SVTCA[x];
@@ -1301,6 +1314,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             { _callDelta[callDepth] = false; if (_deltaFdefDepth > 0) _deltaFdefDepth--; }
                             if (callDepth < _callRearm.Length && _callRearm[callDepth])
                             { _callRearm[callDepth] = false; _phaseApplied = _callPhaseWas[callDepth]; }
+                            if (callDepth < _callSaveKind.Length)
+                            {
+                                switch (_callSaveKind[callDepth])
+                                {
+                                    case 1: _gs.ControlValueCutIn = _callSaveVal[callDepth]; break;
+                                    case 2: if (_storage.Length > 22) _storage[22] = _callSaveVal[callDepth]; break;
+                                    case 3: if (_storage.Length > 24) _storage[24] = _callSaveVal[callDepth]; break;
+                                }
+                                _callSaveKind[callDepth] = 0;
+                            }
                             code = frame.ReturnCode;
                             ip = frame.ReturnIp;
                             break;
@@ -1342,6 +1365,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 && ClearTypeInfo && !NativeClearTypeMode && !BiLevelPass;
                             if (_callRearm[callDepth - 1])
                             { _callPhaseWas[callDepth - 1] = _phaseApplied; _phaseApplied = false; }
+                            // WHAT itrp_CALL@140036380 ACTUALLY DOES AROUND A RECOGNISED FUNCTION,
+                            // read from the binary; the phase re-arm above was a misreading of the
+                            // same code. Every branch is gated on ClearType (globals[0x1c0] bit 0)
+                            // and NOT native mode (globals[0x88] bit 2), and [globals+0x10] is the
+                            // STORAGE ARRAY -- itrp_RS loads storage[i] through that very pointer --
+                            // so the fields it zeroes are storage cells, not the element:
+                            //   fn 0..2, 4, 7, 8  and bit 0x200 (a mode-dispatcher face):
+                            //       14003646c  save [storage+0x60], write 0    -> storage[24] = 0
+                            //   fn 0x40..0x42     and bit 0x100:
+                            //       1400365f4  save [storage+0x58], write 0    -> storage[22] = 0
+                            //   fn 58             and bit 0x800:
+                            //       140036654  save globals[0x78], write 0x7fffffff  -> the CONTROL-VALUE
+                            //                  cut-in is parked: every MIRP inside fn 58 takes its CVT. (0x78 is the
+                            //                  CVT cut-in, not the single-width one: MDRP, which applies only the
+                            //                  single-width test, reads just globals+0x7c, while MIRP reads 0x78 four
+                            //                  times for its axis-scaled CVT tests and 0x7c once. Parking the single
+                            //                  width instead measured Verdana Italic 16,442 -> 423,810.)
+                            // each restored on return (140036670 / 14003667c / 14003668c). The
+                            // dispatcher templates are `PUSHB 24; RS; IF` and the Consolas one is
+                            // `PUSHB 22; RS; IF`: GDI forces the standard Microsoft mode
+                            // dispatchers onto their storage==0 branch for the duration of the
+                            // call. Only itrp_CALL does this; itrp_LOOPCALL reads none of it.
+                            // WPF_CT_CALL_TWEAKS=0 turns all three off.
+                            _callSaveKind[callDepth - 1] = 0;
+                            if (s_callTweaks && ClearTypeInfo && !NativeClearTypeMode && !BiLevelPass)
+                            {
+                                if (id == 58 && _fdefFn58Diag)
+                                { _callSaveKind[callDepth - 1] = 1; _callSaveVal[callDepth - 1] = _gs.ControlValueCutIn; _gs.ControlValueCutIn = int.MaxValue; }
+                                else if (id >= 0x40 && id <= 0x42 && _fdefStorage22 && _storage.Length > 22)
+                                { _callSaveKind[callDepth - 1] = 2; _callSaveVal[callDepth - 1] = _storage[22]; _storage[22] = 0; }
+                                else if ((id < 3 || id == 4 || id == 7 || id == 8) && _fdefModeDispatch && _storage.Length > 24)
+                                { _callSaveKind[callDepth - 1] = 3; _callSaveVal[callDepth - 1] = _storage[24]; _storage[24] = 0; }
+                            }
                             code = _functions[id].Code;
                             ip = _functions[id].Start;
                             break;
@@ -2408,6 +2464,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _fdefModeDispatch;
 
         private readonly bool[] _callRearm = new bool[128];
+        private readonly byte[] _callSaveKind = new byte[128];
+        private readonly int[] _callSaveVal = new int[128];
+        /// <summary>gs+0x1c2 bit 8: a function in 0x40..0x42 begins `PUSHB 22; RS; IF`.</summary>
+        private bool _fdefStorage22;
+        /// <summary>gs+0x1c2 bit 11: function 58 is the ten-byte diagonal helper.</summary>
+        private bool _fdefFn58Diag;
+        private static readonly byte[] s_fdefStorage22 = { 0xB0, 0x16, 0x43, 0x58 };
+        private static readonly byte[] s_fdefFn58Diag = { 0x20, 0x20, 0xB0, 0x01, 0x60, 0x46, 0xB0, 0x40, 0x23, 0x42 };
+        /// <summary>WPF_CT_CALL_TWEAKS=0: itrp_CALL's three save-zero-restore behaviours off.</summary>
+        private static readonly bool s_callTweaks =
+            Environment.GetEnvironmentVariable("WPF_CT_CALL_TWEAKS") != "0";
         private readonly bool[] _callPhaseWas = new bool[128];
 
         private static readonly bool s_phaseRearm =
