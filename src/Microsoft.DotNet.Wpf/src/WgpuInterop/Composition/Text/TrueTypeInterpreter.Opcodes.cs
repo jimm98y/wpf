@@ -3382,6 +3382,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Whether SHP moves and touches a looped point that IS the reference point,
         /// as FreeType does, instead of skipping it.</summary>
+        /// <summary>WPF_CT_PHASE_SHC_LINK=1: SHC records a phase link per point, as it used to.
+        /// OFF BY DEFAULT since 2026-09-17 (measured neutral, 451,449 either way): itrp_SHC neither calls
+        /// AddDistance nor inlines it -- it is absent from the callers of AddDistance@1400354c8
+        /// and of IndirectlyDependsOn@140035a10 (MIRP, MDRP, IP, SHP_Common, AddProportion) --
+        /// it runs ExecutePhaseControl and adds the reference point's stored phase instead.</summary>
+        private static readonly bool s_shcLinks =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_SHC_LINK") == "1";
+
         private static readonly bool s_shpMovesRefPoint =
             Environment.GetEnvironmentVariable("WPF_CT_SHP_REF") == "move";
 
@@ -3442,7 +3450,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int p = first; p <= last && p < z.PointCount; p++)
                 if (p != refPoint || _gs.Zp2 != refZone)
                 {
-                    LinkX(_gs.Zp2, p, refZone, refPoint);
+                    if (s_shcLinks) LinkX(_gs.Zp2, p, refZone, refPoint);
                     MoveDirect(z, p, dx, dy, 0);
                 }
         }
