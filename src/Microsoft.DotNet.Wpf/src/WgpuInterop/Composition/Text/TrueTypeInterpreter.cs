@@ -2994,7 +2994,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 area += (long) _glyphZone.OrusX[i] * _glyphZone.OrusY[j]
                       - (long) _glyphZone.OrusX[j] * _glyphZone.OrusY[i];
             }
-            int w = (area < 0) == !s_phaseWindFlip ? 1 : 0;
+            // The area's sense: negative area (TrueType's clockwise outer, y up) is 0. The old
+            // WPF_CT_PHASE_WIND=0 flip only applies in the legacy "area" mode -- s_phaseWindFlip
+            // reads the same variable, and a mode name must not flip the sense as a side effect.
+            bool legacy = s_phaseWindMode == 0 && s_phaseWindConst < 0;
+            int areaSign = (area < 0) == !(legacy ? s_phaseWindFlip : true) ? 1 : 0;
+            int w = s_phaseWindMode == 1 ? PhaseNesting(c)
+                  : s_phaseWindMode == 2 ? (areaSign ^ PhaseNesting(c))
+                  : s_phaseWindConst >= 0 ? s_phaseWindConst : areaSign;
+            if (s_phaseDump)
+                Console.Error.WriteLine($"  WIND c={c} area={area} areaSign={areaSign} nest={PhaseNesting(c)} mode={s_phaseWindMode} const={s_phaseWindConst} -> {w}");
             _contourWind[c] = (sbyte) w;
             return w;
         }
@@ -3002,6 +3011,72 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>T when the point is x-touched, for the PHASEDUMP trace.</summary>
         private string TouchMark(int k) =>
             k < _realPoints && (_glyphZone.Tags[k] & TagTouchX) != 0 ? "T" : ".";
+
+        /// <summary>WPF_CT_PHASE_WIND=const1 / const0: every contour's flag is that constant, as
+        /// fs__Contour's fill at 140024740 would give if it writes w26 = 1 for all of them.</summary>
+        private static readonly int s_phaseWindConst =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_WIND") switch { "const1" => 1, "const0" => 0, _ => -1 };
+
+        /// <summary>WPF_CT_PHASE_WIND=nest: the flag is the contour's NESTING parity -- 1 for a hole,
+        /// 0 for an outer contour -- which is what fsg_CheckOutlineOrientation@14002c690 computes.
+        /// It zeroes every contour's byte (14002c6cc), skips contours of two points or fewer, finds
+        /// the four extreme points, and calls 14002bcb0 -- which walks EVERY contour of the element
+        /// from that extreme point -- for directions 0 and 2, using 1 or 3 only when those two
+        /// disagree, and sets bit 0 when the answer is 1 (14002cefc..cf08). A containment test at
+        /// an extreme point is orientation-independent, which is why the signed-area sign was wrong
+        /// on faces whose outer contours wind the other way, and why "always 0" was nearly right:
+        /// only holes carry a 1, and holes carry few phase links.</summary>
+        /// <summary>WPF_CT_PHASE_WIND=nest: nesting parity alone. =xor: the contour's winding XOR its
+        /// nesting parity -- 1 only when a contour winds the wrong way for its depth, which is what
+        /// an outline ORIENTATION CHECK reports, and 0 on every contour of a well-formed face.
+        /// Measured: nest equals the signed area on this corpus (380,873, both mark holes 1);
+        /// "always 0" is better (376,284), so GDI's holes carry 0; xor gives 0 everywhere here.</summary>
+        private static readonly int s_phaseWindMode =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_WIND") switch { "nest" => 1, "area" or "0" or "1" or "const0" or "const1" => 0, _ => 2 };
+
+        private int PhaseNesting(int c)
+        {
+            int[] xs = _glyphZone.OrusX, ys = _glyphZone.OrusY;
+            if (c < 0 || c >= _contourCount || c >= _glyphZone.Contours.Length) return 0;
+            int end = _glyphZone.Contours[c], start = c == 0 ? 0 : _glyphZone.Contours[c - 1] + 1;
+            if (end - start + 1 <= 2 || end >= xs.Length) return 0;
+            int iMinX = start, iMaxX = start, iMinY = start, iMaxY = start;
+            for (int i = start; i <= end; i++)
+            {
+                if (xs[i] < xs[iMinX]) iMinX = i; if (xs[i] > xs[iMaxX]) iMaxX = i;
+                if (ys[i] < ys[iMinY]) iMinY = i; if (ys[i] > ys[iMaxY]) iMaxY = i;
+            }
+            int a = NestParity(c, iMinX), b = NestParity(c, iMaxX);
+            if (a >= 0 && a == b) return a;
+            int d = NestParity(c, iMinY); if (d >= 0) return d;
+            int e = NestParity(c, iMaxY); if (e >= 0) return e;
+            return a >= 0 ? a : b >= 0 ? b : 0;
+        }
+
+        /// <summary>Even-odd containment of point pi inside every contour other than c, by a ray to
+        /// +x in design units; -1 when the ray meets a vertex or edge exactly (ambiguous).</summary>
+        private int NestParity(int c, int pi)
+        {
+            int[] xs = _glyphZone.OrusX, ys = _glyphZone.OrusY;
+            long px = xs[pi], py = ys[pi];
+            int crossings = 0, s0 = 0;
+            for (int o = 0; o < _contourCount && o < _glyphZone.Contours.Length; o++)
+            {
+                int oEnd = _glyphZone.Contours[o], oStart = s0; s0 = oEnd + 1;
+                if (o == c || oEnd < oStart || oEnd >= xs.Length) continue;
+                for (int i = oStart; i <= oEnd; i++)
+                {
+                    int j = i == oEnd ? oStart : i + 1;
+                    long x1 = xs[i], y1 = ys[i], x2 = xs[j], y2 = ys[j];
+                    if ((y1 > py) == (y2 > py)) continue;
+                    long num = (py - y1) * (x2 - x1), den = y2 - y1;
+                    long xint = x1 + num / den;
+                    if (xint == px && num % den == 0) return -1;
+                    if (xint > px) crossings++;
+                }
+            }
+            return crossings & 1;
+        }
 
         private sbyte[] _contourWind;
         private int _contourWindGlyph = -1, _phaseGlyphStamp;
