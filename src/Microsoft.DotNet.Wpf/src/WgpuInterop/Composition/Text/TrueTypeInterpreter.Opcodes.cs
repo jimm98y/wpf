@@ -126,8 +126,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // is the bit itrp_MD then asks for, so the whole chain is: this face's
                             // function 0 is the recognised helper, the glyph program has read
                             // storage at least once, and both IUPs have run.
-                            if (_fdefAddHelper) _mdBit3 = true;
+                            // THE PARAGRAPH ABOVE IS WRONG ON BOTH COUNTS, read again from the
+                            // binary. itrp_RS@14003d258 pops the index into w10 and then
+                            //     cmp w10,#0x8 ; b.eq 14003d2a4          -- ONLY storage index 8
+                            //     14003d2a4: if (globals[0x1c0] & 1 && !(globals[0x88] & 4)
+                            //                    && (globals[0x1c2] & 0x400)) {
+                            //         globals[0x1c2] |= 0x8;
+                            //         ldr x8,[x0,#0x28] ; str wzr,[x8]  -- gs+0x28 is the STACK
+                            //                                              pointer: the result
+                            //                                              slot is written ZERO
+                            //         b 14003d290                        -- push it, skipping the
+                            //                                              storage load
+                            //     }
+                            // so on a face whose function 0 is the add-helper, every `RS 8` in the
+                            // ClearType pass ANSWERS 0 -- and storage[8] is the standard Microsoft
+                            // prep's "run the post-IUP counter control" flag, which Times' glyph
+                            // programs test with `RS 8; JROF` right after IUP. GDI skips that whole
+                            // block; we were running it and suppressing its moves by hand
+                            // (s_alignrpTouchedOnly and friends), which leaves its SROUND, WCVTF
+                            // and SFVFS side effects behind. WPF_CT_RS8=0 restores the old reading.
                             int i = Pop();
+                            if (s_rs8Zero && i == 8 && _fdefAddHelper && ClearTypeInfo
+                                && !NativeClearTypeMode && !BiLevelPass)
+                            { _mdBit3 = true; Push(0); break; }
+                            if (_fdefAddHelper && !s_rs8Zero) _mdBit3 = true;
                             Push((uint)i < _storage.Length ? _storage[i] : 0);
                             break;
                         }
@@ -2343,6 +2365,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// function 0 (fontdrvhost+0xa87b0).</summary>
         private static readonly bool s_fdefDump =
             Environment.GetEnvironmentVariable("WPF_FDEF_DUMP") == "1";
+
+        /// <summary>WPF_CT_RS8=0: RS of storage 8 keeps returning the stored value on add-helper
+        /// faces, as it did before itrp_RS was read properly. See the RS handler.</summary>
+        private static readonly bool s_rs8Zero =
+            Environment.GetEnvironmentVariable("WPF_CT_RS8") != "0";
 
         private static readonly byte[] s_fdefAddHelper =
             { 0x45, 0x23, 0x46, 0x60, 0x20, 0xB0, 0x26 };
