@@ -1972,8 +1972,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // that its vector line is already -1 at that MDRP where ours still holds the pair --
             // which would send it down InterAlign's failure path to AddDistance. The writers of
             // gs+0xce are SVTCA_0/1, SPVTCA_0/1, SPVTL, SDPVTL and WPV, the same five sites we
-            // clear at; a 32-bit store at 0xcc would also cover it and none was found. Unresolved;
-            // recording both reproduces the pixels and stays.</para>
+            // clear at; a 32-bit store at 0xcc would also cover it and none was found. And the
+            // store itself is unconditional for in-range points: itrp_SDPVTL@14003d870 and
+            // itrp_SPVTL@14003f208 write both halves after a bounds check whose `cmp w9,w14` uses
+            // x9 = (0|4) + lastContourEnd (+1) from 14003d844/858, not the contour count, and
+            // whose failure is the error exit 0x1112 at 14003d760. So the line is not cleared
+            // early either. Unresolved; recording both reproduces the pixels and stays.</para>
             // WPF_CT_PHASE_PROP_ONLY=2: after a proportion, run only the dependency check the
             // extra AddDistance would have run -- raise the cycle flag, record nothing.
             if (s_propCycleOnly && tookProportion)
