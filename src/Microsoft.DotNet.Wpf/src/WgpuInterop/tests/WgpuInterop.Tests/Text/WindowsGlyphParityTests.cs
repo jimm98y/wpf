@@ -6152,10 +6152,17 @@ namespace WgpuInterop.Tests.Text
                 return kind;
             }
 
-            static SortedSet<int> Edges(List<PathFigure> figures)
+            // WPF_EDGESOLVE_AXIS=y SOLVES THE HORIZONTAL EDGES INSTEAD. Everything below is
+            // written in terms of "the coordinate being solved": the keys come from y, the search
+            // moves points in y, and the rigid pre-shift runs in x. It is the same instrument
+            // turned ninety degrees, and it is the only oracle we have for the ClearType pass's
+            // Y -- GGO answers with the BI-LEVEL fit whatever the DC says, so y has never had one.
+            bool solveY = Environment.GetEnvironmentVariable("WPF_EDGESOLVE_AXIS") == "y";
+
+            SortedSet<int> Edges(List<PathFigure> figures)
             {
                 var keys = new SortedSet<int>();
-                void See(Vector2 p) => keys.Add((int) MathF.Round(p.X * 64f));
+                void See(Vector2 p) => keys.Add((int) MathF.Round((solveY ? p.Y : p.X) * 64f));
                 foreach (PathFigure f in figures)
                 {
                     See(f.Start);
@@ -6238,8 +6245,10 @@ namespace WgpuInterop.Tests.Text
                     Vector2 M(Vector2 p)
                     {
                         int slot = perPoint ? placedIndex++
-                                            : Array.IndexOf(edge, (int) MathF.Round(p.X * 64f));
-                        return new(PenX + p.X + delta[slot] / 64f, 28f + p.Y + dyAll / 64f);
+                                            : Array.IndexOf(edge, (int) MathF.Round((solveY ? p.Y : p.X) * 64f));
+                        return solveY
+                            ? new(PenX + p.X + dyAll / 64f, 28f + p.Y + delta[slot] / 64f)
+                            : new(PenX + p.X + delta[slot] / 64f, 28f + p.Y + dyAll / 64f);
                     }
                     var placed = new List<PathFigure>(fitted.Count);
                     foreach (PathFigure f in fitted)
