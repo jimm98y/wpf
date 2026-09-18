@@ -3958,8 +3958,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 //     else skip;
                 // which is the paper's 'it creates a dent in the outline' case: a post-IUP delta landing on
                 // a point the program never placed. WPF_CT_DELTA_UNTOUCHED=1 runs them again.
+                // AND THE SECOND HALF OF THE SAME CONDITION: `!(globals[0x1c2] >> 1 & 1)`, the
+                // flag itrp_IUP sets at the END of its run (`globals[0x1c2] |= ((axis & 1) ^ 1) + 1`,
+                // so bit 0 for IUP[x] and bit 1 for IUP[y]). Once IUP[y] has run, a y-direction
+                // delta is dropped WHATEVER the point's touch flag says -- the dent rule is about
+                // the interpolation having already happened, not only about the point.
+                // WPF_CT_DELTA_AFTERIUPY=0 keeps the touch test alone.
                 if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
-                    && (uint) p < (uint) z.PointCount && (z.Tags[p] & TagTouchY) == 0)
+                    && (uint) p < (uint) z.PointCount
+                    && ((z.Tags[p] & TagTouchY) == 0 || (s_deltaAfterIupY && _iupYDone)))
                     continue;
                 if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)
                     && (!s_yTrace || Skipped("DELTA", p, amount)))
@@ -4013,6 +4020,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// denting it, which is how diacritics keep clear of their base.</para>
         private static readonly bool s_deltaOnUntouchedY =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_UNTOUCHED") == "1";
+
+        private static readonly bool s_deltaAfterIupY =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_AFTERIUPY") != "0";
 
         /// </summary>
         private bool Skipped(string what, int p, int amount)
