@@ -3767,7 +3767,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // so the choice of anchor is the entire result, not a rounding of it. Flat runs are
             // serifs and bars: two touched points that differ in the design but land on the same
             // reference coordinate. WPF_CT_IUP_FLATTIE=0 restores the old tie.</para>
-            int orus1 = orus[ref1], orus2 = orus[ref2];
+            // ...ALONG THE SAME ARRAY IT INTERPOLATES IN. itrp_IUP loads ONE reference array
+            // into lVar38 -- orus, or org when gs[0x196] is set -- and that single array decides
+            // the endpoint order, the zero-span test and the ratio alike. We were ordering by
+            // font units while WPF_CT_IUP_REF=scaled interpolated along the grid, which is a
+            // third rule that is in neither branch of the binary, so the old measurement of that
+            // knob did not test what it said it did.
+            int[] rf = s_iupRefScaled ? org : orus;
+            int orus1 = rf[ref1], orus2 = rf[ref2];
             if (s_iupFlatTie ? orus1 >= orus2 : orus1 > orus2)
             {
                 (orus1, orus2) = (orus2, orus1);
@@ -3836,8 +3843,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // WPF_CT_IUP_ONESTEP=0 restores the two-step form.</para>
                 if (s_iupOneStep)
                 {
-                    long den = s_iupRefScaled ? org2 - org1 : orus2 - orus1;
-                    long num = s_iupRefScaled ? org[i] - org1 : orus[i] - orus1;
+                    long den = orus2 - orus1;
+                    long num = rf[i] - orus1;
                     long span = (long) (org2 + delta2) - (org1 + delta1);
                     cur[i] = den == 0 ? org1 + delta1
                            : (int) ((num * span + (den >> 1)) / den) + org1 + delta1;
@@ -3861,11 +3868,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // reference array, which is the scaled original too unless gs[0x196] is
                     // clear (a child-scaling case). We always ran the ratio on FONT UNITS.
                     // WPF_CT_IUP_REF=orus keeps that.
-                    scale = s_iupRefScaled
-                        ? DivFix((org2 + delta2) - (org1 + delta1), org2 - org1)
-                        : DivFix((org2 + delta2) - (org1 + delta1), orus2 - orus1);
+                    scale = DivFix((org2 + delta2) - (org1 + delta1), orus2 - orus1);
                 }
-                cur[i] = org1 + delta1 + MulFix(s_iupRefScaled ? org[i] - org1 : orus[i] - orus1, scale);
+                cur[i] = org1 + delta1 + MulFix(rf[i] - orus1, scale);
             }
         }
 
