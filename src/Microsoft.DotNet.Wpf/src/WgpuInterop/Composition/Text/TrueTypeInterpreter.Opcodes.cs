@@ -2251,6 +2251,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>MDRP measures its original distance in font units and scales it once, as MD
         /// does; WPF_MDRP_EXACT=0 subtracts the scaled points instead. See the MDRP site.</summary>
+        private static readonly bool s_mirpExact =
+            Environment.GetEnvironmentVariable("WPF_MIRP_EXACT") == "1";
+
         private static readonly bool s_mdrpExact =
             Environment.GetEnvironmentVariable("WPF_MDRP_EXACT") != "0";
 
@@ -3047,7 +3050,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 z.CurY[p] = z.OrgY[p];
             }
 
-            int original = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
+            // NOT FROM THE FONT UNITS, and the reading that said otherwise is REFUTED.
+            // itrp_MIRP@14003ae90 does read the ORUS arrays (elem+0x20 / +0x28) early on, but the
+            // number it compares against the control value -- the one this variable stands for --
+            // is taken from the SCALED points at elem+0x10, which the general path spells out:
+            //     if (gs+0x78 == XProject) uVar12 = org[p] - org[rp0];
+            // Measuring it from the font units instead costs 160,147 -> 704,111, because every
+            // cut-in decision it feeds flips on the sixty-fourth it moves. MDRP is the opposite
+            // case and does measure from ORUS (WPF_MDRP_EXACT, on). WPF_MIRP_EXACT=1 measures the
+            // font-unit reading again.
+            int original = s_mirpExact && !(linkType == 1 && s_blackOnInk && _preScaled)
+                ? MeasureOriginalExact(_gs.Zp1, p, _gs.Zp0, _gs.Rp0)
+                : MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, black: linkType == 1);
             int current = MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
 
             if (_dumpActive)
