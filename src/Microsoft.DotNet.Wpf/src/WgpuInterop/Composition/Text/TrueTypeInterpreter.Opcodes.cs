@@ -2743,7 +2743,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// v = v / 2`, and localGS+0xcc is the ClearType axis. The 2 is the binary's.</para>
         /// </summary>
         private int EffectiveMinimumDistance()
-            => InClearTypeDirection && !s_fullMinDistance && !BiLevelPass && s_minDistDiv > 1
+            => CtLatch && !s_fullMinDistance && !BiLevelPass && s_minDistDiv > 1
                    ? _gs.MinimumDistance / s_minDistDiv
                    : _gs.MinimumDistance;
 
@@ -2998,7 +2998,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // a STROKE WEIGHT", which is an UNROUNDED MIRP. A rounded one is spacing, and spacing
             // would keep the cut-in the face asked for.
             bool shrink = !s_cutInFull && !BiLevelPass
-                          && (s_cutInAxisExact ? OnClearTypeAxis : InClearTypeDirection)
+                          && (s_cutInAxisExact ? OnClearTypeAxis : CtLatch)
                           && !(s_cutInUnroundedOnly && round);
             int cutIn = (shrink ? _gs.ControlValueCutIn / s_cutInDivisor
                                 : _gs.ControlValueCutIn) * stretch;

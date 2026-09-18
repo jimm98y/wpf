@@ -1128,6 +1128,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// (mean ratio 0.9936 -> 0.9956, light rows 35 -> 30) while the PLACEMENT worsens (heavy rows
         /// 4 -> 11). So the rounding is right and something downstream misplaces the ink it buys;
         /// fixing this needs that second half found first.</para></summary>
+        /// <summary>The ClearType-axis latch localGS+0xcc as GDI keeps it: set by every
+        /// projection-vector instruction from the 0x1c0 bits alone, with NO mode test -- so it is
+        /// live in the PRE-PROGRAM too. itrp_MIRP's sixteenth cut-in and the halved minimum
+        /// distance read this latch and nothing else; only the ROUNDING functions add the
+        /// "mode != 0 or native" condition (itrp_RTG@14003d340 etc.), which is what keeps the
+        /// pre-program on whole pixels. InClearTypeDirection below excludes the pre-program for
+        /// everything; this is the latch for the two rules that do not. WPF_CT_PREP_LATCH=0
+        /// restores the old exclusion for them.</summary>
+        internal bool CtLatch =>
+            s_prepLatch && _inPreProgram
+                ? ClearTypeInfo && (s_ctAxisNotPureY ? NotPureYProjection : IsHorizontalProjection) && SubpixelGridHere
+                : InClearTypeDirection;
+
+        private static readonly bool s_prepLatch =
+            Environment.GetEnvironmentVariable("WPF_CT_PREP_LATCH") != "0";
+
         internal bool InClearTypeDirection =>
             ClearTypeInfo && (s_ctAxisNotPureY ? (s_ctDirLatched ? _ctDirFlag : NotPureYProjection) : IsHorizontalProjection) && (CtRoundingInPrep || !_inPreProgram) && SubpixelGridHere;
 
