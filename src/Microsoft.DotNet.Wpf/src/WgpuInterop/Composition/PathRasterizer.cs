@@ -870,7 +870,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // weights AND the wrong domain -- it averages coverages where GDI averages levels and
                 // rounds once. Only then does the level become a pixel, through a seven-entry ramp.
                 int nSub = FilterBeforeVerticalAverage && SubpixelRowsForRun > 1 ? SubpixelRowsForRun : 1;
-                var lev = new byte[nSub][];
                 // ONE GLYPH AT A TIME, because that is the only thing GDI ever does: ExtTextOutW
                 // rasterizes each glyph into its OWN bitmap and blits it, so the dropout pass sees
                 // one glyph's contours, one glyph's box, and no neighbours at all. Handing it a
@@ -884,52 +883,86 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // the serif lands a row low: "yn" 4,088, "pn" 4,225, while "bn" (no descender)
                 // stays 0. Nothing else in the corpus does this; every other face measures
                 // identically for "n" and "yn".</para>
-                List<(int Col, int SubRow)>? fills = null;
-                if (DropoutForRun > 0)
-                {
-                    int[]? owners = s_dropoutPerGlyph ? FigureGlyphIdsForRun : null;
-                    fills = new List<(int Col, int SubRow)>();
-                    int first = 0;
-                    while (first < polysG.Count)
-                    {
-                        int gid = GlyphOf(owners, contourFigures, first);
-                        int last = first + 1;
-                        while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
-                        List<List<Vector2>> group = first == 0 && last == polysG.Count
-                            ? polysG : polysG.GetRange(first, last - first);
-                        fills.AddRange(GdiDropoutFills(group, path.FillRule, originX, originY,
-                                                       width, height, nSub));
-                        first = last;
-                    }
-                }
-                LastDropoutFills = fills?.Count ?? -1; LastDropoutRuns++;
-                for (int sI = 0; sI < nSub; sI++)
-                    lev[sI] = GdiTableFilterRowset(polysG, path.FillRule, originX, originY,
-                                                   width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
-                                                   originalVertex);
-                var outG = new byte[width * height * 4];
+                int[]? owners = s_dropoutPerGlyph ? FigureGlyphIdsForRun : null;
+                // ...AND THE GLYPHS ARE FILTERED AND BLENDED ONE AT A TIME TOO. GDI renders each
+                // glyph of a run into its own bitmap through the 6x1/6x5 filter and blits it onto
+                // the destination in turn, so where two neighbours' ink or filter tails overlap
+                // the pixel is the sequential blend of two finished glyphs -- 1 - (1-a)(1-b) per
+                // channel -- and never the filter of their union. Rasterizing the whole run as
+                // one outline is what made a row score more than the sum of its glyphs rendered
+                // alone: 49k of the 277k holdout, on the tight faces (Times Bold at 24, Tahoma
+                // Italic at 8, Segoe UI Italic). WPF_CT_RUN_COMPOSITE=0 rasterizes the union.
+                bool composite = s_runComposite && owners is not null;
                 bool gdiKernel = nSub == GdiVerticalKernel.Length;
                 int weightSum = 0;
                 if (gdiKernel) foreach (int w in GdiVerticalKernel) weightSum += w;
-                for (int px = 0; px < width * height; px++)
+                var outG = new byte[width * height * 4];
+                int totalFills = 0;
+                int first = 0;
+                while (first < polysG.Count)
                 {
-                    int sumC = 0;
-                    for (int ch = 0; ch < 3; ch++)
+                    int gid = GlyphOf(owners, contourFigures, first);
+                    int last = first + 1;
+                    if (composite || DropoutForRun > 0)
+                        while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
+                    if (!composite) last = polysG.Count;
+                    List<(int Col, int SubRow)>? fills = null;
+                    if (DropoutForRun > 0)
                     {
-                        int s = 0;
-                        if (gdiKernel)
-                            for (int sI = 0; sI < nSub; sI++) s += GdiVerticalKernel[sI] * lev[sI][px * 4 + ch];
+                        fills = new List<(int Col, int SubRow)>();
+                        if (composite)
+                            fills.AddRange(GdiDropoutFills(polysG.GetRange(first, last - first), path.FillRule,
+                                                           originX, originY, width, height, nSub));
                         else
-                            for (int sI = 0; sI < nSub; sI++) s += lev[sI][px * 4 + ch];
-                        int div = gdiKernel ? weightSum : nSub;
-                        int outLvl = (s + div / 2) / div;
-                        if (outLvl > 6) outLvl = 6;
-                        byte cov = GdiLevelRamp[outLvl];
-                        outG[px * 4 + ch] = cov;
-                        sumC += cov;
+                        {
+                            int f0 = 0;
+                            while (f0 < polysG.Count)
+                            {
+                                int g0 = GlyphOf(owners, contourFigures, f0);
+                                int l0 = f0 + 1;
+                                while (l0 < polysG.Count && GlyphOf(owners, contourFigures, l0) == g0) l0++;
+                                List<List<Vector2>> group = f0 == 0 && l0 == polysG.Count
+                                    ? polysG : polysG.GetRange(f0, l0 - f0);
+                                fills.AddRange(GdiDropoutFills(group, path.FillRule, originX, originY,
+                                                               width, height, nSub));
+                                f0 = l0;
+                            }
+                        }
+                        totalFills += fills.Count;
                     }
-                    outG[px * 4 + 3] = (byte) (sumC / 3);
+                    List<List<Vector2>> polysOne = composite ? polysG.GetRange(first, last - first) : polysG;
+                    var lev = new byte[nSub][];
+                    for (int sI = 0; sI < nSub; sI++)
+                        lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
+                                                       width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
+                                                       originalVertex);
+                    for (int px = 0; px < width * height; px++)
+                    {
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            int sum = 0;
+                            if (gdiKernel)
+                                for (int sI = 0; sI < nSub; sI++) sum += GdiVerticalKernel[sI] * lev[sI][px * 4 + ch];
+                            else
+                                for (int sI = 0; sI < nSub; sI++) sum += lev[sI][px * 4 + ch];
+                            int div = gdiKernel ? weightSum : nSub;
+                            int outLvl = (sum + div / 2) / div;
+                            if (outLvl > 6) outLvl = 6;
+                            int cov = GdiLevelRamp[outLvl];
+                            if (cov == 0) continue;
+                            int have = outG[px * 4 + ch];
+                            // the second glyph blended over the first: 1 - (1-a)(1-b); or, with
+                            // WPF_CT_RUN_COMPOSITE=max, the larger of the two
+                            outG[px * 4 + ch] = s_runCompositeMax ? (byte) Math.Max(have, cov)
+                                              : s_runCompositeAdd ? (byte) Math.Min(255, have + cov)
+                                              : (byte) (have + cov - (have * cov + 127) / 255);
+                        }
+                    }
+                    first = last;
                 }
+                LastDropoutFills = DropoutForRun > 0 ? totalFills : -1; LastDropoutRuns++;
+                for (int px = 0; px < width * height; px++)
+                    outG[px * 4 + 3] = (byte) ((outG[px * 4] + outG[px * 4 + 1] + outG[px * 4 + 2]) / 3);
                 return new SubpixelMask(outG, width, height, originX, originY);
             }
 
@@ -1421,15 +1454,54 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 var on = new List<(int, float)>(); var off = new List<(int, float)>();
                 float sy = R + 0.5f;
                 foreach (Vector2[] a in P)
-                    for (int i = 0; i < a.Length; i++)
+                {
+                    int m = a.Length;
+                    for (int i = 0; i < m; i++)
                     {
-                        Vector2 p = a[i], q = a[(i + 1) % a.Length];
+                        Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.Y == q.Y) continue;
                         float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
-                        if (sy < lo || sy >= hi) continue;
+                        // THE SAME ROW RULE AS THE FILL: strictly between the ends
+                        // (fsc_CalcLine), a vertex on the row by CheckHorizTopology below.
+                        if (s_rowEdgeTopology ? (sy <= lo || sy >= hi) : (sy < lo || sy >= hi)) continue;
                         float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
                         if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
                     }
+                    if (!s_rowEdgeTopology) continue;
+                    // CheckHorizTopology@1400443f8 in this frame, which is y-UP: "up" is a larger y.
+                    for (int i = 0; i < m; i++)
+                    {
+                        Vector2 p = a[i];
+                        if (p.Y != sy) continue;
+                        if (a[(i - 1 + m) % m] == p) continue;
+                        Vector2 pp = p, n = p;
+                        for (int k = 1; k < m; k++) { int ip = (i - k + m) % m; if (a[ip] != p) { pp = a[ip]; break; } }
+                        for (int k = 1; k < m; k++) { int inx = (i + k) % m; if (a[inx] != p) { n = a[inx]; break; } }
+                        if (pp == p || n == p) continue;
+                        bool nUp = n.Y > p.Y, nLevel = n.Y == p.Y;
+                        bool ppBelow = pp.Y < p.Y, ppLevel = pp.Y == p.Y, ppAbove = pp.Y > p.Y;
+                        void On() => on.Add((OnIdx(p.X), p.X));
+                        void Off() => off.Add((OffIdx(p.X), p.X));
+                        if (nUp)
+                        {
+                            if (ppBelow) On();
+                            else if (ppLevel) { if (pp.X > p.X) On(); }
+                            else { On(); Off(); }
+                        }
+                        else if (nLevel)
+                        {
+                            if (ppBelow) { if (n.X > p.X) On(); }
+                            else if (ppAbove || pp.X < p.X) { if (p.X > n.X) Off(); }
+                            else { if (n.X > p.X) On(); }
+                        }
+                        else
+                        {
+                            if (ppAbove) Off();
+                            else if (ppLevel) { if (p.X > pp.X) Off(); }
+                            else { On(); Off(); }
+                        }
+                    }
+                }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 rowOn[R] = on; rowOff[R] = off;
@@ -1451,8 +1523,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 List<(int I, float V)> on = rowOn[R], off = rowOff[R];
                 for (int k = 0; k < on.Count && k < off.Count; k++)
-                    for (int C = Math.Max(0, on[k].I); C < Math.Min(nCols, off[k].I); C++)
+                {
+                    // fsc_FillBitMap fills between the pair either way round (see the fill).
+                    int lo = on[k].I, hi = off[k].I;
+                    if (s_rowEdgeTopology && hi < lo) (lo, hi) = (hi, lo);
+                    for (int C = Math.Max(0, lo); C < Math.Min(nCols, hi); C++)
                         bits[R * nCols + C] = true;
+                }
             }
             bool Bit(int C, int R) => C >= 0 && C < nCols && R >= 0 && R < nRows && bits[R * nCols + C];
             var fills = new List<(int, int)>();
@@ -2202,6 +2279,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// figure on one scale is -29.4%.</para></summary>
         private static readonly bool s_dropoutPerGlyph =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_PERGLYPH") != "0";
+
+        /// <summary>How a run's glyphs are put together. GDI filters each glyph into its own
+        /// bitmap (fontdrvhost's ulClearTypeFilter_6x1 runs per glyph) and the composition of
+        /// neighbours whose ink or filter tails touch is in win32k, which this port has not
+        /// read; so the rule here is the best of three measured models, not a reading.
+        /// Holdout 8..24: union outline filtered once 276,915 (THE DEFAULT); per-glyph filtered
+        /// bitmaps ADDED with saturation 262,494 (=add) -- but that fails 43 of the 452 per-glyph
+        /// ratchets (the Segoe UI repertoire runs at 10-20ppem, both the pixel-coverage and the
+        /// ink tests), which outrank the holdout, so it is not shipped; blended 1-(1-a)(1-b)
+        /// 324,934 (=blend); per-channel MAX 405,538 (=max). All of the holdout gain under =add
+        /// is on the 8-10ppem rows, where neighbours sit a lamp apart; a glyph rendered alone is
+        /// unchanged by any of them. The true rule needs win32k's text composition read.</summary>
+        private static readonly bool s_runComposite =
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") is "add" or "blend" or "max";
+        private static readonly bool s_runCompositeMax =
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") == "max";
+        private static readonly bool s_runCompositeAdd =
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") == "add";
 
         private static int GlyphOf(int[]? owners, List<int> contourFigures, int contour)
         {
