@@ -4176,6 +4176,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_yTrace)
                     Console.Error.WriteLine("YMOVE pt=" + point + " d=" + distance
                         + " fx=" + _gs.FreeX + " fy=" + _gs.FreeY
+                        + " pf=" + _dotProduct + " step=" + FreedomStepY(distance, _gs.FreeY)
+                        + " exact=" + (_dotProduct == 0 ? 0
+                            : (double) ((long) _gs.FreeY * distance) / _dotProduct).ToString("0.000")
                         + (refuse ? " REFUSED" : " y=" + zone.CurY[point]));
             }
         }
@@ -4219,7 +4222,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// y symmetrically as before.</summary>
         private int FreedomStepY(int distance, int component)
         {
-            if (!s_freeStepExact || !s_yMoveTrunc) return FreedomStep(distance, component);
+            // IN BOTH PASSES, AND THAT WAS TESTED RATHER THAN ASSUMED. The twelve single y
+            // points GDI's own bi-level fitted points still disagree on are ALL a diagonal
+            // freedom vector on a diagonal glyph -- Arial 'X' at 13 and 16, Times Roman 'k' at 14
+            // and 'x' at 19, Times Bold 'A' at 9 and 'k' at 21, Arial Italic 'R' at 18 -- and all
+            // out by exactly 2/64. Arial 'X' at 13ppem is the worked case: point 6's last move is
+            // distance -18 along a freedom vector of (-14049, 8429) with a projection dot of
+            // 16383, so the exact step is -9.261; adding the divisor's magnitude unsigned and
+            // truncating gives -8, rounding symmetrically gives -9, and GDI has -9.
+            // <para>So gating this to the ClearType pass, the way the side-bearing snap had to be
+            // gated, looks obvious and is WRONG. It makes Arial exact at 13 and 16 and breaks
+            // Times: over the whole sweep of 306 combinations it takes the perfectly clean count
+            // from 280 down to 219. WPF_CT_YMOVE_TRUNC=ct measures that again, =0 turns the form
+            // off entirely.</para>
+            // <para>AND THE ARITHMETIC IS NOT THE PROBLEM EITHER, because it is now read rather
+            // than inferred. itrp_MovePoint@14003bfa0's y half is
+            //     if (dot == freeY) y += distance;
+            //     else { n = freeY * distance + (dot &lt; 0 ? -(dot/2) : dot/2); y += n / dot; }
+            // -- the half carries the DOT's sign, not the numerator's, and the divide truncates
+            // toward zero. That is exactly this function. For Arial 'X' point 6 it gives -8, which
+            // is what we produce, so GDI reaches its 382 by a different ROUTE, not by rounding
+            // this move differently. The projection dot is not it either:
+            // itrp_ComputeAndCheck_PF_Proj@1400367f8 rounds the two products separately and adds,
+            // `((fx*px + 0x2000) >> 14) + ((fy*py + 0x2000) >> 14)`, which is our ResetProjection
+            // and which is where the 16383 comes from on both sides; its only adjustment snaps a
+            // dot NEAR ZERO to +/-0x4000, and 16383 is nowhere near it.</para>
+            // <para>So the twelve y points are a difference in WHICH INSTRUCTIONS RUN, not in what
+            // any of them computes -- the touch-set frontier, now narrowed to seven glyphs.</para>
+            if (!s_freeStepExact || !s_yMoveTrunc
+                || (BiLevelPass && s_yMoveTruncMode == "ct"))
+                return FreedomStep(distance, component);
             if (_dotProduct == 0x4000)
                 return (int) (((((long) component * distance) >> 13) + 1) >> 1);
             if (component == _dotProduct) return distance;
@@ -4228,8 +4260,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) ((num + half) / _dotProduct);
         }
 
-        private static readonly bool s_yMoveTrunc =
-            Environment.GetEnvironmentVariable("WPF_CT_YMOVE_TRUNC") != "0";
+        private static readonly string s_yMoveTruncMode =
+            Environment.GetEnvironmentVariable("WPF_CT_YMOVE_TRUNC") ?? "";
+
+        private static readonly bool s_yMoveTrunc = s_yMoveTruncMode != "0";
 
         /// <summary>Move a point without regard to the freedom vector: SHPIX's job, and the one
         /// place a program says "this far, in x and y" rather than "this far, that way".</summary>
