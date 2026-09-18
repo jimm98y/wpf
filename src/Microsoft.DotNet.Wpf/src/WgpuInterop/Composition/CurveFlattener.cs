@@ -109,6 +109,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                            System.Globalization.CultureInfo.InvariantCulture, out float gt)
                 && gt > 0 ? gt : 0.0001f;
 
+        // AND IT IS CONVERGED. A sweep on the 90-row specimen, with the step cap raised so that
+        // the cap is not what a curve actually gets: a ten-thousandth of a pixel measures 45,362,
+        // two millionths 45,128, and a ten-millionth 45,228 -- DOWN AND THEN BACK UP, and
+        // identical at 256 and 4096 steps. A converging quantity does not do that. What moves is
+        // the flattening vertices landing on different sides of sample centres, so the 234 (and
+        // the holdout's 2,775) is tie noise, not chord error being removed. Do not lower the
+        // tolerance chasing it: it costs five times the run time and buys a coin toss.
+
         /// <summary>The tolerance a caller gets when it does not name one. WPF_CURVE_TOL.
         /// <para>Worth a knob because 0.025px is not obviously below the floor for TEXT. A
         /// flattening chord sags INWARD on a convex curve, so it can only ever under-cover,
@@ -124,7 +132,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Upper bounds. A degenerate control point (NaN, or a coordinate near float.Max) must
         // not be able to turn one curve into an unbounded vertex stream; the caps also keep
         // the GPU per-fragment segment loops finite.
-        private const int MaxCurveSteps = 256;
+        /// <summary>WPF_CURVE_MAXSTEPS raises the cap. Below about a ten-thousandth of a pixel
+        /// the cap, not the tolerance, is what a glyph curve actually gets, so a convergence
+        /// sweep has to move both.</summary>
+        private static readonly int MaxCurveSteps =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_MAXSTEPS"), out int ms)
+                && ms > 0 ? ms : 256;
         private const int MaxRingSteps = 512;
 
         /// <summary>
