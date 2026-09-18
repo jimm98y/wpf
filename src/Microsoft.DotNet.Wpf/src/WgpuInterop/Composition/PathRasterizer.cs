@@ -1475,6 +1475,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // because rounding to centres collapses the box and takes the row away.
             int xMin = Math.Max(0, (int) MathF.Floor(xLo)), xMax = Math.Min(nCols, (int) MathF.Ceiling(xHi));
             int yMin = Math.Max(0, (int) MathF.Floor(yLo)), yMax = Math.Min(nRows, (int) MathF.Ceiling(yHi));
+            if (s_dropoutGdiBox)
+            {
+                // ...AND THE BOX IS fs_FindBitMapSize's, IN WHOLE PIXELS: rows (ymin+0x1f)>>6 to
+                // (ymax+0x20)>>6 of the 26.6 outline (one row more when those are equal), and the
+                // same for columns, which the ClearType scan then multiplies by its overscale
+                // (fs_ContourScan@1400244c0: [0x2d4]/[0x2d8] *= [0x49a]). A vertex a sixty-fourth
+                // below the baseline does NOT open the row beneath it -- Segoe UI Italic 'x' dips
+                // 1/64 at its leg ends at every size, and we had been giving its dropout fills a
+                // sub-row GDI's bitmap has not got, then filtering that into a faint extra row.
+                // Rounding outward to whole samples (above) kept the slab probe's half-sample
+                // slab alive; so does this, through the "+1 when equal". WPF_CT_DROPOUT_BOX=0.
+                int gx0 = int.MaxValue, gx1 = int.MinValue, gy0 = int.MaxValue, gy1 = int.MinValue;
+                foreach (List<Vector2> poly in polys)
+                    foreach (Vector2 pt in poly)
+                    {
+                        int x64 = (int) MathF.Round(pt.X * 64f), y64 = (int) MathF.Round(pt.Y * 64f);
+                        if (x64 < gx0) gx0 = x64; if (x64 > gx1) gx1 = x64;
+                        if (y64 < gy0) gy0 = y64; if (y64 > gy1) gy1 = y64;
+                    }
+                int colMin = (gx0 + 0x1f) >> 6, colMax = (gx1 + 0x20) >> 6;
+                int rowMin = (gy0 + 0x1f) >> 6, rowMax = (gy1 + 0x20) >> 6;
+                if (colMax == colMin) colMax++;
+                if (rowMax == rowMin) rowMax++;
+                xMin = Math.Max(0, (colMin - originX) * SubpixelsPerPixel * 2);
+                xMax = Math.Min(nCols, (colMax - originX) * SubpixelsPerPixel * 2);
+                yMin = Math.Max(0, nRows - (rowMax - originY) * nSub);
+                yMax = Math.Min(nRows, nRows - (rowMin - originY) * nSub);
+            }
             if (xMin >= xMax || yMin >= yMax) return new List<(int, int)>();
 
             // Four crossing lists, exactly the four arrays the scan converter keeps: per column
@@ -2347,6 +2375,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <para>The -31.7% first reported for this change (458,613 -> 313,163) was measured before
         /// the specimen's bitmap was widened, so both halves of it were understated; the honest
         /// figure on one scale is -29.4%.</para></summary>
+        /// <summary>WPF_CT_DROPOUT_BOX=0: clamp dropout fills into a box rounded outward to
+        /// whole samples instead of fs_FindBitMapSize's pixel rows. See GdiDropoutFills.</summary>
+        private static readonly bool s_dropoutGdiBox =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_BOX") != "0";
+
         private static readonly bool s_dropoutPerGlyph =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_PERGLYPH") != "0";
 
