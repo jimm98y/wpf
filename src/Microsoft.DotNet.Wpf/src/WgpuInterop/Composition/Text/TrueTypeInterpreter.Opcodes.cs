@@ -393,10 +393,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                             // In the twilight zone the point IS the control value: there is no
                             // outline there, so the instruction places the point outright.
+                            // ALONG THE PROJECTION VECTOR, not the freedom one.
+                            // itrp_MIAP@14003aa60 builds a twilight point as
+                            //     curX[p] = ((pv.x * cvt) >> 13) + 1 >> 1
+                            // reading localGS+0x18 / +0x1a, which is the PROJECTION vector; the
+                            // freedom vector lives at +0x1c / +0x1e and is not touched here. The
+                            // two agree wherever a program sets both to the same axis and part
+                            // company exactly where a face parks a twilight point along one
+                            // vector and measures along another -- which is what the italics do.
+                            // WPF_CT_TWILIGHT_PV=0 builds them along freedom again.
                             if (_gs.Zp0 == 0)
                             {
-                                z.OrgX[p] = z.CurX[p] = MulFix(value, _gs.FreeX << 2);
-                                z.OrgY[p] = z.CurY[p] = MulFix(value, _gs.FreeY << 2);
+                                int tvx = s_twilightProj ? _gs.ProjX : _gs.FreeX;
+                                int tvy = s_twilightProj ? _gs.ProjY : _gs.FreeY;
+                                z.OrgX[p] = z.CurX[p] = MulFix(value, tvx << 2);
+                                z.OrgY[p] = z.CurY[p] = MulFix(value, tvy << 2);
                             }
 
                             int here = Project(z.CurX[p], z.CurY[p]);
@@ -2723,6 +2734,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>And the comparison is GDI's own: it multiplies the difference by sixteen rather
         /// than dividing the cut-in, `cutIn &lt; (cvt - outline) * 16`, which s_cutInExact already
         /// does -- the two agree for every cut-in value, exact multiples of sixteen included.</para></summary>
+        private static readonly bool s_twilightProj =
+            Environment.GetEnvironmentVariable("WPF_CT_TWILIGHT_PV") != "0";
+
         private static readonly bool s_miapCutInShrink =
             Environment.GetEnvironmentVariable("WPF_CT_MIAP_CUTIN") == "shrink";
 
@@ -3065,9 +3079,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // A twilight point has no outline position, so the control value IS its position.
             if (_gs.Zp1 == 0)
             {
+                // itrp_MIRP's twilight branch uses the PROJECTION vector too -- see the MIAP case.
                 Zone zr = ZoneOf(_gs.Zp0);
-                z.OrgX[p] = zr.OrgX[_gs.Rp0] + MulFix(value, _gs.FreeX << 2);
-                z.OrgY[p] = zr.OrgY[_gs.Rp0] + MulFix(value, _gs.FreeY << 2);
+                int tvx = s_twilightProj ? _gs.ProjX : _gs.FreeX;
+                int tvy = s_twilightProj ? _gs.ProjY : _gs.FreeY;
+                z.OrgX[p] = zr.OrgX[_gs.Rp0] + MulFix(value, tvx << 2);
+                z.OrgY[p] = zr.OrgY[_gs.Rp0] + MulFix(value, tvy << 2);
                 z.CurX[p] = z.OrgX[p];
                 z.CurY[p] = z.OrgY[p];
             }
