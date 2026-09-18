@@ -197,9 +197,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         SetProjection(op == 0x01);
                         SetFreedom(op == 0x01);
                         LatchClearTypeAxis();
+                        _projFnGeneral = false;                 // itrp_XProject / itrp_YProject
                         break;
                     case 0x02: case 0x03:                                               // SPVTCA[a]
-                        SetVectorLine(-1, -1); SetProjection(op == 0x03); LatchClearTypeAxis(); break;
+                        SetVectorLine(-1, -1); SetProjection(op == 0x03); LatchClearTypeAxis(); _projFnGeneral = false; break;
                     case 0x04: case 0x05: SetFreedom(op == 0x05); break;                // SFVTCA[a]
 
                     case 0x06: case 0x07:                                               // SPVTL[a]
@@ -209,6 +210,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             _gs.ProjY = _gs.DualY = vy;
                             ResetProjection();
                             LatchClearTypeAxis();
+                            _projFnGeneral = true;                  // itrp_SPVTL: gs+0x78 = itrp_Project
                             break;
                         }
                     case 0x08: case 0x09:                                               // SFVTL[a]
@@ -236,6 +238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // from a line the program had put down by hand and then abandoned.
                             SetVectorLine(-1, -1);
                             ResetProjection();
+                            _projFnGeneral = true;                  // itrp_WPV: gs+0x78 = itrp_Project, axis or not
                             break;
                         }
                     case 0x0B:                                                          // SFVFS
@@ -272,6 +275,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             SetVectorLine(p2, p1);
                             ResetProjection();
                             LatchClearTypeAxis();
+                            _projFnGeneral = false;                 // itrp_SDPVTL: gs+0x78 = itrp_OldProject
                             break;
                         }
 

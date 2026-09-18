@@ -525,6 +525,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _gs.ProjY = _gs.FreeY = _gs.DualY = 0;
                     ResetProjection();
                     LatchClearTypeAxis();
+                    _projFnGeneral = false;
 
                     // The dump covers the GLYPH's own program only: the font program and prep run
                     // hundreds of instructions that are the same for every glyph and drown it.
@@ -1755,7 +1756,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _gs.ScanType = 0;
             _gs.InstructControl = 0;
             ResetProjection();
+            _projFnGeneral = false;
         }
+
+        /// <summary>Whether GDI's gs+0x78 -- the projection function -- is the GENERAL
+        /// itrp_Project. SPVTL and WPV (SPVFS) install it, for an axis vector as much as a
+        /// diagonal one; SVTCA and SPVTCA install itrp_XProject/itrp_YProject; SDPVTL installs
+        /// itrp_OldProject; itrp_Execute starts a program on the x pair. It matters for exactly
+        /// one thing: itrp_RoundDownToGridSP@140094a40 rounds to the WHOLE pixel, not the
+        /// sixteenth, when it finds itrp_Project there off native mode. Times New Roman Bold's
+        /// 'x' places its top-serif corner with `CALL(GPV .. SPVFS 0x4000,0) RDTG MDAP[r]` and
+        /// GDI floors 4.95 to 4.0 where we kept 4.9375 -- a whole-pixel notch shift in the top
+        /// row at every size. The earlier reading of this rule keyed on the VECTOR
+        /// (ProjectionIsAxis) and broke Arial Bold A/K/X, whose RDTG follows SDPVTL; keyed on
+        /// the installed function it is the same rule and does not. WPF_CT_RDTG_PROJFN=0.</summary>
+        private bool _projFnGeneral;
+
+        private static readonly bool s_rdtgProjFn =
+            Environment.GetEnvironmentVariable("WPF_CT_RDTG_PROJFN") != "0";
 
         private void ResetProjection()
         {
@@ -4205,7 +4223,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // depends on -- the size of the DISTANCE, not the size of the text.
             if (s_stemSnap > 0 && !position && InClearTypeDirection && Math.Abs(value) <= s_stemSnap)
                 distanceGrid = 1;
+            bool rdtgWhole = s_rdtgProjFn && _gs.Round == RoundMode.DownToGrid && !BiLevelPass
+                             && !NativeClearTypeMode && _projFnGeneral;
             int thirds = XWholePixelGrid ? 1
+                       : rdtgWhole ? 1
                        : bare && s_roundOpWholePixel && !BiLevelPass ? 1
                        : distanceGrid > 0 ? distanceGrid
                        : physicalPosition ? 1
