@@ -1528,15 +1528,65 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 var on = new List<(int, float)>(); var off = new List<(int, float)>();
                 float sx = C + 0.5f;
                 foreach (Vector2[] a in P)
-                    for (int i = 0; i < a.Length; i++)
+                {
+                    int m = a.Length;
+                    for (int i = 0; i < m; i++)
                     {
-                        Vector2 p = a[i], q = a[(i + 1) % a.Length];
+                        Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.X == q.X) continue;
                         float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
-                        if (sx < lo || sx >= hi) continue;
+                        // The column lists' counterpart of the row rule: strictly between the ends
+                        // when a vertex rule handles the vertices, half-open otherwise.
+                        if (s_colTopology != 0 ? (sx <= lo || sx >= hi) : (sx < lo || sx >= hi)) continue;
                         float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
                         if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
                     }
+                    if (s_colTopology == 0) continue;
+                    // A VERTEX EXACTLY ON A COLUMN SAMPLE. The row lists have carried
+                    // CheckHorizTopology's rule since the row-list port; the column lists, which
+                    // only the dropout scan reads, never got its vertical twin. GDI has one --
+                    // CheckVertTopology@140044660 -- but it is not a mirror image of the horizontal
+                    // one and needs its own decode, so this is the ROW rule rotated: the ON
+                    // direction for a column is DECREASING x (fsc_CalcLine's quadrant table), and
+                    // the cross axis is y. Which way the cross-axis comparisons run is the one
+                    // thing the rotation does not settle, so both are measurable:
+                    // WPF_CT_COLTOPO=1 (the default) compares y ascending, =flip descending,
+                    // =0 drops the rule and goes back to half-open edges. Measured on the holdout:
+                    // 139,871 ascending, 141,796 descending, 154,975 without it.
+                    for (int i = 0; i < m; i++)
+                    {
+                        Vector2 p = a[i];
+                        if (p.X != sx) continue;
+                        if (a[(i - 1 + m) % m] == p) continue;
+                        Vector2 pp = p, n = p;
+                        for (int k = 1; k < m; k++) { int ip = (i - k + m) % m; if (a[ip] != p) { pp = a[ip]; break; } }
+                        for (int k = 1; k < m; k++) { int inx = (i + k) % m; if (a[inx] != p) { n = a[inx]; break; } }
+                        if (pp == p || n == p) continue;
+                        bool nOn = n.X < p.X, nLevel = n.X == p.X;
+                        bool ppOff = pp.X > p.X, ppLevel = pp.X == p.X, ppOn = pp.X < p.X;
+                        float sgn = s_colTopology == 2 ? -1f : 1f;
+                        void On() => on.Add((OnIdx(p.Y), p.Y));
+                        void Off() => off.Add((OffIdx(p.Y), p.Y));
+                        if (nOn)
+                        {
+                            if (ppOff) On();
+                            else if (ppLevel) { if (sgn * pp.Y > sgn * p.Y) On(); }
+                            else { On(); Off(); }
+                        }
+                        else if (nLevel)
+                        {
+                            if (ppOff) { if (sgn * n.Y > sgn * p.Y) On(); }
+                            else if (ppOn || sgn * pp.Y < sgn * p.Y) { if (sgn * p.Y > sgn * n.Y) Off(); }
+                            else { if (sgn * n.Y > sgn * p.Y) On(); }
+                        }
+                        else
+                        {
+                            if (ppOn) Off();
+                            else if (ppLevel) { if (sgn * p.Y > sgn * pp.Y) Off(); }
+                            else { On(); Off(); }
+                        }
+                    }
+                }
                 on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 colOn[C] = on; colOff[C] = off;
@@ -2406,6 +2456,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// WPF_CT_DROPOUT_BOUNDS=1 measures the box reading again.</summary>
         private static readonly bool s_dropoutBounds =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_BOUNDS") == "1";
+
+        private static readonly int s_colTopology =
+            Environment.GetEnvironmentVariable("WPF_CT_COLTOPO") switch
+            { "0" => 0, "flip" => 2, _ => 1 };
 
         private static readonly bool s_dropoutLockstep =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_LOCKSTEP") != "0";
