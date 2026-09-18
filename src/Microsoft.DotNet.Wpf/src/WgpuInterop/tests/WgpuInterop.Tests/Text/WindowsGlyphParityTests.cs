@@ -8970,6 +8970,25 @@ namespace WgpuInterop.Tests.Text
                 }
                 rep.AppendLine(line.ToString());
             }
+            // WPF_TWOPATHS_LAMPS=1: every lamp, as GDI's seven levels (0..6), GDI over ours per row.
+            if (Environment.GetEnvironmentVariable("WPF_TWOPATHS_LAMPS") == "1")
+                for (int y = top; y <= bottom; y++)
+                {
+                    var g = new System.Text.StringBuilder($"   {y,3} gdi ");
+                    var o = new System.Text.StringBuilder("       our ");
+                    for (int x = left; x <= right; x++)
+                    {
+                        int i = (y * Width + x) * 4;
+                        for (int L = 0; L < 3; L++)
+                        {
+                            int vg = 255 - raw[i + 2 - L], vo = 255 - runPath[i + L];
+                            g.Append(vg <= 0 ? '.' : (char) ('0' + (vg * 6 + 127) / 255));
+                            o.Append(vo <= 0 ? '.' : (char) ('0' + (vo * 6 + 127) / 255));
+                        }
+                        g.Append(' '); o.Append(' ');
+                    }
+                    rep.AppendLine(g.ToString()); rep.AppendLine(o.ToString());
+                }
             Console.Error.Write(rep.ToString());
         }
 

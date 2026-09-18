@@ -1759,9 +1759,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private void ResetProjection()
         {
+            if (s_pfProjGdi)
+            {
+                // itrp_ComputeAndCheck_PF_Proj@1400367f8: each product rounded to 2.14 ON ITS OWN
+                // (`(a*b + 0x2000) >> 14`, twice) and summed -- not one floor of the exact sum --
+                // and a dot product within 0x3ff of zero (the vectors nearly perpendicular) is
+                // replaced by a whole unit of its sign, so a move never divides by a sliver.
+                // WPF_CT_PFPROJ=0 keeps the single floor.
+                int d = ((_gs.ProjX * _gs.FreeX + 0x2000) >> 14) + ((_gs.ProjY * _gs.FreeY + 0x2000) >> 14);
+                if ((uint) ((d + 0x3ff) & 0xffff) < 0x7ff) d = ((d >> 15) & 1) != 0 ? -0x4000 : 0x4000;
+                _dotProduct = d;
+                return;
+            }
             _dotProduct = (int)(((long)_gs.ProjX * _gs.FreeX + (long)_gs.ProjY * _gs.FreeY) >> 14);
             if (_dotProduct == 0) _dotProduct = 0x4000;
         }
+
+        private static readonly bool s_pfProjGdi =
+            Environment.GetEnvironmentVariable("WPF_CT_PFPROJ") != "0";
 
         // ---- the glyph in and out -----------------------------------------------------------------
 
@@ -3973,7 +3988,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                               && (s_diagYMove == 0 || (zone.Tags[point] & TagTouchY) != 0);
                 if (!refuse)
                 {
-                    zone.CurY[point] += FreedomStep(distance, _gs.FreeY);
+                    zone.CurY[point] += FreedomStepY(distance, _gs.FreeY);
                     if (touch) zone.Tags[point] |= TagTouchY;
                 }
                 if (s_yTrace)
@@ -4012,6 +4027,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_freeStepExact =
             Environment.GetEnvironmentVariable("WPF_CT_FREESTEP") != "muldiv";
+
+        /// <summary>The y half of itrp_MovePoint@14003bfa0 is NOT CompDiv. Read from the ARM64
+        /// at 14003c028..14003c048: `w8 = pfProj/2` (truncating), then `num - w8` when pfProj is
+        /// negative and `num + w8` otherwise -- half the divisor's MAGNITUDE added whatever the
+        /// numerator's sign -- and one sdiv, which truncates toward zero. For a negative product
+        /// with a positive dot product that lands one 64th ABOVE the symmetric rounding almost
+        /// every time. The x half calls CompDiv, which is symmetric. WPF_CT_YMOVE_TRUNC=0 rounds
+        /// y symmetrically as before.</summary>
+        private int FreedomStepY(int distance, int component)
+        {
+            if (!s_freeStepExact || !s_yMoveTrunc) return FreedomStep(distance, component);
+            if (_dotProduct == 0x4000)
+                return (int) (((((long) component * distance) >> 13) + 1) >> 1);
+            if (component == _dotProduct) return distance;
+            long num = (long) component * distance;
+            long half = Math.Abs(_dotProduct / 2);
+            return (int) ((num + half) / _dotProduct);
+        }
+
+        private static readonly bool s_yMoveTrunc =
+            Environment.GetEnvironmentVariable("WPF_CT_YMOVE_TRUNC") != "0";
 
         /// <summary>Move a point without regard to the freedom vector: SHPIX's job, and the one
         /// place a program says "this far, in x and y" rather than "this far, that way".</summary>
