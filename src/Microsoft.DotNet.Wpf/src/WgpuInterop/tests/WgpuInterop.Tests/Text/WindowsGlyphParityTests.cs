@@ -8485,10 +8485,17 @@ namespace WgpuInterop.Tests.Text
 
             var bars = new List<SyntheticFont.Bar>();
             var wanted = new List<double>();
-            for (int sixteenth = 1; sixteenth <= 32; sixteenth++)
+            // WPF_VSLAB_UNITS=a,b,c: slab heights in FONT UNITS instead of sixteenths, so a
+            // height that lands EXACTLY on a sub-row sample at a non-integer units-per-pixel
+            // can be probed (Segoe UI '2'@21's bar top is 147 units = 96.47/64).
+            string? unitsSpec = Environment.GetEnvironmentVariable("WPF_VSLAB_UNITS");
+            int[] unitList = string.IsNullOrEmpty(unitsSpec)
+                ? System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(System.Linq.Enumerable.Range(1, 32), k => (int) Math.Round(k / 16.0 * unitsPerPixel)))
+                : System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(unitsSpec.Split(","), int.Parse));
+            foreach (int unitsWanted in unitList)
             {
-                double px = sixteenth / 16.0;
-                int units = (int) Math.Round(px * unitsPerPixel);
+                double px = unitsWanted / unitsPerPixel;
+                int units = unitsWanted;
                 bars.Add(new SyntheticFont.Bar(0, 256, 256 + (int) Math.Round(6 * unitsPerPixel),
                                                round: false, minDistance: false, noProgram: true,
                                                slabHeight: units));
@@ -8500,9 +8507,16 @@ namespace WgpuInterop.Tests.Text
             // GDI's no-table fallback turns symmetric ON for it while ours stays off -- the two
             // rasterizers then answer different questions. Default: no table, as every probe
             // before this one.
+            // WPF_VSLAB_GASP=sym ships Segoe UI's 20ppem-and-up flags (0xF: gridfit, grayscale,
+            // symmetric gridfit AND symmetric smoothing) at every size, so the probe exercises
+            // GDI's 6x5 path -- ulClearTypeFilter_6x5, five sub-rows per pixel combined 4:9:10:9:4.
             SyntheticFont.GaspRanges =
-                Environment.GetEnvironmentVariable("WPF_VSLAB_GASP") == "times"
-                    ? new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) } : null;
+                Environment.GetEnvironmentVariable("WPF_VSLAB_GASP") switch
+                {
+                    "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
+                    "sym" => new (int, int)[] { (0xFFFF, 0xF) },
+                    _ => null,
+                };
             // WPF_VSLAB_SCAN=times adds Times' own SCANCTRL 303 / SCANTYPE 1 to the probe's prep.
             SyntheticFont.ScanControl =
                 Environment.GetEnvironmentVariable("WPF_VSLAB_SCAN") == "times" ? (303, 1) : null;
