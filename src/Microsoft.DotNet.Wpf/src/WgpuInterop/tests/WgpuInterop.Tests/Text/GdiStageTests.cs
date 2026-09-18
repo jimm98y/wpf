@@ -1109,15 +1109,55 @@ namespace WgpuInterop.Tests.Text
                     // pairing, or only the baseline pairs (6 of 24 points of Tahoma's 'o') and
                     // every "difference" above it is the slant itself.
                     float shear = font.ObliqueShearApplied;
+                    // A RIGID TRANSLATION IN X IS A FRAME DIFFERENCE, NOT A SHAPE ONE, and this
+                    // oracle was reporting one as 129 wrong points. GGO hands back the outline in
+                    // the frame the glyph was DESIGNED in -- side bearing and all -- while the
+                    // interpreter array we capture has already had the side-bearing snap of
+                    // fsg_SimpleInnerGridFit folded into it, the block that rounds orgX[pp1] to the
+                    // grid and moves every real point and phantom with it. For 41 of Times New
+                    // Roman Italic's 44 glyphs that delta is zero, because hmtx's lsb equals glyf's
+                    // xMin and pp1 lands on nothing; for 'c', 'j' and 'y' the two differ by four
+                    // font units and the delta is 2/64 at 12-18ppem and 3/64 at 20-24, which is
+                    // EXACTLY what every one of their points was reported as being out by, at every
+                    // size. Our renderer puts the frame back (fs__Contour's re-anchor onto pp1),
+                    // which is why the holdout does not move a single count either way.
+                    // <para>So: measure the common translation, take it out, and report it
+                    // separately. What is left is shape, which is what this instrument is for.
+                    // WPF_GGOPTS_RIGID=0 scores the raw offsets again.</para>
+                    var dxs = new List<double>(); var dys = new List<double>();
+                    var pi = new List<int>(); var pj = new List<int>();
                     for (int i = 0; i < pts.PointCount; i++)
                     {
                         if (onCurveOnly && !pts.OnCurve[i]) continue;
-                        int j = byIndex ? gdiIdx[i]
-                              : Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
-                        if (j < 0 || j >= fitted.Count) continue;
+                        int j0 = byIndex ? gdiIdx[i]
+                               : Nearest(plain, pts.StartX[i] + shear * pts.StartY[i], -pts.StartY[i]);
+                        if (j0 < 0 || j0 >= fitted.Count) continue;
+                        pi.Add(i); pj.Add(j0);
+                        dxs.Add(pts.FitX[i] + shear * pts.FitY[i] - fitted[j0].X);
+                        dys.Add(pts.FitY[i] - -fitted[j0].Y);
+                    }
+                    // STRICTLY ALL POINTS, and the reason the weaker rule is wrong is the
+                    // finding. A frame shift applied BEFORE hinting does not survive as a
+                    // translation: a point the program ROUNDS lands on the same absolute grid
+                    // whatever frame it started in, while an untouched point carries the shift. So
+                    // a glyph whose program pins some of its points shows a MIXTURE, and taking
+                    // the commonest offset out then makes the pinned points look wrong by the same
+                    // amount the others were -- Times New Roman Italic 'j' goes from 31 differing
+                    // to 15, and neither number means anything. Only a shift that EVERY point
+                    // shares is a frame difference, and that is what this removes.
+                    double tx = 0;
+                    if (Environment.GetEnvironmentVariable("WPF_GGOPTS_RIGID") != "0" && dxs.Count > 0)
+                    {
+                        bool all = true;
+                        foreach (double d in dxs) if (Math.Abs(d - dxs[0]) > 0.5 / 64) { all = false; break; }
+                        if (all && Math.Abs(dxs[0]) > 1.0 / 64) tx = dxs[0];
+                    }
+                    for (int k = 0; k < pi.Count; k++)
+                    {
+                        int i = pi[k], j = pj[k];
                         paired++;
                         float gdiY = -fitted[j].Y, gdiX = fitted[j].X;
-                        double dy = pts.FitY[i] - gdiY, dx = pts.FitX[i] + shear * pts.FitY[i] - gdiX;
+                        double dy = dys[k], dx = dxs[k] - tx;
                         bool badX = Math.Abs(dx) > 1.0 / 64, badY = Math.Abs(dy) > 1.0 / 64;
                         if (badX) { offX++; if (Math.Abs(dx) > Math.Abs(worstX)) worstX = dx; }
                         if (badY) { offY++; if (Math.Abs(dy) > Math.Abs(worstY)) worstY = dy; }
@@ -1131,11 +1171,12 @@ namespace WgpuInterop.Tests.Text
                     gTotal++;
                     if (offX == 0 && offY == 0) gExact++;
                     pTotal += paired; pOffX += offX; pOffY += offY;
-                    if (!quiet || offX + offY > 0)
+                    if (!quiet || offX + offY > 0 || tx != 0)
                         Console.Error.WriteLine($"'{c}' @{ppem}: {paired} of {pts.PointCount}"
                             + $" points paired, {offX} differ in x"
                             + $" (worst {worstX * 64:+0.0;-0.0}/64), {offY} in y"
-                            + $" (worst {worstY * 64:+0.0;-0.0}/64)");
+                            + $" (worst {worstY * 64:+0.0;-0.0}/64)"
+                            + (tx == 0 ? "" : $"   [rigid x shift {tx * 64:+0.0;-0.0}/64 removed]"));
                     foreach (string l in lines) Console.Error.WriteLine(l);
                 }
                 Console.Error.WriteLine($"TOTAL {parts[0]}{(styleSpec == "" ? "" : " " + styleSpec)} @{ppem}"

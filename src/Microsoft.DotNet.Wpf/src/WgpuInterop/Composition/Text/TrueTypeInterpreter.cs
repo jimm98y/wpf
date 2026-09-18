@@ -2015,7 +2015,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 z.CurY[p4] = Pix(z.CurY[p3] + advY);
             }
 
-            if (s_lsbRound && !glyph.Composite && glyph.PointCount < n)
+            if (LsbRoundHere && !glyph.Composite && glyph.PointCount < n)
             {
                 int pp1 = glyph.PointCount;
                 int org = z.OrgX[pp1];
@@ -3450,8 +3450,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// WPF_CT_LSBROUND=0 goes back to the in-place rounding (with
         /// WPF_CT_PP1_SIXTEENTH=2, which is what it needs to be then -- 165,670; the two
         /// together, which rounds pp1 twice, is 189,708).</para></summary>
-        private static readonly bool s_lsbRound =
-            Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") != "0";
+        /// <summary>WPF_CT_LSBROUND: 0 off everywhere, both in both passes, anything else (the
+        /// default) only in the ClearType pass.
+        /// <para>THE BI-LEVEL PASS DOES NOT DO IT, and GDI's own fitted points say so without
+        /// room for argument. The shift is applied BEFORE the program runs, so it does not survive
+        /// as a translation: a point the program ROUNDS lands on the same absolute grid whichever
+        /// frame it started in, and only an UNTOUCHED point carries the shift. GGO's bi-level
+        /// points for Times New Roman Italic 'j' agree with ours exactly on the twenty points its
+        /// program pins and are 2/64 away on the twenty-nine it does not -- which is the signature
+        /// of a shift we applied and GDI did not. 'c' and 'y', whose programs pin nothing in x,
+        /// are out by 2/64 on every single point at 12-18ppem and 3/64 at 20-24, exactly the
+        /// side-bearing delta (their hmtx lsb is four font units off their glyf xMin, and
+        /// round(4 * ppem / 32) is 2 up to 18 and 3 from 20).</para>
+        /// <para>Over the whole sweep -- six faces, three styles, 8..24ppem, 306 combinations --
+        /// this is the ONLY interpreter disagreement of any size: 1,683 x points, all of it Times
+        /// New Roman Italic's c, j and y. Gating it takes the face from 41 of 44 glyphs exact to
+        /// 43, and 129 differing points to 2.</para>
+        /// <para>It stays ON for the ClearType pass, where the pixels demand it: WPF_CT_LSBROUND=0
+        /// measures 145,276 against 139,753. And gating it is EXACTLY NEUTRAL on those pixels --
+        /// 139,753 either way -- so nothing is being fitted here; the holdout cannot see the
+        /// bi-level frame at all, and the oracle can see nothing else.</para></summary>
+        private static readonly string s_lsbRoundMode =
+            Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") ?? "";
+
+        private static bool LsbRoundHere =>
+            s_lsbRoundMode != "0" && (s_lsbRoundMode == "both" || !BiLevelPass);
 
         /// <summary>Is the ClearType x grid in force for THIS run?</summary>
         private static bool SubpixelFittingHere =>
