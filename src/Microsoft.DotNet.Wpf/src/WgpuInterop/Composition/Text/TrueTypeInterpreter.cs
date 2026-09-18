@@ -551,6 +551,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_phaseTwice) _phaseApplied = false;
                 if (s_phaseAtExecute) ApplyPhaseAtIup();
 
+                // THE OUTLINE IS RE-ANCHORED ON THE FITTED LEFT PHANTOM. fs__Contour, after each
+                // pass's fsg_ExecuteGlyph (140025398.. for pass one, the pfVar50 loop for pass
+                // two), translates EVERY point 0..lastPt+8 by
+                //     dx = round(origin.x - curX[pp1]),  dy = origin.y - curY[pp1]
+                // where origin is the client's requested position (clientRec[0x180]/[0x18c]
+                // >> 10, zero for us) and the rounding, applied only when gridfitting and
+                // globals[0x1d4] == 0, is to the WHOLE PIXEL in a bi-level pass (+0x20 & ~0x3f)
+                // and to the SIXTEENTH under ClearType (+2 & ~3; bVar49 = clientRec[0x41a] bit 0
+                // in pass two). dy is never rounded. The program itself rarely moves pp1, but
+                // the PHASE does: the pair rule makes pp1 the mate of the first stem edge placed
+                // from it (Arial Bold 'A'@20: pp1 and p4, -10/64), so the whole glyph then slides
+                // back +12/64. That was the uniform third-of-a-lamp offset every Arial diagonal
+                // showed: 'A'@20B 6,767 -> ~1,100, 'A'@16B 2,291 -> 0, holdout 376,284 -> ~330k.
+                // WPF_CT_PP1_ORIGIN=0 off; =exact skips the rounding; =x leaves y alone.
+                if (s_pp1Origin != 0 && _realPoints + 1 < _glyphZone.CurX.Length)
+                {
+                    int pp1 = _realPoints;
+                    int dx = -_glyphZone.CurX[pp1];
+                    int dy = s_pp1Origin == 3 ? 0 : -_glyphZone.CurY[pp1];
+                    if (s_pp1Origin != 2)
+                        dx = BiLevelPass || !TrueTypeFont.SubpixelFitting ? (dx + 32) & ~63 : (dx + 2) & ~3;
+                    if (dx != 0 || dy != 0)
+                    {
+                        int np = Math.Min(_realPoints + 4, _glyphZone.CurX.Length);
+                        for (int i = 0; i < np; i++) { _glyphZone.CurX[i] += dx; _glyphZone.CurY[i] += dy; }
+                        if (s_phaseDump) Console.Error.WriteLine($"PP1ORIGIN dx={dx} dy={dy} bilevel={BiLevelPass}");
+                    }
+                }
+
                 // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
                 // nothing GDI could recognise as a stroke or a position to scale -- and GDI leaves
                 // it alone. Segoe UI Italic's 'a' at 12ppem runs one SVTCA[x] and then hints only y;
@@ -2609,19 +2638,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int was = _glyphZone.CurX[i];
                 PhaseShiftNode(i);
-            // WPF_CT_PHASE_ANCHOR=1: REFUTED -- 'A'@20B 6,767 -> 71,350, holdout 376,284 ->
-            // 24,669,374, 129 ratchets. Kept only so nobody tries it again. The idea was to
-            // re-anchor on the hinted left phantom after the phase. If GDI
-            // positions the glyph from the PHASED pp1 (as the scan-converter setup reads the
-            // phantoms after hinting), a phantom that the pair rule moved -- Arial Bold 'A'@20's
-            // pp1 goes -10/64 as the mate of p4 -- shifts the whole raster; ours stayed put and
-            // the raster shows a uniform ~third-of-a-lamp shift to the left.
+                if (_glyphZone.CurX[i] != was) moved = true;
+            }
+            // WPF_CT_PHASE_ANCHOR=1: re-anchor the outline on the PHASED left phantom. The pair
+            // rule can move pp1 itself -- Arial Bold 'A'@20's pp1 goes -10/64 as the mate of p4 --
+            // and the raster is positioned from the phantoms after hinting. The earlier
+            // "REFUTED: 6,767 -> 71,350, holdout 24.7M, 129 ratchets" was of a broken version of
+            // this that sat INSIDE the loop above and shifted the glyph once per point.
             if (s_phaseAnchorPp1 && _realPoints < _phaseVal.Length && _realPoints < _glyphZone.CurX.Length)
             {
                 int dx = -_phaseVal[_realPoints];
                 if (dx != 0) for (int q = 0; q < n && q < _glyphZone.CurX.Length; q++) _glyphZone.CurX[q] += dx;
-            }
-                if (_glyphZone.CurX[i] != was) moved = true;
             }
             if (!moved && s_phaseFallbackScale && _ctFactor16 != 0x10000)
                 for (int i = 0; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
@@ -2641,6 +2668,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// cycle", but that is decided by OUR tree, so it stays switchable.</summary>
         /// <summary>WPF_CT_PHASE_PHANTOM=0 denies the two x phantoms their direct phase, which
         /// makes them ordinary roots -- a bisection handle, not one of GDI's rules.</summary>
+        /// <summary>WPF_CT_PP1_ORIGIN: 1 (default) fs__Contour's re-anchor on the fitted pp1 with
+        /// its rounding; 2 = exact (no rounding); 3 = x only; 0 = off. See Hint.</summary>
+        private static readonly int s_pp1Origin =
+            Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN") switch
+            { "0" => 0, "exact" => 2, "x" => 3, _ => 1 };
+
         private static readonly bool s_phasePhantom =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PHANTOM") != "0";
 
@@ -2836,7 +2869,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// symmetric, which phases the same stem from both ends.</summary>
         private void PhasePair(int anc, int p, int colour)
         {
+            if (s_phaseDump) Console.Error.WriteLine($"  PAIR? anc={anc,3} p={p,3} col={colour} partner[anc]={(anc < _phasePartner.Length ? _phasePartner[anc] : -9)} partner[p]={(p < _phasePartner.Length ? _phasePartner[p] : -9)} p0[anc]={_phaseP0[anc]}");
             if (!s_phaseGdiPairs || colour != 1) return;
+            // WPF_CT_PHASE_PHANTOM_MATE=0: a PHANTOM is never a mate. Arial Bold 'A'@20: the link
+            // (5,4) re-targets to pp1 because pp1 and p5 share orus 0, the pair then shifts pp1 by
+            // avg(0,195)*(f-1) = -10 and p5 inherits it -- while GDI's own phase raster (quality
+            // 5 against 6) leaves that left edge exactly where the unphased one has it.
+            if (!s_phasePhantomMate && (anc >= _realPoints || p >= _realPoints)) return;
             if ((uint) anc >= (uint) _phasePartner.Length) return;
             if ((uint) p >= (uint) _phasePartner.Length) return;
             if (_phasePartner[anc] >= 0 || _phasePartner[p] == anc) return;
@@ -3114,6 +3153,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             return crossings & 1;
         }
+
+        private static readonly bool s_phasePhantomMate =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_PHANTOM_MATE") != "0";
 
         private sbyte[] _contourWind;
         private int _contourWindGlyph = -1, _phaseGlyphStamp;
