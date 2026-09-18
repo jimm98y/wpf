@@ -562,7 +562,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// (i@14 2 -> 1, repertoire@14i 17 -> 16), Times 'z'@13 exact through the FILL.
         /// WPF_CT_ROWEDGE=gdi restores the plain (lo, hi] test.</para>
         private static readonly bool s_rowEdgeExtremum =
-            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") is null or "" or "extremum" or "pair";
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") is "extremum" or "pair";
 
         /// <summary>WPF_CT_ROWEDGE=strict: an edge crosses a row sample only STRICTLY between its
         /// ends, so an edge that BEGINS or ENDS exactly on the sample contributes no crossing.
@@ -615,6 +615,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// (=old against the default), so this is parked, not pursued.</summary>
         private static readonly bool s_rowEdgeGdiPair =
             Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") == "pair";
+        /// <summary>WPF_CT_ROWEDGE unset or =topo: fsc_CalcLine's strictly-between rows with
+        /// CheckHorizTopology's rule for a vertex exactly on a sample row, paired ON/OFF by index.
+        /// See GdiTableFilterRowset.</summary>
+        private static readonly bool s_rowEdgeTopology =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWEDGE") is null or "" or "topo";
         /// <summary>The turn, in degrees, above which a flattened vertex counts as one of the
         /// outline's own corners for the row-sample rule. WPF_CT_CORNER_DEG, default 10.</summary>
         private static readonly float s_cornerDegrees =
@@ -1568,25 +1573,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<(float X, int Dir)>[]? rowsPre = null;
             bool[][]? corner = null;
             float glyphMaxX = float.MinValue;
-            if (s_rowEdgeGdiPair)
+            if (s_rowEdgeGdiPair || s_rowEdgeTopology)
             {
                 foreach (List<Vector2> poly in polys) foreach (Vector2 v in poly) if (v.X > glyphMaxX) glyphMaxX = v.X;
-                corner = new bool[polys.Count][];
-                float cosLimit = MathF.Cos(s_cornerDegrees * MathF.PI / 180f);
-                for (int p = 0; p < polys.Count; p++)
+                if (s_rowEdgeGdiPair)
                 {
-                    List<Vector2> poly = polys[p];
-                    int m = poly.Count;
-                    var flags = new bool[m];
-                    for (int v = 0; v < m; v++)
+                    corner = new bool[polys.Count][];
+                    float cosLimit = MathF.Cos(s_cornerDegrees * MathF.PI / 180f);
+                    for (int p = 0; p < polys.Count; p++)
                     {
-                        Vector2 u = poly[v] - poly[(v - 1 + m) % m];
-                        Vector2 w = poly[(v + 1) % m] - poly[v];
-                        float lu = u.Length(), lw = w.Length();
-                        if (lu == 0f || lw == 0f) { flags[v] = true; continue; }
-                        flags[v] = Vector2.Dot(u, w) / (lu * lw) < cosLimit;
+                        List<Vector2> poly = polys[p];
+                        int m = poly.Count;
+                        var flags = new bool[m];
+                        for (int v = 0; v < m; v++)
+                        {
+                            Vector2 u = poly[v] - poly[(v - 1 + m) % m];
+                            Vector2 w = poly[(v + 1) % m] - poly[v];
+                            float lu = u.Length(), lw = w.Length();
+                            if (lu == 0f || lw == 0f) { flags[v] = true; continue; }
+                            flags[v] = Vector2.Dot(u, w) / (lu * lw) < cosLimit;
+                        }
+                        corner[p] = flags;
                     }
-                    corner[p] = flags;
                 }
                 rowsPre = new List<(float X, int Dir)>[height];
                 for (int py = 0; py < height; py++)
@@ -1596,33 +1604,84 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     for (int pi = 0; pi < polys.Count; pi++)
                     {
                         List<Vector2> poly = polys[pi];
-                        for (int i2 = 0; i2 < poly.Count; i2++)
+                        int m = poly.Count;
+                        for (int i2 = 0; i2 < m; i2++)
                         {
-                            Vector2 a = poly[i2], b = poly[(i2 + 1) % poly.Count];
+                            Vector2 a = poly[i2], b = poly[(i2 + 1) % m];
                             if (a.Y == b.Y) continue;
                             float lo = MathF.Min(a.Y, b.Y), hi = MathF.Max(a.Y, b.Y);
-                            // The (lo, hi] membership with the local-maximum exclusion, as the
-                            // extremum path below: the strictly-between reading of fsc_CalcLine
-                            // is refuted on our own outlines (holdout 89.7M) because the curve
-                            // flattener puts vertices ON sample rows, where GDI's spline solver
-                            // has no vertex at all -- see s_rowEdgeGdiPair.
-                            if (syp <= lo || syp > hi) continue;
-                            if (syp == hi)
+                            if (s_rowEdgeTopology)
                             {
-                                int vHi = b.Y > a.Y ? (i2 + 1) % poly.Count : i2;
-                                // fsc_CalcLine walks a segment over the rows STRICTLY between its
-                                // ends, so a row through one of the OUTLINE'S OWN vertices takes
-                                // no crossing from either segment meeting there. The glyph path
-                                // reaches us already flattened -- every vertex is a segment end
-                                // here, and treating them all as GDI's ends measures 67M -- so a
-                                // CORNER stands in for an outline vertex: the turn at a flattened
-                                // curve's interior vertex is a fraction of a degree, the turn where
-                                // a bar meets a diagonal is tens of degrees. WPF_CT_CORNER_DEG.
-                                if (corner is not null && corner[pi][vHi]) continue;
-                                if (maxY is not null && maxY[pi][vHi]) continue;
+                                // fsc_CalcLine@1400435a0: an edge crosses the sample rows STRICTLY
+                                // between its ends. A vertex ON a row is CheckHorizTopology's
+                                // business, below.
+                                if (syp <= lo || syp >= hi) continue;
+                            }
+                            else
+                            {
+                                if (syp <= lo || syp > hi) continue;
+                                if (syp == hi)
+                                {
+                                    int vHi = b.Y > a.Y ? (i2 + 1) % poly.Count : i2;
+                                    if (corner is not null && corner[pi][vHi]) continue;
+                                    if (maxY is not null && maxY[pi][vHi]) continue;
+                                }
                             }
                             float t = (syp - a.Y) / (b.Y - a.Y);
                             lst.Add((a.X + t * (b.X - a.X), b.Y > a.Y ? 1 : -1));
+                        }
+                        if (!s_rowEdgeTopology) continue;
+                        // CheckHorizTopology@1400443f8, called by fsc_FillGlyph@140034280 for a
+                        // vertex whose y sits exactly on a row sample: what it adds depends on
+                        // where the contour came from and where it goes. In GDI's y-up frame,
+                        // with pp -> p -> n and p on the row:
+                        //   up after p:    from below   -> ON crossing (monotone through)
+                        //                  from level   -> ON if it came from the right, else none
+                        //                  from above   -> ON + OFF (a local minimum: a dropout pair)
+                        //   level after p: from below   -> ON if it goes right, else none
+                        //                  from above, or from the left  -> OFF if it goes left, else none
+                        //                  from the right, level -> ON if it goes right, else none
+                        //   down after p:  from above   -> OFF crossing (monotone through)
+                        //                  from level   -> OFF if it came from the left, else none
+                        //                  from below   -> ON + OFF (a local maximum)
+                        // Device y grows downward, so "up" here is a smaller Y. The slab probe
+                        // (wound counter-clockwise, top exactly on a sample) comes out EMPTY on
+                        // that row and Segoe UI '2'@21's bar row (clockwise, bar top on the
+                        // 1.5px sub-row) gets its OFF at the bar's right end -- both as GDI draws.
+                        for (int i2 = 0; i2 < m; i2++)
+                        {
+                            Vector2 p = poly[i2];
+                            if (p.Y != syp) continue;
+                            // A closing point that repeats the previous vertex is the same vertex.
+                            if (poly[(i2 - 1 + m) % m] == p) continue;
+                            // the neighbours, skipping zero-length steps
+                            int ip = i2, inx = i2;
+                            Vector2 pp = p, n = p;
+                            for (int k = 1; k < m; k++) { ip = (i2 - k + m) % m; if (poly[ip] != p) { pp = poly[ip]; break; } }
+                            for (int k = 1; k < m; k++) { inx = (i2 + k) % m; if (poly[inx] != p) { n = poly[inx]; break; } }
+                            if (pp == p || n == p) continue;
+                            bool nUp = n.Y < p.Y, nLevel = n.Y == p.Y;
+                            bool ppBelow = pp.Y > p.Y, ppLevel = pp.Y == p.Y, ppAbove = pp.Y < p.Y;
+                            if (s_rowPairTrace)
+                                Console.Error.WriteLine($"TOPO py={py} sy={syp:0.###} pp=({pp.X:0.###},{pp.Y:0.###}) p=({p.X:0.###},{p.Y:0.###}) n=({n.X:0.###},{n.Y:0.###}) i={i2} m={m}");
+                            if (nUp)
+                            {
+                                if (ppBelow) lst.Add((p.X, -1));
+                                else if (ppLevel) { if (pp.X > p.X) lst.Add((p.X, -1)); }
+                                else { lst.Add((p.X, -1)); lst.Add((p.X, 1)); }
+                            }
+                            else if (nLevel)
+                            {
+                                if (ppBelow) { if (n.X > p.X) lst.Add((p.X, -1)); }
+                                else if (ppAbove || pp.X < p.X) { if (p.X > n.X) lst.Add((p.X, 1)); }
+                                else { if (n.X > p.X) lst.Add((p.X, -1)); }
+                            }
+                            else
+                            {
+                                if (ppAbove) lst.Add((p.X, 1));
+                                else if (ppLevel) { if (p.X > pp.X) lst.Add((p.X, 1)); }
+                                else { lst.Add((p.X, -1)); lst.Add((p.X, 1)); }
+                            }
                         }
                     }
                     lst.Sort(static (u, v) => u.X.CompareTo(v.X));
@@ -1670,6 +1729,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             // bottom row, whose row beneath is EMPTY and is still filled to the
                             // 'e's right extent). WPF_CT_ROWPAIR_BELOW=1 takes the row beneath's
                             // OFF first, which cannot be told apart on the '2' and breaks the 'e'.
+                            if (s_rowEdgeTopology) break;
                             if (s_rowPairBelow)
                             {
                                 while (below is not null && kBelow < below.Count && below[kBelow].Dir != offDir) kBelow++;
@@ -1678,7 +1738,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             }
                             else off = glyphMaxX;
                         }
+                        // fsc_FillBitMap@140042778 fills [on, off) when on < off and -- at
+                        // LAB_1400429c8 -- [off, on) when off < on: a REVERSED pair is filled
+                        // between its two crossings all the same. Only on == off fills nothing,
+                        // and that is what LookForDropouts@140042328 later takes as a dropout.
+                        // Times Italic 'z'@21's hairline diagonal is a reversed pair on every row
+                        // (its upper boundary descends and lands on the OFF list, at the smaller
+                        // x), and GDI draws it.
                         if (off > on) spans.Add((on, off));
+                        else if (s_rowEdgeTopology && off < on) spans.Add((off, on));
                     }
                     if (s_rowPairTrace)
                         Console.Error.WriteLine($"ROWPAIR py={py} sy={sy:0.###} here=[{string.Join(" ", here.ConvertAll(h => $"{h.X:0.###}{(h.Dir < 0 ? "on" : "off")}"))}] spans=[{string.Join(" ", spans.ConvertAll(sp => $"{sp.A:0.###}-{sp.B:0.###}"))}]");
