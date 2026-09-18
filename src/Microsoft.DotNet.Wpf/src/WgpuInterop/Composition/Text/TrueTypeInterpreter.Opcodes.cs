@@ -474,7 +474,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // distance to compare against, since "in which case we assume the context
                             // is a stroke weight, else we assume the context is an accent placement
                             // function, in which case we use the actual distance as before".
-                            if (InClearTypeDirection && !NativeClearTypeMode && _gs.Zp0 == _gs.Zp1)
+                            // THE SAME-ZONE TEST IS OURS, NOT GDI'S. itrp_MSIRP guards this block
+                            // with `(globals[0x88] >> 2 & 1) == 0 && localGS[0xcc] != 0` and
+                            // nothing else, and it measures the original across the two zone
+                            // elements, so a twilight reference is not excluded. The extra test
+                            // came from Beat Stamm's description of the rule rather than from the
+                            // code. Dropped, and it measures EXACTLY ZERO -- so no MSIRP in the
+                            // repertoire crosses zones, and the rule is gone on the strength of
+                            // the binary rather than kept on the strength of a prose description.
+                            // WPF_CT_MSIRP_ZONES=same puts it back.
+                            if (InClearTypeDirection && !NativeClearTypeMode
+                                && (s_msirpAnyZone || _gs.Zp0 == _gs.Zp1))
                             {
                                 int org = MeasureOriginal(_gs.Zp1, p, _gs.Zp0, _gs.Rp0);
                                 if (org != 0
@@ -2303,6 +2313,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// not about the rule, and a different rendering path could flip it.</summary>
         /// <summary>WPF_CT_IUP_FLATTIE=0: on a flat run anchor on the FIRST touched point, as we
         /// used to, instead of itrp_IUP's non-strict tie to the second.</summary>
+        private static readonly bool s_msirpAnyZone =
+            Environment.GetEnvironmentVariable("WPF_CT_MSIRP_ZONES") != "same";
+
         private static readonly bool s_iupFlatTie =
             Environment.GetEnvironmentVariable("WPF_CT_IUP_FLATTIE") != "0";
 
