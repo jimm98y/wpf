@@ -4428,29 +4428,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>SROUND and S45ROUND both take one byte and mean the same thing by it: a period,
         /// a phase within it, and how far past a step counts as reaching the next one.</summary>
+        /// <summary>itrp_SetRoundValues@14003f8a0, which decodes SROUND and S45ROUND's one byte.
+        /// <para>The periods are LITERALS there, not derived: 0x20 / 0x40 / 0x80 for SROUND and
+        /// 0x17 / 0x2d / 0x5b -- 23, 45, 91 -- for S45ROUND, with 999 for the reserved fourth
+        /// code. We had been halving and doubling a 46, which gives 46 and 92 where GDI has 45 and
+        /// 91. The phase is `(p + 2) &gt;&gt; 2`, `(p + 1) &gt;&gt; 1` and `(3p + 2) &gt;&gt; 2`, and the
+        /// threshold `((n - 4) * p + 4) &gt;&gt; 3` with an ARITHMETIC shift -- all of which agree with
+        /// the plain divisions we had for SROUND's powers of two and none of which do for
+        /// S45ROUND's odd ones. WPF_CT_SROUND_GDI=0 restores the derived values.</para></summary>
         private void SetSuperRound(int selector, int gridPeriod)
         {
-            switch (selector & 0xC0)
-            {
-                case 0x00: _gs.RoundPeriod = gridPeriod / 2; break;
-                case 0x40: _gs.RoundPeriod = gridPeriod; break;
-                case 0x80: _gs.RoundPeriod = gridPeriod * 2; break;
-                default: _gs.RoundPeriod = gridPeriod; break;
-            }
+            bool s45 = gridPeriod != 64;
+            if (s_superRoundGdi)
+                _gs.RoundPeriod = (selector & 0xC0) switch
+                {
+                    0x00 => s45 ? 23 : 32,
+                    0x40 => s45 ? 45 : 64,
+                    0x80 => s45 ? 91 : 128,
+                    _ => 999,
+                };
+            else
+                _gs.RoundPeriod = (selector & 0xC0) switch
+                {
+                    0x00 => gridPeriod / 2,
+                    0x40 => gridPeriod,
+                    0x80 => gridPeriod * 2,
+                    _ => gridPeriod,
+                };
 
+            int p = _gs.RoundPeriod;
             _gs.RoundPhase = (selector & 0x30) switch
             {
                 0x00 => 0,
-                0x10 => _gs.RoundPeriod / 4,
-                0x20 => _gs.RoundPeriod / 2,
-                _ => _gs.RoundPeriod * 3 / 4,
+                0x10 => s_superRoundGdi ? (p + 2) >> 2 : p / 4,
+                0x20 => s_superRoundGdi ? (p + 1) >> 1 : p / 2,
+                _ => s_superRoundGdi ? (3 * p + 2) >> 2 : p * 3 / 4,
             };
 
             int threshold = selector & 0x0F;
-            _gs.RoundThreshold = threshold == 0
-                ? _gs.RoundPeriod - 1
-                : (threshold - 4) * _gs.RoundPeriod / 8;
+            _gs.RoundThreshold = threshold == 0 ? p - 1
+                               : s_superRoundGdi ? ((threshold - 4) * p + 4) >> 3
+                               : (threshold - 4) * p / 8;
         }
+
+        private static readonly bool s_superRoundGdi =
+            Environment.GetEnvironmentVariable("WPF_CT_SROUND_GDI") != "0";
 
         // ---- the stack ----------------------------------------------------------------------------
 
