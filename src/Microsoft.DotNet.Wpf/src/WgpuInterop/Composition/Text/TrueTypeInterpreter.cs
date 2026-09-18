@@ -1164,7 +1164,70 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// round-state instruction runs. Null until one has run.</summary>
         private bool? _roundGridSubpixel;
         
-        private void LatchRoundGrid() => _roundGridSubpixel = InClearTypeDirection;
+        private void LatchRoundGrid()
+        {
+            _roundGridSubpixel = InClearTypeDirection;
+            // THE ROUNDING FUNCTION IS CHOSEN WHEN THE ROUND STATE IS SET, NOT WHEN A DISTANCE
+            // IS ROUNDED. itrp_RTG@14003d340, RDTG@14003d040, RTHG@14003d390, RUTG@14003d3e0,
+            // ROFF@1400949f0 and RTDG@14003d2f0 each install one of two functions at
+            // globals+0x90: the subpixel variant (itrp_RoundToGridSP etc., `(v + comp/2 + 2) &
+            // ~3`, a SIXTEENTH) when the ClearType-axis latch localGS+0xcc is set AND (native
+            // mode globals[0x88] bit 2 OR the mode byte globals[0x16b] != 0, i.e. not the
+            // pre-program); otherwise the plain whole-pixel one. The pointer then serves every
+            // rounded MIRP/MDRP/MIAP/MDAP until the next round-state instruction, whatever the
+            // projection is by then -- so `SVTCA[y] RTHG ... SVTCA[x] MDRP` rounds x to a WHOLE
+            // pixel under ClearType, and a pre-program's RTG always installs the whole-pixel
+            // function. Only itrp_MIRP has an inline fast path (localGS+0xa4 != 0: plain RTG with
+            // axis vectors, never cleared since) that rounds by the CURRENT latch.
+            _roundFnSp = InClearTypeDirection && !BiLevelPass
+                         && (NativeClearTypeMode || !_inPreProgram);
+        }
+
+        /// <summary>Whether the round-state function GDI would have installed is the SIXTEENTH
+        /// one. See LatchRoundGrid.</summary>
+        private bool _roundFnSp;
+
+        /// <summary>WPF_CT_ROUND_INSTALL=1: GdiRoundsToSixteenth decides the grid. OFF: its one
+        /// surviving rule -- RDTG rounding down to the whole pixel under an off-axis projection,
+        /// read from itrp_RoundDownToGridSP@140094a40 -- breaks Arial Bold 'A'/'K'/'X'@20 (0 ->
+        /// 4,114 / 1,702 / 491) and costs the holdout 281,797 -> 1,299,293, so at the MDRP that
+        /// follows `SDPVTL RDTG` GDI's gs+0x78 is evidently not itrp_Project (SDPVTL installs a
+        /// dual-projection function) and the fallback never fires there. Kept as the record of
+        /// three readings: the install-time model (80.9M), install + RTG inline (5.2M), RDTG
+        /// alone (1.3M). The rounding-time model this file already had is the right one.</summary>
+        private static readonly bool s_roundInstall =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUND_INSTALL") == "1";
+
+        /// <summary>WPF_CT_ROUND_INLINE=1: model itrp_MIRP's inline path (localGS+0xa4 != 0) as
+        /// "RTG with axis-aligned vectors", rounding by the current latch. Default off: every
+        /// vector or round-state instruction but SVTCA and RTG zeroes 0xa4 and nothing but a
+        /// nonzero SVTCA restores it, so after any pre-program it stays zero.</summary>
+        private static readonly bool s_roundInline =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUND_INLINE") == "1";
+
+        private bool ProjectionIsAxis =>
+            (_gs.ProjX == 0x4000 && _gs.ProjY == 0) || (_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+        private bool FreedomIsAxis =>
+            (_gs.FreeX == 0x4000 && _gs.FreeY == 0) || (_gs.FreeX == 0 && _gs.FreeY == 0x4000);
+
+        /// <summary>The grid GDI rounds this distance on: true = sixteenth, false = whole pixel.
+        /// itrp_RoundDownToGridSP@140094a40 is the one subpixel function with a check of its own:
+        /// off native mode, with the GENERAL projection function installed (an off-axis
+        /// projection vector), it falls back to the whole-pixel RoundDownToGrid.</summary>
+        private bool GdiRoundsToSixteenth()
+        {
+            // ...AND EVERY PROJECTION-VECTOR INSTRUCTION RE-INSTALLS IT: itrp_SVTCA_1@14003f6f0
+            // (14003f734-748), SPVTCA, SPVTL, SDPVTL and WPV all reload globals+0x90 from the
+            // table at 14009b8c0 indexed by round state + 8 when the NEW latch is set, so the
+            // choice follows the projection wherever a program sets one before rounding, which
+            // is everywhere -- the install-time reading measured 80.9M. What survives of it is
+            // itrp_RoundDownToGridSP's own check: off native mode, with the general projection
+            // function installed (an off-axis projection vector -- SDPVTL/SPVTL), RDTG rounds
+            // DOWN TO THE WHOLE PIXEL; the other subpixel functions never look.
+            if (BiLevelPass || !InClearTypeDirection) return false;
+            if (_gs.Round == RoundMode.DownToGrid && !NativeClearTypeMode && !ProjectionIsAxis) return false;
+            return true;
+        }
         
         private static readonly bool s_roundLatch =
             Environment.GetEnvironmentVariable("WPF_CT_ROUNDLATCH") == "1";
@@ -1521,6 +1584,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _prepPpem = pixelsPerEm;
             _prepClearType = clearType;
             _prepBiLevel = BiLevelPass;
+            _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;
             _ppem = ppem;
@@ -4014,7 +4078,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                      : linkType == 1 ? -s_engineComp        // black: shrink
                      : linkType == 2 ? s_engineComp         // white: expand
                      : 0;                                   // grey
-            if (comp != 0 && InClearTypeDirection && !BiLevelPass) comp /= 2;
+            bool? installed = s_roundInstall ? GdiRoundsToSixteenth() : null;
+            if (comp != 0 && (installed ?? (InClearTypeDirection && !BiLevelPass))) comp /= 2;
             distance += distance < 0 ? -comp : comp;
             bool negative = distance < 0;
             int value = negative ? -distance : distance;
@@ -4094,7 +4159,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        : physicalPosition ? 1
                        : finer && TrueTypeFont.SubpixelFitting && IsHorizontalProjection ? 3
                        : position && s_positionGrid > 0 && InClearTypeDirection ? s_positionGrid
-                       : (s_roundLatch && _roundGridSubpixel is bool rg ? rg
+                       : (installed is bool inst ? inst
+                         : s_roundLatch && _roundGridSubpixel is bool rg ? rg
                          : s_gridAxisExact ? OnClearTypeAxis : InClearTypeDirection) ? ClearTypeGrid
                        : 1;
             // A SNAP ZONE was tried here -- pull a value onto a whole pixel when it lands within a
