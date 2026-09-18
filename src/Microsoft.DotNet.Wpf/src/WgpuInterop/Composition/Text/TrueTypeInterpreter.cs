@@ -1467,7 +1467,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// which is worse still (194,744) because the advance phantom is then derived from an
         /// unrounded pp1.</para></summary>
         private static readonly int s_pp1Round =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PP1_SIXTEENTH"), out int p1) ? p1 : 2;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PP1_SIXTEENTH"), out int p1) ? p1
+            // NOT `s_lsbRound ? ...`: that field is declared later in the file and static
+            // initialisers run in declaration order, so it would still be false here.
+            : Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") != "0" ? 0 : 2;
 
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
@@ -3382,8 +3385,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_lsbPhantoms =
             Environment.GetEnvironmentVariable("WPF_CT_LSB_PHANTOM") != "0";
 
+        /// <summary>scl_AdjustOldCharSideBearing@1801da5f0, which is how GDI puts the left
+        /// phantom on its grid: it rounds `orgX[pp1]` -- to a SIXTEENTH under ClearType, to a whole
+        /// pixel otherwise -- and SHIFTS EVERY POINT of the glyph, phantoms included, by the same
+        /// delta, so org and cur agree and the outline keeps its place inside the advance box.
+        /// That is the only place GDI rounds pp1.
+        /// <para>We used to round pp1's cur IN PLACE and leave the outline where it was, which
+        /// slides the outline inside the box and leaves org and cur disagreeing by the delta.
+        /// Together with the sixteenth grid this is worth 172,715 -> 160,147.
+        /// WPF_CT_LSBROUND=0 goes back to the in-place rounding (with
+        /// WPF_CT_PP1_SIXTEENTH=2, which is what it needs to be then -- 165,670; the two
+        /// together, which rounds pp1 twice, is 189,708).</para></summary>
         private static readonly bool s_lsbRound =
-            Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") != "0";
 
         /// <summary>Is the ClearType x grid in force for THIS run?</summary>
         private static bool SubpixelFittingHere =>
