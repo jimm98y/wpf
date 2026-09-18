@@ -3000,6 +3000,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // (5,4) re-targets to pp1 because pp1 and p5 share orus 0, the pair then shifts pp1 by
             // avg(0,195)*(f-1) = -10 and p5 inherits it -- while GDI's own phase raster (quality
             // 5 against 6) leaves that left edge exactly where the unphased one has it.
+            // GDI'S READING SHIPS AND THE EXEMPTION IS EXPENSIVE. AddDistance's pair tail has no
+            // phantom test at all -- its bounds are `index < lastContourEnd + 5`, which INCLUDES
+            // the four phantoms -- so a phantom may be either end of a pair. Re-measured
+            // 2026-09-18: refusing them costs 172,715 -> 230,692. WPF_CT_PHASE_PHANTOM_MATE=0.
             if (!s_phasePhantomMate && (anc >= _realPoints || p >= _realPoints)) return;
             if ((uint) anc >= (uint) _phasePartner.Length) return;
             if ((uint) p >= (uint) _phasePartner.Length) return;

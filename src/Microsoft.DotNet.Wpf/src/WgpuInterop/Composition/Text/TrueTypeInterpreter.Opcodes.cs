@@ -1922,6 +1922,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             sb.Append("] x=[");
             for (int i = 0; i < System.Math.Min(_glyphZone.CurX.Length, s_dumpPoints); i++)
                 sb.Append((_glyphZone.CurX[i] / 64f).ToString("0.##")).Append(' ');
+            sb.Append("] tx=[");
+            // Which points the PROGRAM placed in x, so a per-edge residual can be told apart
+            // from an interpolated one: T = touched in x, . = left to IUP.
+            for (int i = 0; i < System.Math.Min(_glyphZone.Tags.Length, s_dumpPoints); i++)
+                sb.Append((_glyphZone.Tags[i] & TagTouchX) != 0 ? 'T' : '.');
             sb.Append(']');
             Console.Error.WriteLine(sb.ToString());
         }
