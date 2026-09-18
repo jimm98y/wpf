@@ -572,7 +572,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int dx = -_glyphZone.CurX[pp1];
                     int dy = s_pp1Origin == 3 ? 0 : -_glyphZone.CurY[pp1];
                     if (s_pp1Origin != 2)
-                        dx = BiLevelPass || !TrueTypeFont.SubpixelFitting ? (dx + 32) & ~63 : (dx + 2) & ~3;
+                        dx = BiLevelPass || !TrueTypeFont.SubpixelFitting ? (dx + 32) & ~63
+                           : s_pp1Sample ? RoundToSample(dx)
+                           : (dx + 2) & ~3;
                     if (dx != 0 || dy != 0)
                     {
                         int np = Math.Min(_realPoints + 4, _glyphZone.CurX.Length);
@@ -2792,6 +2794,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// makes them ordinary roots -- a bisection handle, not one of GDI's rules.</summary>
         /// <summary>WPF_CT_PP1_ORIGIN: 1 (default) fs__Contour's re-anchor on the fitted pp1 with
         /// its rounding; 2 = exact (no rounding); 3 = x only; 0 = off. See Hint.</summary>
+        /// <summary>fs__Contour@140025398's re-anchor rounds dx in the CURRENT frame, and by the
+        /// time it runs the outline has been through mth_IntelMul with the device matrix -- which
+        /// carries the ClearType OVERSCALE, since the same function divides the finished x back
+        /// down by `globals[0x49a]` at 140024dfc. So its two roundings are a whole pixel and a
+        /// sixteenth OF AN OVERSCALED PIXEL, and which one it takes is
+        ///     bVar49 = (flags[0x41a] bit 0 set) &amp;&amp; (bit 1 clear)   ->  sixteenth
+        ///     otherwise                                          ->  whole pixel
+        /// with bit 0 = ClearType and bit 1 = compatible widths (the span/factor block at
+        /// 140025320 is gated on both, and the second globals block exists only when bit 1 is
+        /// set). Our pass is ClearType WITH compatible widths, so bit 1 is set and the rounding
+        /// is a whole OVERSCALED pixel -- one sample, a SIXTH of a real pixel -- not the
+        /// sixteenth we had.
+        /// <para>REFUTED BY MEASUREMENT, and kept as the record of the reading: rounding dx to a
+        /// whole OVERSCALED pixel (a sixth of a real one) measures 209,012 against the shipped
+        /// sixteenth-of-a-real-pixel's 172,715, and the other arm of the same branch -- a
+        /// sixteenth of an overscaled pixel, which at our resolution is no rounding at all --
+        /// measures 184,107 (WPF_CT_PP1_ORIGIN=exact). So whatever frame fs__Contour's re-anchor
+        /// is in by the time it runs, it is not one where the outline has already been multiplied
+        /// by six; either mth_IntelMul's matrix does not carry the oversample (the division back
+        /// at 140024dfc would then be undoing something applied later) or uVar20/pfVar40 gate the
+        /// rounding away for this pass. The sixteenth of a REAL pixel is also what every rounding
+        /// inside the interpreter uses, so it keeps the fitted outline on one grid.</para>
+        /// WPF_CT_PP1_SAMPLE=1 measures the overscaled reading again.</summary>
+        private static readonly bool s_pp1Sample =
+            Environment.GetEnvironmentVariable("WPF_CT_PP1_SAMPLE") == "1";
+
+        /// <summary>Round a 26.6 x to a whole pixel of the 6x oversampled frame, which is what
+        /// `(dx + 0x20) &amp; ~0x3f` does there. Kept in real 26.6, so the answer is the nearest
+        /// sixty-fourth to it.</summary>
+        private static int RoundToSample(int dx)
+        {
+            long over = (long) dx * TrueTypeFont.ClearTypeOversample;
+            over = (over + 32) & ~63L;
+            long half = TrueTypeFont.ClearTypeOversample / 2;
+            return (int) ((over >= 0 ? over + half : over - half) / TrueTypeFont.ClearTypeOversample);
+        }
+
         private static readonly int s_pp1Origin =
             Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN") switch
             { "0" => 0, "exact" => 2, "x" => 3, _ => 1 };

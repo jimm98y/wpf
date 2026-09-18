@@ -1860,6 +1860,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// renders from a y-only fitting that keeps natural x. The metrics are a reference for the
         /// wrong mode. Rendered coverage is the one to trust, and it says leave x alone -- which is
         /// also what "GDI keeps natural widths" has said all along.</para></summary>
+        /// <summary>How many columns the ClearType scan converter puts in one pixel: GDI's
+        /// globals[0x49a], six, which is three lamps of two samples each.</summary>
+        internal const int ClearTypeOversample = 6;
+
         internal static bool SubpixelFitting { get; set; }
 
         /// <summary>WPF_CT_COMPOFF=1 rounds a component offset on the LAMP grid in x, as
