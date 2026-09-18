@@ -174,13 +174,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// (scl_ScaleOldCharPoints and its phantom twin) use a different multiply-and-shift
         /// with no such term, so this belongs to the control values alone -- applying it to
         /// both measures 3,634,447 against 3,598,948.
-        /// <para>AND IT MEASURES WORSE HERE, so it is OFF: 3,614,199 against 3,598,948. The
-        /// reading that fits is that GDI does not take this path for our sizes at all --
-        /// itrp_GetCVTEntryFast returns the stored value with NO scaling, so the array it reads
-        /// is already scaled and the rounding that produced it happened somewhere we have not
-        /// found. GetCVTEntrySlow is the fallback, not the common case, and mapping its
-        /// arithmetic onto our pre-scaling is putting it in the wrong place.</para>
-        /// <para>WPF_CT_CVTROUND=away turns it on.</para></summary>
+        /// <para>AND IT MEASURES WORSE HERE, so it is OFF: 3,614,199 against 3,598,948 when it
+        /// was written, and 1,569,637 against 139,753 re-measured on 2026-09-19 -- eleven times
+        /// the residual.</para>
+        /// <para>SETTLED 2026-09-19, and the whole chain is read now rather than guessed. The old
+        /// note said "GDI does not take this path at all -- GetCVTEntryFast returns the stored
+        /// value with no scaling, so the array is already scaled and the rounding that produced it
+        /// happened somewhere we have not found". The conclusion was right and every step of the
+        /// reasoning was wrong. In order:</para>
+        /// <para>itrp_Execute@140037030 installs the FAST accessors only when gs[0x16b] == 1, the
+        /// font program, or when gs[0x2e] is non-zero; prep and every glyph program otherwise get
+        /// itrp_GetCVTEntrySlow. So GDI does take the slow path.</para>
+        /// <para>But itrp_GetCVTScale@140037cd0 does not return a scale. It returns gs[0x160] for
+        /// a pure x projection, gs[0x164] for a pure y one, and a cached sqrt of the two for a
+        /// diagonal -- and scl_InitializeScaling sets those two to the ASPECT RATIO, not to a
+        /// size: whichever of the x scale gs[0x184] and the y scale gs[0x188] is larger gets
+        /// 0x10000 and the other gets their quotient. For an unrotated, unstretched glyph the two
+        /// are equal, both come out 1.0, and GetCVTEntrySlow's
+        /// (v * 0x10000 + sign + 0x8000) >> 16 hands back v unchanged. The slow path is an
+        /// ASPECT CORRECTION, not the scaling. The array really is pre-scaled.</para>
+        /// <para>And the pre-scaling is scl_Scale@140040f50, which switches on the rounder
+        /// installed by scl_InitializeScaling: scl_FRound when the em is a POWER OF TWO (all six
+        /// faces are 2048), scl_SRound when it is not, scl_FixRound when the numerator reaches
+        /// 0x8000. The FRound arm is `(v * num + (den >> 1)) >> log2(den)` -- an arithmetic shift,
+        /// so an exact half goes UP, which is what ScaleUnits does. Half AWAY from zero belongs to
+        /// the SRound and FixRound arms, and our faces never reach them.</para>
+        /// <para>So the control values are exact, and WPF_CT_CVTROUND=away is off for the right
+        /// reason at last: it is the tie rule of a code path these fonts do not take.</para>
+        /// </summary>
         internal static int ScaleControlValue(int fontUnits, int scale16)
         {
             long v = (long)fontUnits * scale16;
