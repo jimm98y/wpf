@@ -195,6 +195,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// rasterizer rounds them (<see cref="ScaleUnits"/>).</summary>
         private int Scale(int fontUnits) => ScaleUnits(fontUnits, _scale);
 
+        /// <summary>The y coordinate's scaling, which scl_ScaleOldCharPoints takes through a
+        /// SEPARATE function pointer from x's -- globals+0xd0 against globals+0xc8 -- so the two
+        /// need not round the same way. WPF_CT_YSCALE=away rounds an exact half AWAY FROM ZERO
+        /// (scl_SRound's shape) instead of UP (scl_FRound's), which differs only below the
+        /// baseline: a descender's -0.5 becomes -1 rather than 0.</summary>
+        private int ScaleY(int fontUnits)
+        {
+            if (!s_yScaleAway) return ScaleUnits(fontUnits, _scale);
+            long v = (long) fontUnits * _scale;
+            return (int) ((v + (v >> 63) + 0x8000) >> 16);
+        }
+
+        private static readonly bool s_yScaleAway =
+            Environment.GetEnvironmentVariable("WPF_CT_YSCALE") == "away";
+
         /// <summary>a*b/c, rounded to nearest, and sign-symmetric: the magnitudes are what is
         /// divided, so a negative c cannot turn the rounding round the other way.</summary>
         private static readonly int s_engineComp =
@@ -1852,7 +1867,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     z.OrusX[i] = glyph.X[i];
                     z.OrusY[i] = glyph.Y[i];
                     z.OrgX[i] = z.CurX[i] = Scale(glyph.X[i]);
-                    z.OrgY[i] = z.CurY[i] = Scale(glyph.Y[i]);
+                    z.OrgY[i] = z.CurY[i] = ScaleY(glyph.Y[i]);
                 }
                 z.InkX[i] = z.OrgX[i];
 
