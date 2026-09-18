@@ -2546,7 +2546,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Vector2 current = figure.Start;
                 foreach (PathSegment seg in figure.Segments)
                 {
-                    current = AppendSegment(pts, current, seg, tolerance);
+                    current = AppendSegment(pts, current, seg, tolerance, ends);
                     ends?.Add(pts.Count - 1);
                 }
                 if (pts.Count >= 3)
@@ -2575,6 +2575,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// site so they cannot drift apart.
         /// </summary>
         internal static Vector2 AppendSegment(List<Vector2> pts, Vector2 current, PathSegment seg, float tolerance)
+            => AppendSegment(pts, current, seg, tolerance, null);
+
+        /// <summary>As above, additionally recording in <paramref name="marks"/> the indices of
+        /// any interior points that are the OUTLINE's own rather than the flattener's.</summary>
+        internal static Vector2 AppendSegment(List<Vector2> pts, Vector2 current, PathSegment seg,
+                                              float tolerance, List<int>? marks)
         {
             switch (seg)
             {
@@ -2583,9 +2589,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return l.Point;
                 case QuadraticBezierSegment q:
                 {
-                    int n = CurveFlattener.QuadraticSteps(current, q.Control, q.Point, tolerance);
-                    for (int i = 1; i <= n; i++) pts.Add(Quadratic(current, q.Control, q.Point, i / (float)n));
-                    return q.Point;
+                    // EVERY CURVE IS CUT AT ITS EXTREMA FIRST. EvaluateSpline@140033848 does not
+                    // hand a spline to the scan converter until it is monotonic in both axes: its
+                    // first loop splits where dy changes sign, its second where dx does, each by
+                    // de Casteljau at the exact parameter, and only the monotonic pieces reach
+                    // fsc_CalcSpline. The pieces' join points -- the curve's own extrema -- are
+                    // then real vertices: EvaluateSpline runs CheckHorizTopology and
+                    // CheckVertTopology on each piece's start before emitting it, the same two
+                    // rules a line's endpoint gets.
+                    // <para>This matters far more than the chord error suggests. A hinted bowl has
+                    // its extremum placed ON a grid position, so the extremum lands exactly on a
+                    // sample centre again and again; a chord across it sags INWARD, by less than a
+                    // thousandth of a pixel but always the same way, and the sample that GDI
+                    // covers exactly we miss. That is a curve-only, one-signed ink deficit, and
+                    // curved glyphs carry 69% of the residual at 3.3x the per-row error of
+                    // straight ones. Splitting first puts the extremum back on the polygon as an
+                    // exact vertex, where no sag can reach it.</para>
+                    // <para>WPF_CT_CURVE_SPLIT=0 flattens the whole curve in one span as before;
+                    // =nomark splits but leaves the join points off the outline's vertex set.</para>
+                    Vector2 p0 = current, cc = q.Control, p1 = q.Point;
+                    if (s_curveSplit != 0)
+                    {
+                        float ta = ExtremumT(p0.Y, cc.Y, p1.Y), tb = ExtremumT(p0.X, cc.X, p1.X);
+                        if (ta > tb) (ta, tb) = (tb, ta);
+                        float done = 0f;
+                        for (int k = 0; k < 2; k++)
+                        {
+                            float t = k == 0 ? ta : tb;
+                            if (!(t > done) || !(t < 1f)) continue;
+                            float lt = (t - done) / (1f - done);
+                            Vector2 a = Vector2.Lerp(p0, cc, lt), b = Vector2.Lerp(cc, p1, lt);
+                            Vector2 m = Vector2.Lerp(a, b, lt);
+                            EmitQuadratic(pts, p0, a, m, tolerance);
+                            if (s_curveSplit == 1) marks?.Add(pts.Count - 1);
+                            p0 = m; cc = b; done = t;
+                        }
+                    }
+                    EmitQuadratic(pts, p0, cc, p1, tolerance);
+                    return p1;
                 }
                 case CubicBezierSegment c:
                 {
@@ -2597,6 +2638,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return current;
             }
         }
+
+        /// <summary>The parameter of a quadratic's extremum along one axis, or -1 if it has
+        /// none strictly inside. EvaluateSpline's split point: dB/dt = 0 at
+        /// t = (p0 - c) / (p0 - 2c + p1).</summary>
+        private static float ExtremumT(float p0, float c, float p1)
+        {
+            float den = p0 - 2f * c + p1;
+            if (den == 0f) return -1f;
+            float t = (p0 - c) / den;
+            return t > 0f && t < 1f ? t : -1f;
+        }
+
+        private static void EmitQuadratic(List<Vector2> pts, Vector2 p0, Vector2 c, Vector2 p1,
+                                          float tolerance)
+        {
+            int n = CurveFlattener.QuadraticSteps(p0, c, p1, tolerance);
+            for (int i = 1; i <= n; i++) pts.Add(Quadratic(p0, c, p1, i / (float)n));
+        }
+
+        /// <summary>WPF_CT_CURVE_SPLIT: 1 split and mark (default), 2 split only, 0 off.</summary>
+        private static readonly int s_curveSplit =
+            Environment.GetEnvironmentVariable("WPF_CT_CURVE_SPLIT") is string cs
+                ? (cs == "0" ? 0 : cs == "nomark" ? 2 : 1) : 1;
 
         private static Vector2 Quadratic(Vector2 p0, Vector2 c, Vector2 p1, float t)
         {

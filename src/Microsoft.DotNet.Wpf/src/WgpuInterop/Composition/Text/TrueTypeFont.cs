@@ -3853,7 +3853,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figure;
         }
 
-        private static Vector2 Mid(Vector2 a, Vector2 b) => new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
+        /// <summary>The implied on-curve point between two off-curve ones.
+        /// <para>IT IS NOT THE EXACT AVERAGE. fsc_FillGlyph@140034000 walks the contour in 26.6
+        /// integers and, wherever two consecutive points are both off-curve, materialises the join
+        /// as <c>(a + b + 1) &gt;&gt; 1</c> on BOTH axes before handing the piece to
+        /// EvaluateSpline -- an arithmetic shift, so a half lands on the larger value. A midpoint
+        /// of two odd 26.6 coordinates is therefore a sixty-fourth to the right of and above the
+        /// true middle, never on it, and never the half-sixty-fourth we were keeping.</para>
+        /// <para>Half a sixty-fourth of a pixel sounds beneath notice, and would be if it fell
+        /// anywhere. It falls on curve JOINS, which is where a bowl's outline is at its flattest
+        /// and a whole lamp's worth of samples sits within a sixty-fourth of the edge. Curved
+        /// glyphs carry 69% of the residual at 3.3x the per-row error of straight ones, and the
+        /// point solver finds the differing point is an implied midpoint far more often than it is
+        /// any real point of the outline.</para>
+        /// <para>REFUTED, AND THE REASON IS THE OVERSAMPLING. Those 26.6 integers are not
+        /// sixty-fourths of a PIXEL: fs_ContourScan multiplies the scan box by the ClearType
+        /// overscale before fsc_FillGlyph walks it, so a unit is a sixty-fourth of a sub-column in
+        /// x and of a sub-row in y -- 1/384 and 1/320 of a pixel. Every coordinate is then six
+        /// times (or five times) a sixty-fourth of a pixel, two of them sum to an even number in
+        /// x, and <c>(a + b + 1) &gt;&gt; 1</c> gives back the exact average; in y the tie can
+        /// fall, and it moves the point by a six-hundred-and-fortieth of a pixel. So the rule is
+        /// real and its effect is nothing. Rounding to a sixty-fourth of a PIXEL instead, as this
+        /// did when it was written, is six times too coarse and measures 139,753 -&gt; 270,991.
+        /// WPF_CT_MID64=1 turns the coarse version back on.</para></summary>
+        private static Vector2 Mid(Vector2 a, Vector2 b) => s_midRound
+            ? new(HalfUp64(a.X, b.X), -HalfUp64(-a.Y, -b.Y))
+            : new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
+
+        private static readonly bool s_midRound =
+            Environment.GetEnvironmentVariable("WPF_CT_MID64") == "1";
+
+        private static float HalfUp64(float p, float q)
+        {
+            int i = (int) MathF.Round(p * 64f), j = (int) MathF.Round(q * 64f);
+            return ((i + j + 1) >> 1) / 64f;
+        }
 
         // ---- kern (legacy pairwise kerning, format 0) ----
 

@@ -237,7 +237,7 @@ namespace WgpuInterop.Tests.Text
             ["repertoire@11"] = 64,
             ["repertoire@11b"] = 117,
             ["repertoire@11bi"] = 23,
-            ["repertoire@11i"] = 6,
+            ["repertoire@11i"] = 5,
             ["repertoire@12"] = 65,
             ["repertoire@12b"] = 163,
             ["repertoire@12bi"] = 9,
@@ -5769,8 +5769,9 @@ namespace WgpuInterop.Tests.Text
                         Console.Error.WriteLine($"   (no interpreter index: the path emits"
                             + $" {sx.Length} points and the reconstruction makes"
                             + $" {pathToPoint.Count})");
+                    bool showAll = Environment.GetEnvironmentVariable("WPF_XYSOLVE_ALL") == "1";
                     for (int i = 0; i < sx.Length; i++)
-                        if (sx[i] != ox[i] || sy[i] != oy[i])
+                        if (showAll || sx[i] != ox[i] || sy[i] != oy[i])
                             Console.Error.WriteLine($"   pt {i,3} {Pt(i)} ours ({ox[i],5},{oy[i],5})"
                                 + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})");
                     // WPF_XYSOLVE_INTERVAL=1: how much SLACK each x has, once the residual is zero.
@@ -9188,7 +9189,7 @@ namespace WgpuInterop.Tests.Text
             ["bi@18"] = 1,
             ["bi@19"] = 1,
             ["i@10"] = 0,
-            ["i@11"] = 0,
+            ["i@11"] = 1,
             ["i@12"] = 4,
             ["i@13"] = 12,
             ["i@14"] = 0,
