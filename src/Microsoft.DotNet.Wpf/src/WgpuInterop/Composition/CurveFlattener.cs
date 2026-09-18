@@ -121,8 +121,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <para>Worth a knob because 0.025px is not obviously below the floor for TEXT. A
         /// flattening chord sags INWARD on a convex curve, so it can only ever under-cover,
         /// and a lamp is a third of a pixel -- so a 0.025px sag is up to seven per cent of a
-        /// lamp, one-sided. The specimen is measurably light (ink against Windows 0.9855 at
-        /// 16ppem), which is the symptom that mechanism would produce.</para></summary>
+        /// lamp, one-sided.</para>
+        /// <para>STALE, AND LEFT HERE ONLY TO RETIRE IT: this used to read "the specimen is
+        /// measurably light (ink against Windows 0.9855 at 16ppem), which is the symptom that
+        /// mechanism would produce". It is not light any more. Over the 287 holdout rows our ink
+        /// is 1.00000 of Windows', 145 rows heavier against 135 lighter, and no size is further
+        /// from unity than two parts in ten thousand (8ppem, 0.99980). Mean centroid dx is within
+        /// half a hundredth of a pixel at every size and on every face. So there is no one-signed
+        /// ink deficit left for a sag to explain, and none of the global mechanisms -- gamma, the
+        /// filter weights, a uniform shift, a systematic phase compression -- has anywhere left to
+        /// hide. What remains is per-edge scatter in both directions.</para></summary>
         public static readonly float Tolerance =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_TOL"),
                            System.Globalization.NumberStyles.Float,
