@@ -897,6 +897,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int weightSum = 0;
                 if (gdiKernel) foreach (int w in GdiVerticalKernel) weightSum += w;
                 var outG = new byte[width * height * 4];
+                // The text bitmap in LEVELS, 0..6 per channel: win32k's vOrClearTypeGlyph
+                // @1402ddd78 (and draw_clrt_nf_ntb_o_to_temp_start@140162780) unpack the two
+                // packed pixels through the session's 343-entry table, add each channel and cap
+                // it at 6, and re-pack -- the glyphs of a run are SUMMED in the level domain and
+                // the finished text bitmap is blended once. Adding the coverage ramp instead
+                // (=addramp) is a unit off wherever two partial levels meet.
+                var accLvl = new byte[width * height * 3];
                 int totalFills = 0;
                 int first = 0;
                 while (first < polysG.Count)
@@ -938,6 +945,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                                        originalVertex);
                     for (int px = 0; px < width * height; px++)
                     {
+                        int g0 = 0, g1 = 0, g2 = 0;
                         for (int ch = 0; ch < 3; ch++)
                         {
                             int sum = 0;
@@ -948,8 +956,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             int div = gdiKernel ? weightSum : nSub;
                             int outLvl = (sum + div / 2) / div;
                             if (outLvl > 6) outLvl = 6;
+                            if (ch == 0) g0 = outLvl; else if (ch == 1) g1 = outLvl; else g2 = outLvl;
+                        }
+                        // the 6x5 filter packs its result: quantise the glyph's pixel (lamp order)
+                        if (s_ctPack && nSub > 1)
+                        {
+                            if (LampsRunBlueFirst) { QuantizeLevels(ref g2, ref g1, ref g0); }
+                            else QuantizeLevels(ref g0, ref g1, ref g2);
+                        }
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            int outLvl = ch == 0 ? g0 : ch == 1 ? g1 : g2;
+                            if (outLvl == 0) continue;
+                            if (s_runCompositeLevels)
+                            {
+                                int haveL = accLvl[px * 3 + ch];
+                                accLvl[px * 3 + ch] = (byte) Math.Min(6, haveL + outLvl);
+                                continue;
+                            }
                             int cov = GdiLevelRamp[outLvl];
-                            if (cov == 0) continue;
                             int have = outG[px * 4 + ch];
                             // the second glyph blended over the first: 1 - (1-a)(1-b); or, with
                             // WPF_CT_RUN_COMPOSITE=max, the larger of the two
@@ -961,6 +986,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     first = last;
                 }
                 LastDropoutFills = DropoutForRun > 0 ? totalFills : -1; LastDropoutRuns++;
+                if (s_runCompositeLevels)
+                    for (int px = 0; px < width * height; px++)
+                    {
+                        int a0 = accLvl[px * 3], a1 = accLvl[px * 3 + 1], a2 = accLvl[px * 3 + 2];
+                        // vOrClearTypeGlyph packs the sum: quantise again (lamp order)
+                        if (s_ctPack)
+                        {
+                            if (LampsRunBlueFirst) QuantizeLevels(ref a2, ref a1, ref a0);
+                            else QuantizeLevels(ref a0, ref a1, ref a2);
+                        }
+                        outG[px * 4] = GdiLevelRamp[a0]; outG[px * 4 + 1] = GdiLevelRamp[a1]; outG[px * 4 + 2] = GdiLevelRamp[a2];
+                    }
                 for (int px = 0; px < width * height; px++)
                     outG[px * 4 + 3] = (byte) ((outG[px * 4] + outG[px * 4 + 1] + outG[px * 4 + 2]) / 3);
                 return new SubpixelMask(outG, width, height, originX, originY);
@@ -1293,6 +1330,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 System.Globalization.CultureInfo.InvariantCulture, out float vp) ? vp : 0.5f;
 
         private static readonly byte[] GdiLevelRamp = { 0, 43, 85, 127, 170, 212, 255 };
+
+        /// <summary>GDI KEEPS A CLEARTYPE PIXEL AS ONE PACKED BYTE, AND THE PACKING IS LOSSY. The
+        /// three channel levels 0..6 (343 combinations) are packed through the table at
+        /// fontdrvhost+0xa7b60 into 115 bytes and unpacked through the session table
+        /// (fontdrvhost+0xa7420, installed at main+0x4bb50; win32k's RGB table at +0x349200 is
+        /// byte-identical) -- and 62 of those bytes stand for several triples, always the less
+        /// colourful representative: (0,1,0) is 0, (0,6,0) is (2,4,2), (6,0,6) is (4,2,4),
+        /// (0,0,6) is (0,2,4). Every stage works on the packed byte: ulClearTypeFilter_6x1's
+        /// table is exactly pack(3-lamp box sums) -- verified on all 243 entries --
+        /// ulClearTypeFilter_6x5 unpacks the five sub-rows, combines and packs again, win32k's
+        /// vOrClearTypeGlyph unpacks, adds, caps and packs, and the blend unpacks the final
+        /// byte. So a pixel's channels are quantised to the 115 representable triples at each of
+        /// those points; this is that quantiser. WPF_CT_PACK=0 keeps the exact levels.</summary>
+        private static readonly byte[] GdiPack = { 0,1,2,2,5,5,8,0,3,4,5,5,8,8,3,3,6,7,8,8,23,16,6,6,7,8,23,23,16,20,20,21,22,23,23,20,20,20,21,22,23,45,41,41,41,42,43,44,45,9,10,11,11,15,15,19,12,13,14,15,15,19,19,12,16,17,18,19,19,23,16,16,20,21,22,23,23,36,20,20,21,22,23,45,36,41,41,42,43,44,45,41,41,41,42,43,44,45,24,25,26,26,30,30,35,27,28,29,30,30,35,35,31,32,33,34,35,35,40,31,36,37,38,39,40,40,36,36,41,42,43,44,45,36,41,41,42,43,44,45,41,41,65,65,66,67,68,24,25,26,49,49,49,54,46,47,48,49,49,54,54,50,51,52,53,54,54,59,50,55,56,57,58,59,59,55,55,60,61,62,63,64,55,60,60,65,66,67,68,60,60,65,65,66,67,68,46,47,48,49,49,73,73,46,47,48,49,73,73,73,69,70,71,72,73,73,78,69,74,75,76,77,78,78,74,74,79,80,81,82,83,74,79,79,84,85,86,87,79,79,84,84,88,89,90,46,47,48,49,73,73,73,69,70,71,72,73,73,73,69,70,71,72,73,73,78,91,91,92,93,94,78,78,91,91,95,96,97,98,83,91,95,95,99,100,101,102,95,95,99,99,103,104,105,69,70,71,72,73,73,73,69,70,71,72,73,73,73,91,91,92,93,94,94,78,91,91,92,93,94,94,98,91,106,106,107,108,98,98,106,106,106,109,110,111,102,106,106,109,109,112,113,114 };
+        private static readonly byte[] GdiUnpack = { 0,0,0,0,0,1,0,0,2,0,1,1,0,1,2,0,1,3,0,2,2,0,2,3,0,2,4,1,0,0,1,0,1,1,0,2,1,1,0,1,1,1,1,1,2,1,1,3,1,2,1,1,2,2,1,2,3,1,2,4,1,3,2,1,3,3,1,3,4,1,3,5,2,0,0,2,0,1,2,0,2,2,1,0,2,1,1,2,1,2,2,1,3,2,2,0,2,2,1,2,2,2,2,2,3,2,2,4,2,3,1,2,3,2,2,3,3,2,3,4,2,3,5,2,4,2,2,4,3,2,4,4,2,4,5,2,4,6,3,1,0,3,1,1,3,1,2,3,1,3,3,2,0,3,2,1,3,2,2,3,2,3,3,2,4,3,3,1,3,3,2,3,3,3,3,3,4,3,3,5,3,4,2,3,4,3,3,4,4,3,4,5,3,4,6,3,5,3,3,5,4,3,5,5,3,5,6,4,2,0,4,2,1,4,2,2,4,2,3,4,2,4,4,3,1,4,3,2,4,3,3,4,3,4,4,3,5,4,4,2,4,4,3,4,4,4,4,4,5,4,4,6,4,5,3,4,5,4,4,5,5,4,5,6,4,6,4,4,6,5,4,6,6,5,3,1,5,3,2,5,3,3,5,3,4,5,4,2,5,4,3,5,4,4,5,4,5,5,5,3,5,5,4,5,5,5,5,5,6,5,6,4,5,6,5,5,6,6,6,4,2,6,4,3,6,4,4,6,5,3,6,5,4,6,5,5,6,6,4,6,6,5,6,6,6 };
+        private static readonly bool s_ctPack =
+            Environment.GetEnvironmentVariable("WPF_CT_PACK") != "0";
+
+        /// <summary>The packed byte for three channel levels.</summary>
+        private static int PackLevels(int l0, int l1, int l2) => GdiPack[(l0 * 7 + l1) * 7 + l2];
+
+        /// <summary>Quantise three channel levels in place to what GDI's packed byte holds.</summary>
+        private static void QuantizeLevels(ref int l0, ref int l1, ref int l2)
+        {
+            int b = PackLevels(l0, l1, l2);
+            l0 = GdiUnpack[b * 3]; l1 = GdiUnpack[b * 3 + 1]; l2 = GdiUnpack[b * 3 + 2];
+        }
 
         /// <summary>interpolatePixel_6x5's vertical weights, from the tables at
         /// fontdrvhost+0xa7cb8 / +0xa7cd8 / +0xa7ed0 (4d, 9d, 10d per unit level).</summary>
@@ -1984,6 +2048,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             rgba[o + (LampsRunBlueFirst ? 2 - L : L)] = GdiContrastLevels[idx * 3 + L];
                         continue;
                     }
+                    int q0 = 0, q1 = 0, q2 = 0;
                     for (int L = 0; L < SubpixelsPerPixel; L++)
                     {
                         int c = x * SubpixelsPerPixel + L;
@@ -1999,8 +2064,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // five only feed the OTHER two channels, so the window per lamp is three, not five.
                         int lvl = w1 + w2 + w3;
                         if (lvl > 6) lvl = 6;
-                        rgba[o + (LampsRunBlueFirst ? 2 - L : L)] = (byte) lvl;
+                        if (L == 0) q0 = lvl; else if (L == 1) q1 = lvl; else q2 = lvl;
                     }
+                    // ...and the entry IS a packed byte: quantise the three levels as the table does.
+                    if (s_ctPack) QuantizeLevels(ref q0, ref q1, ref q2);
+                    rgba[o + (LampsRunBlueFirst ? 2 : 0)] = (byte) q0;
+                    rgba[o + 1] = (byte) q1;
+                    rgba[o + (LampsRunBlueFirst ? 0 : 2)] = (byte) q2;
                 }
             }
             return rgba;
@@ -2292,11 +2362,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// is on the 8-10ppem rows, where neighbours sit a lamp apart; a glyph rendered alone is
         /// unchanged by any of them. The true rule needs win32k's text composition read.</summary>
         private static readonly bool s_runComposite =
-            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") is "add" or "blend" or "max";
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") is null or "" or "levels" or "addramp" or "blend" or "max";
+        /// <summary>The level-domain saturating sum win32k's vOrClearTypeGlyph performs.</summary>
+        private static readonly bool s_runCompositeLevels =
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") is null or "" or "levels";
         private static readonly bool s_runCompositeMax =
             Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") == "max";
         private static readonly bool s_runCompositeAdd =
-            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") == "add";
+            Environment.GetEnvironmentVariable("WPF_CT_RUN_COMPOSITE") == "addramp";
 
         private static int GlyphOf(int[]? owners, List<int> contourFigures, int contour)
         {
