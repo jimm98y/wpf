@@ -586,10 +586,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // WPF_CT_XSHIFT=<n>: a DIAGNOSTIC, not a rule -- translate the fitted outline by
                 // n sixty-fourths in x, to ask whether a glyph's residual is a translation or a
                 // shape. Never set in a measurement that is reported as a result.
-                if (s_xShiftProbe != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting)
+                if ((s_xShiftProbe != 0 || s_yShiftProbe != 0)
+                    && !BiLevelPass && TrueTypeFont.SubpixelFitting)
                 {
                     int np2 = Math.Min(_realPoints + 4, _glyphZone.CurX.Length);
-                    for (int i = 0; i < np2; i++) _glyphZone.CurX[i] += s_xShiftProbe;
+                    for (int i = 0; i < np2; i++)
+                    { _glyphZone.CurX[i] += s_xShiftProbe; _glyphZone.CurY[i] += s_yShiftProbe; }
                 }
 
                 // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
@@ -2834,6 +2836,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_pp1Origin =
             Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN") switch
             { "0" => 0, "exact" => 2, "x" => 3, _ => 1 };
+
+        /// <summary>WPF_CT_YSHIFT=&lt;n&gt;: the same diagnostic in y. A DIAGNOSTIC, never a rule.</summary>
+        private static readonly int s_yShiftProbe =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_YSHIFT"), out int ys) ? ys : 0;
 
         private static readonly int s_xShiftProbe =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_XSHIFT"), out int xs) ? xs : 0;
