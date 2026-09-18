@@ -581,6 +581,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                 }
 
+                // WPF_CT_XSHIFT=<n>: a DIAGNOSTIC, not a rule -- translate the fitted outline by
+                // n sixty-fourths in x, to ask whether a glyph's residual is a translation or a
+                // shape. Never set in a measurement that is reported as a result.
+                if (s_xShiftProbe != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting)
+                {
+                    int np2 = Math.Min(_realPoints + 4, _glyphZone.CurX.Length);
+                    for (int i = 0; i < np2; i++) _glyphZone.CurX[i] += s_xShiftProbe;
+                }
+
                 // MODE 9, DAMAGE CONTROL: a glyph whose program never touched a point in x has
                 // nothing GDI could recognise as a stroke or a position to scale -- and GDI leaves
                 // it alone. Segoe UI Italic's 'a' at 12ppem runs one SVTCA[x] and then hints only y;
@@ -2786,6 +2795,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly int s_pp1Origin =
             Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN") switch
             { "0" => 0, "exact" => 2, "x" => 3, _ => 1 };
+
+        private static readonly int s_xShiftProbe =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_XSHIFT"), out int xs) ? xs : 0;
 
         private static readonly bool s_phasePhantom =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_PHANTOM") != "0";

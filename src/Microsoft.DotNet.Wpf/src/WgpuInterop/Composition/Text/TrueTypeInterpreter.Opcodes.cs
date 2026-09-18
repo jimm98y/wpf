@@ -2684,8 +2684,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// right now (lamp grid, WPF_PP2_ROUND=5) but the LSB and the two y phantoms have not
         /// been checked against scl_RoundCurrentSideBearingPnt's second half, which rounds them
         /// to WHOLE pixels.</para></summary>
+        /// <summary>itrp_MIRP's general path@14003b0e0, read in full: on the ClearType axis the
+        /// cut-in test sits BEFORE the opcode's round bit is consulted and is gated only on
+        /// `(globals[0x88] &amp; 4) == 0` -- not native mode -- so every non-native MIRP takes it,
+        /// rounded or not, phantom link or not. In native mode it moves inside the rounded branch.
+        /// That is `round || !NativeClearTypeMode`, which is what "gdi" computes and what now
+        /// ships. The earlier "nophantom" scope measures IDENTICALLY (172,715 either way, and
+        /// "all" too), so nothing turns on it; the faithful reading ships because it is the one
+        /// the binary states. WPF_CT_CUTIN_SCOPE=nophantom or =black restores the guesses
+        /// (black is worse, 188,565).
+        /// <para>And the comparison is GDI's own: it multiplies the difference by sixteen rather
+        /// than dividing the cut-in, `cutIn &lt; (cvt - outline) * 16`, which s_cutInExact already
+        /// does -- the two agree for every cut-in value, exact multiples of sixteen included.</para></summary>
         private static readonly bool s_cutInGdiScope =
-            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_SCOPE") == "gdi";
+            Environment.GetEnvironmentVariable("WPF_CT_CUTIN_SCOPE") is null or "" or "gdi";
 
         private static readonly bool s_cutInExact =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_EXACT") != "0";
