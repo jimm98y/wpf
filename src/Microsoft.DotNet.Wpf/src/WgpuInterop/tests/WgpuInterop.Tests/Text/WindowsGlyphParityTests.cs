@@ -7098,6 +7098,30 @@ namespace WgpuInterop.Tests.Text
                 ? Array.ConvertAll(ws.Split(','), int.Parse)
                 : new[] { 8, 10, 12, 16, 24 };
 
+        /// <summary>WHAT THE RESIDUAL IS MADE OF, at 139,753 over 306 rows (2026-09-19).
+        /// <para>12,210 of 13,464 glyph rows are exact. Of the 1,254 that are not, <b>229 score
+        /// exactly 118 and another 229 exactly 137</b> -- 42% of everything left. A 118 is ONE
+        /// MISSING SUB-SAMPLE and a 137 is one EXTRA: the lamp dump of Segoe UI '8' shows a single
+        /// pixel row in which three adjacent lamps are each one level out, which is what the 6x1
+        /// box filter makes of one sample. 229 of each is why the ink comes out at 1.00000 of
+        /// Windows' with 145 rows heavier against 135 lighter.</para>
+        /// <para><b>And one sample is one sixty-fourth of a pixel of outline.</b> Ten glyphs from
+        /// that pool were put through SolveGdisEdges: 604 edges between them, only SEVEN whose
+        /// allowed run excludes staying put, and six of those seven need a move of exactly 1/64
+        /// (the seventh 3/64), three positive and four negative. Three of the ten have no proven
+        /// wrong edge at all. Flattening is not in it -- Segoe UI '8' at 11ppem measures 118 at a
+        /// tolerance of 1e-4 and again at 2e-7 with an 8192-step cap, unchanged over five hundred
+        /// times.</para>
+        /// <para>So the endgame is <b>arithmetic, not mechanism</b>. A rule that moves points by a
+        /// sixteenth of a pixel -- the grid the ClearType fit rounds on -- cannot fix a
+        /// sixty-fourth. What is left is the fit's accumulated rounding disagreeing with GDI's by
+        /// one unit on one coordinate in about sixty, which then flips a sample wherever that edge
+        /// happens to sit on a boundary.</para>
+        /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
+        /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
+        /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
+        /// 7.3% of the residual" out of a duplicated row. It is 501, and unremarkable.</para>
+        /// </summary>
         [Fact]
         public void HowOurWeightTracksGdis()
         {
