@@ -856,6 +856,27 @@ namespace WgpuInterop.Tests.Text
                         for (int i = 0; !gdiFitTooo && i < gdiPlain.Count; i++)
                             if (gdiPlain[i] != gdiFitted[i]) gdiFitTooo = true;
                         if (gdiFitTooo) gdiFittedAnyway++;
+                        // WPF_GGOPTS_UNHINTED=1: GDI's UNHINTED points, in 64ths, so the unfitted
+                        // outline we draw at a no-gridfit size can be checked against GDI's.
+                        if (Environment.GetEnvironmentVariable("WPF_GGOPTS_UNHINTED") == "1")
+                        {
+                            var sbU = new System.Text.StringBuilder();
+                            sbU.Append($"      GDI unhinted '{c}' @{ppem}: {gdiPlain.Count} pts:");
+                            foreach (Vector2 v in gdiPlain)
+                                sbU.Append($" ({(int) MathF.Round(v.X * 64)},{(int) MathF.Round(v.Y * 64)})");
+                            Console.Error.WriteLine(sbU.ToString());
+                            // ...and OURS, the outline TryGetHintedOutline hands the renderer at
+                            // this size (flattened, 64ths, y-down like GDI's).
+                            if (((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem, out List<PathFigure> oursPlain))
+                            {
+                                var sbO = new System.Text.StringBuilder();
+                                List<Vector2> op = Flatten(oursPlain);
+                                sbO.Append($"      ours unfitted '{c}' @{ppem}: {op.Count} pts:");
+                                foreach (Vector2 v in op)
+                                    sbO.Append($" ({(int) MathF.Round(v.X * 64)},{(int) MathF.Round(v.Y * 64)})");
+                                Console.Error.WriteLine(sbO.ToString());
+                            }
+                        }
                         if (!quiet)
                             Console.Error.WriteLine($"'{c}': WE DID NOT GRID-FIT IT"
                                 + (gdiFitTooo ? " -- BUT GDI DID" : " (nor did GDI)"));

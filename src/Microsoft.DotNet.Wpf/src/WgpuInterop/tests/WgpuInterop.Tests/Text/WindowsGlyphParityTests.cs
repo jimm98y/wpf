@@ -3942,9 +3942,16 @@ namespace WgpuInterop.Tests.Text
                 // gets a different answer on a real glyph than on these bars. The only thing that
                 // differs between the two cases is the smoothing mode, so the probe has to be able
                 // to turn it off before the difference can be blamed on anything else.
+                // WPF_CROSS_GASP=nofit: 0xA (grey + symmetric smoothing, NO gridfit) at every size,
+                // which is what Verdana/Arial/Times declare at 8ppem -- so the bars go through the
+                // UNFITTED outline path on our side, the one no other probe exercises.
                 SyntheticFont.GaspRanges =
-                    Environment.GetEnvironmentVariable("WPF_CROSS_GASP") == "nosym"
-                        ? new[] { (0xFFFF, 0x0003) } : null;
+                    Environment.GetEnvironmentVariable("WPF_CROSS_GASP") switch
+                    {
+                        "nosym" => new[] { (0xFFFF, 0x0003) },
+                        "nofit" => new[] { (0xFFFF, 0x000A) },
+                        _ => null,
+                    };
                 byte[] fontBytes = SyntheticFont.Build(Family + "T" + taper + "S" + slant
                                                        + (SyntheticFont.GaspRanges is null ? "" : "G"),
                                                        bars);
@@ -3959,7 +3966,13 @@ namespace WgpuInterop.Tests.Text
                 {
                     var font = new TrueTypeFont(fontBytes);
                     var raw = new byte[Width * Height * 4];
-                    foreach (int ppem in new[] { 12, 16, 20 })
+                    // WPF_CROSS_PPEM=a,b,c overrides the sizes -- the 8ppem rows of the holdout show
+                    // every stem one level darker in GDI, and this is the program-free instrument
+                    // that can say whether that is the rasterizer.
+                    int[] crossSizes = Environment.GetEnvironmentVariable("WPF_CROSS_PPEM") is { Length: > 0 } cp
+                        ? System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(cp.Split(','), int.Parse))
+                        : new[] { 12, 16, 20 };
+                    foreach (int ppem in crossSizes)
                     {
                         long compared = 0, differing = 0, worst = 0, sum = 0, gInk = 0, oInk = 0;
                         for (int i = 0; i < bars.Count; i++)
@@ -8515,6 +8528,9 @@ namespace WgpuInterop.Tests.Text
                 {
                     "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
                     "sym" => new (int, int)[] { (0xFFFF, 0xF) },
+                    // nofit: what Verdana/Arial/Times declare at 8ppem -- grey + symmetric
+                    // smoothing, no gridfit -- so the slab goes through the UNFITTED path.
+                    "nofit" => new (int, int)[] { (0xFFFF, 0xA) },
                     _ => null,
                 };
             // WPF_VSLAB_SCAN=times adds Times' own SCANCTRL 303 / SCANTYPE 1 to the probe's prep.

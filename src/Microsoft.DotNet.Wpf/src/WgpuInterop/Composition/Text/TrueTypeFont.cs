@@ -1008,26 +1008,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!TryGetGlyphOutline(glyphId, out List<PathFigure> plain))
                     return false;
                 float k = pixelsPerEm / PixelsPerEm;
+                // ...AND ROUNDED TO SIXTY-FOURTHS, because GDI's scaler works in 26.6 and its
+                // unfitted outline is the design scaled and rounded to 1/64 (GGO's unhinted
+                // points for Verdana 'k'@8 are exactly ours before rounding: a stem edge at 193
+                // units is 0.7539px, which GDI holds as 48/64 = 0.75 -- exactly on a lamp sample,
+                // which counts IN -- where our float left it 1/256 to the right and the sample
+                // OUT. Every stem at 8ppem drew one level lighter than GDI's on that alone.
+                // WPF_UNFITTED_ROUND=0 keeps the float coordinates.
                 var scaled = new List<PathFigure>(plain.Count);
                 foreach (PathFigure f in plain)
                 {
-                    var copy = new PathFigure(new Vector2(f.Start.X * k, f.Start.Y * k)) { Closed = f.Closed };
+                    var copy = new PathFigure(P64(f.Start, k)) { Closed = f.Closed };
                     foreach (PathSegment seg in f.Segments)
                         switch (seg)
                         {
                             case LineSegment l:
-                                copy.Segments.Add(new LineSegment(new Vector2(l.Point.X * k, l.Point.Y * k)));
+                                copy.Segments.Add(new LineSegment(P64(l.Point, k)));
                                 break;
                             case QuadraticBezierSegment q:
-                                copy.Segments.Add(new QuadraticBezierSegment(
-                                    new Vector2(q.Control.X * k, q.Control.Y * k),
-                                    new Vector2(q.Point.X * k, q.Point.Y * k)));
+                                copy.Segments.Add(new QuadraticBezierSegment(P64(q.Control, k), P64(q.Point, k)));
                                 break;
                             case CubicBezierSegment c:
-                                copy.Segments.Add(new CubicBezierSegment(
-                                    new Vector2(c.Control1.X * k, c.Control1.Y * k),
-                                    new Vector2(c.Control2.X * k, c.Control2.Y * k),
-                                    new Vector2(c.Point.X * k, c.Point.Y * k)));
+                                copy.Segments.Add(new CubicBezierSegment(P64(c.Control1, k), P64(c.Control2, k), P64(c.Point, k)));
                                 break;
                         }
                     scaled.Add(copy);
@@ -1206,6 +1208,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Whether the face's own pre-program, run for this size, inhibits grid-fitting
         /// (INSTCTRL selector 1). See <see cref="TrueTypeInterpreter.GridFitInhibited"/>.</summary>
+        /// <summary>WPF_UNFITTED_ROUND=0: leave the unfitted outline in float instead of 26.6.</summary>
+        private static readonly bool s_unfittedRound =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_ROUND") != "0";
+
+        /// <summary>A base-pixel point scaled by <paramref name="k"/> and held to 26.6, as the
+        /// scaler holds every coordinate before anything is drawn from it.</summary>
+        private static Vector2 P64(Vector2 v, float k)
+        {
+            float x = v.X * k, y = v.Y * k;
+            if (!s_unfittedRound) return new Vector2(x, y);
+            return new Vector2(MathF.Round(x * 64f, MidpointRounding.AwayFromZero) / 64f,
+                               MathF.Round(y * 64f, MidpointRounding.AwayFromZero) / 64f);
+        }
+
         private bool PrepInhibitsGridFit(float pixelsPerEm)
         {
             TrueTypeInterpreter? interpreter = Interpreter();
