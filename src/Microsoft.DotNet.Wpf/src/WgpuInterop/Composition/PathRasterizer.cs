@@ -1599,9 +1599,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 rowOn[R] = on; rowOff[R] = off;
             }
             // VertCrossings / HorizCrossings walk the on and off lists together and count both.
-            static int Count(List<(int I, float V)>[] on, List<(int I, float V)>[] off, int at, int idx)
+            // AND A CROSSING LIST OUTSIDE THE GLYPH'S BOX COUNTS ZERO. VertCrossings@1400426c0 and
+            // HorizCrossings@140042270 both open with a bounds test against the BOX --
+            // `xMin <= col < xMax` and `yMin <= row < yMax` -- and return 0 when it fails, so a
+            // stub test that reaches past the edge of the glyph sees nothing there and the fill is
+            // refused. We tested only the array's own length, which is the bitmap's, and the
+            // bitmap is a pixel wider and taller than the box: a column or row just outside it
+            // still held crossings for us, the stub test passed, and we filled a dropout GDI does
+            // not. Thirty-four glyph/size pairs were over-filled this way. WPF_CT_DROPOUT_BOUNDS=0
+            // counts them the old way.
+            int Count(List<(int I, float V)>[] on, List<(int I, float V)>[] off, int at, int idx,
+                      int lo, int hi)
             {
+                if (s_dropoutBounds && (at < lo || at >= hi)) return 0;
                 if (at < 0 || at >= on.Length) return 0;
+                if (s_dropoutLockstep)
+                {
+                    // AND THEY WALK THE TWO LISTS IN LOCKSTEP, stopping when the ON pointer reaches
+                    // the ON list's end (`while (psVar4 < psVar6)`), so an OFF entry past the last
+                    // ON one is never counted. Our lists can differ in length wherever the topology
+                    // rule adds an unpaired crossing.
+                    int m = Math.Min(on[at].Count, off[at].Count), c = 0;
+                    for (int i = 0; i < m; i++)
+                    { if (on[at][i].I == idx) c++; if (off[at][i].I == idx) c++; }
+                    return c;
+                }
                 int n = 0;
                 foreach ((int I, float V) e in on[at]) if (e.I == idx) n++;
                 foreach ((int I, float V) e in off[at]) if (e.I == idx) n++;
@@ -1643,12 +1665,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     string? why = null;
                     if (stubs)
                     {
-                        if (Count(rowOn, rowOff, R + 1, C)
-                            + Count(colOn, colOff, C - 1, R + 1)
-                            + Count(colOn, colOff, C, R + 1) < 2) why = "stub-above";
-                        else if (Count(rowOn, rowOff, R - 1, C)
-                            + Count(colOn, colOff, C - 1, R)
-                            + Count(colOn, colOff, C, R) < 2) why = "stub-below";
+                        if (Count(rowOn, rowOff, R + 1, C, yMin, yMax)
+                            + Count(colOn, colOff, C - 1, R + 1, xMin, xMax)
+                            + Count(colOn, colOff, C, R + 1, xMin, xMax) < 2) why = "stub-above";
+                        else if (Count(rowOn, rowOff, R - 1, C, yMin, yMax)
+                            + Count(colOn, colOff, C - 1, R, xMin, xMax)
+                            + Count(colOn, colOff, C, R, xMin, xMax) < 2) why = "stub-below";
                     }
                     if (why is null && C > xMin && Bit(C - 1, R)) why = "on-left";
                     if (why is null && C < xMax && Bit(C, R)) why = "on-right";
@@ -1673,12 +1695,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     string? why = null;
                     if (stubs)
                     {
-                        if (Count(colOn, colOff, C - 1, R)
-                            + Count(rowOn, rowOff, R, C)
-                            + Count(rowOn, rowOff, R - 1, C) < 2) why = "stub-left";
-                        else if (Count(colOn, colOff, C + 1, R)
-                            + Count(rowOn, rowOff, R, C + 1)
-                            + Count(rowOn, rowOff, R - 1, C + 1) < 2) why = "stub-right";
+                        if (Count(colOn, colOff, C - 1, R, xMin, xMax)
+                            + Count(rowOn, rowOff, R, C, yMin, yMax)
+                            + Count(rowOn, rowOff, R - 1, C, yMin, yMax) < 2) why = "stub-left";
+                        else if (Count(colOn, colOff, C + 1, R, xMin, xMax)
+                            + Count(rowOn, rowOff, R, C + 1, yMin, yMax)
+                            + Count(rowOn, rowOff, R - 1, C + 1, yMin, yMax) < 2) why = "stub-right";
                     }
                     if (why is null && R > yMin && Bit(C, R - 1)) why = "on-below";
                     if (why is null && R < yMax && Bit(C, R)) why = "on-above";
@@ -2377,6 +2399,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// figure on one scale is -29.4%.</para></summary>
         /// <summary>WPF_CT_DROPOUT_BOX=0: clamp dropout fills into a box rounded outward to
         /// whole samples instead of fs_FindBitMapSize's pixel rows. See GdiDropoutFills.</summary>
+        /// <summary>REFUTED: VertCrossings@1400426c0 and HorizCrossings@140042270 open with a
+        /// bounds test against the glyph BOX and return 0 outside it, but applying that to our
+        /// counts costs 154,975 -> 272,536 -- so the bounds those two test are the scan
+        /// converter's own, which are the bitmap's, and our array-length test already is that.
+        /// WPF_CT_DROPOUT_BOUNDS=1 measures the box reading again.</summary>
+        private static readonly bool s_dropoutBounds =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_BOUNDS") == "1";
+
+        private static readonly bool s_dropoutLockstep =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_LOCKSTEP") != "0";
+
         private static readonly bool s_dropoutGdiBox =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_BOX") != "0";
 
