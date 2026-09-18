@@ -1964,6 +1964,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // (0..lastEnd, not the phantoms) are translated by the difference before a single
             // instruction runs. It is how the glyph is placed against its own origin, and it is
             // why our left edge kept measuring a sixty-fourth or three right of GDI's.
+            // AND THE VERTICAL PAIR. The same scl_RoundCurrentSideBearingPnt@1801da780 that puts
+            // the advance phantom on its grid finishes by putting BOTH y phantoms on whole pixels
+            //     curY[pp3] = (curY[pp3] + 0x20) & ~0x3f;
+            //     curY[pp4] = (curY[pp3] + advanceHeight + 0x20) & ~0x3f;
+            // on either grid -- there is no ClearType branch in the y half, because nothing
+            // oversamples y. It writes CUR only, leaving ORG where the scaling put it, exactly as
+            // the x half does. WPF_CT_YPHANTOM=0 leaves them unrounded.
+            if (s_yPhantomRound && glyph.PointCount + 3 < n)
+            {
+                int p3 = glyph.PointCount + 2, p4 = glyph.PointCount + 3;
+                int advY = z.CurY[p4] - z.CurY[p3];
+                z.CurY[p3] = Pix(z.CurY[p3]);
+                z.CurY[p4] = Pix(z.CurY[p3] + advY);
+            }
+
             if (s_lsbRound && !glyph.Composite && glyph.PointCount < n)
             {
                 int pp1 = glyph.PointCount;
@@ -3382,6 +3397,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ATEXEC") != "0";
 
         /// <summary>WPF_CT_LSBROUND=1: round the LSB phantom and translate, as GDI does.</summary>
+        private static readonly bool s_yPhantomRound =
+            Environment.GetEnvironmentVariable("WPF_CT_YPHANTOM") != "0";
+
         private static readonly bool s_lsbPhantoms =
             Environment.GetEnvironmentVariable("WPF_CT_LSB_PHANTOM") != "0";
 
