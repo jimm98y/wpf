@@ -1453,9 +1453,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the phase runs for.</summary>
         internal static int HintDepth;
 
-        /// <summary>WPF_CT_PP1_SIXTEENTH=0 rounds the left phantom to a whole pixel again.</summary>
+        /// <summary>Which grid the LEFT PHANTOM is put on before the program runs.
+        /// <para>scl_AdjustOldCharSideBearing@1801da5f0 rounds it to a SIXTEENTH under ClearType and
+        /// to a whole pixel otherwise -- `(v + 2) &amp; ~3` against `(v + 0x20) &amp; ~0x3f`, chosen by
+        /// `globals[0x1c0]` bit 0 set and bit 2 clear -- and scl_RoundCurrentSideBearingPnt@1801da780
+        /// then sets the advance phantom to `pp1 + rounded advance` on the same two grids. GDI
+        /// rounds pp1 NOWHERE ELSE, so a ClearType pass never sees it on a whole pixel. We rounded
+        /// it to a whole pixel in both passes and let the side-bearing shift move it again, which
+        /// left pp1 off both grids -- Times New Roman Italic 'j' has org 3/64, and that came out
+        /// at 1/64 where GDI has 4/64. Holdout 172,615 -&gt; 165,670.</para>
+        /// <para>2 (the default) is GDI's: the sixteenth under ClearType, the whole pixel in the
+        /// bi-level pass. 1 rounds to a whole pixel in both, as before. 0 does not round at all,
+        /// which is worse still (194,744) because the advance phantom is then derived from an
+        /// unrounded pp1.</para></summary>
         private static readonly int s_pp1Round =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PP1_SIXTEENTH"), out int p1) ? p1 : 1;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PP1_SIXTEENTH"), out int p1) ? p1 : 2;
 
         private static readonly int s_advancePhantom =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PP2_ROUND"), out int pp) ? pp
