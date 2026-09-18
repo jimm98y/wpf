@@ -1621,8 +1621,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_ALIGNRP_AXES") != "x";
 
         /// <summary>WPF_CT_ALIGNRP_TOUCHED=0 restores the old behaviour. See the call site.</summary>
+        /// <summary>WPF_CT_ALIGNRP_TOUCHED=1 refuses a post-IUP ALIGNRP on a point the program
+        /// has not touched.
+        /// <para>OFF, AND THE BINARY IS WHY. itrp_ALIGNRP@140035f80 has no such gate: its only
+        /// conditions are the bounds checks and the phase-link recording, and the move itself --
+        /// the two indirect calls through gs+0x70 and gs+0x68 -- runs for every point in the loop.
+        /// The gate that used to ship was inferred from one glyph's pixels (Times New Roman Bold
+        /// '0'@16, where seven of seven ALIGNRP targets appeared to move the wrong way), and with
+        /// the side-bearing and MovePoint roundings right that inference no longer holds:
+        /// refusing them costs 154,975 -> 160,147.</para>
+        /// <para>itrp_SHP_Common is the handler that DOES carry a touched/IUP gate, and it covers
+        /// SHP, SHC and SHZ, not ALIGNRP -- see the SHPIX case, which keeps it.</para></summary>
         private static readonly bool s_alignrpTouchedOnly =
-            Environment.GetEnvironmentVariable("WPF_CT_ALIGNRP_TOUCHED") != "0";
+            Environment.GetEnvironmentVariable("WPF_CT_ALIGNRP_TOUCHED") == "1";
 
         /// <summary>WPF_CT_SCFS_TOUCHED=0 restores the old behaviour. See the SCFS call site --
         /// and note that WHERE GDI implements this is still unknown.</summary>
