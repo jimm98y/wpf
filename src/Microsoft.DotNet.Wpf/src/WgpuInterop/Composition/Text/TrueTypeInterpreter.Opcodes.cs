@@ -412,7 +412,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // ...and the sixteen scales the DIFFERENCE, not the threshold,
                                 // for the reason MIRP's does: 68/16 truncates to 4 rather than
                                 // 4.25, so a difference of exactly 4 threw the control value away.
-                                bool miapShrink = InClearTypeDirection && !s_cutInFull && !BiLevelPass;
+                                // MIAP'S CUT-IN IS NOT SCALED. itrp_MIAP@14003aa60 compares
+                                // `|cvt - here| <= globals[0x78]` against the control value cut-in
+                                // AS STORED -- there is no `* 16` there and no ClearType branch,
+                                // unlike itrp_MIRP's `cutIn < (cvt - outline) * 16`. Shrinking it
+                                // by the grid rejects the control value sixteen times as often and
+                                // anchors the point on the outline instead.
+                                // WPF_CT_MIAP_CUTIN=shrink restores the scaled comparison.
+                                bool miapShrink = s_miapCutInShrink
+                                                  && InClearTypeDirection && !s_cutInFull && !BiLevelPass;
                                 bool miapOver = s_cutInExact
                                     ? (long) Math.Abs(value - here) * (miapShrink ? ClearTypeGrid : 1)
                                       > _gs.ControlValueCutIn
@@ -2715,6 +2723,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>And the comparison is GDI's own: it multiplies the difference by sixteen rather
         /// than dividing the cut-in, `cutIn &lt; (cvt - outline) * 16`, which s_cutInExact already
         /// does -- the two agree for every cut-in value, exact multiples of sixteen included.</para></summary>
+        private static readonly bool s_miapCutInShrink =
+            Environment.GetEnvironmentVariable("WPF_CT_MIAP_CUTIN") == "shrink";
+
         private static readonly bool s_cutInGdiScope =
             Environment.GetEnvironmentVariable("WPF_CT_CUTIN_SCOPE") is null or "" or "gdi";
 
