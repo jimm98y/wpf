@@ -1669,9 +1669,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // the ON list's end (`while (psVar4 < psVar6)`), so an OFF entry past the last
                     // ON one is never counted. Our lists can differ in length wherever the topology
                     // rule adds an unpaired crossing.
-                    int m = Math.Min(on[at].Count, off[at].Count), c = 0;
+                    // ...to the ON list's end exactly: `if (A.end <= A.start) return 0; do { a =
+                    // *pA++; b = *pB++; ... } while (pA < A.end);` reads A.Count entries of BOTH
+                    // lists, so an OFF entry past the last ON one is never counted and an ON entry
+                    // past the last OFF one still is (GDI reads one short past B there; the lists
+                    // are the same length on every face we measure). WPF_CT_DROPOUT_ONCOUNT=0
+                    // stops at the shorter list instead.
+                    int m = s_dropoutOnCount ? on[at].Count : Math.Min(on[at].Count, off[at].Count), c = 0;
                     for (int i = 0; i < m; i++)
-                    { if (on[at][i].I == idx) c++; if (off[at][i].I == idx) c++; }
+                    { if (on[at][i].I == idx) c++; if (i < off[at].Count && off[at][i].I == idx) c++; }
                     return c;
                 }
                 int n = 0;
@@ -1738,10 +1744,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             for (int C = 0; C < nCols; C++)
             {
                 List<(int I, float V)> on = colOn[C], off = colOff[C];
-                for (int k = Math.Min(on.Count, off.Count) - 1; k >= 0; k--)
+                for (int j = 0; j < Math.Min(on.Count, off.Count); j++)
                 {
-                    int R = on[k].I;
-                    if (off[k].I != R || R < yMin || R > yMax) continue;
+                    // FROM THE END OF BOTH LISTS. LookForDropouts@140042328's vertical block walks
+                    // its two pointers DOWNWARD from the ends (`for (psVar7 = end - stride;
+                    // start <= psVar7; psVar7 -= stride)`, with the other decrementing in step),
+                    // so the k-th pair it examines is the k-th from the END of each list. Its
+                    // horizontal block walks forward from the starts instead. The two pairings
+                    // agree only while the lists are the same length, and the column vertex rule
+                    // can leave them uneven. WPF_CT_DROPOUT_ENDPAIR=0 pairs from the start.
+                    int ki = s_dropoutEndPair ? on.Count - 1 - j : Math.Min(on.Count, off.Count) - 1 - j;
+                    int kf = s_dropoutEndPair ? off.Count - 1 - j : ki;
+                    var onE = on[ki]; var offE = off[kf];
+                    int R = onE.I;
+                    if (offE.I != R || R < yMin || R > yMax) continue;
                     string? why = null;
                     if (stubs)
                     {
@@ -1754,11 +1770,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     if (why is null && R > yMin && Bit(C, R - 1)) why = "on-below";
                     if (why is null && R < yMax && Bit(C, R)) why = "on-above";
-                    int fr = smart ? (int) MathF.Floor((on[k].V + off[k].V) * 0.5f - 1f / 128f) : R - 1;
+                    int fr = smart ? (int) MathF.Floor((onE.V + offE.V) * 0.5f - 1f / 128f) : R - 1;
                     if (fr < yMin) fr = yMin;
                     if (fr >= yMax) why ??= "past-top";
                     if (s_dropoutTrace)
-                        Console.Error.WriteLine($"DROP V col={C} R={R} y=({on[k].V:F3},{off[k].V:F3})"
+                        Console.Error.WriteLine($"DROP V col={C} R={R} y=({onE.V:F3},{offE.V:F3})"
+                            + $" st={scanType} L[{Count(colOn, colOff, C - 1, R, xMin, xMax)},"
+                            + $"{Count(rowOn, rowOff, R, C, yMin, yMax)},{Count(rowOn, rowOff, R - 1, C, yMin, yMax)}]"
+                            + $" R[{Count(colOn, colOff, C + 1, R, xMin, xMax)},"
+                            + $"{Count(rowOn, rowOff, R, C + 1, yMin, yMax)},{Count(rowOn, rowOff, R - 1, C + 1, yMin, yMax)}]"
+                            + $" b[{(Bit(C, R - 1) ? 1 : 0)}{(Bit(C, R) ? 1 : 0)}]"
                             + $" -> {why ?? $"fill row {fr}"}");
                     if (why != null) continue;
                     Set(C, fr);
@@ -2460,6 +2481,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly int s_colTopology =
             Environment.GetEnvironmentVariable("WPF_CT_COLTOPO") switch
             { "0" => 0, "flip" => 2, _ => 1 };
+
+        private static readonly bool s_dropoutOnCount =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_ONCOUNT") != "0";
+
+        private static readonly bool s_dropoutEndPair =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_ENDPAIR") != "0";
 
         private static readonly bool s_dropoutLockstep =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_LOCKSTEP") != "0";
