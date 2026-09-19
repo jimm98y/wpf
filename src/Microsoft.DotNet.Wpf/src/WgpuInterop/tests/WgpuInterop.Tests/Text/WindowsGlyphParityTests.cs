@@ -5259,6 +5259,22 @@ namespace WgpuInterop.Tests.Text
                             // '5'@14 P9 ours 84 in [85,89]. Verdana 'c'@17 P0 is ours 545 in
                             // [547,548] and excludes 549. The pinned five rule out a single
                             // sixteenth-step as the whole story.</para>
+                            // <para>RE-RUN AFTER THE SCAN WALK WAS UNGATED, because everything
+                            // above was measured through the polygon rasterizer on these faces.
+                            // The shape of the answer did not change -- the worst rows in the
+                            // report still reach zero on one or two anchors a sixty-fourth out:
+                            // Tahoma 'u'@13B (411) on P1 +1, Verdana '3'@10 (373) on P22 -2 and
+                            // P35 +1, Times 'w'@14B (357) on P1/P3/P9 by -1/-1/-2, Tahoma 'r'@11B
+                            // (311) on P7 +2.</para>
+                            // <para>AND ONE OF THEM IS A STRUCTURAL STATEMENT, not a rounding.
+                            // Tahoma 'q'@15 pins BOTH P17 and P20, ours 369 for each, GDI 368 and
+                            // 369 -- and holding P17 at 369 cannot reach GDI from any placement of
+                            // the others (best 311). The two points are identical in our model all
+                            // the way through: both sit at x 384 before the phase, both are
+                            // `parent` nodes of node 2, both take its shift of -15. So GDI
+                            // separates two points that nothing in our pipeline can tell apart,
+                            // which is a gap in the phase tree rather than a sixty-fourth of
+                            // arithmetic, and it is the cleanest example of one on record.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot
@@ -7291,6 +7307,28 @@ namespace WgpuInterop.Tests.Text
         /// <para>The rounding is not a wash, so this was never harmless: forcing the shipping path
         /// to round its midpoints the same way measures 30,691 -> 80,822 over ppem 16-19 for
         /// round-half-to-even and 65,402 for the ceiling. GDI keeps the half and so do we.</para>
+        /// <para>EVERY KNOB RE-SWEPT ONCE THE SCAN WALK RAN EVERYWHERE, because the rasterizer
+        /// under all of them had changed and a refutation measured through the polygon one proves
+        /// nothing about this pipeline. Over ppem 8, 12, 16 and 20, baseline 18,727:
+        /// <code>
+        ///   WPF_CT_ROWEDGE=pair        18,727      identical to the shipped extremum rule
+        ///   WPF_CT_ROWEDGE=old         41,151
+        ///   WPF_CT_ROWEDGE=gdi         37,989
+        ///   WPF_CT_IUP_REF=scaled     145,346      was a 2% question, now an 8x one
+        ///   WPF_CT_IUP_FLAT=0          18,727
+        ///   WPF_CT_IUP_FLATTIE=0       19,275
+        ///   WPF_CT_PHASE_TWICE=1    4,759,962
+        ///   WPF_CT_PHASE_KEEPBLACK=0   18,727
+        ///   WPF_CT_PHASE_NEG=1         18,727
+        ///   WPF_CT_PHASE_REARM=0       18,727
+        ///   WPF_CT_PP1_ORIGIN=exact    21,612
+        ///   WPF_CT_LSBROUND=both       18,727
+        ///   WPF_CT_LSBROUND=0          19,708
+        ///   WPF_CT_MSIRP_ZONES=same    18,727
+        /// </code>
+        /// Nothing beats the shipped configuration and the three that were close calls before are
+        /// not close any more. The neutral ones are neutral because the case they decide does not
+        /// arise on this specimen, not because the rule does not matter.</para>
         /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
         /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is

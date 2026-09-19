@@ -1313,6 +1313,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// where features are genuinely sub-pixel tall. Set by the renderer per run.</summary>
         internal static int PpemForRun;
 
+        /// <summary>See the horizontal case in GdiLine. WPF_CT_HROW=old.</summary>
+        private static readonly bool s_hRowOld =
+            Environment.GetEnvironmentVariable("WPF_CT_HROW") == "old";
+
         /// <summary>SHIPPED. WPF_CT_SCAN_ONEROW=0 puts the polygon rasterizer back for runs with
         /// no symmetric smoothing.
         /// <para>The walk shipped gated on `nSub > 1`, which is only the faces and sizes whose
@@ -2018,8 +2022,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (y0 == y2)
             {
                 // A horizontal edge crosses no row and every column in its span, at the row
-                // fsc_CalcLine takes from the point itself, one sixty-fourth back when x rises.
-                int r = ((y0 - (x0 < x2 ? 1 : 0)) + 0x20) >> 6;
+                // fsc_CalcLine takes from the point itself, one sixty-fourth back when x FALLS:
+                //     sub w10,w2,#1 ; cmp w3,w1 ; csel w9,w2,w10,ge   ->  x2 >= x0 ? y0 : y0 - 1
+                // We had the test the other way round. MEASURED NEUTRAL (18,727 over ppem 8,
+                // 12, 16 and 20 either way) and taken anyway, because the two differ only when
+                // y0 is exactly 32 mod 64 -- a horizontal edge lying exactly on a sample row --
+                // and a rule that is right for a case the specimen happens not to contain is
+                // still the rule. WPF_CT_HROW=old to re-measure.
+                // <para>The same block in the binary opens with `tbnz w5,#0x1` -- a horizontal
+                // edge contributes NOTHING at all when bit 1 of fsc_CalcLine's mode word is set,
+                // and that bit also gates the dropout checks in fsc_FillGlyph. We pass no mode
+                // word and always emit the columns; what that bit means is not settled.</para>
+                int r = ((y0 - (s_hRowOld ? (x0 < x2 ? 1 : 0) : (x2 < x0 ? 1 : 0))) + 0x20) >> 6;
                 for (int i = 0; i < ncols; i++) { L.Col(col, r, colOn); col += xstep; }
                 return;
             }
