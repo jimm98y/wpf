@@ -5333,6 +5333,24 @@ namespace WgpuInterop.Tests.Text
                             // step up (0.3418) measures 79,092, with 0.33594 at 168,118. The
                             // minimum is sharp on both sides, so the slant is right and those
                             // deltas are the solver's slack agreeing with each other.</para>
+                            // <para>AND WHICH INSTRUCTION PLACED THE IMPLICATED ANCHOR, across
+                            // the same census: 8 MIRP, 8 MDRP, and 11 placed by something that
+                            // leaves no MIRP/MDRP line at all (SHP, SHC or IP). No opcode
+                            // dominates, which is itself the finding -- there is no one handler to
+                            // go and fix.</para>
+                            // <para>FIVE OF THE EIGHT MDRPs ARE THE SAME DEGENERATE CASE, and it
+                            // changes how this census should be read: `round=False min=False
+                            // orig=0 -> dist=0`, an unrounded MDRP between two points that
+                            // COINCIDE in the design, which pulls the placed point exactly onto
+                            // its reference. Tahoma 'g'@12 P0 off P26, 'g'@14I P0 off P26, 'p'@13
+                            // P11 off P7, 'p'@11I P11 off P7, 'n'@9I P16 off P12. GDI's arithmetic
+                            // there is ours -- itrp_RoundOffSP with a zero compensation returns
+                            // the zero unchanged -- so those anchors are FOLLOWERS: if GDI's point
+                            // is two sixty-fourths from ours, so is its reference, and the search
+                            // named the follower only because moving it alone was enough to fix
+                            // the pixels. The census names sources and followers alike, and the
+                            // chain has to be walked back through rp0 before any of them is
+                            // treated as a place to look.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot

@@ -3628,6 +3628,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// neighbours rather than how it is shaped -- and it changes NOTHING, 2,343,248 either way,
         /// because the instructions that place these edges measure from outline points. The 'H'
         /// instruction this was built for has rp0=1.</para></summary>
+        /// <summary>VERIFIED AGAINST itrp_IP@140038040 (2026-09-20). Its inner loop is
+        /// <code>
+        ///   orgDist = OldProject(orus[p] - orus[rp1]);         // the indirect call before it
+        ///   newDist = CompDiv(oldRange, (long) orgDist * curRange);
+        ///   curDist = Project(cur[p] - cur[rp1]);
+        ///   MovePoint(p, newDist - curDist);
+        /// </code>
+        /// and CompDiv@140026480 is `half = d/2 (truncating); if sign(n) != sign(d) half = -half;
+        /// return (n + half) / d` with C truncation -- which is round-half-AWAY-from-zero on the
+        /// magnitudes, case for case what MulDiv does here. The AddProportion that records both
+        /// references as parents sits immediately before the move and is gated on
+        /// `elem != twilight &amp;&amp; globals[0x16b] == 2 &amp;&amp; localGS[0xcc] != 0 &amp;&amp;
+        /// (globals[0x1c0] &gt;&gt; 1 &amp; 1)`, the same four conditions SHP's inlined
+        /// AddDistance carries.
+        /// <para>ONE DIFFERENCE, in a degenerate case: when the reference range is zero CompDiv
+        /// returns +/-0x7fffffff and GDI moves the point to the clamp, where this shifts it by
+        /// `orgDist - oldRange + curRange`. Ours is the sane reading of a meaningless glyph and
+        /// GDI's is garbage; the case is guarded earlier in the binary and has not been seen to
+        /// fire.</para></summary>
         private void InterpolatePoints()
         {
             Zone z0 = ZoneOf(_gs.Zp0), z1 = ZoneOf(_gs.Zp1), z2 = ZoneOf(_gs.Zp2);
