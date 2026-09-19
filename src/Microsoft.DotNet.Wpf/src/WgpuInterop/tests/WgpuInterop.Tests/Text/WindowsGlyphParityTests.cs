@@ -5379,8 +5379,24 @@ namespace WgpuInterop.Tests.Text
                             // need withdrawing for the same reason, so: a pinned or held verdict
                             // is only worth what the rasterizer it was taken on is worth, and
                             // re-run it before quoting it.</para>
-                            // <para>BOTH SURVIVORS SAY THE SAME THING: GDI SEPARATES POINTS OUR
-                            // PHASE KEEPS TOGETHER.</para>
+                            // <para>WITHDRAWN, AND READ THE NEXT PARAGRAPH BEFORE THE TWO AFTER
+                            // IT. This said "both survivors show GDI separating points our phase
+                            // keeps together". They do not. An anchor in this mode is a PROXY for
+                            // itself AND everything IUP carries from it, so a delta on P17 is a
+                            // delta on P17's whole interpolated neighbourhood, and the search
+                            // reaches zero by moving that neighbourhood -- not by separating two
+                            // anchors. The free solver says so outright: on Tahoma 'q'@15 the only
+                            // point that must move is P16, an UNTOUCHED off-curve point, and on
+                            // Verdana '3'@10 it is an implied midpoint by one sixty-fourth (with
+                            // P24 free to wander to the search's span limit). Neither glyph
+                            // requires the anchors themselves to move at all.</para>
+                            // <para>What the hold tests DO establish is narrower and still worth
+                            // having: with the named anchor fixed at our value, no placement of
+                            // the others reaches GDI. That is a constraint on the interpolated
+                            // geometry around it, not a proof about its own coordinate. The two
+                            // paragraphs below are kept because the arithmetic in them is right
+                            // and was checked against the binary; it is the conclusion drawn from
+                            // it that was too strong.</para>
                             // <para>Verdana '3'@10 is the clearer of the two. P22 is MIRPed off P3
                             // with control value 33, which scales to EXACTLY -1.0 pixel and is
                             // already on the sixteenth grid, so the rounding is the identity and
