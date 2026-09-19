@@ -2956,6 +2956,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int mate = p < _phasePartner.Length ? _phasePartner[p] : -1;
                     bool mateFree = mate >= 0 && mate < _glyphZone.CurX.Length
                                     && (_phaseFlags[mate] & 2) == 0;
+                    int before = _glyphZone.CurX[p];
                     if (!mateFree)
                     {
                         // Only a node with FEWER THAN TWO parents may be re-derived directly, and
@@ -2990,6 +2991,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                     _phaseVal[p] = v;
                     _phaseFlags[p] |= 2;
+                    // PHASENODE: the per-node view LINKCOL/GATE-DROP do not give -- which path set
+                    // the node's shift, from which parents and mate, and what it did to the point.
+                    // It is how Segoe UI '8' at 11ppem was worked back to its two anchors.
+                    if (s_phaseDump)
+                        Console.Error.WriteLine($"  PHASENODE p={p,3} a={a,3} b={b,3} mate={mate,3}"
+                            + $" {(mateFree ? (a < 0 || b < 0 ? "mate-sum" : "avg+mate") : a < 0 ? "root" : b < 0 ? "parent" : "avg"),-8}"
+                            + $" v={v,3}  x {before} -> {_glyphZone.CurX[p]}"
+                            + (mateFree ? $"  (mate {mate} -> {_glyphZone.CurX[mate]})" : ""));
                 }
             }
             _phaseFlags[p] &= 0xfb;
