@@ -913,13 +913,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (composite || DropoutForRun > 0)
                         while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
                     if (!composite) last = polysG.Count;
+                    GdiScanRows? walk = null;
+                    List<(float X, int Dir)>[]? exactRows = null;
+                    if (s_scanExact && nSub > 1 && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                        exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
+                                                 composite ? last : polysG.Count,
+                                                 originX, originY, width, height, nSub, out walk);
                     List<(int Col, int SubRow)>? fills = null;
                     if (DropoutForRun > 0)
                     {
                         fills = new List<(int Col, int SubRow)>();
                         if (composite)
                             fills.AddRange(GdiDropoutFills(polysG.GetRange(first, last - first), path.FillRule,
-                                                           originX, originY, width, height, nSub));
+                                                           originX, originY, width, height, nSub, walk));
                         else
                         {
                             int f0 = 0;
@@ -938,11 +944,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         totalFills += fills.Count;
                     }
                     List<List<Vector2>> polysOne = composite ? polysG.GetRange(first, last - first) : polysG;
-                    List<(float X, int Dir)>[]? exactRows = null;
-                    if (s_scanExact && nSub > 1 && (s_rowEdgeGdiPair || s_rowEdgeTopology))
-                        exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
-                                                 composite ? last : polysG.Count,
-                                                 originX, originY, width, height, nSub);
                     if (s_lampTrace)
                         Console.Error.WriteLine($"RASTER group first={first} last={last} contours={polysG.Count}"
                             + $" composite={composite} exact={(exactRows is not null ? 1 : 0)} origin=({originX},{originY})"
@@ -1422,7 +1423,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// pass, which runs left to right taking each column's crossings from the LAST back.
         /// Returns the bits set, as (sample column, sub-row from the top).</para></summary>
         private static List<(int Col, int SubRow)> GdiDropoutFills(List<List<Vector2>> polys,
-            FillRule fillRule, int originX, int originY, int width, int height, int nSub)
+            FillRule fillRule, int originX, int originY, int width, int height, int nSub,
+            GdiScanRows? walk = null)
         {
             int nCols = width * SubpixelsPerPixel * 2, nRows = height * nSub;
             int scanType = DropoutForRun - 1;
@@ -1600,6 +1602,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 colOn[C] = on; colOff[C] = off;
             }
+            if (s_dropoutExact && walk is not null)
+            {
+                // THE SAME CROSSINGS THE FILL USED. LookForDropouts reads the arrays the scan walk
+                // wrote, not a second set found some other way; ours were still being derived from
+                // the FLATTENED polygon, which has hundreds of vertices where GDI's contour has a
+                // handful, and the two disagreed about 34 glyphs' worth of thin features. Rows the
+                // walk counts from the bottom, this frame counts from the top, hence nRows-1-r.
+                // The position kept per crossing is its sample centre, which is what the smart
+                // fill's midpoint is taken between -- GDI recomputes an exact one from the segment
+                // it stored, and the two differ by less than the sample the fill lands in.
+                for (int C = 0; C < nCols; C++)
+                {
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    foreach (int r in walk.ColOn[C]) { int R = nRows - 1 - r; on.Add((R, R + 0.5f)); }
+                    foreach (int r in walk.ColOff[C]) { int R = nRows - 1 - r; off.Add((R, R + 0.5f)); }
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    colOn[C] = on; colOff[C] = off;
+                }
+                for (int R = 0; R < nRows; R++)
+                {
+                    int r = nRows - 1 - R;
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
+                    foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    rowOn[R] = on; rowOff[R] = off;
+                }
+                goto listsReady;
+            }
             for (int R = 0; R < nRows; R++)
             {
                 var on = new List<(int, float)>(); var off = new List<(int, float)>();
@@ -1695,6 +1728,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return n;
             }
 
+            listsReady:
             // The bitmap as the ordinary fill leaves it (fsc_FillBitMap runs before
             // LookForDropouts), then updated by every dropout fill so the "already on" tests see it.
             var bits = new bool[nCols * nRows];
@@ -1835,6 +1869,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>WPF_CT_SCAN_TRACE=1: every conic piece's inputs and integer terms, and each row
         /// crossing it emits.</summary>
+        /// <summary>WPF_CT_DROPOUT_EXACT=1: give the dropout scan the same crossings the fill
+        /// used, out of GDI's integer walk, instead of a second set found from the flattened
+        /// polygon.
+        /// <para>REFUTED, and it retires a reading that had stood since the dropout was ported.
+        /// LookForDropouts reads the arrays the scan walk wrote, so once the fill moved to GDI's
+        /// integer walk it was plainly wrong for the dropout to keep deriving its own from a
+        /// polygon with hundreds of vertices where the contour has a handful -- and the 34
+        /// over-filled glyphs, worth 3,457, looked like exactly that kind of disagreement.
+        /// They are NOT: on the walk's own crossings all 34 measure the SAME, to the count. So
+        /// the over-fill is not a list-source problem and never was.</para>
+        /// <para>What the switch does do is break Times New Roman Italic -- 37 glyphs worse for
+        /// 5,675, 'z' at 23ppem going 0 to 720, nothing anywhere improved, holdout 97,806 to
+        /// 108,053. The column lists want more care than the row lists did: the quadrant table's
+        /// ON sense, the bottom-counted rows against this frame's top-counted ones, and the smart
+        /// fill's midpoint, which GDI recomputes from the segment it stored and this can only
+        /// approximate by the sample centre. Left in because the column crossings themselves are
+        /// the binary's and the next attempt should start from them, not from the polygon.</para>
+        /// </summary>
+        private static readonly bool s_dropoutExact =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";
+
         private static readonly bool s_scanTrace =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
 
@@ -1881,14 +1936,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Two lists a row, kept apart and each sorted, which is how AddHorizSimpleScan keeps
             // them: fsc_FillBitMap pairs the k-th ON with the k-th OFF by rank, not by position.
             public readonly List<int>[] On, Off;
-            public GdiScanRows(int nRows)
+            // ...and the COLUMN lists, which only the dropout scan reads. GDI keeps all four in
+            // the same walk (fsc_CalcLine's quadrant table picks a pair of adders per piece), so
+            // building them here rather than from the flattened polygon is what makes the dropout
+            // and the fill agree about where the ink is.
+            public readonly List<int>[] ColOn, ColOff;
+            public GdiScanRows(int nRows, int nCols)
             {
                 On = new List<int>[nRows]; Off = new List<int>[nRows];
                 for (int i = 0; i < nRows; i++) { On[i] = new List<int>(); Off[i] = new List<int>(); }
+                ColOn = new List<int>[nCols]; ColOff = new List<int>[nCols];
+                for (int i = 0; i < nCols; i++) { ColOn[i] = new List<int>(); ColOff[i] = new List<int>(); }
             }
             public void Row(int col, int rUp, bool on)
             {
                 if ((uint) rUp < (uint) On.Length) (on ? On : Off)[rUp].Add(col);
+            }
+            public void Col(int col, int rUp, bool on)
+            {
+                if ((uint) col < (uint) ColOn.Length) (on ? ColOn : ColOff)[col].Add(rUp);
             }
         }
 
@@ -1908,7 +1974,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             int yDesc = y0 > y2 ? 1 : 0;
             bool rowOn = y0 <= y2;
-            if (y0 == y2) return;                                   // a horizontal edge crosses no row
             int xdist, col, ncols, xstep, xbias, dx, bias;
             if (x0 < x2)
             {
@@ -1919,6 +1984,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 int xc = ((x0 - 0x21) & ~0x3f) + 0x20;
                 xdist = x0 - xc; col = xc >> 6; ncols = col - ((x2 + 0x20) >> 6) + 1; xstep = -1; xbias = 1; dx = x0 - x2; bias = 1 - yDesc;
+            }
+            bool colOn = x0 > x2;
+            if (y0 == y2)
+            {
+                // A horizontal edge crosses no row and every column in its span, at the row
+                // fsc_CalcLine takes from the point itself, one sixty-fourth back when x rises.
+                int r = ((y0 - (x0 < x2 ? 1 : 0)) + 0x20) >> 6;
+                for (int i = 0; i < ncols; i++) { L.Col(col, r, colOn); col += xstep; }
+                return;
             }
             if (x0 == x2)
             {
@@ -1940,6 +2014,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 else
                 {
+                    L.Col(col, yDesc + row, colOn);
                     col += xstep;
                     f -= (long) dy * 0x40;
                 }
@@ -1980,7 +2055,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ybias = 1 - ybias;
             }
             bool rowOn = q == 1 || q == 2;
-            if (row == rowEnd) return;
+            bool colOn = q == 2 || q == 3;              // x descending, per the quadrant table
+            if (row == rowEnd)
+            {
+                for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn);
+                return;
+            }
             if (col == colEnd)
             {
                 for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn);
@@ -2038,7 +2118,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 while (col != colEnd)
                 {
-                    if (row == rowEnd) return;                        // the rest are column crossings
+                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn); return; }
                     if (F >= 0 && Fy <= B2s)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fy={Fy} B2s={B2s}");
@@ -2047,15 +2127,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
+                        L.Col(col, ybias + row, colOn);
                         F += Fx; col += xstep; Fx += 2 * A2s; Fy += Cs;
                     }
                 }
+                for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn);
             }
             else
             {
                 while (col != colEnd)
                 {
-                    if (row == rowEnd) return;
+                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn); return; }
                     if (F < 0 || A2s < Fx)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fx={Fx} A2s={A2s}");
@@ -2064,6 +2146,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
+                        L.Col(col, ybias + row, colOn);
                         F += Fx; Fx += 2 * A2s; col += xstep; Fy += Cs;
                     }
                 }
@@ -2163,10 +2246,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// x as the sample centre's own expression so the span test lands on the index exactly,
         /// direction -1 for ON.</summary>
         private static List<(float X, int Dir)>[] GdiExactRows(PathGeometry path, List<int> figureOf,
-            int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub)
+            int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub,
+            out GdiScanRows walk)
         {
-            int nRows = height * nSub;
-            var L = new GdiScanRows(nRows);
+            int nRows = height * nSub, nCols = width * SubpixelsPerPixel * 2;
+            var L = new GdiScanRows(nRows, nCols);
+            walk = L;
             // HALVES GO UP, not to even. Every outline point is on the 26.6 pixel grid, so it
             // lands on an integer here -- except an implied on-curve midpoint, which is a
             // HALF-sixty-fourth and maps to a half in y (nSub is odd). fsc_FillGlyph makes those
