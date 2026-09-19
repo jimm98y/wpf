@@ -3453,7 +3453,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" minD={_gs.MinimumDistance} min={keepMinimum} cvtval={value / 64f:0.####}"
                     + $" orig={original / 64f:0.####} -> dist={distance / 64f:0.####}"
                     + $" cur={current / 64f:0.####} move={(distance - current) / 64f:0.####}"
-                    + $" pv=({_gs.ProjX},{_gs.ProjY}) ctDir={InClearTypeDirection} ppem={_ppem}");
+                    + $" pv=({_gs.ProjX},{_gs.ProjY}) fv=({_gs.FreeX},{_gs.FreeY})"
+                    + $" ctDir={InClearTypeDirection} ppem={_ppem}");
             // MIRP DOES NOT RECORD A PROPORTION, only a distance -- checked rather than
             // assumed, because MDRP's site does and the arithmetic looked like it wanted one.
             // InterAlign@140035b40 is the gate GDI puts in front of every AddProportion, and its

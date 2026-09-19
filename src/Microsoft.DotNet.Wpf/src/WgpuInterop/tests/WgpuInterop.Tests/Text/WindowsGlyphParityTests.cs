@@ -4805,10 +4805,24 @@ namespace WgpuInterop.Tests.Text
                             is { Length: > 0 } dropSpec)
                             foreach (string tok in dropSpec.Split(','))
                                 if (int.TryParse(tok, out int dp)) dropped.Add(dp);
+                        // WPF_XYSOLVE_ANCHORS_HOLD=p,q,...: keep these anchors AT OUR VALUE and
+                        // let the search move the others.
+                        // <para>It answers the question the interval report cannot. An anchor
+                        // printed PINNED is pinned GIVEN THE OTHERS where the descent left them,
+                        // which is a joint constraint, not a proof that our value is impossible --
+                        // a different configuration might keep ours and move two neighbours. Held
+                        // fixed, the search either finds such a configuration or it does not, and
+                        // a failure is then a real statement about our coordinate.</para>
+                        var held = new HashSet<int>();
+                        if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_HOLD")
+                            is { Length: > 0 } holdSpec)
+                            foreach (string tok in holdSpec.Split(','))
+                                if (int.TryParse(tok, out int hp)) held.Add(hp);
                         var touchedList = new List<int>();
                         for (int i = 0; i < n; i++)
                             if (ipts.TouchedX[i] && !dropped.Contains(i)) touchedList.Add(i);
                         int[] anchorOf = touchedList.ToArray();
+                        bool Held(int k) => k < anchorOf.Length && held.Contains(anchorOf[k]);
                         var extraOf = new List<int>();
                         int wantExtra = int.TryParse(
                             Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_EXTRA"),
@@ -4995,6 +5009,7 @@ namespace WgpuInterop.Tests.Text
                             for (int pass = 0; pass < 3; pass++)
                                 for (int k = 0; k < anchors.Length; k++)
                                 {
+                                    if (Held(k)) continue;
                                     int keep = anchors[k], bestV = keep;
                                     for (int d = -span; d <= span; d++)
                                     {
@@ -5087,6 +5102,7 @@ namespace WgpuInterop.Tests.Text
                                     for (int j = 0; j < anchors.Length && best > 0; j++)
                                     for (int k = j + 1; k < anchors.Length && best > 0; k++)
                                     {
+                                        if (Held(j) || Held(k)) continue;
                                         int kj = anchors[j], kk = anchors[k];
                                         int bj = kj, bk = kk;
                                         for (int d = -span; d <= span; d++)
@@ -5113,11 +5129,12 @@ namespace WgpuInterop.Tests.Text
                                 int Home(int k) => k < anchorOf.Length ? fit[anchorOf[k]]
                                                                       : fit[extraOf[k - anchorOf.Length]];
                                 for (int k = 0; k < trial.Length; k++)
-                                    trial[k] = Home(k) + rng.Next(-span, span + 1);
+                                    trial[k] = Held(k) ? Home(k) : Home(k) + rng.Next(-span, span + 1);
                                 long cur2 = long.MaxValue;
                                 for (int pass = 0; pass < 3; pass++)
                                     for (int k = 0; k < trial.Length; k++)
                                     {
+                                        if (Held(k)) continue;
                                         int keep = trial[k], bestV = keep;
                                         for (int d = -span; d <= span; d++)
                                         {
@@ -5173,31 +5190,46 @@ namespace WgpuInterop.Tests.Text
                             // one that needs two). Our touch set is GDI's; one coordinate per
                             // glyph is out by a hair. The six that cannot are Verdana '9'@13I,
                             // 'p'/'e'/'0'@16B, 'o'/'6'@11I.</para>
-                            // <para>WITH THE SLACK, a delta becomes a CONSTRAINT -- and five of
-                            // them become GDI'S OWN COORDINATE. An anchor whose interval is [0,0]
-                            // is PINNED: no other value of it renders GDI's pixels. Five are
-                            // pinned AND differ from ours, which is the first per-point ClearType
-                            // x oracle this file has had:
+                            // <para>WITH THE SLACK, a delta becomes a CONSTRAINT. Five anchors
+                            // come back with an interval of [0,0] AND a value different from ours:
                             // <code>
-                            //   Verdana 's'@17   P24  ours  64  GDI  63
-                            //   Verdana '3'@17   P35  ours 493  GDI 492
-                            //   Times   '8'@14   P48  ours 320  GDI 319
-                            //   Verdana 'A'@13I  P0   ours 456  GDI 457
-                            //   Times   'g'@14   P30  ours 120  GDI 122
+                            //   Verdana 's'@17   P24  ours  64  solved  63
+                            //   Verdana '3'@17   P35  ours 493  solved 492
+                            //   Times   '8'@14   P48  ours 320  solved 319
+                            //   Verdana 'A'@13I  P0   ours 456  solved 457
+                            //   Times   'g'@14   P30  ours 120  solved 122
                             // </code>
                             // Seven more are pinned AT our value (Verdana 'c'@17 P9, 's'@17 P33,
                             // '8'@11I P19, Times 'h'@17 P10 and P45, 'u'@13 P18, 'g'@14 P63), so
                             // the instrument is not simply pinning everything.</para>
-                            // <para>AND THE PHASE IS EXCLUDED FOR TWO OF THE FIVE. Times '8'@14
-                            // and 'g'@14 print no PHASEDUMP at all -- their compatible advance
-                            // equals their linear one, so the factor is exactly 1.0 and the phase
-                            // returns before it touches a point -- yet P48 and P30 are pinned one
-                            // and two sixty-fourths from ours. Whatever is wrong there is in the
-                            // glyph program's own placement. 'g'@14 P30 is MIRP min-linked off P57
-                            // at 0.9375 (cvt 59/64 -> 15/16, not a tie) and P57 is MIRP off P3 at
-                            // 0.0625 (cvt 2/64 -> a TIE at half a sixteenth, which we round away
-                            // from zero); rounding that tie toward zero moves P30 by -4, and GDI
-                            // wants +2, so the tie is not it either.</para>
+                            // <para>BUT PINNED IS NOT "GDI'S VALUE", AND READING IT THAT WAY IS
+                            // THE MISTAKE THIS INSTRUMENT INVITES. The interval walk moves one
+                            // anchor from the configuration the descent happened to land in, so
+                            // [0,0] says "given the others HERE, this one cannot move" -- a joint
+                            // constraint, not a proof that our coordinate is impossible. The test
+                            // that IS a proof is WPF_XYSOLVE_ANCHORS_HOLD: hold the anchor at OUR
+                            // value and let the search move everything else. Run on all five, only
+                            // TWO survive:
+                            // <code>
+                            //   Verdana 's'@17  hold P24 at  64   best 113   ours is impossible
+                            //   Times   '8'@14  hold P48 at 320   best 118   ours is impossible
+                            //   Verdana '3'@17  hold P35 at 493   best   0   ours is fine
+                            //   Verdana 'A'@13I hold P0  at 456   best   0   ours is fine
+                            //   Times   'g'@14  hold P30 at 120   best   0   ours is fine (P40 +1)
+                            // </code>
+                            // Three of the five "GDI coordinates" were the search's arrangement,
+                            // not GDI's. Use HOLD before believing any of them.</para>
+                            // <para>WHAT SURVIVES IS ONE CLEAN LEAD. Times '8'@14 prints no
+                            // PHASEDUMP at all -- its compatible advance equals its linear one
+                            // (1024 of 2048 units at 14ppem is exactly 7px), so the factor is 1.0
+                            // and the phase returns before touching a point -- and P48 still
+                            // cannot be 320. Its whole chain is pure x (pv = fv = (16384,0)) off
+                            // the advance phantom: pp2 at 448, P16 = pp2 - 52, P48 = P16 - 76,
+                            // every distance rounded onto the sixteenth. So our value is forced
+                            // onto the sixteenth grid and GDI's is not, with nothing in our model
+                            // able to put it anywhere else. Something moves a ClearType anchor off
+                            // the sixteenth without the phase, and this glyph is the smallest case
+                            // of it on record.</para>
                             // <para>IT IS NOT A PROPERTY OF THE POINT, IT IS A PROPERTY OF THE
                             // SIZE. Verdana 's' run at ppem 10..20 is anchor-exact at 10 and
                             // 12-16 and 18-20, and wrong at exactly two sizes: 11 (P0 by -2) and
@@ -5213,15 +5245,12 @@ namespace WgpuInterop.Tests.Text
                             // Arial '0'@15 (354) come down to 118, 118 and 236 -- one or two
                             // sub-samples -- on anchors of one to three sixty-fourths. So the
                             // whole residual, large rows included, is anchors a hair out.</para>
-                            // <para>THE SHARPEST OPEN LEAD. Our anchors sit on the sixteenth grid
-                            // (they are sums of sixteenth-rounded MIRP distances off a phantom at
-                            // zero) and GDI's PINNED ones do not: with the phase provably inert,
-                            // Times '8'@14 P48 is 320 for us and 319 for GDI, 'g'@14 P30 is 120
-                            // and 122. Something puts GDI's ClearType anchors OFF the sixteenth
-                            // without the phase. For '8'@14 the arithmetic points at the advance
-                            // phantom -- P3 hangs off pp1 and is pinned AT our value, P16/P48 hang
-                            // off pp2 and want exactly one sixty-fourth less, which is pp2 at 447
-                            // where we have 448 -- and that is the thing to chase next.</para>
+                            // <para>The advance phantom is not the explanation for '8'@14, and
+                            // it was checked rather than assumed: the glyph's advance is 1024 of
+                            // 2048 units, so pp2 is exactly 448 at 14ppem under every rule, and
+                            // WPF_PP2_ROUND over ppem 16-19 measures 6,754,920 / 12,309,026 /
+                            // 451,393 / 7,603,770 / 6,049,510 / 30,691 / 30,691 for modes 0..6 --
+                            // the shipped 6 tied with 5 and everything else far worse.</para>
                             // <para>A weaker pattern, recorded because it may still be something:
                             // six of seven of the UNPINNED intervals admit exactly OURS + 4/64 --
                             // one whole sixteenth -- Times 'h'@17 P1 ours 171 in [173,175], 'o'@14
