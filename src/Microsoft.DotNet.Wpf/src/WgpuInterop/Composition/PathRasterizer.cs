@@ -2394,6 +2394,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return rows;
         }
 
+        /// <summary>THE DOWNSAMPLE CHAIN, READ END TO END (2026-09-19), because 8ppem is the
+        /// largest pool left and it is the one size where there is no interpreter to blame: the
+        /// outline there is the design scaled and held at 26.6, and it is verified against GDI's
+        /// own unhinted points, so anything left is this.
+        /// <list type="bullet">
+        /// <item>fs_ContourScan@1400220b0 hands the 1-bit overscaled bitmap to
+        /// fsc_CalcGrayMapGdiCompatible@140092668 when the client asks for it, which loops the
+        /// destination rows and calls fsc_CalcGrayRow ONCE PER VERTICAL SUB-ROW, accumulating.
+        /// </item>
+        /// <item>fsc_CalcGrayRow@140044a38 walks the destination lamps right to left, takes the
+        /// next `overscale` bits of the 1-bit row, and does
+        /// `dst[i] += table[pattern]` with a 64-entry table at 0x1400a8890. So a lamp's value is a
+        /// SUM over the sub-rows of a weight indexed by its six-bit horizontal pattern.</item>
+        /// <item>fsc_OverscaleToSubPixel@1400352e0 is the other arm, for the path with no vertical
+        /// overscale: the same six-bit extraction through a 64-entry table at 0x1400a8620, one
+        /// output byte per lamp, no vertical term at all.</item>
+        /// </list>
+        /// The shape of that is what this function already does: `cnt` counts WHOLE SAMPLES -- two
+        /// per lamp, six per pixel -- and never a fraction of one, which is the thing that had to
+        /// be checked, since GDI's input is a one-bit bitmap and a span end that lands mid-sample
+        /// would otherwise leak a fractional level that GDI cannot produce.</summary>
         private static byte[] GdiTableFilterRowset(List<List<Vector2>> polys, FillRule fillRule,
                                                    int originX, int originY, int width, int height,
                                                    float rowOffset, int nSub = 1, int sI = 0,

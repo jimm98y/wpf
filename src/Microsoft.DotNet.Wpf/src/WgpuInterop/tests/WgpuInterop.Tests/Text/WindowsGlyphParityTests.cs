@@ -7384,9 +7384,27 @@ namespace WgpuInterop.Tests.Text
         ///   WPF_CT_LSBROUND=0          19,708
         ///   WPF_CT_MSIRP_ZONES=same    18,727
         /// </code>
-        /// Nothing beats the shipped configuration and the three that were close calls before are
-        /// not close any more. The neutral ones are neutral because the case they decide does not
-        /// arise on this specimen, not because the rule does not matter.</para>
+        /// <code>
+        ///   WPF_CT_SHPIX=run           18,727
+        ///   WPF_CT_SHPIX=outline       91,849
+        ///   WPF_CT_SHPIX_CALL=0     3,588,765
+        ///   WPF_CT_SHPIX_IUPY=0        64,055
+        ///   WPF_CT_SHPIXTOUCH=0        18,727
+        ///   WPF_CT_DELTA_RE=0         121,947
+        ///   WPF_CT_CONTRAST=auto    4,877,880    was "identical to 0" through the polygon path
+        ///   WPF_CT_CONTRAST=1      12,785,489
+        ///   WPF_CT_GRID_AXIS=exact  1,582,104
+        ///   WPF_CT_ROUND_PHASE=quarter 1,547,345
+        ///   WPF_MDRP_EXACT=0           91,651
+        ///   WPF_CT_ROUND_INLINE=1      18,727
+        ///   WPF_CT_CUTIN_UNROUNDED=1 9,582,699
+        ///   WPF_CT_CUTIN_FULL=1      9,772,657
+        /// </code>
+        /// Nothing beats the shipped configuration and the close calls are not close any more --
+        /// WPF_CT_CONTRAST=auto measured IDENTICALLY to 0 before and is now 260x worse, which is
+        /// the clearest illustration of why the whole set had to be re-swept. The neutral ones are
+        /// neutral because the case they decide does not arise on this specimen, not because the
+        /// rule does not matter.</para>
         /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
         /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
