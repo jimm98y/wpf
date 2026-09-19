@@ -2582,12 +2582,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_phaseAnchorPp1 =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_ANCHOR") == "1";
 
+        private static readonly bool s_phaseNoMove =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_NOMOVE") == "1";
+
         internal void ApplyPhaseAtIup()
         {
             // NOT ON A COMPOSITE. Our composites are assembled from components that were each
             // hinted (and so each already phased) by their own HintedProgram call, so phasing the
             // assembly again applies it twice -- 101 of the 224 EveryAccentedGlyph failures.
             // GDI reaches composite offsets through scl_CalcComponentOffset, a different path.
+            // WPF_CT_PHASE_NOMOVE=1: the ONE switch that turns the phase's point movement off
+            // and changes nothing else. WPF_CT_PHASE=0 is not that switch -- it is read by three
+            // other defaults (the stem fat, the MDRP minimum distance and the SHPIX outline mode)
+            // and flips them all at once, which is why "the phase off" has never been measurable
+            // on its own. Every call site goes through here, so this is the whole of it.
+            if (s_phaseNoMove) return;
             if (!s_phaseAtIup || _phaseApplied || BiLevelPass || !TrueTypeFont.SubpixelFitting) return;
             // s_phaseDepth: 0 = only a top-level glyph (components are phased by their own run
             // and the assembly would apply it a second time), 1 = only components, 2 = both.

@@ -7117,6 +7117,23 @@ namespace WgpuInterop.Tests.Text
         /// sixty-fourth. What is left is the fit's accumulated rounding disagreeing with GDI's by
         /// one unit on one coordinate in about sixty, which then flips a sample wherever that edge
         /// happens to sit on a boundary.</para>
+        /// <para>AND IT IS NOT ON A COORDINATE ANY INSTRUCTION DECIDES. Ten glyphs from the
+        /// one-sample pool were put through SolveGdisOutlineXy with WPF_XYSOLVE_INTERVAL=1, which
+        /// reports the slack each x has once the residual is zero; a point whose slack EXCLUDES
+        /// where we put it is proven wrong by GDI's pixels. Of 754 points, ten are:</para>
+        /// <para><code>
+        ///   x-TOUCHED on-curve      0 of 104     &lt;- every coordinate the program places
+        ///   untouched on-curve      2 of  97
+        ///   untouched off-curve     2 of 352
+        ///   implied midpoint        6 of 201
+        /// </code></para>
+        /// <para>Zero of the coordinates a fitting instruction decides is wrong, and our IUP is an
+        /// exact port whose anchors are all in that zero. So whatever is left acts on points the
+        /// program did not place, AFTER it ran. The phase is the mechanism that does that, and it
+        /// is very nearly right rather than wrong: WPF_CT_PHASE_NOMOVE=1, the one switch that
+        /// stops its movement and changes nothing else, measures 46,830,394 against 139,753. (Do
+        /// not use WPF_CT_PHASE=0 for this -- it is read by three other defaults, the stem fat,
+        /// the MDRP minimum distance and the SHPIX outline mode, and flips them all at once.)</para>
         /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
         /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
