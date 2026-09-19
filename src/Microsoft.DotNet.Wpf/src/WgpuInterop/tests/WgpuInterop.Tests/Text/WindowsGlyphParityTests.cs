@@ -5307,14 +5307,22 @@ namespace WgpuInterop.Tests.Text
                             // So the pair really is split, and moving their shared parent P2 down
                             // by one instead is an equally good explanation -- which is the thing
                             // to chase, because P2 is where the shift is decided.</para>
-                            // <para>One RE fact against it, unresolved: AddDistance's callers in
-                            // fontdrvhost are itrp_ALIGNRP, itrp_MSIRP and one unnamed site, and
-                            // SHP is not among them -- yet P17 and P20 take their parent from a
-                            // ShiftByPoint in our tree. If GDI makes no link there they would be
-                            // roots, and a root is not moved at all, which is further from GDI's
-                            // pixels than what we draw. So the link is real and its SOURCE is
-                            // mis-attributed, or AddDistance is reached from SHP through the
-                            // unnamed caller.</para>
+                            // <para>One RE fact sits against it and is sharper than it first
+                            // looked. AddDistance has exactly TWO call sites in fontdrvhost --
+                            // itrp_ALIGNRP@140036258 and itrp_MSIRP@14003bd4c -- and SHP is not
+                            // among them. The third "caller" Ghidra lists, 1400bb8a8, is not code
+                            // at all: the bytes there do not disassemble, and the quadwords around
+                            // it are pairs whose low half is a function offset (0x354c8 IS
+                            // AddDistance) and whose high half indexes something else, so it is a
+                            // symbol table. There is no indirect route.</para>
+                            // <para>Yet P17 and P20 take their parent from a ShiftByPoint in our
+                            // tree, and dropping that link would make them ROOTS -- and a root is
+                            // not moved at all, leaving them at 384 where GDI's pixels want 368
+                            // and 369. So removing the link is plainly worse than keeping it, and
+                            // the phase they need comes from somewhere this model does not have.
+                            // That is the shape of the gap: not a missing link and not a wrong
+                            // rounding, but a shift GDI gives a point that our tree cannot
+                            // express.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot
