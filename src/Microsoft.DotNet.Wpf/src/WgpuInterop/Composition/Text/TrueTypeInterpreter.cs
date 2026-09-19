@@ -2999,6 +2999,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>CompDiv(0x20000, v), and the inline sequence the phantom branch uses instead of
         /// calling it: v / 2^17 rounded half AWAY FROM ZERO. (The decompiler spells the truncation
         /// out as "+ 0x1ffff when negative", which is what C# integer division already does.)</summary>
+        /// <summary>The phase shift for a value of 2 * cur * (factor - 1), in 16.16: half a
+        /// 0x20000 added with the product's sign, then divided toward zero.
+        /// <para>READ OUT OF PhaseShift@140035b80 (2026-09-19). Its three inline copies are
+        /// `n = 2*cur*(f - 0x10000); n += (n &lt; 0 ? -0x10000 : 0x10000); (n + (n &lt; 0 ?
+        /// 0x1ffff : 0)) &gt;&gt; 17` -- the last step being the compiler's idiom for a signed
+        /// divide by 2^17 that truncates toward zero, so the whole is round-half-away, which this
+        /// is. Its mate case is `CompDiv(0x20000, (cur &lt;&lt; 1) * (f - 0x10000))`, the same
+        /// value. Its average is a plain C division, truncating, as CalcAvgXPhase's is. And it
+        /// runs BEFORE the interpolation in itrp_IUP, as ours does by default. So the phase is
+        /// exact in arithmetic and in order, and whatever still moves an interpolated point a
+        /// sixty-fourth is in which instructions run under ClearType, not in what any computes.</para>
+        /// </summary>
         private static int PhaseDiv(long v)
         {
             v += v < 0 ? -0x10000L : 0x10000L;
