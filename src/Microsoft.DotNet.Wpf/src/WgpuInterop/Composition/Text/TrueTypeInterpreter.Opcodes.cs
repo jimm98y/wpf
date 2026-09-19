@@ -2579,6 +2579,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>VERIFIED AGAINST itrp_CALL (2026-09-20). The flag this list drives is
+        /// gs+0x1c2 bit 4, and CALL sets it exactly here:
+        /// <code>
+        ///   count = globals[0x1c4];
+        ///   for (i &lt; count) if (globals[(i + 0xe3) * 2] == callee) globals[0x1c2] |= 0x10;
+        ///   ... call ...
+        ///   globals[0x1c2] &amp;= ~0x10;
+        /// </code>
+        /// -- the same four-entry array itrp_FDEF fills when a function body matches one of the
+        /// two MPPEM-conditional SHPIX fingerprints, which is what this list holds. So "inside a
+        /// recognised delta FDEF" means precisely "called one of those", and the SHPIX
+        /// suppression that hangs off it is gated on the right set.</summary>
         private bool IsSuppressedFdef(int id)
         {
             for (int i = 0; i < _suppressedFdefCount; i++) if (_suppressedFdefs[i] == id) return true;

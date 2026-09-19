@@ -7500,6 +7500,12 @@ namespace WgpuInterop.Tests.Text
         ///   WPF_CT_CUTIN_UNROUNDED=1 9,582,699
         ///   WPF_CT_CUTIN_FULL=1      9,772,657
         /// </code>
+        /// <para>AND THE PHASE'S OWN SUB-KNOBS, swept after the unfitted fixes against a baseline
+        /// of 9,179 over the same four sizes: AVGROUND=1 129,844; PHANTOM_MATE=0 24,622;
+        /// ANCHOR=1 12,064; PROP_ONLY=0 and =2 both 9,179; GDIPAIR=0 2,643,370; WIND=0 1,186,592;
+        /// IUP_UPPER=0 9,179. Every one of the phase's decisions is either confirmed or inert on
+        /// this specimen, which together with PhaseShift and CalcAvgXPhase being verified
+        /// instruction by instruction leaves no knob in that machinery worth another sweep.</para>
         /// Nothing beats the shipped configuration and the close calls are not close any more --
         /// WPF_CT_CONTRAST=auto measured IDENTICALLY to 0 before and is now 260x worse, which is
         /// the clearest illustration of why the whole set had to be re-swept. The neutral ones are
