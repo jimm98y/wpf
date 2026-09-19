@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -915,7 +915,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (!composite) last = polysG.Count;
                     GdiScanRows? walk = null;
                     List<(float X, int Dir)>[]? exactRows = null;
-                    if (s_scanExact && nSub > 1 && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                    if (s_scanExact && (nSub > 1 || s_scanOneRow)
+                        && (s_rowEdgeGdiPair || s_rowEdgeTopology))
                         exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
                                                  composite ? last : polysG.Count,
                                                  originX, originY, width, height, nSub, out walk);
@@ -1311,6 +1312,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>The run's ppem, so the vertical-coverage rule can be limited to the sizes
         /// where features are genuinely sub-pixel tall. Set by the renderer per run.</summary>
         internal static int PpemForRun;
+
+        /// <summary>SHIPPED. WPF_CT_SCAN_ONEROW=0 puts the polygon rasterizer back for runs with
+        /// no symmetric smoothing.
+        /// <para>The walk shipped gated on `nSub > 1`, which is only the faces and sizes whose
+        /// gasp asks for symmetric smoothing -- so every other row was still being drawn by the
+        /// polygon rasterizer while the report was read as if the exact converter drew all of it.
+        /// GDI has one scan converter and uses it either way; the vertical overscale being one
+        /// changes nothing about how it walks an edge.</para>
+        /// <para>HOLDOUT 97,806 -> 47,402, and ppem 16-19 alone 30,691 -> 9,712. 121 parity
+        /// ratchets tightened and 15 loosened, all of them in the ink table and none by more than
+        /// four pixels (b@14 4 -> 8, b@15 2 -> 5, b@13 1 -> 3, b@12 16 -> 18, the rest by one or
+        /// two). The one-sub-sample pool that was half the residual went with it: rows scoring
+        /// exactly 118 fell from 190 to 28 and 137 from 188 to 22.</para>
+        /// <para>AND IT INVALIDATES A DIAGNOSIS. Every "the residual is one anchor a sixty-fourth
+        /// out" measurement in WindowsGlyphParityTests was taken on glyphs whose faces do not ask
+        /// for symmetric smoothing at those sizes -- Verdana at 17, Times at 14 -- so the solver
+        /// was inverting the POLYGON rasterizer, not this one. Re-read those notes with that in
+        /// mind before acting on them.</para></summary>
+        private static readonly bool s_scanOneRow =
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN_ONEROW") != "0";
+
+        /// <summary>See the note at Xg. WPF_CT_XSUB, in 384ths of a pixel.</summary>
+        private static readonly int s_xSubProbe =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_XSUB"), out int xs) ? xs : 0;
+
+        /// <summary>See the note at Xg. WPF_CT_YSUB, in 64ths of a sub-row.</summary>
+        private static readonly int s_ySubProbe =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_YSUB"), out int ys) ? ys : 0;
 
         /// <summary>Largest ppem at which post-filter vertical coverage applies. WPF_VCOV_MAXPPEM.</summary>
         internal static readonly int PostVerticalMaxPpem =
@@ -2258,8 +2287,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // with `(a + b + 1) >> 1`, the ceiling; MathF.Round is banker's and would send half of
             // them the other way. On the flat top and bottom of a bowl, where the curve is nearly
             // horizontal, half a sub-row unit moves the x crossing by a whole sample.
-            int Xg(float x) => (int) MathF.Floor((x - originX) * 384f + 0.5f);
-            int Yg(float y) => (int) MathF.Floor((nRows - (y - originY) * nSub) * 64f + 0.5f);
+            // WPF_CT_XSUB / WPF_CT_YSUB: a DIAGNOSTIC, in units of the scan walk itself -- a
+            // three-hundred-and-eighty-fourth of a pixel in x, a sixty-fourth of a sub-row in y.
+            // <para>It exists to separate two explanations of the one-sub-sample rows that are
+            // half of what is left. If a glyph's ink is short by a sample because an edge passes
+            // EXACTLY through a sample point and our crossing rule puts it on the wrong side, then
+            // moving the whole outline by ONE unit -- far less than any coordinate could be wrong
+            // by -- takes that glyph to zero. If instead a coordinate is genuinely a sixty-fourth
+            // out, one unit does nothing, because a sixty-fourth is six units in x.</para>
+            // <para>Never set in a measurement reported as a result.</para>
+            int Xg(float x) => (int) MathF.Floor((x - originX) * 384f + 0.5f) + s_xSubProbe;
+            int Yg(float y) => (int) MathF.Floor((nRows - (y - originY) * nSub) * 64f + 0.5f)
+                               + s_ySubProbe;
             var verts = new List<(int X, int Y)>();
             for (int c = firstContour; c < lastContour; c++)
             {
