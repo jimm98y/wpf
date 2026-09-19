@@ -7098,42 +7098,33 @@ namespace WgpuInterop.Tests.Text
                 ? Array.ConvertAll(ws.Split(','), int.Parse)
                 : new[] { 8, 10, 12, 16, 24 };
 
-        /// <summary>WHAT THE RESIDUAL IS MADE OF, at 139,753 over 306 rows (2026-09-19).
-        /// <para>12,210 of 13,464 glyph rows are exact. Of the 1,254 that are not, <b>229 score
-        /// exactly 118 and another 229 exactly 137</b> -- 42% of everything left. A 118 is ONE
-        /// MISSING SUB-SAMPLE and a 137 is one EXTRA: the lamp dump of Segoe UI '8' shows a single
-        /// pixel row in which three adjacent lamps are each one level out, which is what the 6x1
-        /// box filter makes of one sample. 229 of each is why the ink comes out at 1.00000 of
-        /// Windows' with 145 rows heavier against 135 lighter.</para>
-        /// <para><b>And one sample is one sixty-fourth of a pixel of outline.</b> Ten glyphs from
-        /// that pool were put through SolveGdisEdges: 604 edges between them, only SEVEN whose
-        /// allowed run excludes staying put, and six of those seven need a move of exactly 1/64
-        /// (the seventh 3/64), three positive and four negative. Three of the ten have no proven
-        /// wrong edge at all. Flattening is not in it -- Segoe UI '8' at 11ppem measures 118 at a
-        /// tolerance of 1e-4 and again at 2e-7 with an 8192-step cap, unchanged over five hundred
-        /// times.</para>
-        /// <para>So the endgame is <b>arithmetic, not mechanism</b>. A rule that moves points by a
-        /// sixteenth of a pixel -- the grid the ClearType fit rounds on -- cannot fix a
-        /// sixty-fourth. What is left is the fit's accumulated rounding disagreeing with GDI's by
-        /// one unit on one coordinate in about sixty, which then flips a sample wherever that edge
-        /// happens to sit on a boundary.</para>
-        /// <para>AND IT IS NOT ON A COORDINATE ANY INSTRUCTION DECIDES. Ten glyphs from the
-        /// one-sample pool were put through SolveGdisOutlineXy with WPF_XYSOLVE_INTERVAL=1, which
-        /// reports the slack each x has once the residual is zero; a point whose slack EXCLUDES
-        /// where we put it is proven wrong by GDI's pixels. Of 754 points, ten are:</para>
+        /// <summary>WHAT THE RESIDUAL IS MADE OF, at 97,806 over 306 rows (2026-09-19, after
+        /// the scan converter shipped; the figures below replace the 139,753 anatomy).
+        /// <para>12,726 of 13,464 glyph rows are exact, 94.5%. Of the 738 that are not, 190 score
+        /// exactly 118 and 188 exactly 137 -- still half of everything left in two numbers, and
+        /// still one MISSING and one EXTRA sub-sample. What the exact walk removed was the large
+        /// sizes: 20..24ppem now contribute about 1% each, where they were the worst rows in the
+        /// report. What is left sits at 8..19.</para>
+        /// <para>Two regimes. At 16..19ppem a handful of glyphs carry 118s and 137s -- 69 nonzero
+        /// rows at 17ppem for 10,475. At 8..13ppem there are many more nonzero rows carrying
+        /// SMALLER numbers (44, 42, 37, 36 -- one lamp one level rather than a whole sample's
+        /// three), because the 6x5 filter spreads one sub-row flip differently when the glyph is
+        /// six pixels tall. Both are one sub-sample.</para>
+        /// <para>AND IT IS STILL NOT ON A COORDINATE ANY INSTRUCTION DECIDES. Ten glyphs from the
+        /// one-sample pool through SolveGdisOutlineXy with WPF_XYSOLVE_INTERVAL=1, scored against
+        /// the exact rasterizer: of 489 points, FIVE are proven wrong --</para>
         /// <para><code>
-        ///   x-TOUCHED on-curve      0 of 104     &lt;- every coordinate the program places
-        ///   untouched on-curve      2 of  97
-        ///   untouched off-curve     2 of 352
-        ///   implied midpoint        6 of 201
+        ///   x-TOUCHED               0 of  60     every coordinate the program places
+        ///   untouched on-curve      2 of  82
+        ///   untouched off-curve     1 of 217
+        ///   implied midpoint        2 of 130
         /// </code></para>
-        /// <para>Zero of the coordinates a fitting instruction decides is wrong, and our IUP is an
-        /// exact port whose anchors are all in that zero. So whatever is left acts on points the
-        /// program did not place, AFTER it ran. The phase is the mechanism that does that, and it
-        /// is very nearly right rather than wrong: WPF_CT_PHASE_NOMOVE=1, the one switch that
-        /// stops its movement and changes nothing else, measures 46,830,394 against 139,753. (Do
-        /// not use WPF_CT_PHASE=0 for this -- it is read by three other defaults, the stem fat,
-        /// the MDRP minimum distance and the SHPIX outline mode, and flips them all at once.)</para>
+        /// <para>-- three of the five by a single 64th, one by 6 and one by 8. Four of the ten
+        /// glyphs are now exact point for point. So the instructions are right, IUP is an exact
+        /// port, the phase is inert on the glyphs where this happens (Segoe UI '6' at 19ppem Bold
+        /// has one node with a non-zero shift, of fifty), and what is left is the precision of the
+        /// anchors IUP interpolates between -- each within its own slack, but far enough apart to
+        /// move a point between them across a sample centre.</para>
         /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
         /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
