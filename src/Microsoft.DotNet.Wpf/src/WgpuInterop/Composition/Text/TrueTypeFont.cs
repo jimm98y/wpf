@@ -1760,6 +1760,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
              // identical (16,681), because there the shear runs on the unfitted outline in BASE
              // pixels and nothing lands on a tie. So the simulated italic's shear is symmetric
              // about zero and the scaler's is not; WPF_OBLIQUE_ROUND=up to re-measure.
+             // TWO ROUNDINGS, NOT ONE, for the same reason the unfitted path takes them: a
+             // transform's products are rounded separately by scl_Scale, so the slant is
+             // `round(x) + round(shear*y)`. Here x is already a whole sixty-fourth -- it came out
+             // of the interpreter -- so only the shear term is rounded, where we had been rounding
+             // the SUM. WPF_OBLIQUE_MATRIX=0 rounds the sum.
+             : s_obliqueMatrix
+                 ? p.X + (s_shearRoundUp
+                     ? MathF.Floor(_shear * p.Y * 64f + 0.5f) / 64f
+                     : MathF.Round(_shear * p.Y * 64f, MidpointRounding.AwayFromZero) / 64f)
              : s_shearRoundUp
                  ? MathF.Floor((p.X + _shear * p.Y) * 64f + 0.5f) / 64f
                  : MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f;
