@@ -938,11 +938,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         totalFills += fills.Count;
                     }
                     List<List<Vector2>> polysOne = composite ? polysG.GetRange(first, last - first) : polysG;
+                    List<(float X, int Dir)>[]? exactRows = null;
+                    if (s_scanExact && nSub > 1 && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                        exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
+                                                 composite ? last : polysG.Count,
+                                                 originX, originY, width, height, nSub);
+                    if (s_lampTrace)
+                        Console.Error.WriteLine($"RASTER group first={first} last={last} contours={polysG.Count}"
+                            + $" composite={composite} exact={(exactRows is not null ? 1 : 0)} origin=({originX},{originY})"
+                            + $" size={width}x{height} nSub={nSub} fills={(fills is null ? -1 : fills.Count)}");
                     var lev = new byte[nSub][];
                     for (int sI = 0; sI < nSub; sI++)
                         lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
                                                        width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
-                                                       originalVertex);
+                                                       originalVertex, exactRows);
                     for (int px = 0; px < width * height; px++)
                     {
                         int g0 = 0, g1 = 0, g2 = 0;
@@ -1788,11 +1797,463 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return fills;
         }
 
+
+        // ================================================================================
+        // GDI'S SCAN CONVERTER, IN ITS OWN INTEGERS.
+        //
+        // fontdrvhost does not flatten a curve and it does not solve it per scanline either.
+        // fsc_FillGlyph@140034000 walks the contour in 26.6, materialising the implied
+        // on-curve point between two off-curve ones as (a + b + 1) >> 1; EvaluateSpline@140033848
+        // cuts every spline at its y extremum and then its x extremum by de Casteljau in the same
+        // integers (a half added with the numerator's sign, then a truncating divide), halves
+        // anything still wider or taller than 0xc81, and hands each monotonic piece to
+        // fsc_CalcLine@1400435a0 or fsc_CalcSpline@1400439f0. Those two are Bresenham walks:
+        // CalcLine keeps one integer error term and steps a row or a column by its sign;
+        // CalcSpline keeps the conic's IMPLICIT equation as an integer error with first and
+        // second differences, its coefficients right-shifted by a PowerOf2-driven table so the
+        // products fit, and steps the same way. A crossing is the sample index the walk is at
+        // when it passes a row centre. There is no x to round: the index falls out of the walk,
+        // and a crossing that sits exactly on a sample centre is decided by the integer error's
+        // initial bias and by strict comparisons, the same way every time.
+        //
+        // The units are sixty-fourths of a SUB-COLUMN in x (six per pixel) and of a SUB-ROW in y
+        // (nSub per pixel), y UP, which is how fs_ContourScan lays the bitmap out; row r's centre
+        // is 64r + 32. Rows come out counted from the bottom, and the fill counts them from the
+        // top, so row r here is sub-row nRows - 1 - r there.
+        //
+        // Why this exists: with the fit proven exact and every arithmetic stage read, the residual
+        // was 229 glyphs missing one sub-sample and 229 with one extra, on curves, insensitive to
+        // the flattening tolerance over five hundred times. A flattened float crossing decides an
+        // exact tie by a coin toss; this decides it the way GDI does. WPF_CT_SCAN=poly is the
+        // flattened path.
+        // ================================================================================
+
+        /// <summary>WPF_LAMP_TRACE=1: every sub-row's lamp counts as the fill leaves them, and one
+        /// line per rowset call saying which path fed it.</summary>
+        private static readonly bool s_lampTrace =
+            Environment.GetEnvironmentVariable("WPF_LAMP_TRACE") == "1";
+
+        /// <summary>WPF_CT_SCAN_TRACE=1: every conic piece's inputs and integer terms, and each row
+        /// crossing it emits.</summary>
+        private static readonly bool s_scanTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
+
+        /// <summary>WPF_CT_SCAN=exact turns the walk on. OFF by default: it is worth 139,753 ->
+        /// 121,744 on the holdout, a 12.9% cut and the largest single step in many rounds, but it
+        /// costs two ratchets at 20ppem (Segoe UI Italic four pixels covered differently, and the
+        /// roman repertoire's ink 0.06% light against 0.05% allowed) while handing back four
+        /// entries that now measure BETTER than their allowance. Ratchets outrank the holdout, so
+        /// it waits for those two.</summary>
+        private static readonly bool s_scanExact =
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN") == "exact"
+            && GdiSamplePhase == 0.5f && GdiSubrowPhase == 0.5f;
+
+        /// <summary>PowerOf2@140026670: the bit length of |v|, through a nibble table.</summary>
+        private static int GdiPowerOf2(int v)
+        {
+            uint u = v < 0 ? (uint) -v : (uint) v;
+            int n = 0;
+            while (u != 0) { n++; u >>= 1; }
+            return n;
+        }
+
+        /// <summary>The table at fontdrvhost+0xa87f0, indexed by the bit length of the larger of
+        /// the piece's spans plus the bit length of twice its determinant.</summary>
+        private static readonly int[] GdiConicShift =
+            { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,2,2,2,3,3,0,0 };
+
+        /// <summary>A half of the divisor's magnitude added with the numerator's sign, then a
+        /// truncating divide: round half away from zero. CompDiv@140026480, and the inline form
+        /// EvaluateSpline uses for its y split.</summary>
+        private static int GdiRDiv(long num, int den)
+        {
+            long h = den / 2;
+            if ((num < 0) != (den < 0)) h = -h;
+            return (int) ((num + h) / den);
+        }
+
+        /// <summary>One glyph's crossing lists, per row counted from the bottom: (sample column
+        /// index, direction) with -1 for ON, the way the fill's rows pair them.</summary>
+        private sealed class GdiScanRows
+        {
+            // Two lists a row, kept apart and each sorted, which is how AddHorizSimpleScan keeps
+            // them: fsc_FillBitMap pairs the k-th ON with the k-th OFF by rank, not by position.
+            public readonly List<int>[] On, Off;
+            public GdiScanRows(int nRows)
+            {
+                On = new List<int>[nRows]; Off = new List<int>[nRows];
+                for (int i = 0; i < nRows; i++) { On[i] = new List<int>(); Off[i] = new List<int>(); }
+            }
+            public void Row(int col, int rUp, bool on)
+            {
+                if ((uint) rUp < (uint) On.Length) (on ? On : Off)[rUp].Add(col);
+            }
+        }
+
+        /// <summary>fsc_CalcLine's walk, rows only.</summary>
+        private static void GdiLine(int x0, int y0, int x2, int y2, GdiScanRows L)
+        {
+            int ydist, row, nrows, ystep, dy;
+            if (y0 <= y2)
+            {
+                int yc = ((y0 + 0x20) & ~0x3f) + 0x20;
+                ydist = yc - y0; row = yc >> 6; nrows = ((y2 - 0x21) >> 6) - row + 1; ystep = 1; dy = y2 - y0;
+            }
+            else
+            {
+                int yc = ((y0 - 0x21) & ~0x3f) + 0x20;
+                ydist = y0 - yc; row = yc >> 6; nrows = row - ((y2 + 0x20) >> 6) + 1; ystep = -1; dy = y0 - y2;
+            }
+            int yDesc = y0 > y2 ? 1 : 0;
+            bool rowOn = y0 <= y2;
+            if (y0 == y2) return;                                   // a horizontal edge crosses no row
+            int xdist, col, ncols, xstep, xbias, dx, bias;
+            if (x0 < x2)
+            {
+                int xc = ((x0 + 0x20) & ~0x3f) + 0x20;
+                xdist = xc - x0; col = xc >> 6; ncols = ((x2 - 0x21) >> 6) - col + 1; xstep = 1; xbias = 0; dx = x2 - x0; bias = yDesc;
+            }
+            else
+            {
+                int xc = ((x0 - 0x21) & ~0x3f) + 0x20;
+                xdist = x0 - xc; col = xc >> 6; ncols = col - ((x2 + 0x20) >> 6) + 1; xstep = -1; xbias = 1; dx = x0 - x2; bias = 1 - yDesc;
+            }
+            if (x0 == x2)
+            {
+                // A vertical edge: every row at one column, which fsc_CalcLine takes from the
+                // point itself, one sixty-fourth back when the edge rises.
+                int c = ((x0 - (y0 < y2 ? 1 : 0)) + 0x20) >> 6;
+                for (int i = 0; i < nrows; i++) { L.Row(c, row, rowOn); row += ystep; }
+                return;
+            }
+            long f = bias - (long) dy * xdist + (long) dx * ydist;
+            int steps = nrows + ncols;
+            for (int i = 0; i < steps; i++)
+            {
+                if (f < 1)
+                {
+                    L.Row(xbias + col, row, rowOn);
+                    row += ystep;
+                    f += (long) dx * 0x40;
+                }
+                else
+                {
+                    col += xstep;
+                    f -= (long) dy * 0x40;
+                }
+            }
+        }
+
+        /// <summary>fsc_CalcSpline's walk, rows only. The piece is monotonic in both axes and
+        /// smaller than 0xc81 in each, which EvaluateSpline guarantees.</summary>
+        private static void GdiConic(int x0, int y0, int x1, int y1, int x2, int y2, GdiScanRows L)
+        {
+            int q, ydist, row, rowEnd, ystep, dy1, dy2;
+            if (y0 < y2)
+            {
+                int yc = ((y0 + 0x20) & ~0x3f) + 0x20;
+                ydist = yc - y0; row = yc >> 6; rowEnd = ((y2 - 0x21) >> 6) + 1; ystep = 1; q = 1; dy1 = y1 - y0; dy2 = y2 - y0;
+            }
+            else
+            {
+                int yc = ((y0 - 0x21) & ~0x3f) + 0x20;
+                ydist = y0 - yc; row = yc >> 6; rowEnd = ((y2 + 0x20) >> 6) - 1; ystep = -1; q = 4; dy1 = y0 - y1; dy2 = y0 - y2;
+            }
+            int ybias = y2 <= y0 ? 1 : 0;
+            int xdist, col, colEnd, xstep, xbias, dx1, dx2;
+            if (x0 < x2)
+            {
+                int xc = ((x0 + 0x20) & ~0x3f) + 0x20;
+                xdist = xc - x0; col = xc >> 6; colEnd = ((x2 - 0x21) >> 6) + 1; xstep = 1; xbias = 0; dx1 = x1 - x0; dx2 = x2 - x0;
+            }
+            else
+            {
+                int xc = ((x0 - 0x21) & ~0x3f) + 0x20;
+                xdist = x0 - xc; col = xc >> 6; colEnd = ((x2 + 0x20) >> 6) - 1; xstep = -1; xbias = 1; dx1 = x0 - x1; dx2 = x0 - x2;
+                q = q == 1 ? 2 : 3;
+                // 140043e4c: `sub w14,w15,w14` -- the row bias flips with the x direction, as it
+                // does in fsc_CalcLine. Left out of the first transcription, and it is a term of
+                // the initial error, so it decided every near-tie on a leftward piece the wrong way:
+                // Tahoma 'o' at 20ppem had three sub-rows one sample out, in both directions.
+                ybias = 1 - ybias;
+            }
+            bool rowOn = q == 1 || q == 2;
+            if (row == rowEnd) return;
+            if (col == colEnd)
+            {
+                for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn);
+                return;
+            }
+
+            int D = 2 * (dy2 * dx1 - dx2 * dy1);
+            int bD = GdiPowerOf2(D), bM = GdiPowerOf2(Math.Max(dx2, dy2));
+            if (bM > 12 || bD > 25) { GdiLine(x0, y0, x2, y2, L); return; }   // GDI fails the glyph; we degrade
+            int sft = GdiConicShift[bM + bD], sh = 6 - sft;
+            if (sft > 0)
+            {
+                int h = 1 << (sft - 1);
+                dx1 = (dx1 + h) >> sft; dx2 = (dx2 + h) >> sft;
+                dy1 = (dy1 + h) >> sft; dy2 = (dy2 + h) >> sft;
+                xdist = (xdist + h) >> sft; ydist = (ydist + h) >> sft;
+                D = 2 * (dy2 * dx1 - dx2 * dy1);
+            }
+            if (Math.Abs((long) D * dx2) >= 0x23000000 || Math.Abs((long) D * dy2) >= 0x23000000)
+            { GdiLine(x0, y0, x2, y2, L); return; }
+
+            int A = dy2 - 2 * dy1, B = dx2 - 2 * dx1;
+            int one = 1 << sh;
+            int A2 = A * A, C = -(A * B), B2 = B * B, Ddy1 = D * dy1, Ddx1 = D * dx1;
+            int Fx, Fy, F, A2s, B2s, Cs;
+            if (bM > 7)
+            {
+                Cs = C << sh;
+                Fx = (xdist + (one >> 1)) * A2 + C * ydist + Ddy1;
+                A2s = A2 << (sh - 1);
+                B2s = B2 << (sh - 1);
+                Fy = (ydist + (one >> 1)) * B2 + C * xdist - Ddx1;
+                F = (((A2 >> 1) * xdist + C * ydist + Ddy1) >> sh) * xdist
+                  + (((B2 >> 1) * ydist - Ddx1) >> sh) * ydist + ybias;
+            }
+            else
+            {
+                int C2 = 2 * C;
+                int t1 = (one + 2 * xdist) * A2 + C2 * ydist + 2 * Ddy1;
+                int t2 = A2 * xdist + C2 * ydist + 2 * Ddy1;
+                Fx = t1 << sh;
+                int t3 = (one + 2 * ydist) * B2 + C2 * xdist - 2 * Ddx1;
+                int t4 = B2 * ydist - 2 * Ddx1;
+                F = t4 * ydist + t2 * xdist + ybias;
+                Fy = t3 << sh;
+                int sh2 = 2 * sh;
+                Cs = C2 << sh2; B2s = B2 << sh2; A2s = A2 << sh2;
+            }
+
+            if (s_scanTrace)
+                Console.Error.WriteLine($"CONIC ({x0},{y0}) ({x1},{y1}) ({x2},{y2}) q={q} D={D} bM={bM} bD={bD} sft={sft} sh={sh}"
+                    + $" xdist={xdist} ydist={ydist} dx1={dx1} dx2={dx2} dy1={dy1} dy2={dy2} A={A} B={B}"
+                    + $" F={F} Fx={Fx} Fy={Fy} A2s={A2s} B2s={B2s} Cs={Cs} col={col}..{colEnd} row={row}..{rowEnd} ybias={ybias} xbias={xbias}");
+            if (D > 0)
+            {
+                while (col != colEnd)
+                {
+                    if (row == rowEnd) return;                        // the rest are column crossings
+                    if (F >= 0 && Fy <= B2s)
+                    {
+                        if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fy={Fy} B2s={B2s}");
+                        L.Row(xbias + col, row, rowOn);
+                        F += Fy; Fx += Cs; row += ystep; Fy += 2 * B2s;
+                    }
+                    else
+                    {
+                        F += Fx; col += xstep; Fx += 2 * A2s; Fy += Cs;
+                    }
+                }
+            }
+            else
+            {
+                while (col != colEnd)
+                {
+                    if (row == rowEnd) return;
+                    if (F < 0 || A2s < Fx)
+                    {
+                        if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fx={Fx} A2s={A2s}");
+                        L.Row(xbias + col, row, rowOn);
+                        F += Fy; Fx += Cs; row += ystep; Fy += 2 * B2s;
+                    }
+                    else
+                    {
+                        F += Fx; Fx += 2 * A2s; col += xstep; Fy += Cs;
+                    }
+                }
+            }
+            for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn);
+        }
+
+        /// <summary>EvaluateSpline@140033848: cut at the y extremum, then the x extremum, halve
+        /// while too big, and emit each piece. The starts of the pieces are recorded as vertices
+        /// for the topology rule, which GDI runs on each piece's start before emitting it.</summary>
+        private static void GdiSpline(int x0, int y0, int x1, int y1, int x2, int y2,
+                                      GdiScanRows L, List<(int X, int Y)> verts)
+        {
+            while (true)
+            {
+                int d1y = y1 - y0, d2y = y2 - y1, d1x = x1 - x0, d2x = x2 - x1;
+                if ((d1y < 1 || d2y > -1) && (d1y > -1 || d2y < 1)) break;
+                int den = d1y - d2y;
+                int nx1 = x0 + GdiRDiv((long) d1x * d1y, den);
+                int nx2 = x1 + GdiRDiv((long) d2x * d1y, den);
+                int mx = nx1 + GdiRDiv((long) (nx2 - nx1) * d1y, den);
+                int my = y0 + GdiRDiv((long) d1y * d1y, den);
+                GdiSpline(x0, y0, nx1, my, mx, my, L, verts);
+                x0 = mx; y0 = my; x1 = nx2; y1 = my;
+            }
+            while (true)
+            {
+                int d1y = y1 - y0, d2y = y2 - y1, d1x = x1 - x0, d2x = x2 - x1;
+                if ((d1x < 1 || d2x > -1) && (d1x > -1 || d2x < 1)) break;
+                int den = d1x - d2x;
+                int ny1 = y0 + GdiRDiv((long) d1y * d1x, den);
+                int ny2 = y1 + GdiRDiv((long) d2y * d1x, den);
+                int my = ny1 + GdiRDiv((long) (ny2 - ny1) * d1x, den);
+                int mx = x0 + GdiRDiv((long) d1x * d1x, den);
+                GdiSpline(x0, y0, mx, ny1, mx, my, L, verts);
+                x0 = mx; y0 = my; x1 = mx; y1 = ny2;
+            }
+            if (Math.Abs(x2 - x0) < 0xc81 && Math.Abs(y2 - y0) < 0xc81)
+            {
+                verts.Add((x0, y0));
+                int d1y = y1 - y0, d2y = y2 - y1, d1x = x1 - x0, d2x = x2 - x1;
+                if ((long) d2y * d1x == (long) d1y * d2x) GdiLine(x0, y0, x2, y2, L);
+                else GdiConic(x0, y0, x1, y1, x2, y2, L);
+                return;
+            }
+            int ax = (x0 + x1) >> 1, ay = (y0 + y1) >> 1, bx = (x1 + x2) >> 1, by = (y1 + y2) >> 1;
+            int cx = (ax + bx) >> 1, cy = (ay + by) >> 1;
+            GdiSpline(x0, y0, ax, ay, cx, cy, L, verts);
+            GdiSpline(cx, cy, bx, by, x2, y2, L, verts);
+        }
+
+        /// <summary>CheckHorizTopology@1400443f8 over one contour's vertices: a vertex exactly on
+        /// a row centre adds a crossing there by where its two neighbours go. The table is the one
+        /// GdiTableFilterRowset already applies to the flattened polygon, in a y-UP frame, and the
+        /// index is (x + 0x1f) &gt;&gt; 6 for an ON crossing and (x + 0x20) &gt;&gt; 6 for an OFF,
+        /// which are the two adders' own formulas.</summary>
+        private static void GdiVertexRule(List<(int X, int Y)> v, GdiScanRows L)
+        {
+            int m = v.Count;
+            for (int i = 0; i < m; i++)
+            {
+                (int X, int Y) p = v[i];
+                if ((p.Y & 0x3f) != 0x20) continue;
+                if (v[(i - 1 + m) % m] == p) continue;
+                (int X, int Y) pp = p, n = p;
+                for (int k = 1; k < m; k++) { var c = v[(i - k + m) % m]; if (c != p) { pp = c; break; } }
+                for (int k = 1; k < m; k++) { var c = v[(i + k) % m]; if (c != p) { n = c; break; } }
+                if (pp == p || n == p) continue;
+                int r = p.Y >> 6;
+                bool nUp = n.Y > p.Y, nLevel = n.Y == p.Y;
+                bool ppBelow = pp.Y < p.Y, ppLevel = pp.Y == p.Y, ppAbove = pp.Y > p.Y;
+                void On() => L.Row((p.X + 0x1f) >> 6, r, true);
+                void Off() => L.Row((p.X + 0x20) >> 6, r, false);
+                if (nUp)
+                {
+                    if (ppBelow) On();
+                    else if (ppLevel) { if (pp.X > p.X) On(); }
+                    else { On(); Off(); }
+                }
+                else if (nLevel)
+                {
+                    if (ppBelow) { if (n.X > p.X) On(); }
+                    else if (ppAbove || pp.X < p.X) { if (p.X > n.X) Off(); }
+                    else { if (n.X > p.X) On(); }
+                }
+                else
+                {
+                    if (ppAbove) Off();
+                    else if (ppLevel) { if (p.X > pp.X) Off(); }
+                    else { On(); Off(); }
+                }
+            }
+        }
+
+        /// <summary>The whole of it for one glyph: its figures, in pixels, into per-sub-row
+        /// crossing lists in the frame GdiTableFilterRowset pairs -- rows counted from the top,
+        /// x as the sample centre's own expression so the span test lands on the index exactly,
+        /// direction -1 for ON.</summary>
+        private static List<(float X, int Dir)>[] GdiExactRows(PathGeometry path, List<int> figureOf,
+            int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub)
+        {
+            int nRows = height * nSub;
+            var L = new GdiScanRows(nRows);
+            int Xg(float x) => (int) MathF.Round((x - originX) * 384f);
+            int Yg(float y) => (int) MathF.Round((nRows - (y - originY) * nSub) * 64f);
+            var verts = new List<(int X, int Y)>();
+            for (int c = firstContour; c < lastContour; c++)
+            {
+                if (c >= figureOf.Count || figureOf[c] >= path.Figures.Count) continue;
+                PathFigure fig = path.Figures[figureOf[c]];
+                verts.Clear();
+                Vector2 cur = fig.Start;
+                int cx = Xg(cur.X), cy = Yg(cur.Y), sx = cx, sy = cy;
+                foreach (PathSegment seg in fig.Segments)
+                {
+                    switch (seg)
+                    {
+                        case LineSegment l:
+                        {
+                            int ex = Xg(l.Point.X), ey = Yg(l.Point.Y);
+                            verts.Add((cx, cy));
+                            GdiLine(cx, cy, ex, ey, L);
+                            cx = ex; cy = ey;
+                            break;
+                        }
+                        case QuadraticBezierSegment qb:
+                        {
+                            int kx = Xg(qb.Control.X), ky = Yg(qb.Control.Y);
+                            int ex = Xg(qb.Point.X), ey = Yg(qb.Point.Y);
+                            GdiSpline(cx, cy, kx, ky, ex, ey, L, verts);
+                            cx = ex; cy = ey;
+                            break;
+                        }
+                        case CubicBezierSegment cb:
+                        {
+                            // Not a TrueType shape; a few chords keep the path closed.
+                            Vector2 p0 = cur;
+                            for (int i = 1; i <= 8; i++)
+                            {
+                                Vector2 pt = Cubic(p0, cb.Control1, cb.Control2, cb.Point, i / 8f);
+                                int ex = Xg(pt.X), ey = Yg(pt.Y);
+                                verts.Add((cx, cy));
+                                GdiLine(cx, cy, ex, ey, L);
+                                cx = ex; cy = ey;
+                            }
+                            break;
+                        }
+                    }
+                    cur = seg switch
+                    {
+                        LineSegment l2 => l2.Point,
+                        QuadraticBezierSegment q2 => q2.Point,
+                        CubicBezierSegment c2 => c2.Point,
+                        _ => cur
+                    };
+                }
+                if (cx != sx || cy != sy) { verts.Add((cx, cy)); GdiLine(cx, cy, sx, sy, L); }
+                GdiVertexRule(verts, L);
+            }
+            // fsc_FillBitMap@140042778 fills [on[k], off[k]) -- half-open, the lower of the two
+            // first, and nothing at all when they are equal. The fill downstream tests a CLOSED
+            // span, so the end is placed between the last covered centre and the first uncovered
+            // one, where inclusive and exclusive agree; and an empty pair is not emitted, because
+            // the pairing there would swap it into a two-sample span.
+            var rows = new List<(float X, int Dir)>[nRows];
+            for (int rUp = 0; rUp < nRows; rUp++)
+            {
+                List<int> on = L.On[rUp], off = L.Off[rUp];
+                on.Sort(); off.Sort();
+                var dst = new List<(float X, int Dir)>();
+                int n = Math.Min(on.Count, off.Count);
+                for (int k = 0; k < n; k++)
+                {
+                    int a = on[k], b = off[k];
+                    if (a == b) continue;
+                    if (b < a) (a, b) = (b, a);
+                    float start = originX + (a + GdiSamplePhase) / 6f;
+                    float end = (originX + (b - 1 + GdiSamplePhase) / 6f + originX + (b + GdiSamplePhase) / 6f) * 0.5f;
+                    dst.Add((start, -1));
+                    dst.Add((end, 1));
+                }
+                rows[nRows - 1 - rUp] = dst;
+            }
+            return rows;
+        }
+
         private static byte[] GdiTableFilterRowset(List<List<Vector2>> polys, FillRule fillRule,
                                                    int originX, int originY, int width, int height,
                                                    float rowOffset, int nSub = 1, int sI = 0,
                                                    List<(int Col, int SubRow)>? dropoutFills = null,
-                                                   List<bool[]>? originalVertex = null)
+                                                   List<bool[]>? originalVertex = null,
+                                                   List<(float X, int Dir)>[]? exactRows = null)
         {
             int subWidth = width * SubpixelsPerPixel;
             var lamp = new byte[subWidth * height];
@@ -1835,7 +2296,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<(float X, int Dir)>[]? rowsPre = null;
             bool[][]? corner = null;
             float glyphMaxX = float.MinValue;
-            if (s_rowEdgeGdiPair || s_rowEdgeTopology)
+            if (exactRows is not null)
+            {
+                // GDI's own walk produced these (GdiExactRows); nothing here has to find a
+                // crossing, only pair what it was given.
+                foreach (List<Vector2> poly in polys) foreach (Vector2 v in poly) if (v.X > glyphMaxX) glyphMaxX = v.X;
+                rowsPre = new List<(float X, int Dir)>[height];
+                for (int py = 0; py < height; py++) rowsPre[py] = exactRows[py * nSub + sI];
+            }
+            else if (s_rowEdgeGdiPair || s_rowEdgeTopology)
             {
                 foreach (List<Vector2> poly in polys) foreach (Vector2 v in poly) if (v.X > glyphMaxX) glyphMaxX = v.X;
                 if (s_rowEdgeGdiPair)
@@ -2011,7 +2480,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         else if (s_rowEdgeTopology && off < on) spans.Add((off, on));
                     }
                     if (s_rowPairTrace)
-                        Console.Error.WriteLine($"ROWPAIR py={py} sy={sy:0.###} here=[{string.Join(" ", here.ConvertAll(h => $"{h.X:0.###}{(h.Dir < 0 ? "on" : "off")}"))}] spans=[{string.Join(" ", spans.ConvertAll(sp => $"{sp.A:0.###}-{sp.B:0.###}"))}]");
+                        Console.Error.WriteLine($"ROWPAIR py={py} sy={sy:0.###} here=[{string.Join(" ", here.ConvertAll(h => $"{h.X:R}{(h.Dir < 0 ? "on" : "off")}"))}] spans=[{string.Join(" ", spans.ConvertAll(sp => $"{sp.A:R}-{sp.B:R}"))}]");
                     goto fillRow;
                 }
                 for (int pi = 0; pi < polys.Count; pi++)
@@ -2067,7 +2536,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     for (int i2 = 0; i2 + 1 < cross.Count; i2 += 2)
                         spans.Add((cross[i2].X, cross[i2 + 1].X));
                 if (s_rowPairTrace)
-                    Console.Error.WriteLine($"ROWWIND py={py} sy={sy:0.###} cross=[{string.Join(" ", cross.ConvertAll(h => $"{h.X:0.###}{(h.Dir < 0 ? "on" : "off")}"))}] spans=[{string.Join(" ", spans.ConvertAll(sp => $"{sp.A:0.###}-{sp.B:0.###}"))}]");
+                    Console.Error.WriteLine($"ROWWIND py={py} sy={sy:0.###} cross=[{string.Join(" ", cross.ConvertAll(h => $"{h.X:R}{(h.Dir < 0 ? "on" : "off")}"))}] spans=[{string.Join(" ", spans.ConvertAll(sp => $"{sp.A:R}-{sp.B:R}"))}]");
             fillRow:
                 int rowBase = py * subWidth;
                 for (int c = 0; c < subWidth; c++)
@@ -2133,6 +2602,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             { cnt++; break; }
                     }
                     lamp[rowBase + c] = (byte)cnt;
+                }
+                if (s_lampTrace)
+                {
+                    var sbL = new System.Text.StringBuilder();
+                    for (int c = 0; c < subWidth; c++) sbL.Append(lamp[rowBase + c]);
+                    Console.Error.WriteLine($"LAMP py={py} sI={sI} exact={(exactRows is not null ? 1 : 0)} {sbL}");
                 }
             }
             if (dropoutFills != null)
