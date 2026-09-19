@@ -5174,6 +5174,15 @@ namespace WgpuInterop.Tests.Text
                             if (best == 0)
                                 for (int k = 0; k < anchors.Length; k++)
                                 {
+                                    // NOT A HELD ANCHOR. The walk-back pulls each anchor toward
+                                    // our own value while the residual stays zero, and it was
+                                    // doing that to anchors the caller had PINNED with `p:d` --
+                                    // which silently undid the hold and turned "this
+                                    // configuration is reachable" into "the search wandered back
+                                    // to ours". Holds at offset zero were unaffected, since home
+                                    // and the held value are the same; every `p:d` verdict taken
+                                    // before this was not.
+                                    if (Held(k)) continue;
                                     int home = k < anchorOf.Length ? fit[anchorOf[k]]
                                                                    : fit[extraOf[k - anchorOf.Length]];
                                     while (anchors[k] != home)
@@ -5377,11 +5386,15 @@ namespace WgpuInterop.Tests.Text
                             // already on the sixteenth grid, so the rounding is the identity and
                             // our stem is 64/64 wide. P3 and P22 are then a black pair, so the
                             // phase shifts both by the same 33 and the width survives. Put to the
-                            // search as configurations: the pair moved TOGETHER by -1, -2 or -3
-                            // all fail at 118, while P22 alone at -2 reaches zero AND P3 alone at
-                            // -2 reaches zero. GDI's stem is 62 or 66 sixty-fourths, never 64 --
-                            // it is the WIDTH that differs, not the position, and nothing in the
-                            // distance rounding can produce a half-sixteenth.</para>
+                            // search as configurations: the pair moved TOGETHER fails at EVERY
+                            // offset from -3 to +4, all of them at 118, while P22 alone at -2
+                            // reaches zero and P3 alone at -2 reaches zero. So no rigid
+                            // translation of that stem reaches GDI and the WIDTH has to change:
+                            // GDI's is 62 or 66 sixty-fourths, never our 64. Nothing in the
+                            // distance rounding can produce a half-sixteenth from a control value
+                            // already on the grid -- and cvt[33] is 203 font units, 0.9912px at
+                            // 10ppem, which Verdana's own prep rounds to exactly 1.0 before the
+                            // glyph program ever reads it.</para>
                             // <para>Tahoma 'q'@15 is the same shape of fact from the other end:
                             // P17 and P20 are identical in org, orus, cur, parent and mate, and
                             // GDI puts them a sixty-fourth apart. One glyph needs a pair pulled
@@ -5454,7 +5467,7 @@ namespace WgpuInterop.Tests.Text
                                 bool ext = k >= anchorOf.Length;
                                 int pt = ext ? extraOf[k - anchorOf.Length] : anchorOf[k];
                                 string slack = "";
-                                if (aInterval)
+                                if (aInterval && !Held(k))
                                 {
                                     int keep = anchors[k], lo = 0, hi = 0;
                                     while (lo > -span)
