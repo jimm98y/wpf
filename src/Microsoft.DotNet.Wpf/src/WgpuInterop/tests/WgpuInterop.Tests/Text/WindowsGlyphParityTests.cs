@@ -270,10 +270,10 @@ namespace WgpuInterop.Tests.Text
             ["repertoire@19b"] = 211,
             ["repertoire@19bi"] = 21,
             ["repertoire@19i"] = 26,
-            ["repertoire@20"] = 113,
-            ["repertoire@20b"] = 197,
-            ["repertoire@20bi"] = 2,
-            ["repertoire@20i"] = 3,
+            ["repertoire@20"] = 103,
+            ["repertoire@20b"] = 180,
+            ["repertoire@20bi"] = 0,
+            ["repertoire@20i"] = 0,
             ["s"] = 0,
             ["u"] = 0,
             ["v"] = 0,
@@ -9218,7 +9218,7 @@ namespace WgpuInterop.Tests.Text
             ["b@17"] = 10,
             ["b@18"] = 2,
             ["b@19"] = 5,
-            ["b@20"] = 1,
+            ["b@20"] = 0,
             ["bi@10"] = 1,
             ["bi@11"] = 1,
             ["bi@12"] = 1,
@@ -9250,7 +9250,7 @@ namespace WgpuInterop.Tests.Text
             ["regular@17"] = 12,
             ["regular@18"] = 11,
             ["regular@19"] = 7,
-            ["regular@20"] = 5,
+            ["regular@20"] = 6,
         };
 
 

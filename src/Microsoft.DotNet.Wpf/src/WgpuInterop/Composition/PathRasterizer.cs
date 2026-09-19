@@ -1838,14 +1838,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_scanTrace =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
 
-        /// <summary>WPF_CT_SCAN=exact turns the walk on. OFF by default: it is worth 139,753 ->
-        /// 121,744 on the holdout, a 12.9% cut and the largest single step in many rounds, but it
-        /// costs two ratchets at 20ppem (Segoe UI Italic four pixels covered differently, and the
-        /// roman repertoire's ink 0.06% light against 0.05% allowed) while handing back four
-        /// entries that now measure BETTER than their allowance. Ratchets outrank the holdout, so
-        /// it waits for those two.</summary>
+        /// <summary>SHIPPED. WPF_CT_SCAN=poly restores the flattened path.
+        /// <para>139,753 -> 97,806 on the holdout, a 30% cut: 147 rows better, 5 worse, 154
+        /// unchanged, every one of the eighteen face-and-style pairs improved, and total ink
+        /// 0.999989 of Windows' over the whole specimen. The five that regress are all at 8..10ppem
+        /// and none by more than 123.</para>
+        /// <para>It needs the sample phases to be GDI's own half-sample; a probe that moves them
+        /// has no integer walk to fall back on, so it takes the polygon path instead.</para>
+        /// </summary>
         private static readonly bool s_scanExact =
-            Environment.GetEnvironmentVariable("WPF_CT_SCAN") == "exact"
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN") != "poly"
             && GdiSamplePhase == 0.5f && GdiSubrowPhase == 0.5f;
 
         /// <summary>PowerOf2@140026670: the bit length of |v|, through a nibble table.</summary>
@@ -2165,8 +2167,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             int nRows = height * nSub;
             var L = new GdiScanRows(nRows);
-            int Xg(float x) => (int) MathF.Round((x - originX) * 384f);
-            int Yg(float y) => (int) MathF.Round((nRows - (y - originY) * nSub) * 64f);
+            // HALVES GO UP, not to even. Every outline point is on the 26.6 pixel grid, so it
+            // lands on an integer here -- except an implied on-curve midpoint, which is a
+            // HALF-sixty-fourth and maps to a half in y (nSub is odd). fsc_FillGlyph makes those
+            // with `(a + b + 1) >> 1`, the ceiling; MathF.Round is banker's and would send half of
+            // them the other way. On the flat top and bottom of a bowl, where the curve is nearly
+            // horizontal, half a sub-row unit moves the x crossing by a whole sample.
+            int Xg(float x) => (int) MathF.Floor((x - originX) * 384f + 0.5f);
+            int Yg(float y) => (int) MathF.Floor((nRows - (y - originY) * nSub) * 64f + 0.5f);
             var verts = new List<(int X, int Y)>();
             for (int c = firstContour; c < lastContour; c++)
             {
