@@ -5323,6 +5323,23 @@ namespace WgpuInterop.Tests.Text
                             // That is the shape of the gap: not a missing link and not a wrong
                             // rounding, but a shift GDI gives a point that our tree cannot
                             // express.</para>
+                            // <para>A CENSUS, over the thirty worst rows at 9ppem and above (the
+                            // sizes where a face is fitted and there are anchors at all): 27 of 30
+                            // REACH GDI, and every one of them on ONE anchor, or two. The deltas
+                            // are +1 x7, -1 x9, +2 x8, -2 x3, +3 x5, and one each of +4, +5 and
+                            // -11 -- no bias in sign, no size that is worse than another. Three
+                            // cannot: Times Bold 'K'@23, Verdana '6'@12, and Tahoma 'q'@15 once
+                            // its P17 is held.</para>
+                            // <para>ONE PATTERN IN IT, AND IT IS REFUTED. Every Tahoma ITALIC row
+                            // in the census wants its anchor moved the SAME WAY -- 'g'@12 +2,
+                            // 'p'@11 +2, 'r'@10 +5, 'n'@9 +2, 'h'@9 +2, 'a'@16 +2, 'g'@14 +3 --
+                            // which is the signature of a synthesized slant that is slightly too
+                            // shallow in the fitted regime, where the shear runs on the fitted
+                            // points rather than on the base outline. It is not: swept over ppem
+                            // 9-17 on Tahoma Italic alone, 87/256 measures 12,819 and the next
+                            // step up (0.3418) measures 79,092, with 0.33594 at 168,118. The
+                            // minimum is sharp on both sides, so the slant is right and those
+                            // deltas are the solver's slack agreeing with each other.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot

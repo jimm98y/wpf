@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -2944,6 +2944,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool PhaseRootDirect =>
             s_phaseRootFromCycle ? _phaseAnyCycle : s_phaseRootDirect;
 
+        /// <summary>RE-READ END TO END AGAINST PhaseShift@140035b80 (2026-09-19), because the
+        /// anchor census says a handful of points want a shift one or two sixty-fourths from the
+        /// one this produces. Everything below is what the binary does:
+        /// <list type="bullet">
+        /// <item>The node value lives at node+8 as a 32-bit int and the node record is 12 bytes.
+        /// Its units are SIXTY-FOURTHS -- `2*cur*(f-0x10000)` is 26.6 x 16.16, and the `>> 17`
+        /// leaves 26.6 -- so GDI rounds the shift AT EVERY NODE exactly as we do. "Carry the
+        /// phase fractionally down the tree and round once at the point" is not what it does, and
+        /// that was the best remaining guess at where a sixty-fourth could come from.</item>
+        /// <item>One parent: `mov w3,w8; bl PhaseShift` and the child takes the parent's value
+        /// unchanged. Two parents: it computes both and, if they are EQUAL, skips the averaging
+        /// (`cmp w0,w24; b.eq`).</item>
+        /// <item>The mate rule fires only when BOTH parents are present; with either missing it
+        /// falls to 140035e08, the sum form `(cur[p] + cur[mate]) * (f-1)`.</item>
+        /// <item>param_3's re-derive at 140035e5c is gated on `node[+2] == -1` and then on
+        /// `orgX[node[+0]] == orgX[p]` -- the ORG array at elem+0x10, not orus and not cur.</item>
+        /// <item>A root does not move: with no parent it stores its value and falls through
+        /// without touching curX.</item>
+        /// </list>
+        /// So the shift machinery is not where the remaining sixty-fourths are; the TREE is the
+        /// only part of the phase left that could put them there.</summary>
         private int PhaseShiftNode(int p)
         {
             if (p < 0 || (uint) p >= (uint) _phaseFlags.Length) return 0;
@@ -3128,6 +3149,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
             if (s_phaseDump) Console.Error.WriteLine($"  ADDDIST r={r,3} p={p,3} col={colour} via={_phaseSite,-22} "
                 + $"p0={_phaseP0[p],3} dep={PhaseDependsOn(r, p, 100)} line=({_pvPtA},{_pvPtB})");
+            // AND SHP IS NOT ONE OF GDI'S CALL SITES, which is the sharpest thing known about
+            // this tree and is not yet acted on. AddDistance@1400354c8 has exactly TWO callers in
+            // fontdrvhost, itrp_ALIGNRP@140036258 and itrp_MSIRP@14003bd4c; the third "caller"
+            // Ghidra lists, 1400bb8a8, is a symbol table (its bytes do not disassemble, and the
+            // quadwords around it pair a function offset -- 0x354c8 IS AddDistance -- with an
+            // index into something else). AddProportion@140035630 takes the rest: MDRP, IP, ISECT
+            // and ALIGNRP.
+            // <para>Tahoma 'q'@15 uses NONE of those except IP: 24 MIRPs, 4 IPs, 4 SHCs, 4 SHPs
+            // and nothing else. So GDI builds its whole tree for that glyph out of four IP calls,
+            // while ours parents P17 and P20 from a ShiftByPoint -- and the pixels say GDI's P17
+            // and P20 differ by a sixty-fourth, which our tree cannot express because it makes
+            // them identical.</para>
+            // <para>Dropping the SHP link is NOT the fix: it would make them roots, and a root is
+            // not moved at all, leaving them at 384 where GDI wants 368 and 369. Whatever GDI
+            // does with those points, our SHP link is a better approximation of it than nothing.
+            // The next step is AddProportion and what an IP parents.</para>
             // ORDER MATTERS, and GDI's is the reverse of the obvious one: AddDistance asks
             // IndirectlyDependsOn(r, p) FIRST and only then looks at whether p already has a parent.
             // A re-link onto an already-placed point therefore still RAISES THE CYCLE FLAG when the
