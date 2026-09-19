@@ -5166,6 +5166,46 @@ namespace WgpuInterop.Tests.Text
                             //     Times 'W'@24       2,504 -> 1,605
                             //     Times 'v'@24         742 -> 429
                             //     Arial Bold 'c'@20    118 -> 118
+                            // <para>AND OVER THE ONE-SAMPLE POOL, WITH THE ARRAYS IN 128THS, the
+                            // verdict is much sharper than it was: of 21 glyphs scoring 137,
+                            // FIFTEEN reach zero and every one of them does it with a SINGLE
+                            // anchor moved one to four sixty-fourths (Verdana '8'@17 is the only
+                            // one that needs two). Our touch set is GDI's; one coordinate per
+                            // glyph is out by a hair. The six that cannot are Verdana '9'@13I,
+                            // 'p'/'e'/'0'@16B, 'o'/'6'@11I.</para>
+                            // <para>WITH THE SLACK, a delta becomes a CONSTRAINT -- and five of
+                            // them become GDI'S OWN COORDINATE. An anchor whose interval is [0,0]
+                            // is PINNED: no other value of it renders GDI's pixels. Five are
+                            // pinned AND differ from ours, which is the first per-point ClearType
+                            // x oracle this file has had:
+                            // <code>
+                            //   Verdana 's'@17   P24  ours  64  GDI  63
+                            //   Verdana '3'@17   P35  ours 493  GDI 492
+                            //   Times   '8'@14   P48  ours 320  GDI 319
+                            //   Verdana 'A'@13I  P0   ours 456  GDI 457
+                            //   Times   'g'@14   P30  ours 120  GDI 122
+                            // </code>
+                            // Seven more are pinned AT our value (Verdana 'c'@17 P9, 's'@17 P33,
+                            // '8'@11I P19, Times 'h'@17 P10 and P45, 'u'@13 P18, 'g'@14 P63), so
+                            // the instrument is not simply pinning everything.</para>
+                            // <para>AND THE PHASE IS EXCLUDED FOR TWO OF THE FIVE. Times '8'@14
+                            // and 'g'@14 print no PHASEDUMP at all -- their compatible advance
+                            // equals their linear one, so the factor is exactly 1.0 and the phase
+                            // returns before it touches a point -- yet P48 and P30 are pinned one
+                            // and two sixty-fourths from ours. Whatever is wrong there is in the
+                            // glyph program's own placement. 'g'@14 P30 is MIRP min-linked off P57
+                            // at 0.9375 (cvt 59/64 -> 15/16, not a tie) and P57 is MIRP off P3 at
+                            // 0.0625 (cvt 2/64 -> a TIE at half a sixteenth, which we round away
+                            // from zero); rounding that tie toward zero moves P30 by -4, and GDI
+                            // wants +2, so the tie is not it either.</para>
+                            // <para>A weaker pattern, recorded because it may still be something:
+                            // six of seven of the UNPINNED intervals admit exactly OURS + 4/64 --
+                            // one whole sixteenth -- Times 'h'@17 P1 ours 171 in [173,175], 'o'@14
+                            // P20 ours 112 in [113,116], '3'@13 P0 ours 40 in [44,45], 'u'@13 P26
+                            // ours 136 in [137,142], Verdana 'e'@14 P12 ours 465 in [466,473],
+                            // '5'@14 P9 ours 84 in [85,89]. Verdana 'c'@17 P0 is ours 545 in
+                            // [547,548] and excludes 549. The pinned five rule out a single
+                            // sixteenth-step as the whole story.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot
@@ -5192,14 +5232,55 @@ namespace WgpuInterop.Tests.Text
                                         Console.Error.WriteLine($"     best P{i,-3} ours {fit[i],5}"
                                             + $" -> {fin[i],5}  d {fin[i] - fit[i],4}");
                             }
+                            // HOW MUCH SLACK EACH ANCHOR HAS, once the search has reached zero.
+                            // <para>Without this the report is unreadable as evidence. The
+                            // walk-back pulls every anchor as close to OUR value as it can while
+                            // the residual stays zero, so an anchor printed `d 0` may be pinned at
+                            // our value or may simply be free, and an anchor printed `d 2` may be
+                            // the only cause or one of several. Verdana 'c'@17 comes back with P0
+                            // two sixty-fourths out and P15 -- P0's own child in the phase tree,
+                            // at the same x -- apparently unmoved, which reads as "the two ends of
+                            // one edge disagree" and would refute any rule that moves a subtree
+                            // together. It only reads that way because the walk-back ran on P15
+                            // second.</para>
+                            // <para>So: from the solved configuration, walk each anchor out both
+                            // ways and report the widest run that keeps the residual at zero. An
+                            // anchor with `[0,0]` is PINNED and its value IS GDI's; anything else
+                            // is a constraint, not a coordinate. WPF_XYSOLVE_ANCHORS_INTERVAL=1.
+                            // </para>
+                            bool aInterval = best == 0
+                                && Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_INTERVAL")
+                                   == "1";
                             for (int k = 0; k < anchors.Length; k++)
                             {
                                 bool ext = k >= anchorOf.Length;
                                 int pt = ext ? extraOf[k - anchorOf.Length] : anchorOf[k];
+                                string slack = "";
+                                if (aInterval)
+                                {
+                                    int keep = anchors[k], lo = 0, hi = 0;
+                                    while (lo > -span)
+                                    {
+                                        anchors[k] = keep + lo - 1;
+                                        Write(RunIup(anchors));
+                                        if (Score() != 0) break;
+                                        lo--;
+                                    }
+                                    while (hi < span)
+                                    {
+                                        anchors[k] = keep + hi + 1;
+                                        Write(RunIup(anchors));
+                                        if (Score() != 0) break;
+                                        hi++;
+                                    }
+                                    anchors[k] = keep;
+                                    Write(RunIup(anchors));
+                                    slack = $"  slack [{lo,3},{hi,3}]{(lo == 0 && hi == 0 ? " PINNED" : "")}";
+                                }
                                 if (anchors[k] != fit[pt] || best == 0)
                                     Console.Error.WriteLine($"     {c}@{ppem}{style} anchor"
                                         + $" P{pt,-3}{(ext ? "+" : " ")} ours {fit[pt],5}"
-                                        + $"  best {anchors[k],5}  d {anchors[k] - fit[pt],4}");
+                                        + $"  best {anchors[k],5}  d {anchors[k] - fit[pt],4}{slack}");
                             }
                             continue;
                         }
