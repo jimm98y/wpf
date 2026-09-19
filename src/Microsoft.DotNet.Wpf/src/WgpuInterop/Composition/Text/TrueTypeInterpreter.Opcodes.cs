@@ -2850,6 +2850,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// all. The remaining difference is therefore a precision problem in the range of a few
         /// sixty-fourths, not a missing mechanism -- 65 to 78 per cent of our coordinates already
         /// land inside the interval GDI's own pixels allow.</para></summary>
+        /// <summary>READ OUT OF itrp_MIRP, SO IT IS NOT A KNOB ANY MORE (2026-09-19). The
+        /// minimum-distance clamp is
+        /// <code>
+        ///   if (flags &gt;&gt; 3 &amp; 1) {
+        ///       v = globals[0x8c];                          // the minimum distance
+        ///       if (localGS[0xcc] != 0) v = (int) v / 2;    // HALVED in the ClearType direction
+        ///       ...clamp the rounded distance to +/-v...
+        ///   }
+        /// </code>
+        /// -- a plain integer halve gated on the same ClearType latch everything else in MIRP is
+        /// gated on, and TWO is what we already ship. The measurement agrees and is not close:
+        /// over ppem 16-19 the divisors 1/2/3/4/6/16 give 533,518 / 30,691 / 115,360 / 127,733 /
+        /// 129,296 / 129,296. The old note below says the clamp was inert at 12ppem on the
+        /// specimen; it is not inert now that the rasterizer is exact, and 1 is catastrophic. Do
+        /// not sweep this again.</summary>
         private static readonly int s_minDistDiv =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_MINDIST_DIV"), out int md) && md > 0
                 ? md : 2;
@@ -3432,7 +3447,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the wrong width or in the wrong column is almost always one of these lines.
             if (s_mdrpTrace)
                 Console.Error.WriteLine($"   MIRP p={p} rp0={_gs.Rp0} cvt={cvt} link={linkType}"
-                    + $" round={round} min={keepMinimum} cvtval={value / 64f:0.####}"
+                    + $" round={round}:{_gs.Round}"
+                    + (_gs.Round == RoundMode.Super || _gs.Round == RoundMode.Super45
+                        ? $"(per {_gs.RoundPeriod} ph {_gs.RoundPhase} th {_gs.RoundThreshold})" : "")
+                    + $" minD={_gs.MinimumDistance} min={keepMinimum} cvtval={value / 64f:0.####}"
                     + $" orig={original / 64f:0.####} -> dist={distance / 64f:0.####}"
                     + $" cur={current / 64f:0.####} move={(distance - current) / 64f:0.####}"
                     + $" pv=({_gs.ProjX},{_gs.ProjY}) ctDir={InClearTypeDirection} ppem={_ppem}");

@@ -5198,6 +5198,30 @@ namespace WgpuInterop.Tests.Text
                             // 0.0625 (cvt 2/64 -> a TIE at half a sixteenth, which we round away
                             // from zero); rounding that tie toward zero moves P30 by -4, and GDI
                             // wants +2, so the tie is not it either.</para>
+                            // <para>IT IS NOT A PROPERTY OF THE POINT, IT IS A PROPERTY OF THE
+                            // SIZE. Verdana 's' run at ppem 10..20 is anchor-exact at 10 and
+                            // 12-16 and 18-20, and wrong at exactly two sizes: 11 (P0 by -2) and
+                            // 17 (P24 by -1). A point placed by a wrong instruction would be
+                            // wrong at every size, so this is a value landing on the far side of
+                            // a boundary, not a rule we have not ported. No DELTAP fires on any
+                            // of the implicated points at the size that is wrong, so it is not a
+                            // suppressed delta either.</para>
+                            // <para>AND THE BIG ROWS ARE THE SAME THING, TWICE. The four worst
+                            // rows in the whole report are not a different problem: Tahoma 'p'@17
+                            // (410) reaches zero with two anchors at -1 each, Verdana '3'@10 (491)
+                            // with -2 and +1. Verdana 'q'@16 (519), Consolas '6'@16 (392) and
+                            // Arial '0'@15 (354) come down to 118, 118 and 236 -- one or two
+                            // sub-samples -- on anchors of one to three sixty-fourths. So the
+                            // whole residual, large rows included, is anchors a hair out.</para>
+                            // <para>THE SHARPEST OPEN LEAD. Our anchors sit on the sixteenth grid
+                            // (they are sums of sixteenth-rounded MIRP distances off a phantom at
+                            // zero) and GDI's PINNED ones do not: with the phase provably inert,
+                            // Times '8'@14 P48 is 320 for us and 319 for GDI, 'g'@14 P30 is 120
+                            // and 122. Something puts GDI's ClearType anchors OFF the sixteenth
+                            // without the phase. For '8'@14 the arithmetic points at the advance
+                            // phantom -- P3 hangs off pp1 and is pinned AT our value, P16/P48 hang
+                            // off pp2 and want exactly one sixty-fourth less, which is pp2 at 447
+                            // where we have 448 -- and that is the thing to chase next.</para>
                             // <para>A weaker pattern, recorded because it may still be something:
                             // six of seven of the UNPINNED intervals admit exactly OURS + 4/64 --
                             // one whole sixteenth -- Times 'h'@17 P1 ours 171 in [173,175], 'o'@14
