@@ -1246,7 +1246,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // function. Only itrp_MIRP has an inline fast path (localGS+0xa4 != 0: plain RTG with
             // axis vectors, never cleared since) that rounds by the CURRENT latch.
             _roundFnSp = InClearTypeDirection && !BiLevelPass
-                         && (NativeClearTypeMode || !_inPreProgram);
+                         && (s_roundInstallMode == 2 || NativeClearTypeMode || !_inPreProgram);
         }
 
         /// <summary>Whether the round-state function GDI would have installed is the SIXTEENTH
@@ -1261,8 +1261,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// dual-projection function) and the fallback never fires there. Kept as the record of
         /// three readings: the install-time model (80.9M), install + RTG inline (5.2M), RDTG
         /// alone (1.3M). The rounding-time model this file already had is the right one.</summary>
-        private static readonly bool s_roundInstall =
-            Environment.GetEnvironmentVariable("WPF_CT_ROUND_INSTALL") == "1";
+        /// <summary>WPF_CT_ROUND_INSTALL: 1 the install model as the binary writes it, 2 the same
+        /// without the pre-program clause, so the two can be told apart.</summary>
+        private static readonly int s_roundInstallMode =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_ROUND_INSTALL"), out int rim) ? rim : 0;
+
+        private static readonly bool s_roundInstall = s_roundInstallMode != 0;
 
         /// <summary>WPF_CT_ROUND_INLINE=1: model itrp_MIRP's inline path (localGS+0xa4 != 0) as
         /// "RTG with axis-aligned vectors", rounding by the current latch. Default off: every
@@ -1290,9 +1294,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // itrp_RoundDownToGridSP's own check: off native mode, with the general projection
             // function installed (an off-axis projection vector -- SDPVTL/SPVTL), RDTG rounds
             // DOWN TO THE WHOLE PIXEL; the other subpixel functions never look.
-            if (BiLevelPass || !InClearTypeDirection) return false;
-            if (_gs.Round == RoundMode.DownToGrid && !NativeClearTypeMode && !ProjectionIsAxis) return false;
-            return true;
+            // 2026-09-19: THE INSTALL MODEL AND THE PER-CALL MODEL ARE THE SAME MODEL, so this
+            // is now the fallback itself and the knob is a no-op (97,806 either way).
+            // <para>globals+0x90 is written in thirteen places -- the six round-state opcodes and
+            // SVTCA, SPVTCA, SPVTL, SPVFS/WPV and SDPVTL, all of which now call LatchRoundGrid --
+            // and EVERY projection change goes through one of them. So "which function is
+            // installed" cannot disagree with "what the projection is now", and choosing the grid
+            // per call is choosing the installed one. itrp_MDRP does load it from globals+0x90
+            // (14003a694: `ldr x8,[x23, #0x90]`, x23 = gs), and the table at 14009b8c0 is
+            // confirmed 0..7 plain / 8..15 subpixel with Super and Super45 sharing entries.</para>
+            // <para>What this used to return was `!ProjectionIsAxis` in place of the RDTG rule --
+            // the SUPERSEDED reading, keyed on the projection VECTOR where the binary keys on the
+            // installed projection FUNCTION at gs+0x78. SDPVTL is where they part: it sets an
+            // off-axis vector but installs itrp_OldProject, not itrp_Project, so RDTG must NOT
+            // fall back there, and the old predicate made it. The 80.9M and the 1,125,947 this
+            // knob is recorded as measuring are that old mistake re-measured, not evidence about
+            // installing. The correct rule lives in rdtgWhole, keyed on _projFnGeneral, and is
+            // applied earlier in the chain than this.</para>
+            return !BiLevelPass && InClearTypeDirection;
         }
         
         private static readonly bool s_roundLatch =

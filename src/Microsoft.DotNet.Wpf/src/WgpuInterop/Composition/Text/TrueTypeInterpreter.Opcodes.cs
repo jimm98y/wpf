@@ -195,12 +195,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // already abandoned.
                         SetVectorLine(-1, -1);
                         SetProjection(op == 0x01);
+                        LatchRoundGrid();   // the vector opcodes re-install it -- see LatchRoundGrid
                         SetFreedom(op == 0x01);
                         LatchClearTypeAxis();
                         _projFnGeneral = false;                 // itrp_XProject / itrp_YProject
                         break;
                     case 0x02: case 0x03:                                               // SPVTCA[a]
-                        SetVectorLine(-1, -1); SetProjection(op == 0x03); LatchClearTypeAxis(); _projFnGeneral = false; break;
+                        SetVectorLine(-1, -1); SetProjection(op == 0x03); LatchClearTypeAxis();
+                        _projFnGeneral = false; LatchRoundGrid(); break;
                     case 0x04: case 0x05: SetFreedom(op == 0x05); break;                // SFVTCA[a]
 
                     case 0x06: case 0x07:                                               // SPVTL[a]
@@ -211,6 +213,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             ResetProjection();
                             LatchClearTypeAxis();
                             _projFnGeneral = true;                  // itrp_SPVTL: gs+0x78 = itrp_Project
+                            LatchRoundGrid();
                             break;
                         }
                     case 0x08: case 0x09:                                               // SFVTL[a]
@@ -239,6 +242,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             SetVectorLine(-1, -1);
                             ResetProjection();
                             _projFnGeneral = true;                  // itrp_WPV: gs+0x78 = itrp_Project, axis or not
+                            LatchRoundGrid();
                             break;
                         }
                     case 0x0B:                                                          // SFVFS
@@ -276,6 +280,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             ResetProjection();
                             LatchClearTypeAxis();
                             _projFnGeneral = false;                 // itrp_SDPVTL: gs+0x78 = itrp_OldProject
+                            LatchRoundGrid();
                             break;
                         }
 
