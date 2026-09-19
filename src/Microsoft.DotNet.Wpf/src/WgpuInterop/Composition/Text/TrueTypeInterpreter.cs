@@ -4381,6 +4381,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_roundOpWholePixel =
             Environment.GetEnvironmentVariable("WPF_CT_ROUND_GRID") == "1";
 
+        /// <summary>VERIFIED AGAINST ALL TEN ROUND FUNCTIONS (2026-09-19). The bi-level oracle
+        /// proves the whole-pixel half of the table at +0x9b8c0, because our bi-level fit is
+        /// bit-exact against GDI's own points; the SUBPIXEL half decides every ClearType anchor
+        /// and had only ever been checked against pixels. Read end to end, it matches:
+        /// <list type="bullet">
+        /// <item>Each SP variant is its plain twin with the whole-pixel mask 0xffffffc0 replaced
+        /// by the sixteenth's 0xfffffffc and the half 0x20 by 2 -- ToGrid `(v + 2) &amp; ~3`,
+        /// DownToGrid `v &amp; ~3`, UpToGrid `(v + 3) &amp; ~3`, ToHalfGrid `(v &amp; ~3) + 2`,
+        /// RoundOff `v`. Multiplying by ClearTypeGrid, rounding to the pixel and dividing back,
+        /// which is what this does, is the same number in every mode.</item>
+        /// <item>Only RoundDownToGridSP@140094a40 carries a gate, and it is the one already
+        /// shipped: `!(globals[0x88] bit 2) &amp;&amp; localGS[0x78] == itrp_Project` falls back to
+        /// the WHOLE-pixel form. That is rdtgWhole below.</item>
+        /// <item>The SP forms halve the compensation (`param_3 / 2`), as the line below does.</item>
+        /// <item>Every one of them refuses to let rounding change a value's SIGN: if the result's
+        /// sign differs from the input's it returns 0 instead (or +/-0x20, and +/-2 in SP, for
+        /// ToHalfGrid). Computing on the magnitude and clamping it at zero, which is what happens
+        /// at the end of this function, is the same rule.</item>
+        /// <item>itrp_MDRP passes the compensation as `globals[(opcode &amp; 3) + 9]`, a per-colour
+        /// array, and applies it inline with the same sign rule when the round bit is clear. Ours
+        /// is zero (WPF_CT_ENGINE), and it must be: a non-zero one would move every rounded link
+        /// by a fixed amount, which is not the shape of what is left. The same excerpt halves the
+        /// minimum distance when localGS[0xcc] is set, which s_minDistMdrp already does.</item>
+        /// </list>
+        /// So the ClearType grid is not where the remaining sixty-fourths come from.</summary>
         private int RoundDistance(int distance, bool position = false, bool mdap = false,
                                   int linkType = -1, bool bare = false)
         {
