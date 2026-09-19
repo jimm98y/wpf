@@ -863,7 +863,7 @@ namespace WgpuInterop.Tests.Text
                             var sbU = new System.Text.StringBuilder();
                             sbU.Append($"      GDI unhinted '{c}' @{ppem}: {gdiPlain.Count} pts:");
                             foreach (Vector2 v in gdiPlain)
-                                sbU.Append($" ({(int) MathF.Round(v.X * 64)},{(int) MathF.Round(v.Y * 64)})");
+                                sbU.Append($" ({v.X * 128,0:0.#},{v.Y * 128,0:0.#})");
                             Console.Error.WriteLine(sbU.ToString());
                             // ...and OURS, the outline TryGetHintedOutline hands the renderer at
                             // this size (flattened, 64ths, y-down like GDI's).
@@ -873,7 +873,7 @@ namespace WgpuInterop.Tests.Text
                                 List<Vector2> op = Flatten(oursPlain);
                                 sbO.Append($"      ours unfitted '{c}' @{ppem}: {op.Count} pts:");
                                 foreach (Vector2 v in op)
-                                    sbO.Append($" ({(int) MathF.Round(v.X * 64)},{(int) MathF.Round(v.Y * 64)})");
+                                    sbO.Append($" ({v.X * 128,0:0.#},{v.Y * 128,0:0.#})");
                                 Console.Error.WriteLine(sbO.ToString());
                             }
                         }

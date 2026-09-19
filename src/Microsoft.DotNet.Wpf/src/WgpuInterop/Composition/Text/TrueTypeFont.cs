@@ -1005,6 +1005,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // outline in the face's own base pixels, which they then scale as if it were device
                 // pixels. That is a factor of ppem/48 in the wrong direction and it showed: the
                 // finished ClearType ink went to eighteen times GDI's.
+                if (s_unfittedPoints && glyphId >= 0 && glyphId < _numGlyphs)
+                {
+                    List<PathFigure> atSize = BuildGlyphFiguresAt(
+                        glyphId, pixelsPerEm, ScaleRoundsHalfUp(_unitsPerEm, pixelsPerEm));
+                    _hintedCache[key] = atSize;
+                    figures = atSize;
+                    return atSize.Count > 0;
+                }
                 if (!TryGetGlyphOutline(glyphId, out List<PathFigure> plain))
                     return false;
                 double num = pixelsPerEm, den = PixelsPerEm;
@@ -3842,6 +3850,94 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // Converts a glyph's font-unit contours to screen-space (y-down) figures,
         // applying synthetic bold/oblique simulations when requested.
+        /// <summary>The unfitted outline AT A SIZE, with the 26.6 rounding applied to the POINTS
+        /// and not to the figure.
+        /// <para>Rounding the figure is a point too late. BuildContourFigure materialises the
+        /// implied on-curve point between two consecutive off-curve ones as their exact average,
+        /// and GDI keeps that average on the HALF sixty-fourth -- its own unhinted report for
+        /// Times New Roman 'm' at 8ppem carries thirteen of them, every one an odd number of
+        /// 128ths, against ours which had been rounded to a whole sixty-fourth. Scaling and
+        /// rounding the points first and building the figure afterwards puts the midpoint back
+        /// where GDI has it: halfway between two rounded neighbours.</para>
+        /// <para>WPF_UNFITTED_PTS=0 goes back to rounding the finished figure.</para></summary>
+        private List<PathFigure> BuildGlyphFiguresAt(int gid, float pixelsPerEm, bool halfUp)
+        {
+            List<Contour> contours = ReadGlyphContours(gid, 0);
+            double k = (double) pixelsPerEm / _unitsPerEm;
+            var scaled = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
+            foreach (Contour contour in contours)
+            {
+                if (contour.Points.Length < 2) continue;
+                var pts = new Vector2[contour.Points.Length];
+                for (int i = 0; i < pts.Length; i++)
+                    pts[i] = new Vector2((float) (contour.Points[i].X * k),
+                                         (float) (-contour.Points[i].Y * k));
+                scaled.Add((pts, contour.OnCurve));
+            }
+
+            // The simulations are in pixels at THIS size, which is what the base-pixel builder
+            // does too once its own scale is taken out.
+            if (_emboldenStrength > 0f)
+                Embolden(scaled, _emboldenStrength * pixelsPerEm / BaseEmPixels);
+
+            // THE SLANT IS A COLUMN OF THE TRANSFORM, NOT A CORRECTION APPLIED AFTER IT.
+            // <para>GDI scales an unfitted outline through a matrix, and scl_Scale rounds EACH
+            // product to 26.6 on its own -- so a sheared x is `round(x*sx) + round(y*sxy)`, two
+            // roundings summed, and not `round(x*sx + y*sxy)`. The two differ by up to half a
+            // sixty-fourth, which is exactly what GDI's own unhinted report for Tahoma Italic 'c'
+            // at 8ppem shows: thirteen points differ in x by one or two 128ths and none differ in
+            // y at all.</para>
+            // <para>WPF_OBLIQUE_MATRIX=0 shears the scaled float and rounds once.</para>
+            bool rnd = s_unfittedRoundMode != 0;
+            foreach ((Vector2[] pts, _) in scaled)
+                for (int i = 0; i < pts.Length; i++)
+                {
+                    float x = pts[i].X, y = pts[i].Y;
+                    if (_shear != 0f && s_obliqueMatrix && rnd)
+                    {
+                        // FROM THE ROUNDED Y. GDI's own unhinted report for Tahoma Italic 'W'
+                        // at 8ppem puts its six cap-height points one sixty-fourth left of a
+                        // shear taken on the unrounded y, and exactly where a shear taken on the
+                        // 26.6 y puts them: cap height is 1489 units, 5.8164px unrounded and
+                        // 5.8125 rounded, and 87/256 of those differ by a sixty-fourth after
+                        // rounding. So the slant is applied to the outline AFTER it is on the
+                        // 26.6 grid, not inside the scaling matrix.
+                        float yr = Round64Y(y, halfUp);
+                        x = Round64(x, halfUp) + Round64(-_shear * yr, halfUp);
+                        pts[i] = new Vector2(x, yr);
+                        continue;
+                    }
+                    if (_shear != 0f) x -= _shear * y;
+                    pts[i] = rnd ? new Vector2(Round64(x, halfUp), Round64Y(y, halfUp))
+                                 : new Vector2(x, y);
+                }
+
+            var figures = new List<PathFigure>(scaled.Count);
+            foreach ((Vector2[] pts, bool[] on) in scaled)
+                figures.Add(BuildContourFigure(pts, on));
+            return figures;
+        }
+
+        /// <summary>One coordinate on the 26.6 grid, by whichever of scl_Scale's two roundings
+        /// this size takes. See ScaleRoundsHalfUp.</summary>
+        private static float Round64(float v, bool halfUp)
+            => s_unfittedRoundMode == 1 || !halfUp
+                   ? MathF.Round(v * 64f, MidpointRounding.AwayFromZero) / 64f
+                   : MathF.Floor(v * 64f + 0.5f) / 64f;
+
+        /// <summary>The same on the y axis, which is STORED FLIPPED: GDI rounds toward +infinity
+        /// in its own y-up space, which is toward -infinity here.</summary>
+        private static float Round64Y(float v, bool halfUp)
+            => s_unfittedRoundMode == 1 || !halfUp
+                   ? MathF.Round(v * 64f, MidpointRounding.AwayFromZero) / 64f
+                   : -MathF.Floor(-v * 64f + 0.5f) / 64f;
+
+        private static readonly bool s_obliqueMatrix =
+            Environment.GetEnvironmentVariable("WPF_OBLIQUE_MATRIX") != "0";
+
+        private static readonly bool s_unfittedPoints =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_PTS") != "0";
+
         private List<PathFigure> BuildGlyphFigures(int gid)
         {
             List<Contour> contours = ReadGlyphContours(gid, 0);
