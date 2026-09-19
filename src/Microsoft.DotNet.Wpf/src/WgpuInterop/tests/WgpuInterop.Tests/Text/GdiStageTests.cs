@@ -877,9 +877,21 @@ namespace WgpuInterop.Tests.Text
                                 Console.Error.WriteLine(sbO.ToString());
                             }
                         }
+                        // "BUT GDI DID" MEANS GetGlyphOutline DID, NOT THAT THE CLEARTYPE
+                        // RASTERIZER DOES. GGO hints unless it is handed GGO_UNHINTED, whatever
+                        // the 'gasp' says, so this line fires for any face whose program still
+                        // moves points at this size -- Arial Regular, Times New Roman Regular and
+                        // all three Consolas at 8ppem, every one of which has GRIDFIT and
+                        // SYMMETRIC_GRIDFIT CLEAR in its version 1 table and must not be fitted.
+                        // Reading it as "we are missing a fit" and forcing one (WPF_GASP_FIT=
+                        // always) measures Times Regular at 8ppem 1,200 -> 183,251, Arial Regular
+                        // 630 -> 179,651, Consolas Regular 259 -> 99,918. The faces where it says
+                        // "nor did GDI" are the ones whose PREP switches instructions off with
+                        // INSTCTRL, which GGO does obey.
                         if (!quiet)
                             Console.Error.WriteLine($"'{c}': WE DID NOT GRID-FIT IT"
-                                + (gdiFitTooo ? " -- BUT GDI DID" : " (nor did GDI)"));
+                                + (gdiFitTooo ? " -- BUT GGO DID (which is not the rasterizer;"
+                                                + " see the note above)" : " (nor did GDI)"));
                         continue;
                     }
 

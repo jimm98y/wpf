@@ -1007,7 +1007,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // finished ClearType ink went to eighteen times GDI's.
                 if (!TryGetGlyphOutline(glyphId, out List<PathFigure> plain))
                     return false;
-                float k = pixelsPerEm / PixelsPerEm;
+                double num = pixelsPerEm, den = PixelsPerEm;
+                bool halfUp = ScaleRoundsHalfUp(_unitsPerEm, pixelsPerEm);
                 // ...AND ROUNDED TO SIXTY-FOURTHS, because GDI's scaler works in 26.6 and its
                 // unfitted outline is the design scaled and rounded to 1/64 (GGO's unhinted
                 // points for Verdana 'k'@8 are exactly ours before rounding: a stem edge at 193
@@ -1018,18 +1019,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 var scaled = new List<PathFigure>(plain.Count);
                 foreach (PathFigure f in plain)
                 {
-                    var copy = new PathFigure(P64(f.Start, k)) { Closed = f.Closed };
+                    var copy = new PathFigure(P64(f.Start, num, den, halfUp)) { Closed = f.Closed };
                     foreach (PathSegment seg in f.Segments)
                         switch (seg)
                         {
                             case LineSegment l:
-                                copy.Segments.Add(new LineSegment(P64(l.Point, k)));
+                                copy.Segments.Add(new LineSegment(P64(l.Point, num, den, halfUp)));
                                 break;
                             case QuadraticBezierSegment q:
-                                copy.Segments.Add(new QuadraticBezierSegment(P64(q.Control, k), P64(q.Point, k)));
+                                copy.Segments.Add(new QuadraticBezierSegment(P64(q.Control, num, den, halfUp), P64(q.Point, num, den, halfUp)));
                                 break;
                             case CubicBezierSegment c:
-                                copy.Segments.Add(new CubicBezierSegment(P64(c.Control1, k), P64(c.Control2, k), P64(c.Point, k)));
+                                copy.Segments.Add(new CubicBezierSegment(P64(c.Control1, num, den, halfUp), P64(c.Control2, num, den, halfUp), P64(c.Point, num, den, halfUp)));
                                 break;
                         }
                     scaled.Add(copy);
@@ -1209,17 +1210,71 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Whether the face's own pre-program, run for this size, inhibits grid-fitting
         /// (INSTCTRL selector 1). See <see cref="TrueTypeInterpreter.GridFitInhibited"/>.</summary>
         /// <summary>WPF_UNFITTED_ROUND=0: leave the unfitted outline in float instead of 26.6.</summary>
-        private static readonly bool s_unfittedRound =
-            Environment.GetEnvironmentVariable("WPF_UNFITTED_ROUND") != "0";
+        private static readonly int s_unfittedRoundMode =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_ROUND") switch
+            { "0" => 0, "away" => 1, "down" => 3, _ => 2 };
 
         /// <summary>A base-pixel point scaled by <paramref name="k"/> and held to 26.6, as the
         /// scaler holds every coordinate before anything is drawn from it.</summary>
-        private static Vector2 P64(Vector2 v, float k)
+        /// <summary>A HALF GOES UP, NOT AWAY FROM ZERO, and it is scl_Scale that says so.
+        /// <para>GDI's point scaler is `(units * mult + half) &gt;&gt; shift` -- an ARITHMETIC
+        /// shift, so the divide floors and the added half makes it round toward +infinity. Away
+        /// from zero is the same thing for a positive coordinate and the opposite for a negative
+        /// one, and exact halves are not rare: at 8ppem in a 2048-unit em a coordinate lands on
+        /// one whenever its design value is 2 mod 4, which is a quarter of them.</para>
+        /// <para>AND THE Y AXIS IS ALREADY FLIPPED HERE. TryGetGlyphOutline negates y on the way
+        /// out, so this array is y-down while GDI rounds y-up; rounding toward +infinity in GDI's
+        /// space is rounding toward -infinity in this one. Getting that backwards would put every
+        /// tied y a sixty-fourth out in exchange for fixing x.</para>
+        /// <para>WPF_UNFITTED_ROUND=away restores the old symmetric rule, =0 keeps the float,
+        /// =down rounds y the wrong way on purpose. Over ppem 8-10 the four measure 16,681 (this),
+        /// 18,007 (away), 50,796 (no rounding at all, which is what leaving it to the scan walk's
+        /// own 1/384 grid would mean, so GDI really does hold the unfitted outline at 26.6 before
+        /// it scans) and 35,735 (y the wrong way). Holdout 47,402 -&gt; 46,605.</para></summary>
+        /// <summary>MULTIPLY THEN DIVIDE, and in double, because the tie has to be exact to be
+        /// rounded correctly. Forming `k = ppem / 48` first rounds 1/6 to a float and every
+        /// coordinate then lands a hair off the value GDI computes in one fixed-point multiply --
+        /// so a design coordinate that is exactly half a sixty-fourth at this size, which is a
+        /// quarter of them in a 2048-unit em at 8ppem, rounds by whichever side the float noise
+        /// fell on rather than by the rule. Multiplying by ppem and dividing by 48 leaves the
+        /// quotient exactly representable and IEEE division returns it exactly.</summary>
+        private static Vector2 P64(Vector2 v, double num, double den, bool halfUp)
         {
-            float x = v.X * k, y = v.Y * k;
-            if (!s_unfittedRound) return new Vector2(x, y);
-            return new Vector2(MathF.Round(x * 64f, MidpointRounding.AwayFromZero) / 64f,
-                               MathF.Round(y * 64f, MidpointRounding.AwayFromZero) / 64f);
+            float x = (float) (v.X * num / den), y = (float) (v.Y * num / den);
+            if (s_unfittedRoundMode == 0) return new Vector2(x, y);
+            if (s_unfittedRoundMode == 1 || !halfUp)
+                return new Vector2(MathF.Round(x * 64f, MidpointRounding.AwayFromZero) / 64f,
+                                   MathF.Round(y * 64f, MidpointRounding.AwayFromZero) / 64f);
+            if (s_unfittedRoundMode == 3)
+                return new Vector2(MathF.Floor(x * 64f + 0.5f) / 64f,
+                                   MathF.Floor(y * 64f + 0.5f) / 64f);
+            return new Vector2(MathF.Floor(x * 64f + 0.5f) / 64f,
+                               -MathF.Floor(-y * 64f + 0.5f) / 64f);
+        }
+
+        /// <summary>WHICH OF GDI'S TWO SCALE ROUNDINGS THIS SIZE GETS, and it is not a choice --
+        /// scl_InitializeScaling reduces the ratio and then looks at the DENOMINATOR:
+        /// <code>
+        ///   if ((den - 1 &amp; den) == 0 &amp;&amp; den != 0)  ->  scl_FRound
+        ///        (mult * v + (den &gt;&gt; 1)) &gt;&gt; log2(den)     an arithmetic shift: half toward +inf
+        ///   else                                    ->  scl_SRound
+        ///        v &lt; 0 ? -(((den&gt;&gt;1) - mult*v) / den)        half AWAY FROM ZERO
+        ///              :  ((den&gt;&gt;1) + mult*v) / den
+        /// </code>
+        /// Every face in the specimen has a 2048-unit em, so every one of them takes the shift and
+        /// rounds toward +infinity; a 1000-unit em takes the symmetric one at most sizes. Getting
+        /// this from the em rather than assuming one rule is why it is written out here.</summary>
+        private static bool ScaleRoundsHalfUp(int unitsPerEm, float pixelsPerEm)
+        {
+            // REDUCED BY THE COMMON POWER OF TWO, not by the gcd: scl_InitializeScaling does
+            // `while (((num | den) & 1) == 0) { num >>= 1; den >>= 1; }` and tests what is left.
+            // The two agree on every power-of-two em, which is every face here, and the shift is
+            // what the binary actually does.
+            int p = (int) MathF.Round(pixelsPerEm);
+            if (p <= 0 || unitsPerEm <= 0) return true;
+            int num = p, den = unitsPerEm;
+            while (((num | den) & 1) == 0) { num >>= 1; den >>= 1; }
+            return den != 0 && (den & (den - 1)) == 0;
         }
 
         private bool PrepInhibitsGridFit(float pixelsPerEm)
@@ -1568,7 +1623,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     for (int i = 0; i < pts.Length; i++)
                         // PLUS, because y is still up here -- the flip to y-down is the second
                         // component of this very expression. Minus leans the glyph backwards.
-                        pts[i] = new Vector2(Sheared(pts[i]), -pts[i].Y);   // y-down
+                        // NOT ROUNDED HERE. This outline is in BASE pixels and something else
+                        // rescales it to the size being drawn, so putting the sheared x on a
+                        // sixty-fourth of a BASE pixel is a rounding at the wrong scale that the
+                        // real one then has to round again. Two roundings are not one: where the
+                        // true coordinate is an exact half at the drawing size -- a quarter of
+                        // them in a 2048-unit em at 8ppem -- the first can nudge it off the tie
+                        // and send the second the wrong way. The fitted path at the other call
+                        // site IS at the drawing size and does round.
+                        // MEASURED EXACTLY NEUTRAL on this specimen -- 16,681 over ppem 8-10
+                        // either way -- because the base em is 48 pixels and every size drawn
+                        // here is smaller, so the first rounding is finer than the second and
+                        // almost never moves a coordinate across its tie. It would stop being
+                        // neutral above 48ppem, where the base grid is the coarser of the two.
+                        // WPF_OBLIQUE_ROUND_BASE=1 rounds here as well, as it used to.
+                        pts[i] = new Vector2(Sheared(pts[i], s_shearRoundBase), -pts[i].Y);   // y-down
             }
 
             var built = new List<PathFigure>(working.Count);
@@ -1638,7 +1707,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             foreach ((Vector2[] pts, _) in working)
                 for (int i = 0; i < pts.Length; i++)
                     // Plus, for the same reason: these are the HINTED points, still y-up.
-                    pts[i] = new Vector2(Sheared(pts[i]), -pts[i].Y);
+                    pts[i] = new Vector2(Sheared(pts[i], true), -pts[i].Y);
 
             var built = new List<PathFigure>(working.Count);
             foreach ((Vector2[] pts, bool[] on) in working)
@@ -1669,11 +1738,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_shearRound =
             Environment.GetEnvironmentVariable("WPF_OBLIQUE_ROUND") != "0";
 
-        private float Sheared(Vector2 p)
+        private static readonly bool s_shearRoundBase =
+            Environment.GetEnvironmentVariable("WPF_OBLIQUE_ROUND_BASE") == "1";
+
+        private float Sheared(Vector2 p, bool round)
             => _shear == 0f ? p.X
-             : s_shearRound
-                 ? MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f
-                 : p.X + _shear * p.Y;
+             : !round || !s_shearRound ? p.X + _shear * p.Y
+             // AWAY FROM ZERO, AND IT IS NOT THE SAME RULE AS THE POINT SCALER'S. scl_Scale
+             // rounds an exact half toward +infinity, and the obvious tidy-up is to make this
+             // agree -- but it is measurably worse where it can be told apart: over ppem 11, 16
+             // and 17, where the faces are fitted and this is the shear applied to the fitted
+             // points, toward +infinity measures 10,617 against 10,088. At 8-10ppem the two are
+             // identical (16,681), because there the shear runs on the unfitted outline in BASE
+             // pixels and nothing lands on a tie. So the simulated italic's shear is symmetric
+             // about zero and the scaler's is not; WPF_OBLIQUE_ROUND=up to re-measure.
+             : s_shearRoundUp
+                 ? MathF.Floor((p.X + _shear * p.Y) * 64f + 0.5f) / 64f
+                 : MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f;
+
+        private static readonly bool s_shearRoundUp =
+            Environment.GetEnvironmentVariable("WPF_OBLIQUE_ROUND") == "up";
 
         private static readonly List<PathFigure> s_noFigures = new();
 

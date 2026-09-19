@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -128,6 +128,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// grid-fitted -- WPF_SYM_ROWS_FIT, one. See SymmetricRows for why these are two.</summary>
         private static readonly int SymmetricRowsFitted =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_SYM_ROWS_FIT"), out int sf) ? sf : 5;
+        // AND FIVE IS CONFIRMED WHERE IT MATTERS MOST. 8ppem is the largest single pool left in
+        // the holdout and it is the UNFITTED regime, so SymmetricRows (not the fitted one) draws
+        // all of it: over that size alone, rows 3, 5 and 7 measure 237,703 / 10,236 / 311,408.
+        // Not a shallow optimum. WPF_SYM_VERTICAL is exactly neutral there as well (10,236 both
+        // ways), so the vertical softening across rows is not what is left either.
         // BOTH ARE FIVE, because GDI's vertical overscale is five and its combine is a genuine
         // five-tap. The old 3-and-1 were compensating for a LINEAR box filter, for which extra
         // vertical samples only blur; with the exact seven-level pipeline the count is not a
