@@ -3149,22 +3149,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((uint) p >= (uint) _phaseP0.Length || (uint) r >= (uint) _phaseP0.Length) return;
             if (s_phaseDump) Console.Error.WriteLine($"  ADDDIST r={r,3} p={p,3} col={colour} via={_phaseSite,-22} "
                 + $"p0={_phaseP0[p],3} dep={PhaseDependsOn(r, p, 100)} line=({_pvPtA},{_pvPtB})");
-            // AND SHP IS NOT ONE OF GDI'S CALL SITES, which is the sharpest thing known about
-            // this tree and is not yet acted on. AddDistance@1400354c8 has exactly TWO callers in
-            // fontdrvhost, itrp_ALIGNRP@140036258 and itrp_MSIRP@14003bd4c; the third "caller"
-            // Ghidra lists, 1400bb8a8, is a symbol table (its bytes do not disassemble, and the
-            // quadwords around it pair a function offset -- 0x354c8 IS AddDistance -- with an
-            // index into something else). AddProportion@140035630 takes the rest: MDRP, IP, ISECT
-            // and ALIGNRP.
-            // <para>Tahoma 'q'@15 uses NONE of those except IP: 24 MIRPs, 4 IPs, 4 SHCs, 4 SHPs
-            // and nothing else. So GDI builds its whole tree for that glyph out of four IP calls,
-            // while ours parents P17 and P20 from a ShiftByPoint -- and the pixels say GDI's P17
-            // and P20 differ by a sixty-fourth, which our tree cannot express because it makes
-            // them identical.</para>
-            // <para>Dropping the SHP link is NOT the fix: it would make them roots, and a root is
-            // not moved at all, leaving them at 384 where GDI wants 368 and 369. Whatever GDI
-            // does with those points, our SHP link is a better approximation of it than nothing.
-            // The next step is AddProportion and what an IP parents.</para>
+            // SHP DOES RECORD A LINK, AND A CALLER LIST DOES NOT PROVE OTHERWISE. Ghidra shows
+            // AddDistance@1400354c8 with two callers, itrp_ALIGNRP and itrp_MSIRP, and it is
+            // tempting to conclude that SHP records nothing -- which would make Tahoma 'q'@15's
+            // P17 and P20 roots, since that glyph has no ALIGNRP and no MSIRP. It is wrong.
+            // itrp_SHP_Common@14003e978 carries the body INLINED: the same IndirectlyDependsOn
+            // call, the same node array at elem+0x68 with its twelve-byte stride, the same
+            // ancestor walk up node[+0] while `elem[+0x20]` (ORUS) is equal, and the same write of
+            // the ancestor into node[+0] with 0xffff into node[+2]. MIRP inlines it too, which is
+            // already written down at the MIRP site. A missing call site means the compiler
+            // inlined the function, not that the work does not happen.
+            // <para>The SHP block is gated on four things, and the fourth is one this file does
+            // not model: `elem != twilight && globals[0x16b] == 2 && localGS[0xcc] != 0 &&
+            // (globals[0x1c0] &gt;&gt; 1 &amp; 1) != 0`. The first three are the glyph-program
+            // mode and the ClearType-direction latch we already gate on; 0x1c0 bit 1 is the same
+            // bit itrp_IUP tests before choosing its reference array, and whether it is always set
+            // on our path is not established.</para>
+            // <para>So Tahoma 'q'@15's P17 and P20 are one-parent nodes in GDI as well, and the
+            // sixty-fourth that separates them is still unexplained.</para>
             // ORDER MATTERS, and GDI's is the reverse of the obvious one: AddDistance asks
             // IndirectlyDependsOn(r, p) FIRST and only then looks at whether p already has a parent.
             // A re-link onto an already-placed point therefore still RAISES THE CYCLE FLAG when the

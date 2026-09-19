@@ -5307,22 +5307,15 @@ namespace WgpuInterop.Tests.Text
                             // So the pair really is split, and moving their shared parent P2 down
                             // by one instead is an equally good explanation -- which is the thing
                             // to chase, because P2 is where the shift is decided.</para>
-                            // <para>One RE fact sits against it and is sharper than it first
-                            // looked. AddDistance has exactly TWO call sites in fontdrvhost --
-                            // itrp_ALIGNRP@140036258 and itrp_MSIRP@14003bd4c -- and SHP is not
-                            // among them. The third "caller" Ghidra lists, 1400bb8a8, is not code
-                            // at all: the bytes there do not disassemble, and the quadwords around
-                            // it are pairs whose low half is a function offset (0x354c8 IS
-                            // AddDistance) and whose high half indexes something else, so it is a
-                            // symbol table. There is no indirect route.</para>
-                            // <para>Yet P17 and P20 take their parent from a ShiftByPoint in our
-                            // tree, and dropping that link would make them ROOTS -- and a root is
-                            // not moved at all, leaving them at 384 where GDI's pixels want 368
-                            // and 369. So removing the link is plainly worse than keeping it, and
-                            // the phase they need comes from somewhere this model does not have.
-                            // That is the shape of the gap: not a missing link and not a wrong
-                            // rounding, but a shift GDI gives a point that our tree cannot
-                            // express.</para>
+                            // <para>A DEAD END WORTH RECORDING, because it looked like the
+                            // answer for an hour. Ghidra gives AddDistance two callers, ALIGNRP
+                            // and MSIRP, and this glyph has neither -- 24 MIRPs, 4 IPs, 4 SHCs, 4
+                            // SHPs -- so it seemed GDI could not be parenting P17 and P20 at all.
+                            // It parents them: itrp_SHP_Common@14003e978 carries AddDistance
+                            // INLINED, the same dependency check and the same walk up node[+0]
+                            // while orus is equal. A missing call site means the compiler inlined
+                            // it. So our tree has the same shape GDI's does here, and the
+                            // sixty-fourth between P17 and P20 is still unexplained.</para>
                             // <para>A CENSUS, over the thirty worst rows at 9ppem and above (the
                             // sizes where a face is fitted and there are anchors at all): 27 of 30
                             // REACH GDI, and every one of them on ONE anchor, or two. The deltas
