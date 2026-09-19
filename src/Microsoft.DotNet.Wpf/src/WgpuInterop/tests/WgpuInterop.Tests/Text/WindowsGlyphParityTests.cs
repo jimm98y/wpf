@@ -5351,6 +5351,31 @@ namespace WgpuInterop.Tests.Text
                             // the pixels. The census names sources and followers alike, and the
                             // chain has to be walked back through rp0 before any of them is
                             // treated as a place to look.</para>
+                            // <para>AND MOST OF THE CENSUS IS SLACK. Held at OUR value with
+                            // WPF_XYSOLVE_ANCHORS_HOLD, four of five tested anchors let the search
+                            // reach zero anyway -- Tahoma 'g'@12 P0, 'u'@13B P1, 'r'@11B P7,
+                            // 'p'@17 P7 -- and only Verdana '3'@10 P22 is forced (best 118 held).
+                            // So the census is a list of "a one-anchor fix exists", not a list of
+                            // wrong coordinates, and a delta in it is evidence of nothing until
+                            // HOLD says the anchor cannot keep our value.</para>
+                            // <para>THE CONFIRMED LIST, which is what to work from, is four:
+                            // <code>
+                            //   Verdana 's'@17   P24  ours  64
+                            //   Verdana '3'@10   P22  ours 329
+                            //   Times   '8'@14   P48  ours 320
+                            //   Tahoma  'q'@15   P17  ours 369
+                            // </code>
+                            // Everything else examined so far is free.</para>
+                            // <para>Tahoma 'g'@12 is worth keeping as the worked example of why:
+                            // its P0 follows P26 by an unrounded MDRP over a zero design distance,
+                            // P26 is an avg node between the two phantoms, and the whole chain
+                            // computes exactly. org(pp1,p26,pp2) = (0,303,425), v(pp2) = 23 from
+                            // 2*424*(f-1)>>17 with f = 448/425, and CalcAvgXPhase gives
+                            // (303*23 + 122*0)/425 = 16.39 -> 16, which is what the dump shows.
+                            // For GDI's P0 the node would need v = 18, and no part of that
+                            // arithmetic can produce it: the numerator would have to be 451
+                            // against a bi-level span that is 448 and a linear advance that is
+                            // 425. The +2 was slack, and the chain is right.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot

@@ -2835,7 +2835,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int[] before = (int[]) _glyphZone.CurX.Clone();
                 for (int k = 0; k < n && k < _glyphZone.CurX.Length; k++) PhaseShiftNode(k);
                 Console.Error.WriteLine($"PHASEDUMP pts={_realPoints} ctFrac={_ctFrac:0.0000} ctFactor={_ctFactor16 / 65536.0:0.0000} cycle={_phaseAnyCycle} rootDirect={PhaseRootDirect}"
-                    + $" compat64={CompatibleAdvance64} linear64={_glyphZone.OrgX[_realPoints + 1] - _glyphZone.OrgX[_realPoints]}");
+                    + $" compat64={CompatibleAdvance64} linear64={_glyphZone.OrgX[_realPoints + 1] - _glyphZone.OrgX[_realPoints]}"
+                    + $" bilevelSpan64={BiLevelSpan64}");
                 for (int k = 0; k < n && k < _glyphZone.CurX.Length; k++)
                 {
                     int pr = k < _phasePartner.Length ? _phasePartner[k] : -1;
