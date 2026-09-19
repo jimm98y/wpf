@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -2348,7 +2348,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static bool s_iupTraceOn;
 
         internal static readonly bool s_iupTrace =
-            Environment.GetEnvironmentVariable("WPF_IUP_TRACE") == "1";
+            Environment.GetEnvironmentVariable("WPF_IUP_TRACE") is "1" or "2";
+
+        /// <summary>WPF_IUP_TRACE=2 adds a line per CARRIED point -- its two references, the
+        /// branch it took and the arithmetic that placed it. The run summary says which anchors a
+        /// point hangs off; this says whether it was interpolated or translated, which is the
+        /// difference between "an anchor is a sixty-fourth out" and "our scaled original is".
+        /// </summary>
+        internal static readonly bool s_iupTracePoints =
+            Environment.GetEnvironmentVariable("WPF_IUP_TRACE") == "2";
 
         /// <summary>WPF_CT_IUP_GRID=1: round IUP's result onto the ClearType sixteenth of a pixel.
         /// See the comment at the interpolation.</summary>
@@ -3841,6 +3849,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // case does not arise in the specimen. Kept because it is what the binary does
                 // and it costs nothing; do not re-measure it looking for a win.</para>
                 int x = org[i];
+                if (s_iupTracePoints && s_iupTraceOn && (x >= org2 || x <= org1))
+                    Console.Error.WriteLine($"      pt {i,3} org {x,5} orus {rf[i],5}"
+                        + $"  outside [{org1},{org2}] -> {(x >= org2 ? delta2 : delta1)} shift");
                 if (s_iupUpperFirst)
                 {
                     if (x >= org2) { cur[i] = x + delta2; continue; }
@@ -3870,6 +3881,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     long span = (long) (org2 + delta2) - (org1 + delta1);
                     cur[i] = den == 0 ? org1 + delta1
                            : (int) ((num * span + (den >> 1)) / den) + org1 + delta1;
+                    if (s_iupTracePoints && s_iupTraceOn)
+                        Console.Error.WriteLine($"      pt {i,3} org {org[i],5} orus {rf[i],5}"
+                            + $"  interp num {num} span {span} den {den} -> {cur[i]}");
                     // WPF_CT_IUP_GRID=1: round the result onto the CLEARTYPE SIXTEENTH. GDI's
                     // glyph programs round on the sixteenth of a pixel, not the sixty-fourth we
                     // carry -- measured off its own pixels for prep (whole pixels) against the

@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -909,12 +909,18 @@ namespace WgpuInterop.Tests.Text
                     {
                         Console.Error.WriteLine($"-- '{c}' GGO fitted {fittedFull.Count},"
                             + $" GGO unfitted {plain.Count}, ours {pts.PointCount}");
+                        // IN SIXTY-FOURTHS, to three places. GGO reports POINTFX, which is
+                        // 16.16, so a coordinate that is NOT a whole sixty-fourth is visible here
+                        // and nowhere else -- and the implied midpoints are the only places one
+                        // could arise, since every real point comes out of a 26.6 interpreter.
+                        // Whether GDI's midpoint of two odd coordinates is the half, the floor or
+                        // the ceiling is a fact about GDI, readable off this line.
                         for (int i = 0; i < fittedFull.Count; i++)
-                            Console.Error.WriteLine($"   ggo[{i,3}] ({fittedFull[i].X,8:0.###},"
-                                + $"{-fittedFull[i].Y,8:0.###})");
+                            Console.Error.WriteLine($"   ggo[{i,3}] ({fittedFull[i].X * 64f,10:0.###},"
+                                + $"{-fittedFull[i].Y * 64f,10:0.###})");
                         for (int i = 0; i < pts.PointCount; i++)
-                            Console.Error.WriteLine($"   our[{i,3}] ({pts.FitX[i],8:0.###},"
-                                + $"{pts.FitY[i],8:0.###})  {(pts.OnCurve[i] ? "on " : "off")}"
+                            Console.Error.WriteLine($"   our[{i,3}] ({pts.FitX[i] * 64f,10:0.###},"
+                                + $"{pts.FitY[i] * 64f,10:0.###})  {(pts.OnCurve[i] ? "on " : "off")}"
                                 + $" {(pts.TouchedX[i] ? "X" : ".")}");
                     }
                     bool onCurveOnly = plain.Count != fitted.Count;

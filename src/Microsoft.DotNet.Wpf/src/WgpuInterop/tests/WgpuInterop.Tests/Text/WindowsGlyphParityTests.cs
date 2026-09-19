@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -4623,7 +4623,9 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
             int passes = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_PASSES"), out int pz) ? pz : 4;
-            int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 36;
+            // 72 hundred-and-twenty-eighths, which is the same 0.56px reach the old default of 36
+            // sixty-fourths had. The arrays changed units; the search did not change size.
+            int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 72;
 
             string? file = FontFiles.Find(parts[0], bold, italic);
             Assert.SkipWhen(file is null, "this machine lacks the face");
@@ -4690,10 +4692,24 @@ namespace WgpuInterop.Tests.Text
 
                     // The fit, flattened to one array per axis in EMISSION order, which is the
                     // order M() below walks -- so a point's identity is its index here.
+                    // IN HUNDRED-AND-TWENTY-EIGHTHS, NOT SIXTY-FOURTHS, because half of GDI's
+                    // coordinates are not on the sixty-fourth grid. Every point an instruction
+                    // places is a whole 26.6 value, but the on-curve point implied between two
+                    // consecutive off-curve ones is their EXACT AVERAGE and GDI keeps it there:
+                    // GetGlyphOutline reports 16.16, and its fitted list for Verdana 'c'@17 comes
+                    // back with 17.5, 22.5, 160.5, 410.5, 475.5 and 564.5 sixty-fourths.
+                    // <para>THIS WAS NOT A DETAIL. With the arrays in sixty-fourths this solver
+                    // rounded every midpoint before it rendered, so "as fitted 0" was a statement
+                    // about a DIFFERENT OUTLINE from the one that ships -- and on curved glyphs
+                    // the two disagree by a whole sub-sample: Verdana 'c'@17 scores 137 as shipped
+                    // and 0 once rounded, which read as "our outline IS GDI's" when it meant the
+                    // opposite. Rounding is not a wash either, so it was never a harmless
+                    // approximation: over ppem 16-19 the exact half measures 30,691 against
+                    // 65,402 for the ceiling and 80,822 for round-half-to-even.</para>
                     var pxl = new List<int>();
                     var pyl = new List<int>();
                     void See(Vector2 p)
-                    { pxl.Add((int) MathF.Round(p.X * 64f)); pyl.Add((int) MathF.Round(p.Y * 64f)); }
+                    { pxl.Add((int) MathF.Round(p.X * 128f)); pyl.Add((int) MathF.Round(p.Y * 128f)); }
                     foreach (PathFigure f in fitted)
                     {
                         See(f.Start);
@@ -4711,7 +4727,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         idx = 0;
                         Vector2 M(Vector2 ignored)
-                        { int i = idx++; return new(PenX + sx[i] / 64f, 28f + sy[i] / 64f); }
+                        { int i = idx++; return new(PenX + sx[i] / 128f, 28f + sy[i] / 128f); }
                         var placed = new List<PathFigure>(fitted.Count);
                         foreach (PathFigure f in fitted)
                         {
@@ -4940,7 +4956,10 @@ namespace WgpuInterop.Tests.Text
                                 for (int i = 0; i < sx.Length; i++)
                                 {
                                     int p = pathToPoint[i];
-                                    if (p >= 0) sx[i] = ox[i] + (c[p] - fit[p]);
+                                    // TWICE, because the anchors are interpreter coordinates in
+                                    // sixty-fourths and these arrays are in hundred-and-twenty-
+                                    // eighths. See the note at See().
+                                    if (p >= 0) sx[i] = ox[i] + 2 * (c[p] - fit[p]);
                                 }
                                 for (int i = 0; i < sx.Length; i++)
                                     if (pathToPoint[i] < 0 && i > 0 && i + 1 < sx.Length)
@@ -7119,12 +7138,22 @@ namespace WgpuInterop.Tests.Text
         ///   untouched off-curve     1 of 217
         ///   implied midpoint        2 of 130
         /// </code></para>
-        /// <para>-- three of the five by a single 64th, one by 6 and one by 8. Four of the ten
-        /// glyphs are now exact point for point. So the instructions are right, IUP is an exact
-        /// port, the phase is inert on the glyphs where this happens (Segoe UI '6' at 19ppem Bold
-        /// has one node with a non-zero shift, of fifty), and what is left is the precision of the
-        /// anchors IUP interpolates between -- each within its own slack, but far enough apart to
-        /// move a point between them across a sample centre.</para>
+        /// <para>-- three of the five by a single 64th, one by 6 and one by 8. So the instructions
+        /// are right, IUP is an exact port, the phase is inert on the glyphs where this happens
+        /// (Segoe UI '6' at 19ppem Bold has one node with a non-zero shift, of fifty), and what is
+        /// left is the precision of the anchors IUP interpolates between -- each within its own
+        /// slack, but far enough apart to move a point between them across a sample centre.</para>
+        /// <para>READ THAT TABLE WITH ITS UNITS IN MIND: it was taken while the solver's point
+        /// arrays were in sixty-fourths, and half of GDI's coordinates are not. The implied
+        /// midpoints are exact halves -- GetGlyphOutline reports 16.16 and hands back 17.5, 22.5,
+        /// 160.5, 410.5, 475.5 and 564.5 sixty-fourths for Verdana 'c'@17 -- so the solver was
+        /// rounding every one of them before it rendered, and "four of the ten glyphs are exact
+        /// point for point" was four glyphs whose ROUNDED outline is GDI's. Verdana 'c'@17 was one
+        /// of them and it is not exact: it scores 137 as shipped. The arrays are in
+        /// hundred-and-twenty-eighths now and it re-solves to one midpoint, one unit.</para>
+        /// <para>The rounding is not a wash, so this was never harmless: forcing the shipping path
+        /// to round its midpoints the same way measures 30,691 -> 80,822 over ppem 16-19 for
+        /// round-half-to-even and 65,402 for the ceiling. GDI keeps the half and so do we.</para>
         /// <para>TRAP: this report APPENDS to WPF_WEIGHT_REPORT. Delete the file first, and check
         /// it has exactly one "TOTAL over N rows" line before ranking anything out of it -- a
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
@@ -8934,39 +8963,63 @@ namespace WgpuInterop.Tests.Text
             byte[] runPath = OursRgba(font, ch, ppem, baseline, correction: true);
 
             // (2) the plain-geometry path, exactly as SolveGdisOutlineXy draws it
+            // <para>TWO THINGS SEPARATE THE SOLVER'S RENDER FROM THE SHIPPED ONE, and until they
+            // were separated here the solver's "residual 0" was read as a statement about the
+            // outline when it might have been a statement about either. It ROUNDS every emitted
+            // coordinate to a sixty-fourth (its point arrays are ints in 64ths, so it has no
+            // choice), and it sets SubpixelRowsOverride/DropoutOverride/PpemOverride, which a
+            // geometry fill otherwise inherits from whatever glyph run the renderer drew last.
+            // So four renders, not two: with and without each.</para>
             bool savedSubpix = TrueTypeFont.SubpixelFitting;
-            byte[] geomPath;
+            byte[] geomPath, geomRound, geomOver, geomBoth;
             try
             {
                 TrueTypeFont.SubpixelFitting = true;
                 int gid = font.GlyphIndex(ch[0]);
                 Assert.True(((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem,
                                 out List<PathFigure> fitted) && fitted.Count > 0, "no outline");
-                var placed = new List<PathFigure>(fitted.Count);
-                Vector2 M(Vector2 p) => new(PenX + p.X, baseline + p.Y);
-                foreach (PathFigure f in fitted)
+                byte[] Geom(bool round, bool overrides)
                 {
-                    var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
-                    foreach (PathSegment sg in f.Segments)
-                        nf.Segments.Add(sg switch
-                        {
-                            LineSegment l => new LineSegment(M(l.Point)),
-                            QuadraticBezierSegment q =>
-                                new QuadraticBezierSegment(M(q.Control), M(q.Point)),
-                            CubicBezierSegment c3 =>
-                                new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
-                            _ => sg,
-                        });
-                    placed.Add(nf);
+                    var placed = new List<PathFigure>(fitted.Count);
+                    Vector2 M(Vector2 p) => round
+                        ? new(PenX + MathF.Round(p.X * 64f) / 64f,
+                              baseline + MathF.Round(p.Y * 64f) / 64f)
+                        : new(PenX + p.X, baseline + p.Y);
+                    foreach (PathFigure f in fitted)
+                    {
+                        var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                        foreach (PathSegment sg in f.Segments)
+                            nf.Segments.Add(sg switch
+                            {
+                                LineSegment l => new LineSegment(M(l.Point)),
+                                QuadraticBezierSegment q =>
+                                    new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                                CubicBezierSegment c3 =>
+                                    new CubicBezierSegment(M(c3.Control1), M(c3.Control2), M(c3.Point)),
+                                _ => sg,
+                            });
+                        placed.Add(nf);
+                    }
+                    var root = new SceneVisual();
+                    root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
+                        new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
+                        { PixelAligned = true });
+                    var renderer = NewRenderer(font);
+                    renderer.TextBlendCorrection = true;
+                    if (overrides)
+                    {
+                        renderer.SubpixelRowsOverride = font.WantsSymmetricSmoothing(ppem) ? 5 : 0;
+                        renderer.DropoutOverride =
+                            font.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
+                        renderer.PpemOverride = ppem;
+                    }
+                    return renderer.RenderToRgba(root, Width, Height,
+                        RgbaColor.FromBytes(255, 255, 255, 255));
                 }
-                var root = new SceneVisual();
-                root.Content.Add(new GeometryFill(new PathGeometry(FillRule.NonZero, placed),
-                    new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), isGlyph: true)
-                    { PixelAligned = true });
-                var renderer = NewRenderer(font);
-                renderer.TextBlendCorrection = true;
-                geomPath = renderer.RenderToRgba(root, Width, Height,
-                    RgbaColor.FromBytes(255, 255, 255, 255));
+                geomPath = Geom(false, false);
+                geomRound = Geom(true, false);
+                geomOver = Geom(false, true);
+                geomBoth = Geom(true, true);
             }
             finally { TrueTypeFont.SubpixelFitting = savedSubpix; }
 
@@ -8995,6 +9048,9 @@ namespace WgpuInterop.Tests.Text
             var rep = new System.Text.StringBuilder();
             rep.AppendLine($"== '{ch}' {family}@{ppem}{style}   glyph-run path {Score(runPath)},"
                            + $"  plain-geometry path {Score(geomPath)}");
+            rep.AppendLine($"   geometry, rounded to 64ths {Score(geomRound)};"
+                           + $"  with the solver's overrides {Score(geomOver)};"
+                           + $"  both (= what SolveGdisOutlineXy scores) {Score(geomBoth)}");
             rep.AppendLine($"   rows {top}..{bottom} cols {left}..{right}"
                            + "   GDI | run path | geometry path   (green channel, digit = ink/255*9)");
             for (int y = top; y <= bottom; y++)

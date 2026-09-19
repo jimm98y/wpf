@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -3876,12 +3876,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// real and its effect is nothing. Rounding to a sixty-fourth of a PIXEL instead, as this
         /// did when it was written, is six times too coarse and measures 139,753 -&gt; 270,991.
         /// WPF_CT_MID64=1 turns the coarse version back on.</para></summary>
-        private static Vector2 Mid(Vector2 a, Vector2 b) => s_midRound
-            ? new(HalfUp64(a.X, b.X), -HalfUp64(-a.Y, -b.Y))
-            : new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
+        /// <para>AND GDI'S OWN NUMBERS SAY IT IS THE EXACT HALF. GetGlyphOutline reports
+        /// POINTFX, which is 16.16 and can carry a half of a sixty-fourth; the implied midpoints
+        /// in its fitted list ARE halves -- Verdana 'c' at 17ppem comes back with 17.5, 22.5,
+        /// 160.5, 410.5, 475.5 and 564.5 sixty-fourths among its coordinates, and every real
+        /// point is whole. So GDI materialises the midpoint without rounding it to the
+        /// sixty-fourth grid, exactly as the overscale argument above predicts, and any rule that
+        /// snaps it is wrong however it measures. WPF_CT_MID64=1 is the ceiling and =even the
+        /// round-half-to-even that SolveGdisOutlineXy's integer point arrays impose; both are
+        /// kept only so that the solver's rounding can be reproduced on the shipping path, which
+        /// is how the two were told apart.</para></summary>
+        private static Vector2 Mid(Vector2 a, Vector2 b) => s_midMode switch
+        {
+            1 => new(HalfUp64(a.X, b.X), -HalfUp64(-a.Y, -b.Y)),
+            2 => new(MathF.Round((a.X + b.X) * 32f) / 64f, MathF.Round((a.Y + b.Y) * 32f) / 64f),
+            _ => new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f),
+        };
 
-        private static readonly bool s_midRound =
-            Environment.GetEnvironmentVariable("WPF_CT_MID64") == "1";
+        private static readonly int s_midMode =
+            Environment.GetEnvironmentVariable("WPF_CT_MID64") switch
+            { "1" => 1, "even" => 2, _ => 0 };
 
         private static float HalfUp64(float p, float q)
         {
