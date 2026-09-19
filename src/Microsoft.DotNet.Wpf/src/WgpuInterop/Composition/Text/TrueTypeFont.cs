@@ -1651,9 +1651,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// shear 87/256 that rounding is a genuine tie at every y that is 2 mod 4 sixty-fourths,
         /// and GDI takes the upper value each time ('l' at 250ppem: 4132.5 -> 4133). Without it the
         /// float shear lands half a sixty-fourth short of GDI on every such point.</summary>
+        /// <summary>WPF_OBLIQUE_ROUND=0: do not put the sheared x back on the sixty-fourth grid.
+        /// <para>The rounding is right for a HINTED outline, where GDI shears the fitted points in
+        /// its own 26.6 arithmetic -- that is what the GGO pairing at 96 and 250ppem proved. Below
+        /// the face's gasp gridfit threshold there is no fitted outline to shear, so GDI can carry
+        /// the slant in the scaling matrix and never see a 26.6 grid at all, and half a
+        /// sixty-fourth is a whole sub-sample at 8ppem. This is here to measure which.</para>
+        /// <para>REFUTED: Tahoma Italic over ppem 8-10 measures 4,490 rounded against 7,541
+        /// unrounded, so GDI puts the sheared x on the sixty-fourth at the small sizes too. Asked
+        /// because the free solver, run on the four worst Tahoma Italic glyphs at 8ppem, wants
+        /// moves of one to three 128ths that vary LINEARLY with y -- 'W' wants +3 at the baseline
+        /// and -3 at cap height -- which is the signature of a shear that disagrees, and the
+        /// rounding was the only part of ours that could disagree by that little. It is not the
+        /// rounding, and the shear itself is pinned to 87/256 by GGO at 96 and 250ppem, so
+        /// whatever that linear-in-y residual is, it is not the slant.</para>
+        /// </summary>
+        private static readonly bool s_shearRound =
+            Environment.GetEnvironmentVariable("WPF_OBLIQUE_ROUND") != "0";
+
         private float Sheared(Vector2 p)
             => _shear == 0f ? p.X
-                            : MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f;
+             : s_shearRound
+                 ? MathF.Round((p.X + _shear * p.Y) * 64f, MidpointRounding.AwayFromZero) / 64f
+                 : p.X + _shear * p.Y;
 
         private static readonly List<PathFigure> s_noFigures = new();
 
