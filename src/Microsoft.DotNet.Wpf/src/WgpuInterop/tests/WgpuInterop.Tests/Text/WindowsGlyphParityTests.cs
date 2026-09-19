@@ -5358,14 +5358,18 @@ namespace WgpuInterop.Tests.Text
                             // So the census is a list of "a one-anchor fix exists", not a list of
                             // wrong coordinates, and a delta in it is evidence of nothing until
                             // HOLD says the anchor cannot keep our value.</para>
-                            // <para>THE CONFIRMED LIST, which is what to work from, is four:
+                            // <para>THE CONFIRMED LIST IS TWO, AND DATE EVERY ENTRY IN IT:
                             // <code>
-                            //   Verdana 's'@17   P24  ours  64
-                            //   Verdana '3'@10   P22  ours 329
-                            //   Times   '8'@14   P48  ours 320
-                            //   Tahoma  'q'@15   P17  ours 369
+                            //   Verdana '3'@10   P22  ours 329   (2026-09-20, current)
+                            //   Tahoma  'q'@15   P17  ours 369   (2026-09-20, current)
                             // </code>
-                            // Everything else examined so far is free.</para>
+                            // It was four an hour ago. Verdana 's'@17 P24 and Times '8'@14 P48
+                            // were confirmed BEFORE the scan walk was ungated, and both glyphs
+                            // now score ZERO -- the coordinates were never wrong, the rasterizer
+                            // under the measurement was. That is the third claim in one day to
+                            // need withdrawing for the same reason, so: a pinned or held verdict
+                            // is only worth what the rasterizer it was taken on is worth, and
+                            // re-run it before quoting it.</para>
                             // <para>Tahoma 'g'@12 is worth keeping as the worked example of why:
                             // its P0 follows P26 by an unrounded MDRP over a zero design distance,
                             // P26 is an avg node between the two phantoms, and the whole chain
