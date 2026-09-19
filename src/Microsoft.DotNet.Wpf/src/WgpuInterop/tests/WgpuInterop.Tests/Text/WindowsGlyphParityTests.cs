@@ -5370,6 +5370,30 @@ namespace WgpuInterop.Tests.Text
                             // need withdrawing for the same reason, so: a pinned or held verdict
                             // is only worth what the rasterizer it was taken on is worth, and
                             // re-run it before quoting it.</para>
+                            // <para>BOTH SURVIVORS SAY THE SAME THING: GDI SEPARATES POINTS OUR
+                            // PHASE KEEPS TOGETHER.</para>
+                            // <para>Verdana '3'@10 is the clearer of the two. P22 is MIRPed off P3
+                            // with control value 33, which scales to EXACTLY -1.0 pixel and is
+                            // already on the sixteenth grid, so the rounding is the identity and
+                            // our stem is 64/64 wide. P3 and P22 are then a black pair, so the
+                            // phase shifts both by the same 33 and the width survives. Put to the
+                            // search as configurations: the pair moved TOGETHER by -1, -2 or -3
+                            // all fail at 118, while P22 alone at -2 reaches zero AND P3 alone at
+                            // -2 reaches zero. GDI's stem is 62 or 66 sixty-fourths, never 64 --
+                            // it is the WIDTH that differs, not the position, and nothing in the
+                            // distance rounding can produce a half-sixteenth.</para>
+                            // <para>Tahoma 'q'@15 is the same shape of fact from the other end:
+                            // P17 and P20 are identical in org, orus, cur, parent and mate, and
+                            // GDI puts them a sixty-fourth apart. One glyph needs a pair pulled
+                            // apart, the other needs two identical points separated; both are the
+                            // phase giving different shifts to points our tree gives the same
+                            // shift.</para>
+                            // <para>The pairing itself is not the error: DoubleCheckLinkColor
+                            // @1400357e8 returns param_4 -- the CALLER'S colour -- when the two
+                            // points are not adjacent or not on one contour, which is why a black
+                            // MIRP link between P3 and P22 pairs them in GDI too. Verified
+                            // against the binary rather than assumed, because "we pair where GDI
+                            // does not" was the obvious first guess and it is wrong.</para>
                             // <para>Tahoma 'g'@12 is worth keeping as the worked example of why:
                             // its P0 follows P26 by an unrounded MDRP over a zero design distance,
                             // P26 is an avg node between the two phantoms, and the whole chain
