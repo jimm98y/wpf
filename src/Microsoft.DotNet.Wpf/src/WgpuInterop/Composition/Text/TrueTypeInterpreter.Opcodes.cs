@@ -3649,6 +3649,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // meaningless. Shift rather than divide by nothing.
                     newDist = orgDist - oldRange + curRange;
 
+                if (_dumpActive)
+                    Console.Error.WriteLine($"      IP p={p} orus=({z2.OrusX[p]},{z2.OrusY[p]})"
+                        + $" orgDist={orgDist} curDist={curDist} newDist={newDist}"
+                        + $" dpv=({_gs.DualX},{_gs.DualY}) pv=({_gs.ProjX},{_gs.ProjY})");
                 MovePoint(z2, p, newDist - curDist);
                 // PHASE tree: IP places p BETWEEN two references, so it takes both as parents --
                 // GDI's AddProportion, which itrp_IP calls under ClearType. The guards are its

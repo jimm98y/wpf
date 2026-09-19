@@ -4161,6 +4161,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     zone.CurX[point] += FreedomStep(distance, _gs.FreeX);
                     if (touch) zone.Tags[point] |= TagTouchX;
                 }
+                if (s_xTrace)
+                    Console.Error.WriteLine("XMOVE pt=" + point + " d=" + distance
+                        + " fx=" + _gs.FreeX + " fy=" + _gs.FreeY + " pf=" + _dotProduct
+                        + " step=" + FreedomStep(distance, _gs.FreeX)
+                        + (XSuppress ? " SUPPRESSED" : " x=" + zone.CurX[point])
+                        + (touch ? " touch" : ""));
             }
             if (_gs.FreeY != 0)
             {
@@ -4194,6 +4200,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>WPF_YTRACE=1: every y move the program makes, so the ClearType pass and the
         /// bi-level pass can be diffed instruction for instruction.</summary>
+        /// <summary>WPF_XTRACE=1: every x move the program makes, the twin of WPF_YTRACE. Added
+        /// for Times New Roman Italic's descenders, the last glyphs whose bi-level fit disagrees
+        /// with GDI's own.</summary>
+        private static readonly bool s_xTrace =
+            Environment.GetEnvironmentVariable("WPF_XTRACE") == "1";
+
         private static readonly bool s_yTrace =
             Environment.GetEnvironmentVariable("WPF_YTRACE") == "1";
 
