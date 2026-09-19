@@ -4813,11 +4813,23 @@ namespace WgpuInterop.Tests.Text
                         // a different configuration might keep ours and move two neighbours. Held
                         // fixed, the search either finds such a configuration or it does not, and
                         // a failure is then a real statement about our coordinate.</para>
+                        // `p` holds the anchor at OUR value; `p:d` holds it d sixty-fourths away,
+                        // which is how a specific configuration is put to the search rather than
+                        // asked of it -- "can the rest of the glyph reach GDI with these two points
+                        // one sixty-fourth lower" is not a question a descent will answer on its
+                        // own, because it will simply not go there.
                         var held = new HashSet<int>();
+                        var heldAt = new Dictionary<int, int>();
                         if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_ANCHORS_HOLD")
                             is { Length: > 0 } holdSpec)
                             foreach (string tok in holdSpec.Split(','))
-                                if (int.TryParse(tok, out int hp)) held.Add(hp);
+                            {
+                                string[] bits = tok.Split(':');
+                                if (!int.TryParse(bits[0], out int hp)) continue;
+                                held.Add(hp);
+                                if (bits.Length > 1 && int.TryParse(bits[1], out int hd))
+                                    heldAt[hp] = hd;
+                            }
                         var touchedList = new List<int>();
                         for (int i = 0; i < n; i++)
                             if (ipts.TouchedX[i] && !dropped.Contains(i)) touchedList.Add(i);
@@ -4979,6 +4991,15 @@ namespace WgpuInterop.Tests.Text
                                     if (pathToPoint[i] < 0 && i > 0 && i + 1 < sx.Length)
                                         sx[i] = ox[i] + ((sx[i - 1] - ox[i - 1])
                                                          + (sx[i + 1] - ox[i + 1])) / 2;
+                            }
+                            // The held offsets go on AFTER the self-check, which compares the
+                            // interpolation at OUR anchor values against our own fitted x.
+                            if (heldAt.Count > 0)
+                            {
+                                for (int k = 0; k < anchorOf.Length; k++)
+                                    if (heldAt.TryGetValue(anchorOf[k], out int hoff))
+                                        anchors[k] = fit[anchorOf[k]] + hoff;
+                                Write(RunIup(anchors));
                             }
                             long best = Score();
                             int arenders = 1;
@@ -5275,6 +5296,25 @@ namespace WgpuInterop.Tests.Text
                             // separates two points that nothing in our pipeline can tell apart,
                             // which is a gap in the phase tree rather than a sixty-fourth of
                             // arithmetic, and it is the cleanest example of one on record.</para>
+                            // <para>PUT TO THE SEARCH AS CONFIGURATIONS, with `p:d` holding an
+                            // anchor d sixty-fourths from ours, it is sharper still:
+                            // <code>
+                            //   P17 368, P20 368   best 311   impossible
+                            //   P17 369, P20 369   best 311   impossible  (what we draw)
+                            //   P17 368, P20 free  best   0
+                            //   P2  368, rest free best   0
+                            // </code>
+                            // So the pair really is split, and moving their shared parent P2 down
+                            // by one instead is an equally good explanation -- which is the thing
+                            // to chase, because P2 is where the shift is decided.</para>
+                            // <para>One RE fact against it, unresolved: AddDistance's callers in
+                            // fontdrvhost are itrp_ALIGNRP, itrp_MSIRP and one unnamed site, and
+                            // SHP is not among them -- yet P17 and P20 take their parent from a
+                            // ShiftByPoint in our tree. If GDI makes no link there they would be
+                            // roots, and a root is not moved at all, which is further from GDI's
+                            // pixels than what we draw. So the link is real and its SOURCE is
+                            // mis-attributed, or AddDistance is reached from SHP through the
+                            // unnamed caller.</para>
                             // <para>The Times verdict is the strong one and the reason is easy to
                             // miss: those glyphs have FOUR x-touched points, not eleven. A four
                             // dimensional search with pairwise moves is thorough and still cannot
