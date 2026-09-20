@@ -4666,6 +4666,26 @@ namespace WgpuInterop.Tests.Text
         /// time by P23 -1. Verdana 'b'@13 does the same: P14 +1, or P27 +1 with P14 held. So GDI
         /// is NOT separating two points our program makes equal -- ANY ONE of a group of
         /// coincident anchors, nudged by a sixty-fourth, reproduces GDI's raster.</para>
+        /// <para>AND THE SEARCH CAN STILL LOCALISE, IF IT IS ASKED THE RIGHT QUESTION.
+        /// A single anchor's value is under-determined, but WHICH IUP RUN the error lives in is
+        /// not. Verdana '6'@12 cannot be reached by moving its own seven anchors (best 118 of
+        /// 292), so GDI is touching a point the program never touches. Add one extra anchor with
+        /// WPF_XYSOLVE_ANCHORS_ADD and the answer is clean: P22, P23, P24 and P25 EACH reach GDI
+        /// exactly, and P27 cannot. Those four are the interior of one run -- 19..25, between
+        /// touched P18 and P26 -- and P27 is in the next one. So the defect is in THAT RUN and
+        /// nowhere else, which is a far stronger statement than "one anchor is a sixty-fourth
+        /// out" and does not depend on which point the search happens to name.</para>
+        /// <para>What an extra anchor DOES, even at our own coordinate, is SPLIT the run: 19..25
+        /// between 18 and 26 becomes 19..24 between 18 and 25 and nothing between 25 and 26, so
+        /// the interpolation ramp acquires a kink. And a kink is exactly what the pixels ask for.
+        /// The sample-row oracle shows '6'@12 differing in TWO ADJACENT ROWS at the same three
+        /// lamps, one sample too much in the upper and one too little in the lower -- which is a
+        /// local edge ROTATED, not translated, and a smooth ramp cannot rotate one. So GDI'S RUN
+        /// IS SPLIT BY A TOUCHED POINT AND OURS IS NOT.</para>
+        /// <para>That is a touch-set difference, and the enumeration says it is not a delta and
+        /// not a SHPIX: itrp_DeltaEngine's suppression path (140036cac) and itrp_SHP_Common's
+        /// (the param_4 gate) both skip the MOVE and the TOUCH together, exactly as this file
+        /// does. Finding which instruction touches that point is the next job.</para>
         /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
         /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
         /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
