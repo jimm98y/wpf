@@ -4023,8 +4023,18 @@ namespace WgpuInterop.Tests.Text
             // Tahoma 'p'@17 each differ in TWO adjacent rows, at the same three lamps, by one
             // sample in opposite directions, and the rows are the two the arm meets the stem in.
             bool cross = Environment.GetEnvironmentVariable("WPF_CROSS_X") == "1";
+            // WPF_CROSS_SLANTS=lo,hi,step widens the slant sweep. THREE SLOPES IS NOT A PROOF:
+            // the shipped list below is 0, 300 and 900, and "the scan converter is exact on
+            // slanted bars" rested on it. Times Bold 'K' at 12ppem is wrong at most of its
+            // sub-pixel phases, always in rows 16..22 and always one or two rows at a time --
+            // which row moving with the phase -- and that is one DIAGONAL's crossing being a
+            // hair off, at whatever scanline the phase brings near a sample. A crossing
+            // computed by an incremental walk rather than a division would differ by slope, and
+            // a three-slope sweep cannot see that.
+            int[] slants = Environment.GetEnvironmentVariable("WPF_CROSS_SLANTS") is { Length: > 0 } ss
+                ? BuildRange(ss) : new[] { 0, 300, 900 };
             foreach (int taper in new[] { 0, 96, 192, 280 })
-            foreach (int slant in new[] { 0, 300, 900 })
+            foreach (int slant in slants)
             {
                 var bars = new List<SyntheticFont.Bar>();
                 for (int units = 96; units <= 288; units += 48)
@@ -4882,6 +4892,46 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(file is null, "this machine lacks the face");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
+
+            // WPF_XYSOLVE_PATCH=<shift>: SOLVE AT A DIFFERENT SUB-PIXEL PHASE.
+            // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
+            // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
+            // of them dissolves when checked against the instruction that places the point. What
+            // breaks that is asking the SAME glyph at phases it does not ship. The whole-glyph
+            // shift of HowGdiFollowsAMovedPoint translates the outline and moves xMin, xMax and
+            // the side bearing with it, so pp1 and the advance are untouched and only the phase
+            // moves; both scalers re-run the program on it. A point move that is GDI's rather
+            // than the search's own minimality has to hold at EVERY phase, and an instruction
+            // that can produce it has to produce it at every phase too.</para>
+            string gdiName = GdiFamily(parts[0], bold, italic);
+            if (Environment.GetEnvironmentVariable("WPF_XYSOLVE_PATCH") is { Length: > 0 } patchSpec
+                && parts[1].Length == 1)
+            {
+                int shift = int.Parse(patchSpec);
+                var probeFont = new TrueTypeFont(bytes);
+                int pgid = probeFont.GlyphIndex(parts[1][0]);
+                if (!Glyf(bytes, sfnt, pgid, out int gAt, out int gLen) || gLen == 0)
+                    Assert.Skip("that glyph has no simple outline to shift");
+                if (!XCoordSlots(bytes, gAt, out int[] pAt, out int[] pSize, out bool[] pPos,
+                                 out _, out int pBox))
+                    Assert.Skip("that glyph is a composite");
+                int pLsb = LeftSideBearingByte(bytes, sfnt, pgid);
+                if (pLsb <= 0 || !Bump(bytes, pAt[0], pSize[0], pPos[0], shift))
+                    Assert.Skip("point zero's delta cannot carry the shift");
+                Write16(bytes, pBox, (short) (Read16(bytes, pBox) + shift));
+                Write16(bytes, pBox + 4, (short) (Read16(bytes, pBox + 4) + shift));
+                Write16(bytes, pLsb, (short) (Read16(bytes, pLsb) + shift));
+                int nameAt2 = FamilyNameByte(bytes, sfnt);
+                byte was2 = nameAt2 > 0 ? bytes[nameAt2] : (byte) 0;
+                int variant2 = 0;
+                gdiName = Rename(bytes, nameAt2, gdiName, ref variant2, was2);
+                int cnt = 0;
+                Assert.True(AddFontMemResourceEx(bytes, bytes.Length, IntPtr.Zero, ref cnt)
+                            != IntPtr.Zero && cnt > 0, "GDI refused the patched face");
+                Console.Error.WriteLine($"== SOLVING AT SHIFT {shift} ("
+                    + $"{shift * 64.0 * ppem / probeFont.UnitsPerEmForHinting:F2}/64 px) as {gdiName}");
+            }
+
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
             var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
 
@@ -4938,7 +4988,7 @@ namespace WgpuInterop.Tests.Text
                     }
 
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.Draw(c.ToString(), gdiName, ppem, PenX, 28, Width, Height, bold, italic);
                     Gdi.s_rawRgb = null;
 
                     // The fit, flattened to one array per axis in EMISSION order, which is the
@@ -9673,6 +9723,29 @@ namespace WgpuInterop.Tests.Text
                         ch.ToString(), ppem, baseline, correction: true), ref gdiInk, ref ourInk,
                         ref gdiCx, ref ourCx);
                     total += v; n++; if (v > worst) worst = v;
+                    // WPF_PATCHPT_WHERE=1: for every phase that disagrees, WHICH ROWS do. A glyph
+                    // wrong at most of its phases is not a tie-break, and if the same rows carry
+                    // it at every one of them the error is one FEATURE of the glyph rather than a
+                    // rounding that happens to land badly -- which is the difference between
+                    // looking for a point and looking for a rule.
+                    if (v > 0 && Environment.GetEnvironmentVariable("WPF_PATCHPT_WHERE") == "1")
+                    {
+                        byte[] ours2 = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem,
+                                                baseline, correction: true);
+                        var rows = new SortedDictionary<int, long>();
+                        for (int y = 0; y < Height; y++)
+                        for (int x = 0; x < Width; x++)
+                        for (int c = 0; c < 3; c++)
+                        {
+                            int diff = Math.Abs((255 - raw[(y * Width + x) * 4 + (2 - c)])
+                                                - (255 - ours2[(y * Width + x) * 4 + c]));
+                            if (diff != 0) { rows.TryGetValue(y, out long t); rows[y] = t + diff; }
+                        }
+                        report.AppendLine($"   WHERE shift {d,5} total {v,6}: "
+                            + string.Join(" ", System.Linq.Enumerable.Select(rows,
+                                  kv => $"y{kv.Key}={kv.Value}")));
+                    }
+
                     // WPF_PATCHPT_DUMP=<shift>: the differing LAMPS at one phase. A bucket where
                     // GDI's ink jumps and ours jumps with it is not a displaced point; what is
                     // left once both sides agree on the jump is how the extra coverage was
@@ -9818,6 +9891,17 @@ namespace WgpuInterop.Tests.Text
             if (numH <= 0) return -1;
             return gid < numH ? hmtx + gid * 4 + 2
                               : hmtx + numH * 4 + (gid - numH) * 2;
+        }
+
+        /// <summary>"lo,hi,step" as an inclusive range, for a sweep knob.</summary>
+        private static int[] BuildRange(string spec)
+        {
+            string[] p = spec.Split(',');
+            int lo = int.Parse(p[0]), hi = p.Length > 1 ? int.Parse(p[1]) : lo;
+            int step = p.Length > 2 ? int.Parse(p[2]) : 1;
+            var list = new List<int>();
+            for (int v = lo; v <= hi; v += Math.Max(1, step)) list.Add(v);
+            return list.ToArray();
         }
 
         private static short Read16(byte[] d, int at) => (short) ((d[at] << 8) | d[at + 1]);
