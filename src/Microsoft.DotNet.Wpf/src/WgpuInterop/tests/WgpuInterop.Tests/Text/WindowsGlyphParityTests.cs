@@ -2701,7 +2701,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     string ch = ((char) (0x41 + i)).ToString();
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, false);
+                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, s_getInfoItalic);
                     Gdi.s_rawRgb = null;
                     int drawn = InkLeftColumn(raw);
                     var ggoFig = GdiStageTests.GdiOutlineAt(ch[0], Fam, ProbePpem, 0, 0);
@@ -2792,7 +2792,7 @@ namespace WgpuInterop.Tests.Text
                 {
                     string ch = ((char) (0x41 + i)).ToString();
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, false);
+                    Gdi.Draw(ch, Fam, ProbePpem, PenX, ProbePpem + 12, Width, Height, false, s_getInfoItalic);
                     Gdi.s_rawRgb = null;
                     int drawn = InkLeftColumn(raw);
                     int ourDrawn = InkLeftColumn(OursRgba(font, ch, ProbePpem, ProbePpem + 12,
@@ -9731,7 +9731,7 @@ namespace WgpuInterop.Tests.Text
                     Gdi.s_rawRgb = raw;
                     Gdi.Draw(ch.ToString(), fam, ppem, PenX, baseline, Width, Height, bold, italic);
                     Gdi.s_rawRgb = null;
-                    byte[] ours = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem, baseline,
+                    byte[] ours = OursRgba(Ours(bytes, sfnt, bold, italic), ch.ToString(), ppem, baseline,
                                            correction: true);
                     long sum = 0;
                     gdiInk = ourInk = 0; gdiCx = ourCx = 0;
@@ -9816,7 +9816,7 @@ namespace WgpuInterop.Tests.Text
                     Write16(bytes, lsbAt, (short) (Read16(bytes, lsbAt) + d));
                     string fam = Rename(bytes, nameAt, family, ref variant, nameWas);
                     long v = Score(bytes, fam);
-                    if (held is not null) v = Compare(held, OursRgba(new TrueTypeFont(bytes),
+                    if (held is not null) v = Compare(held, OursRgba(Ours(bytes, sfnt, bold, italic),
                         ch.ToString(), ppem, baseline, correction: true), ref gdiInk, ref ourInk,
                         ref gdiCx, ref ourCx);
                     total += v; n++; if (v > worst) worst = v;
@@ -9827,7 +9827,7 @@ namespace WgpuInterop.Tests.Text
                     // looking for a point and looking for a rule.
                     if (v > 0 && Environment.GetEnvironmentVariable("WPF_PATCHPT_WHERE") == "1")
                     {
-                        byte[] ours2 = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem,
+                        byte[] ours2 = OursRgba(Ours(bytes, sfnt, bold, italic), ch.ToString(), ppem,
                                                 baseline, correction: true);
                         var rows = new SortedDictionary<int, long>();
                         for (int y = 0; y < Height; y++)
@@ -9849,7 +9849,7 @@ namespace WgpuInterop.Tests.Text
                     // SPREAD, and that is only visible lamp by lamp.
                     if (Environment.GetEnvironmentVariable("WPF_PATCHPT_DUMP") == d.ToString())
                     {
-                        byte[] ours = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem,
+                        byte[] ours = OursRgba(Ours(bytes, sfnt, bold, italic), ch.ToString(), ppem,
                                                baseline, correction: true);
                         report.AppendLine($"   -- lamps that differ at shift {d}"
                                           + " (x,y: gdi rgb | ours rgb | ours-gdi)");
@@ -10004,6 +10004,56 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveGrid64 =
             Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
+        /// <summary>WHERE THE HOLDOUT ACTUALLY LIVES, 2026-09-20, and it is not where this session
+        /// spent its day. By face: Tahoma 9,758, Times New Roman 8,980, Verdana 4,638, Consolas
+        /// 2,571, Arial 2,236, Segoe UI ZERO. By face and style the largest single pool is
+        /// <b>Tahoma Italic at 4,128</b> -- and Tahoma ships no italic file, so that is a
+        /// SYNTHESIZED oblique. (Parse the report from the END of each row: "Times New Roman" is
+        /// three tokens and a fixed column index silently gives it 50 instead of 8,980.)
+        /// <para>Tahoma Italic is worth its own paragraph because the upright face is EXACT at
+        /// every one of these sizes -- every character, sum|d| zero -- while the synthesized
+        /// oblique fails, and at 10ppem on exactly four characters: r 289, X 260, Z 255, k 255.
+        /// Our fitted outline and our phase tree are byte-identical between the two, so the fit
+        /// is not in question; only the shear runs differently. The free solver on the grid wants
+        /// ONE point moved per glyph, by one to four sixty-fourths.</para>
+        /// <para>Four hypotheses tried and refuted there, none of them cheap to re-derive:
+        /// the shear ROUNDING (up / off / matrix / base: all four glyphs unmoved at 1,059);
+        /// the shear taking the UNFITTED y (X's P8 wants a term of 89/64 and the unfitted y gives
+        /// 96 against the fitted y's 90); GETINFO answering differently under a shear (Tahoma
+        /// never asks selector 2 or 4 at all, and WPF_GETINFO_ITALIC=1 measures GDI answering
+        /// selector 1024, sub-pixel positioned, as ZERO in every context, upright and sheared);
+        /// and the phase seeing sheared x (X's P8 is a phase ROOT, v = 0, and Tahoma Italic 'X'
+        /// is exact at every ppem but 10).</para>
+        /// <para>Also refuted, and it looked like the best lead of the day: our ClearType pass's
+        /// y drifts from our bi-level y on exactly the glyphs that carry the residual -- X@10 by
+        /// 10/64, Times Bold K@12 by 56/64, Verdana '6'@12 by 40/64 -- while our BI-LEVEL fit is
+        /// GDI's own to the point. It is not a defect: WPF_CT_Y_BILEVEL=1 takes the phase holdout
+        /// from 28,378 to 2,025,829. The two passes fit y differently on purpose, so GGO is not a
+        /// y reference for the ClearType pass and "our CT y is wrong" does not follow.</para>
+        /// </summary>
+        /// <summary>The font OUR side must draw, for a face whose style has to be SYNTHESIZED.
+        /// <para>Tahoma ships no italic file, so "Tahoma Italic" is an oblique both scalers
+        /// invent. `new TrueTypeFont(bytes)` invents nothing: it drew Tahoma upright against
+        /// GDI's sheared italic and the probe read 6,359 on one character, where the whole
+        /// fifty-one-character holdout row is 1,314. Every spec used before this was caught had a
+        /// real file on disk -- timesi, ariali, verdanai, timesbd -- so no earlier measurement is
+        /// affected, but Tahoma Italic is the single largest style pool in the holdout (4,128 of
+        /// 28,183) and could not have been looked at at all.</para></summary>
+        private static TrueTypeFont Ours(byte[] bytes, int sfnt, bool bold, bool italic)
+        {
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            return new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+        }
+
+        /// <summary>WPF_GETINFO_ITALIC=1 asks GDI the same questions while it SYNTHESIZES an
+        /// oblique. Tahoma ships no italic file, its synthesized italic is the single largest
+        /// style pool in the holdout (4,128 of 28,183) while the UPRIGHT face is exact at every
+        /// one of these sizes, and its glyph program asks selector 1024 -- sub-pixel positioned --
+        /// four times per glyph. Whether GDI's answers change when the draw is sheared is a
+        /// measurement, and this is the only instrument that can take it.</summary>
+        private static readonly bool s_getInfoItalic =
+            Environment.GetEnvironmentVariable("WPF_GETINFO_ITALIC") == "1";
+
         private static short Read16(byte[] d, int at) => (short) ((d[at] << 8) | d[at + 1]);
         private static void Write16(byte[] d, int at, short v)
         { d[at] = (byte) (v >> 8); d[at + 1] = (byte) v; }
@@ -10013,6 +10063,11 @@ namespace WgpuInterop.Tests.Text
         /// last") cannot be widened without moving every byte after it, so it is refused too.</summary>
         private static bool Bump(byte[] d, int at, int size, bool positive, int delta)
         {
+            // A ZERO shift always succeeds. A point whose x delta is stored as "same as the last"
+            // occupies no bytes and cannot be widened, which is a real refusal for a real shift --
+            // but it was also refusing shift 0, so a glyph whose first point happens to repeat its
+            // x could not be MEASURED at its own phase, only swept.
+            if (delta == 0) return true;
             if (size == 2) { Write16(d, at, (short) (Read16(d, at) + delta)); return true; }
             if (size != 1) return false;
             int v = positive ? d[at] : -d[at];
