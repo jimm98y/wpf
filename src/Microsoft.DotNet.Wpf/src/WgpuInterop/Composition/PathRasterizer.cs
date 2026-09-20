@@ -1673,6 +1673,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                 colOn[C] = on; colOff[C] = off;
             }
+            // THE STUB TESTS' COUNTS, FROM THE ARRAYS THE FILL ACTUALLY WROTE.
+            // <para>DoVertDropout's two three-term gates call VertCrossings@1400426c0 and
+            // HorizCrossings@140042270, which walk the SCAN CONVERTER's own crossing lists and
+            // count the entries equal to a given index. Ours have always counted the FLATTENED
+            // polygon's instead, which is a second set of crossings found another way -- the
+            // fill has used the exact walk's since the row-list port. Taking the walk's lists
+            // whole (WPF_CT_DROPOUT_EXACT) is 80x worse because they carry no positions and the
+            // smart fill's midpoint needs them; the COUNTS need no positions at all, so they can
+            // be adopted on their own. WPF_CT_DROPOUT_COUNTS=walk.</para>
+            // <para>REFUTED, 939,726 against 31,200, which says the two list sets differ in more
+            // than provenance. They must: the walk records a column crossing by the DDA's own row
+            // index at the moment it steps, while the flattened lists take OnIdx of the exact
+            // intersection, and at a boundary those are not the same integer. Whatever the walk's
+            // arrays are in GDI's convention, ours are not yet in it -- so the fill's positions
+            // are not the only thing missing from them, and WPF_CT_DROPOUT_EXACT's 2,548,548 is
+            // not a position problem alone either.</para>
+            var cntColOn = colOn; var cntColOff = colOff;
+            var cntRowOn = rowOn; var cntRowOff = rowOff;
+            if (s_dropoutCountsWalk && walk is not null)
+            {
+                cntColOn = new List<(int I, float V)>[nCols];
+                cntColOff = new List<(int I, float V)>[nCols];
+                cntRowOn = new List<(int I, float V)>[nRows];
+                cntRowOff = new List<(int I, float V)>[nRows];
+                for (int C = 0; C < nCols; C++)
+                {
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    foreach (int r in walk.ColOn[C]) { int R = nRows - 1 - r; on.Add((R, R + 0.5f)); }
+                    foreach (int r in walk.ColOff[C]) { int R = nRows - 1 - r; off.Add((R, R + 0.5f)); }
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    cntColOn[C] = on; cntColOff[C] = off;
+                }
+                for (int R = 0; R < nRows; R++)
+                {
+                    int r = nRows - 1 - R;
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
+                    foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    cntRowOn[R] = on; cntRowOff[R] = off;
+                }
+            }
             if (s_dropoutExact && walk is not null)
             {
                 // THE SAME CROSSINGS THE FILL USED. LookForDropouts reads the arrays the scan walk
@@ -1835,12 +1879,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     string? why = null;
                     if (stubs)
                     {
-                        if (Count(rowOn, rowOff, R + 1, C, yMin, yMax)
-                            + Count(colOn, colOff, C - 1, R + 1, xMin, xMax)
-                            + Count(colOn, colOff, C, R + 1, xMin, xMax) < 2) why = "stub-above";
-                        else if (Count(rowOn, rowOff, R - 1, C, yMin, yMax)
-                            + Count(colOn, colOff, C - 1, R, xMin, xMax)
-                            + Count(colOn, colOff, C, R, xMin, xMax) < 2) why = "stub-below";
+                        if (Count(cntRowOn, cntRowOff, R + 1, C, yMin, yMax)
+                            + Count(cntColOn, cntColOff, C - 1, R + 1, xMin, xMax)
+                            + Count(cntColOn, cntColOff, C, R + 1, xMin, xMax) < 2) why = "stub-above";
+                        else if (Count(cntRowOn, cntRowOff, R - 1, C, yMin, yMax)
+                            + Count(cntColOn, cntColOff, C - 1, R, xMin, xMax)
+                            + Count(cntColOn, cntColOff, C, R, xMin, xMax) < 2) why = "stub-below";
                     }
                     if (why is null && C > xMin && Bit(C - 1, R)) why = "on-left";
                     if (why is null && C < xMax && Bit(C, R)) why = "on-right";
@@ -1875,12 +1919,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     string? why = null;
                     if (stubs)
                     {
-                        if (Count(colOn, colOff, C - 1, R, xMin, xMax)
-                            + Count(rowOn, rowOff, R, C, yMin, yMax)
-                            + Count(rowOn, rowOff, R - 1, C, yMin, yMax) < 2) why = "stub-left";
-                        else if (Count(colOn, colOff, C + 1, R, xMin, xMax)
-                            + Count(rowOn, rowOff, R, C + 1, yMin, yMax)
-                            + Count(rowOn, rowOff, R - 1, C + 1, yMin, yMax) < 2) why = "stub-right";
+                        if (Count(cntColOn, cntColOff, C - 1, R, xMin, xMax)
+                            + Count(cntRowOn, cntRowOff, R, C, yMin, yMax)
+                            + Count(cntRowOn, cntRowOff, R - 1, C, yMin, yMax) < 2) why = "stub-left";
+                        else if (Count(cntColOn, cntColOff, C + 1, R, xMin, xMax)
+                            + Count(cntRowOn, cntRowOff, R, C + 1, yMin, yMax)
+                            + Count(cntRowOn, cntRowOff, R - 1, C + 1, yMin, yMax) < 2) why = "stub-right";
                     }
                     // WHICH NEIGHBOUR "ALREADY LIT" MEANS. DoVertDropout@140041ea8 refuses the
                     // fill when the bit at (col, row - 1) is set, and its rows are the scan
@@ -2001,6 +2045,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// `if (bit(col, row - 1)) return` was worth asking about. It measures 81,054 against
         /// 31,200, so the scan converter's rows are this frame's and R - 1 is right.</para>
         /// </summary>
+        private static readonly bool s_dropoutCountsWalk =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_COUNTS") == "walk";
+
         private static readonly bool s_dropFlip =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_FLIP") == "1";
 
