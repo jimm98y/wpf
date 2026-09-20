@@ -1888,8 +1888,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     int r = s_dropoutNoFlip ? R : nRows - 1 - R;
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                    foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
-                    foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
+                    for (int k = 0; k < walk.On[r].Count; k++)
+                        on.Add((walk.On[r][k], s_rowPosExact ? walk.OnPos[r][k] : walk.On[r][k] + 0.5f));
+                    for (int k = 0; k < walk.Off[r].Count; k++)
+                        off.Add((walk.Off[r][k], s_rowPosExact ? walk.OffPos[r][k] : walk.Off[r][k] + 0.5f));
                     on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     rowOn[R] = on; rowOff[R] = off;
@@ -2132,6 +2134,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>WPF_CT_DROPOUT_NOFLIP=0 restores the `nRows - 1 - r` conversion on the
         /// walk's row indices. It was never right -- see the substitution -- and with it the
         /// walk's lists measure 1,288,932 where without it they measure 28,475.</summary>
+        /// <summary>WPF_CT_ROWPOS=0 files the walk's row crossings at their sample centre, as
+        /// they were before the column ones got their exact positions.</summary>
+        private static readonly bool s_walkColTopo =
+            Environment.GetEnvironmentVariable("WPF_CT_WALKCOLTOPO") != "0";
+
+        private static readonly bool s_rowPosExact =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWPOS") != "0";
+
         private static readonly bool s_dropoutNoFlip =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_NOFLIP") != "0";
 
@@ -2226,10 +2236,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // for the smart dropout, whose fill row is the MIDPOINT of a span's two crossings;
             // filing both at their row's centre collapses every midpoint onto the ON row.
             public readonly List<float>[] ColOnPos, ColOffPos;
+            // The same for the rows, and for the same reason: DoHorizDropout's fill COLUMN is the
+            // midpoint of the span's two crossings, and a sample centre is not one.
+            public readonly List<float>[] OnPos, OffPos;
             public GdiScanRows(int nRows, int nCols)
             {
                 On = new List<int>[nRows]; Off = new List<int>[nRows];
-                for (int i = 0; i < nRows; i++) { On[i] = new List<int>(); Off[i] = new List<int>(); }
+                OnPos = new List<float>[nRows]; OffPos = new List<float>[nRows];
+                for (int i = 0; i < nRows; i++)
+                {
+                    On[i] = new List<int>(); Off[i] = new List<int>();
+                    OnPos[i] = new List<float>(); OffPos[i] = new List<float>();
+                }
                 ColOn = new List<int>[nCols]; ColOff = new List<int>[nCols];
                 ColOnPos = new List<float>[nCols]; ColOffPos = new List<float>[nCols];
                 for (int i = 0; i < nCols; i++)
@@ -2238,9 +2256,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     ColOnPos[i] = new List<float>(); ColOffPos[i] = new List<float>();
                 }
             }
-            public void Row(int col, int rUp, bool on)
+            public void Row(int col, int rUp, bool on, float pos = float.NaN)
             {
-                if ((uint) rUp < (uint) On.Length) (on ? On : Off)[rUp].Add(col);
+                if ((uint) rUp >= (uint) On.Length) return;
+                (on ? On : Off)[rUp].Add(col);
+                (on ? OnPos : OffPos)[rUp].Add(float.IsNaN(pos) ? col + 0.5f : pos);
             }
             public void Col(int col, int rUp, bool on, float pos = float.NaN)
             {
@@ -2301,7 +2321,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // A vertical edge: every row at one column, which fsc_CalcLine takes from the
                 // point itself, one sixty-fourth back when the edge rises.
                 int c = ((x0 - (y0 < y2 ? 1 : 0)) + 0x20) >> 6;
-                for (int i = 0; i < nrows; i++) { L.Row(c, row, rowOn); row += ystep; }
+                for (int i = 0; i < nrows; i++) { L.Row(c, row, rowOn, x0 / 64f); row += ystep; }
                 return;
             }
             long f = bias - (long) dy * xdist + (long) dx * ydist;
@@ -2310,7 +2330,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 if (f < 1)
                 {
-                    L.Row(xbias + col, row, rowOn);
+                    long syL = (long) row * 64 + 32;
+                    float posR = y2 == y0 ? x0 / 64f
+                               : (float) ((x0 + (syL - y0) * (double) (x2 - x0) / (y2 - y0)) / 64.0);
+                    L.Row(xbias + col, row, rowOn, posR);
                     row += ystep;
                     f += (long) dx * 0x40;
                 }
@@ -2335,6 +2358,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     f -= (long) dy * 0x40;
                 }
             }
+        }
+
+        /// <summary>Where a monotone quadratic piece meets a row's sample line, in the walk's own
+        /// sixty-fourths of a sub-column. The twin of ConicY.</summary>
+        private static float ConicX(int x0, int y0, int x1, int y1, int x2, int y2, int row)
+        {
+            double sy = row * 64.0 + 32.0;
+            double a = y0 - 2.0 * y1 + y2, b = 2.0 * (y1 - y0), c = y0 - sy;
+            double t;
+            if (Math.Abs(a) < 1e-9)
+            {
+                if (Math.Abs(b) < 1e-9) return x0 / 64f;
+                t = -c / b;
+            }
+            else
+            {
+                double disc = b * b - 4 * a * c;
+                if (disc < 0) return x0 / 64f;
+                double r = Math.Sqrt(disc);
+                double t1 = (-b + r) / (2 * a), t2 = (-b - r) / (2 * a);
+                t = t1 >= -1e-6 && t1 <= 1 + 1e-6 ? t1 : t2;
+            }
+            if (!(t >= 0)) t = 0; else if (t > 1) t = 1;
+            double u = 1 - t;
+            return (float) ((u * u * x0 + 2 * u * t * x1 + t * t * x2) / 64.0);
         }
 
         /// <summary>Where a monotone quadratic piece meets a column's sample line, in the walk's
@@ -2417,7 +2465,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             if (col == colEnd)
             {
-                for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn);
+                for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn, ConicX(x0, y0, x1, y1, x2, y2, row));
                 return;
             }
 
@@ -2476,7 +2524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (F >= 0 && Fy <= B2s)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fy={Fy} B2s={B2s}");
-                        L.Row(xbias + col, row, rowOn);
+                        L.Row(xbias + col, row, rowOn, ConicX(x0, y0, x1, y1, x2, y2, row));
                         F += Fy; Fx += Cs; row += ystep; Fy += 2 * B2s;
                     }
                     else
@@ -2495,7 +2543,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (F < 0 || A2s < Fx)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fx={Fx} A2s={A2s}");
-                        L.Row(xbias + col, row, rowOn);
+                        L.Row(xbias + col, row, rowOn, ConicX(x0, y0, x1, y1, x2, y2, row));
                         F += Fy; Fx += Cs; row += ystep; Fy += 2 * B2s;
                     }
                     else
@@ -2505,7 +2553,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
             }
-            for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn);
+            for (; row != rowEnd; row += ystep) L.Row(xbias + col, row, rowOn, ConicX(x0, y0, x1, y1, x2, y2, row));
         }
 
         /// <summary>EvaluateSpline@140033848: cut at the y extremum, then the x extremum, halve
@@ -2740,7 +2788,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 if (cx != sx || cy != sy) { verts.Add((cx, cy)); GdiLine(cx, cy, sx, sy, L); }
                 GdiVertexRule(verts, L);
-                GdiVertexRuleCol(verts, L);
+                // WPF_CT_WALKCOLTOPO=0: leave the column lists without CheckVertTopology. It had
+                // no measurable effect while nothing read them; the dropout does now.
+                if (s_walkColTopo) GdiVertexRuleCol(verts, L);
             }
             // fsc_FillBitMap@140042778 fills [on[k], off[k]) -- half-open, the lower of the two
             // first, and nothing at all when they are equal. The fill downstream tests a CLOSED
