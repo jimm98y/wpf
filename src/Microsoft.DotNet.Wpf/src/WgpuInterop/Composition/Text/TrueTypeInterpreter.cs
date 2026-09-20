@@ -2163,6 +2163,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return x[p] >= lo && x[p] <= hi;
         }
 
+        /// <summary>THE CALL-SITE SET IS PROVEN COMPLETE (2026-09-20). Every inlined
+        /// AddDistance and AddProportion body calls IndirectlyDependsOn@140035a10, so its
+        /// callers enumerate the sites exactly, and there are seven:
+        /// <code>
+        ///   AddDistance@1400354c8   (out of line)  &lt;- itrp_ALIGNRP, itrp_MSIRP
+        ///   AddProportion@140035630 (out of line)  &lt;- itrp_ALIGNRP, itrp_IP x3, itrp_ISECT,
+        ///                                             itrp_MDRP
+        ///   inlined bodies                         &lt;- itrp_IP x2, itrp_MDRP, itrp_MIRP,
+        ///                                             itrp_SHP_Common
+        /// </code>
+        /// which is MIRP, MDRP, MSIRP, ALIGNRP, SHP, IP and ISECT -- the set this file already
+        /// records, with MDRP and ALIGNRP taking either a proportion or a distance and the other
+        /// four only a distance. Nothing records a link that we do not.</summary>
+        /// <summary>AND SHPIX RECORDS NOTHING, which is worth stating because SHPIX shares
+        /// itrp_SHP_Common with SHP and that body holds a link block. itrp_SHPIX calls it with
+        /// `mov w2,#0xffffffff` at 14003e930 -- reference point -1 -- and the link block's first
+        /// gate is `-1 &lt; (int) param_3`, so it never runs for a SHPIX. The move-suppression
+        /// gate at the end of SHP_Common is likewise SHPIX-only: itrp_SHP passes param_4 = 0
+        /// (14003e7bc) and SHPIX passes 1 (14003e92c), and param_4 == 0 applies the shift
+        /// unconditionally.</summary>
         private void LinkX(int zoneP, int p, int zoneR, int r, int distanceType = -1,
             bool canProportion = false, bool doubleCheck = false, int phaseType = -1,
             [System.Runtime.CompilerServices.CallerMemberName] string site = "")
