@@ -3060,6 +3060,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// while costing Bold 44 and Italic 883, so it is not a blanket rule but the mechanism is
         /// in that gate. What is missing is a reason for the flag to be set on THIS glyph and not
         /// on its bold and italic.</para>
+        /// <para>REFUTED THE SAME DAY, and worth the line so nobody re-opens it: on the whole
+        /// holdout that gate measures 6,151,781 against 28,183, so the re-derive really is
+        /// conditional and the 77 above is a coincidence rather than a clue. Nor can the flag
+        /// fire on this glyph by any reading of the binary. The pair records, in order, are
+        /// SHP(3->7), MIRP(3->9) -- which takes partner[3] = 9 -- MDRP(3->10), MDRP(3->1) and
+        /// MDRP(1->6); the only flag-setting branch in the pair tail needs
+        /// `partner[nodes[anchor].p0] == anchor`, and partner[12] is -1 throughout while
+        /// partner[3] is 9 and never 1.</para>
         /// <para>Everything the flag depends on has now been read end to end and matches:
         /// ExecutePhaseControl@140035970 scans nodes 0..lastEnd+4 for flag bit 0 and passes
         /// `found` as param_3 to every PhaseShift; AddDistance@1400354c8 sets that bit on the
