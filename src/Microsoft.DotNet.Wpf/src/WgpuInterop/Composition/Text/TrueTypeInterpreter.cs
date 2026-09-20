@@ -3060,6 +3060,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// while costing Bold 44 and Italic 883, so it is not a blanket rule but the mechanism is
         /// in that gate. What is missing is a reason for the flag to be set on THIS glyph and not
         /// on its bold and italic.</para>
+        /// <para>AND THE DEEPER LESSON, which undercuts the framing above. There are at least
+        /// THREE distinct single-point fixes for this glyph, all reaching GDI exactly: the free
+        /// solver names P4 (-1), the anchor search names P3 (-1), and with P3 and P9 held it
+        /// names P6 (-2), which also drags P5. Four differing lamps do not determine an outline.
+        /// So "GDI's outline is ours with ONE point moved" is a property of the solver's
+        /// minimality, not a fact about GDI -- the real difference may be anywhere in the glyph,
+        /// and chasing the point the solver happens to name is chasing an artifact. What the
+        /// evidence does say is only that SOME change on the scale of a sixty-fourth fixes it.</para>
+        /// <para>What IS pinned, because every step was read: org is GDI's (GGO's unhinted
+        /// outline gives g3 = 4.500px against our 288/64), the bi-level fit is GDI's (11 of 11
+        /// points exact), the bi-level chain through the same IP and MDAP lands on 320 in both,
+        /// and in the ClearType pass the chain is forced -- IP gives 287 from any plausible
+        /// advance phantom (632, 633, 636, 628 all end at 288 after MDAP; only an unrounded 640
+        /// reaches 292), MDAP's SP round returns a multiple of four, and the phase's avg is 3.
+        /// The model produces 291 and cannot produce 290.</para>
         /// <para>REFUTED THE SAME DAY, and worth the line so nobody re-opens it: on the whole
         /// holdout that gate measures 6,151,781 against 28,183, so the re-derive really is
         /// conditional and the 77 above is a coincidence rather than a clue. Nor can the flag
