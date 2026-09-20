@@ -3095,6 +3095,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// advance phantom (632, 633, 636, 628 all end at 288 after MDAP; only an unrounded 640
         /// reaches 292), MDAP's SP round returns a multiple of four, and the phase's avg is 3.
         /// The model produces 291 and cannot produce 290.</para>
+        /// <para>THE STALE PHASE KNOBS, RE-MEASURED at this baseline so nobody re-runs them:
+        /// WPF_CT_PHASE_AVGROUND=1 (round the two-parent average instead of truncating) 678,622;
+        /// WPF_CT_PHASE_PHANTOM_MATE=0 86,160; WPF_CT_PHASE_PROPPHANTOM=0 4,810,624;
+        /// WPF_CT_PHASE_KEEPBLACK=0 INERT at 28,183. Every one of them confirms what ships.</para>
         /// <para>REFUTED THE SAME DAY, and worth the line so nobody re-opens it: on the whole
         /// holdout that gate measures 6,151,781 against 28,183, so the re-derive really is
         /// conditional and the 77 above is a coincidence rather than a clue. Nor can the flag
