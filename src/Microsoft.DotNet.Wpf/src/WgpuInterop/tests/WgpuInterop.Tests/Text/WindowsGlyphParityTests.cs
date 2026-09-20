@@ -4609,6 +4609,39 @@ namespace WgpuInterop.Tests.Text
         /// suspect.</para>
         /// <summary>GDI'S CLEARTYPE OUTLINE IN BOTH AXES, recovered by inverting our own
         /// rasterizer. WPF_XYSOLVE=family/chars/ppem[/B|I].
+        /// <para>WHAT THE HOLDOUT IS MADE OF AT 32,280 (censused 2026-09-20, the sixty worst
+        /// glyph rows, WPF_XYSOLVE_INTERVAL=1 so every verdict is a SLACK BAND and not a
+        /// coordinate). The whole holdout is 468 differing lamps at a mean of 69/255 each --
+        /// about one step of the seven-value ladder GDI's filter emits -- spread over 112 of the
+        /// 306 rows, one to six lamps a row. Per point, counting only points whose value falls
+        /// OUTSIDE the band GDI's own pixels allow, and measuring how far outside:</para>
+        /// <code>
+        ///   implied midpoint   n=27   median  7/128   max 64/128    6 need &lt;= 4/128
+        ///   touched (program)  n=23   median  2/128   max 46/128   18 need &lt;= 4/128
+        ///   off-curve control  n= 9   median 20/128   max 72/128    2 need &lt;= 4/128
+        ///   on-curve, IUP'd    n= 6   median 25/128   max 57/128    1 need &lt;= 4/128
+        /// </code>
+        /// <para>Read that as: the program-placed x is right to ONE SIXTY-FOURTH on eighteen of
+        /// twenty-three, and what is left over is curve interior -- midpoints and controls, the
+        /// two things nothing places directly. The glyphs are bowls and diagonals (Tahoma u q r p
+        /// g n h, Verdana 3 6 9, Times w K), and every one of them fits its BI-LEVEL outline to
+        /// GDI's own GetGlyphOutline points EXACTLY, so nothing here is the interpreter running
+        /// the program wrong. It is the ClearType branch alone.</para>
+        /// <para>FOUR POINTS IN SIXTY ARE PINNED -- the pixels admit exactly one value -- and they
+        /// are the only coordinates in this census that may be quoted as GDI's:</para>
+        /// <code>
+        ///   Times New Roman K@21B  P46 touched   ours 758  GDI 762   +4/128
+        ///   Tahoma          r@16B  mid           ours 608  GDI 544  -64/128
+        ///   Verdana         p@17   P14 touched   ours 412  GDI 453  +41/128
+        ///   Tahoma          p@16   P11 touched   ours 330  GDI 376  +46/128
+        /// </code>
+        /// <para>The last one is the sharpest thing the census found. Tahoma 'p' at 16ppem has
+        /// P10 and P11 on the SAME original coordinate -- org 324, orus 324 -- and our fit leaves
+        /// them together at 330. GDI separates them by 81/128 of a pixel: P11, which its MDRP
+        /// touches, goes to 376, and P10, which only IUP reaches, goes to 295 (slack [-37,0]).
+        /// Ours sits between the two. A rule that keeps coincident points together cannot produce
+        /// that, so whatever GDI does to x in ClearType is not a function of the scaled
+        /// coordinate alone.</para>
         /// <para>DO NOT USE IT AT 8PPEM. This solver renders our glyph as a plain GeometryFill
         /// built from TryGetHintedOutline; the weight report -- which IS the holdout, and therefore
         /// the goal -- renders it through GlyphRunDraw, the shipped glyph-run path. At 10, 12 and
@@ -5756,6 +5789,20 @@ namespace WgpuInterop.Tests.Text
                     // neighbours. The distinction decides which half of the pipeline a difference
                     // belongs to, and it cannot be had from the coordinates: an interpolated point
                     // can sit anywhere its anchors put it, including exactly on a grid line.
+                    // WHERE THE POINT STARTED, for a census that wants to ask whether GDI's
+                    // value is the UNFITTED x rather than the fitted one. StartX is the scaled,
+                    // pre-program coordinate the interpreter began from, printed in the same
+                    // 128ths the solver's arrays use so the three numbers subtract. A `mid` or a
+                    // point with no interpreter index prints nothing.
+                    string Org(int i)
+                    {
+                        if (ipts is null || i >= pathToPoint.Count || pathToPoint[i] < 0) return "";
+                        int p = pathToPoint[i];
+                        if (p >= ipts.StartX.Length) return "";
+                        return $"  org {MathF.Round(ipts.StartX[p] * 128f),5}"
+                             + $" orus {ipts.OrusX[p],5}";
+                    }
+
                     string Pt(int i)
                     {
                         if (i >= pathToPoint.Count || pathToPoint[i] < 0)
@@ -6161,7 +6208,8 @@ namespace WgpuInterop.Tests.Text
                     for (int i = 0; i < sx.Length; i++)
                         if (showAll || sx[i] != ox[i] || sy[i] != oy[i])
                             Console.Error.WriteLine($"   pt {i,3} {Pt(i)} ours ({ox[i],5},{oy[i],5})"
-                                + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})");
+                                + $"  gdi ({sx[i],5},{sy[i],5})  d ({sx[i] - ox[i],4},{sy[i] - oy[i],4})"
+                                + Org(i));
                     // WPF_XYSOLVE_INTERVAL=1: how much SLACK each x has, once the residual is zero.
                     // <para>The solve is a coordinate descent that moves a point only when the move
                     // reduces the residual and stops at zero, so what it reports is the FIRST
@@ -6188,7 +6236,8 @@ namespace WgpuInterop.Tests.Text
                             { sx[i] = keep + hi + 1; if (Score() != 0) break; hi++; }
                             sx[i] = keep;
                             Console.Error.WriteLine($"   pt {i,3} {Pt(i)} ours {ox[i],5}  gdi {keep,5}"
-                                + $"  slack [{lo,3},{hi,3}]{(lo == 0 && hi == 0 ? "  PINNED" : "")}");
+                                + $"  slack [{lo,3},{hi,3}]{(lo == 0 && hi == 0 ? "  PINNED" : "")}"
+                                + (ox[i] == keep ? "" : "  MOVED") + Org(i));
                         }
                     }
                 }
@@ -8598,8 +8647,15 @@ namespace WgpuInterop.Tests.Text
             // which is the only mode with an exact oracle to check the trace against.
             TrueTypeInterpreter.BiLevelPass =
                 Environment.GetEnvironmentVariable("WPF_HINT_DUMP_BILEVEL") == "1";
+            // AND OTHERWISE THE TRACE IS OF THE SHIPPED FIT, which means SubpixelFitting ON.
+            // It is a static defaulting to false, and this test used to leave it alone: the
+            // traced run then had ClearTypeInfo true -- so GETINFO answered ClearType and the
+            // font's own program took its ClearType branches -- but SubpixelGridHere false and
+            // no compatible-width phase. That is a fourth mode nothing ships, and reading a
+            // point's final x off it and comparing with the renderer's is how an afternoon
+            // disappears.
             bool savedSub = TrueTypeFont.SubpixelFitting;
-            if (TrueTypeInterpreter.BiLevelPass) TrueTypeFont.SubpixelFitting = false;
+            TrueTypeFont.SubpixelFitting = !TrueTypeInterpreter.BiLevelPass;
             TrueTypeInterpreter.s_dumpGlyph = true;
             try { ((IHintedGlyphFont) font).TryGetHintedOutline(gid, ppem, out _); }
             finally

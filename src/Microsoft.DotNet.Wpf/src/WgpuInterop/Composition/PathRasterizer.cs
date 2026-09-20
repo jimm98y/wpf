@@ -2296,6 +2296,69 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>CheckVertTopology@140044660 over one contour's vertices, into the COLUMN
+        /// lists -- the vertical twin of GdiVertexRule, and the piece the exact scan walk was
+        /// missing.
+        /// <para>EvaluateSpline calls BOTH checks on every monotonic piece's start
+        /// (CheckHorizTopology at 140033b30, CheckVertTopology at 140033c14) and fsc_FillGlyph
+        /// calls both on every real vertex, so the two lists see the same vertex set. Ours did
+        /// not: the row lists have come from this walk since the row-list port, while the column
+        /// lists carried their rule on the FLATTENED polygon instead, and the walk's own column
+        /// lists -- the ones LookForDropouts would read, under WPF_CT_DROPOUT_EXACT -- had no
+        /// vertex rule at all. That is most of why the exact dropout arrays measured worse than
+        /// the flattened ones they were meant to replace.</para>
+        /// <para>The table is the one written out at the flattened copy, which is that function
+        /// branch for branch. ON is DECREASING x, and the row index is the two adders' own
+        /// formulas: (y + 0x1f) &gt;&gt; 6 for an ON, (y + 0x20) &gt;&gt; 6 for an OFF -- the same
+        /// pair GdiLine already uses for a horizontal edge's column run.</para>
+        /// <para>AND IT DID NOT RESCUE WPF_CT_DROPOUT_EXACT, which is worth recording so the next
+        /// attempt does not start here. With this rule in place the exact column arrays still
+        /// measure 2,548,548 on the holdout against the flattened ones' 32,280 -- eighty times
+        /// worse, not the near-miss a single missing rule would leave. Whatever is wrong with
+        /// them is structural (the frame the walk indexes rows in, most likely, since the fill
+        /// reads them through nRows-1-r while the walk counts sub-rows from the bottom), and the
+        /// vertex rule was never the reason. This runs unconditionally and is INERT while
+        /// WPF_CT_DROPOUT_EXACT is off: the holdout is bit-identical with and without it.</para>
+        /// </summary>
+        private static void GdiVertexRuleCol(List<(int X, int Y)> v, GdiScanRows L)
+        {
+            int m = v.Count;
+            for (int i = 0; i < m; i++)
+            {
+                (int X, int Y) p = v[i];
+                if ((p.X & 0x3f) != 0x20) continue;
+                if (v[(i - 1 + m) % m] == p) continue;
+                (int X, int Y) pp = p, n = p;
+                for (int k = 1; k < m; k++) { var c2 = v[(i - k + m) % m]; if (c2 != p) { pp = c2; break; } }
+                for (int k = 1; k < m; k++) { var c2 = v[(i + k) % m]; if (c2 != p) { n = c2; break; } }
+                if (pp == p || n == p) continue;
+                int c = p.X >> 6;
+                bool nLeft = n.X < p.X, nLevel = n.X == p.X;
+                bool ppRight = pp.X > p.X, ppLevel = pp.X == p.X;
+                void On() => L.Col(c, (p.Y + 0x1f) >> 6, true);
+                void Off() => L.Col(c, (p.Y + 0x20) >> 6, false);
+                if (nLeft)
+                {
+                    if (ppRight) On();
+                    else if (ppLevel) { if (p.Y < pp.Y) On(); }
+                    else { On(); Off(); }
+                }
+                else if (nLevel)
+                {
+                    if (ppRight) { if (n.Y > p.Y) On(); }
+                    else if (!ppLevel) { if (n.Y < p.Y) Off(); }
+                    else if (p.Y > pp.Y) { if (n.Y < p.Y) Off(); }
+                    else if (p.Y < pp.Y) { if (n.Y > p.Y) On(); }
+                }
+                else
+                {
+                    if (ppRight) { On(); Off(); }
+                    else if (!ppLevel) Off();
+                    else if (p.Y > pp.Y) Off();
+                }
+            }
+        }
+
         /// <summary>The whole of it for one glyph: its figures, in pixels, into per-sub-row
         /// crossing lists in the frame GdiTableFilterRowset pairs -- rows counted from the top,
         /// x as the sample centre's own expression so the span test lands on the index exactly,
@@ -2378,6 +2441,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 if (cx != sx || cy != sy) { verts.Add((cx, cy)); GdiLine(cx, cy, sx, sy, L); }
                 GdiVertexRule(verts, L);
+                GdiVertexRuleCol(verts, L);
             }
             // fsc_FillBitMap@140042778 fills [on[k], off[k]) -- half-open, the lower of the two
             // first, and nothing at all when they are equal. The fill downstream tests a CLOSED

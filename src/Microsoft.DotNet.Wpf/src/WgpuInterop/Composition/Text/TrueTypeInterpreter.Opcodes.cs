@@ -641,12 +641,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             Console.Error.WriteLine($"IUPX pts={_realPoints} applied={_phaseApplied}"
                                 + $" compat64={CompatibleAdvance64} ct={ClearTypeInfo}"
                                 + $" bilevel={BiLevelPass} depth={HintDepth}");
-                        // ORDER. The phase writes CurX without setting TagTouchX, so running it
-                        // BEFORE IUP lets IUP reposition every untouched point from its ORIGINAL
-                        // coordinates and throw the compression away -- which is exactly what
-                        // Arial Italic 'w'@16 shows: the tree computes d=-41..-166 per node and the
-                        // rendered glyph is not compressed at all. GDI's ExecutePhaseControl runs
-                        // over the finished outline. WPF_CT_PHASE_AFTERIUP=1 puts it after.
+                        // ORDER, SETTLED OFF THE BINARY (2026-09-20): THE PHASE RUNS FIRST, AND
+                        // THEN THE INTERPOLATION. itrp_IUP@140039020 opens with the gate this file
+                        // already models -- globals[0x16b]==2, globals[0x1c0] bits 0 and 1 set,
+                        // (bits&4) != (axis&1) -- and then reads the latch elem[0x60]. If the latch
+                        // is clear it branches FORWARD over the interpolation to its inlined phase
+                        // block at 1400391f8:
+                        // <code>
+                        //   w13 = ends[contourCount-1] + 5          // every point, four phantoms
+                        //   w8  = first node index whose flags&1 is set, else w13
+                        //   w15 = (w8 &lt; w13)                        // "any node flagged"
+                        //   for (w14 = 0; w14 &lt; w13; w14++) PhaseShift(ctx, elem, w15, w14)
+                        //   elem[0x60] = 1
+                        //   b 0x1400390b0                           // ...and INTO the loop
+                        // </code>
+                        // so the last thing the phase block does is fall into the interpolation it
+                        // jumped over. An earlier note here said "GDI's ExecutePhaseControl runs
+                        // over the finished outline" and used that to argue the other order; that
+                        // is true of ExecutePhaseControl@140035970, which itrp_Execute calls at the
+                        // END for glyphs whose programs never reach an IUP, and it is not true of
+                        // itrp_IUP's own copy. The two are byte-for-byte identical bodies called at
+                        // different times, which is what made the claim easy to mix up.
+                        // <para>The consequence is the one the old note worried about and GDI
+                        // accepts: the phase writes CurX without setting TagTouchX, so IUP
+                        // immediately rebuilds every untouched point from its ORIGINAL coordinates
+                        // and the anchors' phased ones. Only the anchors keep the compression, by
+                        // design. WPF_CT_PHASE_AFTERIUP=1 puts it after, which the binary does
+                        // not.
                         if (s_phaseAfterIup) { InterpolateUntouched(true); ApplyPhaseAtIup(); }
                         else { ApplyPhaseAtIup(); InterpolateUntouched(true); }
                         _iupDone = true; _iupXDone = true; break;
