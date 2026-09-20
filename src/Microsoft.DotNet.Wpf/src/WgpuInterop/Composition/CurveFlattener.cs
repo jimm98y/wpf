@@ -103,6 +103,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// rectangle, a circle -- does not pay two and a half times the segments for an
         /// accuracy only text at a few pixels an em can use. WPF_CURVE_TOL overrides
         /// both.</para></summary>
+        /// <summary>STALE FOR TEXT SINCE THE SCAN WALK WAS UNGATED (measured 2026-09-20). Every
+        /// number in the paragraphs above was taken when a glyph reached the rasterizer as a
+        /// FLATTENED polygon. It does not any more: PathRasterizer.GdiExactRows runs for every
+        /// glyph now that WPF_CT_SCAN_ONEROW is on, and it hands each quadratic to GdiSpline --
+        /// the port of EvaluateSpline plus fsc_CalcSpline, which subdivides in 26.6 integers
+        /// until the piece is monotonic in both axes and then solves it per scanline. No chord,
+        /// no tolerance. On the holdout at 32,280, WPF_CT_CURVE_SPLIT=0, =nomark and
+        /// WPF_CURVE_TOL=0.00001 all measure 32,280 EXACTLY -- the knobs below no longer touch
+        /// text at all, and a conclusion drawn from them is a conclusion about shapes.</summary>
         public static readonly float GlyphTolerance =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_CURVE_TOL"),
                            System.Globalization.NumberStyles.Float,

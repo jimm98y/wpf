@@ -3053,7 +3053,26 @@ namespace WgpuInterop.Tests.Text
         /// <para>Ask it against the INTERVAL, never against the single solved value: the solver's
         /// answer is its own tie-break wherever the pixels leave a coordinate free, and reading
         /// that as GDI's position is what produced this investigation's retracted conclusions.</para>
-        /// <para>WPF_TOUCHSETS=chars@ppem, e.g. "HNM8s0@12".</para></summary>
+        /// <para>WPF_TOUCHSETS=chars@ppem, e.g. "HNM8s0@12".</para>
+        /// <para>WHAT IT SAYS ONCE IT IS ASKED IN CLEARTYPE (2026-09-20, the first readings taken
+        /// after the SubpixelFitting bug below was fixed). Tahoma, the worst face on the holdout,
+        /// over a-z0-9 at 10/12/14/16ppem: 1,090 points a size, 868-870 of them interpolated,
+        /// 97.0/97.7/98.3/98.4% of OUR coordinates are ones GDI's own pixels allow, and ELEVEN TO
+        /// FOURTEEN are impossible -- points whose IUP prediction, computed from GDI's OWN values
+        /// for the two anchors, still lands outside the interval GDI's pixels allow. Those are the
+        /// only points in any census here that indict the TOUCH SET rather than a coordinate.</para>
+        /// <para>At 12ppem ten of the eleven are OFF-CURVE, and nine want the point moved the same
+        /// way -- 8 to 20 sixty-fourths, two to five SIXTEENTHS. The clearest is a point whose two
+        /// anchors moved -0.140 and -0.066 of a pixel: every point interpolated between them must
+        /// move NEGATIVE, and GDI's pixels want that one at least +0.059 POSITIVE. No
+        /// interpolation of those anchors can produce it, so GDI either touches that point or
+        /// hangs it off different anchors.</para>
+        /// <para>That is the same shape as the Times Bold finding at TrueTypeInterpreter's
+        /// post-IUP suppressions -- "GDI touching points our program never touches", with moves of
+        /// four, six and nine sixteenths -- now reproduced on a second face. It is not the
+        /// interpolation (itrp_IUP is verified exact and both of its reference arrays are
+        /// implemented) and not the anchors (18 of the 23 touched points the outline solver moves
+        /// need one sixty-fourth or less).</para></summary>
         [Fact]
         public void WhichPointsGdiTouchedInX()
         {
