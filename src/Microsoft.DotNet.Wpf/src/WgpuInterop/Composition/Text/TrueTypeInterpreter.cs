@@ -1326,6 +1326,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_ctInPrepAuto =
             Environment.GetEnvironmentVariable("WPF_CT_PREP") == "auto";
         
+        /// <summary>WPF_CT_PREP=1 puts the pre-program on the ClearType grid too; =auto ties it to
+        /// the symmetric-rendering answer.
+        /// <para>THE BINARY'S GATE SAYS WHICH, AND THE MEASUREMENT SAYS WHAT 0x16b HOLDS. Every
+        /// round-state setter -- itrp_RTG@14003d340 and its five siblings -- picks the SUBPIXEL
+        /// rounding function over the whole-pixel one when
+        /// `localGS[0xcc] != 0 &amp;&amp; (globals[0x88] bit 2 || globals[0x16b] != 0)`. Read alone that
+        /// allows the pre-program, since 0x16b is plainly not the projection. Measured on the
+        /// holdout at 31,200: putting prep on the ClearType grid costs 5,815,200 and tying it to
+        /// the symmetric answer 1,240,559. So `globals[0x16b]` is ZERO while the pre-program runs
+        /// and 2 once a glyph is loaded -- which is also what itrp_IUP's `if (globals[0x16b] != 2)
+        /// bail` says -- and excluding prep, which this does, IS the gate.</para>
+        /// <para>The engine compensation went the same way: WPF_CT_ENGINE=64 measures
+        /// 163,269,513, so GDI's is zero and the `comp / 2` the SP family applies to it is
+        /// invisible here.</para></summary>
         private static readonly bool s_ctInPrep =
             Environment.GetEnvironmentVariable("WPF_CT_PREP") == "1";
 
