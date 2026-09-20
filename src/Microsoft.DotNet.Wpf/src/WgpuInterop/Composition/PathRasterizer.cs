@@ -1559,7 +1559,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // in the row ABOVE their cap height: the cap top sits at 22.703 device rows, the
                 // last sub-row centre of row 22 is at 22.9 and is inside the glyph, and we were
                 // clamping row 22 away. WPF_CT_BOX_FLIP=0 restores the unflipped bounds.</para>
-                int colMin = (gx0 + 0x1f) >> 6, colMax = (gx1 + 0x20) >> 6;
+                // The same inclusivity on the OTHER axis. GDI's column range is colMin..colMax
+                // INCLUSIVE and xMax below is exclusive, so the exclusive bound is one past it.
+                // x is not flipped, so the two constants stay where they are.
+                // WPF_CT_BOX_COLINC=0 keeps the exclusive reading this had.
+                int colMin = (gx0 + 0x1f) >> 6, colMax = ((gx1 + 0x20) >> 6) + (s_boxColInc ? 1 : 0);
                 int rowMin = s_boxFlip ? -1 - ((0x20 - gy0) >> 6) : (gy0 + 0x1f) >> 6;
                 int rowMax = s_boxFlip ? -((0x1f - gy1) >> 6) : (gy1 + 0x20) >> 6;
                 if (colMax == colMin) colMax++;
@@ -1958,6 +1962,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
         private static readonly bool s_boxFlip =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_FLIP") != "0";
+
+        private static readonly bool s_boxColInc =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_COLINC") != "0";
 
         private static readonly bool s_dropoutExact =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";

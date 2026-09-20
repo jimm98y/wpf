@@ -4350,6 +4350,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // dot NEAR ZERO to +/-0x4000, and 16383 is nowhere near it.</para>
             // <para>So the twelve y points are a difference in WHICH INSTRUCTIONS RUN, not in what
             // any of them computes -- the touch-set frontier, now narrowed to seven glyphs.</para>
+            // <para>RE-COUNTED 2026-09-20 over six faces x twelve sizes (9..18, 20, 24), the
+            // repertoire a-z A K N R W X Y Z 0-9: SIXTY-EIGHT of the seventy-two face/size
+            // combinations are bit-exact against GDI's own bi-level fitted points, and the four
+            // that are not are ONE POINT EACH, all in y, all 2/64, all on a diagonal crossing --
+            // Arial 'X' at 13 and 16, Times New Roman 'k' at 14 and 'x' at 24. Twelve down to
+            // four. Nothing else in the corpus disagrees with GDI's own fit at all, which is what
+            // makes the ClearType branch the only place the holdout can be coming from.</para>
             if (!s_freeStepExact || !s_yMoveTrunc
                 || (BiLevelPass && s_yMoveTruncMode == "ct"))
                 return FreedomStep(distance, component);
