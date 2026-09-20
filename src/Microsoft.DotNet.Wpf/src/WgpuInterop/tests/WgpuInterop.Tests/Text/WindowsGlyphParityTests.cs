@@ -9605,7 +9605,25 @@ namespace WgpuInterop.Tests.Text
         /// about the curve rather than about which control point to blame.</para>
         /// <para>Ours is solved the same way from our own lamps, so the two are directly
         /// comparable. `-` marks a sample both agree is outside, `#` both inside, `?` one the
-        /// pixels do not pin down, and `G`/`O` a sample only GDI or only we cover.</para></summary>
+        /// pixels do not pin down, and `G`/`O` a sample only GDI or only we cover.</para>
+        /// <para>THE CENSUS IT GIVES (2026-09-20, every differing glyph at 9..17ppem -- 116 of
+        /// them, which is the whole nSub=1 pool). 176 glyph-rows differ, and:</para>
+        /// <code>
+        ///   142 of 176 are exactly THREE lamps off by one -- a single sample, since a sample
+        ///        falls in exactly three windows; 12 are two lamps and 21 one, which is a
+        ///        sample near the glyph's edge where the window is clipped; ONE is four.
+        ///    93 have the extra sample on OUR side, 82 on GDI's -- balanced, so there is no
+        ///        systematic "our stems are fatter" left in this pool.
+        ///   116 sit where the window is at an EDGE (its lowest level 0..2); 43 where it is
+        ///        nearly full (4..6), which is a one-sample HOLE one side keeps.
+        /// </code>
+        /// <para>And the extra sample is spread evenly over the six sample positions in a pixel
+        /// (45/45/42/42/55/55), which rules out the tidiest explanation available: a coordinate
+        /// landing EXACTLY on a lamp sample, which can only happen at a quarter pixel (16 and 48
+        /// mod 64) and would have concentrated on positions 1 and 4. These are not ties broken
+        /// the wrong way; they are edges genuinely up to a sixth of a pixel out, which is the
+        /// size the outline solver's census asks interpolated points to move by.</para>
+        /// </summary>
         [Fact]
         public void WhereGdiSamplesTheRow()
         {

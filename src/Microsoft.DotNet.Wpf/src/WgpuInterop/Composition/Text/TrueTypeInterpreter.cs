@@ -585,6 +585,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // phase block -- same lastContourEnd+5 scan, same "any node flagged" boolean, same
                 // PhaseShift over every point -- and it neither reads nor writes elem[0x60], the
                 // latch that stops IUP's own copy running twice. itrp_Execute@140037314 calls it.
+                // AND IT DOES NOT RUN TWICE, which the gate says and the measurement confirms.
+                // ExecutePhaseControl@140035970 really does not read elem[0x60] -- it only writes
+                // it, at 1400359fc -- so the latch that stops itrp_IUP's copy repeating does not
+                // stop this one. What stops it is the CALL SITE: itrp_Execute reaches it only
+                // through `globals[0x16b] == 2` (a glyph, not prep), `globals[0x1c0]` bits 0 and 1
+                // (ClearType), and `elem[0xd0] == 0` -- a SECOND latch, written by
+                // fsg_ExecuteGlyph. That one is plainly not zero once the glyph program has run
+                // its IUP: clearing our own latch so the phase runs again measures 27,149,676
+                // against 31,200. The at-execute call is still needed for the glyphs that never
+                // reach an IUP -- turning it off costs 217,420.
                 if (s_phaseTwice) _phaseApplied = false;
                 if (s_phaseAtExecute) ApplyPhaseAtIup();
 

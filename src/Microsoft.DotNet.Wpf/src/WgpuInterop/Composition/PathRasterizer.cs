@@ -1882,7 +1882,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             + Count(rowOn, rowOff, R, C + 1, yMin, yMax)
                             + Count(rowOn, rowOff, R - 1, C + 1, yMin, yMax) < 2) why = "stub-right";
                     }
-                    if (why is null && R > yMin && Bit(C, R - 1)) why = "on-below";
+                    // WHICH NEIGHBOUR "ALREADY LIT" MEANS. DoVertDropout@140041ea8 refuses the
+                    // fill when the bit at (col, row - 1) is set, and its rows are the scan
+                    // converter's -- the same frame the glyph box turned out to be written in,
+                    // which is y-UP, while these rows count downward. If that is so the test
+                    // belongs on R + 1 here. WPF_CT_DROPOUT_FLIP=1 measures it.
+                    int nb = s_dropFlip ? R + 1 : R - 1;
+                    if (why is null && nb >= yMin && nb < yMax && Bit(C, nb)) why = "on-below";
                     if (why is null && R < yMax && Bit(C, R)) why = "on-above";
                     int fr = smart ? DropMid(onE.V, offE.V) : R - 1;
                     if (fr < yMin) fr = yMin;
@@ -1988,6 +1994,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             3 => (((int) MathF.Round(a * 64f) + (int) MathF.Round(b * 64f)) - 1) >> 7,
             _ => (int) MathF.Floor((a + b) * 0.5f - 1f / 128f),
         };
+
+        /// <summary>WPF_CT_DROPOUT_FLIP=1 puts the "already lit" neighbour test on R + 1.
+        /// <para>REFUTED, and it settles the frame. The glyph box turned out to be written in the
+        /// outline's y-UP frame while these rows count downward, so DoVertDropout's
+        /// `if (bit(col, row - 1)) return` was worth asking about. It measures 81,054 against
+        /// 31,200, so the scan converter's rows are this frame's and R - 1 is right.</para>
+        /// </summary>
+        private static readonly bool s_dropFlip =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_FLIP") == "1";
 
         private static readonly bool s_dropoutExact =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";
