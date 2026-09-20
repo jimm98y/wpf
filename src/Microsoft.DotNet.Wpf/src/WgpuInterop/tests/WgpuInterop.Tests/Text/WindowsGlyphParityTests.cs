@@ -4037,8 +4037,24 @@ namespace WgpuInterop.Tests.Text
             foreach (int slant in slants)
             {
                 var bars = new List<SyntheticFont.Bar>();
+                // WPF_CROSS_LEFT=lo,hi,step SWEEPS THE EDGE POSITION, which this probe never did.
+                // The left edge was pinned at 400 font units and only the WIDTH moved, so every
+                // case put the left edge at the same sub-pixel offset -- and an edge that never
+                // approaches a sample boundary cannot show a boundary disagreement. Consolas '1'
+                // at 18ppem has its flag diagonal crossing row 19 at device x 9.975, a fortieth
+                // of a pixel from the sample at 10.0, and that is where our pixels and GDI's part
+                // company on an outline the scaler itself says we have EXACTLY right.
+                // SWEPT AND THE RASTERIZER SURVIVED IT: 41 edge positions (380..420 font units,
+                // a third of a pixel at 12ppem, one per RUN) x 42 slopes x 4 tapers x 3 sizes =
+                // 20,664 cases, ZERO differing lamps. So a boundary edge position is not what
+                // Consolas '1'@18 hits. Run ONE left value per invocation -- more than two
+                // overflows the bar-to-character mapping and reports thousands of phantom
+                // differences at an ink ratio of 1.005, which is the tell.
+                int[] lefts = Environment.GetEnvironmentVariable("WPF_CROSS_LEFT") is { Length: > 0 } ls
+                    ? BuildRange(ls) : new[] { 400 };
+                foreach (int left in lefts)
                 for (int units = 96; units <= 288; units += 48)
-                    bars.Add(new SyntheticFont.Bar(units, 400, 400 + units, false, false,
+                    bars.Add(new SyntheticFont.Bar(units, left, left + units, false, false,
                                                    noProgram: true, slant: slant, cross: cross,
                                                    taper: Math.Min(taper, units - 16)));
                 // WPF_CROSS_GASP=nosym: ship a 'gasp' that asks for gridfit and grey but NOT
@@ -10017,7 +10033,15 @@ namespace WgpuInterop.Tests.Text
         /// crossings, arcs in both orientations, stem/arm junctions -- and this says the proof
         /// does not carry to a real glyph's outline. That is where to look, and it is a much
         /// smaller target than the fit: the geometry is now PINNED by the scaler itself rather
-        /// than inferred from the pixels it produced.</para></summary>
+        /// than inferred from the pixels it produced.</para>
+        /// <para>AND IT IS NOT A BOUNDARY EDGE POSITION. The obvious reading -- that the probe
+        /// pinned its bar's left edge at 400 font units and so never walked an edge across a
+        /// sample -- is right about the gap and wrong about the consequence: sweeping the edge
+        /// through 41 positions (WPF_CROSS_LEFT) over 42 slopes, 4 tapers and 3 sizes is 20,664
+        /// cases and ZERO differing lamps. The scan converter handles edges arbitrarily close to
+        /// a sample. Whatever Consolas '1' does that a tapered slanted bar does not -- several
+        /// edges meeting in one row, a contour that reverses, the dropout path -- is the next
+        /// thing to reproduce synthetically.</para></summary>
         /// <summary>THE SOLVER'S "GDI WANTS POINT N AT V" IS NOT GDI'S COORDINATE, PROVEN.
         /// <para>2026-09-21, against the real scaler. `scratchpad/ctharness` now drives
         /// fontdrvhost's own fs__Contour directly and, with its mode word `inp[0xd0]` set to 3,
