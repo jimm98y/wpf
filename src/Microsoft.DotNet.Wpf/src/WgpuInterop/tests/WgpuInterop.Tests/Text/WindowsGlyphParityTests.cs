@@ -4691,6 +4691,22 @@ namespace WgpuInterop.Tests.Text
         /// mask -- itrp_IUP tests tag bit 1 for x and bit 2 for y, so the y work at instructions
         /// 181..192 (which does touch point 19) cannot split the x run. Whatever splits it is
         /// either a branch we do not take or something outside the opcode stream.</para>
+        /// <para>NARROWED FURTHER. It is not the TAG ARRAY surviving the first pass:
+        /// fsg_SimpleInnerGridFit@140031460 memsets elem+0x48 for `lastContourEnd + 9` bytes at
+        /// the top of every call, gated only on the glyph having a program, and it is called once
+        /// per pass. It is not a MISSING touch either -- dropping any of '6'@12's seven anchors
+        /// leaves the search at 118 or worse, so GDI has MORE touched points than we do, not
+        /// fewer. And it is not a storage-gated branch: Verdana's fpgm tests `storage[2] == 2`
+        /// (function 91 at instruction 1000, and the block at 892) and our ClearType pass carries
+        /// 6 -- ClearType bit 2 OR compatible-widths bit 4 -- which is what GDI's own GETINFO
+        /// answers give, in prep as well as in a glyph
+        /// (WhatGdiAnswersGetInfoInThePreProgram: ClearType, compatible widths and symmetric
+        /// rendering all set at 16ppem). The bi-level pass carries 0 and takes the other branch,
+        /// as it should.</para>
+        /// <para>TRAP, while that probe is open: its "ours" column reads -1 for every bit GDI
+        /// sets, which is its sentinel for "the shift was neither 0 nor 10 pixels", not a real
+        /// disagreement -- our prep demonstrably answers those bits, since Verdana's storage[2]
+        /// comes out 6. The probe's own side needs fixing before that column means anything.</para>
         /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
         /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
         /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
