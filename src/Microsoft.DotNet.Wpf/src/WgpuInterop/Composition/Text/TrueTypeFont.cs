@@ -151,6 +151,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // nothing further than half a sixty-fourth from GDI's. The two paragraphs below are the
         // earlier measurements that got within 0.4% of it from the pixels alone.
         //
+        // AND DO NOT RE-DERIVE IT FROM THE POINTS THAT ARE WRONG. 2026-09-20: Tahoma Italic 'X'
+        // at 10ppem is wrong at eight sub-pixel phases, every one of them wanting exactly -1/64 on
+        // one point, and solving `shear * y * 64` for the coefficient that would give GDI's term
+        // at those four points lands on shear in [0.33520, 0.33647) -- a tight interval that
+        // EXCLUDES 87/256 and is centred on 86/256. It is wrong, and expensively so: 86/256
+        // measures 507,895 on the holdout against 28,183, and Tahoma Italic alone 4,128 ->
+        // 483,840. The interval was fitted to the handful of points that disagree while ignoring
+        // the hundreds that already agree, and moving the coefficient by one 256th moves all of
+        // them. A shear derived from failures alone will always look tighter than it is.
+        //
         // MEASURED OFF GDI'S OWN PIXELS, not swept against a specimen. Draw a vertical stem with
         // GDI's simulated italic, take the sub-pixel CENTROID of each row's ink -- for a single
         // stem that is its centre line -- and the slope through those centroids is the shear. Over
