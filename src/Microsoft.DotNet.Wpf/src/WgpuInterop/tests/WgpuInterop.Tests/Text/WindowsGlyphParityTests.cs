@@ -10004,6 +10004,18 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveGrid64 =
             Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
+        /// <summary>THE KNOB SURFACE IS EXHAUSTED. Every `WPF_CT_*` in Composition/ -- 235 of them,
+        /// minus the pure diagnostics (_DUMP, _TRACE, _DEBUG, _INFO, _VALIDATE) and the two
+        /// translation probes -- has now been measured against the phase holdout at both 0 and 1,
+        /// plus every string value the code compares against. That is 369 settings over four
+        /// sweeps, on a fourteen-to-eighteen spec set in which ten specs score ZERO so a
+        /// regression cannot hide. <b>Not one is below the baseline.</b>
+        /// <para>So the residual is not a shipped configuration choice. It cannot be reached by
+        /// flipping anything this port already knows how to do, which is worth knowing before
+        /// anyone sweeps knobs again: the answer is not in here. The two apparent gains both came
+        /// from tuning on failing specs alone and both were catastrophic on the real holdout --
+        /// WPF_CT_PFPROJ=0 (21,353 on four failing specs, 44,510 on the holdout against 28,183)
+        /// and an 86/256 shear that four independent points agreed on (507,895).</para></summary>
         /// <summary>WHERE THE HOLDOUT ACTUALLY LIVES, 2026-09-20, and it is not where this session
         /// spent its day. By face: Tahoma 9,758, Times New Roman 8,980, Verdana 4,638, Consolas
         /// 2,571, Arial 2,236, Segoe UI ZERO. By face and style the largest single pool is
