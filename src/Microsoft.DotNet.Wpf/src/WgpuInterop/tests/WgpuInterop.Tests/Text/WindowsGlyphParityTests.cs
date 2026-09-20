@@ -9388,7 +9388,17 @@ namespace WgpuInterop.Tests.Text
         /// ppem 11,12,14,16,17,20,24 x four tapers x slants of 0, 300 and 900 design units, all
         /// eighty-four cases 0 differing lamps and every ink ratio 1.0000 -- and CURVES by this
         /// one. Nothing below the fit needs looking at again; see the point-solver census in the
-        /// note at SolveGdisOutlineXy.</para></para>
+        /// note at SolveGdisOutlineXy.</para>
+        /// <para>AND THE OTHER ORIENTATION TOO, which is what ArcEndX was built for and had never
+        /// been run: WPF_ARC_AXIS=x stands the chord up so the curve's extremum is in X. At 13,
+        /// 15 and 17ppem, all twenty-four shapes, GDI's ink and ours are again EQUAL to the
+        /// hundredth (13ppem totals 298.04 / 298.04, 15ppem 334.06 / 334.06, 17ppem 295.90 /
+        /// 295.90) even where both fall well short of the closed form, which is the
+        /// under-sampling the two rasterizers share. Between the two orientations the probe
+        /// covers a near-horizontal edge at a y extremum and a near-vertical one at an x
+        /// extremum, so the WHERE-IN-THE-ROW-IS-THE-SAMPLE question is settled as well: a wrong
+        /// vertical sample position would show at a y extremum and nowhere else, and it does not
+        /// show.</para></para>
         /// <para>ANSWERED -- AND THE ANSWER WAS ALREADY WRITTEN DOWN, at the span test in
         /// PathRasterizer.GdiTableFilterRowset. Read that note first; this one only adds the sweep
         /// and the eliminations. It is a TIE AT A SAMPLE: we count a sample exactly on a span's

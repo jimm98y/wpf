@@ -4507,10 +4507,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// ToHalfGrid). Computing on the magnitude and clamping it at zero, which is what happens
         /// at the end of this function, is the same rule.</item>
         /// <item>itrp_MDRP passes the compensation as `globals[(opcode &amp; 3) + 9]`, a per-colour
-        /// array, and applies it inline with the same sign rule when the round bit is clear. Ours
-        /// is zero (WPF_CT_ENGINE), and it must be: a non-zero one would move every rounded link
-        /// by a fixed amount, which is not the shape of what is left. The same excerpt halves the
-        /// minimum distance when localGS[0xcc] is set, which s_minDistMdrp already does.</item>
+        /// array, and applies it inline with the same sign rule when the round bit is clear. The
+        /// same excerpt halves the minimum distance when localGS[0xcc] is set, which
+        /// s_minDistMdrp already does.</item>
+        /// <item>AND THE COMPENSATION IS PROVEN ZERO, read end to end rather than inferred from
+        /// the residual's shape, which is how this note used to argue it. fs__Contour fills the
+        /// array itself, at 1400247b0 and again in the second pass:
+        /// <code>
+        ///   c = (0x16c0a - clientRec[0x1a0]) &gt;&gt; 10;      // arithmetic
+        ///   globals[9] = 0;      // grey
+        ///   globals[10] = c;     // black
+        ///   globals[11] = -c;    // white
+        ///   globals[12] = 0;
+        /// </code>
+        /// and clientRec[0x1a0] is a copy of transform[0x98], which bSetXform writes at 14001c67c
+        /// from the literal at 14001c7f8. That literal is <c>0a 6a 01 00</c> = 0x16a0a. So
+        /// <c>0x16c0a - 0x16a0a = 0x200</c>, exactly half of the 0x400 the shift divides by, and
+        /// the arithmetic shift takes it to ZERO on all three colours. The constant is chosen to
+        /// make it zero. Swept on the holdout for completeness: every non-zero value is
+        /// catastrophic (-6 is 41,625,889 against 28,183), which is what a proof predicts.</item>
         /// </list>
         /// So the ClearType grid is not where the remaining sixty-fourths come from.</summary>
         private int RoundDistance(int distance, bool position = false, bool mdap = false,
