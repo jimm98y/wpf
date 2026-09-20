@@ -1919,12 +1919,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     string? why = null;
                     if (stubs)
                     {
+                        // The same frame question as the neighbour test, and DoHorizDropout
+                        // settles it. Read at 140095a38, its two gates are
+                        //   HorizCrossings(col, row+1) + VertCrossings(col-1, row+1)
+                        //                              + VertCrossings(col,   row+1) >= 2
+                        //   HorizCrossings(col, row-1) + VertCrossings(col-1, row)
+                        //                              + VertCrossings(col,   row)   >= 2
+                        // and its "already lit" pair is GetBitAbs(col-1, row) / (col, row) --
+                        // which is what the horizontal block above already does, term for term,
+                        // with R+1 and R-1 exactly where they are written. The two directions
+                        // share a frame, so DoVertDropout's `row - 1` is this R - 1 and no flip
+                        // is due. Measured: STUBROW=1 costs 417,328 and with the neighbour flipped
+                        // too 442,382, against 31,200. WPF_CT_DROPOUT_STUBROW=1 puts it on R + 1.
+                        int sr = s_dropStubRow ? R + 1 : R - 1;
                         if (Count(cntColOn, cntColOff, C - 1, R, xMin, xMax)
                             + Count(cntRowOn, cntRowOff, R, C, yMin, yMax)
-                            + Count(cntRowOn, cntRowOff, R - 1, C, yMin, yMax) < 2) why = "stub-left";
+                            + Count(cntRowOn, cntRowOff, sr, C, yMin, yMax) < 2) why = "stub-left";
                         else if (Count(cntColOn, cntColOff, C + 1, R, xMin, xMax)
                             + Count(cntRowOn, cntRowOff, R, C + 1, yMin, yMax)
-                            + Count(cntRowOn, cntRowOff, R - 1, C + 1, yMin, yMax) < 2) why = "stub-right";
+                            + Count(cntRowOn, cntRowOff, sr, C + 1, yMin, yMax) < 2) why = "stub-right";
                     }
                     // WHICH NEIGHBOUR "ALREADY LIT" MEANS. DoVertDropout@140041ea8 refuses the
                     // fill when the bit at (col, row - 1) is set, and its rows are the scan
@@ -2045,6 +2058,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// `if (bit(col, row - 1)) return` was worth asking about. It measures 81,054 against
         /// 31,200, so the scan converter's rows are this frame's and R - 1 is right.</para>
         /// </summary>
+        private static readonly bool s_dropStubRow =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_STUBROW") == "1";
+
         private static readonly bool s_dropoutCountsWalk =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_COUNTS") == "walk";
 
