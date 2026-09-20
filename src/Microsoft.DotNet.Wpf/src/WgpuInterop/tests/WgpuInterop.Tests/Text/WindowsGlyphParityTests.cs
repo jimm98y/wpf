@@ -9210,6 +9210,147 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(report.ToString());
         }
 
+        /// <summary>WHERE AN ARM RUNS INTO A STEM, in GDI and in ours. WPF_JUNC=&lt;ppem&gt;.
+        /// <para>Every other program-free probe is now EXACT: bars, slanted bars, tapered bars,
+        /// two strokes crossing (WPF_CROSS_X=1, forty-eight cases, 0 differing lamps) and a lone
+        /// quadratic (HowGdiWeighsAQuadraticArc, twenty-four arcs at three sizes, ink equal to
+        /// the hundredth). The holdout is 28,183 and what is left of it is not spread over a
+        /// glyph: the sample-row oracle shows TWO ADJACENT ROWS, the same three lamps, one sample
+        /// too much in the upper and one too little in the lower -- Verdana 'b'@13, 'r'@11 and
+        /// 's'@11 and Tahoma 'p'@17 all carry exactly that -- and the two rows are always the ones
+        /// where a bowl or an arm runs into a stem.</para>
+        /// <para>So this draws that junction and nothing else. One contour: a stem Left..Right, a
+        /// flat top out to ArmRight, down the arm's end, and ONE QUADRATIC back to (Right, JoinY)
+        /// -- a near-horizontal curve meeting a vertical edge -- then down to the baseline. No
+        /// glyph program, so both rasterizers read the same outline and any difference is the scan
+        /// converter's, which is the only way left to tell a fit error from a raster error.</para>
+        /// <para>JoinY walks the join across a pixel in sixty-fourths (six positions per pixel
+        /// reach a different sample) and the control walks the curve from nearly straight to a
+        /// quarter circle, so a TIE at one position is told from a placement difference at all of
+        /// them -- the same test the arc probe uses. WPF_JUNC_GASP=nosym for the no-oversampling
+        /// regime the residual lives in; WPF_JUNC_DUMP=&lt;i&gt; prints one case as two character
+        /// maps.</para></summary>
+        [Fact]
+        public void HowGdiFillsAStemArmJunction()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? spec = Environment.GetEnvironmentVariable("WPF_JUNC");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_JUNC=<ppem>");
+            int ppem = int.Parse(spec!);
+            const string Family = "WpfJuncProbe";
+            double u = SyntheticFont.UnitsPerEm / (double) ppem;      // font units per pixel
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== an arm running into a stem, WpfJuncProbe at {ppem}ppem,"
+                              + " no glyph program");
+            report.AppendLine("   joinY/64  bulge     lamps  differing   worst  mean|d|"
+                              + "    GDI ink   our ink   ours/GDI");
+
+            int stemL = (int) Math.Round(1.0 * u);
+            // WPF_JUNC_STEMX=<n>: move the stem's RIGHT edge -- the vertical the curve runs into
+            // -- by n sixty-fourths of a pixel. The whole disagreement on real glyphs is in x at
+            // exactly that edge, so walking it across a pixel is what tells a tie from a rule.
+            int stemX64 = int.TryParse(Environment.GetEnvironmentVariable("WPF_JUNC_STEMX"),
+                                       out int sx64) ? sx64 : 0;
+            int stemR = (int) Math.Round(2.5 * u + stemX64 * u / 64.0);
+            int armR = (int) Math.Round(6.0 * u);
+            int armTop = (int) Math.Round(5.0 * u);
+            int armBot = (int) Math.Round(4.0 * u);
+
+            // WPF_JUNC_JOIN=a,b,c overrides the join offsets (in sixty-fourths of a pixel).
+            int[] joins = Environment.GetEnvironmentVariable("WPF_JUNC_JOIN") is { Length: > 0 } jj
+                ? System.Linq.Enumerable.ToArray(
+                      System.Linq.Enumerable.Select(jj.Split(','), int.Parse))
+                : new[] { 0, 5, 11, 16, 21, 27, 32, 37, 43, 48, 53, 59 };
+
+            var bars = new List<SyntheticFont.Bar>();
+            var wanted = new List<(int Join, double Bulge)>();
+            foreach (int j64 in joins)
+            foreach (double bulge in new[] { 0.0, 0.25, 0.75, 1.5 })
+            {
+                int joinY = (int) Math.Round(1.5 * u + j64 * u / 64.0);
+                // The control sits between the arm's end and the join, pulled DOWN by `bulge`
+                // pixels, so the underside runs from nearly straight to a deep curve.
+                int cx = (stemR + armR) / 2;
+                int cy = (int) Math.Round((armBot + joinY) / 2.0 - bulge * u);
+                bars.Add(new SyntheticFont.Bar(0, stemL, stemR, round: false, minDistance: false,
+                                               noProgram: true, junction: true, armTop: armTop,
+                                               armRight: armR, armBottom: armBot, joinY: joinY,
+                                               joinCtrlX: cx, joinCtrlY: cy));
+                wanted.Add((j64, bulge));
+            }
+
+            SyntheticFont.GaspRanges =
+                Environment.GetEnvironmentVariable("WPF_JUNC_GASP") switch
+                {
+                    "nosym" => new (int, int)[] { (0xFFFF, 0x0003) },
+                    "all" => new (int, int)[] { (0xFFFF, 0x000F) },
+                    "times" => new (int, int)[] { (8, 0xA), (17, 0x5), (0xFFFF, 0xF) },
+                    _ => null,
+                };
+            byte[] fontBytes;
+            try { fontBytes = SyntheticFont.Build(Family + ppem, bars); }
+            finally { SyntheticFont.GaspRanges = null; }
+
+            int count = 0;
+            IntPtr handle = AddFontMemResourceEx(fontBytes, fontBytes.Length, IntPtr.Zero, ref count);
+            Assert.True(handle != IntPtr.Zero && count > 0, "GDI refused the probe font");
+            long allCompared = 0, allDiffering = 0, allSum = 0;
+            try
+            {
+                var font = new TrueTypeFont(fontBytes);
+                var raw = new byte[Width * Height * 4];
+                for (int i = 0; i < bars.Count; i++)
+                {
+                    string ch = ((char) (0x41 + i)).ToString();
+                    int baseline = ppem + 12;
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch, Family + ppem, ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    byte[] ours = OursRgba(font, ch, ppem, baseline, correction: true);
+                    if (Environment.GetEnvironmentVariable("WPF_JUNC_DUMP") == i.ToString())
+                        DumpTwo($"join {wanted[i].Join}/64 bulge {wanted[i].Bulge}", raw, ours);
+                    long compared = 0, differing = 0, worst = 0, sum = 0, gInk = 0, oInk = 0;
+                    for (int y = 0; y < Height; y++)
+                    {
+                        bool gRow = false, oRow = false;
+                        for (int x = 0; x < Width && !(gRow && oRow); x++)
+                            for (int c = 0; c < 3; c++)
+                            {
+                                if (raw[(y * Width + x) * 4 + (2 - c)] != 255) gRow = true;
+                                if (ours[(y * Width + x) * 4 + c] != 255) oRow = true;
+                            }
+                        if (!gRow || !oRow) continue;
+                        for (int x = 0; x < Width; x++)
+                        for (int c = 0; c < 3; c++)
+                        {
+                            int k = y * Width + x;
+                            int g = 255 - raw[k * 4 + (2 - c)];
+                            int o = 255 - ours[k * 4 + c];
+                            if (g == 0 && o == 0) continue;
+                            compared++; gInk += g; oInk += o;
+                            int d = Math.Abs(g - o);
+                            if (d == 0) continue;
+                            differing++; sum += d;
+                            if (d > worst) worst = d;
+                        }
+                    }
+                    allCompared += compared; allDiffering += differing; allSum += sum;
+                    report.AppendLine($"   {wanted[i].Join,8}  {wanted[i].Bulge,5:0.00}"
+                        + $"  {compared,8}  {differing,9}  {worst,6}"
+                        + $"  {(differing == 0 ? 0 : sum / (double) differing),7:0.0}"
+                        + $"  {gInk,9}  {oInk,9}"
+                        + $"     {(gInk == 0 ? 0 : oInk / (double) gInk),6:0.0000}");
+                }
+            }
+            finally { RemoveFontMemResourceEx(handle); }
+            report.AppendLine($"   TOTAL  {allCompared} lamps, {allDiffering} differing,"
+                              + $" sum|d| {allSum}");
+            if (Environment.GetEnvironmentVariable("WPF_JUNC_REPORT") is { Length: > 0 } rp)
+                File.AppendAllText(rp, report.ToString());
+            Console.Error.Write(report.ToString());
+        }
+
         /// <summary>WHAT A QUADRATIC ARC WEIGHS, in GDI, in ours, and in closed form.
         /// WPF_ARC=&lt;ppem&gt;.
         /// <para>Every synthetic probe before this one is made of STRAIGHT edges -- bars, slabs,

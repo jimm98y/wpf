@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
@@ -127,15 +127,35 @@ namespace WgpuInterop.Tests.Text
             /// the rasterizers disagreeing by a factor of five.</summary>
             public readonly bool Arc;
 
+            /// <summary>Draw a STEM WITH AN ARM RUNNING INTO IT: the one geometry no probe covers,
+            /// and the one every remaining residual sits on.
+            /// <para>The bars, the slanted bars, the crossed strokes and the lone quadratic are
+            /// all EXACT against GDI. What is left in the holdout is not spread over a glyph -- it
+            /// is two adjacent rows, at the same three lamps, one sample too much in the upper and
+            /// one too little in the lower, and those two rows are always the ones where a bowl or
+            /// an arm runs into a stem. Verdana 'b'@13, 'r'@11 and 's'@11 and Tahoma 'p'@17 all
+            /// have exactly that shape of error. This draws it with no glyph program, so both
+            /// rasterizers read the same outline and any difference is the scan converter's.</para>
+            /// <para>The contour is Left..Right for the stem, a flat top at ArmTop out to
+            /// ArmRight, down the arm's right end to ArmBottom, and then ONE QUADRATIC back to
+            /// (Right, JoinY) -- the join, where a near-horizontal curve meets a vertical edge --
+            /// and down Right to the baseline.</para></summary>
+            public readonly bool Junction;
+            public readonly int ArmTop, ArmRight, ArmBottom, JoinY, JoinCtrlX, JoinCtrlY;
+
             public Bar(int cvt, int left, int right, bool round, bool minDistance,
                        bool noProgram = false, int probe = 0, int lsb = int.MinValue,
                        int slant = 0, bool cross = false, int taper = 0, int slabHeight = 0,
                        int arcCtrlX = 0, int arcCtrlY = 0,
-                       int arcEndX = int.MinValue, int arcEndY = int.MinValue, bool arc = false)
+                       int arcEndX = int.MinValue, int arcEndY = int.MinValue, bool arc = false,
+                       bool junction = false, int armTop = 0, int armRight = 0, int armBottom = 0,
+                       int joinY = 0, int joinCtrlX = 0, int joinCtrlY = 0)
             {
                 Cvt = cvt; Left = left; Right = right; Round = round; MinDistance = minDistance;
                 NoProgram = noProgram; Probe = probe; Slant = slant; Cross = cross; Taper = taper;
                 SlabHeight = slabHeight; ArcCtrlX = arcCtrlX; ArcCtrlY = arcCtrlY; Arc = arc;
+                Junction = junction; ArmTop = armTop; ArmRight = armRight; ArmBottom = armBottom;
+                JoinY = joinY; JoinCtrlX = joinCtrlX; JoinCtrlY = joinCtrlY;
                 ArcEndX = arcEndX == int.MinValue ? right : arcEndX;
                 ArcEndY = arcEndY == int.MinValue ? 0 : arcEndY;   // Bottom
                 Lsb = lsb == int.MinValue ? left : lsb;
@@ -295,6 +315,33 @@ namespace WgpuInterop.Tests.Text
                 // y deltas
                 WriteI16(s, Bottom); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
                 WriteI16(s, Bottom - Top); WriteI16(s, 0); WriteI16(s, Top - Bottom); WriteI16(s, 0);
+                return;
+            }
+
+            if (b.Junction)
+            {
+                // P0 (Left, 0) P1 (Left, ArmTop) P2 (ArmRight, ArmTop) P3 (ArmRight, ArmBottom)
+                // P4 (JoinCtrl) OFF  P5 (Right, JoinY)  P6 (Right, 0).
+                int[] px = { b.Left, b.Left, b.ArmRight, b.ArmRight, b.JoinCtrlX, b.Right, b.Right };
+                int[] py = { Bottom, b.ArmTop, b.ArmTop, b.ArmBottom, b.JoinCtrlY, b.JoinY, Bottom };
+                int xLo = px[0], xHi = px[0], yLo = py[0], yHi = py[0];
+                for (int i = 1; i < px.Length; i++)
+                {
+                    if (px[i] < xLo) xLo = px[i];
+                    if (px[i] > xHi) xHi = px[i];
+                    if (py[i] < yLo) yLo = py[i];
+                    if (py[i] > yHi) yHi = py[i];
+                }
+                WriteI16(s, 1);
+                WriteI16(s, xLo); WriteI16(s, yLo);
+                WriteI16(s, xHi); WriteI16(s, yHi);
+                WriteU16(s, (ushort) (px.Length - 1));       // endPtsOfContours[0]
+                WriteU16(s, 0);                              // no instructions
+                for (int i = 0; i < px.Length; i++) s.WriteByte((byte) (i == 4 ? 0x00 : 0x01));
+                int prev = 0;
+                for (int i = 0; i < px.Length; i++) { WriteI16(s, px[i] - prev); prev = px[i]; }
+                prev = 0;
+                for (int i = 0; i < py.Length; i++) { WriteI16(s, py[i] - prev); prev = py[i]; }
                 return;
             }
 
