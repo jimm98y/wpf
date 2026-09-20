@@ -3221,6 +3221,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             // those positions is not GDI's, so that the inclusive test has been
                             // compensating. Flipping it is right only after that is fixed; until
                             // then this is a known, measured, deliberate difference.</para>
+                            // <para>BOTH HALVES OF THAT ARE NOW OVERTAKEN, re-measured 2026-09-20
+                            // at a holdout of 28,183. The tie is GONE from the arc probe: at 12,
+                            // 15 and 17ppem, with Times' own gasp, HowGdiWeighsAQuadraticArc
+                            // reports GDI's ink and ours EQUAL TO THE HUNDREDTH on all
+                            // twenty-four arcs (337.50 exact / 293.96 / 293.96 at 12ppem, and the
+                            // same at the other two), so nothing here needs a compensating
+                            // inclusive test any more. And the knob is no longer a 290k question
+                            // but a catastrophic one: WPF_CT_SPANSTART=out now measures
+                            // 32,745,404. The exclusive test cannot ship at any price, because
+                            // the fill's spans come from the exact scan walk and their left
+                            // boundary lands ON a sample constantly -- which is the whole reason
+                            // fsc_FillBitMap's test is `>=`. Do not re-open this knob.</para>
                             if ((s_spanStartExclusive ? sx > sp.A : sx >= sp.A)
                                 && (s_spanEndInclusive ? sx <= sp.B : sx < sp.B))
                             { cnt++; break; }

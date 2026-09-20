@@ -3946,6 +3946,15 @@ namespace WgpuInterop.Tests.Text
         /// blue and reported the UPRIGHT bars differing in 336 of 456 lamps at a mean of 124.
         /// A slant-only test would have called that a diagonal problem.</para></summary>
         /// <summary>Is our lamp coverage GDI's where two strokes CROSS?
+        /// <para>AND THE CROSSING ITSELF IS EXACT TOO, measured at last on 2026-09-20 with
+        /// WPF_CROSS_X=1 (see the flag): forty-eight cases -- four tapers x slants of 0, 300 and
+        /// 900 design units x ppem 11, 13, 15 and 17, with WPF_CROSS_GASP=nosym so the run is in
+        /// the no-oversampling regime the residual lives in -- and every one of them 0 differing
+        /// lamps, every ink ratio 1.0000. That covers the overlap winding, the shallow-angle
+        /// meeting of two edges inside one row, and the reflex corners the union makes. Together
+        /// with the bars, the slanted bars and HowGdiWeighsAQuadraticArc there is now no shape
+        /// class left that the scan converter gets wrong, and "the residual is the FIT" is
+        /// established rather than assumed.</para>
         /// <para>CoverageOnADiagonal_AgainstGdis settled the lone slanted edge: ours agrees with
         /// GDI's, so one vertical sample per row is right and diagonals per se are not the problem.
         /// It never drew two edges close together, and that is where the residual actually lives.
@@ -4005,7 +4014,15 @@ namespace WgpuInterop.Tests.Text
             report.AppendLine("   taper  slant  ppem     lamps  differing   worst  mean|d|"
                               + "    GDI ink   our ink   ours/GDI");
 
-            bool cross = false;
+            // WPF_CROSS_X=1 draws the TWO CROSSING STROKES the family was named for instead of
+            // a single one. It has been available in SyntheticFont since the probe was written
+            // and never switched on, so the one geometry no program-free probe covers -- two
+            // edges meeting at a shallow angle, which is every stem/bowl junction in every
+            // lower-case letter -- has never been measured against GDI at all. The residual that
+            // is left lives at exactly those junctions: Verdana 'b'@13, 'r'@11 and 's'@11 and
+            // Tahoma 'p'@17 each differ in TWO adjacent rows, at the same three lamps, by one
+            // sample in opposite directions, and the rows are the two the arm meets the stem in.
+            bool cross = Environment.GetEnvironmentVariable("WPF_CROSS_X") == "1";
             foreach (int taper in new[] { 0, 96, 192, 280 })
             foreach (int slant in new[] { 0, 300, 900 })
             {
@@ -4628,6 +4645,46 @@ namespace WgpuInterop.Tests.Text
         /// suspect.</para>
         /// <summary>GDI'S CLEARTYPE OUTLINE IN BOTH AXES, recovered by inverting our own
         /// rasterizer. WPF_XYSOLVE=family/chars/ppem[/B|I].
+        /// <para>THE ANCHOR CENSUS, 2026-09-20, holdout 28,183. The nineteen worst rows of the
+        /// report put through WPF_XYSOLVE_ANCHORS=1. Fourteen REACH GDI; of those, THIRTEEN do it
+        /// by moving exactly ONE anchor, and the move is one to five sixty-fourths:
+        /// <code>
+        ///   Tahoma  q@15 P17 -1    Tahoma  p@17 P7  -1    Tahoma B r@11 P7  +3
+        ///   Tahoma I g@12 P26 +2   Tahoma I p@11 P11 +2   Tahoma B u@11 P1  +3
+        ///   Tahoma I n@9  P16 +2   Verdana 9@15 P53  +3   Verdana b@13 P14  +1
+        ///   Tahoma  p@13 P11 +1    Verdana g@17 P33  -2   Tahoma  m@11 P26  +1
+        ///   Tahoma B a@14 P0  +1   Tahoma B 9@16 P20 +4 and P29 -1
+        ///   Verdana 3@10 P22 -2 and P30 +5
+        /// </code>
+        /// Twelve of the seventeen moves are POSITIVE: our anchor sits a sixty-fourth or two to
+        /// the LEFT of GDI's.</para>
+        /// <para>AND THE ANCHOR THE SEARCH NAMES IS NOT THE ANCHOR THAT IS WRONG -- this is the
+        /// trap, and it was walked into before it was found. Tahoma 'p'@17 places P7, P11 and P23
+        /// at the SAME x (170) by construction: one MDRP and two SHPs off the same reference, one
+        /// phase node each with the same parent and the same shift. The search reports P7 -1.
+        /// Hold P7 at our value with WPF_XYSOLVE_ANCHORS_HOLD=7 and it reaches GDI again, this
+        /// time by P23 -1. Verdana 'b'@13 does the same: P14 +1, or P27 +1 with P14 held. So GDI
+        /// is NOT separating two points our program makes equal -- ANY ONE of a group of
+        /// coincident anchors, nudged by a sixty-fourth, reproduces GDI's raster.</para>
+        /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
+        /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
+        /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
+        /// phase node's tie -- cannot be the cause, because the anchors are already where GDI has
+        /// them. Do not spend another afternoon deriving which formula gives P7 a shift of -3;
+        /// there isn't one, and there does not need to be.</para>
+        /// <para>The sample-row oracle says the same thing in pixels: Verdana 'b'@13, 'r'@11 and
+        /// 's'@11 each differ in exactly TWO rows, at the SAME three lamps, by ONE sample in
+        /// opposite directions -- +1 in the upper row and -1 in the lower. That is one interpolated
+        /// point of a junction sitting on the wrong side of one sample, not an edge in the wrong
+        /// place.</para>
+        /// <para>Five rows do NOT reach GDI, and two of them are an artifact of this test rather
+        /// than of the renderer: Times New Roman Bold 'K'@21 contributes 313 to the holdout but
+        /// renders HERE at 62,654, with every point wanting to move about +1.5px, so the solver is
+        /// placing that glyph at a different origin than the weight report does. Treat a
+        /// "CANNOT reach GDI" verdict with a huge `as fitted` as a harness mismatch and check the
+        /// glyph's own row in the report first. ('K' is worth checking for its own sake: at 12,
+        /// 15, 17, 18, 19, 21, 22 and 23ppem it carries 1,220 of Times New Roman Bold's
+        /// 2,316.)</para>
         /// <para>WHAT THE HOLDOUT IS MADE OF AT 32,280 (censused 2026-09-20, the sixty worst
         /// glyph rows, WPF_XYSOLVE_INTERVAL=1 so every verdict is a SLACK BAND and not a
         /// coordinate). The whole holdout is 468 differing lamps at a mean of 69/255 each --
@@ -9175,6 +9232,20 @@ namespace WgpuInterop.Tests.Text
         /// the slab probe needs it: with NO table GDI's fallback turns symmetric smoothing on for
         /// the probe while ours stays off, and the two sides then answer different questions.
         /// WPF_ARC_SCAN=times adds Times' SCANCTRL 303 / SCANTYPE 1.</para></summary>
+        /// <para>AND NOW THERE IS NO TIE LEFT TO ANSWER. Re-run 2026-09-20 at a holdout of
+        /// 28,183, with WPF_ARC_GASP=times at 12, 15 and 17ppem: GDI's ink column and ours are
+        /// EQUAL TO THE HUNDREDTH on every one of the twenty-four arcs at every size, bulges of
+        /// 0.25 to 6.0 pixels and all three control skews (12ppem totals 337.50 exact, 293.96
+        /// GDI, 293.96 ours). The paragraph below records a real difference that the scan-walk
+        /// work has since closed; the sample-exactly-on-a-span's-left-edge knob it names is now
+        /// catastrophic rather than merely expensive (32,745,404), and the note there says so.
+        /// <para>SO THE RASTERIZER IS EXACT FOR ALL THREE KINDS OF EDGE and the whole residual
+        /// is the FIT. Straight edges were settled by the bar probes, DIAGONAL ones by
+        /// CoverageAtACrossing_AgainstGdis -- re-run the same day with WPF_CROSS_GASP=nosym over
+        /// ppem 11,12,14,16,17,20,24 x four tapers x slants of 0, 300 and 900 design units, all
+        /// eighty-four cases 0 differing lamps and every ink ratio 1.0000 -- and CURVES by this
+        /// one. Nothing below the fit needs looking at again; see the point-solver census in the
+        /// note at SolveGdisOutlineXy.</para></para>
         /// <para>ANSWERED -- AND THE ANSWER WAS ALREADY WRITTEN DOWN, at the span test in
         /// PathRasterizer.GdiTableFilterRowset. Read that note first; this one only adds the sweep
         /// and the eliminations. It is a TIE AT A SAMPLE: we count a sample exactly on a span's

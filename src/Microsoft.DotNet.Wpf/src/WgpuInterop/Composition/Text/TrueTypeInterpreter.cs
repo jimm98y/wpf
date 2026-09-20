@@ -4381,6 +4381,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Arial 'X' at 13 and 16, Times New Roman 'k' at 14 and 'x' at 24. Twelve down to
             // four. Nothing else in the corpus disagrees with GDI's own fit at all, which is what
             // makes the ClearType branch the only place the holdout can be coming from.</para>
+            // <para>THE WHOLE DIAGONAL/ITALIC KNOB SET RE-SWEPT 2026-09-20 at a holdout of
+            // 28,183, because italics are 46% of what is left (Times I 4,012 + Tahoma I 4,128 +
+            // Consolas I 2,315 + Arial I 2,007 + Verdana I 604 = 13,066) and Arial's and
+            // Consolas' italics are NINE TIMES their romans (2,007 against 229, 2,315 against
+            // 256) although both are real italic files rather than synthesised obliques. Every
+            // knob confirms what ships:
+            // <code>
+            //   WPF_CT_DIAG_YMOVE=0    3,127,669      WPF_CT_YMOVE_TRUNC=0      96,479
+            //   WPF_CT_DIAG_YMOVE=2    2,367,744      WPF_CT_FREESTEP=muldiv    96,479
+            //   WPF_OBLIQUE_ROUND=0       86,741      WPF_OBLIQUE_MATRIX=0      31,300
+            //   WPF_CT_YMOVE_TRUNC=ct     28,183  -- INERT on the holdout now
+            // </code>
+            // The `=ct` row is the one worth reading twice: gating this to the ClearType pass
+            // used to cost 61 clean rows (280 -> 219) and now changes the holdout by NOTHING, so
+            // the bi-level pass's y rounding no longer reaches the shipped raster at all -- it
+            // survives only in the advance, which is whole-pixel rounded either way. The clean-row
+            // claim above is therefore about the BI-LEVEL ORACLE, not about pixels.</para>
             if (!s_freeStepExact || !s_yMoveTrunc
                 || (BiLevelPass && s_yMoveTruncMode == "ct"))
                 return FreedomStep(distance, component);
