@@ -1494,8 +1494,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // the column pass's stub crossing counts. s_rowEdgeExtremum fixes the same bar in the
             // fill where it belongs, for the same -6,390 and with no ratchet worse, after which
             // the OffIdx change measures EXACTLY ZERO further and still costs three. Removed.</para>
-            static int OnIdx(float v) => (int) MathF.Ceiling(v - 0.5f);
-            static int OffIdx(float v) => (int) MathF.Floor(v - 0.5f) + 1;
+            // WHICH ROW A CROSSING IS FILED UNDER, and the two candidates mean different things.
+            // <para>OnIdx/OffIdx file it under the first SAMPLE it covers, which is what the fill
+            // wants. The scan walk -- our port of GDI's own converter -- files a column crossing
+            // under the row it LIES IN, and the difference decides whether a span that straddles
+            // a row boundary without covering either sample is a dropout at all. Tahoma 'r' Bold
+            // at 11ppem is the case: its arm's underside spans 4.761..5.266 in column 29, which
+            // is rows 4 and 5 by the walk (no dropout) and row 5 twice by OnIdx/OffIdx (one), and
+            // GDI leaves that sample dark. WPF_CT_DROPOUT_IDX=floor files both under floor(v).
+            // </para>
+            // <para>And floor is NOT the answer globally: it fixes that glyph exactly as
+            // predicted (116 -> 58, the spurious fill gone) and costs 713,611 over the holdout.
+            // The sample semantics are right for the other several hundred thin features, so the
+            // two conventions are not interchangeable and the Tahoma case is not evidence that
+            // ours is the wrong one -- only that the LISTS the dropout reads are still not the
+            // ones GDI's scan converter wrote.</para>
+            static int OnIdx(float v) => s_dropoutIdxFloor ? (int) MathF.Floor(v)
+                                                           : (int) MathF.Ceiling(v - 0.5f);
+            static int OffIdx(float v) => s_dropoutIdxFloor ? (int) MathF.Floor(v)
+                                                            : (int) MathF.Floor(v - 0.5f) + 1;
 
             // xMin/xMax/yMin/yMax are the GLYPH's box, not the target's: fs_FindBitMapSize sizes
             // the bitmap to the outline, so the samples run from the first centre inside it to the
@@ -1717,6 +1734,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     cntRowOn[R] = on; cntRowOff[R] = off;
                 }
             }
+            // WPF_CT_DROPOUT_LISTS=<col>: the two column lists side by side, so the convention
+            // the walk records a crossing in can be compared with the flattened polygon's.
+            if (s_dropoutLists >= 0 && walk is not null && s_dropoutLists < nCols)
+            {
+                for (int C0 = Math.Max(0, s_dropoutLists - 4);
+                     C0 <= Math.Min(nCols - 1, s_dropoutLists + 4); C0++)
+                {
+                Console.Error.WriteLine($"LISTS col={C0}  flat on=["
+                    + string.Join(" ", colOn[C0].ConvertAll(t => $"{t.I}@{t.V:0.###}")) + "] off=["
+                    + string.Join(" ", colOff[C0].ConvertAll(t => $"{t.I}@{t.V:0.###}")) + "]");
+                var wo = new List<string>(); var wf = new List<string>();
+                foreach (int r in walk.ColOn[C0]) wo.Add((nRows - 1 - r).ToString());
+                foreach (int r in walk.ColOff[C0]) wf.Add((nRows - 1 - r).ToString());
+                Console.Error.WriteLine($"LISTS col={C0}  walk on=[" + string.Join(" ", wo)
+                    + "] off=[" + string.Join(" ", wf) + "]   nRows=" + nRows + " nSub=" + nSub);
+                }
+            }
             if (s_dropoutExact && walk is not null)
             {
                 // THE SAME CROSSINGS THE FILL USED. LookForDropouts reads the arrays the scan walk
@@ -1874,8 +1908,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<(int I, float V)> on = rowOn[R], off = rowOff[R];
                 for (int k = 0; k < on.Count && k < off.Count; k++)
                 {
+                    // GDI HAS NO "SAME INDEX" TEST. DoHorizDropout@140095a38 takes the pair's ON
+                    // entry, reads its column, and lets `GetBitAbs(col - 1, row) != 0 ||
+                    // GetBitAbs(col, row) != 0` throw the ordinary spans away -- a span that
+                    // covers its own sample has already lit it, so it is filtered without ever
+                    // being compared. We added `off.I == on.I` on top, which is a different rule
+                    // wherever a span straddles a boundary. WPF_CT_DROPOUT_SAMEIDX=0 drops it.
                     int C = on[k].I;
-                    if (off[k].I != C || C < xMin || C > xMax) continue;
+                    if (s_dropoutSameIdx && off[k].I != C) continue;
+                    if (C < xMin || C > xMax) continue;
                     string? why = null;
                     if (stubs)
                     {
@@ -1915,7 +1956,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     int kf = s_dropoutEndPair ? off.Count - 1 - j : ki;
                     var onE = on[ki]; var offE = off[kf];
                     int R = onE.I;
-                    if (offE.I != R || R < yMin || R > yMax) continue;
+                    if (s_dropoutSameIdx && offE.I != R) continue;
+                    if (R < yMin || R > yMax) continue;
                     string? why = null;
                     if (stubs)
                     {
@@ -2058,6 +2100,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// `if (bit(col, row - 1)) return` was worth asking about. It measures 81,054 against
         /// 31,200, so the scan converter's rows are this frame's and R - 1 is right.</para>
         /// </summary>
+        private static readonly bool s_dropoutSameIdx =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_SAMEIDX") != "0";
+
+        private static readonly bool s_dropoutIdxFloor =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_IDX") == "floor";
+
+        private static readonly int s_dropoutLists =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_LISTS"), out int dl) ? dl : -1;
+
         private static readonly bool s_dropStubRow =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_STUBROW") == "1";
 
