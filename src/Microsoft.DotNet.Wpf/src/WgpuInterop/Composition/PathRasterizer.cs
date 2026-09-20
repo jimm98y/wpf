@@ -1746,6 +1746,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     cntRowOn[R] = on; cntRowOff[R] = off;
                 }
             }
+            // WHAT THE DROPOUT STILL COSTS, PER GLYPH (2026-09-20, at 28,183). Over the 93
+            // glyphs that still differ below the symmetric-smoothing size, rendered with the
+            // dropout on and off: 6,113 against 6,970, so it is worth having -- but TWENTY-SEVEN
+            // of them would rather it did not run, several by a factor of two or three (Tahoma
+            // 'q'@15 95 -> 37, 'r'@11B 116 -> 58, Verdana '6'@12 94 -> 36), while twenty-two
+            // would rather it ran harder.
+            // <para>There is no discriminator in the trace. Both populations are spans of 0.6 to
+            // 0.97 of a row that straddle a row boundary and cover no sample, both pass the stub
+            // gates with exactly the two crossings the gate demands, and both have their
+            // neighbours dark. The only visible difference is that the helping fills come in runs
+            // of consecutive columns and the hurting ones are single isolated columns -- a curve
+            // grazing a row boundary at one place -- and the stub gate, which exists to tell a
+            // continuing feature from a stub, does not separate them because the counts are 2 on
+            // both sides either way. So it is not a rule we are missing; it is that those spans
+            // are not where GDI's outline puts them.</para>
             // WPF_CT_DROPOUT_LISTS=<col>: the two column lists side by side, so the convention
             // the walk records a crossing in can be compared with the flattened polygon's.
             if (s_dropoutLists >= 0 && walk is not null && s_dropoutLists < nCols)

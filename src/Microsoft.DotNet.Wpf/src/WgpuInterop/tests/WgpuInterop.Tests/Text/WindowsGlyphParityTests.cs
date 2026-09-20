@@ -9617,6 +9617,12 @@ namespace WgpuInterop.Tests.Text
         ///   116 sit where the window is at an EDGE (its lowest level 0..2); 43 where it is
         ///        nearly full (4..6), which is a one-sample HOLE one side keeps.
         /// </code>
+        /// <para>RE-CENSUSED AT 28,183, after the dropout was moved onto the scan walk's own
+        /// crossing lists: 93 glyphs and 156 differing rows, against 116 and 176 before. The
+        /// shape is unchanged -- 123 of the 156 are exactly three lamps, 38 are holes and 102
+        /// edges, and the direction is still balanced at 81 ours to 75 GDI's -- so what the
+        /// dropout repairs removed was a slice of the same population and not a class of its
+        /// own.</para>
         /// <para>And the extra sample is spread evenly over the six sample positions in a pixel
         /// (45/45/42/42/55/55), which rules out the tidiest explanation available: a coordinate
         /// landing EXACTLY on a lamp sample, which can only happen at a quarter pixel (16 and 48
