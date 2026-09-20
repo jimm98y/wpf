@@ -3178,6 +3178,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // The PAIR rule, and it applies only to a node the tree did NOT already pin
                         // between two parents: both edges move together by the phase of their
                         // centre, and the partner is marked done so it is not phased twice.
+                        // THE PAIR SUMS, IT DOES NOT DOUBLE. Read at 18007fe9c:
+                        //     ldr w9,[x8, w10, SXTW #2]   ; curX[mate]
+                        //     ldr w8,[x8, w21, SXTW #2]   ; curX[p]
+                        //     add w9,w9,w8                ; the SUM of the two
+                        //     ldr w8,[globals, #0x1d0] ; sub w8,w8,#0x10,LSL #12
+                        //     smull x1,w9,w8 ; bl CompDiv
+                        // which is what this line does. It is the SINGLE-node branch at 18007ff2c
+                        // that doubles one point (`lsl w9,w8,#1`), and PhaseDiv's summary used to
+                        // say the mate case doubled too. It does not, and the sentence cost a
+                        // session a full detour: Times Bold 'K'@12 puts P30 at 88 and its mate P16
+                        // at 196, and the two readings are -5 and -3 -- the -3 being exactly what
+                        // the anchor search asks for, which is how convincing a wrong note can be.
                         if (a < 0 || b < 0)
                             v = PhaseDiv((long) (_glyphZone.CurX[p] + _glyphZone.CurX[mate])
                                          * (_ctFactor16 - 0x10000));
@@ -3211,8 +3223,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// `n = 2*cur*(f - 0x10000); n += (n &lt; 0 ? -0x10000 : 0x10000); (n + (n &lt; 0 ?
         /// 0x1ffff : 0)) &gt;&gt; 17` -- the last step being the compiler's idiom for a signed
         /// divide by 2^17 that truncates toward zero, so the whole is round-half-away, which this
-        /// is. Its mate case is `CompDiv(0x20000, (cur &lt;&lt; 1) * (f - 0x10000))`, the same
-        /// value. Its average is a plain C division, truncating, as CalcAvgXPhase's is. And it
+        /// is. Its average is a plain C division, truncating, as CalcAvgXPhase's is. And it
         /// runs BEFORE the interpolation in itrp_IUP, as ours does by default. So the phase is
         /// exact in arithmetic and in order, and whatever still moves an interpolated point a
         /// sixty-fourth is in which instructions run under ClearType, not in what any computes.</para>

@@ -4894,6 +4894,24 @@ namespace WgpuInterop.Tests.Text
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
 
             // WPF_XYSOLVE_PATCH=<shift>: SOLVE AT A DIFFERENT SUB-PIXEL PHASE.
+            // <para>THE CENSUS THAT CAME OUT OF IT, Times Bold 'K' at 12ppem over 41 phases
+            // (2026-09-20). Thirty-seven of the 41 REACH GDI; four cannot be reached by any
+            // configuration of our twenty x-anchors, which is a statement no single-phase run can
+            // make. Of those that reach, the direction each anchor wants is nearly constant:
+            // <code>
+            //   P1   11 of 11 NEGATIVE (-1, -2)        P46   8 of 9  POSITIVE (+1..+3)
+            //   P13   4 of 4  NEGATIVE (-1)            P47  12 of 14 POSITIVE (+1, +2)
+            //   P0   mixed over 25, both signs         P59   3 of 4  POSITIVE (+1)
+            // </code>
+            // So our fit puts P1 and P13 too far RIGHT and P46, P47 and P59 too far LEFT, by one
+            // or two sixty-fourths, at every phase. P0 is the search's slack.</para>
+            // <para>WHAT IT IS NOT. All six are children of the same phase pair -- parents 16 and
+            // 61, mode "avg" -- so the obvious reading is that CalcAvgXPhase rounds the wrong way.
+            // It does not: the exact interpolations are P46 -5.000, P0 -9.518, P13 -10.637,
+            // P47 -12.83, P59 -15.69, P1 -16.938, and the two points with the LARGEST fractions
+            // want opposite directions (P1 .938 negative, P47 .83 positive). No rounding rule on
+            // that division produces this pattern. Nor is it the pair rule that gives their parent
+            // node 16 its -5: that is read out of the binary at 18007fe9c and sums the pair.</para>
             // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
             // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
             // of them dissolves when checked against the instruction that places the point. What
