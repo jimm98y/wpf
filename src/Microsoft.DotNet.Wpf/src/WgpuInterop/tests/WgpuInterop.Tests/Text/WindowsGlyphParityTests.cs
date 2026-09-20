@@ -4682,10 +4682,17 @@ namespace WgpuInterop.Tests.Text
         /// lamps, one sample too much in the upper and one too little in the lower -- which is a
         /// local edge ROTATED, not translated, and a smooth ramp cannot rotate one. So GDI'S RUN
         /// IS SPLIT BY A TOUCHED POINT AND OURS IS NOT.</para>
-        /// <para>That is a touch-set difference, and the enumeration says it is not a delta and
-        /// not a SHPIX: itrp_DeltaEngine's suppression path (140036cac) and itrp_SHP_Common's
-        /// (the param_4 gate) both skip the MOVE and the TOUCH together, exactly as this file
-        /// does. Finding which instruction touches that point is the next job, and the first
+        /// <para>THAT READING IS WITHDRAWN. An extra anchor is an extra DEGREE OF FREEDOM, and
+        /// a split is only one of the things it can buy; concluding "GDI touches a point there"
+        /// requires an instruction that could, and there is none. '6'@12's whole x phase is four
+        /// MIRPs, one DELTAP, three IPs and one MDAP, and not one of them names a point in
+        /// 19..25 -- checked on the stack contents, not just the top, so SLOOP cannot hide one.
+        /// The face runs no UTP, no SHC and no SHZ. The delta at instruction 163 names points 1,
+        /// 13, 32, 33, 37, 49, 55 and 57. And GDI's own suppression paths --
+        /// itrp_DeltaEngine@140036cac and itrp_SHP_Common's param_4 gate -- skip the MOVE and the
+        /// TOUCH together, exactly as this file does. So the run is not split and the defect is
+        /// in its SHAPE by some other route. What the extra anchor really establishes is only
+        /// the LOCALISATION: the missing freedom is inside run 19..25 and not in the next one, and the first
         /// place to look is NOT the glyph program: filtering '6'@12's whole x phase for a
         /// point-moving opcode whose target lands in 19..25 returns NOTHING. Nor is it the IUP
         /// mask -- itrp_IUP tests tag bit 1 for x and bit 2 for y, so the y work at instructions
@@ -4719,6 +4726,12 @@ namespace WgpuInterop.Tests.Text
         /// 339, cur 392 to 128, orus[26] = 344 -- cur[26] = 133, which is 137 after its phase of
         /// +4, needs cur[47] = 131 where we have 128. So the most economical description of this
         /// glyph is a wrong P47 AND a kink in the run, not one error.</para>
+        /// <para>Traced to its end, the chain is: P26's phase node is an avg between P18 (v 17)
+        /// and P47 (v 4), giving `((392-129)*4 + (129-128)*17) / 264` = 4, so 130 + 4 = 134. The
+        /// search wants 137, which needs v(P47) = 7; P47 is P9's MATE and takes the pair sum
+        /// `(52 + 128)/2 * (f-1)` = 4. Its own direct derive would give 6, not 7, and disabling
+        /// the pair rule is already refuted on the holdout (WPF_CT_PHASE_PHANTOM_MATE=0 is
+        /// 86,160). So this glyph, like the others, has no reachable set of values.
         /// <para>AND THAT P47 IS NOT REACHABLE EITHER, which makes it the fourth inference of
         /// this shape to dissolve on contact. Its MIRP at instruction 160 is
         /// `cvt[33] = 1.0000px (raw 203, scaled 64), outline 1.1875px, cut-in 2.0000px, rp0 = 9,
