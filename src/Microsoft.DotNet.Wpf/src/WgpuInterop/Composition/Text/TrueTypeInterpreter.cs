@@ -3049,7 +3049,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// returns a multiple of four, so MDAP's output is 284, 288 or 292 and the phased results
         /// are 287, 291, 295 -- 290 is not among them. Something gives p3, and p3 alone, one
         /// sixty-fourth less than the tree does, and neither the factor (swept, worse everywhere)
-        /// nor the rounding grid (swept, worse everywhere) is it.</para></summary>
+        /// nor the rounding grid (swept, worse everywhere) is it.</para>
+        /// <para>AND THERE IS A SECOND SOLUTION, which is the useful part. Hold P3 AND P9 at our
+        /// values and the search still reaches GDI, this time by P6 alone: 79 -> 77. P6's
+        /// pre-phase x is 76 and it inherits v = 3 through p1 from p3. Seventy-seven is exactly
+        /// what the RE-DERIVE produces -- `PhaseDiv(2 * 76 * 725)` = 1, so 76 + 1 = 77 -- and the
+        /// re-derive is gated on ExecutePhaseControl's param_3, which is the "any node carries the
+        /// cycle flag" boolean and is FALSE for this glyph. Forcing it on
+        /// (WPF_CT_PHASE_ROOTCYCLE=0) takes Consolas Regular '1'@18 from 256 to 118 -- halved --
+        /// while costing Bold 44 and Italic 883, so it is not a blanket rule but the mechanism is
+        /// in that gate. What is missing is a reason for the flag to be set on THIS glyph and not
+        /// on its bold and italic.</para>
+        /// <para>Everything the flag depends on has now been read end to end and matches:
+        /// ExecutePhaseControl@140035970 scans nodes 0..lastEnd+4 for flag bit 0 and passes
+        /// `found` as param_3 to every PhaseShift; AddDistance@1400354c8 sets that bit on the
+        /// PLACED node in two places -- when IndirectlyDependsOn(anchor, placed) is true
+        /// (14003561c, and it then still falls into the pair tail), and when the anchor's parent
+        /// already partners the anchor (14003560c) -- and its ancestor walk climbs
+        /// `nodes[cur].p0` while ORUS (elem+0x20) is equal, stopping otherwise. The pair tail
+        /// fires only for colour 1, only when the anchor has no partner yet, and never when the
+        /// placed point already partners the anchor.</para></summary>
         private int PhaseShiftNode(int p)
         {
             if (p < 0 || (uint) p >= (uint) _phaseFlags.Length) return 0;
@@ -4499,7 +4518,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// of this labour has now been tried -- both grids fine (6), positions only (7), widths to a
         /// whole pixel (8), all of it (5) -- and all four are far behind mode 0.</para></summary>
         /// <summary>WPF_CT_SROUND_SCALE=0 restores the old behaviour: an SROUND period compared
-        /// against a value already multiplied up for the finer ClearType grid.</summary>
+        /// against a value already multiplied up for the finer ClearType grid.
+        /// <para>AND THE BINARY'S OWN TABLE SAYS SCALING BOTH IS RIGHT (2026-09-20).
+        /// itrp_SVTCA_1@14003f6f0 re-installs the round function on every axis change, from a
+        /// sixteen-entry table at 0x14009b8c0 indexed by `roundState + (subpixel ? 8 : 0)` where
+        /// subpixel is `globals[0x88] bit 2 || globals[0x16b] != 0`:
+        /// <code>
+        ///   0..7   ToDoubleGrid DownToGrid UpToGrid ToGrid ToHalfGrid Off SuperRound Super45Round
+        ///   8..15  ...SP        ...SP      ...SP    ...SP  ...SP      ...SP SuperRound Super45Round
+        /// </code>
+        /// -- entries 14 and 15 are the SAME FUNCTIONS as 6 and 7. SuperRound and Super45Round
+        /// have NO subpixel variant, so under ClearType they round exactly as they do in bi-level
+        /// mode. Scaling the value and the period by the same factor and dividing back, which is
+        /// what this does, is algebraically that: (4u)/(4p)*(4p)/4 = u/p*p. The table also
+        /// confirms that the grid follows the CURRENT axis rather than being latched when RTG
+        /// ran, which is how RoundDistance chooses it.</para></summary>
         private static readonly bool s_superRoundScaled =
             Environment.GetEnvironmentVariable("WPF_CT_SROUND_SCALE") != "0";
 
