@@ -3077,6 +3077,14 @@ namespace WgpuInterop.Tests.Text
             double movedBilevel = 0, movedOurs = 0;
 
             TrueTypeInterpreter.s_capturePoints = true;
+            // IT HAS TO BE THE CLEARTYPE FIT. This test judges our x against GDI's ClearType
+            // LAMPS and calls the answer "the only measure of our CLEARTYPE fitting there is" --
+            // but TrueTypeFont.SubpixelFitting is a static defaulting to FALSE, so until
+            // 2026-09-20 every reading of it fitted BI-LEVEL and then asked ClearType pixels to
+            // approve whole-pixel stems. Any count of "impossible" points taken before that date
+            // is about the bi-level fit.
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = true;
             try
             {
                 foreach (char c in parts[0])
@@ -3327,7 +3335,11 @@ namespace WgpuInterop.Tests.Text
                     foreach (string d in detail) Console.Error.WriteLine(d);
                 }
             }
-            finally { TrueTypeInterpreter.s_capturePoints = false; }
+            finally
+            {
+                TrueTypeFont.SubpixelFitting = savedSubpix;
+                TrueTypeInterpreter.s_capturePoints = false;
+            }
 
             Console.Error.WriteLine($"TOTAL {totalPoints} points, {totalUntouched} interpolated,"
                 + $" {totalImpossible} impossible under our touch set;"
@@ -3603,14 +3615,28 @@ namespace WgpuInterop.Tests.Text
         /// reproduces GDI's lamps exactly given the right rectangle, so the rectangle that
         /// reproduces GDI's row IS what GDI drew. Searched on the 64th grid over both edges.</para>
         /// <para>WPF_STEMPROBE=&lt;path&gt; to collect it.</para>
-        /// <para>WHAT IT MEASURED, AND WHAT IT DID NOT. At 16ppem with a 1.25px outline width,
-        /// GDI places the bar consistently LEFT of where its outline is, by 4 to 16 sixty-fourths,
-        /// mean about -10/64. We place it exactly at the outline, because our MDAP rounds on the
-        /// sixteenth grid and the input is already there. That is the same direction as every
-        /// finding on real faces -- our stems sit right of GDI's -- now shown on a font that
-        /// contains one bar, one MDAP and one MIRP and nothing else, with the input known rather
-        /// than solved for.</para>
-        /// <para>But it is NOT a rule, and the reason is the instrument. A single isolated bar
+        /// <para>RETRACTED 2026-09-20: "GDI PUTS THE BAR 10/64 LEFT OF ITS OUTLINE" WAS THIS
+        /// TEST'S OWN BUG. The probe read our fit through TryGetHintedOutline without setting
+        /// TrueTypeFont.SubpixelFitting, which is a static that defaults to FALSE -- so for its
+        /// whole life it compared our BI-LEVEL outline against GDI's CLEARTYPE lamps. The
+        /// bi-level fit rounds the bar's left edge to a whole pixel, which is why "ours" sat on
+        /// 3.0000 for three consecutive inputs and read as a constant leftward offset in GDI, and
+        /// why the treads looked like a slope of 0.885 rather than 1.</para>
+        /// <para>WHAT IT MEASURES NOW, with SubpixelFitting on: our left edge lands INSIDE GDI's
+        /// allowed range on ALL SIXTEEN phases of the sweep, and our width (1.2500) is inside
+        /// every allowed width band. There is no residual here to chase. The MDAP column is kept
+        /// only as the centre-of-range minus input, which is not a displacement of ours.</para>
+        /// <code>
+        ///    3.0000 -> GDI 2.7500..2.9063   ours 2.8590   inside
+        ///    3.0625 -> GDI 2.9219..3.0781   ours 2.9220   inside
+        ///    ...            (all 16 rows)                 inside
+        /// </code>
+        /// <para>So the minimal case CONFIRMS the x fit rather than indicting it, and the "our
+        /// stems sit right of GDI's" family of findings gets no support from a font that contains
+        /// one bar, one MDAP and one MIRP. Whatever the remaining holdout is, it is not a bar
+        /// placed by MDAP+MIRP at 16ppem.</para>
+        /// <para>The tie analysis below still stands, and it is why this probe was never going to
+        /// resolve a sixty-fourth in the first place. A single isolated bar
         /// saturates its lamps, so a whole neighbourhood of geometries draws it identically: every
         /// row here has 100 to 121 rectangles reaching residual ZERO, and the allowed left edge is
         /// a range about 9/64 wide. Read as ranges rather than as the sweep's first winner -- which
@@ -3637,7 +3663,11 @@ namespace WgpuInterop.Tests.Text
         /// <para>TO MAKE THIS DECISIVE the probe glyph has to constrain harder than one bar can.
         /// Two or three bars at known separations in ONE glyph would do it -- the lamp pattern
         /// stops saturating and the ties collapse -- and that means teaching SyntheticFont to write
-        /// a multi-bar glyph, which it cannot do today.</para></summary>
+        /// a multi-bar glyph, which it cannot do today. Worth doing only if some other instrument
+        /// points back here; as of the retraction above there is nothing to resolve.</para>
+        /// <para>THE TRAP GENERALISES: any test that calls TryGetHintedOutline directly gets the
+        /// BI-LEVEL fit unless it sets TrueTypeFont.SubpixelFitting itself. The renderer sets it;
+        /// a bare probe does not.</para></summary>
         [Fact]
         public void WhereGdiPutsAStem()
         {
@@ -3646,7 +3676,11 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(string.IsNullOrEmpty(path), "set WPF_STEMPROBE to collect this");
 
             const string Family = "WpfStemPlace";
-            const int Ppem = 16;
+            // WPF_STEMPROBE_PPEM sweeps the size. The whole point of a font with one bar in it is
+            // that a disagreement anywhere in (ppem, width) is a bug with no co-defendants, so the
+            // probe is only worth what it covers.
+            int Ppem = int.TryParse(Environment.GetEnvironmentVariable("WPF_STEMPROBE_PPEM"),
+                                    out int pp) && pp > 0 ? pp : 16;
             // 2048 units per em at 16ppem is 128 units to the pixel, so 8 units is a sixteenth of
             // one. Sweep a whole pixel of PHASE at a fixed width, which is the variable the rule
             // has to be a function of.
@@ -3684,8 +3718,18 @@ namespace WgpuInterop.Tests.Text
 
             var report = new System.Text.StringBuilder();
             report.AppendLine($"== where GDI puts a stem: {Family} at {Ppem}ppem,"
-                              + $" outline width {Width0 / 128.0:0.0000}px, MIRP round=true");
+                              + $" outline width {Width0 * Ppem / (double) SyntheticFont.UnitsPerEm:0.0000}px,"
+                              + $" MIRP round=true");
             report.AppendLine("   unfitted left -> GDI left, GDI width      (all in pixels)");
+            // THE PROBE HAS TO ASK FOR THE FIT IT IS COMPARING AGAINST. GDI draws these bars
+            // with ClearType; SubpixelFitting is a static that defaults to FALSE, so every
+            // earlier reading of this probe took our BI-LEVEL outline and measured it against
+            // GDI's ClearType lamps. That mismatch is what the "GDI is 11/64 left of its own
+            // outline even at an on-grid input" row was, and what the 0.885 slope was: the
+            // bi-level fit rounds the bar to whole pixels, so its left edge moves in whole-pixel
+            // treads while GDI's moves in sixty-fourths.
+            bool savedSubpix = TrueTypeFont.SubpixelFitting;
+            TrueTypeFont.SubpixelFitting = true;
             try
             {
                 var raw = new byte[Width * Height * 4];
@@ -3716,7 +3760,7 @@ namespace WgpuInterop.Tests.Text
                             {
                                 float left = plainLeft + l / 64f, wid = plainWidth + w / 64f;
                                 if (wid <= 0.05f) continue;
-                                double err = GlyphLampError(Rectangle(left, wid), PenX, baseline, raw);
+                                double err = GlyphLampError(Rectangle(left, wid, Ppem), PenX, baseline, raw);
                                 if (pass == 0) { if (err < best - 1e-9) best = err; continue; }
                                 if (err > best + 1e-9) continue;
                                 if (left < lLo) lLo = left;
@@ -3745,25 +3789,42 @@ namespace WgpuInterop.Tests.Text
                             + $"  => model offset {offset * 64:+0.0;-0.0}/64");
                         continue;
                     }
+                    // OUTSIDE is the only word a sweep needs to grep for.
+                    bool inL = ourLeft >= lLo - offset - 1e-4f && ourLeft <= lHi - offset + 1e-4f;
+                    bool inW = ourWidth >= wLo - 1e-4f && ourWidth <= wHi + 1e-4f;
                     report.AppendLine($"   {plainLeft,7:0.0000} -> left"
                         + $" {lLo - offset,7:0.0000}..{lHi - offset,7:0.0000}"
                         + $" w {wLo,6:0.0000}..{wHi,6:0.0000}"
                         + $"   ours {ourLeft,7:0.0000} w {ourWidth,6:0.0000}"
                         + $"   ties {hits,4}"
+                        + $"   {(inL && inW ? "ok" : "OUTSIDE" + (inL ? "" : " left") + (inW ? "" : " width"))}"
                         + $"   MDAP {((lLo + lHi) / 2 - offset - plainLeft) * 64,6:+0.0;-0.0}/64");
                 }
             }
-            finally { RemoveFontMemResourceEx(handle); }
+            finally
+            {
+                TrueTypeFont.SubpixelFitting = savedSubpix;
+                RemoveFontMemResourceEx(handle);
+            }
             File.AppendAllText(path!, report.ToString());
         }
 
         /// <summary>A bar as a path, for inverting GDI's lamps back into a rectangle.</summary>
-        private static List<PathFigure> Rectangle(float left, float width)
+        /// <summary>The probe bar as a path. The height is SyntheticFont's Top (1400 units)
+        /// scaled to the size being probed -- 10.9375px at 16ppem, which is where the old
+        /// hard-coded constant came from.
+        /// <para>It has to follow the size. Hard-coded at 16ppem's height it made every other
+        /// size read nonsense: at 8ppem the real bar is 5.47px tall and the probe's rectangle was
+        /// 10.94px, so the search bought back the surplus ink by NARROWING, and a 1.0px bar came
+        /// out as "GDI allows 0.625..0.656 wide" -- in the no-program CONTROL, where nothing but
+        /// the instrument can be wrong.</para></summary>
+        private static List<PathFigure> Rectangle(float left, float width, float ppem = 16f)
         {
+            float top = -1400f * ppem / SyntheticFont.UnitsPerEm;
             var f = new PathFigure(new Vector2(left, 0f)) { Closed = true };
             f.Segments.Add(new LineSegment(new Vector2(left + width, 0f)));
-            f.Segments.Add(new LineSegment(new Vector2(left + width, -10.9375f)));
-            f.Segments.Add(new LineSegment(new Vector2(left, -10.9375f)));
+            f.Segments.Add(new LineSegment(new Vector2(left + width, top)));
+            f.Segments.Add(new LineSegment(new Vector2(left, top)));
             return new List<PathFigure> { f };
         }
 

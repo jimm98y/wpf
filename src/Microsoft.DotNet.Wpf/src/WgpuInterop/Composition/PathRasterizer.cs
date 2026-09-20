@@ -1586,17 +1586,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
                     }
                     if (s_colTopology == 0) continue;
-                    // A VERTEX EXACTLY ON A COLUMN SAMPLE. The row lists have carried
-                    // CheckHorizTopology's rule since the row-list port; the column lists, which
-                    // only the dropout scan reads, never got its vertical twin. GDI has one --
-                    // CheckVertTopology@140044660 -- but it is not a mirror image of the horizontal
-                    // one and needs its own decode, so this is the ROW rule rotated: the ON
-                    // direction for a column is DECREASING x (fsc_CalcLine's quadrant table), and
-                    // the cross axis is y. Which way the cross-axis comparisons run is the one
-                    // thing the rotation does not settle, so both are measurable:
-                    // WPF_CT_COLTOPO=1 (the default) compares y ascending, =flip descending,
-                    // =0 drops the rule and goes back to half-open edges. Measured on the holdout:
-                    // 139,871 ascending, 141,796 descending, 154,975 without it.
+                    // A VERTEX EXACTLY ON A COLUMN SAMPLE, and it IS CheckVertTopology@140044660.
+                    // <para>This was written as "the ROW rule rotated" with the cross-axis
+                    // direction left open, because the vertical twin had not been decoded. It has
+                    // been now (2026-09-20), off the disassembly rather than the decompiler, and
+                    // the table below is that function branch for branch. Do not re-derive it.</para>
+                    // <code>
+                    //   cur=(cx,cy) at +0x8/+0xc, prev=(px,py) at +0x0/+0x4, next=(nx,ny) in w1/w2
+                    //   nx &lt; cx :  cx&lt;px -> On          cx==px -> On if cy&lt;py    cx&gt;px -> On,Off
+                    //   nx &gt; cx :  cx&lt;px -> On,Off      cx==px -> Off if cy&gt;py   cx&gt;px -> Off
+                    //   nx == cx:  cx&lt;px -> On if ny&gt;cy               cx&gt;px -> Off if ny&lt;cy
+                    //              cx==px -> Off if cy&gt;py &amp;&amp; ny&lt;cy, On if cy&lt;py &amp;&amp; ny&gt;cy
+                    // </code>
+                    // <para>The emitters are AddVertOn@140044310 and AddVertOff@140095fa0 -- note
+                    // the pairing is CROSSED against the horizontal one (AddHorizOn@140095ec0,
+                    // AddHorizOff@140044230), which is the binary saying in its own words that the
+                    // ON direction for a column is DECREASING x while for a row it is increasing
+                    // y. The monotone arm reaches the list through the pointer at ctx+0xb8 with
+                    // `(cy + 0x1f) >> 6` for an ON and `(cy + 0x20) >> 6` for an OFF: the same two
+                    // adders' formulas OnIdx/OffIdx already carry.</para>
+                    // <para>So the guess was right, ascending and all. WPF_CT_COLTOPO=1 (the
+                    // default) is the binary, =flip inverts the cross-axis comparisons, =0 drops
+                    // the rule. Measured on the holdout at 32,280: flip 34,205, off 47,384 --
+                    // the rule is worth 15,104 and neither variant is worth re-measuring.</para>
                     for (int i = 0; i < m; i++)
                     {
                         Vector2 p = a[i];
