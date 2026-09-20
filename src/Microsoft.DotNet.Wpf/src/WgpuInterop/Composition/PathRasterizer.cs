@@ -937,8 +937,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                 while (l0 < polysG.Count && GlyphOf(owners, contourFigures, l0) == g0) l0++;
                                 List<List<Vector2>> group = f0 == 0 && l0 == polysG.Count
                                     ? polysG : polysG.GetRange(f0, l0 - f0);
+                                // ...AND THE DROPOUT GETS THIS GLYPH'S OWN WALK. The composite
+                                // arm has always handed one over; this arm never did, so every
+                                // glyph in an ordinary run had its dropout reading the flattened
+                                // polygon's crossings while its FILL read the walk's. The walk
+                                // computed above spans the whole run, which is the wrong set for
+                                // a per-glyph dropout, so build one for the group.
+                                // WPF_CT_DROPOUT_GLYPHWALK=0 goes back to the flattened lists.
+                                GdiScanRows? gw = null;
+                                if (s_dropoutGlyphWalk && s_scanExact && (nSub > 1 || s_scanOneRow)
+                                    && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                                    GdiExactRows(path, contourFigures, f0, l0, originX, originY,
+                                                 width, height, nSub, out gw);
                                 fills.AddRange(GdiDropoutFills(group, path.FillRule, originX, originY,
-                                                               width, height, nSub));
+                                                               width, height, nSub, gw));
                                 f0 = l0;
                             }
                         }
@@ -2136,6 +2148,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// walk's lists measure 1,288,932 where without it they measure 28,475.</summary>
         /// <summary>WPF_CT_ROWPOS=0 files the walk's row crossings at their sample centre, as
         /// they were before the column ones got their exact positions.</summary>
+        private static readonly bool s_dropoutGlyphWalk =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_GLYPHWALK") != "0";
+
         private static readonly bool s_walkColTopo =
             Environment.GetEnvironmentVariable("WPF_CT_WALKCOLTOPO") != "0";
 
@@ -2620,8 +2635,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int r = p.Y >> 6;
                 bool nUp = n.Y > p.Y, nLevel = n.Y == p.Y;
                 bool ppBelow = pp.Y < p.Y, ppLevel = pp.Y == p.Y, ppAbove = pp.Y > p.Y;
-                void On() => L.Row((p.X + 0x1f) >> 6, r, true);
-                void Off() => L.Row((p.X + 0x20) >> 6, r, false);
+                // The vertex IS the crossing, so its own x is the position -- no need for the
+                // sample-centre stand-in Row() falls back to.
+                void On() => L.Row((p.X + 0x1f) >> 6, r, true, p.X / 64f);
+                void Off() => L.Row((p.X + 0x20) >> 6, r, false, p.X / 64f);
                 if (nUp)
                 {
                     if (ppBelow) On();
@@ -2682,8 +2699,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int c = p.X >> 6;
                 bool nLeft = n.X < p.X, nLevel = n.X == p.X;
                 bool ppRight = pp.X > p.X, ppLevel = pp.X == p.X;
-                void On() => L.Col(c, (p.Y + 0x1f) >> 6, true);
-                void Off() => L.Col(c, (p.Y + 0x20) >> 6, false);
+                void On() => L.Col(c, (p.Y + 0x1f) >> 6, true, p.Y / 64f);
+                void Off() => L.Col(c, (p.Y + 0x20) >> 6, false, p.Y / 64f);
                 if (nLeft)
                 {
                     if (ppRight) On();
