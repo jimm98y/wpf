@@ -4719,6 +4719,19 @@ namespace WgpuInterop.Tests.Text
         /// 339, cur 392 to 128, orus[26] = 344 -- cur[26] = 133, which is 137 after its phase of
         /// +4, needs cur[47] = 131 where we have 128. So the most economical description of this
         /// glyph is a wrong P47 AND a kink in the run, not one error.</para>
+        /// <para>AND THAT P47 IS NOT REACHABLE EITHER, which makes it the fourth inference of
+        /// this shape to dissolve on contact. Its MIRP at instruction 160 is
+        /// `cvt[33] = 1.0000px (raw 203, scaled 64), outline 1.1875px, cut-in 2.0000px, rp0 = 9,
+        /// op 0xED`: the difference is 12/64, and 12 * 16 = 192 exceeds the 128 cut-in, so the
+        /// OUTLINE distance wins, rounds on the sixteenth to 76, and lands on cur[9] + 76 =
+        /// 52 + 76 = 128. Reaching 131 needs a distance of 79, and RoundToGridSP only ever
+        /// returns a multiple of four. So "P47 should be 131" is a consequence of wanting P26 at
+        /// 137, not an independent fact, and the +3 on P26 must come from somewhere else.</para>
+        /// <para>THE STANDING LESSON, now demonstrated four separate ways on this one glyph: a
+        /// few differing lamps do not determine an outline, and any chain of inference that ends
+        /// "so point N should be V" is under-determined unless V is independently producible by
+        /// the instruction that places N. Check that FIRST -- it is one dump line -- before
+        /// spending an afternoon on the mechanism that would produce it.</para>
         /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
         /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
         /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
