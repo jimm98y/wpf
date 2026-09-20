@@ -10041,7 +10041,17 @@ namespace WgpuInterop.Tests.Text
         /// cases and ZERO differing lamps. The scan converter handles edges arbitrarily close to
         /// a sample. Whatever Consolas '1' does that a tapered slanted bar does not -- several
         /// edges meeting in one row, a contour that reverses, the dropout path -- is the next
-        /// thing to reproduce synthetically.</para></summary>
+        /// thing to reproduce synthetically.</para>
+        /// <para>TWO MORE STRUCTURES TRIED, BOTH CLEAN. Row 20 of that glyph carries TWO ink
+        /// spans (device 8.145..9.863 and 10.55..12.25, a sub-pixel gap between them), which a
+        /// single bar never has -- so the CROSS mode, two strokes, swept over 25 edge positions
+        /// and 21 slopes: 6,300 cases, zero differing lamps. And Consolas at 18ppem has no
+        /// SYMMETRIC_SMOOTHING in its gasp, so it renders at nSub=1 while the probe's own font
+        /// might not -- WPF_CROSS_GASP default, nosym and nofit all give zero over 252 cases
+        /// each. Neither the two-span row nor the nSub=1 path is the difference.</para>
+        /// <para>And the premise holds: WPF_FIT_TRACE reports no rejected fit for this glyph, so
+        /// what we rasterize IS the outline the scaler returned. Verified outline, verified
+        /// rasterizer, four differing lamps.</para></summary>
         /// <summary>THE SOLVER'S "GDI WANTS POINT N AT V" IS NOT GDI'S COORDINATE, PROVEN.
         /// <para>2026-09-21, against the real scaler. `scratchpad/ctharness` now drives
         /// fontdrvhost's own fs__Contour directly and, with its mode word `inp[0xd0]` set to 3,
