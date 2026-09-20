@@ -10004,6 +10004,23 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveGrid64 =
             Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
+        /// <summary>THE SOLVER'S "GDI WANTS POINT N AT V" IS NOT GDI'S COORDINATE, PROVEN.
+        /// <para>2026-09-21, against the real scaler. `scratchpad/ctharness` now drives
+        /// fontdrvhost's own fs__Contour directly and, with its mode word `inp[0xd0]` set to 3,
+        /// reproduces OUR ClearType fit point for point -- Consolas '1' at 18ppem comes back
+        /// 563 103 103 291 291 115 79 313 400 400 563 in 64ths, identical to this port's, and
+        /// Segoe UI 'H'@12 likewise. Set the mode to 5 or 7 instead and it produces GGO's
+        /// bi-level fit exactly. So the harness is an oracle for what the scaler computes.</para>
+        /// <para>And the anchor search's answer for that same glyph -- P3 = 290 -- is a number the
+        /// scaler NEVER produces, in any of its 256 mode values. It renders GDI's pixels, which is
+        /// all the search ever claimed, but it is not where GDI puts the point. Read every
+        /// "GDI wants point N at V" in this file that way, including the census above: the
+        /// DIRECTIONS repeat and are evidence, the coordinates are one solution among several.</para>
+        /// <para>The harness has also found the first concrete disagreement between this
+        /// interpreter and the scaler: Times New Roman Bold 'K' gid 46 at 12ppem agrees at P0,
+        /// P46, P47 and P59 and differs at P1 (scaler 294, ours 472) and P13 (346 against 327).
+        /// That is where to look next, and it is a question about the interpreter rather than
+        /// about pixels.</para></summary>
         /// <summary>THE KNOB SURFACE IS EXHAUSTED. Every `WPF_CT_*` in Composition/ -- 235 of them,
         /// minus the pure diagnostics (_DUMP, _TRACE, _DEBUG, _INFO, _VALIDATE) and the two
         /// translation probes -- has now been measured against the phase holdout at both 0 and 1,
