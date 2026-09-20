@@ -2100,6 +2100,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// `if (bit(col, row - 1)) return` was worth asking about. It measures 81,054 against
         /// 31,200, so the scan converter's rows are this frame's and R - 1 is right.</para>
         /// </summary>
+        /// <summary>WPF_CT_COLBIAS=flip files GdiLine's COLUMN crossings under the flipped row
+        /// bias, the way GdiConic files its own.
+        /// <para>An internal inconsistency, found by reading the two walks side by side: GdiConic
+        /// flips its ybias with the x direction and says so in its comment, citing 140043e4c;
+        /// GdiLine computes the same flipped value into `bias`, uses it for the initial error
+        /// term, and then files its column crossings under the UNFLIPPED yDesc. One of the two is
+        /// wrong for a leftward line.</para>
+        /// <para>Nothing reads those lists -- the dropout takes the flattened polygon's -- so the
+        /// holdout is 31,200 either way, and the only paths that do read them get WORSE with the
+        /// flip: WPF_CT_DROPOUT_COUNTS=walk goes 939,726 -> 947,044 and WPF_CT_DROPOUT_EXACT=1
+        /// 2,548,548 -> 2,657,963. Both of those are already 30x and 80x off, so that is not
+        /// evidence either way, and the default stays where it measured. Resolve it against the
+        /// binary before shipping the flip.</para></summary>
+        private static readonly bool s_colBiasFlip =
+            Environment.GetEnvironmentVariable("WPF_CT_COLBIAS") == "flip";
+
         private static readonly bool s_dropoutSameIdx =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_SAMEIDX") != "0";
 
@@ -2255,7 +2271,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 else
                 {
-                    L.Col(col, yDesc + row, colOn);
+                    // THE ROW BIAS FLIPS WITH THE X DIRECTION, and GdiConic below already says so
+                    // in its own comment -- "140043e4c: `sub w14,w15,w14` -- the row bias flips
+                    // with the x direction, as it does in fsc_CalcLine". GdiConic uses its flipped
+                    // ybias here; this used the UNFLIPPED yDesc, so a leftward line filed its
+                    // column crossings one row from where a leftward curve filed its. Nothing read
+                    // them -- the dropout takes its lists from the flattened polygon -- which is
+                    // why the inconsistency survived. WPF_CT_COLBIAS=flip makes them agree; see
+                    // the knob for why that is not the default.
+                    L.Col(col, (s_colBiasFlip ? bias : yDesc) + row, colOn);
                     col += xstep;
                     f -= (long) dy * 0x40;
                 }
