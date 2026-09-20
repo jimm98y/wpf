@@ -2182,6 +2182,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return x[p] >= lo && x[p] <= hi;
         }
 
+        /// <summary>AND SO IS THE CLEARTYPE SURFACE OF THE INTERPRETER (2026-09-20). Every
+        /// ClearType-conditional behaviour has to read localGS+0xcc (the direction latch),
+        /// globals+0x1c0 (the mode flags) or globals+0x1c2 (the per-glyph flags), so listing
+        /// their readers among itrp_* enumerates the whole surface. It is:
+        /// <list type="bullet">
+        /// <item>the six round-state setters plus SROUND/S45ROUND/ROFF -- picking the function
+        /// from the table at 0x14009b8c0;</item>
+        /// <item>MDRP and MIRP -- the halved minimum distance and the shrunk cut-in;</item>
+        /// <item>ALIGNRP, MSIRP, IP (four reads), ISECT (three) and SHP_Common -- every one of
+        /// them a PHASE-LINK gate and nothing else. IP's "different path" at 1400388c4 is a call
+        /// to AddProportion and a branch straight back into the ordinary interpolation, so IP has
+        /// no ClearType arithmetic at all; ISECT's two extra reads only CHOOSE which pair of
+        /// references the proportion is recorded against;</item>
+        /// <item>SHP_Common's SHPIX suppression, DeltaEngine's delta gate, RS's storage-8 answer,
+        /// MD's 65/64, CALL's three tweaks, FDEF's fingerprints, GETINFO's answers, SDPVTL's
+        /// write of the latch;</item>
+        /// <item>IUP and Execute -- the phase; and SHC, which RUNS the phase and then adds
+        /// `nodes[ref].value` to the shift (see ShiftContour, which does both).</item>
+        /// </list>
+        /// All of them are implemented. So the residual is not a missing opcode behaviour.</summary>
         /// <summary>THE CALL-SITE SET IS PROVEN COMPLETE (2026-09-20). Every inlined
         /// AddDistance and AddProportion body calls IndirectlyDependsOn@140035a10, so its
         /// callers enumerate the sites exactly, and there are seven:
