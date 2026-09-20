@@ -2611,7 +2611,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// -- the same four-entry array itrp_FDEF fills when a function body matches one of the
         /// two MPPEM-conditional SHPIX fingerprints, which is what this list holds. So "inside a
         /// recognised delta FDEF" means precisely "called one of those", and the SHPIX
-        /// suppression that hangs off it is gated on the right set.</summary>
+        /// suppression that hangs off it is gated on the right set.
+        /// <para>AND THE WHOLE FINGERPRINT LAYER IS DIFFED AGAINST THE BINARY (2026-09-20), bytes
+        /// and function-id gates alike. itrp_FDEF holds SEVEN memcmps and no more:
+        /// <code>
+        ///   +0xa8790  5  01 b0 18 43 58                    ids 0,1,2,4,7,8 -> 0x200
+        ///   +0xa87a0  6  01 18 b0 18 43 58                 ids 0,1,2,4,7,8 -> 0x200
+        ///   +0xa87b0  7  45 23 46 60 20 b0 26              id 0            -> 0x400
+        ///   +0xa87c0 10  20 20 b0 01 60 46 b0 40 23 42     id 0x3a         -> 0x800
+        ///   +0xa8780  4  b0 16 43 58                       ids 0x40..0x42  -> 0x100
+        ///   +0xa87e0  9  4b 54 58 38 1b 21 21 59 2d        any id, first byte 0x4b -> the array
+        ///   +0xa87d0 13  4b 53 23 4b 51 5a 58 38 1b 21 21 59 2d   ditto
+        /// </code>
+        /// and the gates are `if (id &lt; 0x40) { if (id &lt; 3 || id - 7u &lt; 2 || id == 4) ... }
+        /// else if (id &lt; 0x43)`, with the array capped at four entries. Every sequence and every
+        /// gate above is what this file already holds, so nothing is missing from the layer.</para></summary>
         private bool IsSuppressedFdef(int id)
         {
             for (int i = 0; i < _suppressedFdefCount; i++) if (_suppressedFdefs[i] == id) return true;

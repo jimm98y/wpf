@@ -455,7 +455,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
         /// distance, every delta applied -- whatever the ClearType defaults say.
         /// <para>Set around a second hinting pass, so a glyph can be fitted both ways and the two
-        /// results compared. See TrueTypeFont's left-edge transfer.</para></summary>
+        /// results compared. See TrueTypeFont's left-edge transfer.</para>
+        /// <para>WHAT THE BI-LEVEL PASS PROVES ABOUT THE CLEARTYPE ONE (2026-09-20). GDI's own
+        /// fitted points, through GetGlyphOutline, pin the bi-level pass exactly -- Tahoma 'q'@15
+        /// 33 of 33 points, Tahoma 'p'@17 30 of 30, Verdana 'b'@13 33 of 33, every off-curve
+        /// control included, 0 differing in x and 0 in y -- and those are three of the glyphs that
+        /// carry the residual. Two things follow, and both were checked rather than assumed:
+        /// <list type="bullet">
+        /// <item>THE CLEARTYPE PASS'S Y IS EXACT. Dump FINAL in both modes for Tahoma 'p'@17 and
+        /// the y arrays are identical, so the CT branch does the same y work the bi-level one
+        /// does, and the bi-level one is GDI's. The residual is purely X. (The point solver says
+        /// the same from the other side: with both axes free it still moves only x.)</item>
+        /// <item>AND THE CONTROL VALUES ARE THE SAME IN BOTH PASSES. WPF_CVT_DUMP for Tahoma at
+        /// 17ppem gives 388 entries per prep run and every one is bit-identical between the
+        /// bi-level and ClearType passes, which is what s_ctInPrep already says (globals[0x16b] is
+        /// zero while the pre-program runs, so prep never reaches the sixteenth grid). So a wrong
+        /// CT-pass control value is not the explanation either.</item>
+        /// </list>
+        /// What is left is the CLEARTYPE BRANCH of the glyph program placing one x a sixty-fourth
+        /// or two from where GDI puts it -- a different block of instructions from the one the
+        /// bi-level oracle covers, and the only part of the chain with no oracle over it.</para></summary>
         [ThreadStatic] internal static bool BiLevelPass;
         private float _prepPpem = -1f;
 
