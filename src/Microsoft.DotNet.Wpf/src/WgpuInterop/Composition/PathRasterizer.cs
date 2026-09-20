@@ -1717,15 +1717,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 for (int C = 0; C < nCols; C++)
                 {
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                    foreach (int r in walk.ColOn[C]) { int R = nRows - 1 - r; on.Add((R, R + 0.5f)); }
-                    foreach (int r in walk.ColOff[C]) { int R = nRows - 1 - r; off.Add((R, R + 0.5f)); }
+                    foreach (int r in walk.ColOn[C]) { int R = s_dropoutNoFlip ? r : nRows - 1 - r; on.Add((R, R + 0.5f)); }
+                    foreach (int r in walk.ColOff[C]) { int R = s_dropoutNoFlip ? r : nRows - 1 - r; off.Add((R, R + 0.5f)); }
                     on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     cntColOn[C] = on; cntColOff[C] = off;
                 }
                 for (int R = 0; R < nRows; R++)
                 {
-                    int r = nRows - 1 - R;
+                    int r = s_dropoutNoFlip ? R : nRows - 1 - R;
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
                     foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
                     foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
@@ -1867,17 +1867,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 for (int C = 0; (s_dropoutExactMode & 1) != 0 && C < nCols; C++)
                 {
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    // WPF_CT_DROPOUT_NOFLIP=1: take the walk's row indices AS THEY ARE. The
+                    // conversion assumes the walk counts rows from the bottom; printing the two
+                    // list sets side by side says otherwise wherever they agree -- column 25 of
+                    // Tahoma 'r' Bold at 11ppem is on=1 off=7 in the flattened list and raw 1
+                    // and 7 in the walk's -- so the flip may be what has been wrecking them.
                     for (int k = 0; k < walk.ColOn[C].Count; k++)
-                        on.Add((nRows - 1 - walk.ColOn[C][k], nRows - walk.ColOnPos[C][k]));
+                        on.Add(s_dropoutNoFlip
+                            ? (walk.ColOn[C][k], walk.ColOnPos[C][k])
+                            : (nRows - 1 - walk.ColOn[C][k], nRows - walk.ColOnPos[C][k]));
                     for (int k = 0; k < walk.ColOff[C].Count; k++)
-                        off.Add((nRows - 1 - walk.ColOff[C][k], nRows - walk.ColOffPos[C][k]));
+                        off.Add(s_dropoutNoFlip
+                            ? (walk.ColOff[C][k], walk.ColOffPos[C][k])
+                            : (nRows - 1 - walk.ColOff[C][k], nRows - walk.ColOffPos[C][k]));
                     on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
                     colOn[C] = on; colOff[C] = off;
                 }
                 for (int R = 0; (s_dropoutExactMode & 2) != 0 && R < nRows; R++)
                 {
-                    int r = nRows - 1 - R;
+                    int r = s_dropoutNoFlip ? R : nRows - 1 - R;
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
                     foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
                     foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
@@ -2122,6 +2131,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 2,548,548 -> 2,657,963. Both of those are already 30x and 80x off, so that is not
         /// evidence either way, and the default stays where it measured. Resolve it against the
         /// binary before shipping the flip.</para></summary>
+        /// <summary>WPF_CT_DROPOUT_NOFLIP=0 restores the `nRows - 1 - r` conversion on the
+        /// walk's row indices. It was never right -- see the substitution -- and with it the
+        /// walk's lists measure 1,288,932 where without it they measure 28,475.</summary>
+        private static readonly bool s_dropoutNoFlip =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_NOFLIP") != "0";
+
         private static readonly bool s_colBiasFlip =
             Environment.GetEnvironmentVariable("WPF_CT_COLBIAS") == "flip";
 
@@ -2143,12 +2158,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_dropFlip =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_FLIP") == "1";
 
-        /// <summary>WPF_CT_DROPOUT_EXACT: `1`/`both` takes BOTH of the dropout's list sets from
-        /// the scan walk, `cols` only the columns, `rows` only the rows -- so the two halves can
-        /// be blamed separately. Off by default; see the note at the substitution.</summary>
+        /// <summary>WHICH OF THE DROPOUT'S LIST SETS COMES FROM THE SCAN WALK. Both, now that
+        /// they are right: `0` goes back to the flattened polygon, `cols` or `rows` takes one.
+        /// <para>LookForDropouts reads the arrays the scan converter wrote -- it does not go
+        /// looking for the crossings a second way -- and ours now do too. It took three repairs
+        /// to get there, each measured on the holdout from 31,200: GdiConic's column row-bias
+        /// (2,657,963 -> 1,276,085), the exact positions for column crossings instead of their
+        /// row's centre, and finally the row-index FLIP, which was the whole of what was left.
+        /// The walk's indices are already in this frame; `nRows - 1 - r` was turning every one of
+        /// them upside down. With it gone: columns alone 31,824, rows alone 29,942, both
+        /// 28,475.</para></summary>
         private static readonly int s_dropoutExactMode =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") switch
-            { "1" or "both" => 3, "cols" => 1, "rows" => 2, _ => 0 };
+            { "0" or "off" or "flat" => 0, "cols" => 1, "rows" => 2, _ => 3 };
 
         private static readonly bool s_scanTrace =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
