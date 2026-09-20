@@ -4912,6 +4912,15 @@ namespace WgpuInterop.Tests.Text
             // want opposite directions (P1 .938 negative, P47 .83 positive). No rounding rule on
             // that division produces this pattern. Nor is it the pair rule that gives their parent
             // node 16 its -5: that is read out of the binary at 18007fe9c and sums the pair.</para>
+            // <para>AND THE FOUR UNREACHABLE PHASES ARE THE SHARPEST THING HERE. Shifts -57, 15,
+            // 56 and 59 sit at 37, 199, 75 and 75, and no placement of the twenty anchors moves
+            // them: -57 does not improve by a single unit over 81,011 renders. WPF_XYSOLVE_ANCHORS
+            // _EXTRA=1 adds one more anchor and three of the four independently choose P2, each
+            // wanting it about 24/64 LOWER -- and it buys 37 -> 36. So the leftover is ONE LAMP
+            // LEVEL that no outline our anchors and our IUP can express produces, on a glyph whose
+            // other 37 phases we reach exactly. A small, well-defined puzzle: either GDI touches a
+            // point our program leaves to IUP, or it interpolates the untouched ones differently,
+            // and one extra anchor is not enough to tell which.</para>
             // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
             // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
             // of them dissolves when checked against the instruction that places the point. What
