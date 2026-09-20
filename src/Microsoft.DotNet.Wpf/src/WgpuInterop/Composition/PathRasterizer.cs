@@ -1844,7 +1844,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     if (why is null && C > xMin && Bit(C - 1, R)) why = "on-left";
                     if (why is null && C < xMax && Bit(C, R)) why = "on-right";
-                    int fc = smart ? (int) MathF.Floor((on[k].V + off[k].V) * 0.5f - 1f / 128f) : C - 1;
+                    int fc = smart ? DropMid(on[k].V, off[k].V) : C - 1;
                     if (fc < xMin) fc = xMin;
                     if (fc >= xMax) why ??= "past-right";
                     if (s_dropoutTrace)
@@ -1884,7 +1884,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     if (why is null && R > yMin && Bit(C, R - 1)) why = "on-below";
                     if (why is null && R < yMax && Bit(C, R)) why = "on-above";
-                    int fr = smart ? (int) MathF.Floor((onE.V + offE.V) * 0.5f - 1f / 128f) : R - 1;
+                    int fr = smart ? DropMid(onE.V, offE.V) : R - 1;
                     if (fr < yMin) fr = yMin;
                     if (fr >= yMax) why ??= "past-top";
                     if (s_dropoutTrace)
@@ -1965,6 +1965,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static readonly bool s_boxColInc =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_COLINC") != "0";
+
+        /// <summary>WHICH ROW (or column) A SMART DROPOUT FILLS: the midpoint of the span's two
+        /// crossings, as DoVertDropout@140041ea8 computes it -- `(a + b - 1) >> 7` over two
+        /// positions the scan converter stored, which are 26.6 INTEGERS there and floats here.
+        /// <para>It is a near-tie far more often than it looks. Tahoma 'r' Bold at 11ppem is the
+        /// worked case: the arm's underside spans y 4.761..5.266, a midpoint of 5.0135, and the
+        /// fill lands in row 5 -- while GDI's lands one row lower, which is exactly the two rows
+        /// the sample oracle says that glyph differs on. Thirteen thousandths of a pixel decide
+        /// it, which is far more than the flattening tolerance and far less than a sixty-fourth,
+        /// so the question is what PRECISION GDI's two numbers carry.</para>
+        /// <para>WPF_CT_DROPOUT_MID: 0 (the default) floors the float midpoint less 1/128,
+        /// 1 floors it, 2 rounds to nearest, 3 quantises both crossings to a sixty-fourth FIRST
+        /// and then does the binary's integer `(a + b - 1) >> 7`.</para></summary>
+        private static readonly int s_dropMid =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_MID"), out int dm) ? dm : 0;
+
+        private static int DropMid(float a, float b) => s_dropMid switch
+        {
+            1 => (int) MathF.Floor((a + b) * 0.5f),
+            2 => (int) MathF.Round((a + b) * 0.5f, MidpointRounding.AwayFromZero),
+            3 => (((int) MathF.Round(a * 64f) + (int) MathF.Round(b * 64f)) - 1) >> 7,
+            _ => (int) MathF.Floor((a + b) * 0.5f - 1f / 128f),
+        };
 
         private static readonly bool s_dropoutExact =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";
