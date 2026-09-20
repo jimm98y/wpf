@@ -3028,7 +3028,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// without touching curX.</item>
         /// </list>
         /// So the shift machinery is not where the remaining sixty-fourths are; the TREE is the
-        /// only part of the phase left that could put them there.</summary>
+        /// only part of the phase left that could put them there.
+        /// <para>THE SMALLEST COMPLETE CASE, worked end to end 2026-09-20 so the next attempt does
+        /// not have to. CONSOLAS '1' AT 18ppem is 256 of the holdout, twelve points, six of them
+        /// x-touched, and the solver says GDI's outline is OURS WITH ONE POINT MOVED: hold the
+        /// other five anchors and P3 alone reaches GDI at 290 against our 291; hold P3 instead and
+        /// NO placement of the other five reaches it. Every number:
+        /// <code>
+        ///   program   51 SVTCA[x]  52 IP(p3 between rp1=pp2, rp2=pp1)  53 MDAP[r] p3
+        ///   IP        orus 1126 -> 0, cur 632 -> 0, orus[p3] 512
+        ///             round(-614 * -632 / -1126) = -345,  632 - 345 = 287
+        ///   MDAP[r]   RoundToGridSP(287) = (287 + 0 + 2) &amp; ~3 = 288
+        ///   phase     factor = 640/633 -&gt; 66261, f-1 = 725;  v(pp2) = round(632*725/65536) = 7
+        ///             p3 = avg(pp2, pp1) = trunc((288-0)*7 / 633) = 3   -&gt; 291
+        ///   GDI                                                            290
+        /// </code>
+        /// and the constraint that makes it hard: p1, p6, p7 and p10 all INHERIT p3's shift and
+        /// are all correct at 3, and p9 is p3's mate and is correct at 3. So GDI does not give the
+        /// subtree a different shift. Nor can the pre-phase value be 287: RoundToGridSP only ever
+        /// returns a multiple of four, so MDAP's output is 284, 288 or 292 and the phased results
+        /// are 287, 291, 295 -- 290 is not among them. Something gives p3, and p3 alone, one
+        /// sixty-fourth less than the tree does, and neither the factor (swept, worse everywhere)
+        /// nor the rounding grid (swept, worse everywhere) is it.</para></summary>
         private int PhaseShiftNode(int p)
         {
             if (p < 0 || (uint) p >= (uint) _phaseFlags.Length) return 0;
