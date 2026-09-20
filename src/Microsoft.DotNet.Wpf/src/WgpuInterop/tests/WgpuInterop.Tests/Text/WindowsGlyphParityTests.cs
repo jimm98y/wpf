@@ -9432,6 +9432,388 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(report.ToString());
         }
 
+        /// <summary>MOVE ONE POINT OF A REAL FACE AND SEE WHETHER GDI FOLLOWS US.
+        /// WPF_PATCHPT=family/char/ppem[/B|I].
+        /// <para>Everything below the ClearType branch of the glyph program is proven, and the
+        /// branch itself has no oracle: GetGlyphOutline returns the BI-LEVEL fit whatever the DC,
+        /// fontdrvhost is a PPL process, and the residual is a handful of lamps per glyph which
+        /// do not determine an outline -- five separate chains of "so point N should be V" have
+        /// dissolved on the fact that V is not producible by the instruction that places N.</para>
+        /// <para>So stop asking the pixels what the outline IS and ask what it DEPENDS ON. Patch
+        /// one point's x in the font file by d design units, hand the SAME patched bytes to GDI
+        /// and to us, and compare the two rasters. Both sides re-run the whole program on the
+        /// perturbed outline, so this is not a comparison of coordinates but of RESPONSES: where
+        /// our model of a point's handling matches GDI's, the difference between the two rasters
+        /// stays at its baseline as d moves; where it does not, the difference jumps. A point the
+        /// program ROUNDS answers in steps and a point IUP interpolates answers smoothly, and the
+        /// two cannot be mistaken for each other over a sweep.</para>
+        /// <para>The patch is in place so nothing else about the font changes: the point's own x
+        /// delta and the NEXT point's are adjusted by +d and -d, which leaves every later point
+        /// where it was, the bounding box is widened by the sweep's range, and one character of
+        /// the family name is varied so GDI cannot serve a cached face. A point whose delta is
+        /// stored in a form that cannot absorb d -- an eight-bit delta that would change sign or
+        /// overflow -- is skipped and said so, because silently patching nothing would read as
+        /// agreement.</para></summary>
+        [Fact]
+        public void HowGdiFollowsAMovedPoint()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? specs = Environment.GetEnvironmentVariable("WPF_PATCHPT");
+            Assert.SkipWhen(string.IsNullOrEmpty(specs), "set WPF_PATCHPT=family/char/ppem[/style]");
+            long grand = 0;
+            foreach (string one in specs!.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                grand += OneMovedPoint(one.Trim());
+            if (specs.Contains(';'))
+                Console.Error.WriteLine($"PHASEHOLDOUT {grand}");
+        }
+
+        /// <summary>One spec's worth of <see cref="HowGdiFollowsAMovedPoint"/>. Returns what the
+        /// sweep totalled, so a semicolon-separated list of specs adds up to one number -- the
+        /// PHASE HOLDOUT, which is the ordinary holdout's question asked at every sub-pixel phase
+        /// instead of the one each face happens to ship. A knob that reads "no change" on the
+        /// holdout has not been shown to be neutral; it has been shown to be neutral at one
+        /// phase, and most of these glyphs are wrong at a dozen more.</summary>
+        private long OneMovedPoint(string spec)
+        {
+            string[] parts = spec!.Split('/');
+            bool bold = parts.Length > 3 && parts[3].Contains('B');
+            bool italic = parts.Length > 3 && parts[3].Contains('I');
+            string family = GdiFamily(parts[0]);
+            char ch = parts[1][0];
+            int ppem = int.Parse(parts[2]);
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            byte[] original = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(original, family, bold, italic);
+
+            var probe = new TrueTypeFont(original);
+            int gid = probe.GlyphIndex(ch);
+            if (!Glyf(original, sfnt, gid, out int glyphAt, out int glyphLen) || glyphLen == 0)
+            { Console.Error.WriteLine($"'{ch}' has no simple outline"); return 0; }
+
+            // WPF_PATCHPT_DELTAS overrides the sweep; the default is small enough that a
+            // point stays inside its own eight-bit encoding almost everywhere.
+            int[] deltas = Environment.GetEnvironmentVariable("WPF_PATCHPT_DELTAS") is { Length: > 0 } dl
+                ? System.Linq.Enumerable.ToArray(
+                      System.Linq.Enumerable.Select(dl.Split(','), int.Parse))
+                : new[] { -24, -12, 12, 24 };
+            // WPF_PATCHPT_POINTS=a,b,c restricts the sweep.
+            int[]? only = Environment.GetEnvironmentVariable("WPF_PATCHPT_POINTS") is { Length: > 0 } pl
+                ? System.Linq.Enumerable.ToArray(
+                      System.Linq.Enumerable.Select(pl.Split(','), int.Parse))
+                : null;
+
+            if (!XCoordSlots(original, glyphAt, out int[] at, out int[] size, out bool[] positive,
+                             out int nPoints, out int bboxAt))
+            { Console.Error.WriteLine($"'{ch}' is a composite or malformed"); return 0; }
+
+            var report = new System.Text.StringBuilder();
+            report.AppendLine($"== does GDI follow a moved point? {family}"
+                              + $"{(bold ? " Bold" : "")}{(italic ? " Italic" : "")} '{ch}' at {ppem}ppem,"
+                              + $" {nPoints} points");
+            report.AppendLine("   point   " + string.Join("", System.Linq.Enumerable.Select(
+                deltas, d => $"{d,8}")) + "     baseline");
+
+            int baseline = ppem + 12;
+            var raw = new byte[Width * Height * 4];
+            long gdiInk = 0, ourInk = 0;
+            // The glyph's INK CENTROID in x, per side. Ink alone cannot tell a glyph that moved
+            // from one that changed shape, and a whole-pixel misplacement and a re-fitted stem
+            // weigh about the same; the centroid separates them, and it is continuous, so it
+            // reads sub-pixel movement that the leftmost lit column quantises away.
+            double gdiCx = 0, ourCx = 0;
+            long Score(byte[] bytes, string fam)
+            {
+                int count = 0;
+                IntPtr h = AddFontMemResourceEx(bytes, bytes.Length, IntPtr.Zero, ref count);
+                if (h == IntPtr.Zero || count == 0) return -1;
+                try
+                {
+                    Array.Clear(raw);
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw(ch.ToString(), fam, ppem, PenX, baseline, Width, Height, bold, italic);
+                    Gdi.s_rawRgb = null;
+                    byte[] ours = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem, baseline,
+                                           correction: true);
+                    long sum = 0;
+                    gdiInk = ourInk = 0; gdiCx = ourCx = 0;
+                    for (int y = 0; y < Height; y++)
+                    for (int x = 0; x < Width; x++)
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int g = 255 - raw[(y * Width + x) * 4 + (2 - c)];
+                        int o = 255 - ours[(y * Width + x) * 4 + c];
+                        gdiInk += g; ourInk += o;
+                        gdiCx += (double) g * x; ourCx += (double) o * x;
+                        sum += Math.Abs(g - o);
+                    }
+                    if (gdiInk > 0) gdiCx /= gdiInk;
+                    if (ourInk > 0) ourCx /= ourInk;
+                    return sum;
+                }
+                finally { RemoveFontMemResourceEx(h); }
+            }
+
+            int nameAt = FamilyNameByte(original, sfnt);
+            byte nameWas = nameAt > 0 ? original[nameAt] : (byte) 0;
+            int variant = 0;
+            long baseScore = Score(original, family);
+            report.AppendLine($"   (unpatched baseline sum|d| {baseScore}, ink gdi {gdiInk} ours {ourInk})");
+
+            // WPF_PATCHPT_SHIFT=lo,hi TRANSLATES THE WHOLE GLYPH, pp1 and the advance held fixed.
+            // The xMin sweep below moves pp1, and pp1 is zero for all but a handful of real
+            // glyphs, so most of what it measures is a regime the corpus never enters. This one
+            // stays inside the regime: point zero's x delta carries every later point with it
+            // because glyf stores deltas, and moving xMin, xMax and the 'hmtx' side bearing by
+            // the same amount leaves xMin - lsb -- pp1 -- exactly where it was. What changes is
+            // the glyph's SUB-PIXEL PHASE against the grid, which is the one input the fit is
+            // there to absorb: a face whose hinting works snaps the same stems to the same pixels
+            // at every phase, so GDI's raster should be the same shape throughout and so should
+            // ours. Each phase is an independent test of the fit, which is how a glyph carrying
+            // four differing lamps turns into a hundred constraints instead of four.
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_SHIFT") is { Length: > 0 } sh)
+            {
+                string[] r = sh.Split(',');
+                int lo = int.Parse(r[0]), hi = int.Parse(r[1]);
+                int step = r.Length > 2 ? int.Parse(r[2]) : 1;
+                int upem = probe.UnitsPerEmForHinting;
+                int lsbAt = LeftSideBearingByte(original, sfnt, gid);
+                if (lsbAt <= 0) { Console.Error.WriteLine("no 'hmtx' entry for this glyph"); return 0; }
+                report.AppendLine($"   whole-glyph shift {lo}..{hi} step {step}, {upem} upem,"
+                                  + $" point 0 delta is {size[0]} byte(s)");
+                report.AppendLine("     shift     px/64      sum|d|    gdiInk    ourInk"
+                                  + "     gdiCx     ourCx    dCx(px)");
+                long worst = 0, total = 0; int n = 0;
+                for (int d = lo; d <= hi; d += step)
+                {
+                    byte[] bytes = (byte[]) original.Clone();
+                    if (!Bump(bytes, at[0], size[0], positive[0], d))
+                    { report.AppendLine($"   {d,7}   point 0's delta cannot hold it"); continue; }
+                    Write16(bytes, bboxAt, (short) (Read16(bytes, bboxAt) + d));
+                    Write16(bytes, bboxAt + 4, (short) (Read16(bytes, bboxAt + 4) + d));
+                    Write16(bytes, lsbAt, (short) (Read16(bytes, lsbAt) + d));
+                    string fam = Rename(bytes, nameAt, family, ref variant, nameWas);
+                    long v = Score(bytes, fam);
+                    total += v; n++; if (v > worst) worst = v;
+                    report.AppendLine($"   {d,7}   {d * 64.0 * ppem / upem,7:F2}   {v,9}"
+                                      + $"   {gdiInk,7}   {ourInk,7}"
+                                      + $"   {gdiCx,7:F3}   {ourCx,7:F3}   {ourCx - gdiCx,8:F4}");
+                }
+                report.AppendLine($"   PHASETOTAL {total} over {n} phases, worst {worst}");
+                if (nameAt > 0) original[nameAt] = nameWas;
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_REPORT") is { Length: > 0 } rp3)
+                    File.AppendAllText(rp3, report.ToString());
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_QUIET") == "1")
+                    Console.Error.WriteLine($"   {spec,-18} PHASETOTAL {total,8}"
+                                            + $" over {n} phases, worst {worst}");
+                else Console.Error.Write(report.ToString());
+                return total;
+            }
+
+            // WPF_PATCHPT_SWEEP=lo,hi walks the glyph's DECLARED xMin instead of its points.
+            // xMin is not decoration: pp1.x is xMin - lsb, so moving it moves the phantom point
+            // the whole fit is anchored to and re-anchored onto, which is to say it sweeps the
+            // glyph's sub-pixel PHASE without touching one outline coordinate. Both scalers
+            // implement that, so the two rasters can be compared at every phase rather than at
+            // the one the face happens to ship -- and where the agreement starts and stops is a
+            // rounding threshold with a readable position.
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_SWEEP") is { Length: > 0 } sw)
+            {
+                string[] r = sw.Split(',');
+                int lo = int.Parse(r[0]), hi = int.Parse(r[1]);
+                int step = r.Length > 2 ? int.Parse(r[2]) : 1;
+                int upem = probe.UnitsPerEmForHinting;
+                report.AppendLine($"   xMin sweep {lo}..{hi} step {step}, {upem} upem"
+                                  + $" ({ppem / (double) upem:F5} px per unit)");
+                report.AppendLine("     dxMin     px/64      sum|d|    gdiInk    ourInk"
+                                  + "     gdiCx     ourCx    dCx(px)");
+                for (int d = lo; d <= hi; d += step)
+                {
+                    byte[] bytes = (byte[]) original.Clone();
+                    Write16(bytes, bboxAt, (short) (Read16(bytes, bboxAt) + d));
+                    string fam = Rename(bytes, nameAt, family, ref variant, nameWas);
+                    long v = Score(bytes, fam);
+                    report.AppendLine($"   {d,7}   {d * 64.0 * ppem / upem,7:F2}   {v,9}"
+                                      + $"   {gdiInk,7}   {ourInk,7}"
+                                      + $"   {gdiCx,7:F3}   {ourCx,7:F3}   {ourCx - gdiCx,8:F4}");
+                }
+                if (nameAt > 0) original[nameAt] = nameWas;
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_REPORT") is { Length: > 0 } rp2)
+                    File.AppendAllText(rp2, report.ToString());
+                Console.Error.Write(report.ToString());
+                return 0;
+            }
+
+            for (int p = 0; p + 1 < nPoints; p++)
+            {
+                if (only is not null && Array.IndexOf(only, p) < 0) continue;
+                var line = new System.Text.StringBuilder($"   {p,5}   ");
+                bool any = false;
+                foreach (int d in deltas)
+                {
+                    byte[] bytes = (byte[]) original.Clone();
+                    if (!Bump(bytes, at[p], size[p], positive[p], d)
+                        || !Bump(bytes, at[p + 1], size[p + 1], positive[p + 1], -d))
+                    { line.Append($"{"--",8}"); continue; }
+                    // Widen the bounding box so nothing is clipped, and give GDI a new name.
+                    int grow = int.TryParse(Environment.GetEnvironmentVariable("WPF_PATCHPT_BBOX"),
+                                            out int g) ? g : 64;
+                    if (grow != 0)
+                    {
+                        Write16(bytes, bboxAt, (short) (Read16(bytes, bboxAt) - grow));
+                        Write16(bytes, bboxAt + 4, (short) (Read16(bytes, bboxAt + 4) + grow));
+                    }
+                    string fam = Environment.GetEnvironmentVariable("WPF_PATCHPT_RENAME") == "0"
+                        ? family : Rename(bytes, nameAt, family, ref variant, nameWas);
+                    long v = Score(bytes, fam);
+                    line.Append(Environment.GetEnvironmentVariable("WPF_PATCHPT_INK") is { Length: > 0 }
+                                ? $"{v,8}({gdiInk}/{ourInk})" : $"{v,8}");
+                    any = true;
+                }
+                if (any) report.AppendLine(line.ToString() + $"     {baseScore,8}");
+            }
+            if (nameAt > 0) original[nameAt] = nameWas;
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_REPORT") is { Length: > 0 } rp)
+                File.AppendAllText(rp, report.ToString());
+            Console.Error.Write(report.ToString());
+            return 0;
+        }
+
+        /// <summary>Give the patched bytes a family name GDI has never seen, and say what it is.
+        /// The variant character SKIPS the face's own first letter: 'C' + "onsolas" is "Consolas",
+        /// so one sweep row in twenty-six was handing GDI the real installed face -- which looks
+        /// exactly like a disagreement, because our side still rendered the patch.</summary>
+        private static string Rename(byte[] bytes, int nameAt, string family, ref int variant,
+                                     byte nameWas)
+        {
+            if (nameAt <= 0) return family;
+            byte c;
+            do { c = (byte) ('A' + (variant++ % 26)); } while (c == nameWas);
+            bytes[nameAt] = c;
+            return (char) c + family.Substring(1);
+        }
+
+        /// <summary>Where glyph <paramref name="gid"/>'s left side bearing sits in 'hmtx'. Past
+        /// the last full metric the table is bearings only, two bytes each.</summary>
+        private static int LeftSideBearingByte(byte[] d, int sfnt, int gid)
+        {
+            int hhea = TableAt(d, sfnt, "hhea"), hmtx = TableAt(d, sfnt, "hmtx");
+            if (hhea <= 0 || hmtx <= 0) return -1;
+            int numH = (d[hhea + 34] << 8) | d[hhea + 35];
+            if (numH <= 0) return -1;
+            return gid < numH ? hmtx + gid * 4 + 2
+                              : hmtx + numH * 4 + (gid - numH) * 2;
+        }
+
+        private static short Read16(byte[] d, int at) => (short) ((d[at] << 8) | d[at + 1]);
+        private static void Write16(byte[] d, int at, short v)
+        { d[at] = (byte) (v >> 8); d[at + 1] = (byte) v; }
+
+        /// <summary>Add <paramref name="d"/> to a glyf x delta IN PLACE, or refuse when its
+        /// stored form cannot hold the result. A zero-length delta (the flag says "same as the
+        /// last") cannot be widened without moving every byte after it, so it is refused too.</summary>
+        private static bool Bump(byte[] d, int at, int size, bool positive, int delta)
+        {
+            if (size == 2) { Write16(d, at, (short) (Read16(d, at) + delta)); return true; }
+            if (size != 1) return false;
+            int v = positive ? d[at] : -d[at];
+            int n = v + delta;
+            if (positive ? (n < 0 || n > 255) : (n > 0 || n < -255)) return false;
+            d[at] = (byte) Math.Abs(n);
+            return true;
+        }
+
+        /// <summary>Where glyph <paramref name="gid"/>'s record starts, from 'loca'.</summary>
+        private static bool Glyf(byte[] d, int sfnt, int gid, out int at, out int len)
+        {
+            at = len = 0;
+            int head = TableAt(d, sfnt, "head"), loca = TableAt(d, sfnt, "loca");
+            int glyf = TableAt(d, sfnt, "glyf");
+            if (head <= 0 || loca <= 0 || glyf <= 0) return false;
+            bool longLoca = Read16(d, head + 50) != 0;
+            int lo, hi;
+            if (longLoca)
+            {
+                lo = (d[loca + gid * 4] << 24) | (d[loca + gid * 4 + 1] << 16)
+                   | (d[loca + gid * 4 + 2] << 8) | d[loca + gid * 4 + 3];
+                hi = (d[loca + gid * 4 + 4] << 24) | (d[loca + gid * 4 + 5] << 16)
+                   | (d[loca + gid * 4 + 6] << 8) | d[loca + gid * 4 + 7];
+            }
+            else
+            {
+                lo = (((d[loca + gid * 2] << 8) | d[loca + gid * 2 + 1])) * 2;
+                hi = (((d[loca + gid * 2 + 2] << 8) | d[loca + gid * 2 + 3])) * 2;
+            }
+            at = glyf + lo; len = hi - lo;
+            return len >= 0 && at + len <= d.Length;
+        }
+
+        private static int TableAt(byte[] d, int sfnt, string tag)
+        {
+            int n = (d[sfnt + 4] << 8) | d[sfnt + 5];
+            for (int i = 0; i < n; i++)
+            {
+                int r = sfnt + 12 + i * 16;
+                if (r + 16 > d.Length) return -1;
+                if (d[r] == tag[0] && d[r + 1] == tag[1] && d[r + 2] == tag[2] && d[r + 3] == tag[3])
+                    return (d[r + 8] << 24) | (d[r + 9] << 16) | (d[r + 10] << 8) | d[r + 11];
+            }
+            return -1;
+        }
+
+        /// <summary>Byte position, width and sign of every point's x delta inside a simple glyph,
+        /// walking the flags exactly as the scaler does.</summary>
+        private static bool XCoordSlots(byte[] d, int at, out int[] slot, out int[] size,
+                                        out bool[] positive, out int nPoints, out int bboxAt)
+        {
+            slot = size = Array.Empty<int>(); positive = Array.Empty<bool>();
+            nPoints = 0; bboxAt = at + 2;
+            int contours = Read16(d, at);
+            if (contours <= 0) return false;                 // composite
+            int p = at + 10;
+            int last = -1;
+            for (int i = 0; i < contours; i++) { last = (d[p] << 8) | d[p + 1]; p += 2; }
+            nPoints = last + 1;
+            int instr = (d[p] << 8) | d[p + 1]; p += 2 + instr;
+            var flags = new byte[nPoints];
+            for (int i = 0; i < nPoints; )
+            {
+                byte f = d[p++];
+                flags[i++] = f;
+                if ((f & 0x08) != 0) { int rep = d[p++]; while (rep-- > 0 && i < nPoints) flags[i++] = f; }
+            }
+            slot = new int[nPoints]; size = new int[nPoints]; positive = new bool[nPoints];
+            for (int i = 0; i < nPoints; i++)
+            {
+                byte f = flags[i];
+                slot[i] = p;
+                if ((f & 0x02) != 0) { size[i] = 1; positive[i] = (f & 0x10) != 0; p += 1; }
+                else if ((f & 0x10) != 0) { size[i] = 0; }   // repeat of the previous x: no bytes
+                else { size[i] = 2; p += 2; }
+            }
+            return true;
+        }
+
+        /// <summary>The byte of the family name this probe varies so GDI cannot serve a cached
+        /// face. Windows-platform name ID 1, first character of the UTF-16 string.</summary>
+        private static int FamilyNameByte(byte[] d, int sfnt)
+        {
+            int name = TableAt(d, sfnt, "name");
+            if (name <= 0) return -1;
+            int count = (d[name + 2] << 8) | d[name + 3];
+            int strOff = name + ((d[name + 4] << 8) | d[name + 5]);
+            for (int i = 0; i < count; i++)
+            {
+                int r = name + 6 + i * 12;
+                int plat = (d[r] << 8) | d[r + 1];
+                int id = (d[r + 6] << 8) | d[r + 7];
+                int len = (d[r + 8] << 8) | d[r + 9];
+                int off = (d[r + 10] << 8) | d[r + 11];
+                if (id == 1 && plat == 3 && len >= 2) return strOff + off + 1;   // low byte of the first char
+            }
+            return -1;
+        }
+
         /// <summary>WHAT A QUADRATIC ARC WEIGHS, in GDI, in ours, and in closed form.
         /// WPF_ARC=&lt;ppem&gt;.
         /// <para>Every synthetic probe before this one is made of STRAIGHT edges -- bars, slabs,
