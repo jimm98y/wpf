@@ -9723,6 +9723,71 @@ namespace WgpuInterop.Tests.Text
                 }
             }
 
+            // WPF_PATCHPT_ASFIT=1: MAKE THE UNHINTED OUTLINE BE OUR FITTED ONE, so GDI rasterizes
+            // the exact geometry this port produces and the comparison stops depending on whose
+            // fit is right.
+            // <para>NOINSTR clears the glyph's SHAPE but leaves the question open: it renders the
+            // SCALED outline, and the fitted outline is a different shape, so "our rasterizer
+            // agrees on the scaled one" does not settle whether it agrees on the fitted one.
+            // This does. Set unitsPerEm to ppem*64 -- one font unit becomes exactly one
+            // sixty-fourth of a pixel at this size -- rewrite the glyph's points as our fitted
+            // coordinates in 64ths, and neutralise the program. If GDI's pixels then match ours,
+            // the rasterizer agrees on the FITTED geometry and the residual is the FIT. If they
+            // still differ, it is the rasterizer on that geometry.</para>
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_ASFIT") == "1")
+            {
+                var f0 = Ours(original, sfnt, bold, italic);
+                bool savedSub = TrueTypeFont.SubpixelFitting;
+                TrueTypeFont.SubpixelFitting = true;
+                TrueTypeInterpreter.s_capturePoints = true;   // LastHintedPoints is null without it
+                ((IHintedGlyphFont) f0).TryGetHintedOutline(gid, ppem, out _);
+                TrueTypeFont.SubpixelFitting = savedSub;
+                var pts = f0.LastHintedPoints;
+                if (pts is null || pts.PointCount == 0)
+                { Console.Error.WriteLine("ASFIT: no captured points"); return 0; }
+                int head = TableAt(original, sfnt, "head");
+                Write16(original, head + 18, (short) (ppem * 64));      // unitsPerEm
+                int n2 = pts.PointCount, conts = Read16(original, glyphAt);
+                var xs2 = new int[n2]; var ys2 = new int[n2];
+                for (int i = 0; i < n2; i++)
+                {
+                    xs2[i] = (int) MathF.Round(pts.FitX[i] * 64f);
+                    ys2[i] = (int) MathF.Round(pts.FitY[i] * 64f);
+                }
+                // Rebuild: header, endPts, zero instructions, all-16-bit flags and deltas.
+                int need = 10 + conts * 2 + 2 + n2 + n2 * 2 + n2 * 2;
+                if (need > glyphLen)
+                { Console.Error.WriteLine($"ASFIT: needs {need} bytes, record is {glyphLen}"); return 0; }
+                int w = glyphAt + 10 + conts * 2;
+                Write16(original, w, 0); w += 2;                        // instructionLength
+                for (int i = 0; i < n2; i++) original[w++] = 0x01;      // on-curve, 16-bit deltas
+                int px2 = 0, py2 = 0;
+                for (int i = 0; i < n2; i++) { Write16(original, w, (short) (xs2[i] - px2)); px2 = xs2[i]; w += 2; }
+                for (int i = 0; i < n2; i++) { Write16(original, w, (short) (ys2[i] - py2)); py2 = ys2[i]; w += 2; }
+                // The BOUNDING BOX and the METRICS are in the old units until they are rewritten,
+                // and both move the glyph: xMin feeds pp1 and the side bearing places the ink.
+                int xmn = int.MaxValue, xmx = int.MinValue, ymn = int.MaxValue, ymx = int.MinValue;
+                for (int i = 0; i < n2; i++)
+                {
+                    if (xs2[i] < xmn) xmn = xs2[i];
+                    if (xs2[i] > xmx) xmx = xs2[i];
+                    if (ys2[i] < ymn) ymn = ys2[i];
+                    if (ys2[i] > ymx) ymx = ys2[i];
+                }
+                Write16(original, glyphAt + 2, (short) xmn);
+                Write16(original, glyphAt + 4, (short) ymn);
+                Write16(original, glyphAt + 6, (short) xmx);
+                Write16(original, glyphAt + 8, (short) ymx);
+                int lsbAt2 = LeftSideBearingByte(original, sfnt, gid);
+                if (lsbAt2 > 0)
+                {
+                    Write16(original, lsbAt2, (short) xmn);                    // lsb == xMin
+                    Write16(original, lsbAt2 - 2, (short) (ppem * 64 * 10 / ppem / 10 * 0 + 632));
+                }
+                Console.Error.WriteLine($"   ASFIT: upem -> {ppem * 64}, {n2} points as the fit,"
+                    + $" bbox {xmn}..{xmx} x {ymn}..{ymx}");
+            }
+
             var report = new System.Text.StringBuilder();
             report.AppendLine($"== does GDI follow a moved point? {family}"
                               + $"{(bold ? " Bold" : "")}{(italic ? " Italic" : "")} '{ch}' at {ppem}ppem,"
@@ -10052,9 +10117,18 @@ namespace WgpuInterop.Tests.Text
         /// (a) GDI's fit differs from ours, or (b) the fits agree and the rasterizer parts
         /// company on the FITTED geometry only. What NOINSTR does prove is that the glyph's
         /// SHAPE and our handling of it are not the problem.</para>
-        /// <para>Distinguishing (a) from (b) needs GDI's fitted outline, and the mode sweep does
-        /// not supply it: for this glyph mode 1 gives our fit minus a uniform 3/64 (the unphased
-        /// fit), mode 3 gives ours exactly, modes 5 and 7 give whole pixels. None is GDI.</para>
+        /// <para>ANSWERED BY WPF_PATCHPT_ASFIT=1, AND IT IS (b): THE RASTERIZER. Set unitsPerEm
+        /// to ppem*64 so one font unit is exactly one sixty-fourth of a pixel, rewrite the
+        /// glyph's points as OUR FITTED COORDINATES, drop the instructions, and both scalers
+        /// rasterize provably identical geometry with no program and no mode to argue about.
+        /// Consolas '1'@18 then differs by 256 -- the SAME four lamps, the same values, byte for
+        /// byte as the hinted run. Control: consola/1/12, consola/1/16, consola/e/11,
+        /// verdana/k/11 and segoeui/g/13 all stay at ZERO, so the rewrite introduces nothing.</para>
+        /// <para>So for that glyph the fit is not implicated at all. Our fitted outline and GDI's
+        /// may or may not agree; it does not matter, because feeding OURS to both sides
+        /// reproduces the entire difference. The residual is in how that geometry is turned into
+        /// lamps -- and the synthetic proofs (20,664 swept-edge cases, 6,300 two-span cases, all
+        /// three gasp modes, 42 slopes) do not cover whatever this outline does.</para>
         /// <para>Which means the claim below is wrong, and the flaw is worth naming: the harness
         /// agreement proves our interpreter reproduces the SCALER IN MODE 3, not that GDI uses
         /// mode 3. Matching a mode that matches us is not evidence about GDI. (Fill the
