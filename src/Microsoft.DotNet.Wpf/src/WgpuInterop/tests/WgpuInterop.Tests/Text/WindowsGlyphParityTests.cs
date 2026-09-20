@@ -4921,6 +4921,25 @@ namespace WgpuInterop.Tests.Text
             // other 37 phases we reach exactly. A small, well-defined puzzle: either GDI touches a
             // point our program leaves to IUP, or it interpolates the untouched ones differently,
             // and one extra anchor is not enough to tell which.</para>
+            // <para>THE FREE SOLVER ANSWERS IT FOR shift -57, AND THE ANSWER IS THE EXCEPTION,
+            // NOT THE RULE. Dropping anchor mode -- every path point free -- reaches residual 0
+            // there in 257 renders, so GDI's raster IS producible; what our twenty anchors and
+            // our IUP cannot express is ONE OFF-CURVE control point, P2, about 0.32px left of
+            // where interpolation puts it. (The EXTRA=1 anchor search independently chose P2 and
+            // wanted 24/64; the free solver says 41/128. Two searches, one point.)</para>
+            // <para>But run free over twenty phases and the general case is the opposite: 18 of
+            // 20 reach residual ZERO, and what differs is one to three X-TOUCHED points --
+            // off-curve differs in only 3 of the 20, on-curve in almost all. So GDI's ClearType
+            // outline is never far from ours: it is reachable by moving one or two of OUR OWN
+            // anchors by one to six 128ths, at every phase, which is the same story the anchor
+            // census tells and rules out "GDI touches a different point set" as the general
+            // explanation. Keep the free solver for the phases the anchors cannot reach; those
+            // are where a different touch set actually shows.</para>
+            // <para>And do not read the exact coordinates it prints as GDI's. It walks back to
+            // the SMALLEST move that still renders GDI exactly, so a value can land on a half
+            // sixty-fourth -- GDI's P46 comes out 177.5/64 at one phase -- which no fitted
+            // coordinate can be. The DIRECTIONS are the evidence; the magnitudes are an upper
+            // bound on how far we are wrong, and they are one to three 128ths.</para>
             // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
             // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
             // of them dissolves when checked against the instruction that places the point. What
