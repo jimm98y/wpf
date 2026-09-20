@@ -4373,7 +4373,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -4404,7 +4404,7 @@ namespace WgpuInterop.Tests.Text
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
 
             long Score(float l, float w)
@@ -4549,9 +4549,9 @@ namespace WgpuInterop.Tests.Text
             bool bold = style.Contains('B'), italic = style.Contains('I');
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.Draw(parts[1], GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             if (file is not null)
             {
                 byte[] bytes = File.ReadAllBytes(file);
@@ -4677,13 +4677,15 @@ namespace WgpuInterop.Tests.Text
         /// opposite directions -- +1 in the upper row and -1 in the lower. That is one interpolated
         /// point of a junction sitting on the wrong side of one sample, not an edge in the wrong
         /// place.</para>
-        /// <para>Five rows do NOT reach GDI, and two of them are an artifact of this test rather
+        /// <para>Five rows do NOT reach GDI, and two of them were an artifact of this test rather
         /// than of the renderer: Times New Roman Bold 'K'@21 contributes 313 to the holdout but
-        /// renders HERE at 62,654, with every point wanting to move about +1.5px, so the solver is
-        /// placing that glyph at a different origin than the weight report does. Treat a
-        /// "CANNOT reach GDI" verdict with a huge `as fitted` as a harness mismatch and check the
-        /// glyph's own row in the report first. ('K' is worth checking for its own sake: at 12,
-        /// 15, 17, 18, 19, 21, 22 and 23ppem it carries 1,220 of Times New Roman Bold's
+        /// rendered HERE at 62,654, with every point wanting to move about +1.5px. THE CAUSE IS
+        /// FOUND AND FIXED -- the spec's family was handed to GDI as a face name, and GDI has no
+        /// family called "times", so the whole census row was our Times against Windows'
+        /// fallback face. See GdiFamily. Every `times/...` and `consola/...` reading taken from
+        /// any oracle in this file before 2026-09-20 is suspect for the same reason; the weight
+        /// report never was, because it iterates proper family names. ('K' is worth its own look:
+        /// at 12, 15, 17, 18, 19, 21, 22 and 23ppem it carries 1,220 of Times New Roman Bold's
         /// 2,316.)</para>
         /// <para>WHAT THE HOLDOUT IS MADE OF AT 32,280 (censused 2026-09-20, the sixty worst
         /// glyph rows, WPF_XYSOLVE_INTERVAL=1 so every verdict is a SLACK BAND and not a
@@ -4797,7 +4799,7 @@ namespace WgpuInterop.Tests.Text
             // sixty-fourths had. The arrays changed units; the search did not change size.
             int span = int.TryParse(Environment.GetEnvironmentVariable("WPF_XYSOLVE_SPAN"), out int sp) ? sp : 72;
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, "this machine lacks the face");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -4857,7 +4859,7 @@ namespace WgpuInterop.Tests.Text
                     }
 
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
                     Gdi.s_rawRgb = null;
 
                     // The fit, flattened to one array per axis in EMISSION order, which is the
@@ -6352,7 +6354,7 @@ namespace WgpuInterop.Tests.Text
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -6378,7 +6380,7 @@ namespace WgpuInterop.Tests.Text
                     { Console.Error.WriteLine($"== '{c}': not fitted"); continue; }
 
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
                     Gdi.s_rawRgb = null;
 
                     // WPF_KNOTSOLVE_MODE=y sweeps the point's Y instead, and then matches on Y
@@ -6472,7 +6474,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -6501,7 +6503,7 @@ namespace WgpuInterop.Tests.Text
                     { Console.Error.WriteLine($"== '{c}': not fitted"); continue; }
 
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                    Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
                     Gdi.s_rawRgb = null;
 
                     long Score(int dx, int shear)
@@ -6570,7 +6572,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -6721,7 +6723,7 @@ namespace WgpuInterop.Tests.Text
                     ? GlyphRunPainter.ScaleFigures(plain, natScale, 0f, 0f) : new List<PathFigure>();
 
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
                 Gdi.s_rawRgb = null;
 
                 // WPF_EDGESOLVE_PERPOINT=1: every point its own unknown. The distinct-x grouping
@@ -7072,7 +7074,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -7101,7 +7103,7 @@ namespace WgpuInterop.Tests.Text
                 }
 
                 Gdi.s_rawRgb = raw;
-                Gdi.Draw(c.ToString(), parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+                Gdi.Draw(c.ToString(), GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
                 Gdi.s_rawRgb = null;
 
                 // AND THE SAME GLYPH FITTED THE OTHER WAY. Our BI-LEVEL fitting reproduces GDI's
@@ -7355,7 +7357,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 2 ? parts[2].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -7368,7 +7370,7 @@ namespace WgpuInterop.Tests.Text
             string Sample = string.Join(" ", letters.ToCharArray());
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(Sample, parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.Draw(Sample, GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
             byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true);
 
@@ -7474,7 +7476,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length == 4 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -7485,7 +7487,7 @@ namespace WgpuInterop.Tests.Text
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.Draw(parts[1], GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
             byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
 
@@ -7552,7 +7554,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length == 4 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
@@ -7561,7 +7563,7 @@ namespace WgpuInterop.Tests.Text
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
-            Gdi.Draw(parts[1], parts[0], ppem, PenX, 28, Width, Height, bold, italic);
+            Gdi.Draw(parts[1], GdiFamily(parts[0], bold, italic), ppem, PenX, 28, Width, Height, bold, italic);
             Gdi.s_rawRgb = null;
             byte[] ours = OursRgba(font, parts[1], ppem, 28, correction: true);
 
@@ -8712,7 +8714,7 @@ namespace WgpuInterop.Tests.Text
             string[] parts = spec!.Split('/');
             bool bold = parts.Length > 3 && parts[3].Contains('B');
             bool italic = parts.Length > 3 && parts[3].Contains('I');
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -9554,7 +9556,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_PICTURE");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_PICTURE=family/char/ppem[/B|I]");
             string[] parts = spec!.Split('/');
-            string family = parts[0], text = parts[1];
+            string family = GdiFamily(parts[0]), text = parts[1];
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
@@ -9647,7 +9649,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_TWOPATHS");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_TWOPATHS=family/char/ppem[/style]");
             string[] parts = spec!.Split('/');
-            string family = parts[0], ch = parts[1];
+            string family = GdiFamily(parts[0]), ch = parts[1];
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
@@ -9849,7 +9851,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_SAMPLEROW");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SAMPLEROW=family/char/ppem[/style]");
             string[] parts = spec!.Split('/');
-            string family = parts[0], ch = parts[1];
+            string family = GdiFamily(parts[0]), ch = parts[1];
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
@@ -10024,7 +10026,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_GDI_QUALITY");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GDI_QUALITY=family/char/ppem[/style]");
             string[] parts = spec!.Split('/');
-            string family = parts[0], ch = parts[1];
+            string family = GdiFamily(parts[0]), ch = parts[1];
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
@@ -10083,7 +10085,7 @@ namespace WgpuInterop.Tests.Text
             string? spec = Environment.GetEnvironmentVariable("WPF_GLYPHDIFF");
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_GLYPHDIFF=family/char/ppem[/style]");
             string[] parts = spec!.Split('/');
-            string family = parts[0], ch = parts[1];
+            string family = GdiFamily(parts[0]), ch = parts[1];
             int ppem = int.Parse(parts[2]);
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains('B'), italic = style.Contains('I');
@@ -10580,6 +10582,103 @@ namespace WgpuInterop.Tests.Text
         private static string ProbeFamily() =>
             Environment.GetEnvironmentVariable("WPF_FACE") is string f && f.Length > 0 ? f : "Segoe UI";
 
+        /// <summary>The name GDI KNOWS A FACE BY, for a spec that names the file.
+        /// <para>Every oracle in this file takes its face from an environment variable, resolves
+        /// OUR side through FontFiles.Find -- which matches file stems, so `times` and `consola`
+        /// work -- and then hands the SAME STRING to GDI as a family name. GDI has no family
+        /// called "times" or "consola". It does not fail: it silently substitutes a default face,
+        /// so the oracle compares our Consolas against Windows' Arial and reports a glyph that
+        /// disagrees everywhere.</para>
+        /// <para>It is not a small effect and it is not obvious from the output. Consolas '1' at
+        /// 18ppem reads 4 differing lamps in the weight report and thirty-two rows of total
+        /// disagreement in the sample-row oracle -- GDI drawing a '1' with no base serif, which is
+        /// not Consolas' '1' at all. Times New Roman Bold 'K'@21 reads 313 in the report and
+        /// 62,654 in SolveGdisOutlineXy, "every point wants to move 1.5px", which was written up
+        /// as a pen-origin mismatch and is this. Between them Times and Consolas are 9,103 of the
+        /// 28,183 holdout, a third of it, and no env-driven oracle could see any of it.</para>
+        /// <para>The fix is to ask the FILE what it is called: name ID 1 of the 'name' table,
+        /// Windows platform first. A styled file still names the family -- consolab.ttf is
+        /// "Consolas" -- so this is right for bold and italic too.</para>
+        /// <para>AND IT FIXES A SECOND TRAP ON OUR OWN SIDE, which is why every oracle here
+        /// resolves the spec through this before anything else. FontFiles.Find matches file
+        /// stems, so `times` with bold asked for returns TIMES.TTF -- the regular -- and our side
+        /// then SIMULATES the bold while GDI uses timesbd.ttf. Times New Roman Bold 'w'@14 read
+        /// 84 differing lamps over five rows that way, against 5 in the weight report; through
+        /// the resolved family it reads the ordinary three-lamp signature. A spec that names a
+        /// file is never safe for a styled comparison.</para></summary>
+        private static readonly Dictionary<string, string> s_gdiFamily =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        internal static string GdiFamily(string spec, bool bold = false, bool italic = false)
+        {
+            string key = spec + (bold ? "|b" : "") + (italic ? "|i" : "");
+            lock (s_gdiFamily)
+            {
+                if (s_gdiFamily.TryGetValue(key, out string? cached)) return cached;
+                string result = spec;
+                try
+                {
+                    string? file = FontFiles.Find(spec, bold, italic);
+                    if (file is not null)
+                    {
+                        byte[] d = File.ReadAllBytes(file);
+                        string? n = NameRecord(d, FontFiles.SfntOffset(d, spec, bold, italic), 1);
+                        if (!string.IsNullOrWhiteSpace(n)) result = n!;
+                    }
+                }
+                catch { /* a face we cannot read keeps the spec, which is what we did before */ }
+                s_gdiFamily[key] = result;
+                return result;
+            }
+        }
+
+        /// <summary>One 'name' record, Windows/Unicode BMP and language 0x409 by preference,
+        /// then any Windows record, then any Macintosh one read as Latin-1.</summary>
+        private static string? NameRecord(byte[] d, int sfnt, int nameId)
+        {
+            if (d.Length < sfnt + 12) return null;
+            int numTables = (d[sfnt + 4] << 8) | d[sfnt + 5];
+            int name = 0, nameLen = 0;
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = sfnt + 12 + i * 16;
+                if (rec + 16 > d.Length) return null;
+                if (d[rec] == 'n' && d[rec + 1] == 'a' && d[rec + 2] == 'm' && d[rec + 3] == 'e')
+                {
+                    name = (d[rec + 8] << 24) | (d[rec + 9] << 16) | (d[rec + 10] << 8) | d[rec + 11];
+                    nameLen = (d[rec + 12] << 24) | (d[rec + 13] << 16)
+                              | (d[rec + 14] << 8) | d[rec + 15];
+                    break;
+                }
+            }
+            if (name == 0 || name + 6 > d.Length || name + nameLen > d.Length) return null;
+            int count = (d[name + 2] << 8) | d[name + 3];
+            int strOff = name + ((d[name + 4] << 8) | d[name + 5]);
+            string? best = null;
+            int bestScore = -1;
+            for (int i = 0; i < count; i++)
+            {
+                int r = name + 6 + i * 12;
+                if (r + 12 > d.Length) break;
+                int plat = (d[r] << 8) | d[r + 1];
+                int enc = (d[r + 2] << 8) | d[r + 3];
+                int lang = (d[r + 4] << 8) | d[r + 5];
+                int id = (d[r + 6] << 8) | d[r + 7];
+                int len = (d[r + 8] << 8) | d[r + 9];
+                int off = (d[r + 10] << 8) | d[r + 11];
+                if (id != nameId || strOff + off + len > d.Length) continue;
+                int score = plat == 3 && enc == 1 && lang == 0x409 ? 3
+                          : plat == 3 ? 2
+                          : plat == 1 ? 1 : 0;
+                if (score <= bestScore) continue;
+                bestScore = score;
+                best = plat == 3
+                    ? System.Text.Encoding.BigEndianUnicode.GetString(d, strOff + off, len)
+                    : System.Text.Encoding.Latin1.GetString(d, strOff + off, len);
+            }
+            return best;
+        }
+
 
         /// <summary>Per character: the advance GDI lays out with, against the advance we lay out
         /// with. Set WPF_ADVANCES to family@ppem, with :B or :I for bold or italic.
@@ -10600,7 +10699,7 @@ namespace WgpuInterop.Tests.Text
             bool italic = spec.EndsWith(":I", StringComparison.Ordinal);
             if (bold || italic) spec = spec.Substring(0, spec.Length - 2);
             string[] parts = spec.Split('@');
-            string family = parts[0];
+            string family = GdiFamily(parts[0]);
             int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 12;
 
             string? file = FontFiles.Find(family, bold, italic);
@@ -10738,7 +10837,7 @@ namespace WgpuInterop.Tests.Text
             string spec = Environment.GetEnvironmentVariable("WPF_RUNDRIFT") ?? "";
             Assert.SkipWhen(spec.Length == 0, "set WPF_RUNDRIFT to family@ppem");
             string[] parts = spec.Split('@');
-            string family = parts[0];
+            string family = GdiFamily(parts[0]);
             int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 12;
             string? file = FontFiles.Find(family, bold: false, italic: false);
             Assert.SkipWhen(file is null, $"this machine has no {family}");
@@ -10795,7 +10894,7 @@ namespace WgpuInterop.Tests.Text
             string spec = Environment.GetEnvironmentVariable("WPF_SLANT") ?? "";
             Assert.SkipWhen(spec.Length == 0, "set WPF_SLANT to family@ppem");
             string[] parts = spec.Split('@');
-            string family = parts[0];
+            string family = GdiFamily(parts[0]);
             int ppem = parts.Length > 1 ? int.Parse(parts[1]) : 48;
 
             var log = new System.Text.StringBuilder();

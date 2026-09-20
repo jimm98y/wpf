@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -72,7 +72,8 @@ namespace WgpuInterop.Tests.Text
                 lfItalic = (byte) (style.Contains("I") ? 1 : 0),
                 lfCharSet = 1,
                 lfQuality = 5,                       // CLEARTYPE_QUALITY
-                lfFaceName = parts[0],
+                // The FILE STEM is not a GDI face name; see WindowsGlyphParityTests.GdiFamily.
+                lfFaceName = WindowsGlyphParityTests.GdiFamily(parts[0]),
             };
             IntPtr font = CreateFontIndirectW(ref lf);
             IntPtr dc = CreateCompatibleDC(IntPtr.Zero);

@@ -456,7 +456,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_STAGE_GLYPH3=family/char/ppem");
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI draws the reference");
             string[] parts = spec!.Split('/');
-            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            string? file = FontFiles.Find(WindowsGlyphParityTests.GdiFamily(parts[0]), bold: false, italic: false);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -468,7 +468,7 @@ namespace WgpuInterop.Tests.Text
             try
             {
                 mine = RasterizeIntoCell(HintedFigures(font, c, ppem));
-                theirs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, false, xScale: 3));
+                theirs = RasterizeIntoCell(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, false, xScale: 3));
             }
             finally { TrueTypeFont.SubpixelFitting = saved; }
 
@@ -599,7 +599,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_XCOORDS=family/char/ppem");
             Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
             string[] parts = spec!.Split('/');
-            string? file = FontFiles.Find(parts[0], bold: false, italic: false);
+            string? file = FontFiles.Find(WindowsGlyphParityTests.GdiFamily(parts[0]), bold: false, italic: false);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -611,7 +611,7 @@ namespace WgpuInterop.Tests.Text
             List<PathFigure> ours;
             try { ours = HintedFigures(font, c, ppem); }
             finally { TrueTypeFont.SubpixelFitting = saved; }
-            List<PathFigure> theirs = GdiOutline(c, parts[0], ppem, unhinted: false);
+            List<PathFigure> theirs = GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false);
 
             // WPF_XMATCH_AXIS=y reads the same comparison on the OTHER axis, where
             // GetGlyphOutline is authoritative -- y is hinted bi-level in both renderers -- so a
@@ -621,7 +621,7 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  fitted {(onY ? "y" : "x")} coordinates ===");
             Console.Error.WriteLine("  ours : " + show(ours));
             Console.Error.WriteLine("  gdi  : " + show(theirs));
-            List<PathFigure> plain = GdiOutline(c, parts[0], ppem, unhinted: true);
+            List<PathFigure> plain = GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: true);
             Console.Error.WriteLine("  (unhinted, both agree): " + show(plain));
 
             // And the same glyph through the per-call BI-LEVEL pass, which is meant to reproduce the
@@ -772,7 +772,7 @@ namespace WgpuInterop.Tests.Text
             string[] parts = spec!.Split('/');
             string styleSpec = parts.Length > 3 ? parts[3] : "";
             bool bold = styleSpec.Contains('B'), italic = styleSpec.Contains('I');
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(WindowsGlyphParityTests.GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}");
             int ppem = int.Parse(parts[2]);
 
@@ -820,7 +820,7 @@ namespace WgpuInterop.Tests.Text
                     {
                         foreach (bool unh in new[] { true, false })
                         {
-                            List<Vector2> g = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: unh,
+                            List<Vector2> g = FlattenOnCurve(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: unh,
                                                                         bold: bold, italic: italic));
                             Console.Error.WriteLine($"GDI-{(unh ? "PLAIN " : "FITTED")} '{c}' @{ppem}: {g.Count} on-curve points (y up)");
                             for (int i = 0; i < g.Count; i++)
@@ -848,9 +848,9 @@ namespace WgpuInterop.Tests.Text
                         // ...and DID GDI? Declining to fit is only a bug if GDI fitted. Its own
                         // two reports answer it: identical fitted and unfitted outlines mean GDI
                         // declined as well, which is gasp doing its job and not a disagreement.
-                        List<Vector2> gdiPlain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true,
+                        List<Vector2> gdiPlain = Flatten(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: true,
                                                                     bold: bold, italic: italic));
-                        List<Vector2> gdiFitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false,
+                        List<Vector2> gdiFitted = Flatten(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false,
                                                                      bold: bold, italic: italic));
                         bool gdiFitTooo = gdiPlain.Count != gdiFitted.Count;
                         for (int i = 0; !gdiFitTooo && i < gdiPlain.Count; i++)
@@ -895,9 +895,9 @@ namespace WgpuInterop.Tests.Text
                         continue;
                     }
 
-                    List<Vector2> plain = Flatten(GdiOutline(c, parts[0], ppem, unhinted: true,
+                    List<Vector2> plain = Flatten(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: true,
                                                              bold: bold, italic: italic));
-                    List<Vector2> fitted = Flatten(GdiOutline(c, parts[0], ppem, unhinted: false,
+                    List<Vector2> fitted = Flatten(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false,
                                                               bold: bold, italic: italic));
                     // FITTING CHANGES HOW GGO SEGMENTS THE OUTLINE, so its two reports need not be
                     // the same length and CANNOT ALWAYS BE PAIRED. Grid-fitting leaves points
@@ -938,9 +938,9 @@ namespace WgpuInterop.Tests.Text
                     bool onCurveOnly = plain.Count != fitted.Count;
                     if (onCurveOnly)
                     {
-                        plain = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: true,
+                        plain = FlattenOnCurve(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: true,
                                                           bold: bold, italic: italic));
-                        fitted = FlattenOnCurve(GdiOutline(c, parts[0], ppem, unhinted: false,
+                        fitted = FlattenOnCurve(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false,
                                                            bold: bold, italic: italic));
                     }
                     // PAIR BY INDEX WHEN GGO'S FITTED REPORT IS ALREADY OUR POINT LIST. The
@@ -1418,7 +1418,7 @@ namespace WgpuInterop.Tests.Text
             string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
             bool bold = style.Contains("B"), italic = style.Contains("I");
 
-            string? file = FontFiles.Find(parts[0], bold, italic);
+            string? file = FontFiles.Find(WindowsGlyphParityTests.GdiFamily(parts[0]), bold, italic);
             Assert.SkipWhen(file is null, "this machine lacks the face");
             byte[] faceBytes = File.ReadAllBytes(file!);
             FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
@@ -1443,7 +1443,7 @@ namespace WgpuInterop.Tests.Text
             {
                 if (!((IHintedGlyphFont) font).TryGetHintedOutline(font.GlyphIndex(c), ppem,
                         out List<PathFigure>? ours) || ours is null) continue;
-                List<PathFigure> gdi = GdiOutline(c, parts[0], ppem, unhinted: false,
+                List<PathFigure> gdi = GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false,
                                                   bold: bold, italic: italic);
                 List<List<Vector2>> op = AreaPolys(ours, 1f), gp = AreaPolys(gdi, 1f);   // both already y-up-negative
                 if (op.Count == 0 || gp.Count == 0) continue;
@@ -1629,7 +1629,7 @@ namespace WgpuInterop.Tests.Text
             // (see WPF_STEM_NATURAL's numbers), so a width rule has to be read at both weights.
             string[] parts = spec!.Split('/');
             bool bold = parts.Length > 3 && parts[3].StartsWith("b");
-            string? file = FontFiles.Find(parts[0], bold: bold, italic: false);
+            string? file = FontFiles.Find(WindowsGlyphParityTests.GdiFamily(parts[0]), bold: bold, italic: false);
             Assert.SkipWhen(file is null, $"this machine has no {parts[0]}" + (bold ? " Bold" : ""));
 
             var font = new TrueTypeFont(File.ReadAllBytes(file!));
@@ -1651,7 +1651,7 @@ namespace WgpuInterop.Tests.Text
                 // to look at the largest single term in the text disagreement.
                 Console.Error.WriteLine($"=== {parts[0]} '{c}' @{ppem}  GDI's fitted outline: "
                     + "our rasterizer | GDI's ===");
-                byte[] gdiOutlineOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: false, bold: bold));
+                byte[] gdiOutlineOurs = RasterizeIntoCell(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: false, bold: bold));
                 Dump(gdiOutlineOurs, theirs);
 
                 // WHICH SIDE gains the ink. The aggregate says GDI renders a shape fatter than the
@@ -1678,7 +1678,7 @@ namespace WgpuInterop.Tests.Text
                 // above), and not a rasterizer or a contrast curve. It is stem darkening, and half
                 // a pixel is a much larger and much simpler number than the tuned +6/64 the
                 // interpreter currently applies over ppem 11-13 only.
-                byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, parts[0], ppem, unhinted: true, bold: bold));
+                byte[] unhintedOurs = RasterizeIntoCell(GdiOutline(c, WindowsGlyphParityTests.GdiFamily(parts[0]), ppem, unhinted: true, bold: bold));
                 // OURS is the fourth column and the only one that says what to DO. The other three
                 // describe GDI; this one is the geometry we actually ship, so the correction any
                 // fix has to apply is (GDI - ours) and not (GDI - anything of GDI's).
