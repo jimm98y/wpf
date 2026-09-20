@@ -1538,8 +1538,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         if (x64 < gx0) gx0 = x64; if (x64 > gx1) gx1 = x64;
                         if (y64 < gy0) gy0 = y64; if (y64 > gy1) gy1 = y64;
                     }
+                // AND THE ROW BOUNDS HAVE TO BE FLIPPED, because fs_FindBitMapSize's rule is
+                // written in the outline's own y-UP frame and this is a y-DOWN one.
+                // <para>GDI takes rows `(ymin + 0x1f) >> 6` to `(ymax + 0x20) >> 6` INCLUSIVE,
+                // with y measured up from the baseline, and its row k covers y in [64k, 64k+64).
+                // Applying that to a y-down device coordinate puts the +0x1f on the wrong edge:
+                // the TOP of the glyph is the y-down MINIMUM but the y-up MAXIMUM, so it is the
+                // +0x20 rule that decides it. Transform GDI's bounds properly and the baseline
+                // drops out --
+                // <code>
+                //   topRow    = -1 - ((0x20 - gy0) >> 6)      (inclusive)
+                //   bottomRow = -1 - ((0x1f - gy1) >> 6)      (inclusive, so +1 exclusive)
+                // </code>
+                // -- which is what this computes. The old form was one row short at the top on
+                // every glyph whose highest point is more than a third of the way up its row.</para>
+                // <para>It is worth a size where there is no interpreter to blame. Times New
+                // Roman at 8ppem was the only face still imperfect at 8, 1,080 of the holdout
+                // between Regular and Italic, and its outline there is byte-for-byte GDI's own
+                // unhinted points. The whole of it was 'N', 'W' and 'Y' missing a level-one lamp
+                // in the row ABOVE their cap height: the cap top sits at 22.703 device rows, the
+                // last sub-row centre of row 22 is at 22.9 and is inside the glyph, and we were
+                // clamping row 22 away. WPF_CT_BOX_FLIP=0 restores the unflipped bounds.</para>
                 int colMin = (gx0 + 0x1f) >> 6, colMax = (gx1 + 0x20) >> 6;
-                int rowMin = (gy0 + 0x1f) >> 6, rowMax = (gy1 + 0x20) >> 6;
+                int rowMin = s_boxFlip ? -1 - ((0x20 - gy0) >> 6) : (gy0 + 0x1f) >> 6;
+                int rowMax = s_boxFlip ? -((0x1f - gy1) >> 6) : (gy1 + 0x20) >> 6;
                 if (colMax == colMin) colMax++;
                 if (rowMax == rowMin) rowMax++;
                 xMin = Math.Max(0, (colMin - originX) * SubpixelsPerPixel * 2);
@@ -1932,6 +1954,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// approximate by the sample centre. Left in because the column crossings themselves are
         /// the binary's and the next attempt should start from them, not from the polygon.</para>
         /// </summary>
+        /// <summary>WPF_CT_BOX_FLIP=0: apply fs_FindBitMapSize's row bounds to the y-DOWN
+        /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
+        private static readonly bool s_boxFlip =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_FLIP") != "0";
+
         private static readonly bool s_dropoutExact =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";
 
