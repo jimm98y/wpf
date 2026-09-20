@@ -10004,6 +10004,20 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveGrid64 =
             Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
+        /// <summary>FOR CONSOLAS '1' AT 18ppem THE OUTLINE IS NOT THE PROBLEM -- OUR FIT IS THE
+        /// REAL SCALER'S, POINT FOR POINT, AND THE PIXELS STILL DIFFER BY 256.
+        /// <para>Driven directly (scratchpad/ctharness, INPD0=03), fontdrvhost's own fs__Contour
+        /// returns, in pixels: x = 8.80 1.61 1.61 4.55 4.55 1.80 1.23 4.89 6.25 6.25 8.80 0 and
+        /// y = 0 0 1 1 10 8 9 11 11 1 1 0. This port's fitted outline is the SAME THIRTEEN
+        /// NUMBERS in both axes. (Only the advance phantom differs, 10.00 against our 9.88, which
+        /// no single-glyph render can see.)</para>
+        /// <para>So that glyph's whole contribution to the holdout is downstream of the outline:
+        /// two adjacent rows, three consecutive samples, ours light above and heavy below. The
+        /// scan converter is proven exact on SYNTHETIC shapes -- bars at 42 slopes, tapers,
+        /// crossings, arcs in both orientations, stem/arm junctions -- and this says the proof
+        /// does not carry to a real glyph's outline. That is where to look, and it is a much
+        /// smaller target than the fit: the geometry is now PINNED by the scaler itself rather
+        /// than inferred from the pixels it produced.</para></summary>
         /// <summary>THE SOLVER'S "GDI WANTS POINT N AT V" IS NOT GDI'S COORDINATE, PROVEN.
         /// <para>2026-09-21, against the real scaler. `scratchpad/ctharness` now drives
         /// fontdrvhost's own fs__Contour directly and, with its mode word `inp[0xd0]` set to 3,
