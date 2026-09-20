@@ -2380,6 +2380,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and without this the measurement pass's runs are printed beside the real ones.</summary>
         private static bool s_iupTraceOn;
 
+        private static readonly bool s_iupMaskEither =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_MASK") == "either";
+
         internal static readonly bool s_iupTrace =
             Environment.GetEnvironmentVariable("WPF_IUP_TRACE") is "1" or "2";
 
@@ -3778,7 +3781,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private void InterpolateUntouched(bool horizontal)
         {
             Zone z = _glyphZone;
-            byte mask = horizontal ? TagTouchX : TagTouchY;
+            // WPF_CT_IUP_MASK=either: treat a point touched in EITHER axis as an interpolation
+            // boundary. itrp_IUP plainly tests bit 1 for x and bit 2 for y -- `uVar24 = 1` on the
+            // x arm, `2` on the y arm, against elem+0x48 -- and SHP_Common sets bit 1 from the
+            // freedom x and bit 2 from the freedom y, so the reading is not in doubt. It is here
+            // because a reading that is not in doubt is exactly what localGS+0xcc was, and
+            // because IUP[x] runs BEFORE IUP[y] in every face here: at IUP[x] time the y work has
+            // already touched points inside the x runs, so this is the one cheap way to split
+            // them that costs no new mechanism.
+            // REFUTED, 16,160,523 against 28,183, and Verdana '6'@12 itself -- the glyph the
+            // idea came from -- goes 292 to 883. The mask really is one bit per axis.
+            byte mask = s_iupMaskEither ? (byte) (TagTouchX | TagTouchY)
+                      : horizontal ? TagTouchX : TagTouchY;
             int[] cur = horizontal ? z.CurX : z.CurY;
             int[] org = horizontal ? z.OrgX : z.OrgY;
             int[] orus = horizontal ? z.OrusX : z.OrusY;

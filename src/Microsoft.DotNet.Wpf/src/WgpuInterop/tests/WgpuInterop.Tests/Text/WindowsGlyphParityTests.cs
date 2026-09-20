@@ -4707,6 +4707,18 @@ namespace WgpuInterop.Tests.Text
         /// sets, which is its sentinel for "the shift was neither 0 nor 10 pixels", not a real
         /// disagreement -- our prep demonstrably answers those bits, since Verdana's storage[2]
         /// comes out 6. The probe's own side needs fixing before that column means anything.</para>
+        /// <para>Two more eliminations on the same run. It is not a DELTA: '6'@12's x-phase
+        /// DELTAP at instruction 163 names points 1, 13, 32, 33, 37, 49, 55 and 57, three of
+        /// which fire, and NOT ONE of them is in 19..25. And it is not the IUP mask -- treating a
+        /// point touched in either axis as a boundary (WPF_CT_IUP_MASK=either), which would split
+        /// x runs at the points the y work touches, measures 16,160,523 and takes this very glyph
+        /// from 292 to 883.</para>
+        /// <para>Where the numbers point instead, for the next attempt: anchors alone get '6'@12
+        /// from 292 to 118 by moving P26 from 134 to 137, and P26 is placed by the IP at
+        /// instruction 179 between rp1=18 and rp2=47. Working that IP backwards -- orus 1046 to
+        /// 339, cur 392 to 128, orus[26] = 344 -- cur[26] = 133, which is 137 after its phase of
+        /// +4, needs cur[47] = 131 where we have 128. So the most economical description of this
+        /// glyph is a wrong P47 AND a kink in the run, not one error.</para>
         /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
         /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
         /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
